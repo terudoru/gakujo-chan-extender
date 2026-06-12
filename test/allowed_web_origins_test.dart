@@ -5,14 +5,14 @@ void main() {
   test('allows only HTTPS Gakujo pages in release mode', () {
     expect(
       AllowedWebOrigins.canLoad(
-        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do',
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
         debugAllowed: false,
       ),
       isTrue,
     );
     expect(
       AllowedWebOrigins.canLoad(
-        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do;jsessionid=redacted',
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do;jsessionid=redacted',
         debugAllowed: false,
       ),
       isTrue,

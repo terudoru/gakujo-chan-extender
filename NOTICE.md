@@ -1,17 +1,20 @@
 # Notices
 
-This Flutter app is a portable replacement client for the More-Better-Gakujo
-Gakujo 2FA autofill flow. This repository is prepared as a fork-derived project
-from:
+This Android app is published as a standalone Flutter repository.
 
-- `koji-genba/gakujo-chan-extender`
-- `yangniao23/gakujo-chan-extender`
+It is inspired by and derived from ideas in the More-Better-Gakujo /
+Gakujo-chan-extender lineage. The primary upstream project is:
 
-The original application lineage is licensed under the MIT License. The MIT
-license text and upstream copyright notice are included in this repository's
-`LICENSE.md`.
+- https://github.com/koji-genba/gakujo-chan-extender
 
-This Flutter app adds a Dart/WebView implementation of the required 2FA path,
-including Gakujo URL allowlisting, secure local secret access, TOTP generation,
-`input[name="ninshoCode"]` autofill, and Android download organization by
-course folder.
+Related fork:
+
+- https://github.com/yangniao23/gakujo-chan-extender
+
+The upstream browser extension README states that the original author is no
+longer able to maintain the project after 2024-04-01. This Android app should
+therefore be treated as an independent, unofficial continuation for Android
+WebView usage rather than an official upstream release.
+
+This app does not claim affiliation with Niigata University or the original
+browser extension authors.

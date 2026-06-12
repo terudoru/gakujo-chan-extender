@@ -16,6 +16,7 @@ class GakujoCourseNameEstimator {
 
   static String estimateFromHtml(String html) {
     final candidates = <String?>[
+      ..._textsForTags(html, ['tr']),
       ..._textsForTags(html, ['h1', 'h2', 'h3']),
       ..._textsForClassHints(html, [
         'breadcrumb',
@@ -49,12 +50,69 @@ class GakujoCourseNameEstimator {
       return null;
     }
 
-    final ignored = ['学務情報システム', 'More Better Gakujo', 'CampusSquare'];
-    if (ignored.any((value) => trimmed.toLowerCase() == value.toLowerCase())) {
+    final extracted = _extractCourseName(trimmed).trim();
+    if (extracted.isEmpty || _isIgnoredCourseName(extracted)) {
       return null;
     }
 
-    return trimmed;
+    return extracted;
+  }
+
+  static String _extractCourseName(String text) {
+    final labeledMatch = RegExp(
+      r'(?:授業科目名|授業科目|科目名|授業名|講義名|科目\s*[:：])\s*[:：]?\s*(?:[A-Z0-9]{4,}\s+)?(.+)$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (labeledMatch != null) {
+      return _trimAtKnownFieldLabel(labeledMatch.group(1)!.trim());
+    }
+
+    final codeMatch = RegExp(
+      r'^[A-Z0-9]{4,}\s+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (codeMatch != null) {
+      return codeMatch.group(1)!.trim();
+    }
+
+    final enrolledStudentsMatch = RegExp(
+      r'([^\s、。]+?)の履修者各位',
+    ).firstMatch(text);
+    if (enrolledStudentsMatch != null) {
+      return enrolledStudentsMatch.group(1)!.trim();
+    }
+
+    return text;
+  }
+
+  static String _trimAtKnownFieldLabel(String text) {
+    final match = RegExp(
+      r'\s(?:担当教員|担当|教員|曜日|時限|開講|年度|学期|単位|対象|授業コード|科目区分|シラバス|提出期限|課題)(?:\s|$)',
+    ).firstMatch(text);
+    final trimmed = match == null ? text : text.substring(0, match.start);
+    return trimmed.trim();
+  }
+
+  static bool _isIgnoredCourseName(String text) {
+    final genericPageLabels = {
+      '開設一覧',
+      '連絡通知',
+      '掲示一覧',
+      '授業ポートフォリオ',
+      'レポート・小テスト・アンケート提出',
+      'レポート提出',
+      '小テスト',
+      'アンケート',
+      '年度 開講所属 開講番号 科目名',
+      'タイトル',
+    };
+    if (genericPageLabels.contains(text)) {
+      return true;
+    }
+
+    final lower = text.toLowerCase();
+    final ignored = ['学務情報システム', 'more better gakujo', 'campussquare'];
+    return ignored.any(lower.contains);
   }
 
   static Iterable<String?> _textsForTags(String html, List<String> tags) sync* {

@@ -1,17 +1,44 @@
-# More Better Gakujo Flutter
+# More Better Gakujo Android
 
-This is the portable Flutter version of the Android WebView app. The shared
-Dart layer owns the Gakujo URL allowlist, Base32 normalization, TOTP generation,
-secure secret access, and `ninshoCode` autofill script generation so the same
-behavior can be shipped on Android and iOS.
+This is a standalone Flutter Android app for using Niigata University's Gakujo
+portal in a WebView with More Better Gakujo-inspired conveniences.
+
+Current Android APK builds include:
+
+- 2FA code autofill from a locally stored Base32 secret.
+- A settings screen for the 2FA secret, download behavior, and mobile/desktop
+  page mode.
+- Download save modes:
+  - auto-sort by course and save under a configured folder
+  - save directly under a configured folder
+  - choose the save location each time
+- Gakujo download capture for links and form/button-based downloads.
+- Course-folder inference from Gakujo pages, including course tables, report /
+  quiz / survey submission pages, notification pages, and fallback file-name
+  patterns.
+
+The release APK is written to:
+
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
 
 ## License and upstream notices
 
-This app is prepared as a standalone Flutter repository derived from the
-More-Better-Gakujo / Gakujo Chan Extender lineage. The original browser
-extension lineage is licensed under the MIT License. Include this repository's
-`LICENSE.md` and `NOTICE.md` when redistributing copies or substantial portions
-of the software.
+This app is published as a standalone repository, not as a GitHub fork of the
+browser extension repository.
+
+It is inspired by and derived from ideas in the More-Better-Gakujo /
+Gakujo-chan-extender lineage. The primary upstream project is:
+
+- https://github.com/koji-genba/gakujo-chan-extender
+
+Related fork:
+
+- https://github.com/yangniao23/gakujo-chan-extender
+
+Include this repository's `LICENSE.md` and `NOTICE.md` when redistributing
+copies or substantial portions of the software.
 
 ## Setup
 
@@ -31,11 +58,12 @@ and CocoaPods setup is complete.
 ```sh
 flutter test
 flutter run -d android
-flutter build apk
+flutter build apk --release
 ./android/gradlew -p android bundleRelease
 ```
 
-The debug APK is written to
+The release APK is written to
+`build/app/outputs/flutter-apk/app-release.apk`. The debug APK is written to
 `build/app/outputs/flutter-apk/app-debug.apk`. The release AAB is written to
 `build/app/outputs/bundle/release/app-release.aab`.
 
@@ -91,9 +119,12 @@ flutter build ipa
 - Injects JavaScript after allowed page loads and retries briefly until
   `input[name="ninshoCode"]` exists, then submits the surrounding form or submit
   button so the login can continue automatically.
-- Lets the user choose a download root folder on Android, then saves detected
-  Gakujo downloads under `course/file`, using the clicked link or button text
-  instead of the fallback `campussquare.do` name whenever possible.
+- Lets the user choose a download root folder on Android.
+- Saves detected Gakujo downloads according to the selected save mode.
+- Detects course names from the current Gakujo page, including table columns
+  where `科目名` appears above or beside the value.
+- Falls back to useful file-name patterns when the page does not expose a
+  course name clearly.
 
 ## iOS Port Notes
 

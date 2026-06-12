@@ -1,6 +1,6 @@
 class AllowedWebOrigins {
   static const gakujoUrl =
-      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do';
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
   static const _gakujoHost = 'gakujo.iess.niigata-u.ac.jp';
   static const _debugFixturePrefix = 'file:///android_asset/qa/';
 

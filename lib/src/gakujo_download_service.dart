@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import 'download_destination_settings.dart';
+import 'gakujo_app_settings.dart';
 import 'gakujo_download_request.dart';
 
 class GakujoDownloadResult {
@@ -55,10 +56,16 @@ class GakujoDownloadService {
   Future<GakujoDownloadResult> download(
     GakujoDownloadRequest request, {
     String? userAgent,
+    required DownloadSaveMode saveMode,
   }) async {
+    final method = saveMode == DownloadSaveMode.flatWithPickerEachTime
+        ? 'downloadToPickedFile'
+        : 'downloadToConfiguredFolder';
+    final arguments = request.toMethodChannelArguments(userAgent: userAgent)
+      ..['autoSortByCourse'] = saveMode.autoSortByCourse;
     final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-      'downloadToCourseFolder',
-      request.toMethodChannelArguments(userAgent: userAgent),
+      method,
+      arguments,
     );
     return GakujoDownloadResult.fromMap(raw);
   }
