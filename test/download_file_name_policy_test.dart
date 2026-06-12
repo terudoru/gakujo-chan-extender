@@ -1,0 +1,57 @@
+import 'package:morebettergakujo_flutter/src/download_file_name_policy.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test(
+      'does not keep campussquare.do when a button name is available elsewhere',
+      () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: '授業資料',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      mimeType: 'application/pdf',
+    );
+
+    expect(name, '授業資料.pdf');
+  });
+
+  test('does not keep campussquare.do from the URL fallback', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: '',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      mimeType: 'application/pdf',
+    );
+
+    expect(name, 'document.pdf');
+  });
+
+  test('removes forbidden filename characters', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: r'講義/資料:第*1?回".pdf',
+    );
+
+    expect(name, '講義資料第1回.pdf');
+  });
+
+  test('falls back to document for empty names', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: '   ',
+      mimeType: 'text/plain',
+    );
+
+    expect(name, 'document.txt');
+  });
+
+  test('adds a numeric suffix when a name already exists', () {
+    final name = DownloadFileNamePolicy.uniqueName(
+      '資料.pdf',
+      {'資料.pdf', '資料 (1).pdf'},
+    );
+
+    expect(name, '資料 (2).pdf');
+  });
+
+  test('sanitizes folder names and falls back to unclassified', () {
+    expect(DownloadFileNamePolicy.safeFolderName(r'講義/資料'), '講義資料');
+    expect(DownloadFileNamePolicy.safeFolderName('  '), '未分類');
+  });
+}

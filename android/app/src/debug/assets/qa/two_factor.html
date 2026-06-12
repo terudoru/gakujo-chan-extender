@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>More Better Gakujo Flutter 2FA QA</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 24px;
+      }
+      label,
+      input {
+        display: block;
+        font-size: 18px;
+        margin-top: 12px;
+        width: 100%;
+      }
+      input {
+        box-sizing: border-box;
+        padding: 10px;
+      }
+      button {
+        font-size: 18px;
+        margin-top: 16px;
+        padding: 10px 14px;
+      }
+    </style>
+  </head>
+  <body id="google-authenticator-login-body">
+    <h1>2FA QA Page</h1>
+    <form id="twoFactorForm">
+      <label for="ninshoCode">ninshoCode</label>
+      <input id="ninshoCode" name="ninshoCode" type="password" autocomplete="one-time-code">
+      <button type="submit">認証</button>
+    </form>
+    <p id="submitResult" aria-live="polite"></p>
+    <script>
+      document.getElementById('twoFactorForm').addEventListener('submit', function(event) {
+        event.preventDefault();
+        document.body.setAttribute('data-submitted', 'true');
+        document.getElementById('submitResult').textContent = 'MBG_2FA_SUBMIT_SUCCESS';
+      });
+    </script>
+  </body>
+</html>

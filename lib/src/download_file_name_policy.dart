@@ -1,0 +1,141 @@
+class DownloadFileNamePolicy {
+  const DownloadFileNamePolicy._();
+
+  static const fallbackBaseName = 'document';
+  static const unknownCourseFolderName = '未分類';
+
+  static String safeFileName({
+    String? preferredName,
+    String? contentDispositionName,
+    String? url,
+    String? mimeType,
+  }) {
+    final preferred = _cleanCandidate(preferredName);
+    final disposition = _cleanCandidate(contentDispositionName);
+    final urlName = _cleanCandidate(_fileNameFromUrl(url));
+    final usableUrlName = _isCampussquareDo(urlName) ? null : urlName;
+    final base = (_isCampussquareDo(preferred) ? null : preferred) ??
+        disposition ??
+        usableUrlName ??
+        fallbackBaseName;
+    return _withExtension(base, mimeType: mimeType, urlName: usableUrlName);
+  }
+
+  static String safeFolderName(String? name) {
+    return _cleanCandidate(name) ?? unknownCourseFolderName;
+  }
+
+  static String uniqueName(String desiredName, Set<String> existingNames) {
+    if (!existingNames.contains(desiredName)) {
+      return desiredName;
+    }
+
+    final extensionIndex = desiredName.lastIndexOf('.');
+    final hasExtension =
+        extensionIndex > 0 && extensionIndex < desiredName.length - 1;
+    final base =
+        hasExtension ? desiredName.substring(0, extensionIndex) : desiredName;
+    final extension = hasExtension ? desiredName.substring(extensionIndex) : '';
+
+    var index = 1;
+    while (true) {
+      final candidate = '$base ($index)$extension';
+      if (!existingNames.contains(candidate)) {
+        return candidate;
+      }
+      index += 1;
+    }
+  }
+
+  static String? _cleanCandidate(String? raw, {String replacement = ''}) {
+    final value = raw
+        ?.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), replacement)
+        .replaceAll(RegExp(r'''[\\/:*?"<>|]'''), replacement)
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (value == null || value.isEmpty || value == '.' || value == '..') {
+      return null;
+    }
+    return value;
+  }
+
+  static String _withExtension(String base,
+      {String? mimeType, String? urlName}) {
+    if (_hasLikelyExtension(base) || _isCampussquareDo(base)) {
+      return base;
+    }
+
+    final urlExtension = _extensionFromName(urlName).takeUnlessDo();
+    final mimeExtension = _extensionFromMime(mimeType);
+    final extension = urlExtension ?? mimeExtension;
+    return extension == null ? base : '$base.$extension';
+  }
+
+  static bool _hasLikelyExtension(String name) {
+    final extension = _extensionFromName(name);
+    return extension != null && extension != 'do';
+  }
+
+  static String? _extensionFromName(String? name) {
+    if (name == null) {
+      return null;
+    }
+
+    final index = name.lastIndexOf('.');
+    if (index <= 0 || index == name.length - 1) {
+      return null;
+    }
+
+    final extension = name.substring(index + 1).toLowerCase();
+    if (!RegExp(r'^[a-z0-9]{1,8}$').hasMatch(extension)) {
+      return null;
+    }
+    return extension;
+  }
+
+  static String? _extensionFromMime(String? mimeType) {
+    final normalized = mimeType?.split(';').first.trim().toLowerCase();
+    return switch (normalized) {
+      'application/pdf' => 'pdf',
+      'text/plain' => 'txt',
+      'text/csv' => 'csv',
+      'application/zip' => 'zip',
+      'application/msword' => 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' =>
+        'docx',
+      'application/vnd.ms-excel' => 'xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' =>
+        'xlsx',
+      'application/vnd.ms-powerpoint' => 'ppt',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation' =>
+        'pptx',
+      'image/jpeg' => 'jpg',
+      'image/png' => 'png',
+      _ => null,
+    };
+  }
+
+  static String? _fileNameFromUrl(String? rawUrl) {
+    if (rawUrl == null || rawUrl.trim().isEmpty) {
+      return null;
+    }
+
+    final uri = Uri.tryParse(rawUrl);
+    final segment =
+        uri?.pathSegments.isNotEmpty == true ? uri!.pathSegments.last : null;
+    if (segment == null || segment.isEmpty) {
+      return null;
+    }
+    return Uri.decodeComponent(segment);
+  }
+
+  static bool _isCampussquareDo(String? name) {
+    return name?.toLowerCase() == 'campussquare.do';
+  }
+}
+
+extension on String? {
+  String? takeUnlessDo() {
+    return this == 'do' ? null : this;
+  }
+}

@@ -1,0 +1,9 @@
+More-Better-Gakujo notices
+
+This Flutter Android app is part of a workspace derived from the browser
+extension lineage published at koji-genba/gakujo-chan-extender and
+yangniao23/gakujo-chan-extender.
+
+The original application lineage is licensed under the MIT License. Include the
+MIT license text and upstream copyright notice from the source package
+LICENSE.md when redistributing copies or substantial portions of the software.
