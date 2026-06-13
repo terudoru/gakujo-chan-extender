@@ -1,20 +1,21 @@
-# Notices
+# 通知事項
 
-This Android app is published as a standalone Flutter repository.
+このAndroidアプリは、独立したFlutterリポジトリとして公開しています。
 
-It is inspired by and derived from ideas in the More-Better-Gakujo /
-Gakujo-chan-extender lineage. The primary upstream project is:
+このアプリは More-Better-Gakujo / Gakujo-chan-extender 系のアイデアを参考にし、
+Android WebView向けに実装したものです。
+
+主な上流プロジェクト:
 
 - https://github.com/koji-genba/gakujo-chan-extender
 
-Related fork:
+関連するフォーク:
 
 - https://github.com/yangniao23/gakujo-chan-extender
 
-The upstream browser extension README states that the original author is no
-longer able to maintain the project after 2024-04-01. This Android app should
-therefore be treated as an independent, unofficial continuation for Android
-WebView usage rather than an official upstream release.
+上流のブラウザ拡張機能のREADMEには、元の作者が2024年4月1日以降は
+メンテナンスできない旨が記載されています。そのため、このAndroidアプリは
+公式の上流リリースではなく、Android WebViewで使うための非公式な独立継続版
+として扱ってください。
 
-This app does not claim affiliation with Niigata University or the original
-browser extension authors.
+このアプリは、新潟大学および元のブラウザ拡張機能の作者と関係ありません。

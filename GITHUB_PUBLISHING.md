@@ -1,33 +1,38 @@
-# GitHub Publishing Notes
+# GitHub公開メモ
 
-This directory is a standalone Flutter extraction with its own initial git
-history. It keeps `upstream` as a read-only reference to:
+このディレクトリは、独立したFlutterアプリとして切り出したリポジトリです。
+ローカルでは、参照用の読み取り専用リモートとして `upstream` を残しています。
 
 ```sh
 https://github.com/yangniao23/gakujo-chan-extender.git
 ```
 
-Before publishing, create or choose the GitHub repository that should receive
-this Flutter-only app, then set `origin` locally:
+現在の公開先は次のリポジトリです。
 
 ```sh
-git remote add origin git@github.com:<your-user-or-org>/<repo>.git
-git push -u origin main
+https://github.com/terudoru/gakujo-chan-extender.git
 ```
 
-If `<repo>` is a GitHub fork that already contains upstream extension history,
-this Flutter-only repository will not share that history. In that case, either:
+公開先は、Android版アプリの内容を持つ `main` ブランチをdefault branchにしています。
+フォーク元由来の古い `master` ブランチは削除済みです。
 
-- publish this as a new standalone repository and mention the upstream lineage
-  in `NOTICE.md`, or
-- intentionally replace a branch in the fork after reviewing the consequences.
+`upstream` リモートにはpushしないでください。誤って書き込まないように、
+ローカルではpush URLを `DISABLED` にしています。
 
-Do not push the `upstream` remote. Its push URL is set to `DISABLED` locally to
-avoid accidental writes.
+## 公開時の注意
 
-Local files intentionally ignored and not committed:
+このFlutter版は、元のブラウザ拡張機能リポジトリとは履歴を共有していません。
+そのため、ブラウザ拡張機能側の履歴に対して通常のPull Requestを作る用途には
+向いていません。
+
+このリポジトリでは、Android版アプリとして独立公開し、上流への敬意と由来は
+`NOTICE.md` に記載する方針です。
+
+## コミットしないローカルファイル
+
+次のファイルはgit管理外にしてください。
 
 - `android/key.properties`
 - `android/upload-keystore.jks`
 - `android/local.properties`
-- Flutter, Gradle, IDE, and QA build outputs
+- Flutter、Gradle、IDE、QAのビルド出力

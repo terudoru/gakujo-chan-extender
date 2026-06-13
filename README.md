@@ -1,139 +1,93 @@
 # More Better Gakujo Android
 
-This is a standalone Flutter Android app for using Niigata University's Gakujo
-portal in a WebView with More Better Gakujo-inspired conveniences.
+More Better Gakujo Android は、新潟大学の学務情報システムを Android
+アプリ内で開き、2段階認証や資料ダウンロードを少し楽にする非公式アプリです。
 
-Current Android APK builds include:
+## ダウンロード
 
-- 2FA code autofill from a locally stored Base32 secret.
-- A settings screen for the 2FA secret, download behavior, and mobile/desktop
-  page mode.
-- Download save modes:
-  - auto-sort by course and save under a configured folder
-  - save directly under a configured folder
-  - choose the save location each time
-- Gakujo download capture for links and form/button-based downloads.
-- Course-folder inference from Gakujo pages, including course tables, report /
-  quiz / survey submission pages, notification pages, and fallback file-name
-  patterns.
+最新版のAPKは GitHub Releases からダウンロードできます。
 
-The release APK is written to:
+- https://github.com/terudoru/gakujo-chan-extender/releases
 
-```text
-build/app/outputs/flutter-apk/app-release.apk
-```
+Android の設定によっては、APKをインストールするときに「提供元不明のアプリ」を
+許可する必要があります。インストール後、不要であればその許可は元に戻して
+ください。
 
-## License and upstream notices
+## できること
 
-This app is published as a standalone repository, not as a GitHub fork of the
-browser extension repository.
+- 学務情報システムをアプリ内のWebViewで開く
+- 2段階認証コードを自動入力する
+- ダウンロードした資料を科目ごとのフォルダに自動仕分けする
+- 仕分けせず指定フォルダへ保存する
+- ダウンロードのたびに保存場所を選ぶ
+- モバイル版ページとデスクトップ版ページを切り替える
 
-It is inspired by and derived from ideas in the More-Better-Gakujo /
-Gakujo-chan-extender lineage. The primary upstream project is:
+## 初回設定
 
-- https://github.com/koji-genba/gakujo-chan-extender
+アプリを開いたら、右上の設定から必要な項目を設定します。
 
-Related fork:
+### 2段階認証
 
-- https://github.com/yangniao23/gakujo-chan-extender
+2段階認証の自動入力を使う場合は、設定画面に秘密鍵を保存します。
 
-Include this repository's `LICENSE.md` and `NOTICE.md` when redistributing
-copies or substantial portions of the software.
+秘密鍵の取り出し方法は、元プロジェクトの説明を参照してください。
 
-## Setup
+- https://github.com/koji-genba/gakujo-chan-extender#2段階認証自動入力
 
-Install Flutter, then fetch dependencies:
+保存するのは、6桁の認証コードではなく、Base32形式の長い秘密鍵です。
 
-```sh
-cd morebettergakujo-flutter
-flutter pub get
-```
+### ダウンロード保存先
 
-The checked-in Dart files are the source of truth. Android and iOS runners are
-included so Android can be built now and iOS can be compiled once local Xcode
-and CocoaPods setup is complete.
+資料を保存するフォルダを指定できます。保存モードは次の3つから選べます。
 
-## Checks
+- 自動仕分けして指定フォルダに保存
+- 自動仕分けせず指定フォルダに保存
+- 自動仕分けせず毎回保存場所を選ぶ
 
-```sh
-flutter test
-flutter run -d android
-flutter build apk --release
-./android/gradlew -p android bundleRelease
-```
+「自動仕分けして指定フォルダに保存」を選ぶと、ページ内の科目名を探して、
+指定フォルダの下に科目名フォルダを作って保存します。
 
-The release APK is written to
-`build/app/outputs/flutter-apk/app-release.apk`. The debug APK is written to
-`build/app/outputs/flutter-apk/app-debug.apk`. The release AAB is written to
-`build/app/outputs/bundle/release/app-release.aab`.
+### 表示モード
 
-For local builds without a private keystore, the release build falls back to
-debug signing. For a Play-ready AAB, create `android/key.properties` locally:
+学務情報システムを開くときに、モバイル版ページを使うかデスクトップ版ページを
+使うかを選べます。普段使いやすい方を選んでください。
 
-```properties
-storeFile=/absolute/path/to/upload-keystore.jks
-storePassword=...
-keyAlias=...
-keyPassword=...
-```
+## 使い方
 
-`android/key.properties` is ignored by git.
+1. アプリを起動します。
+2. 学務情報システムにログインします。
+3. 2段階認証の画面では、秘密鍵を設定済みなら認証コードが自動入力されます。
+4. 資料のダウンロードボタンやリンクを押します。
+5. 設定した保存モードに従ってファイルが保存されます。
 
-Keep `android/upload-keystore.jks` and `android/key.properties` backed up. APK
-updates must be signed with the same key, otherwise Android users will need to
-uninstall the old app before installing the new one.
+科目名の自動仕分けは、ページ内の「科目名」欄やファイル名をもとに判定します。
+判定できない場合は「未分類」フォルダに保存されることがあります。
 
-Do not commit `android/upload-keystore.jks`, `android/key.properties`, or
-`android/local.properties`; they are intentionally ignored.
+## うまく動かないとき
 
-For local Android 2FA fixture QA, start an emulator and run:
+### 2段階認証が自動入力されない
 
-```sh
-flutter build apk --debug
-./scripts/flutter_android_local_2fa_qa.sh
-```
+- 秘密鍵が正しく保存されているか確認してください。
+- 6桁の認証コードではなく、Base32形式の秘密鍵を保存してください。
+- 学務情報システム側の画面構成が変わった場合、自動入力できないことがあります。
 
-The QA script installs the debug APK, opens the debug-only
-`file:///android_asset/qa/two_factor.html` fixture, injects a synthetic Base32
-secret through Android intent extras, and verifies that the fixture is submitted
-after autofill without writing the six-digit token to logcat. Screenshots, UI
-XML, and logcat are written under `build/qa/`.
+### 科目名が「未分類」になる
 
-For iOS after opening the generated runner on macOS:
+- ダウンロードページ内に科目名が表示されているか確認してください。
+- ファイル名に科目名が入っている場合でも、形式によっては判定できないことが
+  あります。
+- 再現するページ、ファイル名、本来の科目名が分かると修正しやすくなります。
 
-```sh
-flutter run -d ios
-flutter build ipa
-```
+### APKを更新できない
 
-## Behavior Ported From Kotlin
+Android は、同じ署名で作られたAPKだけを上書きインストールできます。
+署名が違うAPKを入れる場合は、古いアプリをアンインストールしてから
+インストールする必要があります。
 
-- Opens `https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do`.
-- Blocks navigation outside `https://gakujo.iess.niigata-u.ac.jp/*`.
-- Debug builds additionally allow only `file:///android_asset/qa/*` for local
-  fixture QA.
-- Saves only the long Base32 2FA secret, never the six-digit one-time code.
-- Stores the secret through `flutter_secure_storage`, which maps to Android
-  Keystore-backed storage and iOS Keychain-backed storage.
-- Generates a six-digit TOTP token in Dart.
-- Injects JavaScript after allowed page loads and retries briefly until
-  `input[name="ninshoCode"]` exists, then submits the surrounding form or submit
-  button so the login can continue automatically.
-- Lets the user choose a download root folder on Android.
-- Saves detected Gakujo downloads according to the selected save mode.
-- Detects course names from the current Gakujo page, including table columns
-  where `科目名` appears above or beside the value.
-- Falls back to useful file-name patterns when the page does not expose a
-  course name clearly.
+## 注意
 
-## iOS Port Notes
+このアプリは非公式です。新潟大学および元のブラウザ拡張機能の作者とは
+関係ありません。
 
-The app code avoids Android-only APIs. When the generated iOS runner is added,
-review the normal Flutter plugin setup for:
-
-- `webview_flutter` iOS WebKit support.
-- Keychain access from `flutter_secure_storage`.
-- App transport/network settings if the university portal changes its TLS
-  behavior.
-
-No Gakujo-specific logic should need to move into Swift.
+開発者向けのビルド手順や公開メモは [DEVELOPER_NOTES.md](DEVELOPER_NOTES.md)
+を参照してください。
