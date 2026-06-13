@@ -10,8 +10,7 @@ More Better Gakujo Android は、新潟大学の学務情報システムを Andr
 - https://github.com/terudoru/gakujo-chan-extender/releases
 
 Android の設定によっては、APKをインストールするときに「提供元不明のアプリ」を
-許可する必要があります。インストール後、不要であればその許可は元に戻して
-ください。
+許可する必要があります。
 
 ## できること
 
