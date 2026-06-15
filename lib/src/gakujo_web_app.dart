@@ -5,7 +5,6 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 import 'allowed_web_origins.dart';
 import 'download_destination_settings.dart';
@@ -56,7 +55,8 @@ class GakujoWebApp extends StatefulWidget {
 
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
-  late final WebViewController _controller;
+  late final GakujoWebViewController _controller;
+  late final Future<void> _webViewReady;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
   late final GakujoWebViewService _webViewService;
@@ -86,39 +86,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
-    _controller = _webViewService.createController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        GakujoDownloadCaptureScript.channelName,
-        onMessageReceived: _handleDownloadMessage,
-      )
-      ..addJavaScriptChannel(
-        LoginAutofillAssistScript.channelName,
-        onMessageReceived: _handleLoginAutofillMessage,
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: _handleNavigationRequest,
-          onPageStarted: (url) {
-            _currentPageUrl = url;
-            unawaited(_refreshNavigationState());
-            _setStatus('読込中: ${_displayUrl(url)}');
-          },
-          onPageFinished: (url) async {
-            _currentPageUrl = url;
-            _setStatus('表示中: ${_displayUrl(url)}');
-            await _saveLastPageUrl(url);
-            await _refreshNavigationState();
-            await _injectLoginAutofillAssistIfAllowed();
-            await _injectTwoFactorAutofillIfAllowed();
-            await _injectDownloadCaptureIfAllowed();
-            await _refreshEstimatedCourseName();
-          },
-          onWebResourceError: (error) {
-            _setStatus('読込エラー: ${error.description}');
-          },
-        ),
-      );
+    _controller = _webViewService.createController();
+    _webViewReady = _configureWebViewController();
 
     _loadDownloadRoot();
     unawaited(_loadInitialPage());
@@ -127,6 +96,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     unawaited(_saveCurrentPageUrl());
+    unawaited(_controller.dispose());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -166,7 +136,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             ),
             IconButton(
               tooltip: '再読込',
-              onPressed: () => _controller.reload(),
+              onPressed: () => unawaited(_controller.reload()),
               icon: const Icon(Icons.refresh),
             ),
           ],
@@ -204,8 +174,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<NavigationDecision> _handleNavigationRequest(
-    NavigationRequest request,
+  Future<GakujoNavigationDecision> _handleNavigationRequest(
+    GakujoNavigationRequest request,
   ) async {
     final canLoad = AllowedWebOrigins.canLoad(
       request.url,
@@ -216,7 +186,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Gakujo以外のページをブロックしました')),
       );
-      return NavigationDecision.prevent;
+      return GakujoNavigationDecision.prevent;
     }
 
     if (GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
@@ -231,10 +201,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           formFields: const {},
         ),
       );
-      return NavigationDecision.prevent;
+      return GakujoNavigationDecision.prevent;
     }
 
-    return NavigationDecision.navigate;
+    return GakujoNavigationDecision.navigate;
   }
 
   Future<String> _estimateCourseNameFromPage(String? fallbackTitle) async {
@@ -467,7 +437,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           _appSettings = _appSettings.copyWith(pageMode: mode);
                         });
                         setDialogState(() {});
-                        await _controller.loadRequest(Uri.parse(mode.startUrl));
+                        await _controller.loadUrl(mode.startUrl);
                       },
                     ),
                   ],
@@ -497,10 +467,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
-  Future<void> _handleDownloadMessage(JavaScriptMessage message) async {
+  Future<void> _handleDownloadMessage(String message) async {
     late final GakujoDownloadRequest request;
     try {
-      request = GakujoDownloadRequest.fromJsonText(message.message);
+      request = GakujoDownloadRequest.fromJsonText(message);
       debugPrint(
         'MoreBetterGakujo download candidate ${request.method} '
         '${_displayUrl(request.url)} as "${request.fileName}" '
@@ -519,10 +489,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _handleDownloadRequest(request);
   }
 
-  void _handleLoginAutofillMessage(JavaScriptMessage message) {
-    debugPrint('MoreBetterGakujo login autofill ${message.message}');
+  void _handleLoginAutofillMessage(String message) {
+    debugPrint('MoreBetterGakujo login autofill $message');
     developer.log(
-      'Login autofill ${message.message}',
+      'Login autofill $message',
       name: 'MoreBetterGakujo',
     );
   }
@@ -718,6 +688,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadInitialPage() async {
+    await _webViewReady;
     await _webViewService.configureController(
       _controller,
       debugAllowed: _debugAllowed,
@@ -727,7 +698,42 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final savedUrl = _appSettings.hasLoginCredentials
         ? null
         : await _lastPageStore.load(debugAllowed: _debugAllowed);
-    await _controller.loadRequest(Uri.parse(_resolveStartUrl(savedUrl)));
+    await _controller.loadUrl(_resolveStartUrl(savedUrl));
+  }
+
+  Future<void> _configureWebViewController() async {
+    await _controller.setJavaScriptModeUnrestricted();
+    await _controller.addJavaScriptChannel(
+      GakujoDownloadCaptureScript.channelName,
+      onMessageReceived: _handleDownloadMessage,
+    );
+    await _controller.addJavaScriptChannel(
+      LoginAutofillAssistScript.channelName,
+      onMessageReceived: _handleLoginAutofillMessage,
+    );
+    await _controller.setNavigationDelegate(
+      GakujoNavigationDelegate(
+        onNavigationRequest: _handleNavigationRequest,
+        onPageStarted: (url) {
+          _currentPageUrl = url;
+          unawaited(_refreshNavigationState());
+          _setStatus('読込中: ${_displayUrl(url)}');
+        },
+        onPageFinished: (url) async {
+          _currentPageUrl = url;
+          _setStatus('表示中: ${_displayUrl(url)}');
+          await _saveLastPageUrl(url);
+          await _refreshNavigationState();
+          await _injectLoginAutofillAssistIfAllowed();
+          await _injectTwoFactorAutofillIfAllowed();
+          await _injectDownloadCaptureIfAllowed();
+          await _refreshEstimatedCourseName();
+        },
+        onWebResourceError: (error) {
+          _setStatus('読込エラー: ${error.description}');
+        },
+      ),
+    );
   }
 
   Future<void> _loadAppSettings() async {

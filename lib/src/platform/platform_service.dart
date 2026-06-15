@@ -14,7 +14,10 @@ abstract class GakujoPlatformService {
     if (Platform.isIOS) {
       return const IosGakujoPlatformService();
     }
-    if (Platform.isMacOS || Platform.isWindows) {
+    if (Platform.isMacOS) {
+      return const MacosGakujoPlatformService();
+    }
+    if (Platform.isWindows) {
       return const DesktopGakujoPlatformService();
     }
     return const UnsupportedGakujoPlatformService();
@@ -53,12 +56,26 @@ class IosGakujoPlatformService extends GakujoPlatformService {
   }
 }
 
+class MacosGakujoPlatformService extends GakujoPlatformService {
+  const MacosGakujoPlatformService();
+
+  @override
+  GakujoWebViewService createWebViewService() {
+    return const WebViewFlutterGakujoWebViewService();
+  }
+
+  @override
+  GakujoDownloadService createDownloadService() {
+    return FileSystemGakujoDownloadService();
+  }
+}
+
 class DesktopGakujoPlatformService extends GakujoPlatformService {
   const DesktopGakujoPlatformService();
 
   @override
   GakujoWebViewService createWebViewService() {
-    return const WebViewFlutterGakujoWebViewService();
+    return const WindowsGakujoWebViewService();
   }
 
   @override
