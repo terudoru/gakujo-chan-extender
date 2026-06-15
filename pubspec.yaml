@@ -13,7 +13,6 @@ dependencies:
   crypto: ^3.0.6
   flutter_secure_storage: ^9.2.2
   webview_flutter: ^4.10.0
-  webview_flutter_android: ^4.13.0
 
 dev_dependencies:
   flutter_test:

@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'allowed_web_origins.dart';
 import 'download_destination_settings.dart';
@@ -17,11 +16,13 @@ import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
 import 'gakujo_last_page_store.dart';
+import 'platform/platform_service.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
+import 'web_view_service.dart';
 
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
@@ -58,6 +59,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final WebViewController _controller;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
+  late final GakujoWebViewService _webViewService;
   late final GakujoDownloadService _downloadService;
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
@@ -77,12 +79,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     WidgetsBinding.instance.addObserver(this);
     _secretStore = widget._secretStore ?? TwoFactorSecretStore();
     _totpGenerator = widget._totpGenerator ?? const TotpGenerator();
-    _downloadService = const GakujoDownloadService();
+    final platformService = GakujoPlatformService.current();
+    _webViewService = platformService.createWebViewService();
+    _downloadService = platformService.createDownloadService();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
-    _controller = WebViewController()
+    _controller = _webViewService.createController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
         GakujoDownloadCaptureScript.channelName,
@@ -192,7 +196,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
             ),
             Expanded(
-              child: WebViewWidget(controller: _controller),
+              child: _webViewService.buildWidget(_controller),
             ),
           ],
         ),
@@ -689,7 +693,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadInitialPage() async {
-    await _configureAndroidWebView();
+    await _webViewService.configureController(
+      _controller,
+      debugAllowed: _debugAllowed,
+    );
     await _saveInitialTwoFactorSecretIfAllowed();
     await _loadAppSettings();
     final savedUrl = _appSettings.hasLoginCredentials
@@ -706,25 +713,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     setState(() {
       _appSettings = settings;
-    });
-  }
-
-  Future<void> _configureAndroidWebView() async {
-    final platformController = _controller.platform;
-    if (platformController is! AndroidWebViewController) {
-      return;
-    }
-
-    await platformController.setAllowFileAccess(_debugAllowed);
-    await platformController.setAllowContentAccess(false);
-    await platformController.enableZoom(true);
-    await platformController.setUseWideViewPort(true);
-    await platformController.setMixedContentMode(MixedContentMode.neverAllow);
-    await platformController.setOnConsoleMessage((message) {
-      developer.log(
-        'WebViewConsole: ${message.message}',
-        name: 'MoreBetterGakujo',
-      );
     });
   }
 
