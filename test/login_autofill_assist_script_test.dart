@@ -18,4 +18,19 @@ void main() {
 
     expect(script, contains("input.getAttribute('name') !== 'ninshoCode'"));
   });
+
+  test('embeds saved credentials and submits the login form', () {
+    final script = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'student"123',
+        password: r'p@ss\word',
+      ),
+    );
+
+    expect(script, contains('"student\\"123"'));
+    expect(script, contains(r'"p@ss\\word"'));
+    expect(script, contains('setInputValue(target.username, savedUsername)'));
+    expect(script, contains('submitForm(target)'));
+    expect(script, contains('window.__MBG_LOGIN_AUTOFILL_SUBMITTED'));
+  });
 }

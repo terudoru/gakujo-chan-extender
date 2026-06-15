@@ -19,6 +19,18 @@ class AllowedWebOrigins {
     return canLoad(url, debugAllowed: debugAllowed);
   }
 
+  static bool canRestoreLastPage(String? url, {required bool debugAllowed}) {
+    return canLoad(url, debugAllowed: debugAllowed) && !_isTransientPage(url);
+  }
+
+  static bool _isTransientPage(String? url) {
+    final uri = Uri.tryParse(url ?? '');
+    if (uri == null) {
+      return false;
+    }
+    return uri.path.endsWith('/TimeoutAlert.html');
+  }
+
   static bool _isGakujoUrl(String url) {
     final uri = Uri.tryParse(url);
     return uri != null && uri.scheme == 'https' && uri.host == _gakujoHost;

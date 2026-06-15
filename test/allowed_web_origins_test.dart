@@ -70,4 +70,25 @@ void main() {
       isFalse,
     );
   });
+
+  test('does not restore transient timeout pages', () {
+    const timeoutUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/theme/default/TimeoutAlert.html';
+
+    expect(
+      AllowedWebOrigins.canLoad(timeoutUrl, debugAllowed: false),
+      isTrue,
+    );
+    expect(
+      AllowedWebOrigins.canRestoreLastPage(timeoutUrl, debugAllowed: false),
+      isFalse,
+    );
+    expect(
+      AllowedWebOrigins.canRestoreLastPage(
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+        debugAllowed: false,
+      ),
+      isTrue,
+    );
+  });
 }

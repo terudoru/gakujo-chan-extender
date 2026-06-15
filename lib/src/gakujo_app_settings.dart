@@ -85,21 +85,43 @@ class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
     this.pageMode = GakujoPageMode.mobile,
+    this.loginCredentials,
   });
 
   final DownloadSaveMode downloadSaveMode;
   final GakujoPageMode pageMode;
+  final GakujoLoginCredentials? loginCredentials;
+
+  bool get hasLoginCredentials => loginCredentials?.isComplete ?? false;
 
   GakujoAppSettings copyWith({
     DownloadSaveMode? downloadSaveMode,
     GakujoPageMode? pageMode,
+    Object? loginCredentials = _unchanged,
   }) {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
       pageMode: pageMode ?? this.pageMode,
+      loginCredentials: loginCredentials == _unchanged
+          ? this.loginCredentials
+          : loginCredentials as GakujoLoginCredentials?,
     );
   }
 }
+
+class GakujoLoginCredentials {
+  const GakujoLoginCredentials({
+    required this.loginId,
+    required this.password,
+  });
+
+  final String loginId;
+  final String password;
+
+  bool get isComplete => loginId.trim().isNotEmpty && password.isNotEmpty;
+}
+
+const _unchanged = Object();
 
 class GakujoAppSettingsStore {
   GakujoAppSettingsStore({
@@ -108,6 +130,8 @@ class GakujoAppSettingsStore {
 
   static const _downloadSaveModeKey = 'more_better_gakujo_download_save_mode';
   static const _pageModeKey = 'more_better_gakujo_page_mode';
+  static const _loginIdKey = 'more_better_gakujo_login_id';
+  static const _loginPasswordKey = 'more_better_gakujo_login_password';
 
   final FlutterSecureStorage _secureStorage;
 
@@ -115,10 +139,17 @@ class GakujoAppSettingsStore {
     final values = await Future.wait([
       _secureStorage.read(key: _downloadSaveModeKey),
       _secureStorage.read(key: _pageModeKey),
+      _secureStorage.read(key: _loginIdKey),
+      _secureStorage.read(key: _loginPasswordKey),
     ]);
+    final loginId = values[2]?.trim() ?? '';
+    final password = values[3] ?? '';
     return GakujoAppSettings(
       downloadSaveMode: DownloadSaveModeLabels.fromStorageValue(values[0]),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[1]),
+      loginCredentials: loginId.isNotEmpty && password.isNotEmpty
+          ? GakujoLoginCredentials(loginId: loginId, password: password)
+          : null,
     );
   }
 
@@ -134,5 +165,28 @@ class GakujoAppSettingsStore {
       key: _pageModeKey,
       value: mode.storageValue,
     );
+  }
+
+  Future<void> saveLoginCredentials({
+    required String loginId,
+    required String password,
+  }) async {
+    final trimmedLoginId = loginId.trim();
+    if (trimmedLoginId.isEmpty || password.isEmpty) {
+      await clearLoginCredentials();
+      return;
+    }
+
+    await Future.wait([
+      _secureStorage.write(key: _loginIdKey, value: trimmedLoginId),
+      _secureStorage.write(key: _loginPasswordKey, value: password),
+    ]);
+  }
+
+  Future<void> clearLoginCredentials() {
+    return Future.wait([
+      _secureStorage.delete(key: _loginIdKey),
+      _secureStorage.delete(key: _loginPasswordKey),
+    ]);
   }
 }

@@ -128,6 +128,117 @@ void main() {
     expect(cleared, isFalse);
   });
 
+  testWidgets(
+      'login credentials save is disabled until both fields are present',
+      (tester) async {
+    var saved = false;
+    var cleared = false;
+    var loginId = '';
+    var password = '';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LoginCredentialsSection(
+            isConfigured: false,
+            canSave: false,
+            onLoginIdChanged: (value) {
+              loginId = value;
+            },
+            onPasswordChanged: (value) {
+              password = value;
+            },
+            onClear: () async {
+              cleared = true;
+            },
+            onSave: () async {
+              saved = true;
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('ログイン自動入力'), findsOneWidget);
+    expect(find.textContaining('現在の状態: 未設定'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'ログイン情報を保存'),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<TextButton>(
+            find.widgetWithText(TextButton, 'ログイン情報を削除'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.enterText(find.widgetWithText(TextField, 'ログインID'), 'abc123');
+    await tester.enterText(find.widgetWithText(TextField, 'パスワード'), 'secret');
+    await tester.pump();
+
+    expect(loginId, 'abc123');
+    expect(password, 'secret');
+    expect(saved, isFalse);
+    expect(cleared, isFalse);
+  });
+
+  testWidgets('login credentials section saves and clears configured state',
+      (tester) async {
+    var saved = false;
+    var cleared = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: LoginCredentialsSection(
+            isConfigured: true,
+            canSave: true,
+            onLoginIdChanged: (_) {},
+            onPasswordChanged: (_) {},
+            onClear: () async {
+              cleared = true;
+            },
+            onSave: () async {
+              saved = true;
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('現在の状態: 保存済み'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'ログイン情報を保存'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(
+      tester
+          .widget<TextButton>(
+            find.widgetWithText(TextButton, 'ログイン情報を削除'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'ログイン情報を保存'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(TextButton, 'ログイン情報を削除'));
+    await tester.pump();
+
+    expect(saved, isTrue);
+    expect(cleared, isTrue);
+  });
+
   testWidgets('download destination controls show unset state', (tester) async {
     var didPick = false;
     var didClear = false;

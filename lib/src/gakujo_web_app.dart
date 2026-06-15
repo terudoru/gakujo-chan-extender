@@ -88,6 +88,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         GakujoDownloadCaptureScript.channelName,
         onMessageReceived: _handleDownloadMessage,
       )
+      ..addJavaScriptChannel(
+        LoginAutofillAssistScript.channelName,
+        onMessageReceived: _handleLoginAutofillMessage,
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: _handleNavigationRequest,
@@ -279,6 +283,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _showSettingsDialog() async {
     var secretInput = '';
+    var loginIdInput = '';
+    var loginPasswordInput = '';
     final messenger = ScaffoldMessenger.of(context);
 
     await showDialog<void>(
@@ -287,6 +293,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return StatefulBuilder(
           builder: (context, setDialogState) {
             final canSaveSecret = secretInput.trim().isNotEmpty;
+            final canSaveLoginCredentials =
+                loginIdInput.trim().isNotEmpty && loginPasswordInput.isNotEmpty;
 
             Future<void> refreshDownloadRoot(
               Future<DownloadDestinationSettings> Function() action,
@@ -358,6 +366,56 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             );
                           }
                         }
+                      },
+                    ),
+                    const Divider(height: 32),
+                    LoginCredentialsSection(
+                      isConfigured: _appSettings.hasLoginCredentials,
+                      canSave: canSaveLoginCredentials,
+                      onLoginIdChanged: (value) {
+                        loginIdInput = value;
+                        setDialogState(() {});
+                      },
+                      onPasswordChanged: (value) {
+                        loginPasswordInput = value;
+                        setDialogState(() {});
+                      },
+                      onClear: () async {
+                        await _appSettingsStore.clearLoginCredentials();
+                        if (!mounted) {
+                          return;
+                        }
+                        setState(() {
+                          _appSettings =
+                              _appSettings.copyWith(loginCredentials: null);
+                        });
+                        setDialogState(() {});
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('ログイン情報を削除しました')),
+                        );
+                      },
+                      onSave: () async {
+                        await _appSettingsStore.saveLoginCredentials(
+                          loginId: loginIdInput,
+                          password: loginPasswordInput,
+                        );
+                        if (!mounted) {
+                          return;
+                        }
+                        final credentials = GakujoLoginCredentials(
+                          loginId: loginIdInput.trim(),
+                          password: loginPasswordInput,
+                        );
+                        setState(() {
+                          _appSettings = _appSettings.copyWith(
+                            loginCredentials: credentials,
+                          );
+                        });
+                        setDialogState(() {});
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('ログイン情報を保存しました')),
+                        );
+                        await _injectLoginAutofillAssistIfAllowed();
                       },
                     ),
                     const Divider(height: 32),
@@ -455,6 +513,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     await _handleDownloadRequest(request);
+  }
+
+  void _handleLoginAutofillMessage(JavaScriptMessage message) {
+    debugPrint('MoreBetterGakujo login autofill ${message.message}');
+    developer.log(
+      'Login autofill ${message.message}',
+      name: 'MoreBetterGakujo',
+    );
   }
 
   Future<void> _handleDownloadRequest(GakujoDownloadRequest request) async {
@@ -574,7 +640,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await _controller.runJavaScript(LoginAutofillAssistScript.build());
+      final credentials = _appSettings.loginCredentials;
+      debugPrint(
+        'MoreBetterGakujo inject login autofill '
+        'hasCredentials=${credentials?.isComplete ?? false}',
+      );
+      developer.log(
+        'Inject login autofill url=${_displayUrl(_currentPageUrl)} '
+        'hasCredentials=${credentials?.isComplete ?? false}',
+        name: 'MoreBetterGakujo',
+      );
+      await _controller.runJavaScript(
+        LoginAutofillAssistScript.build(
+          credentials: credentials == null
+              ? null
+              : GakujoLoginAutofillCredentials(
+                  loginId: credentials.loginId,
+                  password: credentials.password,
+                ),
+        ),
+      );
     } catch (error, stackTrace) {
       developer.log(
         'Failed to inject login autofill assist script',
@@ -607,7 +692,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _configureAndroidWebView();
     await _saveInitialTwoFactorSecretIfAllowed();
     await _loadAppSettings();
-    final savedUrl = await _lastPageStore.load(debugAllowed: _debugAllowed);
+    final savedUrl = _appSettings.hasLoginCredentials
+        ? null
+        : await _lastPageStore.load(debugAllowed: _debugAllowed);
     await _controller.loadRequest(Uri.parse(_resolveStartUrl(savedUrl)));
   }
 
@@ -1038,6 +1125,84 @@ class TwoFactorSecretSection extends StatelessWidget {
               onPressed: () => unawaited(onClear()),
               icon: const Icon(Icons.delete_outline),
               label: const Text('秘密鍵を削除'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class LoginCredentialsSection extends StatelessWidget {
+  const LoginCredentialsSection({
+    super.key,
+    required this.isConfigured,
+    required this.canSave,
+    required this.onLoginIdChanged,
+    required this.onPasswordChanged,
+    required this.onClear,
+    required this.onSave,
+  });
+
+  final bool isConfigured;
+  final bool canSave;
+  final ValueChanged<String> onLoginIdChanged;
+  final ValueChanged<String> onPasswordChanged;
+  final Future<void> Function() onClear;
+  final Future<void> Function() onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = isConfigured ? '保存済み' : '未設定';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'ログイン自動入力',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'ログインIDとパスワードを端末内に保存します。保存済みの場合、起動直後のログイン画面で入力とログイン操作を自動で行います。現在の状態: $status',
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          decoration: const InputDecoration(
+            labelText: 'ログインID',
+            border: OutlineInputBorder(),
+          ),
+          enableSuggestions: false,
+          autocorrect: false,
+          textInputAction: TextInputAction.next,
+          onChanged: onLoginIdChanged,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          decoration: const InputDecoration(
+            labelText: 'パスワード',
+            border: OutlineInputBorder(),
+          ),
+          obscureText: true,
+          enableSuggestions: false,
+          autocorrect: false,
+          textInputAction: TextInputAction.done,
+          onChanged: onPasswordChanged,
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: canSave ? () => unawaited(onSave()) : null,
+              icon: const Icon(Icons.login),
+              label: const Text('ログイン情報を保存'),
+            ),
+            TextButton.icon(
+              onPressed: isConfigured ? () => unawaited(onClear()) : null,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('ログイン情報を削除'),
             ),
           ],
         ),

@@ -13,7 +13,10 @@ class GakujoLastPageStore {
 
   Future<String?> load({required bool debugAllowed}) async {
     final url = await _secureStorage.read(key: lastUrlKey);
-    if (AllowedWebOrigins.canLoad(url, debugAllowed: debugAllowed)) {
+    if (AllowedWebOrigins.canRestoreLastPage(
+      url,
+      debugAllowed: debugAllowed,
+    )) {
       return url;
     }
 
@@ -27,7 +30,10 @@ class GakujoLastPageStore {
     String? url, {
     required bool debugAllowed,
   }) async {
-    if (!AllowedWebOrigins.canLoad(url, debugAllowed: debugAllowed)) {
+    if (!AllowedWebOrigins.canRestoreLastPage(
+      url,
+      debugAllowed: debugAllowed,
+    )) {
       return;
     }
 
