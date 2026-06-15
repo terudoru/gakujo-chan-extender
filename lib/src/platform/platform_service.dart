@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import '../file_system_gakujo_download_service.dart';
 import '../gakujo_download_service.dart';
 import '../web_view_service.dart';
 
@@ -48,9 +49,7 @@ class IosGakujoPlatformService extends GakujoPlatformService {
 
   @override
   GakujoDownloadService createDownloadService() {
-    return const UnsupportedGakujoDownloadService(
-      'iOS download saving is not implemented yet.',
-    );
+    return FileSystemGakujoDownloadService();
   }
 }
 
@@ -64,9 +63,7 @@ class DesktopGakujoPlatformService extends GakujoPlatformService {
 
   @override
   GakujoDownloadService createDownloadService() {
-    return const UnsupportedGakujoDownloadService(
-      'Desktop download saving is not implemented yet.',
-    );
+    return FileSystemGakujoDownloadService();
   }
 }
 

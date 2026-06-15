@@ -587,6 +587,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final result = await _downloadService.download(
         effectiveRequest,
         userAgent: await _userAgent(),
+        cookieHeader: await _cookieHeader(),
         saveMode: _appSettings.downloadSaveMode,
       );
       final savedPath = result.courseName.isEmpty
@@ -612,7 +613,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final result = await _controller.runJavaScriptReturningResult(
       'navigator.userAgent',
     );
-    return result.toString();
+    return _stringFromJavaScriptResult(result);
+  }
+
+  Future<String?> _cookieHeader() async {
+    if (!AllowedWebOrigins.canLoad(
+      _currentPageUrl,
+      debugAllowed: _debugAllowed,
+    )) {
+      return null;
+    }
+
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        'document.cookie',
+      );
+      return _stringFromJavaScriptResult(result);
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to read WebView cookie header',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
   }
 
   Future<void> _injectDownloadCaptureIfAllowed() async {

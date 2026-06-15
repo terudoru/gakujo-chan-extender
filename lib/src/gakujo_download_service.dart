@@ -33,6 +33,7 @@ abstract class GakujoDownloadService {
   Future<GakujoDownloadResult> download(
     GakujoDownloadRequest request, {
     String? userAgent,
+    String? cookieHeader,
     required DownloadSaveMode saveMode,
   });
 }
@@ -76,6 +77,7 @@ class MethodChannelGakujoDownloadService extends GakujoDownloadService {
   Future<GakujoDownloadResult> download(
     GakujoDownloadRequest request, {
     String? userAgent,
+    String? cookieHeader,
     required DownloadSaveMode saveMode,
   }) async {
     final method = saveMode == DownloadSaveMode.flatWithPickerEachTime
@@ -118,6 +120,7 @@ class UnsupportedGakujoDownloadService extends GakujoDownloadService {
   Future<GakujoDownloadResult> download(
     GakujoDownloadRequest request, {
     String? userAgent,
+    String? cookieHeader,
     required DownloadSaveMode saveMode,
   }) {
     throw PlatformException(

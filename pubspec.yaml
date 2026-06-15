@@ -13,7 +13,9 @@ dependencies:
   crypto: ^3.0.6
   flutter_secure_storage: ^9.2.2
   webview_flutter: ^4.10.0
-
+  file_selector: ^1.1.0
+  path_provider: ^2.1.5
+  webview_windows: ^0.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
