@@ -32,6 +32,18 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   @override
   Future<DownloadDestinationSettings> pickDownloadRoot() async {
     final current = await getDownloadRoot();
+    if (Platform.isIOS) {
+      final selected = await _defaultDirectoryPath();
+      if (selected == null || selected.trim().isEmpty) {
+        return current;
+      }
+      await _secureStorage.write(
+        key: _downloadRootPathKey,
+        value: selected,
+      );
+      return _settingsFromPath(selected);
+    }
+
     final selected = await getDirectoryPath(
       initialDirectory: current.path ?? await _defaultDirectoryPath(),
       confirmButtonText: '保存先にする',
@@ -75,6 +87,16 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       );
 
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
+        if (Platform.isIOS) {
+          final root = await _defaultRootDirectory();
+          final finalName = await _uniqueFileName(root, fileName);
+          await File(_join(root.path, finalName)).writeAsBytes(downloaded.bytes);
+          return GakujoDownloadResult(
+            fileName: finalName,
+            courseName: '',
+          );
+        }
+
         final location = await getSaveLocation(
           initialDirectory: await _defaultDirectoryPath(),
           suggestedName: fileName,
@@ -199,6 +221,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return downloads.path;
     }
     return getApplicationDocumentsDirectory().then((directory) => directory.path);
+  }
+
+  Future<Directory> _defaultRootDirectory() async {
+    final path = await _defaultDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      throw PlatformException(
+        code: 'missing_root',
+        message: '保存先を準備できませんでした',
+      );
+    }
+    return Directory(path)..createSync(recursive: true);
   }
 
   DownloadDestinationSettings _settingsFromPath(String? path) {
