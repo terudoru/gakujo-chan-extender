@@ -1,10 +1,11 @@
 # 開発者向けメモ
 
-このリポジトリは、新潟大学の学務情報システムを Android の WebView で使うための
-Flutterアプリです。More Better Gakujo / Gakujo-chan-extender 系のアイデアを
-Androidアプリとして移植・拡張しています。
+このリポジトリは、新潟大学の学務情報システムを Flutter の WebView で使うための
+クロスプラットフォームアプリです。More Better Gakujo / Gakujo-chan-extender 系の
+アイデアを Android アプリとして移植したものを、iOS/iPadOS、Windows、macOS へ
+広げています。
 
-## 現在のAPKに含まれる主な機能
+## 現在のアプリに含まれる主な機能
 
 - ローカルに保存したBase32秘密鍵から2段階認証コードを生成し、自動入力する
 - 2段階認証、ダウンロード動作、モバイル版/デスクトップ版の表示モードを設定する
@@ -16,7 +17,7 @@ Androidアプリとして移植・拡張しています。
 - 授業連絡、レポート・小テスト・アンケート提出画面、科目情報テーブル、
   ファイル名などから科目名を推定する
 
-リリースAPKは次の場所に出力されます。
+Android リリースAPKは次の場所に出力されます。
 
 ```text
 build/app/outputs/flutter-apk/app-release.apk
@@ -47,9 +48,9 @@ cd morebettergakujo-flutter
 flutter pub get
 ```
 
-Dart側のコードがアプリ本体の実装です。Androidランナーはすぐにビルドできます。
-iOSランナーも含まれていますが、実際に使うにはローカルのXcodeやCocoaPodsの
-設定確認が必要です。
+Dart側のコードがアプリ本体の実装です。Android/iOS/macOS/Windows のランナーを
+含みます。Apple プラットフォームではローカルの Xcode と CocoaPods、Windows では
+Windows ホストと WebView2 Runtime が必要です。
 
 ## 確認コマンド
 
@@ -59,6 +60,9 @@ flutter analyze
 flutter run -d android
 flutter build apk --release
 ./android/gradlew -p android bundleRelease
+flutter build ios --debug --no-codesign
+flutter build macos --debug
+flutter build windows --debug
 ```
 
 出力先:
@@ -66,6 +70,12 @@ flutter build apk --release
 - リリースAPK: `build/app/outputs/flutter-apk/app-release.apk`
 - デバッグAPK: `build/app/outputs/flutter-apk/app-debug.apk`
 - リリースAAB: `build/app/outputs/bundle/release/app-release.aab`
+- macOSアプリ: `build/macos/Build/Products/Debug/morebettergakujo_flutter.app`
+- Windowsアプリ: `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe`
+
+`flutter build windows` は Windows ホストでのみ実行できます。macOS/iOS ビルドは
+`xcode-select` がフル Xcode を指している必要があります。Command Line Tools のみを
+指している環境では `xcrun xcodebuild` が失敗します。
 
 ローカルに秘密鍵ストアがない場合、リリースビルドはデバッグ署名にフォールバック
 します。Play Store向けのAABを作る場合は、ローカルに
@@ -121,13 +131,22 @@ Intent extra経由でテスト用Base32秘密鍵を注入し、6桁コードをl
 - ページ内の「科目名」欄や表から科目名を検出する
 - ページから科目名を取れない場合は、ファイル名のパターンから推定する
 
-## iOS移植メモ
+## クロスプラットフォーム移植メモ
 
-アプリ本体のコードはAndroid専用APIに寄せすぎないようにしています。
-iOSランナーを使う場合は、通常のFlutterプラグイン設定に加えて次を確認します。
+アプリ本体のコードは Android 専用 API に寄せすぎないようにしています。
+プラットフォーム分岐は `lib/src/platform/platform_service.dart` を入口にし、
+WebView とダウンロード処理を抽象化しています。
 
-- `webview_flutter` のiOS WebKit対応
-- `flutter_secure_storage` のKeychainアクセス
-- 学務情報システム側のTLS設定が変わった場合の通信設定
+- Android は既存の MethodChannel ダウンロード処理を使います。
+- iOS/iPadOS は Dart でファイルを取得し、アプリ Documents に保存したあと
+  `share_plus` の共有シートでファイルアプリ等へ渡します。
+- macOS は `webview_flutter` と Dart ダウンロード処理を使います。Sandbox で
+  `network.client` と user-selected read/write entitlement を付与しています。
+- Windows は `webview_windows` と Dart ダウンロード処理を使います。実行環境には
+  Microsoft Edge WebView2 Runtime が必要です。
 
 学務情報システム固有のロジックは、基本的にSwift側へ移す必要はありません。
+
+`share_plus` 12.0.2 は現在の Android debug build では動作しますが、Flutter から
+Kotlin Gradle Plugin 移行に関する将来警告が出ます。新しい Flutter へ上げる場合は
+`share_plus` の更新状況を確認してください。

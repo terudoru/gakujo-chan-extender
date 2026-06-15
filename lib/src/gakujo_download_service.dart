@@ -34,6 +34,7 @@ abstract class GakujoDownloadService {
     GakujoDownloadRequest request, {
     String? userAgent,
     String? cookieHeader,
+    Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   });
 }
@@ -78,6 +79,7 @@ class MethodChannelGakujoDownloadService extends GakujoDownloadService {
     GakujoDownloadRequest request, {
     String? userAgent,
     String? cookieHeader,
+    Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   }) async {
     final method = saveMode == DownloadSaveMode.flatWithPickerEachTime
@@ -121,6 +123,7 @@ class UnsupportedGakujoDownloadService extends GakujoDownloadService {
     GakujoDownloadRequest request, {
     String? userAgent,
     String? cookieHeader,
+    Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   }) {
     throw PlatformException(

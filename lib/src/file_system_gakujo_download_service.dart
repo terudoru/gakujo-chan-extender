@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
@@ -71,6 +72,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     GakujoDownloadRequest request, {
     String? userAgent,
     String? cookieHeader,
+    Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   }) async {
     try {
@@ -90,7 +92,13 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         if (Platform.isIOS) {
           final root = await _defaultRootDirectory();
           final finalName = await _uniqueFileName(root, fileName);
-          await File(_join(root.path, finalName)).writeAsBytes(downloaded.bytes);
+          final file = await _writeFile(root, finalName, downloaded.bytes);
+          await _shareIosFile(
+            file,
+            fileName: finalName,
+            mimeType: downloaded.mimeType,
+            sharePositionOrigin: sharePositionOrigin,
+          );
           return GakujoDownloadResult(
             fileName: finalName,
             courseName: '',
@@ -124,7 +132,13 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
             )
           : root;
       final finalName = await _uniqueFileName(parent, fileName);
-      await File(_join(parent.path, finalName)).writeAsBytes(downloaded.bytes);
+      final file = await _writeFile(parent, finalName, downloaded.bytes);
+      await _shareIosFile(
+        file,
+        fileName: finalName,
+        mimeType: downloaded.mimeType,
+        sharePositionOrigin: sharePositionOrigin,
+      );
       return GakujoDownloadResult(
         fileName: finalName,
         courseName: saveMode.autoSortByCourse ? _baseName(parent.path) : '',
@@ -250,6 +264,39 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     final directory = Directory(_join(root.path, name));
     await directory.create(recursive: true);
     return directory;
+  }
+
+  Future<File> _writeFile(
+    Directory directory,
+    String fileName,
+    Uint8List bytes,
+  ) async {
+    return File(_join(directory.path, fileName)).writeAsBytes(bytes);
+  }
+
+  Future<void> _shareIosFile(
+    File file, {
+    required String fileName,
+    required String? mimeType,
+    required Rect? sharePositionOrigin,
+  }) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [
+          XFile(
+            file.path,
+            mimeType: mimeType,
+            name: fileName,
+          ),
+        ],
+        title: fileName,
+        sharePositionOrigin:
+            sharePositionOrigin ?? const Rect.fromLTWH(0, 0, 1, 1),
+      ),
+    );
   }
 
   Future<String> _uniqueFileName(Directory directory, String desiredName) async {

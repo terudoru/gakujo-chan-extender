@@ -25,6 +25,8 @@ constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
+constexpr int kMinWindowWidth = 960;
+constexpr int kMinWindowHeight = 600;
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
@@ -51,6 +53,14 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
+}
+
+void SetMinimumWindowSize(HWND hwnd, MINMAXINFO* min_max_info) {
+  HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  double scale_factor = dpi / 96.0;
+  min_max_info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale_factor);
+  min_max_info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
 }
 
 }  // namespace
@@ -206,6 +216,10 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
     }
+    case WM_GETMINMAXINFO:
+      SetMinimumWindowSize(
+          hwnd, reinterpret_cast<MINMAXINFO*>(lparam));
+      return 0;
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {

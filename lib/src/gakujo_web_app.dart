@@ -558,6 +558,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         effectiveRequest,
         userAgent: await _userAgent(),
         cookieHeader: await _cookieHeader(),
+        sharePositionOrigin: _sharePositionOrigin(),
         saveMode: _appSettings.downloadSaveMode,
       );
       final savedPath = result.courseName.isEmpty
@@ -584,6 +585,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       'navigator.userAgent',
     );
     return _stringFromJavaScriptResult(result);
+  }
+
+  Rect? _sharePositionOrigin() {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
   }
 
   Future<String?> _cookieHeader() async {
