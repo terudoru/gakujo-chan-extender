@@ -145,6 +145,13 @@ WebView とダウンロード処理を抽象化しています。
 - Windows は `webview_windows` と Dart ダウンロード処理を使います。実行環境には
   Microsoft Edge WebView2 Runtime が必要です。
 
+元の移植メモでは `flutter_inappwebview` への移行も候補にしていましたが、現時点では
+WebView を `GakujoWebViewService` で抽象化したうえで、Windows は `webview_windows`、
+Android/iOS/macOS は `webview_flutter` を使っています。Windows の実ビルドまで通る
+構成を優先した判断です。将来 `flutter_inappwebview` の Windows 対応を採用する場合も、
+差し替え箇所は `lib/src/web_view_service.dart` と
+`lib/src/platform/platform_service.dart` に寄せています。
+
 学務情報システム固有のロジックは、基本的にSwift側へ移す必要はありません。
 
 `share_plus` 12.0.2 は現在の Android debug build では動作しますが、Flutter から
