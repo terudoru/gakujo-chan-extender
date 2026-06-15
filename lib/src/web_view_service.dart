@@ -33,13 +33,40 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
     WebViewController controller, {
     required bool debugAllowed,
   }) async {
-    if (!kDebugMode) {
+    await _configureAndroidController(
+      controller,
+      debugAllowed: debugAllowed,
+    );
+
+    if (kDebugMode) {
+      developer.log(
+        'Using ${controller.platform.runtimeType} via webview_flutter',
+        name: 'MoreBetterGakujo',
+      );
+    }
+  }
+
+  Future<void> _configureAndroidController(
+    WebViewController controller, {
+    required bool debugAllowed,
+  }) async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
       return;
     }
 
-    developer.log(
-      'Using ${controller.platform.runtimeType} via webview_flutter',
-      name: 'MoreBetterGakujo',
-    );
+    final platformController = controller.platform;
+    try {
+      await (platformController as dynamic).setAllowFileAccess(debugAllowed);
+      await (platformController as dynamic).setAllowContentAccess(false);
+      await (platformController as dynamic).enableZoom(true);
+      await (platformController as dynamic).setUseWideViewPort(true);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to configure Android WebView platform controller',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 }
