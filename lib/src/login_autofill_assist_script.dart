@@ -13,7 +13,7 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var assistVersion = 4;
+  var assistVersion = 5;
   var savedUsername = $username;
   var savedPassword = $password;
   var logChannelName = $channelName;
@@ -189,10 +189,30 @@ class LoginAutofillAssistScript {
   }
 
   function setInputValue(input, value) {
+    var pageWindow = input.ownerDocument.defaultView || window;
+    var descriptor = pageWindow.HTMLInputElement &&
+      Object.getOwnPropertyDescriptor(pageWindow.HTMLInputElement.prototype, 'value');
     input.focus();
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
+    try {
+      input.dispatchEvent(new pageWindow.InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertReplacementText',
+        data: value
+      }));
+    } catch (_) {
+    }
+    if (descriptor && descriptor.set) {
+      descriptor.set.call(input, value);
+    } else {
+      input.value = value;
+    }
+    input.dispatchEvent(new pageWindow.InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertReplacementText',
+      data: value
+    }));
+    input.dispatchEvent(new pageWindow.Event('change', { bubbles: true }));
     input.blur();
   }
 

@@ -1,5 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'secure_storage_factory.dart';
+
 enum DownloadSaveMode {
   autoSortToConfiguredFolder,
   flatToConfiguredFolder,
@@ -126,7 +128,7 @@ const _unchanged = Object();
 class GakujoAppSettingsStore {
   GakujoAppSettingsStore({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage();
+  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
 
   static const _downloadSaveModeKey = 'more_better_gakujo_download_save_mode';
   static const _pageModeKey = 'more_better_gakujo_page_mode';

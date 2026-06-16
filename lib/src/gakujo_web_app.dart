@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'allowed_web_origins.dart';
+import 'desktop_page_fit_script.dart';
 import 'download_destination_settings.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_course_name_estimator.dart';
@@ -72,6 +73,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
   String? _currentCourseName;
+  bool _isSettingsDialogOpen = false;
 
   @override
   void initState() {
@@ -121,7 +123,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('More Better Gakujo'),
+          toolbarHeight: 42,
+          titleSpacing: 12,
+          title: const Text(
+            'More Better Gakujo',
+            style: TextStyle(fontSize: 16),
+          ),
           actions: [
             GakujoNavigationActions(
               canGoBack: _canGoBack,
@@ -133,11 +140,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               tooltip: '設定',
               onPressed: _showSettingsDialog,
               icon: const Icon(Icons.settings),
+              iconSize: 20,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 38,
+                height: 38,
+              ),
             ),
             IconButton(
               tooltip: '再読込',
               onPressed: () => unawaited(_controller.reload()),
               icon: const Icon(Icons.refresh),
+              iconSize: 20,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 38,
+                height: 38,
+              ),
             ),
           ],
         ),
@@ -166,7 +185,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
             ),
             Expanded(
-              child: _webViewService.buildWidget(_controller),
+              child: _isSettingsDialogOpen
+                  ? const SizedBox.expand()
+                  : _webViewService.buildWidget(_controller),
             ),
           ],
         ),
@@ -261,199 +282,211 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var loginPasswordInput = '';
     final messenger = ScaffoldMessenger.of(context);
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final canSaveSecret = secretInput.trim().isNotEmpty;
-            final canSaveLoginCredentials =
-                loginIdInput.trim().isNotEmpty && loginPasswordInput.isNotEmpty;
+    setState(() {
+      _isSettingsDialogOpen = true;
+    });
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final canSaveSecret = secretInput.trim().isNotEmpty;
+              final canSaveLoginCredentials = loginIdInput.trim().isNotEmpty &&
+                  loginPasswordInput.isNotEmpty;
 
-            Future<void> refreshDownloadRoot(
-              Future<DownloadDestinationSettings> Function() action,
-            ) async {
-              try {
-                final next = await action();
-                if (!mounted) {
-                  return;
-                }
-                setState(() {
-                  _downloadRoot = next;
-                });
-                setDialogState(() {});
-              } on PlatformException catch (error) {
-                if (mounted) {
-                  messenger.showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
+              Future<void> refreshDownloadRoot(
+                Future<DownloadDestinationSettings> Function() action,
+              ) async {
+                try {
+                  final next = await action();
+                  if (!mounted) {
+                    return;
+                  }
+                  setState(() {
+                    _downloadRoot = next;
+                  });
+                  setDialogState(() {});
+                } on PlatformException catch (error) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  }
                 }
               }
-            }
 
-            final rootLabel = _downloadRoot.isConfigured
-                ? (_downloadRoot.displayName ?? '設定済み')
-                : '未設定';
-            final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
-            final selectedPageMode = _appSettings.pageMode;
+              final rootLabel = _downloadRoot.isConfigured
+                  ? (_downloadRoot.displayName ?? '設定済み')
+                  : '未設定';
+              final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
+              final selectedPageMode = _appSettings.pageMode;
 
-            return AlertDialog(
-              title: const Text('設定'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TwoFactorSecretSection(
-                      canSave: canSaveSecret,
-                      onChanged: (value) {
-                        secretInput = value;
-                        setDialogState(() {});
-                      },
-                      onClear: () async {
-                        await _secretStore.clear();
-                        if (mounted) {
+              return AlertDialog(
+                title: const Text('設定'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TwoFactorSecretSection(
+                        canSave: canSaveSecret,
+                        onChanged: (value) {
+                          secretInput = value;
+                          setDialogState(() {});
+                        },
+                        onClear: () async {
+                          await _secretStore.clear();
+                          if (mounted) {
+                            messenger.showSnackBar(
+                              const SnackBar(content: Text('2FA秘密鍵を削除しました')),
+                            );
+                          }
+                        },
+                        onSave: () async {
+                          try {
+                            await _secretStore.save(secretInput);
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(content: Text('2FA秘密鍵を保存しました')),
+                              );
+                            }
+                            await _injectTwoFactorAutofillIfAllowed();
+                          } on FormatException {
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('長いBase32秘密鍵を確認してください'),
+                                ),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                      const Divider(height: 32),
+                      LoginCredentialsSection(
+                        isConfigured: _appSettings.hasLoginCredentials,
+                        canSave: canSaveLoginCredentials,
+                        onLoginIdChanged: (value) {
+                          loginIdInput = value;
+                          setDialogState(() {});
+                        },
+                        onPasswordChanged: (value) {
+                          loginPasswordInput = value;
+                          setDialogState(() {});
+                        },
+                        onClear: () async {
+                          await _appSettingsStore.clearLoginCredentials();
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(loginCredentials: null);
+                          });
+                          setDialogState(() {});
                           messenger.showSnackBar(
-                            const SnackBar(content: Text('2FA秘密鍵を削除しました')),
+                            const SnackBar(content: Text('ログイン情報を削除しました')),
                           );
-                        }
-                      },
-                      onSave: () async {
-                        try {
-                          await _secretStore.save(secretInput);
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              const SnackBar(content: Text('2FA秘密鍵を保存しました')),
-                            );
-                          }
-                          await _injectTwoFactorAutofillIfAllowed();
-                        } on FormatException {
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('長いBase32秘密鍵を確認してください'),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                    ),
-                    const Divider(height: 32),
-                    LoginCredentialsSection(
-                      isConfigured: _appSettings.hasLoginCredentials,
-                      canSave: canSaveLoginCredentials,
-                      onLoginIdChanged: (value) {
-                        loginIdInput = value;
-                        setDialogState(() {});
-                      },
-                      onPasswordChanged: (value) {
-                        loginPasswordInput = value;
-                        setDialogState(() {});
-                      },
-                      onClear: () async {
-                        await _appSettingsStore.clearLoginCredentials();
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings =
-                              _appSettings.copyWith(loginCredentials: null);
-                        });
-                        setDialogState(() {});
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('ログイン情報を削除しました')),
-                        );
-                      },
-                      onSave: () async {
-                        await _appSettingsStore.saveLoginCredentials(
-                          loginId: loginIdInput,
-                          password: loginPasswordInput,
-                        );
-                        if (!mounted) {
-                          return;
-                        }
-                        final credentials = GakujoLoginCredentials(
-                          loginId: loginIdInput.trim(),
-                          password: loginPasswordInput,
-                        );
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(
-                            loginCredentials: credentials,
+                        },
+                        onSave: () async {
+                          await _appSettingsStore.saveLoginCredentials(
+                            loginId: loginIdInput,
+                            password: loginPasswordInput,
                           );
-                        });
-                        setDialogState(() {});
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('ログイン情報を保存しました')),
-                        );
-                        await _injectLoginAutofillAssistIfAllowed();
-                      },
-                    ),
-                    const Divider(height: 32),
-                    DownloadDestinationSection(
-                      rootLabel: rootLabel,
-                      isConfigured: _downloadRoot.isConfigured,
-                      saveMode: selectedDownloadSaveMode,
-                      onSaveModeChanged: (mode) async {
-                        if (mode == null) {
-                          return;
-                        }
-                        await _appSettingsStore.saveDownloadSaveMode(mode);
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings =
-                              _appSettings.copyWith(downloadSaveMode: mode);
-                        });
-                        setDialogState(() {});
-                      },
-                      onPick: () async {
-                        await refreshDownloadRoot(
-                          _downloadService.pickDownloadRoot,
-                        );
-                      },
-                      onClear: () async {
-                        await refreshDownloadRoot(
-                          _downloadService.clearDownloadRoot,
-                        );
-                      },
-                    ),
-                    const Divider(height: 32),
-                    GakujoPageModeSection(
-                      pageMode: selectedPageMode,
-                      onChanged: (mode) async {
-                        if (mode == null) {
-                          return;
-                        }
-                        await _appSettingsStore.savePageMode(mode);
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(pageMode: mode);
-                        });
-                        setDialogState(() {});
-                        await _controller.loadUrl(mode.startUrl);
-                      },
-                    ),
-                  ],
+                          if (!mounted) {
+                            return;
+                          }
+                          final credentials = GakujoLoginCredentials(
+                            loginId: loginIdInput.trim(),
+                            password: loginPasswordInput,
+                          );
+                          setState(() {
+                            _appSettings = _appSettings.copyWith(
+                              loginCredentials: credentials,
+                            );
+                          });
+                          setDialogState(() {});
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('ログイン情報を保存しました')),
+                          );
+                          await _injectLoginAutofillAssistIfAllowed();
+                        },
+                      ),
+                      const Divider(height: 32),
+                      DownloadDestinationSection(
+                        rootLabel: rootLabel,
+                        isConfigured: _downloadRoot.isConfigured,
+                        saveMode: selectedDownloadSaveMode,
+                        onSaveModeChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          await _appSettingsStore.saveDownloadSaveMode(mode);
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(downloadSaveMode: mode);
+                          });
+                          setDialogState(() {});
+                        },
+                        onPick: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.pickDownloadRoot,
+                          );
+                        },
+                        onClear: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.clearDownloadRoot,
+                          );
+                        },
+                      ),
+                      const Divider(height: 32),
+                      GakujoPageModeSection(
+                        pageMode: selectedPageMode,
+                        onChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          await _appSettingsStore.savePageMode(mode);
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(pageMode: mode);
+                          });
+                          setDialogState(() {});
+                          await _controller.loadUrl(mode.startUrl);
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('閉じる'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('閉じる'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSettingsDialogOpen = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadDownloadRoot() async {
@@ -736,6 +769,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           await _injectLoginAutofillAssistIfAllowed();
           await _injectTwoFactorAutofillIfAllowed();
           await _injectDownloadCaptureIfAllowed();
+          await _fitDesktopPageIfAllowed();
           await _refreshEstimatedCourseName();
         },
         onWebResourceError: (error) {
@@ -754,6 +788,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = settings;
     });
+  }
+
+  Future<void> _fitDesktopPageIfAllowed() async {
+    if (_appSettings.pageMode != GakujoPageMode.desktop) {
+      return;
+    }
+    if (!AllowedWebOrigins.canLoad(
+      _currentPageUrl,
+      debugAllowed: _debugAllowed,
+    )) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(DesktopPageFitScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to fit desktop page',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _saveInitialTwoFactorSecretIfAllowed() async {
@@ -1089,11 +1146,23 @@ class GakujoNavigationActions extends StatelessWidget {
           tooltip: '前のページ',
           onPressed: canGoBack ? onBack : null,
           icon: const Icon(Icons.arrow_back),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 38,
+            height: 38,
+          ),
         ),
         IconButton(
           tooltip: '次のページ',
           onPressed: canGoForward ? onForward : null,
           icon: const Icon(Icons.arrow_forward),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 38,
+            height: 38,
+          ),
         ),
       ],
     );

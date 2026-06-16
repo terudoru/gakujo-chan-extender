@@ -1,11 +1,12 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'base32.dart';
+import 'secure_storage_factory.dart';
 
 class TwoFactorSecretStore {
   TwoFactorSecretStore({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage();
+  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
 
   static const _secretKey = 'more_better_gakujo_2fa_secret';
 

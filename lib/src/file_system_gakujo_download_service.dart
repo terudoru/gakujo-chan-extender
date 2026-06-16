@@ -13,11 +13,12 @@ import 'download_file_name_policy.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
+import 'secure_storage_factory.dart';
 
 class FileSystemGakujoDownloadService extends GakujoDownloadService {
   FileSystemGakujoDownloadService({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage();
+  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
 
   static const _downloadRootPathKey = 'more_better_gakujo_download_root_path';
   static const _iosDownloadsChannel = MethodChannel(

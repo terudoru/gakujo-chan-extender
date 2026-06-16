@@ -1,11 +1,12 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'allowed_web_origins.dart';
+import 'secure_storage_factory.dart';
 
 class GakujoLastPageStore {
   GakujoLastPageStore({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? const FlutterSecureStorage();
+  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
 
   static const lastUrlKey = 'more_better_gakujo_last_url';
 
