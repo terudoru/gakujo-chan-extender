@@ -256,11 +256,22 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
     }
     let folderName = courseName.isEmpty ? "未分類" : courseName
     let directory = root.appendingPathComponent(folderName, isDirectory: true)
+    if isDirectory(directory) {
+      return directory
+    }
     try FileManager.default.createDirectory(
       at: directory,
       withIntermediateDirectories: true
     )
     return directory
+  }
+
+  private func isDirectory(_ url: URL) -> Bool {
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(
+      atPath: url.path,
+      isDirectory: &isDirectory
+    ) && isDirectory.boolValue
   }
 
   private func uniqueFileName(in directory: URL, desiredName: String) throws -> String {

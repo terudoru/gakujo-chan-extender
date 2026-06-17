@@ -73,6 +73,21 @@ flutter build windows --debug
 - macOSアプリ: `build/macos/Build/Products/Debug/morebettergakujo_flutter.app`
 - Windowsアプリ: `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe`
 
+iOS/iPadOS の自己署名配布では、GitHub Releases に
+`morebettergakujo-ios.ipa` をアップロードします。Sideloadly 向けにはIPAを直接渡し、
+SideStore 向けには `distribution/altstore-source.json` を公開します。
+ローカルでIPAを作る場合は次のコマンドを使います。
+
+```sh
+./scripts/package_ios_ipa.sh
+./scripts/generate_altstore_source.sh dist/morebettergakujo-ios.ipa
+```
+
+GitHub Releases へ出す場合は、`Release iOS Sideload IPA` workflow がIPAと
+`altstore-source.json` を同じリリースへアップロードします。
+
+詳しい運用は [docs/ios-sideloading.md](docs/ios-sideloading.md) を参照してください。
+
 `flutter build windows` は Windows ホストでのみ実行できます。macOS/iOS ビルドは
 `xcode-select` がフル Xcode を指している必要があります。Command Line Tools のみを
 指している環境では `xcrun xcodebuild` が失敗します。

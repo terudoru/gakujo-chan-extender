@@ -137,6 +137,9 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       await (platformController as dynamic).setAllowContentAccess(false);
       await (platformController as dynamic).enableZoom(true);
       await (platformController as dynamic).setUseWideViewPort(true);
+      await (platformController as dynamic).setLoadWithOverviewMode(true);
+      await (platformController as dynamic).setBuiltInZoomControls(true);
+      await (platformController as dynamic).setDisplayZoomControls(false);
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to configure Android WebView platform controller',
@@ -148,8 +151,7 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
   }
 }
 
-class WebViewFlutterGakujoWebViewController
-    implements GakujoWebViewController {
+class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   WebViewFlutterGakujoWebViewController(this._inner);
 
   final WebViewController _inner;

@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'allowed_web_origins.dart';
 import 'desktop_page_fit_script.dart';
+import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_course_name_estimator.dart';
@@ -23,6 +25,7 @@ import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
 import 'web_view_service.dart';
+import 'web_view_reflow_script.dart';
 
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
@@ -74,6 +77,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   GakujoAppSettings _appSettings = const GakujoAppSettings();
   String? _currentCourseName;
   bool _isSettingsDialogOpen = false;
+  double _desktopZoom = 1.0;
+
+  static const double _minimumDesktopZoom = 0.5;
+  static const double _maximumDesktopZoom = 2.0;
+  static const double _desktopZoomStep = 0.1;
 
   @override
   void initState() {
@@ -136,6 +144,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
             ),
+            if (_supportsDesktopZoom)
+              GakujoZoomActions(
+                zoomPercent: (_desktopZoom * 100).round(),
+                canZoomOut: _desktopZoom > _minimumDesktopZoom,
+                canZoomIn: _desktopZoom < _maximumDesktopZoom,
+                onZoomOut: () => unawaited(_changeDesktopZoomBy(
+                  -_desktopZoomStep,
+                )),
+                onReset: () => unawaited(_setDesktopZoom(1.0)),
+                onZoomIn: () => unawaited(_changeDesktopZoomBy(
+                  _desktopZoomStep,
+                )),
+              ),
             IconButton(
               tooltip: '設定',
               onPressed: _showSettingsDialog,
@@ -187,12 +208,148 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             Expanded(
               child: _isSettingsDialogOpen
                   ? const SizedBox.expand()
-                  : _webViewService.buildWidget(_controller),
+                  : _buildWebViewArea(),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildWebViewArea() {
+    final webView = _webViewService.buildWidget(_controller);
+    Widget content = webView;
+    if (_supportsSideNavigationGestures) {
+      content = Stack(
+        children: [
+          Positioned.fill(child: webView),
+          _SideNavigationGestureZone(
+            alignment: Alignment.centerLeft,
+            onTriggered: () => unawaited(_goBack()),
+          ),
+          _SideNavigationGestureZone(
+            alignment: Alignment.centerRight,
+            onTriggered: () => unawaited(_goForward()),
+          ),
+        ],
+      );
+    }
+
+    if (!_supportsDesktopZoom) {
+      return content;
+    }
+
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleDesktopZoomKeyEvent,
+      child: Listener(
+        onPointerSignal: _handleDesktopZoomPointerSignal,
+        child: content,
+      ),
+    );
+  }
+
+  bool get _supportsDesktopZoom {
+    return defaultTargetPlatform == TargetPlatform.macOS;
+  }
+
+  KeyEventResult _handleDesktopZoomKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!HardwareKeyboard.instance.isMetaPressed &&
+        !HardwareKeyboard.instance.isControlPressed) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.equal ||
+        key == LogicalKeyboardKey.numpadAdd) {
+      unawaited(_changeDesktopZoomBy(_desktopZoomStep));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.minus ||
+        key == LogicalKeyboardKey.numpadSubtract) {
+      unawaited(_changeDesktopZoomBy(-_desktopZoomStep));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) {
+      unawaited(_setDesktopZoom(1.0));
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  void _handleDesktopZoomPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) {
+      return;
+    }
+    if (!HardwareKeyboard.instance.isMetaPressed &&
+        !HardwareKeyboard.instance.isControlPressed) {
+      return;
+    }
+
+    final delta =
+        event.scrollDelta.dy < 0 ? _desktopZoomStep : -_desktopZoomStep;
+    unawaited(_changeDesktopZoomBy(delta));
+  }
+
+  Future<void> _changeDesktopZoomBy(double delta) {
+    return _setDesktopZoom(_desktopZoom + delta);
+  }
+
+  Future<void> _setDesktopZoom(double zoom) async {
+    final nextZoom = (zoom / _desktopZoomStep).round() * _desktopZoomStep;
+    final clampedZoom = nextZoom
+        .clamp(
+          _minimumDesktopZoom,
+          _maximumDesktopZoom,
+        )
+        .toDouble();
+    if ((_desktopZoom - clampedZoom).abs() < 0.001) {
+      await _applyDesktopZoomIfAllowed();
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _desktopZoom = clampedZoom;
+      });
+    } else {
+      _desktopZoom = clampedZoom;
+    }
+    await _applyDesktopZoomIfAllowed();
+  }
+
+  Future<void> _applyDesktopZoomIfAllowed() async {
+    if (!_supportsDesktopZoom) {
+      return;
+    }
+    if (!AllowedWebOrigins.canLoad(
+      _currentPageUrl,
+      debugAllowed: _debugAllowed,
+    )) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(
+        DesktopPageZoomScript.build(_desktopZoom),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to apply desktop page zoom',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  bool get _supportsSideNavigationGestures {
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
   }
 
   Future<GakujoNavigationDecision> _handleNavigationRequest(
@@ -320,9 +477,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 }
               }
 
-              final rootLabel = _downloadRoot.isConfigured
-                  ? (_downloadRoot.displayName ?? '設定済み')
-                  : '未設定';
+              final rootLabel = _downloadRootLabel(_downloadRoot);
               final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
               final selectedPageMode = _appSettings.pageMode;
 
@@ -770,6 +925,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           await _injectTwoFactorAutofillIfAllowed();
           await _injectDownloadCaptureIfAllowed();
           await _fitDesktopPageIfAllowed();
+          await _applyDesktopZoomIfAllowed();
+          await _injectReflowOnZoomIfAllowed();
           await _refreshEstimatedCourseName();
         },
         onWebResourceError: (error) {
@@ -806,6 +963,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     } catch (error, stackTrace) {
       developer.log(
         'Failed to fit desktop page',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _injectReflowOnZoomIfAllowed() async {
+    if (!AllowedWebOrigins.canLoad(
+      _currentPageUrl,
+      debugAllowed: _debugAllowed,
+    )) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(WebViewReflowScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject WebView reflow script',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
@@ -935,6 +1112,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       RegExp(r';jsessionid=[^?#]+', caseSensitive: false),
       ';jsessionid=<redacted>',
     );
+  }
+
+  String _downloadRootLabel(DownloadDestinationSettings root) {
+    if (!root.isConfigured) {
+      return '未設定';
+    }
+
+    final displayName = root.displayName?.trim();
+    final path = root.path?.trim();
+    if (path == null || path.isEmpty || path == displayName) {
+      return displayName?.isNotEmpty == true ? displayName! : '設定済み';
+    }
+
+    if (displayName == null || displayName.isEmpty) {
+      return path;
+    }
+    return '$displayName\n$path';
   }
 
   String _stringFromJavaScriptResult(Object? result) {
@@ -1169,6 +1363,70 @@ class GakujoNavigationActions extends StatelessWidget {
   }
 }
 
+class GakujoZoomActions extends StatelessWidget {
+  const GakujoZoomActions({
+    super.key,
+    required this.zoomPercent,
+    required this.canZoomOut,
+    required this.canZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onZoomIn,
+  });
+
+  final int zoomPercent;
+  final bool canZoomOut;
+  final bool canZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onZoomIn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '縮小',
+          onPressed: canZoomOut ? onZoomOut : null,
+          icon: const Icon(Icons.remove),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 34,
+            height: 38,
+          ),
+        ),
+        TextButton(
+          onPressed: onReset,
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(48, 38),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            '$zoomPercent%',
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+          ),
+        ),
+        IconButton(
+          tooltip: '拡大',
+          onPressed: canZoomIn ? onZoomIn : null,
+          icon: const Icon(Icons.add),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 34,
+            height: 38,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class TwoFactorSecretSection extends StatelessWidget {
   const TwoFactorSecretSection({
     super.key,
@@ -1384,6 +1642,67 @@ class DownloadDestinationSection extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _SideNavigationGestureZone extends StatefulWidget {
+  const _SideNavigationGestureZone({
+    required this.alignment,
+    required this.onTriggered,
+  });
+
+  final Alignment alignment;
+  final VoidCallback onTriggered;
+
+  @override
+  State<_SideNavigationGestureZone> createState() =>
+      _SideNavigationGestureZoneState();
+}
+
+class _SideNavigationGestureZoneState
+    extends State<_SideNavigationGestureZone> {
+  static const double _width = 28;
+  static const double _minimumDragDistance = 64;
+  static const double _minimumFlingVelocity = 420;
+
+  double _dragDistance = 0;
+
+  bool get _isLeftEdge => widget.alignment == Alignment.centerLeft;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: widget.alignment,
+      child: SizedBox(
+        width: _width,
+        height: double.infinity,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: (_) {
+            _dragDistance = 0;
+          },
+          onHorizontalDragUpdate: (details) {
+            _dragDistance += details.primaryDelta ?? 0;
+          },
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            final isBackGesture = _isLeftEdge &&
+                (_dragDistance > _minimumDragDistance ||
+                    velocity > _minimumFlingVelocity);
+            final isForwardGesture = !_isLeftEdge &&
+                (_dragDistance < -_minimumDragDistance ||
+                    velocity < -_minimumFlingVelocity);
+            _dragDistance = 0;
+            if (isBackGesture || isForwardGesture) {
+              widget.onTriggered();
+            }
+          },
+          onHorizontalDragCancel: () {
+            _dragDistance = 0;
+          },
+        ),
+      ),
     );
   }
 }
