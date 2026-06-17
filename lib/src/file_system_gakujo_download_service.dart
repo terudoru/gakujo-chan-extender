@@ -151,10 +151,14 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       }
 
       final root = await _configuredRootDirectory();
+      final courseFolderName = DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: request.courseName,
+        fileName: fileName,
+      );
       final parent = saveMode.autoSortByCourse
           ? await _ensureChildDirectory(
               root,
-              DownloadFileNamePolicy.safeFolderName(request.courseName),
+              courseFolderName,
             )
           : root;
       final finalName = await _uniqueFileName(parent, fileName);
@@ -195,9 +199,11 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         : Uri.parse(request.url);
 
     final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 30);
     try {
       final httpRequest = await client.openUrl(method, uri);
       httpRequest.followRedirects = true;
+      httpRequest.headers.set(HttpHeaders.acceptHeader, '*/*');
       final normalizedUserAgent = userAgent?.trim();
       if (normalizedUserAgent != null && normalizedUserAgent.isNotEmpty) {
         httpRequest.headers
@@ -211,15 +217,20 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
       if (method == 'POST') {
         final body = _encodeForm(request.formFields);
+        final encodedBody = utf8.encode(body);
+        httpRequest.headers
+            .set(HttpHeaders.contentLengthHeader, encodedBody.length);
         httpRequest.headers.contentType = ContentType(
           'application',
           'x-www-form-urlencoded',
           charset: 'utf-8',
         );
-        httpRequest.add(utf8.encode(body));
+        httpRequest.add(encodedBody);
       }
 
-      final response = await httpRequest.close();
+      final response = await httpRequest.close().timeout(
+            const Duration(seconds: 30),
+          );
       if (response.statusCode < 200 || response.statusCode > 299) {
         throw PlatformException(
           code: 'download_failed',
@@ -228,7 +239,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       }
 
       final builder = BytesBuilder(copy: false);
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(
+        const Duration(seconds: 60),
+      )) {
         builder.add(chunk);
       }
       final disposition =

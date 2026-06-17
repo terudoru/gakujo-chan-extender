@@ -28,4 +28,4 @@ The installer is written to:
 dist\windows\MoreBetterGakujoSetup-0.67.0.exe
 ```
 
-The installer places the app under `Program Files`, creates Start Menu entries, registers an uninstaller, and optionally creates a desktop shortcut. User-specific app data should stay outside the install directory, such as under `%AppData%`.
+The installer places the app under `Program Files`, creates Start Menu entries, registers an uninstaller, and optionally creates a desktop shortcut. When an existing install is detected, setup asks whether to remove the old version before installing the new one. User-specific app data should stay outside the install directory, such as under `%AppData%`.

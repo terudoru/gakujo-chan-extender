@@ -432,11 +432,12 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   }
 
   void _handleWebMessage(Object? raw) {
-    if (raw is! Map) {
+    final decoded = WindowsWebMessageBridge.decode(raw);
+    if (decoded == null) {
       return;
     }
-    final channel = raw['channel']?.toString();
-    final message = raw['message']?.toString();
+    final channel = decoded.channel;
+    final message = decoded.message;
     if (channel == null || message == null) {
       return;
     }
@@ -467,5 +468,45 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   };
 })()
 ''';
+  }
+}
+
+@visibleForTesting
+class WindowsWebMessage {
+  const WindowsWebMessage({
+    required this.channel,
+    required this.message,
+  });
+
+  final String? channel;
+  final String? message;
+}
+
+@visibleForTesting
+class WindowsWebMessageBridge {
+  const WindowsWebMessageBridge._();
+
+  static WindowsWebMessage? decode(Object? raw) {
+    final map = switch (raw) {
+      final Map<dynamic, dynamic> value => value,
+      final String value => _decodeJsonMap(value),
+      _ => null,
+    };
+    if (map == null) {
+      return null;
+    }
+    return WindowsWebMessage(
+      channel: map['channel']?.toString(),
+      message: map['message']?.toString(),
+    );
+  }
+
+  static Map<dynamic, dynamic>? _decodeJsonMap(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is Map<dynamic, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
+    }
   }
 }

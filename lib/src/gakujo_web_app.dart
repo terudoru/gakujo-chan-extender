@@ -250,7 +250,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool get _supportsDesktopZoom {
-    return defaultTargetPlatform == TargetPlatform.macOS;
+    return defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows;
   }
 
   KeyEventResult _handleDesktopZoomKeyEvent(FocusNode node, KeyEvent event) {

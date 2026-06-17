@@ -25,6 +25,17 @@ class DownloadFileNamePolicy {
     return _cleanCandidate(name) ?? unknownCourseFolderName;
   }
 
+  static String courseFolderName({
+    required String requestedCourseName,
+    required String fileName,
+  }) {
+    final requested = safeFolderName(requestedCourseName);
+    if (_isUsefulCourseName(requested)) {
+      return requested;
+    }
+    return _inferCourseNameFromFileName(fileName) ?? unknownCourseFolderName;
+  }
+
   static String uniqueName(String desiredName, Set<String> existingNames) {
     if (!existingNames.contains(desiredName)) {
       return desiredName;
@@ -131,6 +142,82 @@ class DownloadFileNamePolicy {
 
   static bool _isCampussquareDo(String? name) {
     return name?.toLowerCase() == 'campussquare.do';
+  }
+
+  static bool _isUsefulCourseName(String name) {
+    if (name.isEmpty || name == unknownCourseFolderName) {
+      return false;
+    }
+    const genericPageLabels = {
+      '開設一覧',
+      '連絡通知',
+      '掲示一覧',
+      '授業ポートフォリオ',
+      'レポート・小テスト・アンケート提出',
+      'レポート提出',
+      '小テスト',
+      'アンケート',
+      '年度 開講所属 開講番号 科目名',
+      'タイトル',
+    };
+    if (genericPageLabels.contains(name)) {
+      return false;
+    }
+
+    final lower = name.toLowerCase();
+    return !lower.contains('campussquare') &&
+        !lower.contains('more better gakujo') &&
+        !name.contains('学務情報システム');
+  }
+
+  static String? _inferCourseNameFromFileName(String fileName) {
+    var base = fileName;
+    final dot = base.lastIndexOf('.');
+    if (dot > 0) {
+      base = base.substring(0, dot);
+    }
+    base = base.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (base.isEmpty) {
+      return null;
+    }
+
+    base = base.replaceFirst(RegExp(r'^[0-9０-９]+\s*[_＿\-－ー.．]\s*'), '').trim();
+
+    final separatedParts = <String>[];
+    for (final separator in [
+      '_',
+      '＿',
+      ' - ',
+      ' – ',
+      ' — ',
+      '：',
+      ':',
+      '／',
+      '/',
+    ]) {
+      final index = base.indexOf(separator);
+      if (index > 0) {
+        separatedParts.add(base.substring(0, index).trim());
+      }
+    }
+    if (separatedParts.isNotEmpty) {
+      separatedParts.sort((a, b) => a.length.compareTo(b.length));
+      base = separatedParts.first;
+    }
+
+    base = base
+        .replaceFirst(RegExp(r'^第\s*[0-9０-９]+\s*回\s*'), '')
+        .replaceFirst(RegExp(r'^(講義|授業|資料|課題)\s*'), '')
+        .trim();
+
+    if (base.isEmpty || base.length < 3) {
+      return null;
+    }
+    if (RegExp(r'^[0-9A-Za-z_ -]+$').hasMatch(base)) {
+      return null;
+    }
+    final folderName = safeFolderName(base);
+    return folderName == unknownCourseFolderName ? null : folderName;
   }
 }
 
