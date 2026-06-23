@@ -1,16 +1,24 @@
-# More Better Gakujo Android
+# More Better Gakujo
 
-More Better Gakujo Android は、新潟大学の学務情報システムを Android
-アプリ内で開き、2段階認証や資料ダウンロードを少し楽にする非公式アプリです。
+More Better Gakujo は、新潟大学の学務情報システムをアプリ内で開き、
+2段階認証や資料ダウンロードを少し楽にする非公式 Flutter アプリです。
+
+現在は Android を安定版として扱いつつ、iOS/iPadOS、Windows、macOS へ同じ
+コードベースで対応するための移植を進めています。
 
 ## ダウンロード
 
-最新版のAPKは GitHub Releases からダウンロードできます。
+Android 版の最新版APKは GitHub Releases からダウンロードできます。
 
 - https://github.com/terudoru/gakujo-chan-extender/releases
 
 Android の設定によっては、APKをインストールするときに「提供元不明のアプリ」を
 許可する必要があります。
+
+iOS/iPadOS 版は、技術者向けの自己署名配布として Sideloadly と SideStore 用の
+導線を分けます。通常のApp Store配布ではありません。配布手順とSideStore sourceは
+[docs/ios-sideloading.md](docs/ios-sideloading.md) を参照してください。
+iOS/iPadOS 版は iOS/iPadOS 14 以降が必要です。
 
 ## できること
 
@@ -20,6 +28,25 @@ Android の設定によっては、APKをインストールするときに「提
 - 仕分けせず指定フォルダへ保存する
 - ダウンロードのたびに保存場所を選ぶ
 - モバイル版ページとデスクトップ版ページを切り替える
+- 元ブラウザ拡張のREADMEにある時間延長、レポート/成績ソート、GPA表示、
+  連絡通知一括既読をWebView内で使う
+
+元ブラウザ拡張の機能との対応状況は
+[docs/original-extension-feature-status.md](docs/original-extension-feature-status.md)
+を参照してください。
+
+## 対応状況
+
+| プラットフォーム | 状況 |
+|---|---|
+| Android | 既存の安定版。ネイティブの保存先選択とWebView設定を利用 |
+| iOS / iPadOS | Android版と同じ保存モード、Flutterランナー、Dart保存処理に対応 |
+| macOS | Android版と同じ保存モード、Flutterデスクトップランナー、WebViewに対応 |
+| Windows | Android版と同じ保存モード、WebView2ベースのWebViewに対応 |
+
+Windows 版は Microsoft Edge WebView2 Runtime が必要です。通常の Windows 10/11
+では入っていますが、入っていない環境では Microsoft から WebView2 Runtime を
+インストールしてください。
 
 ## 初回設定
 
@@ -47,6 +74,12 @@ Android の設定によっては、APKをインストールするときに「提
 
 「自動仕分けして指定フォルダに保存」を選ぶと、ページ内の科目名を探して、
 指定フォルダの下に科目名フォルダを作って保存します。
+
+Android 版と同じ体験を基準に、iOS/iPadOS、macOS、Windows でも同じ3つの保存
+モードを使えます。iOS/iPadOS では iCloud Drive のフォルダを保存先に選ぶと、
+自動仕分けして指定フォルダに保存できます。ただし Google Drive は Files アプリ上で
+フォルダ単位の保存先指定に対応していないことがあるため、Google Drive に保存する
+場合は「自動仕分けせず毎回保存場所を選ぶ」を使ってください。
 
 ### 表示モード
 

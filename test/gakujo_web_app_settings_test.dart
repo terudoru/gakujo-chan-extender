@@ -250,6 +250,7 @@ void main() {
             rootLabel: '未設定',
             isConfigured: false,
             saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
+            helperText: null,
             onSaveModeChanged: (_) {},
             onPick: () async {
               didPick = true;
@@ -294,6 +295,7 @@ void main() {
             rootLabel: 'Downloads',
             isConfigured: true,
             saveMode: DownloadSaveMode.flatToConfiguredFolder,
+            helperText: null,
             onSaveModeChanged: (_) {},
             onPick: () async {},
             onClear: () async {
@@ -315,6 +317,27 @@ void main() {
     await tester.pump();
 
     expect(didClear, isTrue);
+  });
+
+  testWidgets('download destination helper text is shown when provided',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DownloadDestinationSection(
+            rootLabel: '未設定',
+            isConfigured: false,
+            saveMode: DownloadSaveMode.flatWithPickerEachTime,
+            helperText: 'Google Drive は毎回保存モードを使います。',
+            onSaveModeChanged: (_) {},
+            onPick: () async {},
+            onClear: () async {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Google Drive は毎回保存モードを使います。'), findsOneWidget);
   });
 
   testWidgets('page mode section offers mobile and desktop', (tester) async {

@@ -21,13 +21,32 @@ class GakujoDownloadResult {
   }
 }
 
-class GakujoDownloadService {
+abstract class GakujoDownloadService {
   const GakujoDownloadService();
+
+  Future<DownloadDestinationSettings> getDownloadRoot();
+
+  Future<DownloadDestinationSettings> pickDownloadRoot();
+
+  Future<DownloadDestinationSettings> clearDownloadRoot();
+
+  Future<GakujoDownloadResult> download(
+    GakujoDownloadRequest request, {
+    String? userAgent,
+    String? cookieHeader,
+    Rect? sharePositionOrigin,
+    required DownloadSaveMode saveMode,
+  });
+}
+
+class MethodChannelGakujoDownloadService extends GakujoDownloadService {
+  const MethodChannelGakujoDownloadService();
 
   static const _channel = MethodChannel(
     'net.yoshida.morebettergakujo/downloads',
   );
 
+  @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {
     try {
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
@@ -39,6 +58,7 @@ class GakujoDownloadService {
     }
   }
 
+  @override
   Future<DownloadDestinationSettings> pickDownloadRoot() async {
     final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'pickDownloadRoot',
@@ -46,6 +66,7 @@ class GakujoDownloadService {
     return DownloadDestinationSettings.fromMap(raw);
   }
 
+  @override
   Future<DownloadDestinationSettings> clearDownloadRoot() async {
     final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'clearDownloadRoot',
@@ -53,9 +74,12 @@ class GakujoDownloadService {
     return DownloadDestinationSettings.fromMap(raw);
   }
 
+  @override
   Future<GakujoDownloadResult> download(
     GakujoDownloadRequest request, {
     String? userAgent,
+    String? cookieHeader,
+    Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   }) async {
     final method = saveMode == DownloadSaveMode.flatWithPickerEachTime
@@ -68,5 +92,43 @@ class GakujoDownloadService {
       arguments,
     );
     return GakujoDownloadResult.fromMap(raw);
+  }
+}
+
+class UnsupportedGakujoDownloadService extends GakujoDownloadService {
+  const UnsupportedGakujoDownloadService(this.message);
+
+  final String message;
+
+  @override
+  Future<DownloadDestinationSettings> getDownloadRoot() async {
+    return const DownloadDestinationSettings(isConfigured: false);
+  }
+
+  @override
+  Future<DownloadDestinationSettings> pickDownloadRoot() {
+    throw PlatformException(
+      code: 'unsupported_platform',
+      message: message,
+    );
+  }
+
+  @override
+  Future<DownloadDestinationSettings> clearDownloadRoot() async {
+    return const DownloadDestinationSettings(isConfigured: false);
+  }
+
+  @override
+  Future<GakujoDownloadResult> download(
+    GakujoDownloadRequest request, {
+    String? userAgent,
+    String? cookieHeader,
+    Rect? sharePositionOrigin,
+    required DownloadSaveMode saveMode,
+  }) {
+    throw PlatformException(
+      code: 'unsupported_platform',
+      message: message,
+    );
   }
 }

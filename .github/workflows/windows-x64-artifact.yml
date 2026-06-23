@@ -1,0 +1,56 @@
+name: Windows x64 Release Artifact
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Windows x64 release
+        run: flutter build windows --release
+
+      - name: Package Windows x64 bundle
+        shell: pwsh
+        run: |
+          $buildDir = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $buildDir)) {
+            $buildDir = "build\windows\runner\Release"
+          }
+          if (-not (Test-Path $buildDir)) {
+            throw "Windows release output directory was not found."
+          }
+
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Compress-Archive `
+            -Path "$buildDir\*" `
+            -DestinationPath "dist\morebettergakujo-windows-x64-release.zip" `
+            -Force
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: morebettergakujo-windows-x64-release
+          path: dist/morebettergakujo-windows-x64-release.zip
+          if-no-files-found: error

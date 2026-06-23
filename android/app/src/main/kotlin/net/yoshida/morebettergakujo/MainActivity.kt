@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
     private var pendingPickFileArgs: Map<*, *>? = null
+    private val downloadFolderLock = Any()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -67,7 +68,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun pickDownloadRoot(result: MethodChannel.Result) {
-        if (pendingPickRootResult != null) {
+        if (pendingPickRootResult != null || pendingPickFileResult != null) {
             result.error("picker_active", "フォルダ選択がすでに開いています", null)
             return
         }
@@ -193,7 +194,7 @@ class MainActivity : FlutterActivity() {
             result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
             return
         }
-        if (pendingPickFileResult != null) {
+        if (pendingPickFileResult != null || pendingPickRootResult != null) {
             result.error("picker_active", "保存先選択がすでに開いています", null)
             return
         }
@@ -459,8 +460,29 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun ensureDirectory(root: DocumentFile, name: String): DocumentFile {
-        root.findFile(name)?.takeIf { it.isDirectory }?.let { return it }
-        return root.createDirectory(name) ?: throw IllegalStateException("授業フォルダを作成できませんでした")
+        synchronized(downloadFolderLock) {
+            findDirectoryWithCloudRetry(root, name)?.let { return it }
+
+            val created = root.createDirectory(name)
+                ?: throw IllegalStateException("授業フォルダを作成できませんでした")
+            return findDirectory(root, name) ?: created
+        }
+    }
+
+    private fun findDirectoryWithCloudRetry(root: DocumentFile, name: String): DocumentFile? {
+        val delays = listOf(0L, 250L, 750L, 1500L)
+        for (delay in delays) {
+            if (delay > 0) {
+                Thread.sleep(delay)
+            }
+            findDirectory(root, name)?.let { return it }
+        }
+        return null
+    }
+
+    private fun findDirectory(root: DocumentFile, name: String): DocumentFile? {
+        return root.listFiles()
+            .firstOrNull { it.isDirectory && it.name == name }
     }
 
     private fun uniqueName(parent: DocumentFile, desiredName: String): String {
@@ -485,9 +507,11 @@ class MainActivity : FlutterActivity() {
 
     private fun downloadRootState(): Map<String, Any?> {
         val root = downloadRootFile()
+        val rawUri = prefs().getString(KEY_DOWNLOAD_ROOT_URI, null)
         return mapOf(
             "isConfigured" to (root != null),
-            "displayName" to root?.name
+            "displayName" to root?.name,
+            "path" to rawUri
         )
     }
 

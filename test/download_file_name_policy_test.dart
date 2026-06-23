@@ -50,8 +50,55 @@ void main() {
     expect(name, '資料 (2).pdf');
   });
 
+  test('decodes RFC 5987 content disposition filenames', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      "attachment; filename*=UTF-8''%E7%94%9F%E5%90%88%E6%88%90.pdf",
+    );
+
+    expect(name, '生合成.pdf');
+  });
+
+  test('reads quoted content disposition filenames', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      'attachment; filename="lecture.pdf"',
+    );
+
+    expect(name, 'lecture.pdf');
+  });
+
   test('sanitizes folder names and falls back to unclassified', () {
     expect(DownloadFileNamePolicy.safeFolderName(r'講義/資料'), '講義資料');
     expect(DownloadFileNamePolicy.safeFolderName('  '), '未分類');
+  });
+
+  test('uses requested course folder when it is useful', () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '情報数学',
+        fileName: '第1回 資料.pdf',
+      ),
+      '情報数学',
+    );
+  });
+
+  test('infers course folder from file name when requested name is generic',
+      () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '開設一覧',
+        fileName: '情報数学 - 第1回 資料.pdf',
+      ),
+      '情報数学',
+    );
+  });
+
+  test('falls back to unknown course folder when inference is not useful', () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '未分類',
+        fileName: 'report.pdf',
+      ),
+      '未分類',
+    );
   });
 }

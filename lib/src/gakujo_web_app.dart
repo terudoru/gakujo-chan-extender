@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'allowed_web_origins.dart';
+import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_course_name_estimator.dart';
@@ -16,12 +16,18 @@ import 'gakujo_download_capture_script.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
+import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
+import 'gakujo_message_reader_script.dart';
+import 'gakujo_report_sorter_script.dart';
+import 'gakujo_session_extender_script.dart';
+import 'platform/platform_service.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
+import 'web_view_service.dart';
 
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
@@ -55,14 +61,17 @@ class GakujoWebApp extends StatefulWidget {
 
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
-  late final WebViewController _controller;
+  late final GakujoWebViewController _controller;
+  late final Future<void> _webViewReady;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
+  late final GakujoWebViewService _webViewService;
   late final GakujoDownloadService _downloadService;
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
   late final bool _debugAllowed;
   String? _currentPageUrl;
+  String? _lastAllowedPageUrl;
   String _status = '準備中';
   bool _canGoBack = false;
   bool _canGoForward = false;
@@ -70,6 +79,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
   String? _currentCourseName;
+  bool _isSettingsDialogOpen = false;
+  double _desktopZoom = 1.0;
+  double _desktopPanZoomStartZoom = 1.0;
+  bool _desktopPanZoomIsPinching = false;
+  double _desktopHistorySwipeDistance = 0;
+  bool _desktopHistorySwipeTriggered = false;
+  Offset? _desktopZoomOrigin;
+  Timer? _desktopHistorySwipeResetTimer;
+
+  static const double _minimumDesktopZoom = 0.5;
+  static const double _maximumDesktopZoom = 2.0;
+  static const double _desktopZoomStep = 0.1;
+  static const double _desktopHistorySwipeThreshold = 120;
+  static const double _desktopHorizontalSwipeDominance = 1.35;
+  static const double _desktopPinchZoomDeadZone = 0.01;
 
   @override
   void initState() {
@@ -77,44 +101,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     WidgetsBinding.instance.addObserver(this);
     _secretStore = widget._secretStore ?? TwoFactorSecretStore();
     _totpGenerator = widget._totpGenerator ?? const TotpGenerator();
-    _downloadService = const GakujoDownloadService();
+    final platformService = GakujoPlatformService.current();
+    _webViewService = platformService.createWebViewService();
+    _downloadService = platformService.createDownloadService();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        GakujoDownloadCaptureScript.channelName,
-        onMessageReceived: _handleDownloadMessage,
-      )
-      ..addJavaScriptChannel(
-        LoginAutofillAssistScript.channelName,
-        onMessageReceived: _handleLoginAutofillMessage,
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: _handleNavigationRequest,
-          onPageStarted: (url) {
-            _currentPageUrl = url;
-            unawaited(_refreshNavigationState());
-            _setStatus('読込中: ${_displayUrl(url)}');
-          },
-          onPageFinished: (url) async {
-            _currentPageUrl = url;
-            _setStatus('表示中: ${_displayUrl(url)}');
-            await _saveLastPageUrl(url);
-            await _refreshNavigationState();
-            await _injectLoginAutofillAssistIfAllowed();
-            await _injectTwoFactorAutofillIfAllowed();
-            await _injectDownloadCaptureIfAllowed();
-            await _refreshEstimatedCourseName();
-          },
-          onWebResourceError: (error) {
-            _setStatus('読込エラー: ${error.description}');
-          },
-        ),
-      );
+    _controller = _webViewService.createController();
+    _webViewReady = _configureWebViewController();
 
     _loadDownloadRoot();
     unawaited(_loadInitialPage());
@@ -123,6 +118,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     unawaited(_saveCurrentPageUrl());
+    unawaited(_controller.dispose());
+    _desktopHistorySwipeResetTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -147,7 +144,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('More Better Gakujo'),
+          toolbarHeight: 42,
+          titleSpacing: 12,
+          title: const Text(
+            'More Better Gakujo',
+            style: TextStyle(fontSize: 16),
+          ),
           actions: [
             GakujoNavigationActions(
               canGoBack: _canGoBack,
@@ -155,15 +157,40 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
             ),
+            if (_supportsDesktopZoom)
+              GakujoZoomActions(
+                zoomPercent: (_desktopZoom * 100).round(),
+                canZoomOut: _desktopZoom > _minimumDesktopZoom,
+                canZoomIn: _desktopZoom < _maximumDesktopZoom,
+                onZoomOut: () => unawaited(_changeDesktopZoomBy(
+                  -_desktopZoomStep,
+                )),
+                onReset: () => unawaited(_setDesktopZoom(1.0)),
+                onZoomIn: () => unawaited(_changeDesktopZoomBy(
+                  _desktopZoomStep,
+                )),
+              ),
             IconButton(
               tooltip: '設定',
               onPressed: _showSettingsDialog,
               icon: const Icon(Icons.settings),
+              iconSize: 20,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 38,
+                height: 38,
+              ),
             ),
             IconButton(
               tooltip: '再読込',
-              onPressed: () => _controller.reload(),
+              onPressed: () => unawaited(_controller.reload()),
               icon: const Icon(Icons.refresh),
+              iconSize: 20,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 38,
+                height: 38,
+              ),
             ),
           ],
         ),
@@ -192,7 +219,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
             ),
             Expanded(
-              child: WebViewWidget(controller: _controller),
+              child: _isSettingsDialogOpen
+                  ? const SizedBox.expand()
+                  : _buildWebViewArea(),
             ),
           ],
         ),
@@ -200,19 +229,253 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<NavigationDecision> _handleNavigationRequest(
-    NavigationRequest request,
+  Widget _buildWebViewArea() {
+    final webView = _webViewService.buildWidget(_controller);
+    Widget content = webView;
+    if (_supportsSideNavigationGestures) {
+      content = Stack(
+        children: [
+          Positioned.fill(child: webView),
+          _SideNavigationGestureZone(
+            alignment: Alignment.centerLeft,
+            onTriggered: () => unawaited(_goBack()),
+          ),
+          _SideNavigationGestureZone(
+            alignment: Alignment.centerRight,
+            onTriggered: () => unawaited(_goForward()),
+          ),
+        ],
+      );
+    }
+
+    if (!_supportsDesktopZoom) {
+      return content;
+    }
+
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleDesktopZoomKeyEvent,
+      child: Listener(
+        onPointerHover: _handleDesktopPointerHover,
+        onPointerDown: _handleDesktopPointerDown,
+        onPointerSignal: _handleDesktopZoomPointerSignal,
+        onPointerPanZoomStart: _handleDesktopPanZoomStart,
+        onPointerPanZoomUpdate: _handleDesktopPanZoomUpdate,
+        onPointerPanZoomEnd: _handleDesktopPanZoomEnd,
+        child: content,
+      ),
+    );
+  }
+
+  void _handleDesktopPointerHover(PointerHoverEvent event) {
+    _desktopZoomOrigin = event.localPosition;
+  }
+
+  void _handleDesktopPointerDown(PointerDownEvent event) {
+    _desktopZoomOrigin = event.localPosition;
+  }
+
+  bool get _supportsDesktopZoom {
+    return defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  KeyEventResult _handleDesktopZoomKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!HardwareKeyboard.instance.isMetaPressed &&
+        !HardwareKeyboard.instance.isControlPressed) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.equal ||
+        key == LogicalKeyboardKey.numpadAdd) {
+      unawaited(_changeDesktopZoomBy(_desktopZoomStep));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.minus ||
+        key == LogicalKeyboardKey.numpadSubtract) {
+      unawaited(_changeDesktopZoomBy(-_desktopZoomStep));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.digit0 || key == LogicalKeyboardKey.numpad0) {
+      unawaited(_setDesktopZoom(1.0));
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  void _handleDesktopZoomPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) {
+      return;
+    }
+    if (!HardwareKeyboard.instance.isMetaPressed &&
+        !HardwareKeyboard.instance.isControlPressed) {
+      _handleDesktopHistorySwipeDelta(event.scrollDelta);
+      return;
+    }
+
+    final delta =
+        event.scrollDelta.dy < 0 ? _desktopZoomStep : -_desktopZoomStep;
+    _desktopZoomOrigin = event.localPosition;
+    unawaited(_changeDesktopZoomBy(delta));
+  }
+
+  void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
+    _desktopPanZoomStartZoom = _desktopZoom;
+    _desktopPanZoomIsPinching = false;
+    _desktopZoomOrigin = event.localPosition;
+    _resetDesktopHistorySwipe();
+  }
+
+  void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    _desktopZoomOrigin = event.localPosition;
+    if ((event.scale - 1).abs() > _desktopPinchZoomDeadZone) {
+      _desktopPanZoomIsPinching = true;
+      unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * event.scale));
+      return;
+    }
+
+    if (_desktopPanZoomIsPinching) {
+      return;
+    }
+
+    _handleDesktopHistorySwipeDelta(event.panDelta);
+  }
+
+  void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
+    _desktopPanZoomIsPinching = false;
+    _scheduleDesktopHistorySwipeReset();
+  }
+
+  void _handleDesktopHistorySwipeDelta(Offset delta) {
+    if (!_supportsDesktopZoom || _desktopHistorySwipeTriggered) {
+      return;
+    }
+
+    final horizontal = delta.dx.abs();
+    final vertical = delta.dy.abs();
+    if (horizontal <= vertical * _desktopHorizontalSwipeDominance) {
+      if (vertical > horizontal) {
+        _scheduleDesktopHistorySwipeReset();
+      }
+      return;
+    }
+
+    _desktopHistorySwipeDistance += delta.dx;
+    _scheduleDesktopHistorySwipeReset();
+
+    if (_desktopHistorySwipeDistance.abs() < _desktopHistorySwipeThreshold) {
+      return;
+    }
+
+    _desktopHistorySwipeTriggered = true;
+    if (_desktopHistorySwipeDistance < 0) {
+      unawaited(_goBackIfPossible());
+    } else {
+      unawaited(_goForwardIfPossible());
+    }
+  }
+
+  void _scheduleDesktopHistorySwipeReset() {
+    _desktopHistorySwipeResetTimer?.cancel();
+    _desktopHistorySwipeResetTimer = Timer(
+      const Duration(milliseconds: 250),
+      _resetDesktopHistorySwipe,
+    );
+  }
+
+  void _resetDesktopHistorySwipe() {
+    _desktopHistorySwipeResetTimer?.cancel();
+    _desktopHistorySwipeResetTimer = null;
+    _desktopHistorySwipeDistance = 0;
+    _desktopHistorySwipeTriggered = false;
+  }
+
+  Future<void> _changeDesktopZoomBy(double delta) {
+    return _setDesktopZoom(_desktopZoom + delta);
+  }
+
+  Future<void> _setDesktopZoom(double zoom) async {
+    final nextZoom = (zoom / _desktopZoomStep).round() * _desktopZoomStep;
+    return _setDesktopZoomValue(nextZoom);
+  }
+
+  Future<void> _setDesktopZoomSmooth(double zoom) {
+    return _setDesktopZoomValue(zoom);
+  }
+
+  Future<void> _setDesktopZoomValue(double zoom) async {
+    final clampedZoom = zoom
+        .clamp(
+          _minimumDesktopZoom,
+          _maximumDesktopZoom,
+        )
+        .toDouble();
+    if ((_desktopZoom - clampedZoom).abs() < 0.001) {
+      await _applyDesktopZoomIfAllowed();
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _desktopZoom = clampedZoom;
+      });
+    } else {
+      _desktopZoom = clampedZoom;
+    }
+    await _applyDesktopZoomIfAllowed();
+  }
+
+  Future<void> _applyDesktopZoomIfAllowed() async {
+    if (!_supportsDesktopZoom) {
+      return;
+    }
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(
+        DesktopPageZoomScript.build(
+          _desktopZoom,
+          originX: _desktopZoomOrigin?.dx,
+          originY: _desktopZoomOrigin?.dy,
+        ),
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to apply desktop page zoom',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  bool get _supportsSideNavigationGestures {
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  Future<GakujoNavigationDecision> _handleNavigationRequest(
+    GakujoNavigationRequest request,
   ) async {
+    if (_isInternalBlankUrl(request.url)) {
+      return GakujoNavigationDecision.navigate;
+    }
+
     final canLoad = AllowedWebOrigins.canLoad(
       request.url,
       debugAllowed: _debugAllowed,
     );
     if (!canLoad) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gakujo以外のページをブロックしました')),
-      );
-      return NavigationDecision.prevent;
+      _showSnackBar('Gakujo以外のページをブロックしました');
+      return GakujoNavigationDecision.prevent;
     }
 
     if (GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
@@ -227,10 +490,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           formFields: const {},
         ),
       );
-      return NavigationDecision.prevent;
+      return GakujoNavigationDecision.prevent;
     }
 
-    return NavigationDecision.navigate;
+    return GakujoNavigationDecision.navigate;
   }
 
   Future<String> _estimateCourseNameFromPage(String? fallbackTitle) async {
@@ -287,199 +550,210 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var loginPasswordInput = '';
     final messenger = ScaffoldMessenger.of(context);
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final canSaveSecret = secretInput.trim().isNotEmpty;
-            final canSaveLoginCredentials =
-                loginIdInput.trim().isNotEmpty && loginPasswordInput.isNotEmpty;
+    setState(() {
+      _isSettingsDialogOpen = true;
+    });
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final canSaveSecret = secretInput.trim().isNotEmpty;
+              final canSaveLoginCredentials = loginIdInput.trim().isNotEmpty &&
+                  loginPasswordInput.isNotEmpty;
 
-            Future<void> refreshDownloadRoot(
-              Future<DownloadDestinationSettings> Function() action,
-            ) async {
-              try {
-                final next = await action();
-                if (!mounted) {
-                  return;
-                }
-                setState(() {
-                  _downloadRoot = next;
-                });
-                setDialogState(() {});
-              } on PlatformException catch (error) {
-                if (mounted) {
-                  messenger.showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
+              Future<void> refreshDownloadRoot(
+                Future<DownloadDestinationSettings> Function() action,
+              ) async {
+                try {
+                  final next = await action();
+                  if (!mounted) {
+                    return;
+                  }
+                  setState(() {
+                    _downloadRoot = next;
+                  });
+                  setDialogState(() {});
+                } on PlatformException catch (error) {
+                  if (mounted) {
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  }
                 }
               }
-            }
 
-            final rootLabel = _downloadRoot.isConfigured
-                ? (_downloadRoot.displayName ?? '設定済み')
-                : '未設定';
-            final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
-            final selectedPageMode = _appSettings.pageMode;
+              final rootLabel = _downloadRootLabel(_downloadRoot);
+              final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
+              final selectedPageMode = _appSettings.pageMode;
 
-            return AlertDialog(
-              title: const Text('設定'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TwoFactorSecretSection(
-                      canSave: canSaveSecret,
-                      onChanged: (value) {
-                        secretInput = value;
-                        setDialogState(() {});
-                      },
-                      onClear: () async {
-                        await _secretStore.clear();
-                        if (mounted) {
+              return AlertDialog(
+                title: const Text('設定'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TwoFactorSecretSection(
+                        canSave: canSaveSecret,
+                        onChanged: (value) {
+                          secretInput = value;
+                          setDialogState(() {});
+                        },
+                        onClear: () async {
+                          await _secretStore.clear();
+                          if (mounted) {
+                            messenger.showSnackBar(
+                              const SnackBar(content: Text('2FA秘密鍵を削除しました')),
+                            );
+                          }
+                        },
+                        onSave: () async {
+                          try {
+                            await _secretStore.save(secretInput);
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(content: Text('2FA秘密鍵を保存しました')),
+                              );
+                            }
+                            await _injectTwoFactorAutofillIfAllowed();
+                          } on FormatException {
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('長いBase32秘密鍵を確認してください'),
+                                ),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                      const Divider(height: 32),
+                      LoginCredentialsSection(
+                        isConfigured: _appSettings.hasLoginCredentials,
+                        canSave: canSaveLoginCredentials,
+                        onLoginIdChanged: (value) {
+                          loginIdInput = value;
+                          setDialogState(() {});
+                        },
+                        onPasswordChanged: (value) {
+                          loginPasswordInput = value;
+                          setDialogState(() {});
+                        },
+                        onClear: () async {
+                          await _appSettingsStore.clearLoginCredentials();
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(loginCredentials: null);
+                          });
+                          setDialogState(() {});
                           messenger.showSnackBar(
-                            const SnackBar(content: Text('2FA秘密鍵を削除しました')),
+                            const SnackBar(content: Text('ログイン情報を削除しました')),
                           );
-                        }
-                      },
-                      onSave: () async {
-                        try {
-                          await _secretStore.save(secretInput);
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              const SnackBar(content: Text('2FA秘密鍵を保存しました')),
-                            );
-                          }
-                          await _injectTwoFactorAutofillIfAllowed();
-                        } on FormatException {
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('長いBase32秘密鍵を確認してください'),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                    ),
-                    const Divider(height: 32),
-                    LoginCredentialsSection(
-                      isConfigured: _appSettings.hasLoginCredentials,
-                      canSave: canSaveLoginCredentials,
-                      onLoginIdChanged: (value) {
-                        loginIdInput = value;
-                        setDialogState(() {});
-                      },
-                      onPasswordChanged: (value) {
-                        loginPasswordInput = value;
-                        setDialogState(() {});
-                      },
-                      onClear: () async {
-                        await _appSettingsStore.clearLoginCredentials();
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings =
-                              _appSettings.copyWith(loginCredentials: null);
-                        });
-                        setDialogState(() {});
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('ログイン情報を削除しました')),
-                        );
-                      },
-                      onSave: () async {
-                        await _appSettingsStore.saveLoginCredentials(
-                          loginId: loginIdInput,
-                          password: loginPasswordInput,
-                        );
-                        if (!mounted) {
-                          return;
-                        }
-                        final credentials = GakujoLoginCredentials(
-                          loginId: loginIdInput.trim(),
-                          password: loginPasswordInput,
-                        );
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(
-                            loginCredentials: credentials,
+                        },
+                        onSave: () async {
+                          await _appSettingsStore.saveLoginCredentials(
+                            loginId: loginIdInput,
+                            password: loginPasswordInput,
                           );
-                        });
-                        setDialogState(() {});
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('ログイン情報を保存しました')),
-                        );
-                        await _injectLoginAutofillAssistIfAllowed();
-                      },
-                    ),
-                    const Divider(height: 32),
-                    DownloadDestinationSection(
-                      rootLabel: rootLabel,
-                      isConfigured: _downloadRoot.isConfigured,
-                      saveMode: selectedDownloadSaveMode,
-                      onSaveModeChanged: (mode) async {
-                        if (mode == null) {
-                          return;
-                        }
-                        await _appSettingsStore.saveDownloadSaveMode(mode);
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings =
-                              _appSettings.copyWith(downloadSaveMode: mode);
-                        });
-                        setDialogState(() {});
-                      },
-                      onPick: () async {
-                        await refreshDownloadRoot(
-                          _downloadService.pickDownloadRoot,
-                        );
-                      },
-                      onClear: () async {
-                        await refreshDownloadRoot(
-                          _downloadService.clearDownloadRoot,
-                        );
-                      },
-                    ),
-                    const Divider(height: 32),
-                    GakujoPageModeSection(
-                      pageMode: selectedPageMode,
-                      onChanged: (mode) async {
-                        if (mode == null) {
-                          return;
-                        }
-                        await _appSettingsStore.savePageMode(mode);
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(pageMode: mode);
-                        });
-                        setDialogState(() {});
-                        await _controller.loadRequest(Uri.parse(mode.startUrl));
-                      },
-                    ),
-                  ],
+                          if (!mounted) {
+                            return;
+                          }
+                          final credentials = GakujoLoginCredentials(
+                            loginId: loginIdInput.trim(),
+                            password: loginPasswordInput,
+                          );
+                          setState(() {
+                            _appSettings = _appSettings.copyWith(
+                              loginCredentials: credentials,
+                            );
+                          });
+                          setDialogState(() {});
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('ログイン情報を保存しました')),
+                          );
+                          await _injectLoginAutofillAssistIfAllowed();
+                        },
+                      ),
+                      const Divider(height: 32),
+                      DownloadDestinationSection(
+                        rootLabel: rootLabel,
+                        isConfigured: _downloadRoot.isConfigured,
+                        saveMode: selectedDownloadSaveMode,
+                        helperText: _downloadDestinationHelperText,
+                        onSaveModeChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          await _appSettingsStore.saveDownloadSaveMode(mode);
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(downloadSaveMode: mode);
+                          });
+                          setDialogState(() {});
+                        },
+                        onPick: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.pickDownloadRoot,
+                          );
+                        },
+                        onClear: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.clearDownloadRoot,
+                          );
+                        },
+                      ),
+                      const Divider(height: 32),
+                      GakujoPageModeSection(
+                        pageMode: selectedPageMode,
+                        onChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          await _appSettingsStore.savePageMode(mode);
+                          if (!mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _appSettings =
+                                _appSettings.copyWith(pageMode: mode);
+                          });
+                          setDialogState(() {});
+                          await _controller.loadUrl(mode.startUrl);
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('閉じる'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('閉じる'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSettingsDialogOpen = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadDownloadRoot() async {
@@ -493,10 +767,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
-  Future<void> _handleDownloadMessage(JavaScriptMessage message) async {
+  Future<void> _handleDownloadMessage(String message) async {
     late final GakujoDownloadRequest request;
     try {
-      request = GakujoDownloadRequest.fromJsonText(message.message);
+      request = GakujoDownloadRequest.fromJsonText(message);
       debugPrint(
         'MoreBetterGakujo download candidate ${request.method} '
         '${_displayUrl(request.url)} as "${request.fileName}" '
@@ -504,21 +778,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     } on FormatException {
       _setStatus('保存エラー: ダウンロード情報を読めませんでした');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ダウンロード情報を読めませんでした')),
-        );
-      }
+      _showSnackBar('ダウンロード情報を読めませんでした');
       return;
     }
 
     await _handleDownloadRequest(request);
   }
 
-  void _handleLoginAutofillMessage(JavaScriptMessage message) {
-    debugPrint('MoreBetterGakujo login autofill ${message.message}');
+  void _handleLoginAutofillMessage(String message) {
+    debugPrint('MoreBetterGakujo login autofill $message');
     developer.log(
-      'Login autofill ${message.message}',
+      'Login autofill $message',
       name: 'MoreBetterGakujo',
     );
   }
@@ -529,9 +799,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       debugAllowed: _debugAllowed,
     )) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gakujo以外のダウンロードをブロックしました')),
-      );
+      _showSnackBar('Gakujo以外のダウンロードをブロックしました');
       return;
     }
 
@@ -563,9 +831,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var root = _downloadRoot;
     if (_appSettings.downloadSaveMode.needsConfiguredRoot &&
         !root.isConfigured) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ダウンロード保存先を選択してください')),
-      );
+      _showSnackBar('ダウンロード保存先を選択してください');
       root = await _downloadService.pickDownloadRoot();
       if (!mounted) {
         return;
@@ -583,24 +849,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final result = await _downloadService.download(
         effectiveRequest,
         userAgent: await _userAgent(),
+        cookieHeader: await _cookieHeader(),
+        sharePositionOrigin: _sharePositionOrigin(),
         saveMode: _appSettings.downloadSaveMode,
       );
       final savedPath = result.courseName.isEmpty
           ? result.fileName
           : '${result.courseName}/${result.fileName}';
       _setStatus('保存しました: $savedPath');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存しました: ${result.fileName}')),
-        );
-      }
+      _showSnackBar('保存しました: ${result.fileName}');
     } on PlatformException catch (error) {
-      _setStatus('保存エラー: ${error.message ?? error.code}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存できませんでした: ${error.message ?? error.code}')),
-        );
-      }
+      final message = error.message ?? error.code;
+      _setStatus('保存エラー: $message');
+      _showSnackBar('保存できませんでした: $message');
     }
   }
 
@@ -608,14 +869,47 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final result = await _controller.runJavaScriptReturningResult(
       'navigator.userAgent',
     );
-    return result.toString();
+    return _stringFromJavaScriptResult(result);
+  }
+
+  Rect? _sharePositionOrigin() {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
+  String? get _downloadDestinationHelperText {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return null;
+    }
+    return 'iCloud Drive はフォルダ指定と自動仕分けに対応します。Google Drive に保存する場合は「自動仕分けなし+適宜保存場所指定」を使います。';
+  }
+
+  Future<String?> _cookieHeader() async {
+    if (!_canRunPageScripts) {
+      return null;
+    }
+
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        'document.cookie',
+      );
+      return _stringFromJavaScriptResult(result);
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to read WebView cookie header',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
   }
 
   Future<void> _injectDownloadCaptureIfAllowed() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return;
     }
 
@@ -631,11 +925,49 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _injectGpaDisplayIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(GakujoGpaDisplayScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject GPA display script',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _injectOriginalExtensionFeaturesIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    final scripts = [
+      GakujoSessionExtenderScript.build(),
+      GakujoReportSorterScript.build(),
+      GakujoMessageReaderScript.build(),
+    ];
+    for (final script in scripts) {
+      try {
+        await _controller.runJavaScript(script);
+      } catch (error, stackTrace) {
+        developer.log(
+          'Failed to inject original extension feature script',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+  }
+
   Future<void> _injectLoginAutofillAssistIfAllowed() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return;
     }
 
@@ -689,13 +1021,71 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadInitialPage() async {
-    await _configureAndroidWebView();
+    await _webViewReady;
+    await _webViewService.configureController(
+      _controller,
+      debugAllowed: _debugAllowed,
+    );
     await _saveInitialTwoFactorSecretIfAllowed();
     await _loadAppSettings();
     final savedUrl = _appSettings.hasLoginCredentials
         ? null
         : await _lastPageStore.load(debugAllowed: _debugAllowed);
-    await _controller.loadRequest(Uri.parse(_resolveStartUrl(savedUrl)));
+    await _controller.loadUrl(_resolveStartUrl(savedUrl));
+  }
+
+  Future<void> _configureWebViewController() async {
+    await _controller.setJavaScriptModeUnrestricted();
+    await _controller.addJavaScriptChannel(
+      GakujoDownloadCaptureScript.channelName,
+      onMessageReceived: _handleDownloadMessage,
+    );
+    await _controller.addJavaScriptChannel(
+      LoginAutofillAssistScript.channelName,
+      onMessageReceived: _handleLoginAutofillMessage,
+    );
+    await _controller.setNavigationDelegate(
+      GakujoNavigationDelegate(
+        onNavigationRequest: _handleNavigationRequest,
+        onPageStarted: (url) {
+          if (_isInternalBlankUrl(url)) {
+            return;
+          }
+          _currentPageUrl = url;
+          if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+            _lastAllowedPageUrl = url;
+          }
+          unawaited(_refreshNavigationState());
+          _setStatus('読込中: ${_displayUrl(url)}');
+        },
+        onPageFinished: (url) async {
+          if (_isInternalBlankUrl(url)) {
+            await _injectDownloadCaptureIfAllowed();
+            await _injectGpaDisplayIfAllowed();
+            await _injectOriginalExtensionFeaturesIfAllowed();
+            await _applyDesktopZoomIfAllowed();
+            return;
+          }
+          _currentPageUrl = url;
+          if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+            _lastAllowedPageUrl = url;
+          }
+          _setStatus('表示中: ${_displayUrl(url)}');
+          await _saveLastPageUrl(url);
+          await _refreshNavigationState();
+          await _injectLoginAutofillAssistIfAllowed();
+          await _injectTwoFactorAutofillIfAllowed();
+          await _injectDownloadCaptureIfAllowed();
+          await _injectGpaDisplayIfAllowed();
+          await _injectOriginalExtensionFeaturesIfAllowed();
+          await _applyDesktopZoomIfAllowed();
+          await _refreshEstimatedCourseName();
+        },
+        onWebResourceError: (error) {
+          _setStatus('読込エラー: ${error.description}');
+        },
+      ),
+    );
   }
 
   Future<void> _loadAppSettings() async {
@@ -706,25 +1096,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     setState(() {
       _appSettings = settings;
-    });
-  }
-
-  Future<void> _configureAndroidWebView() async {
-    final platformController = _controller.platform;
-    if (platformController is! AndroidWebViewController) {
-      return;
-    }
-
-    await platformController.setAllowFileAccess(_debugAllowed);
-    await platformController.setAllowContentAccess(false);
-    await platformController.enableZoom(true);
-    await platformController.setUseWideViewPort(true);
-    await platformController.setMixedContentMode(MixedContentMode.neverAllow);
-    await platformController.setOnConsoleMessage((message) {
-      developer.log(
-        'WebViewConsole: ${message.message}',
-        name: 'MoreBetterGakujo',
-      );
     });
   }
 
@@ -754,16 +1125,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('前のページはありません')),
-    );
+    _showSnackBar('前のページはありません');
   }
 
   Future<void> _goBack() async {
     if (!await _goBackIfPossible() && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('前のページはありません')),
-      );
+      _showSnackBar('前のページはありません');
     }
   }
 
@@ -779,10 +1146,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _goForward() async {
-    if (await _controller.canGoForward()) {
-      await _controller.goForward();
-    }
+    await _goForwardIfPossible();
     await _refreshNavigationState();
+  }
+
+  Future<bool> _goForwardIfPossible() async {
+    if (!await _controller.canGoForward()) {
+      await _refreshNavigationState();
+      return false;
+    }
+
+    await _controller.goForward();
+    await _refreshNavigationState();
+    return true;
   }
 
   Future<void> _refreshNavigationState() async {
@@ -819,6 +1195,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _saveLastPageUrl(String? url) async {
+    if (_isInternalBlankUrl(url)) {
+      return;
+    }
     try {
       await _lastPageStore.saveIfAllowed(url, debugAllowed: _debugAllowed);
     } catch (error, stackTrace) {
@@ -841,6 +1220,30 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
+  void _showSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  bool get _canRunPageScripts {
+    return AllowedWebOrigins.canLoad(
+          _currentPageUrl,
+          debugAllowed: _debugAllowed,
+        ) ||
+        AllowedWebOrigins.canLoad(
+          _lastAllowedPageUrl,
+          debugAllowed: _debugAllowed,
+        );
+  }
+
+  bool _isInternalBlankUrl(String? url) {
+    return (url ?? '').trim().toLowerCase() == 'about:blank';
+  }
+
   String _displayUrl(String? url) {
     if (url == null || url.trim().isEmpty) {
       return '(unknown)';
@@ -850,6 +1253,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       RegExp(r';jsessionid=[^?#]+', caseSensitive: false),
       ';jsessionid=<redacted>',
     );
+  }
+
+  String _downloadRootLabel(DownloadDestinationSettings root) {
+    if (!root.isConfigured) {
+      return '未設定';
+    }
+
+    final displayName = root.displayName?.trim();
+    final path = root.path?.trim();
+    if (path == null || path.isEmpty || path == displayName) {
+      return displayName?.isNotEmpty == true ? displayName! : '設定済み';
+    }
+
+    if (displayName == null || displayName.isEmpty) {
+      return path;
+    }
+    return '$displayName\n$path';
   }
 
   String _stringFromJavaScriptResult(Object? result) {
@@ -1061,11 +1481,87 @@ class GakujoNavigationActions extends StatelessWidget {
           tooltip: '前のページ',
           onPressed: canGoBack ? onBack : null,
           icon: const Icon(Icons.arrow_back),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 38,
+            height: 38,
+          ),
         ),
         IconButton(
           tooltip: '次のページ',
           onPressed: canGoForward ? onForward : null,
           icon: const Icon(Icons.arrow_forward),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 38,
+            height: 38,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class GakujoZoomActions extends StatelessWidget {
+  const GakujoZoomActions({
+    super.key,
+    required this.zoomPercent,
+    required this.canZoomOut,
+    required this.canZoomIn,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onZoomIn,
+  });
+
+  final int zoomPercent;
+  final bool canZoomOut;
+  final bool canZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onZoomIn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: '縮小',
+          onPressed: canZoomOut ? onZoomOut : null,
+          icon: const Icon(Icons.remove),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 34,
+            height: 38,
+          ),
+        ),
+        TextButton(
+          onPressed: onReset,
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(48, 38),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            '$zoomPercent%',
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+          ),
+        ),
+        IconButton(
+          tooltip: '拡大',
+          onPressed: canZoomIn ? onZoomIn : null,
+          icon: const Icon(Icons.add),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(
+            width: 34,
+            height: 38,
+          ),
         ),
       ],
     );
@@ -1217,6 +1713,7 @@ class DownloadDestinationSection extends StatelessWidget {
     required this.rootLabel,
     required this.isConfigured,
     required this.saveMode,
+    required this.helperText,
     required this.onSaveModeChanged,
     required this.onPick,
     required this.onClear,
@@ -1225,6 +1722,7 @@ class DownloadDestinationSection extends StatelessWidget {
   final String rootLabel;
   final bool isConfigured;
   final DownloadSaveMode saveMode;
+  final String? helperText;
   final ValueChanged<DownloadSaveMode?> onSaveModeChanged;
   final Future<void> Function() onPick;
   final Future<void> Function() onClear;
@@ -1239,26 +1737,14 @@ class DownloadDestinationSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        InputDecorator(
+        SettingsRadioGroup<DownloadSaveMode>(
+          groupValue: saveMode,
+          values: DownloadSaveMode.values,
+          labelFor: (mode) => mode.label,
+          onChanged: onSaveModeChanged,
           decoration: const InputDecoration(
             labelText: 'ファイル保存モード',
             border: OutlineInputBorder(),
-          ),
-          child: RadioGroup<DownloadSaveMode>(
-            groupValue: saveMode,
-            onChanged: onSaveModeChanged,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final mode in DownloadSaveMode.values)
-                  RadioListTile<DownloadSaveMode>(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: mode,
-                    title: Text(mode.label),
-                  ),
-              ],
-            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1269,6 +1755,13 @@ class DownloadDestinationSection extends StatelessWidget {
           ),
           child: Text(rootLabel),
         ),
+        if (helperText != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            helperText!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -1287,6 +1780,107 @@ class DownloadDestinationSection extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class SettingsRadioGroup<T> extends StatelessWidget {
+  const SettingsRadioGroup({
+    super.key,
+    required this.groupValue,
+    required this.values,
+    required this.labelFor,
+    required this.onChanged,
+    required this.decoration,
+  });
+
+  final T groupValue;
+  final Iterable<T> values;
+  final String Function(T value) labelFor;
+  final ValueChanged<T?> onChanged;
+  final InputDecoration decoration;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: decoration,
+      child: RadioGroup<T>(
+        groupValue: groupValue,
+        onChanged: onChanged,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final value in values)
+              RadioListTile<T>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: value,
+                title: Text(labelFor(value)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SideNavigationGestureZone extends StatefulWidget {
+  const _SideNavigationGestureZone({
+    required this.alignment,
+    required this.onTriggered,
+  });
+
+  final Alignment alignment;
+  final VoidCallback onTriggered;
+
+  @override
+  State<_SideNavigationGestureZone> createState() =>
+      _SideNavigationGestureZoneState();
+}
+
+class _SideNavigationGestureZoneState
+    extends State<_SideNavigationGestureZone> {
+  static const double _width = 28;
+  static const double _minimumDragDistance = 64;
+  static const double _minimumFlingVelocity = 420;
+
+  double _dragDistance = 0;
+
+  bool get _isLeftEdge => widget.alignment == Alignment.centerLeft;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: widget.alignment,
+      child: SizedBox(
+        width: _width,
+        height: double.infinity,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: (_) {
+            _dragDistance = 0;
+          },
+          onHorizontalDragUpdate: (details) {
+            _dragDistance += details.primaryDelta ?? 0;
+          },
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            final isBackGesture = _isLeftEdge &&
+                (_dragDistance > _minimumDragDistance ||
+                    velocity > _minimumFlingVelocity);
+            final isForwardGesture = !_isLeftEdge &&
+                (_dragDistance < -_minimumDragDistance ||
+                    velocity < -_minimumFlingVelocity);
+            _dragDistance = 0;
+            if (isBackGesture || isForwardGesture) {
+              widget.onTriggered();
+            }
+          },
+          onHorizontalDragCancel: () {
+            _dragDistance = 0;
+          },
+        ),
+      ),
     );
   }
 }
@@ -1311,26 +1905,14 @@ class GakujoPageModeSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        InputDecorator(
+        SettingsRadioGroup<GakujoPageMode>(
+          groupValue: pageMode,
+          values: GakujoPageMode.values,
+          labelFor: (mode) => mode.label,
+          onChanged: onChanged,
           decoration: const InputDecoration(
             labelText: '開く画面',
             border: OutlineInputBorder(),
-          ),
-          child: RadioGroup<GakujoPageMode>(
-            groupValue: pageMode,
-            onChanged: onChanged,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final mode in GakujoPageMode.values)
-                  RadioListTile<GakujoPageMode>(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: mode,
-                    title: Text(mode.label),
-                  ),
-              ],
-            ),
           ),
         ),
       ],
