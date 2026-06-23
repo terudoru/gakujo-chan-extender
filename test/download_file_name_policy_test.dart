@@ -50,6 +50,22 @@ void main() {
     expect(name, '資料 (2).pdf');
   });
 
+  test('decodes RFC 5987 content disposition filenames', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      "attachment; filename*=UTF-8''%E7%94%9F%E5%90%88%E6%88%90.pdf",
+    );
+
+    expect(name, '生合成.pdf');
+  });
+
+  test('reads quoted content disposition filenames', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      'attachment; filename="lecture.pdf"',
+    );
+
+    expect(name, 'lecture.pdf');
+  });
+
   test('sanitizes folder names and falls back to unclassified', () {
     expect(DownloadFileNamePolicy.safeFolderName(r'講義/資料'), '講義資料');
     expect(DownloadFileNamePolicy.safeFolderName('  '), '未分類');

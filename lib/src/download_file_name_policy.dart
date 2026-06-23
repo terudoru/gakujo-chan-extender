@@ -58,6 +58,28 @@ class DownloadFileNamePolicy {
     }
   }
 
+  static String? fileNameFromContentDisposition(String? header) {
+    if (header == null || header.trim().isEmpty) {
+      return null;
+    }
+
+    final encodedMatch = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(header);
+    if (encodedMatch != null) {
+      return Uri.decodeComponent(
+        encodedMatch.group(1)?.trim().replaceAll('"', '') ?? '',
+      );
+    }
+
+    final quotedMatch = RegExp(
+      r'''filename="?([^";]+)"?''',
+      caseSensitive: false,
+    ).firstMatch(header);
+    return quotedMatch?.group(1);
+  }
+
   static String? _cleanCandidate(String? raw, {String replacement = ''}) {
     final value = raw
         ?.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), replacement)

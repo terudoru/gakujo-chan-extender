@@ -75,7 +75,7 @@ cat > "$output_path" <<JSON
           "localizedDescription": $(jq_escape "$release_notes"),
           "downloadURL": $(jq_escape "$download_url"),
           "size": $size,
-          "minOSVersion": "13.0"
+          "minOSVersion": "14.0"
         }
       ],
       "appPermissions": {

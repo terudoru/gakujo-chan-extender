@@ -68,7 +68,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun pickDownloadRoot(result: MethodChannel.Result) {
-        if (pendingPickRootResult != null) {
+        if (pendingPickRootResult != null || pendingPickFileResult != null) {
             result.error("picker_active", "フォルダ選択がすでに開いています", null)
             return
         }
@@ -194,7 +194,7 @@ class MainActivity : FlutterActivity() {
             result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
             return
         }
-        if (pendingPickFileResult != null) {
+        if (pendingPickFileResult != null || pendingPickRootResult != null) {
             result.error("picker_active", "保存先選択がすでに開いています", null)
             return
         }

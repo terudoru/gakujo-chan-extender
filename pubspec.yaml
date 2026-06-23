@@ -16,7 +16,6 @@ dependencies:
   file_selector: ^1.1.0
   path_provider: ^2.1.5
   webview_windows: ^0.4.0
-  share_plus: ^13.1.0
 
 dev_dependencies:
   flutter_test:

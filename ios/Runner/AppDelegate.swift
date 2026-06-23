@@ -24,6 +24,9 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   private static let bookmarkKey = "more_better_gakujo_download_root_bookmark"
 
   private var pendingPickResult: FlutterResult?
+  private var pendingExportResult: FlutterResult?
+  private var pendingExportFileName: String?
+  private var pendingExportURL: URL?
 
   func register(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
@@ -50,6 +53,8 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
         result(self.downloadRootState())
       case "saveDownloadedFileToConfiguredFolder":
         self.saveDownloadedFileToConfiguredFolder(call: call, result: result)
+      case "exportDownloadedFile":
+        self.exportDownloadedFile(call: call, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -57,7 +62,7 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   }
 
   private func pickDownloadRoot(result: @escaping FlutterResult) {
-    if pendingPickResult != nil {
+    if pendingPickResult != nil || pendingExportResult != nil {
       result(FlutterError(
         code: "picker_active",
         message: "フォルダ選択がすでに開いています",
@@ -95,10 +100,91 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
     presenter.present(picker, animated: true)
   }
 
+  private func exportDownloadedFile(
+    call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    if pendingExportResult != nil || pendingPickResult != nil {
+      result(FlutterError(
+        code: "picker_active",
+        message: "保存先選択がすでに開いています",
+        details: nil
+      ))
+      return
+    }
+
+    guard let presenter = topViewController() else {
+      result(FlutterError(
+        code: "missing_presenter",
+        message: "保存先選択を表示できませんでした",
+        details: nil
+      ))
+      return
+    }
+    guard let args = call.arguments as? [String: Any],
+          let typedData = args["bytes"] as? FlutterStandardTypedData else {
+      result(FlutterError(
+        code: "missing_arguments",
+        message: "保存するファイルを取得できませんでした",
+        details: nil
+      ))
+      return
+    }
+
+    do {
+      let requestedFileName = sanitizeName(args["fileName"] as? String)
+      let fileName = requestedFileName.isEmpty ? "document" : requestedFileName
+      let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+      )
+      let exportURL = directory.appendingPathComponent(fileName)
+      try typedData.data.write(to: exportURL, options: .atomic)
+
+      pendingExportResult = result
+      pendingExportFileName = fileName
+      pendingExportURL = exportURL
+
+      let picker: UIDocumentPickerViewController
+      if #available(iOS 14.0, *) {
+        picker = UIDocumentPickerViewController(
+          forExporting: [exportURL],
+          asCopy: true
+        )
+      } else {
+        picker = UIDocumentPickerViewController(
+          url: exportURL,
+          in: .exportToService
+        )
+      }
+      picker.delegate = self
+      picker.allowsMultipleSelection = false
+      presenter.present(picker, animated: true)
+    } catch {
+      result(FlutterError(
+        code: "export_failed",
+        message: "保存ファイルを準備できませんでした: \(error.localizedDescription)",
+        details: nil
+      ))
+    }
+  }
+
   func documentPicker(
     _ controller: UIDocumentPickerViewController,
     didPickDocumentsAt urls: [URL]
   ) {
+    if let result = pendingExportResult {
+      let fileName = pendingExportFileName ?? pendingExportURL?.lastPathComponent ?? "document"
+      clearPendingExport()
+      result([
+        "fileName": fileName,
+        "courseName": ""
+      ])
+      return
+    }
+
     guard let result = pendingPickResult else {
       return
     }
@@ -137,11 +223,31 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    if let result = pendingExportResult {
+      clearPendingExport()
+      result(FlutterError(
+        code: "cancelled",
+        message: "保存をキャンセルしました",
+        details: nil
+      ))
+      return
+    }
+
     guard let result = pendingPickResult else {
       return
     }
     pendingPickResult = nil
     result(downloadRootState())
+  }
+
+  private func clearPendingExport() {
+    pendingExportResult = nil
+    pendingExportFileName = nil
+    if let url = pendingExportURL {
+      let directory = url.deletingLastPathComponent()
+      try? FileManager.default.removeItem(at: directory)
+    }
+    pendingExportURL = nil
   }
 
   private func saveDownloadedFileToConfiguredFolder(

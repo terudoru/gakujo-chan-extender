@@ -6,8 +6,8 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
+import 'allowed_web_origins.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
 import 'gakujo_app_settings.dart';
@@ -21,7 +21,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
 
   static const _downloadRootPathKey = 'more_better_gakujo_download_root_path';
-  static const _iosDownloadsChannel = MethodChannel(
+  static const _nativeDownloadsChannel = MethodChannel(
     'net.yoshida.morebettergakujo/downloads',
   );
 
@@ -29,8 +29,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
   @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {
-    if (Platform.isIOS) {
-      return _getIosDownloadRoot();
+    if (_usesNativeDownloadRoot) {
+      return _getNativeDownloadRoot();
     }
 
     final path = await _secureStorage.read(key: _downloadRootPathKey);
@@ -40,9 +40,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   @override
   Future<DownloadDestinationSettings> pickDownloadRoot() async {
     final current = await getDownloadRoot();
-    if (Platform.isIOS) {
+    if (_usesNativeDownloadRoot) {
       final raw =
-          await _iosDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+          await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
         'pickDownloadRoot',
       );
       return DownloadDestinationSettings.fromMap(raw);
@@ -66,9 +66,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
   @override
   Future<DownloadDestinationSettings> clearDownloadRoot() async {
-    if (Platform.isIOS) {
+    if (_usesNativeDownloadRoot) {
       final raw =
-          await _iosDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+          await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
         'clearDownloadRoot',
       );
       return DownloadDestinationSettings.fromMap(raw);
@@ -87,6 +87,13 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     required DownloadSaveMode saveMode,
   }) async {
     try {
+      if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
+        throw PlatformException(
+          code: 'blocked_url',
+          message: 'Gakujo以外のダウンロードをブロックしました',
+        );
+      }
+
       final downloaded = await _downloadBytes(
         request,
         userAgent: userAgent,
@@ -98,80 +105,41 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         url: downloaded.finalUrl,
         mimeType: downloaded.mimeType,
       );
-
-      if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
-        if (Platform.isIOS) {
-          final root = await _defaultRootDirectory();
-          final finalName = await _uniqueFileName(root, fileName);
-          final file = await _writeFile(root, finalName, downloaded.bytes);
-          await _shareIosFile(
-            file,
-            fileName: finalName,
-            mimeType: downloaded.mimeType,
-            sharePositionOrigin: sharePositionOrigin,
-          );
-          return GakujoDownloadResult(
-            fileName: finalName,
-            courseName: '',
-          );
-        }
-
-        final location = await getSaveLocation(
-          initialDirectory: await _defaultDirectoryPath(),
-          suggestedName: fileName,
-          confirmButtonText: '保存',
-          canCreateDirectories: true,
-        );
-        if (location == null) {
-          throw PlatformException(
-            code: 'cancelled',
-            message: '保存をキャンセルしました',
-          );
-        }
-        await File(location.path).writeAsBytes(downloaded.bytes);
-        return GakujoDownloadResult(
-          fileName: _baseName(location.path),
-          courseName: '',
-        );
-      }
-
-      if (Platform.isIOS) {
-        final raw =
-            await _iosDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
-          'saveDownloadedFileToConfiguredFolder',
-          {
-            'bytes': downloaded.bytes,
-            'fileName': fileName,
-            'courseName': request.courseName,
-            'mimeType': downloaded.mimeType ?? 'application/octet-stream',
-            'autoSortByCourse': saveMode.autoSortByCourse,
-          },
-        );
-        return GakujoDownloadResult.fromMap(raw);
-      }
-
-      final root = await _configuredRootDirectory();
       final courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,
         fileName: fileName,
       );
-      final parent = saveMode.autoSortByCourse
-          ? await _ensureChildDirectory(
-              root,
-              courseFolderName,
-            )
-          : root;
-      final finalName = await _uniqueFileName(parent, fileName);
-      final file = await _writeFile(parent, finalName, downloaded.bytes);
-      await _shareIosFile(
-        file,
-        fileName: finalName,
-        mimeType: downloaded.mimeType,
-        sharePositionOrigin: sharePositionOrigin,
-      );
-      return GakujoDownloadResult(
-        fileName: finalName,
-        courseName: saveMode.autoSortByCourse ? _baseName(parent.path) : '',
+
+      if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
+        if (Platform.isIOS) {
+          return _exportToNativePicker(
+            bytes: downloaded.bytes,
+            fileName: fileName,
+            mimeType: downloaded.mimeType,
+          );
+        }
+
+        return _saveToPickedFlutterFile(
+          bytes: downloaded.bytes,
+          fileName: fileName,
+        );
+      }
+
+      if (_usesNativeDownloadRoot) {
+        return _saveToNativeConfiguredFolder(
+          bytes: downloaded.bytes,
+          fileName: fileName,
+          courseFolderName: courseFolderName,
+          mimeType: downloaded.mimeType,
+          autoSortByCourse: saveMode.autoSortByCourse,
+        );
+      }
+
+      return _saveToConfiguredFlutterFolder(
+        bytes: downloaded.bytes,
+        fileName: fileName,
+        courseFolderName: courseFolderName,
+        autoSortByCourse: saveMode.autoSortByCourse,
       );
     } on PlatformException {
       rethrow;
@@ -181,6 +149,85 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         message: '保存できませんでした: $error',
       );
     }
+  }
+
+  Future<GakujoDownloadResult> _exportToNativePicker({
+    required Uint8List bytes,
+    required String fileName,
+    required String? mimeType,
+  }) async {
+    final raw =
+        await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+      'exportDownloadedFile',
+      {
+        'bytes': bytes,
+        'fileName': fileName,
+        'mimeType': mimeType ?? 'application/octet-stream',
+      },
+    );
+    return GakujoDownloadResult.fromMap(raw);
+  }
+
+  Future<GakujoDownloadResult> _saveToNativeConfiguredFolder({
+    required Uint8List bytes,
+    required String fileName,
+    required String courseFolderName,
+    required String? mimeType,
+    required bool autoSortByCourse,
+  }) async {
+    final raw =
+        await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+      'saveDownloadedFileToConfiguredFolder',
+      {
+        'bytes': bytes,
+        'fileName': fileName,
+        'courseName': courseFolderName,
+        'mimeType': mimeType ?? 'application/octet-stream',
+        'autoSortByCourse': autoSortByCourse,
+      },
+    );
+    return GakujoDownloadResult.fromMap(raw);
+  }
+
+  Future<GakujoDownloadResult> _saveToPickedFlutterFile({
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    final location = await getSaveLocation(
+      initialDirectory: await _defaultDirectoryPath(),
+      suggestedName: fileName,
+      confirmButtonText: '保存',
+      canCreateDirectories: true,
+    );
+    if (location == null) {
+      throw PlatformException(
+        code: 'cancelled',
+        message: '保存をキャンセルしました',
+      );
+    }
+    await File(location.path).writeAsBytes(bytes);
+    return GakujoDownloadResult(
+      fileName: _baseName(location.path),
+      courseName: '',
+    );
+  }
+
+  Future<GakujoDownloadResult> _saveToConfiguredFlutterFolder({
+    required Uint8List bytes,
+    required String fileName,
+    required String courseFolderName,
+    required bool autoSortByCourse,
+  }) async {
+    final root = await _configuredRootDirectory();
+    final parent = autoSortByCourse
+        ? await _ensureChildDirectory(root, courseFolderName)
+        : root;
+    final finalName = await _uniqueFileName(parent, fileName);
+    await _writeFile(parent, finalName, bytes);
+    return GakujoDownloadResult(
+      fileName: finalName,
+      courseName: autoSortByCourse ? _baseName(parent.path) : '',
+    );
   }
 
   Future<_DownloadedFile> _downloadBytes(
@@ -253,17 +300,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
             : response.redirects.last.location.toString(),
         mimeType: response.headers.contentType?.mimeType,
         contentDispositionFileName:
-            _fileNameFromContentDisposition(disposition),
+            DownloadFileNamePolicy.fileNameFromContentDisposition(disposition),
       );
     } finally {
       client.close(force: true);
     }
   }
 
-  Future<DownloadDestinationSettings> _getIosDownloadRoot() async {
+  Future<DownloadDestinationSettings> _getNativeDownloadRoot() async {
     try {
       final raw =
-          await _iosDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+          await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
         'getDownloadRoot',
       );
       return DownloadDestinationSettings.fromMap(raw);
@@ -271,6 +318,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return const DownloadDestinationSettings(isConfigured: false);
     }
   }
+
+  bool get _usesNativeDownloadRoot => Platform.isIOS || Platform.isMacOS;
 
   Future<Directory> _configuredRootDirectory() async {
     final settings = await getDownloadRoot();
@@ -291,17 +340,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
     return getApplicationDocumentsDirectory()
         .then((directory) => directory.path);
-  }
-
-  Future<Directory> _defaultRootDirectory() async {
-    final path = await _defaultDirectoryPath();
-    if (path == null || path.trim().isEmpty) {
-      throw PlatformException(
-        code: 'missing_root',
-        message: '保存先を準備できませんでした',
-      );
-    }
-    return Directory(path)..createSync(recursive: true);
   }
 
   DownloadDestinationSettings _settingsFromPath(String? path) {
@@ -330,31 +368,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     return File(_join(directory.path, fileName)).writeAsBytes(bytes);
   }
 
-  Future<void> _shareIosFile(
-    File file, {
-    required String fileName,
-    required String? mimeType,
-    required Rect? sharePositionOrigin,
-  }) async {
-    if (!Platform.isIOS) {
-      return;
-    }
-    await SharePlus.instance.share(
-      ShareParams(
-        files: [
-          XFile(
-            file.path,
-            mimeType: mimeType,
-            name: fileName,
-          ),
-        ],
-        title: fileName,
-        sharePositionOrigin:
-            sharePositionOrigin ?? const Rect.fromLTWH(0, 0, 1, 1),
-      ),
-    );
-  }
-
   Future<String> _uniqueFileName(
       Directory directory, String desiredName) async {
     final existing =
@@ -369,26 +382,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
               '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
         )
         .join('&');
-  }
-
-  static String? _fileNameFromContentDisposition(String? header) {
-    if (header == null || header.trim().isEmpty) {
-      return null;
-    }
-
-    final encodedMatch = RegExp(
-      r'''filename\*=UTF-8''([^;]+)''',
-      caseSensitive: false,
-    ).firstMatch(header);
-    if (encodedMatch != null) {
-      return Uri.decodeComponent(encodedMatch.group(1) ?? '');
-    }
-
-    final quotedMatch = RegExp(
-      r'''filename="?([^";]+)"?''',
-      caseSensitive: false,
-    ).firstMatch(header);
-    return quotedMatch?.group(1);
   }
 
   static String _join(String parent, String child) {

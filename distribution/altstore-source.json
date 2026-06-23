@@ -24,10 +24,10 @@
           "buildVersion": "67",
           "marketingVersion": "0.67.0 (67)",
           "date": "2026-06-17",
-          "localizedDescription": "Google Drive folder saving, zoom reflow, and mobile edge navigation gestures.",
+          "localizedDescription": "Android-aligned download modes with iCloud Drive folder saving, Files app export flow for Google Drive, zoom reflow, and mobile edge navigation gestures.",
           "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.67.0/morebettergakujo-ios.ipa",
           "size": 7641603,
-          "minOSVersion": "13.0"
+          "minOSVersion": "14.0"
         }
       ],
       "appPermissions": {

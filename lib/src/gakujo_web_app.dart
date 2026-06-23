@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'allowed_web_origins.dart';
-import 'desktop_page_fit_script.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'gakujo_app_settings.dart';
@@ -17,7 +16,11 @@ import 'gakujo_download_capture_script.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
+import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
+import 'gakujo_message_reader_script.dart';
+import 'gakujo_report_sorter_script.dart';
+import 'gakujo_session_extender_script.dart';
 import 'platform/platform_service.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
@@ -25,7 +28,6 @@ import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
 import 'web_view_service.dart';
-import 'web_view_reflow_script.dart';
 
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
@@ -69,6 +71,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoAppSettingsStore _appSettingsStore;
   late final bool _debugAllowed;
   String? _currentPageUrl;
+  String? _lastAllowedPageUrl;
   String _status = '準備中';
   bool _canGoBack = false;
   bool _canGoForward = false;
@@ -78,10 +81,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _currentCourseName;
   bool _isSettingsDialogOpen = false;
   double _desktopZoom = 1.0;
+  double _desktopPanZoomStartZoom = 1.0;
+  bool _desktopPanZoomIsPinching = false;
+  double _desktopHistorySwipeDistance = 0;
+  bool _desktopHistorySwipeTriggered = false;
+  Offset? _desktopZoomOrigin;
+  Timer? _desktopHistorySwipeResetTimer;
 
   static const double _minimumDesktopZoom = 0.5;
   static const double _maximumDesktopZoom = 2.0;
   static const double _desktopZoomStep = 0.1;
+  static const double _desktopHistorySwipeThreshold = 120;
+  static const double _desktopHorizontalSwipeDominance = 1.35;
+  static const double _desktopPinchZoomDeadZone = 0.01;
 
   @override
   void initState() {
@@ -107,6 +119,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void dispose() {
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
+    _desktopHistorySwipeResetTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -243,10 +256,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       autofocus: true,
       onKeyEvent: _handleDesktopZoomKeyEvent,
       child: Listener(
+        onPointerHover: _handleDesktopPointerHover,
+        onPointerDown: _handleDesktopPointerDown,
         onPointerSignal: _handleDesktopZoomPointerSignal,
+        onPointerPanZoomStart: _handleDesktopPanZoomStart,
+        onPointerPanZoomUpdate: _handleDesktopPanZoomUpdate,
+        onPointerPanZoomEnd: _handleDesktopPanZoomEnd,
         child: content,
       ),
     );
+  }
+
+  void _handleDesktopPointerHover(PointerHoverEvent event) {
+    _desktopZoomOrigin = event.localPosition;
+  }
+
+  void _handleDesktopPointerDown(PointerDownEvent event) {
+    _desktopZoomOrigin = event.localPosition;
   }
 
   bool get _supportsDesktopZoom {
@@ -288,12 +314,85 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (!HardwareKeyboard.instance.isMetaPressed &&
         !HardwareKeyboard.instance.isControlPressed) {
+      _handleDesktopHistorySwipeDelta(event.scrollDelta);
       return;
     }
 
     final delta =
         event.scrollDelta.dy < 0 ? _desktopZoomStep : -_desktopZoomStep;
+    _desktopZoomOrigin = event.localPosition;
     unawaited(_changeDesktopZoomBy(delta));
+  }
+
+  void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
+    _desktopPanZoomStartZoom = _desktopZoom;
+    _desktopPanZoomIsPinching = false;
+    _desktopZoomOrigin = event.localPosition;
+    _resetDesktopHistorySwipe();
+  }
+
+  void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    _desktopZoomOrigin = event.localPosition;
+    if ((event.scale - 1).abs() > _desktopPinchZoomDeadZone) {
+      _desktopPanZoomIsPinching = true;
+      unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * event.scale));
+      return;
+    }
+
+    if (_desktopPanZoomIsPinching) {
+      return;
+    }
+
+    _handleDesktopHistorySwipeDelta(event.panDelta);
+  }
+
+  void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
+    _desktopPanZoomIsPinching = false;
+    _scheduleDesktopHistorySwipeReset();
+  }
+
+  void _handleDesktopHistorySwipeDelta(Offset delta) {
+    if (!_supportsDesktopZoom || _desktopHistorySwipeTriggered) {
+      return;
+    }
+
+    final horizontal = delta.dx.abs();
+    final vertical = delta.dy.abs();
+    if (horizontal <= vertical * _desktopHorizontalSwipeDominance) {
+      if (vertical > horizontal) {
+        _scheduleDesktopHistorySwipeReset();
+      }
+      return;
+    }
+
+    _desktopHistorySwipeDistance += delta.dx;
+    _scheduleDesktopHistorySwipeReset();
+
+    if (_desktopHistorySwipeDistance.abs() < _desktopHistorySwipeThreshold) {
+      return;
+    }
+
+    _desktopHistorySwipeTriggered = true;
+    if (_desktopHistorySwipeDistance < 0) {
+      unawaited(_goBackIfPossible());
+    } else {
+      unawaited(_goForwardIfPossible());
+    }
+  }
+
+  void _scheduleDesktopHistorySwipeReset() {
+    _desktopHistorySwipeResetTimer?.cancel();
+    _desktopHistorySwipeResetTimer = Timer(
+      const Duration(milliseconds: 250),
+      _resetDesktopHistorySwipe,
+    );
+  }
+
+  void _resetDesktopHistorySwipe() {
+    _desktopHistorySwipeResetTimer?.cancel();
+    _desktopHistorySwipeResetTimer = null;
+    _desktopHistorySwipeDistance = 0;
+    _desktopHistorySwipeTriggered = false;
   }
 
   Future<void> _changeDesktopZoomBy(double delta) {
@@ -302,7 +401,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _setDesktopZoom(double zoom) async {
     final nextZoom = (zoom / _desktopZoomStep).round() * _desktopZoomStep;
-    final clampedZoom = nextZoom
+    return _setDesktopZoomValue(nextZoom);
+  }
+
+  Future<void> _setDesktopZoomSmooth(double zoom) {
+    return _setDesktopZoomValue(zoom);
+  }
+
+  Future<void> _setDesktopZoomValue(double zoom) async {
+    final clampedZoom = zoom
         .clamp(
           _minimumDesktopZoom,
           _maximumDesktopZoom,
@@ -327,16 +434,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!_supportsDesktopZoom) {
       return;
     }
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return;
     }
 
     try {
       await _controller.runJavaScript(
-        DesktopPageZoomScript.build(_desktopZoom),
+        DesktopPageZoomScript.build(
+          _desktopZoom,
+          originX: _desktopZoomOrigin?.dx,
+          originY: _desktopZoomOrigin?.dy,
+        ),
       );
     } catch (error, stackTrace) {
       developer.log(
@@ -356,15 +464,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoNavigationDecision> _handleNavigationRequest(
     GakujoNavigationRequest request,
   ) async {
+    if (_isInternalBlankUrl(request.url)) {
+      return GakujoNavigationDecision.navigate;
+    }
+
     final canLoad = AllowedWebOrigins.canLoad(
       request.url,
       debugAllowed: _debugAllowed,
     );
     if (!canLoad) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gakujo以外のページをブロックしました')),
-      );
+      _showSnackBar('Gakujo以外のページをブロックしました');
       return GakujoNavigationDecision.prevent;
     }
 
@@ -578,6 +688,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         rootLabel: rootLabel,
                         isConfigured: _downloadRoot.isConfigured,
                         saveMode: selectedDownloadSaveMode,
+                        helperText: _downloadDestinationHelperText,
                         onSaveModeChanged: (mode) async {
                           if (mode == null) {
                             return;
@@ -667,11 +778,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     } on FormatException {
       _setStatus('保存エラー: ダウンロード情報を読めませんでした');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ダウンロード情報を読めませんでした')),
-        );
-      }
+      _showSnackBar('ダウンロード情報を読めませんでした');
       return;
     }
 
@@ -692,9 +799,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       debugAllowed: _debugAllowed,
     )) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gakujo以外のダウンロードをブロックしました')),
-      );
+      _showSnackBar('Gakujo以外のダウンロードをブロックしました');
       return;
     }
 
@@ -726,9 +831,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var root = _downloadRoot;
     if (_appSettings.downloadSaveMode.needsConfiguredRoot &&
         !root.isConfigured) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ダウンロード保存先を選択してください')),
-      );
+      _showSnackBar('ダウンロード保存先を選択してください');
       root = await _downloadService.pickDownloadRoot();
       if (!mounted) {
         return;
@@ -754,18 +857,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           ? result.fileName
           : '${result.courseName}/${result.fileName}';
       _setStatus('保存しました: $savedPath');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存しました: ${result.fileName}')),
-        );
-      }
+      _showSnackBar('保存しました: ${result.fileName}');
     } on PlatformException catch (error) {
-      _setStatus('保存エラー: ${error.message ?? error.code}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存できませんでした: ${error.message ?? error.code}')),
-        );
-      }
+      final message = error.message ?? error.code;
+      _setStatus('保存エラー: $message');
+      _showSnackBar('保存できませんでした: $message');
     }
   }
 
@@ -784,11 +880,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return renderObject.localToGlobal(Offset.zero) & renderObject.size;
   }
 
+  String? get _downloadDestinationHelperText {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return null;
+    }
+    return 'iCloud Drive はフォルダ指定と自動仕分けに対応します。Google Drive に保存する場合は「自動仕分けなし+適宜保存場所指定」を使います。';
+  }
+
   Future<String?> _cookieHeader() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return null;
     }
 
@@ -809,10 +909,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _injectDownloadCaptureIfAllowed() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return;
     }
 
@@ -828,11 +925,49 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _injectGpaDisplayIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(GakujoGpaDisplayScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject GPA display script',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _injectOriginalExtensionFeaturesIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    final scripts = [
+      GakujoSessionExtenderScript.build(),
+      GakujoReportSorterScript.build(),
+      GakujoMessageReaderScript.build(),
+    ];
+    for (final script in scripts) {
+      try {
+        await _controller.runJavaScript(script);
+      } catch (error, stackTrace) {
+        developer.log(
+          'Failed to inject original extension feature script',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+  }
+
   Future<void> _injectLoginAutofillAssistIfAllowed() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    if (!_canRunPageScripts) {
       return;
     }
 
@@ -913,21 +1048,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
         onPageStarted: (url) {
+          if (_isInternalBlankUrl(url)) {
+            return;
+          }
           _currentPageUrl = url;
+          if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+            _lastAllowedPageUrl = url;
+          }
           unawaited(_refreshNavigationState());
           _setStatus('読込中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
+          if (_isInternalBlankUrl(url)) {
+            await _injectDownloadCaptureIfAllowed();
+            await _injectGpaDisplayIfAllowed();
+            await _injectOriginalExtensionFeaturesIfAllowed();
+            await _applyDesktopZoomIfAllowed();
+            return;
+          }
           _currentPageUrl = url;
+          if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+            _lastAllowedPageUrl = url;
+          }
           _setStatus('表示中: ${_displayUrl(url)}');
           await _saveLastPageUrl(url);
           await _refreshNavigationState();
           await _injectLoginAutofillAssistIfAllowed();
           await _injectTwoFactorAutofillIfAllowed();
           await _injectDownloadCaptureIfAllowed();
-          await _fitDesktopPageIfAllowed();
+          await _injectGpaDisplayIfAllowed();
+          await _injectOriginalExtensionFeaturesIfAllowed();
           await _applyDesktopZoomIfAllowed();
-          await _injectReflowOnZoomIfAllowed();
           await _refreshEstimatedCourseName();
         },
         onWebResourceError: (error) {
@@ -946,49 +1097,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = settings;
     });
-  }
-
-  Future<void> _fitDesktopPageIfAllowed() async {
-    if (_appSettings.pageMode != GakujoPageMode.desktop) {
-      return;
-    }
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
-      return;
-    }
-
-    try {
-      await _controller.runJavaScript(DesktopPageFitScript.build());
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to fit desktop page',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<void> _injectReflowOnZoomIfAllowed() async {
-    if (!AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
-      return;
-    }
-
-    try {
-      await _controller.runJavaScript(WebViewReflowScript.build());
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to inject WebView reflow script',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
   }
 
   Future<void> _saveInitialTwoFactorSecretIfAllowed() async {
@@ -1017,16 +1125,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('前のページはありません')),
-    );
+    _showSnackBar('前のページはありません');
   }
 
   Future<void> _goBack() async {
     if (!await _goBackIfPossible() && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('前のページはありません')),
-      );
+      _showSnackBar('前のページはありません');
     }
   }
 
@@ -1042,10 +1146,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _goForward() async {
-    if (await _controller.canGoForward()) {
-      await _controller.goForward();
-    }
+    await _goForwardIfPossible();
     await _refreshNavigationState();
+  }
+
+  Future<bool> _goForwardIfPossible() async {
+    if (!await _controller.canGoForward()) {
+      await _refreshNavigationState();
+      return false;
+    }
+
+    await _controller.goForward();
+    await _refreshNavigationState();
+    return true;
   }
 
   Future<void> _refreshNavigationState() async {
@@ -1082,6 +1195,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _saveLastPageUrl(String? url) async {
+    if (_isInternalBlankUrl(url)) {
+      return;
+    }
     try {
       await _lastPageStore.saveIfAllowed(url, debugAllowed: _debugAllowed);
     } catch (error, stackTrace) {
@@ -1102,6 +1218,30 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _status = status;
     });
+  }
+
+  void _showSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  bool get _canRunPageScripts {
+    return AllowedWebOrigins.canLoad(
+          _currentPageUrl,
+          debugAllowed: _debugAllowed,
+        ) ||
+        AllowedWebOrigins.canLoad(
+          _lastAllowedPageUrl,
+          debugAllowed: _debugAllowed,
+        );
+  }
+
+  bool _isInternalBlankUrl(String? url) {
+    return (url ?? '').trim().toLowerCase() == 'about:blank';
   }
 
   String _displayUrl(String? url) {
@@ -1573,6 +1713,7 @@ class DownloadDestinationSection extends StatelessWidget {
     required this.rootLabel,
     required this.isConfigured,
     required this.saveMode,
+    required this.helperText,
     required this.onSaveModeChanged,
     required this.onPick,
     required this.onClear,
@@ -1581,6 +1722,7 @@ class DownloadDestinationSection extends StatelessWidget {
   final String rootLabel;
   final bool isConfigured;
   final DownloadSaveMode saveMode;
+  final String? helperText;
   final ValueChanged<DownloadSaveMode?> onSaveModeChanged;
   final Future<void> Function() onPick;
   final Future<void> Function() onClear;
@@ -1595,26 +1737,14 @@ class DownloadDestinationSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        InputDecorator(
+        SettingsRadioGroup<DownloadSaveMode>(
+          groupValue: saveMode,
+          values: DownloadSaveMode.values,
+          labelFor: (mode) => mode.label,
+          onChanged: onSaveModeChanged,
           decoration: const InputDecoration(
             labelText: 'ファイル保存モード',
             border: OutlineInputBorder(),
-          ),
-          child: RadioGroup<DownloadSaveMode>(
-            groupValue: saveMode,
-            onChanged: onSaveModeChanged,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final mode in DownloadSaveMode.values)
-                  RadioListTile<DownloadSaveMode>(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: mode,
-                    title: Text(mode.label),
-                  ),
-              ],
-            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1625,6 +1755,13 @@ class DownloadDestinationSection extends StatelessWidget {
           ),
           child: Text(rootLabel),
         ),
+        if (helperText != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            helperText!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -1643,6 +1780,46 @@ class DownloadDestinationSection extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class SettingsRadioGroup<T> extends StatelessWidget {
+  const SettingsRadioGroup({
+    super.key,
+    required this.groupValue,
+    required this.values,
+    required this.labelFor,
+    required this.onChanged,
+    required this.decoration,
+  });
+
+  final T groupValue;
+  final Iterable<T> values;
+  final String Function(T value) labelFor;
+  final ValueChanged<T?> onChanged;
+  final InputDecoration decoration;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: decoration,
+      child: RadioGroup<T>(
+        groupValue: groupValue,
+        onChanged: onChanged,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final value in values)
+              RadioListTile<T>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: value,
+                title: Text(labelFor(value)),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1728,26 +1905,14 @@ class GakujoPageModeSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        InputDecorator(
+        SettingsRadioGroup<GakujoPageMode>(
+          groupValue: pageMode,
+          values: GakujoPageMode.values,
+          labelFor: (mode) => mode.label,
+          onChanged: onChanged,
           decoration: const InputDecoration(
             labelText: '開く画面',
             border: OutlineInputBorder(),
-          ),
-          child: RadioGroup<GakujoPageMode>(
-            groupValue: pageMode,
-            onChanged: onChanged,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final mode in GakujoPageMode.values)
-                  RadioListTile<GakujoPageMode>(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    value: mode,
-                    title: Text(mode.label),
-                  ),
-              ],
-            ),
           ),
         ),
       ],

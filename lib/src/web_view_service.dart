@@ -407,8 +407,6 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   }
 
   Future<void> _handleUrlChanged(String url) async {
-    _currentUrl = url;
-    _delegate?.onPageStarted?.call(url);
     if (_handlingPreventedNavigation) {
       return;
     }
@@ -417,6 +415,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       GakujoNavigationRequest(url: url),
     );
     if (decision != GakujoNavigationDecision.prevent) {
+      _currentUrl = url;
+      _delegate?.onPageStarted?.call(url);
       return;
     }
 
