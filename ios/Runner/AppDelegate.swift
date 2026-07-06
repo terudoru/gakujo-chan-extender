@@ -1,10 +1,14 @@
 import Flutter
+import EventKit
 import UIKit
+import UserNotifications
 import UniformTypeIdentifiers
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let downloadsBridge = IosDownloadsBridge()
+  private let notificationsBridge = IosNotificationsBridge()
+  private let calendarBridge = AppleCalendarBridge()
 
   override func application(
     _ application: UIApplication,
@@ -16,6 +20,336 @@ import UniformTypeIdentifiers
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     downloadsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+    notificationsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+    calendarBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+  }
+}
+
+private final class AppleCalendarBridge {
+  private static let channelName = "net.yoshida.morebettergakujo/calendar"
+  private static let calendarIdentifierKey = "more_better_gakujo_calendar_identifier"
+  private static let marker = "MBG_UID:"
+
+  private let eventStore = EKEventStore()
+
+  func register(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: Self.channelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(
+          code: "bridge_unavailable",
+          message: "カレンダーを準備できませんでした",
+          details: nil
+        ))
+        return
+      }
+
+      switch call.method {
+      case "syncEvents":
+        self.requestAccess { granted in
+          guard granted else {
+            result(FlutterError(
+              code: "calendar_permission_denied",
+              message: "カレンダーへの追加が許可されませんでした",
+              details: nil
+            ))
+            return
+          }
+          self.syncEvents(call: call, result: result)
+        }
+      case "deleteAddedEvents":
+        self.requestAccess { granted in
+          guard granted else {
+            result(FlutterError(
+              code: "calendar_permission_denied",
+              message: "カレンダーへのアクセスが許可されませんでした",
+              details: nil
+            ))
+            return
+          }
+          self.deleteAddedEvents(call: call, result: result)
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func requestAccess(completion: @escaping (Bool) -> Void) {
+    if #available(iOS 17.0, macOS 14.0, *) {
+      eventStore.requestFullAccessToEvents { granted, _ in
+        DispatchQueue.main.async {
+          completion(granted)
+        }
+      }
+    } else {
+      eventStore.requestAccess(to: .event) { granted, _ in
+        DispatchQueue.main.async {
+          completion(granted)
+        }
+      }
+    }
+  }
+
+  private func syncEvents(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let args = call.arguments as? [String: Any] else {
+      result(FlutterError(
+        code: "missing_arguments",
+        message: "カレンダー情報を取得できませんでした",
+        details: nil
+      ))
+      return
+    }
+
+    do {
+      let title = args["calendarTitle"] as? String ?? "More Better Gakujo 授業"
+      let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
+      let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
+      let rangeStart = Date(timeIntervalSince1970: startMillis / 1000)
+      let rangeEnd = Date(timeIntervalSince1970: endMillis / 1000)
+      let calendar = try writableCalendar(title: title)
+      let removed = try removeExistingEvents(start: rangeStart, end: rangeEnd, calendars: [calendar])
+      let events = args["events"] as? [[String: Any]] ?? []
+      var added = 0
+      for rawEvent in events {
+        if try insertEvent(rawEvent, calendar: calendar) {
+          added += 1
+        }
+      }
+      if added > 0 {
+        try eventStore.commit()
+      }
+      result([
+        "added": added,
+        "removed": removed,
+        "openedFallback": false
+      ])
+    } catch {
+      result(FlutterError(
+        code: "calendar_sync_failed",
+        message: "カレンダーに追加できませんでした: \(error.localizedDescription)",
+        details: nil
+      ))
+    }
+  }
+
+  private func deleteAddedEvents(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let args = call.arguments as? [String: Any] else {
+      result(FlutterError(
+        code: "missing_arguments",
+        message: "カレンダー情報を取得できませんでした",
+        details: nil
+      ))
+      return
+    }
+
+    do {
+      let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
+      let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
+      let rangeStart = Date(timeIntervalSince1970: startMillis / 1000)
+      let rangeEnd = Date(timeIntervalSince1970: endMillis / 1000)
+      let calendarTitle = args["calendarTitle"] as? String
+      let calendars: [EKCalendar]?
+      if let calendarTitle, !calendarTitle.isEmpty {
+        guard let calendar = existingCalendar(title: calendarTitle) else {
+          result(["removed": 0])
+          return
+        }
+        calendars = [calendar]
+      } else {
+        calendars = nil
+      }
+      let removed = try removeExistingEvents(start: rangeStart, end: rangeEnd, calendars: calendars)
+      result(["removed": removed])
+    } catch {
+      result(FlutterError(
+        code: "calendar_delete_failed",
+        message: "カレンダー予定を削除できませんでした: \(error.localizedDescription)",
+        details: nil
+      ))
+    }
+  }
+
+  private func writableCalendar(title: String) throws -> EKCalendar {
+    if let identifier = UserDefaults.standard.string(forKey: Self.calendarIdentifierKey),
+       let calendar = eventStore.calendar(withIdentifier: identifier),
+       calendar.title == title,
+       calendar.allowsContentModifications {
+      return calendar
+    }
+
+    if let existing = eventStore.calendars(for: .event).first(where: {
+      $0.title == title && $0.allowsContentModifications
+    }) {
+      UserDefaults.standard.set(existing.calendarIdentifier, forKey: Self.calendarIdentifierKey)
+      return existing
+    }
+
+    let calendar = EKCalendar(for: .event, eventStore: eventStore)
+    calendar.title = title
+    calendar.source = eventStore.defaultCalendarForNewEvents?.source
+      ?? eventStore.sources.first(where: { $0.sourceType == .local })
+      ?? eventStore.sources.first
+    guard calendar.source != nil else {
+      if let fallback = eventStore.defaultCalendarForNewEvents,
+         fallback.allowsContentModifications {
+        return fallback
+      }
+      throw CalendarBridgeError.missingWritableCalendar
+    }
+    try eventStore.saveCalendar(calendar, commit: true)
+    UserDefaults.standard.set(calendar.calendarIdentifier, forKey: Self.calendarIdentifierKey)
+    return calendar
+  }
+
+  private func existingCalendar(title: String) -> EKCalendar? {
+    eventStore.calendars(for: .event).first {
+      $0.title == title && $0.allowsContentModifications
+    }
+  }
+
+  private func removeExistingEvents(start: Date, end: Date, calendars: [EKCalendar]? = nil) throws -> Int {
+    let predicate = eventStore.predicateForEvents(
+      withStart: start,
+      end: end,
+      calendars: calendars
+    )
+    let events = eventStore.events(matching: predicate).filter {
+      $0.notes?.contains(Self.marker) == true
+    }
+    for event in events {
+      try eventStore.remove(event, span: .thisEvent, commit: false)
+    }
+    if !events.isEmpty {
+      try eventStore.commit()
+    }
+    return events.count
+  }
+
+  private func insertEvent(_ raw: [String: Any], calendar: EKCalendar) throws -> Bool {
+    guard let title = stringValue(raw["title"]), !title.isEmpty,
+          let startMillis = doubleValue(raw["startMillis"]),
+          let endMillis = doubleValue(raw["endMillis"]) else {
+      return false
+    }
+
+    let event = EKEvent(eventStore: eventStore)
+    event.calendar = calendar
+    event.title = title
+    event.startDate = Date(timeIntervalSince1970: startMillis / 1000)
+    event.endDate = Date(timeIntervalSince1970: endMillis / 1000)
+    event.timeZone = TimeZone(identifier: "Asia/Tokyo") ?? .current
+    event.location = stringValue(raw["location"])
+    var notes = ""
+    if let displayNotes = stringValue(raw["notes"]) {
+      notes = displayNotes
+    } else if let teacher = stringValue(raw["teacher"]), !teacher.isEmpty {
+      notes = "担当教員: \(teacher)"
+    }
+    if !notes.isEmpty {
+      notes += "\n\n"
+    }
+    notes += "\(Self.marker)\(stringValue(raw["id"]) ?? "")"
+    event.notes = notes
+    try eventStore.save(event, span: .thisEvent, commit: false)
+    return true
+  }
+
+  private func stringValue(_ raw: Any?) -> String? {
+    if let value = raw as? String {
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : trimmed
+    }
+    if let value = raw {
+      let text = "\(value)".trimmingCharacters(in: .whitespacesAndNewlines)
+      return text.isEmpty ? nil : text
+    }
+    return nil
+  }
+
+  private func doubleValue(_ raw: Any?) -> Double? {
+    if let value = raw as? NSNumber {
+      return value.doubleValue
+    }
+    if let value = raw as? Double {
+      return value
+    }
+    if let value = raw as? Int {
+      return Double(value)
+    }
+    if let value = raw as? Int64 {
+      return Double(value)
+    }
+    if let value = raw as? String {
+      return Double(value)
+    }
+    return nil
+  }
+}
+
+private enum CalendarBridgeError: LocalizedError {
+  case missingWritableCalendar
+
+  var errorDescription: String? {
+    switch self {
+    case .missingWritableCalendar:
+      return "書き込み可能なカレンダーが見つかりません"
+    }
+  }
+}
+
+private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDelegate {
+  private static let channelName = "net.yoshida.morebettergakujo/notifications"
+
+  func register(messenger: FlutterBinaryMessenger) {
+    UNUserNotificationCenter.current().delegate = self
+    let channel = FlutterMethodChannel(
+      name: Self.channelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "requestPermission":
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+          DispatchQueue.main.async {
+            result(granted)
+          }
+        }
+      case "notifyDeadline":
+        let args = call.arguments as? [String: Any]
+        let content = UNMutableNotificationContent()
+        content.title = args?["title"] as? String ?? "課題期限"
+        content.body = args?["body"] as? String ?? "提出期限を検出しました"
+        content.sound = .default
+        let request = UNNotificationRequest(
+          identifier: "deadline-\(Date().timeIntervalSince1970)",
+          content: content,
+          trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+          DispatchQueue.main.async {
+            if let error {
+              result(FlutterError(code: "notification_failed", message: error.localizedDescription, details: nil))
+            } else {
+              result(true)
+            }
+          }
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.alert, .sound, .badge])
   }
 }
 
@@ -177,10 +511,12 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   ) {
     if let result = pendingExportResult {
       let fileName = pendingExportFileName ?? pendingExportURL?.lastPathComponent ?? "document"
+      let pickedLocation = urls.first?.path
       clearPendingExport()
       result([
         "fileName": fileName,
-        "courseName": ""
+        "courseName": "",
+        "location": pickedLocation ?? ""
       ])
       return
     }
@@ -294,7 +630,8 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
       try typedData.data.write(to: destination, options: .atomic)
       result([
         "fileName": finalName,
-        "courseName": autoSortByCourse ? parent.lastPathComponent : ""
+        "courseName": autoSortByCourse ? parent.lastPathComponent : "",
+        "location": destination.path
       ])
     } catch {
       result(FlutterError(

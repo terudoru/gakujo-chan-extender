@@ -33,6 +33,25 @@ class TwoFactorAutofillScript {
   var token = $encodedToken;
   var autoSubmit = $autoSubmitLiteral;
 
+  function allDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+          return;
+        }
+        documents.push(win.document);
+        var frames = Array.prototype.slice.call(win.document.querySelectorAll('iframe, frame'));
+        for (var i = 0; i < frames.length; i += 1) {
+          collect(frames[i].contentWindow);
+        }
+      } catch (_) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
   function isLikelySubmitControl(element) {
     if (!element) {
       return false;
@@ -60,7 +79,8 @@ class TwoFactorAutofillScript {
       submitControl = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
     }
     if (!submitControl) {
-      var controls = document.querySelectorAll('button, input[type="submit"]');
+      var ownerDocument = input.ownerDocument || document;
+      var controls = ownerDocument.querySelectorAll('button, input[type="submit"]');
       for (var i = 0; i < controls.length; i += 1) {
         if (isLikelySubmitControl(controls[i])) {
           submitControl = controls[i];
@@ -94,7 +114,14 @@ class TwoFactorAutofillScript {
 
   function fill() {
     attempts += 1;
-    var input = document.querySelector('input[name="$inputName"]');
+    var input = null;
+    var documents = allDocuments();
+    for (var i = 0; i < documents.length; i += 1) {
+      input = documents[i].querySelector('input[name="$inputName"]');
+      if (input) {
+        break;
+      }
+    }
     if (!input) {
       if (attempts < maxAttempts) {
         window.setTimeout(fill, intervalMillis);

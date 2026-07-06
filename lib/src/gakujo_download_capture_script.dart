@@ -6,15 +6,30 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 6;
+  var captureVersion = 7;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
+    if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
+      window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
+    }
     return;
   }
   window.__MBG_DOWNLOAD_CAPTURE_VERSION = captureVersion;
 
-  if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER) {
-    document.removeEventListener('click', window.__MBG_DOWNLOAD_CAPTURE_HANDLER, true);
+  if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER &&
+      window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
+    for (var oldDocIndex = 0;
+        oldDocIndex < window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.length;
+        oldDocIndex += 1) {
+      try {
+        window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+          'click',
+          window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
+          true
+        );
+      } catch (e) {}
+    }
   }
+  window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
 
   function textOf(element) {
     if (!element) {
@@ -325,7 +340,37 @@ class GakujoDownloadCaptureScript {
     });
   };
 
-  document.addEventListener('click', window.__MBG_DOWNLOAD_CAPTURE_HANDLER, true);
+  function attachClickHandlers() {
+    if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER &&
+        window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
+      for (var oldDocIndex = 0;
+          oldDocIndex < window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.length;
+          oldDocIndex += 1) {
+        try {
+          window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+            'click',
+            window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
+            true
+          );
+        } catch (e) {}
+      }
+    }
+    window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+    var documents = collectDocuments();
+    for (var i = 0; i < documents.length; i += 1) {
+      try {
+        documents[i].addEventListener(
+          'click',
+          window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
+          true
+        );
+        window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.push(documents[i]);
+      } catch (e) {}
+    }
+  }
+
+  window.__MBG_DOWNLOAD_CAPTURE_ATTACH = attachClickHandlers;
+  attachClickHandlers();
 })();
 ''';
   }

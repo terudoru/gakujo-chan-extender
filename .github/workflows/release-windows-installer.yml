@@ -1,0 +1,84 @@
+name: Release Windows Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag, for example v0.67.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag_name }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: MoreBetterGakujo
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Windows app
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Package Windows portable zip and installer
+        shell: pwsh
+        run: |
+          $tagName = "${{ inputs.tag_name }}"
+          $safeTagName = $tagName -replace '[^A-Za-z0-9._-]', '-'
+          $appVersion = $safeTagName -replace '^[vV]', ''
+          $versionNumbers = @([regex]::Matches($appVersion, '\d+') | ForEach-Object { $_.Value })
+          if ($versionNumbers.Count -eq 0) {
+            $versionNumbers = @("0", "0", "0", "0")
+          }
+          while ($versionNumbers.Count -lt 4) {
+            $versionNumbers += "0"
+          }
+          $versionInfo = ($versionNumbers | Select-Object -First 4) -join "."
+          $releaseDir = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $releaseDir)) {
+            $releaseDir = "build\windows\runner\Release"
+          }
+          if (-not (Test-Path $releaseDir)) {
+            throw "Windows release output directory was not found."
+          }
+
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "dist\${env:APP_NAME}-$safeTagName.zip" -Force
+
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "distribution\windows\morebettergakujo.iss" `
+            "/DMyBuildDir=$releaseDir" `
+            "/DMyOutputDir=$((Resolve-Path dist).Path)" `
+            "/DMyAppVersion=$appVersion" `
+            "/DMyAppVersionInfo=$versionInfo" `
+            "/DMyOutputBaseFilename=${env:APP_NAME}-$safeTagName"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: |
+            dist/*.exe
+            dist/*.zip

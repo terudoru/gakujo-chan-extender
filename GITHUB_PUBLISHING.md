@@ -28,6 +28,29 @@ https://github.com/terudoru/gakujo-chan-extender.git
 このリポジトリでは、Android版アプリとして独立公開し、上流への敬意と由来は
 `NOTICE.md` に記載する方針です。
 
+GitHub Releases の配布ファイル名は、利用者が迷わないように
+`MoreBetterGakujo-vX.Y.Z.<拡張子>` の形に揃えます。タグ push だけで別の
+workflow が同じ Release に asset を追加しないよう、Release 作成 workflow は
+手動実行に限定しています。
+
+## GitHub ActionsでのWindows配布物作成
+
+`Release Windows Installer` workflow を手動実行すると、指定したタグから
+Windows版だけをビルドして GitHub Releases に添付します。
+
+- `MoreBetterGakujo-vX.Y.Z.zip`
+- `MoreBetterGakujo-vX.Y.Z.exe`
+
+実行手順:
+
+1. GitHub の Actions タブで `Release Windows Installer` を開く
+2. `Run workflow` を選ぶ
+3. `tag_name` に `v0.67.0` のようなタグ名を入力する
+4. 完了後、同じタグの Release assets を確認する
+
+Windows の `.zip` はポータブル版、`.exe` は Inno Setup で作成する
+インストーラーです。Android/iOS/macOS の配布物はこの workflow では作成しません。
+
 ## コミットしないローカルファイル
 
 次のファイルはgit管理外にしてください。

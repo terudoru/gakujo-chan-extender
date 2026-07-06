@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -42,15 +42,17 @@ jobs:
             throw "Windows release output directory was not found."
           }
 
+          $pubspecVersion = (Select-String -Path "pubspec.yaml" -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value.Trim()
+          $version = ($pubspecVersion -split '\+')[0]
           New-Item -ItemType Directory -Force -Path "dist" | Out-Null
           Compress-Archive `
             -Path "$buildDir\*" `
-            -DestinationPath "dist\morebettergakujo-windows-x64-release.zip" `
+            -DestinationPath "dist\MoreBetterGakujo-v$version.zip" `
             -Force
 
       - name: Upload Windows x64 artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: morebettergakujo-windows-x64-release
-          path: dist/morebettergakujo-windows-x64-release.zip
+          name: MoreBetterGakujo-windows-x64-release
+          path: dist/MoreBetterGakujo-v*.zip
           if-no-files-found: error

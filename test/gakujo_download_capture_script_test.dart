@@ -6,10 +6,15 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 6'));
+    expect(script, contains('captureVersion = 7'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
+    expect(script, contains('__MBG_DOWNLOAD_CAPTURE_DOCUMENTS'));
+    expect(script, contains('__MBG_DOWNLOAD_CAPTURE_ATTACH'));
+    expect(script, contains('function attachClickHandlers()'));
+    expect(script, contains('documents[i].addEventListener'));
+    expect(script, contains('removeEventListener'));
     expect(script, contains('firstMatchingCourseNameText'));
     expect(script, contains('sameRowValue'));
     expect(script, contains('科目名'));

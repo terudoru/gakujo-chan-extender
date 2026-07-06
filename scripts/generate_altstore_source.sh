@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 path/to/morebettergakujo-ios.ipa" >&2
+  echo "Usage: $0 path/to/MoreBetterGakujo-vX.Y.Z.ipa" >&2
   exit 64
 fi
 
@@ -31,7 +31,7 @@ fi
 release_tag="${RELEASE_TAG:-v$version}"
 release_notes="${RELEASE_NOTES:-iOS/iPadOS self-signed build.}"
 release_date="${RELEASE_DATE:-$(date +%Y-%m-%d)}"
-download_url="${DOWNLOAD_URL:-https://github.com/terudoru/gakujo-chan-extender/releases/download/$release_tag/morebettergakujo-ios.ipa}"
+download_url="${DOWNLOAD_URL:-https://github.com/terudoru/gakujo-chan-extender/releases/download/$release_tag/MoreBetterGakujo-$release_tag.ipa}"
 output_path="${OUTPUT_PATH:-distribution/altstore-source.json}"
 
 mkdir -p "$(dirname "$output_path")"

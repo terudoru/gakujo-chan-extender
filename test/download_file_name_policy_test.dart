@@ -58,12 +58,52 @@ void main() {
     expect(name, '生合成.pdf');
   });
 
+  test('decodes RFC 5987 filenames with a language tag', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      "attachment; filename*=UTF-8'ja'%E7%94%9F%E5%90%88%E6%88%90.pdf",
+    );
+
+    expect(name, '生合成.pdf');
+  });
+
+  test('decodes quoted RFC 5987 filenames', () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      'attachment; filename*="UTF-8\'\'%E8%B3%87%E6%96%99.pdf"',
+    );
+
+    expect(name, '資料.pdf');
+  });
+
+  test('decodes non-UTF-8 RFC 5987 filenames instead of leaving them encoded',
+      () {
+    final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
+      "attachment; filename*=iso-8859-1''%E9tude.pdf",
+    );
+
+    expect(name, 'étude.pdf');
+  });
+
   test('reads quoted content disposition filenames', () {
     final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
       'attachment; filename="lecture.pdf"',
     );
 
     expect(name, 'lecture.pdf');
+  });
+
+  test('does not fail on malformed encoded filename hints', () {
+    final dispositionName =
+        DownloadFileNamePolicy.fileNameFromContentDisposition(
+      "attachment; filename*=UTF-8''%E7%ZZ.pdf",
+    );
+    final fileName = DownloadFileNamePolicy.safeFileName(
+      preferredName: '',
+      contentDispositionName: dispositionName,
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/%E7%ZZ',
+      mimeType: 'application/pdf',
+    );
+
+    expect(fileName, '%E7%ZZ.pdf');
   });
 
   test('sanitizes folder names and falls back to unclassified', () {

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+pubspec_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+version="${pubspec_version%%+*}"
+
 app_path="${APP_PATH:-build/ios/iphoneos/Runner.app}"
-output_path="${OUTPUT_PATH:-dist/morebettergakujo-ios.ipa}"
+output_path="${OUTPUT_PATH:-dist/MoreBetterGakujo-v$version.ipa}"
 
 case "$output_path" in
   /*) output_abs="$output_path" ;;

@@ -7,6 +7,7 @@ void main() {
 
     expect(script, contains('__MBG_REPORT_SORTER_VERSION'));
     expect(script, contains("document.getElementById('main-frame-if')"));
+    expect(script, contains('|| document'));
     expect(script,
         contains("doc.querySelector('#enqListForm table:nth-of-type(2)')"));
     expect(script, contains('タイトルでソート'));

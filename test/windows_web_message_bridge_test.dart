@@ -25,4 +25,10 @@ void main() {
     expect(WindowsWebMessageBridge.decode('not json'), isNull);
     expect(WindowsWebMessageBridge.decode(42), isNull);
   });
+
+  test('decodes WebView2 JSON string script results', () {
+    expect(WindowsJavaScriptResult.decodeString('"単位修得状況照会"'), '単位修得状況照会');
+    expect(WindowsJavaScriptResult.decodeString('plain title'), 'plain title');
+    expect(WindowsJavaScriptResult.decodeString(null), isNull);
+  });
 }

@@ -73,6 +73,8 @@ abstract class GakujoWebViewController {
 
   Future<String?> currentUrl();
 
+  Future<String?> cookieHeaderForUrl(String url);
+
   Future<void> dispose();
 }
 
@@ -168,7 +170,18 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   }) async {
     _inner.addJavaScriptChannel(
       name,
-      onMessageReceived: (message) => onMessageReceived(message.message),
+      onMessageReceived: (message) {
+        Future.sync(() => onMessageReceived(message.message)).catchError(
+          (Object error, StackTrace stackTrace) {
+            developer.log(
+              'WebView JavaScript channel handler failed',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          },
+        );
+      },
     );
   }
 
@@ -230,6 +243,38 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<String?> currentUrl() => _inner.currentUrl();
+
+  @override
+  Future<String?> cookieHeaderForUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) {
+      return null;
+    }
+
+    try {
+      final cookies = await WebViewCookieManager().getCookies(
+        domain: Uri(scheme: uri.scheme, host: uri.host),
+      );
+      final requestPath = uri.path.isEmpty ? '/' : uri.path;
+      final pairs = <String>[];
+      for (final cookie in cookies) {
+        final name = cookie.name.trim();
+        if (name.isEmpty || !requestPath.startsWith(cookie.path)) {
+          continue;
+        }
+        pairs.add('$name=${cookie.value}');
+      }
+      return pairs.isEmpty ? null : pairs.join('; ');
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to read WebView cookie store',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
 
   @override
   Future<void> dispose() async {}
@@ -349,7 +394,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       return _title;
     }
     final result = await _inner.executeScript('document.title');
-    return result?.toString();
+    return WindowsJavaScriptResult.decodeString(result);
   }
 
   @override
@@ -399,6 +444,11 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   }
 
   @override
+  Future<String?> cookieHeaderForUrl(String url) async {
+    return null;
+  }
+
+  @override
   Future<void> dispose() async {
     for (final subscription in _subscriptions) {
       await subscription.cancel();
@@ -425,6 +475,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       await _inner.stop();
       if (_canGoBack) {
         await _inner.goBack();
+      } else if (_currentUrl != null && _currentUrl != url) {
+        await _inner.loadUrl(_currentUrl!);
       }
     } finally {
       _handlingPreventedNavigation = false;
@@ -441,7 +493,19 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     if (channel == null || message == null) {
       return;
     }
-    _javaScriptHandlers[channel]?.call(message);
+    final handler = _javaScriptHandlers[channel];
+    if (handler == null) {
+      return;
+    }
+    Future.sync(() => handler(message))
+        .catchError((Object error, StackTrace stackTrace) {
+      developer.log(
+        'Windows WebView JavaScript channel handler failed',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    });
   }
 
   Future<void> _tryExecuteScript(String script) async {
@@ -508,5 +572,28 @@ class WindowsWebMessageBridge {
     } on FormatException {
       return null;
     }
+  }
+}
+
+@visibleForTesting
+class WindowsJavaScriptResult {
+  const WindowsJavaScriptResult._();
+
+  static String? decodeString(Object? raw) {
+    final value = raw?.toString();
+    if (value == null) {
+      return null;
+    }
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is String) {
+          return decoded;
+        }
+      } on FormatException {
+        return value;
+      }
+    }
+    return value;
   }
 }

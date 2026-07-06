@@ -16,15 +16,15 @@ class GakujoMessageReaderScript {
   function mainFrameDocument() {
     try {
       var frame = document.getElementById('main-frame-if');
-      return frame && frame.contentWindow && frame.contentWindow.document;
+      return frame && frame.contentWindow && frame.contentWindow.document || document;
     } catch (e) {
-      return null;
+      return document;
     }
   }
 
   function messageTable() {
     var doc = mainFrameDocument();
-    return doc ? doc.querySelector('table.normal:nth-child(9)') : null;
+    return doc.querySelector('table.normal:nth-child(9)');
   }
 
   function absoluteCampusUrl(url) {

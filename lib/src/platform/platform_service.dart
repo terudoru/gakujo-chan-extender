@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 
 import '../file_system_gakujo_download_service.dart';
+import '../gakujo_calendar_service.dart';
 import '../gakujo_download_service.dart';
 import '../web_view_service.dart';
 
@@ -26,6 +27,8 @@ abstract class GakujoPlatformService {
   GakujoWebViewService createWebViewService();
 
   GakujoDownloadService createDownloadService();
+
+  GakujoCalendarService createCalendarService();
 }
 
 class AndroidGakujoPlatformService extends GakujoPlatformService {
@@ -39,6 +42,11 @@ class AndroidGakujoPlatformService extends GakujoPlatformService {
   @override
   GakujoDownloadService createDownloadService() {
     return const MethodChannelGakujoDownloadService();
+  }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const MethodChannelGakujoCalendarService();
   }
 }
 
@@ -54,6 +62,11 @@ class IosGakujoPlatformService extends GakujoPlatformService {
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
   }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const MethodChannelGakujoCalendarService();
+  }
 }
 
 class MacosGakujoPlatformService extends GakujoPlatformService {
@@ -67,6 +80,11 @@ class MacosGakujoPlatformService extends GakujoPlatformService {
   @override
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
+  }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const MethodChannelGakujoCalendarService();
   }
 }
 
@@ -82,6 +100,11 @@ class DesktopGakujoPlatformService extends GakujoPlatformService {
   GakujoDownloadService createDownloadService() {
     return FileSystemGakujoDownloadService();
   }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const UnsupportedGakujoCalendarService();
+  }
 }
 
 class UnsupportedGakujoPlatformService extends GakujoPlatformService {
@@ -95,5 +118,10 @@ class UnsupportedGakujoPlatformService extends GakujoPlatformService {
   @override
   GakujoDownloadService createDownloadService() {
     return const UnsupportedGakujoDownloadService('Unsupported platform.');
+  }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const UnsupportedGakujoCalendarService();
   }
 }

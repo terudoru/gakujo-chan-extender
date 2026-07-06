@@ -50,7 +50,8 @@ class LoginAutofillAssistScript {
     if (!element) {
       return false;
     }
-    var style = window.getComputedStyle(element);
+    var pageWindow = element.ownerDocument.defaultView || window;
+    var style = pageWindow.getComputedStyle(element);
     return style.display !== 'none' &&
       style.visibility !== 'hidden' &&
       style.opacity !== '0' &&
@@ -58,16 +59,21 @@ class LoginAutofillAssistScript {
   }
 
   function allDocuments() {
-    var documents = [document];
-    var frames = Array.prototype.slice.call(document.querySelectorAll('iframe, frame'));
-    for (var i = 0; i < frames.length; i += 1) {
+    var documents = [];
+    function collect(win) {
       try {
-        if (frames[i].contentDocument) {
-          documents.push(frames[i].contentDocument);
+        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+          return;
+        }
+        documents.push(win.document);
+        var frames = Array.prototype.slice.call(win.document.querySelectorAll('iframe, frame'));
+        for (var i = 0; i < frames.length; i += 1) {
+          collect(frames[i].contentWindow);
         }
       } catch (_) {
       }
     }
+    collect(window);
     return documents;
   }
 
@@ -93,8 +99,10 @@ class LoginAutofillAssistScript {
       input.getAttribute('title')
     ];
 
-    if (input.id && window.CSS && CSS.escape) {
-      var label = document.querySelector('label[for="' + CSS.escape(input.id) + '"]');
+    var ownerDocument = input.ownerDocument || document;
+    var pageWindow = ownerDocument.defaultView || window;
+    if (input.id && pageWindow.CSS && pageWindow.CSS.escape) {
+      var label = ownerDocument.querySelector('label[for="' + pageWindow.CSS.escape(input.id) + '"]');
       if (label) {
         pieces.push(label.innerText || label.textContent);
       }
@@ -216,6 +224,36 @@ class LoginAutofillAssistScript {
     input.blur();
   }
 
+  function setIfMissing(element, name, value) {
+    if (!element.getAttribute(name)) {
+      element.setAttribute(name, value);
+    }
+  }
+
+  function enableCredentialAutofill(target) {
+    if (target.form) {
+      target.form.setAttribute('autocomplete', 'on');
+    }
+
+    target.username.setAttribute('autocomplete', 'username');
+    target.username.setAttribute('autocapitalize', 'none');
+    target.username.setAttribute('autocorrect', 'off');
+    target.username.setAttribute('spellcheck', 'false');
+    target.username.setAttribute('enterkeyhint', 'next');
+    setIfMissing(target.username, 'name', 'username');
+    setIfMissing(target.username, 'id', 'username');
+    setIfMissing(target.username, 'aria-label', 'ログインID');
+
+    target.password.setAttribute('autocomplete', 'current-password');
+    target.password.setAttribute('autocapitalize', 'none');
+    target.password.setAttribute('autocorrect', 'off');
+    target.password.setAttribute('spellcheck', 'false');
+    target.password.setAttribute('enterkeyhint', 'done');
+    setIfMissing(target.password, 'name', 'password');
+    setIfMissing(target.password, 'id', 'password');
+    setIfMissing(target.password, 'aria-label', 'パスワード');
+  }
+
   function submitForm(target) {
     if (window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
       return;
@@ -304,27 +342,7 @@ class LoginAutofillAssistScript {
       return;
     }
 
-    if (target.form) {
-      target.form.setAttribute('autocomplete', 'on');
-    }
-
-    target.username.setAttribute('autocomplete', 'username');
-    target.username.setAttribute('autocapitalize', 'none');
-    target.username.setAttribute('spellcheck', 'false');
-    if (!target.username.getAttribute('name')) {
-      target.username.setAttribute('name', 'username');
-    }
-    if (!target.username.getAttribute('id')) {
-      target.username.setAttribute('id', 'username');
-    }
-
-    target.password.setAttribute('autocomplete', 'current-password');
-    if (!target.password.getAttribute('name')) {
-      target.password.setAttribute('name', 'password');
-    }
-    if (!target.password.getAttribute('id')) {
-      target.password.setAttribute('id', 'password');
-    }
+    enableCredentialAutofill(target);
 
     if (!savedUsername || !savedPassword || window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
       report('ready-no-submit', 'target-found');

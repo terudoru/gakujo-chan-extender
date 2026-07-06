@@ -23,10 +23,10 @@
           "version": "0.67.0",
           "buildVersion": "67",
           "marketingVersion": "0.67.0 (67)",
-          "date": "2026-06-17",
-          "localizedDescription": "Android-aligned download modes with iCloud Drive folder saving, Files app export flow for Google Drive, zoom reflow, and mobile edge navigation gestures.",
-          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.67.0/morebettergakujo-ios.ipa",
-          "size": 7641603,
+          "date": "2026-06-23",
+          "localizedDescription": "Cross-platform feature parity changes, original extension README features, download/save improvements, GPA display/sort features, and desktop zoom fixes.",
+          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.67.0/MoreBetterGakujo-v0.67.0.ipa",
+          "size": 7560321,
           "minOSVersion": "14.0"
         }
       ],

@@ -9,7 +9,16 @@ void main() {
     expect(script, contains('autocomplete\', \'username'));
     expect(script, contains('autocomplete\', \'current-password'));
     expect(script, contains('autocapitalize\', \'none'));
+    expect(script, contains('autocorrect\', \'off'));
     expect(script, contains('spellcheck\', \'false'));
+    expect(script, contains('enterkeyhint\', \'next'));
+    expect(script, contains('enterkeyhint\', \'done'));
+    expect(script, contains('aria-label\', \'ログインID'));
+    expect(script, contains('aria-label\', \'パスワード'));
+    expect(script, contains('function enableCredentialAutofill(target)'));
+    expect(script, contains('function collect(win)'));
+    expect(script, contains('element.ownerDocument.defaultView || window'));
+    expect(script, contains('ownerDocument.querySelector'));
     expect(script, contains('MBG_LOGIN_AUTOFILL_ASSIST_READY'));
   });
 

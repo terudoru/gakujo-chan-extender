@@ -62,4 +62,38 @@ class GakujoDownloadRequest {
       if (userAgent != null && userAgent.isNotEmpty) 'userAgent': userAgent,
     };
   }
+
+  Map<String, Object?> toJson() {
+    return {
+      'url': url,
+      'method': method,
+      'courseName': courseName,
+      'fileName': fileName,
+      'formFields': formFields,
+    };
+  }
+
+  factory GakujoDownloadRequest.fromJsonMap(Map<dynamic, dynamic> raw) {
+    final rawFields = raw['formFields'];
+    final fields = <String, String>{};
+    if (rawFields is Map) {
+      rawFields.forEach((key, value) {
+        if (key != null && value != null) {
+          fields[key.toString()] = value.toString();
+        }
+      });
+    }
+
+    return GakujoDownloadRequest(
+      url: raw['url']?.toString() ?? '',
+      method: (raw['method']?.toString() ?? 'GET').toUpperCase(),
+      courseName:
+          DownloadFileNamePolicy.safeFolderName(raw['courseName']?.toString()),
+      fileName: DownloadFileNamePolicy.safeFileName(
+        preferredName: raw['fileName']?.toString(),
+        url: raw['url']?.toString(),
+      ),
+      formFields: fields,
+    );
+  }
 }

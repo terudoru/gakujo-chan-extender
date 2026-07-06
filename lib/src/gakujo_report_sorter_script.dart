@@ -16,15 +16,15 @@ class GakujoReportSorterScript {
   function mainFrameDocument() {
     try {
       var frame = document.getElementById('main-frame-if');
-      return frame && frame.contentWindow && frame.contentWindow.document;
+      return frame && frame.contentWindow && frame.contentWindow.document || document;
     } catch (e) {
-      return null;
+      return document;
     }
   }
 
   function reportTable() {
     var doc = mainFrameDocument();
-    return doc ? doc.querySelector('#enqListForm table:nth-of-type(2)') : null;
+    return doc.querySelector('#enqListForm table:nth-of-type(2)');
   }
 
   function textOf(element) {
@@ -35,6 +35,19 @@ class GakujoReportSorterScript {
 
   function normalizeDateNumber(text) {
     var end = (text || '').split('～').pop() || '';
+    // Parse Y/M/D and optional H:M explicitly so the comparable value is always
+    // YYYYMMDDhhmm (12 digits), regardless of separators or trailing seconds.
+    var match = end.match(
+      /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/
+    );
+    if (match) {
+      function pad(value) {
+        return ('0' + (value || '0')).slice(-2);
+      }
+      return Number(
+        match[1] + pad(match[2]) + pad(match[3]) + pad(match[4]) + pad(match[5])
+      );
+    }
     var digits = end.replace(/[^\d]/g, '');
     return Number(digits || '0');
   }

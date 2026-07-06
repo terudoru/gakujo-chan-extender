@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $InstallerScript = Join-Path $RepoRoot "distribution\windows\morebettergakujo.iss"
+$Pubspec = Join-Path $RepoRoot "pubspec.yaml"
 
 if (-not $InnoSetupCompiler) {
   $Candidates = @(
@@ -22,8 +23,23 @@ if (-not $InnoSetupCompiler -or -not (Test-Path $InnoSetupCompiler)) {
 
 Push-Location $RepoRoot
 try {
+  $PubspecVersion = (Select-String -Path $Pubspec -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value.Trim()
+  $AppVersion = ($PubspecVersion -split '\+')[0]
+  $VersionNumbers = @([regex]::Matches($AppVersion, '\d+') | ForEach-Object { $_.Value })
+  if ($VersionNumbers.Count -eq 0) {
+    $VersionNumbers = @("0", "0", "0", "0")
+  }
+  while ($VersionNumbers.Count -lt 4) {
+    $VersionNumbers += "0"
+  }
+  $VersionInfo = ($VersionNumbers | Select-Object -First 4) -join "."
+
   flutter build windows --release
-  & $InnoSetupCompiler $InstallerScript
+  & $InnoSetupCompiler `
+    $InstallerScript `
+    "/DMyAppVersion=$AppVersion" `
+    "/DMyAppVersionInfo=$VersionInfo" `
+    "/DMyOutputBaseFilename=MoreBetterGakujo-v$AppVersion"
 }
 finally {
   Pop-Location

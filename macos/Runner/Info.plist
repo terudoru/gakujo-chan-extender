@@ -22,6 +22,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>履修中の授業予定をMacのカレンダーに追加・更新するために使用します。</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>履修中の授業予定をMacのカレンダーに追加・更新するために使用します。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>

@@ -6,6 +6,11 @@ void main() {
     final script = TwoFactorAutofillScript.build(token: '123456');
 
     expect(script, contains('input[name="ninshoCode"]'));
+    expect(script, contains('function allDocuments()'));
+    expect(script, contains('function collect(win)'));
+    expect(script, contains("document.querySelectorAll('iframe, frame')"));
+    expect(script, contains('documents[i].querySelector'));
+    expect(script, contains('input.ownerDocument || document'));
     expect(script, contains('var token = "123456";'));
     expect(script, contains('MBG_2FA_AUTOFILL_SUCCESS'));
     expect(script, contains('MBG_2FA_AUTO_SUBMIT_SUCCESS'));

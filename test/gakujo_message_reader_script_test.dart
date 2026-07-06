@@ -7,6 +7,7 @@ void main() {
 
     expect(script, contains('__MBG_MESSAGE_READER_VERSION'));
     expect(script, contains("document.getElementById('main-frame-if')"));
+    expect(script, contains('|| document'));
     expect(script, contains("doc.querySelector('table.normal:nth-child(9)')"));
     expect(script, contains('指定した個数を既読にする'));
     expect(script, contains('既読にする数(半角数字)'));

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
@@ -209,6 +210,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     return GakujoDownloadResult(
       fileName: _baseName(location.path),
       courseName: '',
+      location: location.path,
     );
   }
 
@@ -224,9 +226,11 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         : root;
     final finalName = await _uniqueFileName(parent, fileName);
     await _writeFile(parent, finalName, bytes);
+    final location = _join(parent.path, finalName);
     return GakujoDownloadResult(
       fileName: finalName,
       courseName: autoSortByCourse ? _baseName(parent.path) : '',
+      location: location,
     );
   }
 
@@ -285,6 +289,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         );
       }
 
+      final finalUrl = resolveRedirectedDownloadUrl(
+        uri,
+        response.redirects.map((redirect) => redirect.location),
+      );
+      if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
+        throw PlatformException(
+          code: 'blocked_url',
+          message: 'Gakujo以外へのリダイレクトをブロックしました',
+        );
+      }
+
       final builder = BytesBuilder(copy: false);
       await for (final chunk in response.timeout(
         const Duration(seconds: 60),
@@ -295,9 +310,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           response.headers.value(HttpHeaders.contentDisposition);
       return _DownloadedFile(
         bytes: builder.takeBytes(),
-        finalUrl: response.redirects.isEmpty
-            ? uri.toString()
-            : response.redirects.last.location.toString(),
+        finalUrl: finalUrl,
         mimeType: response.headers.contentType?.mimeType,
         contentDispositionFileName:
             DownloadFileNamePolicy.fileNameFromContentDisposition(disposition),
@@ -399,6 +412,15 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     final index = trimmed.lastIndexOf('/');
     return index < 0 ? trimmed : trimmed.substring(index + 1);
   }
+}
+
+@visibleForTesting
+String resolveRedirectedDownloadUrl(Uri initialUri, Iterable<Uri> redirects) {
+  var current = initialUri;
+  for (final redirect in redirects) {
+    current = current.resolveUri(redirect);
+  }
+  return current.toString();
 }
 
 class _DownloadedFile {

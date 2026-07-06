@@ -8,15 +8,18 @@ class GakujoDownloadResult {
   const GakujoDownloadResult({
     required this.fileName,
     required this.courseName,
+    this.location,
   });
 
   final String fileName;
   final String courseName;
+  final String? location;
 
   factory GakujoDownloadResult.fromMap(Map<dynamic, dynamic>? raw) {
     return GakujoDownloadResult(
       fileName: raw?['fileName']?.toString() ?? '',
       courseName: raw?['courseName']?.toString() ?? '',
+      location: raw?['location']?.toString(),
     );
   }
 }

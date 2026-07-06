@@ -32,6 +32,7 @@ void main() {
     expect(script, contains('function sortByNumber()'));
     expect(script, contains('function sortByOpenNumber()'));
     expect(script, contains('function sortByScore()'));
+    expect(script, contains('gradeTable.headerRowIndex + 1'));
     expect(script, contains('__MBG_GPA_DISPLAY_INTERVAL'));
     expect(script, contains('.mbg-gpa-display'));
     expect(script, contains("display.style.background = 'transparent'"));

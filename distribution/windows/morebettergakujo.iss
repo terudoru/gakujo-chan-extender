@@ -4,15 +4,38 @@
 ;
 ; Then compile this file with Inno Setup on Windows.
 
+#ifndef MyAppId
 #define MyAppId "{{30C656ED-D1B4-4FDD-A731-43851D4EB506}"
+#endif
+
+#ifndef MyAppRegistryId
 #define MyAppRegistryId "{30C656ED-D1B4-4FDD-A731-43851D4EB506}"
+#endif
+
 #define MyAppName "More Better Gakujo"
+
+#ifndef MyAppVersion
 #define MyAppVersion "0.67.0"
+#endif
+
+#ifndef MyAppVersionInfo
 #define MyAppVersionInfo "0.67.0.67"
+#endif
+
 #define MyAppPublisher "net.yoshida"
 #define MyAppExeName "morebettergakujo_flutter.exe"
+
+#ifndef MyBuildDir
 #define MyBuildDir "..\..\build\windows\x64\runner\Release"
+#endif
+
+#ifndef MyOutputDir
 #define MyOutputDir "..\..\dist\windows"
+#endif
+
+#ifndef MyOutputBaseFilename
+#define MyOutputBaseFilename "MoreBetterGakujo-v" + MyAppVersion
+#endif
 
 [Setup]
 AppId={#MyAppId}
@@ -23,7 +46,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir={#MyOutputDir}
-OutputBaseFilename=MoreBetterGakujoSetup-{#MyAppVersion}
+OutputBaseFilename={#MyOutputBaseFilename}
 SetupIconFile=..\..\windows\runner\resources\app_icon.ico
 Compression=lzma2
 SolidCompression=yes

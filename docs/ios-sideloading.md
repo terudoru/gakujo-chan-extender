@@ -15,18 +15,23 @@ iOS/iPadOS 14 以降が必要です。
 どちらも同じ `.ipa` を使います。アプリの署名は、利用者それぞれのApple Accountで
 行います。
 
-## リリースに置くファイル
+## 配布ファイル
 
-GitHub Releases には、IPAを次の名前でアップロードします。
+iOS/iPadOS版のIPAは、GitHub Actionsでは作りません。macOS上のローカル環境で
+作成し、必要な場合だけ手動で配布場所へ置きます。
+
+配布する場合のファイル名は次の形に揃えます。
 
 ```text
-morebettergakujo-ios.ipa
+MoreBetterGakujo-v0.67.0.ipa
 ```
 
-SideStore/AltStore source は、次のリリースassetとして公開します。
+SideStore/AltStore source を使う場合は、Release asset に混ぜず、リポジトリ内の
+`distribution/altstore-source.json` を更新して raw URL を案内します。source内の
+`downloadURL` は、実際に配布するIPAのURLに合わせます。
 
 ```text
-altstore-source.json
+https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distribution/altstore-source.json
 ```
 
 アプリのBundle IDは固定します。
@@ -39,7 +44,7 @@ Bundle IDを変えると、Sideloadly/SideStoreからは別アプリとして扱
 
 ## 自分用: Sideloadly
 
-1. `morebettergakujo-ios.ipa` を作ります。
+1. `MoreBetterGakujo-vX.Y.Z.ipa` を作ります。
 2. Mac/PCでSideloadlyを開きます。
 3. IPAをSideloadlyへドロップします。
 4. 対象のiPhone/iPadを選びます。
@@ -56,12 +61,6 @@ Bundle IDを変えると、Sideloadly/SideStoreからは別アプリとして扱
 - GitHub ReleasesからIPAを直接ダウンロードし、SideStoreで開く
 
 推奨するSource URL:
-
-```text
-https://github.com/terudoru/gakujo-chan-extender/releases/latest/download/altstore-source.json
-```
-
-リポジトリ内のsourceテンプレート:
 
 ```text
 https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distribution/altstore-source.json
@@ -87,7 +86,7 @@ macOSにXcodeとFlutterが入っている環境で実行します。
 出力先:
 
 ```text
-dist/morebettergakujo-ios.ipa
+dist/MoreBetterGakujo-v0.67.0.ipa
 ```
 
 このIPAはApp Store用の署名済みビルドではありません。SideloadlyやSideStore側で、
@@ -98,7 +97,7 @@ dist/morebettergakujo-ios.ipa
 IPAを作ったあとに実行します。
 
 ```sh
-./scripts/generate_altstore_source.sh dist/morebettergakujo-ios.ipa
+./scripts/generate_altstore_source.sh dist/MoreBetterGakujo-v0.67.0.ipa
 ```
 
 任意の環境変数:
@@ -106,24 +105,16 @@ IPAを作ったあとに実行します。
 ```sh
 RELEASE_TAG=v0.66.0 \
 RELEASE_NOTES="iOS sideloading build." \
-./scripts/generate_altstore_source.sh dist/morebettergakujo-ios.ipa
+./scripts/generate_altstore_source.sh dist/MoreBetterGakujo-v0.66.0.ipa
 ```
 
 生成された `distribution/altstore-source.json` は、リリース前またはリリースと同時に
 コミットします。
 
-## GitHub Actionsでリリースする
+## GitHub Actionsでの扱い
 
-`Release iOS Sideload IPA` workflow は、`v*` タグのpush、または手動実行で動きます。
-同じGitHub Releaseに次の2つをアップロードします。
-
-```text
-morebettergakujo-ios.ipa
-altstore-source.json
-```
-
-リリースassetのsourceは、実際にアップロードしたIPAから生成されるため、
-SideStore向けにはこちらのURLを推奨します。
+このリポジトリでは、GitHub Actionsによる配布物作成はWindows版だけに限定します。
+iOS/iPadOS版のIPA作成、署名、SideStore source更新はローカル作業として扱います。
 
 ## 利用者に明記する注意点
 

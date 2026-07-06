@@ -207,10 +207,6 @@ class GakujoGpaDisplayScript {
     headerCell.appendChild(display);
   }
 
-  function bodyRows(table) {
-    return Array.prototype.slice.call(table.rows, 1);
-  }
-
   function rewriteRows(table, rows) {
     var parent = table.tBodies && table.tBodies.length ? table.tBodies[0] : table;
     for (var i = 0; i < rows.length; i += 1) {
@@ -225,7 +221,10 @@ class GakujoGpaDisplayScript {
       if (!gradeTable) {
         continue;
       }
-      var rows = bodyRows(gradeTable.table);
+      var rows = Array.prototype.slice.call(
+        gradeTable.table.rows,
+        gradeTable.headerRowIndex + 1
+      );
       rows.sort(compare);
       rewriteRows(gradeTable.table, rows);
       updateDocument(documents[i]);

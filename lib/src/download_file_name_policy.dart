@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class DownloadFileNamePolicy {
   const DownloadFileNamePolicy._();
 
@@ -64,12 +66,14 @@ class DownloadFileNamePolicy {
     }
 
     final encodedMatch = RegExp(
-      r"filename\*=UTF-8''([^;]+)",
+      r'''filename\*\s*=\s*"?([^'";]*)'[^']*'([^";]+)"?''',
       caseSensitive: false,
     ).firstMatch(header);
     if (encodedMatch != null) {
-      return Uri.decodeComponent(
-        encodedMatch.group(1)?.trim().replaceAll('"', '') ?? '',
+      final charset = encodedMatch.group(1)?.trim().toLowerCase();
+      return _decodeExtendedFilename(
+        encodedMatch.group(2)?.trim().replaceAll('"', '') ?? '',
+        charset,
       );
     }
 
@@ -154,12 +158,55 @@ class DownloadFileNamePolicy {
     }
 
     final uri = Uri.tryParse(rawUrl);
-    final segment =
-        uri?.pathSegments.isNotEmpty == true ? uri!.pathSegments.last : null;
+    String? segment;
+    try {
+      segment =
+          uri?.pathSegments.isNotEmpty == true ? uri!.pathSegments.last : null;
+    } on FormatException {
+      segment = Uri.tryParse(rawUrl)?.path.split('/').last;
+    }
     if (segment == null || segment.isEmpty) {
       return null;
     }
-    return Uri.decodeComponent(segment);
+    return _tryDecodeComponent(segment);
+  }
+
+  static String? _tryDecodeComponent(String value) {
+    try {
+      return Uri.decodeComponent(value);
+    } on FormatException {
+      return value;
+    } on ArgumentError {
+      return value;
+    }
+  }
+
+  // Decodes an RFC 5987 filename* value (percent-encoded, charset-prefixed).
+  // UTF-8 (the common case) goes through Uri.decodeComponent; other charsets
+  // are percent-decoded to raw bytes and decoded with the declared charset so
+  // the result is a real name rather than a literal "%E9%80..." string.
+  static String? _decodeExtendedFilename(String value, String? charset) {
+    if (charset == null || charset.isEmpty || charset == 'utf-8') {
+      return _tryDecodeComponent(value);
+    }
+    try {
+      final bytes = <int>[];
+      for (var i = 0; i < value.length; i += 1) {
+        final char = value[i];
+        if (char == '%' && i + 2 < value.length) {
+          bytes.add(int.parse(value.substring(i + 1, i + 3), radix: 16));
+          i += 2;
+        } else {
+          bytes.add(char.codeUnitAt(0));
+        }
+      }
+      if (charset == 'iso-8859-1' || charset == 'latin1') {
+        return latin1.decode(bytes);
+      }
+      return utf8.decode(bytes, allowMalformed: true);
+    } on FormatException {
+      return _tryDecodeComponent(value);
+    }
   }
 
   static bool _isCampussquareDo(String? name) {
