@@ -117,52 +117,126 @@ class TwoFactorAutofillScript {
     setSessionValue(key, String(count + 1));
   }
 
-  function isLikelySubmitControl(element) {
+  function reportProgress(event, detail) {
+    try {
+      var channel = window.MoreBetterGakujoLoginAutofill;
+      if (channel && channel.postMessage) {
+        channel.postMessage(JSON.stringify({
+          event: '2fa-' + event,
+          detail: detail || '',
+          url: location.href
+        }));
+      }
+    } catch (_) {
+    }
+    try {
+      console.log('MBG_2FA_' + event.toUpperCase() + ' ' + (detail || ''));
+    } catch (_) {
+    }
+  }
+
+  function isVisible(element) {
     if (!element) {
       return false;
     }
+    try {
+      var pageWindow = (element.ownerDocument && element.ownerDocument.defaultView) || window;
+      var style = pageWindow.getComputedStyle(element);
+      return style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.opacity !== '0' &&
+        element.getClientRects().length > 0;
+    } catch (_) {
+      return true;
+    }
+  }
 
-    var tagName = (element.tagName || '').toLowerCase();
-    var type = (element.getAttribute('type') || '').toLowerCase();
-    if (tagName === 'button') {
-      return type === '' || type === 'submit';
+  function controlText(element) {
+    return [
+      element.innerText,
+      element.textContent,
+      element.value,
+      element.getAttribute && element.getAttribute('aria-label'),
+      element.getAttribute && element.getAttribute('title')
+    ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function isBackOrResetControl(element) {
+    var text = controlText(element);
+    var idText = [
+      element.getAttribute && element.getAttribute('id'),
+      element.getAttribute && element.getAttribute('name'),
+      element.getAttribute && element.getAttribute('class')
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /戻る|もどる|リセット|キャンセル|再送|reset|back|cancel|resend/.test(text) ||
+      /reset|cancel|back/.test(idText);
+  }
+
+  // CampusSquare submits via a "ログイン"/"認証" button whose onclick calls the
+  // page's send() helper (which populates hidden action fields). A raw
+  // form.submit() skips that helper and the server bounces back to login, so we
+  // must click the real control (mirroring the login autofill script).
+  function findSubmitControl(input) {
+    var form = input.form || input.closest('form');
+    var scope = form || input.ownerDocument || document;
+    var candidates = Array.prototype.slice.call(
+      scope.querySelectorAll('button, input, a, [role="button"]')
+    );
+    var explicit = null;
+    var labeled = null;
+    for (var i = 0; i < candidates.length; i += 1) {
+      var element = candidates[i];
+      if (element === input) {
+        continue;
+      }
+      var tagName = (element.tagName || '').toLowerCase();
+      var type = (element.getAttribute('type') || '').toLowerCase();
+      if (type === 'hidden' || type === 'password' || type === 'text') {
+        continue;
+      }
+      if (!isVisible(element) || isBackOrResetControl(element)) {
+        continue;
+      }
+      if (!explicit &&
+          ((tagName === 'button' && (type === '' || type === 'submit')) ||
+           (tagName === 'input' && type === 'submit'))) {
+        explicit = element;
+      }
+      if (!labeled &&
+          /ログイン|認証|確認|送信|次へ|つぎへ|ok|verify|submit|sign\\s?in|log\\s?in/.test(controlText(element))) {
+        labeled = element;
+      }
     }
-    if (tagName === 'input') {
-      return type === 'submit';
-    }
-    return false;
+    return labeled || explicit || null;
   }
 
   function submitFrom(input) {
     if (shouldBlockAutoSubmit()) {
-      console.log('MBG_2FA_AUTO_SUBMIT_BLOCKED');
+      reportProgress('submit-blocked', 'session-limit-or-error');
       return false;
     }
 
-    var form = input.form || input.closest('form');
-    var submitControl = null;
-    if (form) {
-      submitControl = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
-    }
-    if (!submitControl) {
-      var ownerDocument = input.ownerDocument || document;
-      var controls = ownerDocument.querySelectorAll('button, input[type="submit"]');
-      for (var i = 0; i < controls.length; i += 1) {
-        if (isLikelySubmitControl(controls[i])) {
-          submitControl = controls[i];
-          break;
-        }
-      }
-    }
-
-    if (submitControl) {
+    var control = findSubmitControl(input);
+    if (control) {
       markAutoSubmitAttempted();
-      submitControl.click();
-      console.log('MBG_2FA_AUTO_SUBMIT_SUCCESS');
+      reportProgress('submit', 'click ' + (control.tagName || '') + '/' +
+        (control.getAttribute('type') || '') + ' "' + controlText(control).slice(0, 24) + '"');
+      control.click();
       return true;
     }
+
+    var pageWindow = (input.ownerDocument && input.ownerDocument.defaultView) || window;
+    if (typeof pageWindow.send === 'function') {
+      markAutoSubmitAttempted();
+      reportProgress('submit', 'campus-square-send');
+      pageWindow.send();
+      return true;
+    }
+
+    var form = input.form || input.closest('form');
     if (form) {
       markAutoSubmitAttempted();
+      reportProgress('submit', 'form-submit-fallback');
       if (typeof form.requestSubmit === 'function') {
         form.requestSubmit();
       } else {
@@ -171,10 +245,10 @@ class TwoFactorAutofillScript {
           form.submit();
         }
       }
-      console.log('MBG_2FA_AUTO_SUBMIT_SUCCESS');
       return true;
     }
 
+    reportProgress('submit', 'no-control');
     return false;
   }
 
