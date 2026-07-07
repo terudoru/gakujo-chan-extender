@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/bundled_secure_storage.dart';
@@ -76,6 +77,81 @@ void main() {
     expect(second, {'login': 'student'});
     expect(await storage.readAll(), {'login': 'student'});
   });
+
+  test('recovers from errSecDuplicateItem by deleting then rewriting', () async {
+    final backing = _DuplicateOnFirstWriteSecureStorage();
+    final storage = BundledSecureStorage(
+      storage: backing,
+      bundleKey: 'bundle',
+    );
+
+    // Must not throw the unhandled -25299 PlatformException.
+    await storage.write(key: 'login', value: 'student');
+
+    expect(backing.deleteCount, 1);
+    expect(backing.writeAttempts, 2);
+    expect(await storage.read(key: 'login'), 'student');
+  });
+}
+
+class _DuplicateOnFirstWriteSecureStorage extends FlutterSecureStorage {
+  final Map<String, String> values = {};
+  int writeAttempts = 0;
+  int deleteCount = 0;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    return values[key];
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    writeAttempts += 1;
+    if (writeAttempts == 1) {
+      throw PlatformException(
+        code: 'Unexpected security result code',
+        message: 'Code: -25299, Message: '
+            'The specified item already exists in the keychain.',
+        details: -25299,
+      );
+    }
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    deleteCount += 1;
+    values.remove(key);
+  }
 }
 
 class _MemorySecureStorage extends FlutterSecureStorage {

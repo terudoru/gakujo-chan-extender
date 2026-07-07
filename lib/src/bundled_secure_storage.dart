@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class BundledSecureStorage extends FlutterSecureStorage {
@@ -240,18 +241,59 @@ class BundledSecureStorage extends FlutterSecureStorage {
     final snapshot = Map<String, String>.from(values);
     _cachedValues = snapshot;
     _pendingRead = Future.value(Map<String, String>.from(values));
-    await _storage.write(
-      key: _bundleKey,
-      value: jsonEncode(values),
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
+    final encoded = jsonEncode(values);
+    try {
+      await _storage.write(
+        key: _bundleKey,
+        value: encoded,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    } on PlatformException catch (error) {
+      if (!_isDuplicateItemError(error)) {
+        rethrow;
+      }
+      // flutter_secure_storage's update-or-add write path can surface
+      // errSecDuplicateItem (-25299) on some macOS/iOS keychains: the item
+      // exists but the update query does not match it, so the add is rejected.
+      // Delete the stale entry and rewrite the authoritative bundle value.
+      await _storage.delete(
+        key: _bundleKey,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+      await _storage.write(
+        key: _bundleKey,
+        value: encoded,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    }
     _cachedValues = snapshot;
     _pendingRead = null;
+  }
+
+  static bool _isDuplicateItemError(PlatformException error) {
+    if (error.details == -25299) {
+      return true;
+    }
+    final description =
+        '${error.code} ${error.message ?? ''} ${error.details ?? ''}'
+            .toLowerCase();
+    return description.contains('-25299') ||
+        description.contains('already exists');
   }
 
   Future<void> _updateBundle(
