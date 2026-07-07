@@ -1,0 +1,242 @@
+name: Release All Platforms
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag, for example v0.68.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: MoreBetterGakujo
+  RELEASE_TAG: ${{ inputs.tag_name || github.ref_name }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      - name: Stage APK
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/${APP_NAME}-${RELEASE_TAG}.apk"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Package unsigned iOS IPA
+        env:
+          OUTPUT_PATH: dist/${{ env.APP_NAME }}-${{ inputs.tag_name || github.ref_name }}.ipa
+        run: ./scripts/package_ios_ipa.sh
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release
+
+      - name: Package macOS DMG
+        run: |
+          set -euo pipefail
+          app_path="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -1)"
+          if [ -z "$app_path" ]; then
+            echo "macOS .app bundle not found" >&2
+            exit 1
+          fi
+          mkdir -p dist dmg_staging
+          cp -R "$app_path" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create \
+            -volname "${APP_NAME}" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO \
+            "dist/${APP_NAME}-${RELEASE_TAG}.dmg"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Windows app
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Package Windows installer and portable zip
+        shell: pwsh
+        run: |
+          $tagName = "${env:RELEASE_TAG}"
+          $safeTagName = $tagName -replace '[^A-Za-z0-9._-]', '-'
+          $appVersion = $safeTagName -replace '^[vV]', ''
+          $versionNumbers = @([regex]::Matches($appVersion, '\d+') | ForEach-Object { $_.Value })
+          if ($versionNumbers.Count -eq 0) {
+            $versionNumbers = @("0", "0", "0", "0")
+          }
+          while ($versionNumbers.Count -lt 4) {
+            $versionNumbers += "0"
+          }
+          $versionInfo = ($versionNumbers | Select-Object -First 4) -join "."
+          $releaseDir = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $releaseDir)) {
+            $releaseDir = "build\windows\runner\Release"
+          }
+          if (-not (Test-Path $releaseDir)) {
+            throw "Windows release output directory was not found."
+          }
+
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Compress-Archive -Path "$releaseDir\*" -DestinationPath "dist\${env:APP_NAME}-$safeTagName.zip" -Force
+
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "distribution\windows\morebettergakujo.iss" `
+            "/DMyBuildDir=$releaseDir" `
+            "/DMyOutputDir=$((Resolve-Path dist).Path)" `
+            "/DMyAppVersion=$appVersion" `
+            "/DMyAppVersionInfo=$versionInfo" `
+            "/DMyOutputBaseFilename=${env:APP_NAME}-$safeTagName"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [android, ios, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( -name '*.apk' -o -name '*.ipa' -o -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) \
+            -exec cp {} dist/ \;
+          ls -la dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          name: ${{ inputs.tag_name || github.ref_name }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.apk
+            dist/*.ipa
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+          body: |
+            More Better Gakujo ${{ inputs.tag_name || github.ref_name }}
+
+            ## ダウンロード
+            - **Android**: `*.apk`
+            - **Windows**: `*.exe`（インストーラー） / `*.zip`（ポータブル版）
+            - **macOS**: `*.dmg`（未署名。初回は右クリック→開くで起動）
+            - **iOS/iPadOS**: `*.ipa`（**未署名**。App Store版ではありません。AltStore / Sideloadly でのサイドロード用。無料Apple IDでは7日ごとに再署名が必要です）
