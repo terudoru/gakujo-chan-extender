@@ -31,4 +31,17 @@ void main() {
 
     expect(script, contains('var autoSubmit = false;'));
   });
+
+  test('limits automatic submit across reloads and stops after errors', () {
+    final script = TwoFactorAutofillScript.build(token: '123456');
+
+    expect(script, contains('window.sessionStorage.getItem(key)'));
+    expect(script, contains("sessionKey('SUBMIT_COUNT')"));
+    expect(script, contains('var maxAutoSubmitPerSession = 3;'));
+    expect(script, contains('count >= maxAutoSubmitPerSession'));
+    expect(script, contains('function hasTwoFactorError()'));
+    expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
+    expect(script, contains('MBG_2FA_AUTO_SUBMIT_BLOCKED'));
+    expect(script, contains('markAutoSubmitAttempted()'));
+  });
 }

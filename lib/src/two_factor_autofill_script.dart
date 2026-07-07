@@ -27,11 +27,35 @@ class TwoFactorAutofillScript {
 
     return '''
 (function() {
+  var assistVersion = 2;
   var attempts = 0;
   var maxAttempts = $maxAttempts;
   var intervalMillis = $intervalMillis;
   var token = $encodedToken;
   var autoSubmit = $autoSubmitLiteral;
+  var maxAutoSubmitPerSession = 3;
+
+  function sessionKey(suffix) {
+    var normalizedUrl = location.origin + location.pathname;
+    return 'MBG_2FA_AUTOFILL_' + suffix + ':' + normalizedUrl;
+  }
+
+  function sessionValue(key) {
+    try {
+      return window.sessionStorage && window.sessionStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function setSessionValue(key, value) {
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(key, value);
+      }
+    } catch (_) {
+    }
+  }
 
   function allDocuments() {
     var documents = [];
@@ -52,6 +76,47 @@ class TwoFactorAutofillScript {
     return documents;
   }
 
+  function hasTwoFactorError() {
+    var documents = allDocuments();
+    for (var i = 0; i < documents.length; i += 1) {
+      var text = '';
+      try {
+        text = (documents[i].body &&
+          (documents[i].body.innerText || documents[i].body.textContent) || '')
+          .replace(/\\s+/g, ' ')
+          .toLowerCase();
+      } catch (_) {
+        continue;
+      }
+      if (/認証コード.*正しく|認証コード.*誤|コード.*正しく|コード.*誤|コード.*無効|確認コード.*正しく|確認コード.*誤|ワンタイム.*正しく|ワンタイム.*誤|invalid.*code|invalid.*token|incorrect.*code|wrong.*code|authentication.*code.*failed|verification.*failed/.test(text)) {
+        setSessionValue(sessionKey('ERROR'), '1');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function shouldBlockAutoSubmit() {
+    if (!autoSubmit || window.__MBG_2FA_AUTO_SUBMITTED) {
+      return true;
+    }
+    if (sessionValue(sessionKey('ERROR')) === '1' || hasTwoFactorError()) {
+      return true;
+    }
+    var count = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
+    return isFinite(count) && count >= maxAutoSubmitPerSession;
+  }
+
+  function markAutoSubmitAttempted() {
+    window.__MBG_2FA_AUTO_SUBMITTED = true;
+    var key = sessionKey('SUBMIT_COUNT');
+    var count = parseInt(sessionValue(key) || '0', 10);
+    if (!isFinite(count) || count < 0) {
+      count = 0;
+    }
+    setSessionValue(key, String(count + 1));
+  }
+
   function isLikelySubmitControl(element) {
     if (!element) {
       return false;
@@ -69,7 +134,8 @@ class TwoFactorAutofillScript {
   }
 
   function submitFrom(input) {
-    if (!autoSubmit || window.__MBG_2FA_AUTO_SUBMITTED) {
+    if (shouldBlockAutoSubmit()) {
+      console.log('MBG_2FA_AUTO_SUBMIT_BLOCKED');
       return false;
     }
 
@@ -89,13 +155,14 @@ class TwoFactorAutofillScript {
       }
     }
 
-    window.__MBG_2FA_AUTO_SUBMITTED = true;
     if (submitControl) {
+      markAutoSubmitAttempted();
       submitControl.click();
       console.log('MBG_2FA_AUTO_SUBMIT_SUCCESS');
       return true;
     }
     if (form) {
+      markAutoSubmitAttempted();
       if (typeof form.requestSubmit === 'function') {
         form.requestSubmit();
       } else {
@@ -108,7 +175,6 @@ class TwoFactorAutofillScript {
       return true;
     }
 
-    window.__MBG_2FA_AUTO_SUBMITTED = false;
     return false;
   }
 
