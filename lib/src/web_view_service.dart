@@ -162,7 +162,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> setJavaScriptModeUnrestricted() async {
-    _inner.setJavaScriptMode(JavaScriptMode.unrestricted);
+    await _inner.setJavaScriptMode(JavaScriptMode.unrestricted);
   }
 
   @override
@@ -170,18 +170,20 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     String name, {
     required FutureOr<void> Function(String message) onMessageReceived,
   }) async {
-    _inner.addJavaScriptChannel(
+    await _inner.addJavaScriptChannel(
       name,
       onMessageReceived: (message) {
-        Future.sync(() => onMessageReceived(message.message)).catchError(
-          (Object error, StackTrace stackTrace) {
-            developer.log(
-              'WebView JavaScript channel handler failed',
-              name: 'MoreBetterGakujo',
-              error: error,
-              stackTrace: stackTrace,
-            );
-          },
+        unawaited(
+          Future.sync(() => onMessageReceived(message.message)).catchError(
+            (Object error, StackTrace stackTrace) {
+              developer.log(
+                'WebView JavaScript channel handler failed',
+                name: 'MoreBetterGakujo',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            },
+          ),
         );
       },
     );
@@ -189,7 +191,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> setNavigationDelegate(GakujoNavigationDelegate delegate) async {
-    _inner.setNavigationDelegate(
+    await _inner.setNavigationDelegate(
       NavigationDelegate(
         onNavigationRequest: (request) async {
           final decision = await delegate.onNavigationRequest?.call(
@@ -339,7 +341,20 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
 class WindowsGakujoWebViewController implements GakujoWebViewController {
   WindowsGakujoWebViewController(this._inner) {
     _ready = _inner.initialize();
-    _subscriptions.add(_inner.url.listen(_handleUrlChanged));
+    _subscriptions.add(_inner.url.listen((url) {
+      unawaited(
+        _handleUrlChanged(url).catchError(
+          (Object error, StackTrace stackTrace) {
+            developer.log(
+              'Windows WebView URL handler failed',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          },
+        ),
+      );
+    }));
     _subscriptions.add(_inner.title.listen((value) {
       _title = value;
     }));
@@ -347,12 +362,9 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       _canGoBack = value.canGoBack;
       _canGoForward = value.canGoForward;
     }));
-    _subscriptions.add(_inner.loadingState.listen((state) async {
+    _subscriptions.add(_inner.loadingState.listen((state) {
       if (state == windows.LoadingState.navigationCompleted) {
-        final url = _currentUrl;
-        if (url != null) {
-          await _delegate?.onPageFinished?.call(url);
-        }
+        unawaited(_notifyPageFinished());
       }
     }));
     _subscriptions.add(_inner.onLoadError.listen((error) {
@@ -520,15 +532,35 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     if (handler == null) {
       return;
     }
-    Future.sync(() => handler(message))
-        .catchError((Object error, StackTrace stackTrace) {
+    unawaited(
+      Future.sync(() => handler(message)).catchError(
+        (Object error, StackTrace stackTrace) {
+          developer.log(
+            'Windows WebView JavaScript channel handler failed',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _notifyPageFinished() async {
+    final url = _currentUrl;
+    if (url == null) {
+      return;
+    }
+    try {
+      await _delegate?.onPageFinished?.call(url);
+    } on Object catch (error, stackTrace) {
       developer.log(
-        'Windows WebView JavaScript channel handler failed',
+        'Windows WebView page-finished handler failed',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
       );
-    });
+    }
   }
 
   Future<void> _tryExecuteScript(String script) async {

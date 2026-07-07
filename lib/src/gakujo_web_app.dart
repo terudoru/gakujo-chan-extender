@@ -294,11 +294,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _webViewReady = _configureWebViewController();
 
     if (_secureStorageAccessAllowed) {
-      _loadDownloadRoot();
+      unawaited(_loadDownloadRoot());
       unawaited(_compactStoredData());
     }
     if (activityBellToolbarButtonEnabled) {
-      _refreshActivityCounts();
+      unawaited(_refreshActivityCounts());
     }
     unawaited(_loadInitialPage());
   }
@@ -1337,14 +1337,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadDownloadRoot() async {
-    final root = await _downloadService.getDownloadRoot();
-    if (!mounted) {
-      return;
-    }
+    try {
+      final root = await _downloadService.getDownloadRoot();
+      if (!mounted) {
+        return;
+      }
 
-    setState(() {
-      _downloadRoot = root;
-    });
+      setState(() {
+        _downloadRoot = root;
+      });
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to load download root',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _compactStoredData() async {
@@ -1424,8 +1433,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                     tooltip: '保存場所をコピー',
                                     icon: const Icon(Icons.copy),
                                     onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: entry.location!),
+                                      unawaited(
+                                        Clipboard.setData(
+                                          ClipboardData(text: entry.location!),
+                                        ),
                                       );
                                       Navigator.of(dialogContext).pop();
                                       _showSnackBar('保存場所をコピーしました');
@@ -1580,8 +1591,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                       tooltip: '保存場所をコピー',
                                       icon: const Icon(Icons.copy),
                                       onPressed: () {
-                                        Clipboard.setData(
-                                          ClipboardData(text: file.location!),
+                                        unawaited(
+                                          Clipboard.setData(
+                                            ClipboardData(text: file.location!),
+                                          ),
                                         );
                                         Navigator.of(dialogContext).pop();
                                         _showSnackBar('保存場所をコピーしました');
@@ -1661,10 +1674,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ? null
                   : () async {
                       await _activityStore.clearReportLists();
-                      if (mounted) {
-                        Navigator.of(dialogContext).pop();
-                        _showSnackBar('保存済み課題一覧を削除しました');
+                      if (!dialogContext.mounted) {
+                        return;
                       }
+                      Navigator.of(dialogContext).pop();
+                      _showSnackBar('保存済み課題一覧を削除しました');
                     },
               child: const Text('削除'),
             ),
@@ -1723,10 +1737,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ? null
                   : () async {
                       await _activityStore.clearChanges();
-                      if (mounted) {
-                        Navigator.of(dialogContext).pop();
-                        _showSnackBar('変更履歴を削除しました');
+                      if (!dialogContext.mounted) {
+                        return;
                       }
+                      Navigator.of(dialogContext).pop();
+                      _showSnackBar('変更履歴を削除しました');
                     },
               child: const Text('削除'),
             ),
@@ -1837,7 +1852,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       _activityStore.markSnapshotsSeen(),
                       _activityStore.clearDeadlines(),
                     ]);
-                    if (!mounted) {
+                    if (!dialogContext.mounted) {
                       return;
                     }
                     Navigator.of(dialogContext).pop();
@@ -1948,10 +1963,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             TextButton(
               onPressed: () async {
                 await clearAll();
-                if (mounted) {
-                  Navigator.of(dialogContext).pop();
-                  _showSnackBar('保存データを削除しました');
+                if (!dialogContext.mounted) {
+                  return;
                 }
+                Navigator.of(dialogContext).pop();
+                _showSnackBar('保存データを削除しました');
               },
               child: const Text('全て削除'),
             ),

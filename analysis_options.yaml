@@ -3,4 +3,7 @@ include: package:lints/recommended.yaml
 linter:
   rules:
     avoid_print: true
+    discarded_futures: true
     prefer_final_locals: true
+    unawaited_futures: true
+    use_build_context_synchronously: true
