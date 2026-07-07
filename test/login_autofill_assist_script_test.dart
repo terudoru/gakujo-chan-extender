@@ -42,4 +42,20 @@ void main() {
     expect(script, contains('submitForm(target)'));
     expect(script, contains('window.__MBG_LOGIN_AUTOFILL_SUBMITTED'));
   });
+
+  test('limits automatic login submission across page reloads', () {
+    final script = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'student',
+        password: 'wrong-password',
+      ),
+    );
+
+    expect(script, contains('window.sessionStorage.getItem(key)'));
+    expect(script, contains("sessionKey('SUBMIT_COUNT')"));
+    expect(script, contains('attempts >= 1'));
+    expect(script, contains('function hasLoginError()'));
+    expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
+    expect(script, contains("report('submit-blocked'"));
+  });
 }

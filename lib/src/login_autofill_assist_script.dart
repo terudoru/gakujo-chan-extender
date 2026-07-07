@@ -13,12 +13,12 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var assistVersion = 5;
+  var assistVersion = 6;
   var savedUsername = $username;
   var savedPassword = $password;
   var logChannelName = $channelName;
   if (window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION === assistVersion) {
-    if (!savedUsername || !savedPassword || window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
+    if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
       return;
     }
   }
@@ -45,6 +45,62 @@ class LoginAutofillAssistScript {
   }
 
   report('start', 'version=' + assistVersion);
+
+  function sessionKey(suffix) {
+    var normalizedUrl = location.origin + location.pathname;
+    return 'MBG_LOGIN_AUTOFILL_' + suffix + ':' + normalizedUrl;
+  }
+
+  function sessionValue(key) {
+    try {
+      return window.sessionStorage && window.sessionStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function setSessionValue(key, value) {
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(key, value);
+      }
+    } catch (_) {
+    }
+  }
+
+  function hasLoginError() {
+    var text = '';
+    try {
+      text = (document.body && (document.body.innerText || document.body.textContent) || '')
+        .replace(/\\s+/g, ' ')
+        .toLowerCase();
+    } catch (_) {
+      return false;
+    }
+    return /認証失敗|認証に失敗|ログイン失敗|ログインに失敗|ユーザーidまたはパスワード|ユーザidまたはパスワード|idまたはパスワード|パスワード.*違|invalid.*password|authentication.*failed|login.*failed/.test(text);
+  }
+
+  function shouldBlockAutoSubmit() {
+    if (window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
+      return true;
+    }
+    if (sessionValue(sessionKey('ERROR')) === '1' || hasLoginError()) {
+      setSessionValue(sessionKey('ERROR'), '1');
+      return true;
+    }
+    var attempts = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
+    return attempts >= 1;
+  }
+
+  function markAutoSubmitAttempted() {
+    window.__MBG_LOGIN_AUTOFILL_SUBMITTED = true;
+    var key = sessionKey('SUBMIT_COUNT');
+    var attempts = parseInt(sessionValue(key) || '0', 10);
+    if (!isFinite(attempts) || attempts < 0) {
+      attempts = 0;
+    }
+    setSessionValue(key, String(attempts + 1));
+  }
 
   function visible(element) {
     if (!element) {
@@ -255,10 +311,11 @@ class LoginAutofillAssistScript {
   }
 
   function submitForm(target) {
-    if (window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
+    if (shouldBlockAutoSubmit()) {
+      report('submit-blocked', 'session-limit-or-error');
       return;
     }
-    window.__MBG_LOGIN_AUTOFILL_SUBMITTED = true;
+    markAutoSubmitAttempted();
 
     var form = target.form;
     var doc = target.doc;
@@ -344,7 +401,7 @@ class LoginAutofillAssistScript {
 
     enableCredentialAutofill(target);
 
-    if (!savedUsername || !savedPassword || window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
+    if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
       report('ready-no-submit', 'target-found');
       console.log('MBG_LOGIN_AUTOFILL_ASSIST_READY');
       return;

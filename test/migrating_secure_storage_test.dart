@@ -96,7 +96,8 @@ void main() {
     expect(fallback.readKeys, isEmpty);
   });
 
-  test('readKeys migrates only missing requested keys from fallback', () async {
+  test('readKeys treats missing keys as unset when primary has values',
+      () async {
     final primary = _MemorySecureStorage({'login': 'student'});
     final fallback = _MemorySecureStorage({
       'login': 'old',
@@ -109,10 +110,29 @@ void main() {
 
     final values = await storage.readKeys(['login', 'password']);
 
-    expect(values, {'login': 'student', 'password': 'legacy-secret'});
-    expect(primary.values, {'login': 'student', 'password': 'legacy-secret'});
-    expect(fallback.values, {'login': 'old'});
-    expect(fallback.readKeys, ['password']);
+    expect(values, {'login': 'student', 'password': null});
+    expect(primary.values, {'login': 'student'});
+    expect(fallback.values, {'login': 'old', 'password': 'legacy-secret'});
+    expect(fallback.readKeys, isEmpty);
+  });
+
+  test('readKeys migrates missing keys when primary is empty', () async {
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({
+      'login': 'old',
+      'password': 'legacy-secret',
+    });
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+    );
+
+    final values = await storage.readKeys(['login', 'password']);
+
+    expect(values, {'login': 'old', 'password': 'legacy-secret'});
+    expect(primary.values, {'login': 'old', 'password': 'legacy-secret'});
+    expect(fallback.values, isEmpty);
+    expect(fallback.readKeys, ['login', 'password']);
   });
 
   test('readKeys falls back when the primary batch times out', () async {
@@ -150,7 +170,7 @@ void main() {
     );
   });
 
-  test('readAll merges values and lets primary win', () async {
+  test('readAll avoids fallback when primary has values', () async {
     final primary = _MemorySecureStorage({'token': 'primary'});
     final fallback = _MemorySecureStorage({
       'token': 'fallback',
@@ -161,15 +181,38 @@ void main() {
       fallback: fallback,
     );
 
-    expect(await storage.readAll(), {
-      'token': 'primary',
-      'legacy': 'migrated',
-    });
-    expect(primary.values, {
-      'token': 'primary',
-      'legacy': 'migrated',
-    });
-    expect(fallback.values, {'token': 'fallback'});
+    expect(await storage.readAll(), {'token': 'primary'});
+    expect(primary.values, {'token': 'primary'});
+    expect(fallback.values, {'token': 'fallback', 'legacy': 'migrated'});
+    expect(fallback.readAllCount, 0);
+  });
+
+  test('readAll migrates fallback when primary is empty', () async {
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({'legacy': 'migrated'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+    );
+
+    expect(await storage.readAll(), {'legacy': 'migrated'});
+    expect(primary.values, {'legacy': 'migrated'});
+    expect(fallback.values, isEmpty);
+    expect(fallback.readAllCount, 1);
+  });
+
+  test('read avoids fallback for missing key when primary has values',
+      () async {
+    final primary = _MemorySecureStorage({'login': 'student'});
+    final fallback = _MemorySecureStorage({'password': 'legacy-secret'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+    );
+
+    expect(await storage.read(key: 'password'), isNull);
+    expect(fallback.readKeys, isEmpty);
+    expect(fallback.readAllCount, 0);
   });
 
   test('primary read failure is rethrown when fallback is empty', () async {

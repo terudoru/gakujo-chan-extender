@@ -89,6 +89,45 @@ void main() {
     expect(fourth.end, DateTime(2027, 3, 20));
   });
 
+  test('termsFromExtractedText falls back when ActualText has invalid dates',
+      () {
+    final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
+      const GakujoPdfText(
+        text: '''
+第１ターム 4月8日～6月8日
+第２ターム 6月10日～8月5日
+第３ターム 10月2日～12月1日
+第４ターム 12月3日～2月12日
+''',
+        actualTexts: [
+          '99',
+          '99',
+          '8',
+          '5',
+          '10',
+          '2',
+          '12',
+          '1',
+          '12',
+          '3',
+          '2',
+          '31',
+          '4',
+          '8',
+          '6',
+          '8',
+        ],
+      ),
+      academicYear: 2026,
+      sourceUrl: 'https://example.com/schedule_2026.pdf',
+    );
+
+    expect(terms, hasLength(4));
+    expect(terms[0].name, '第1ターム');
+    expect(terms[0].start, DateTime(2026, 4, 8));
+    expect(terms[0].end, DateTime(2026, 6, 8));
+  });
+
   test('termsFromExtractedText reads no-class notes from official text', () {
     final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
       const GakujoPdfText(

@@ -100,6 +100,28 @@ String downloadRootLabel(
   return '$displayName\n$path';
 }
 
+@visibleForTesting
+bool isLikelyMacosKeychainUserDeniedError(Object error) {
+  if (error is! PlatformException) {
+    return false;
+  }
+  final haystack = [
+    error.code,
+    error.message,
+    error.details?.toString(),
+  ].whereType<String>().join(' ').toLowerCase();
+  return haystack.contains('usercanceled') ||
+      haystack.contains('user canceled') ||
+      haystack.contains('usercancelled') ||
+      haystack.contains('user cancelled') ||
+      haystack.contains('authfailed') ||
+      haystack.contains('auth failed') ||
+      haystack.contains('-128') ||
+      haystack.contains('-25293') ||
+      haystack.contains('errsecusercanceled') ||
+      haystack.contains('errsecauthfailed');
+}
+
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
     super.key,
@@ -5956,13 +5978,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final details = error is PlatformException
             ? (error.message ?? error.code)
             : error.toString();
+        final userDenied = isLikelyMacosKeychainUserDeniedError(error);
+        final guidance = userDenied
+            ? 'macOS が拒否を記憶している場合、「再試行」だけでは許可ダイアログが再表示されません。\n\n'
+                'データを残して復旧するには、キーチェーンアクセス.app を開き、'
+                'ログインキーチェーン内の More Better Gakujo / '
+                'net.yoshida.morebettergakujoFlutter.secure_storage.v2 に関連する項目を探して、'
+                'アクセス制御でこのアプリを許可してから「再試行」してください。\n\n'
+                '項目が見つからない、または許可できない場合は「保存データをリセット」で保存領域を作り直せます。'
+                'その場合はログイン情報と2FA設定の再入力が必要です。'
+            : '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
+                '以前に許可ダイアログを拒否した場合は、キーチェーンアクセス.app でこのアプリのアクセスを許可してから'
+                '再試行してください。それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+                'その場合はログイン情報と2FA設定の再入力が必要です。';
         return AlertDialog(
           title: const Text('キーチェーンにアクセスできません'),
           content: Text(
             '保存済みログイン情報や2FA設定を読み込めませんでした。\n\n'
-            '先にすべて拒否した場合でも、このバージョンでは新しい保存領域を使って復旧できます。'
-            'まず「保存データをリセット」を実行し、ログイン情報と2FA設定を入れ直してください。'
-            '旧保存領域は起動時に自動で読みに行かないため、許可待ちで固まることはありません。\n\n'
+            '$guidance\n\n'
             '詳細: $details',
           ),
           actions: [

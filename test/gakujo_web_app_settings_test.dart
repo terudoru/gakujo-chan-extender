@@ -34,6 +34,27 @@ void main() {
     );
   });
 
+  test('isLikelyMacosKeychainUserDeniedError detects denial statuses', () {
+    expect(
+      isLikelyMacosKeychainUserDeniedError(
+        PlatformException(code: 'errSecUserCanceled', message: 'User canceled'),
+      ),
+      isTrue,
+    );
+    expect(
+      isLikelyMacosKeychainUserDeniedError(
+        PlatformException(code: 'keychain_error', message: 'OSStatus -25293'),
+      ),
+      isTrue,
+    );
+    expect(
+      isLikelyMacosKeychainUserDeniedError(
+        PlatformException(code: 'timeout', message: 'Keychain timed out'),
+      ),
+      isFalse,
+    );
+  });
+
   test('activity page reading follows independent feature toggles', () {
     expect(
       shouldReadPageForActivityFeatures(const GakujoAppSettings()),

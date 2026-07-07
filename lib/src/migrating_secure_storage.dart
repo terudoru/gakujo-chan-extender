@@ -58,6 +58,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     if (missingKeys.isEmpty) {
       return values;
     }
+    if (primaryError == null && values.values.any((value) => value != null)) {
+      return values;
+    }
 
     final fallbackEntries = await Future.wait(
       missingKeys.map((key) async {
@@ -120,6 +123,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     if (primaryValue != null) {
       return primaryValue;
     }
+    if (primaryError == null && await _primaryHasAnyValue()) {
+      return null;
+    }
 
     final fallbackValue = await _readFallbackKey(
       key: key,
@@ -177,6 +183,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     } on Object catch (error, stackTrace) {
       primaryError = error;
       primaryStackTrace = stackTrace;
+    }
+    if (primaryError == null && primaryValues.isNotEmpty) {
+      return primaryValues;
     }
 
     final fallbackValues = await _readFallbackAll(
@@ -350,6 +359,15 @@ class MigratingSecureStorage extends FlutterSecureStorage {
           .timeout(_storageOperationTimeout);
     } on Object {
       return const {};
+    }
+  }
+
+  Future<bool> _primaryHasAnyValue() async {
+    try {
+      final values = await _primary.readAll().timeout(_storageOperationTimeout);
+      return values.isNotEmpty;
+    } on Object {
+      return false;
     }
   }
 

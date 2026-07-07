@@ -201,9 +201,21 @@ class GakujoAcademicCalendarPdfParser {
       // (April YYYY .. March YYYY+1). Mirror _monthDayDate's mapping so a term
       // that starts in Jan-Mar is not placed a full year too early.
       final startYear = numbers[offset] <= 3 ? academicYear + 1 : academicYear;
-      final endYear = numbers[offset + 2] <= 3 ? academicYear + 1 : academicYear;
-      final start = DateTime(startYear, numbers[offset], numbers[offset + 1]);
-      final end = DateTime(endYear, numbers[offset + 2], numbers[offset + 3]);
+      final endYear =
+          numbers[offset + 2] <= 3 ? academicYear + 1 : academicYear;
+      final start = _validatedDate(
+        startYear,
+        numbers[offset],
+        numbers[offset + 1],
+      );
+      final end = _validatedDate(
+        endYear,
+        numbers[offset + 2],
+        numbers[offset + 3],
+      );
+      if (start == null || end == null || end.isBefore(start)) {
+        return null;
+      }
       ranges[termOrder[i]] = (start, end);
     }
     return ranges;
@@ -311,7 +323,18 @@ class GakujoAcademicCalendarPdfParser {
       return null;
     }
     final year = month <= 3 ? academicYear + 1 : academicYear;
-    return DateTime(year, month, day);
+    return _validatedDate(year, month, day);
+  }
+
+  static DateTime? _validatedDate(int year, int month, int day) {
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      return null;
+    }
+    final date = DateTime(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
   }
 
   static int? _number(String? raw) {
