@@ -16,6 +16,7 @@ import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
+import 'download_file_name_policy.dart';
 import 'gakujo_activity_store.dart';
 import 'gakujo_activity_classifier.dart';
 import 'gakujo_academic_calendar.dart';
@@ -30,6 +31,7 @@ import 'gakujo_download_history_store.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
+import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
 import 'gakujo_message_filter_script.dart';
@@ -251,7 +253,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _totpGenerator = widget._totpGenerator ?? const TotpGenerator();
     final platformService = GakujoPlatformService.current();
     _webViewService = platformService.createWebViewService();
-    _downloadService = platformService.createDownloadService();
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
@@ -263,6 +264,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
     _controller = _webViewService.createController();
+    _downloadService = Platform.isWindows
+        ? FileSystemGakujoDownloadService(
+            authenticatedBytesLoader: _downloadBytesWithWebViewSession,
+          )
+        : platformService.createDownloadService();
     _webViewReady = _configureWebViewController();
 
     if (_secureStorageAccessAllowed) {
@@ -2457,6 +2463,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   GakujoCalendarImportSettings _effectiveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
   ) {
+    if (!_calendarService.supportsDirectSync &&
+        settings.method == GakujoCalendarImportMethod.deviceCalendar) {
+      return settings.copyWith(method: GakujoCalendarImportMethod.icsFile);
+    }
     if (_calendarService.supportsDirectSync &&
         settings.method == GakujoCalendarImportMethod.officialGoogle) {
       return settings.copyWith(
@@ -2467,7 +2477,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   List<GakujoCalendarImportMethod> _calendarImportMethodChoices() {
     if (!_calendarService.supportsDirectSync) {
-      return GakujoCalendarImportMethod.values;
+      return GakujoCalendarImportMethod.values
+          .where(
+              (method) => method != GakujoCalendarImportMethod.deviceCalendar)
+          .toList(growable: false);
     }
     return GakujoCalendarImportMethod.values
         .where((method) => method != GakujoCalendarImportMethod.officialGoogle)
@@ -2832,6 +2845,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         const SizedBox(height: 8),
                         Text(
                           '本家Google連携を開く場合、日付範囲は学務側の動作に従います。ターム自動判定を使う場合は「自動で選ぶ」か「OSカレンダーへ直接追加」を使ってください。',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                      if (!_calendarService.supportsDirectSync) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'WindowsではOSカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -5406,6 +5426,103 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
       return null;
     }
+  }
+
+  Future<AuthenticatedDownloadedFile> _downloadBytesWithWebViewSession(
+    GakujoDownloadRequest request, {
+    String? userAgent,
+  }) async {
+    if (!Platform.isWindows) {
+      throw PlatformException(
+        code: 'unsupported_platform',
+        message: 'WebViewセッションでの取得はWindows専用です',
+      );
+    }
+    if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
+      throw PlatformException(
+        code: 'blocked_url',
+        message: 'Gakujo以外のダウンロードをブロックしました',
+      );
+    }
+
+    final script = '''
+(async function() {
+  const inputUrl = ${jsonEncode(request.url)};
+  const method = ${jsonEncode(request.method.toUpperCase() == 'POST' ? 'POST' : 'GET')};
+  const fields = ${jsonEncode(request.formFields)};
+  const url = new URL(inputUrl, window.location.href);
+  const options = { method, credentials: 'include', redirect: 'follow' };
+  if (method === 'GET') {
+    Object.keys(fields || {}).forEach(function(key) {
+      url.searchParams.set(key, String(fields[key]));
+    });
+  } else {
+    const body = new URLSearchParams();
+    Object.keys(fields || {}).forEach(function(key) {
+      body.append(key, String(fields[key]));
+    });
+    options.body = body.toString();
+    options.headers = {
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+    };
+  }
+  const response = await fetch(url.toString(), options);
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(i, i + chunkSize)
+    );
+  }
+  return JSON.stringify({
+    status: response.status,
+    ok: response.ok,
+    finalUrl: response.url,
+    mimeType: response.headers.get('content-type') || '',
+    contentDisposition: response.headers.get('content-disposition') || '',
+    bodyBase64: btoa(binary)
+  });
+})()
+''';
+
+    final raw = _stringFromJavaScriptResult(
+      await _controller.runJavaScriptReturningResult(script),
+    );
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('WebView download result must be an object');
+    }
+    final status = int.tryParse(decoded['status']?.toString() ?? '') ?? 0;
+    final finalUrl = decoded['finalUrl']?.toString() ?? request.url;
+    if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
+      throw PlatformException(
+        code: 'blocked_url',
+        message: 'Gakujo以外へのリダイレクトをブロックしました',
+      );
+    }
+    if (status < 200 || status > 299 || decoded['ok'] != true) {
+      throw PlatformException(
+        code: 'download_failed',
+        message: 'ダウンロードに失敗しました HTTP $status',
+      );
+    }
+    return AuthenticatedDownloadedFile(
+      bytes: base64Decode(decoded['bodyBase64']?.toString() ?? ''),
+      finalUrl: finalUrl,
+      mimeType: _mimeTypeFromContentType(decoded['mimeType']?.toString()),
+      contentDispositionFileName:
+          DownloadFileNamePolicy.fileNameFromContentDisposition(
+        decoded['contentDisposition']?.toString(),
+      ),
+    );
+  }
+
+  String? _mimeTypeFromContentType(String? raw) {
+    final value = raw?.split(';').first.trim().toLowerCase();
+    return value == null || value.isEmpty ? null : value;
   }
 
   Future<void> _injectDownloadCaptureIfAllowed() async {

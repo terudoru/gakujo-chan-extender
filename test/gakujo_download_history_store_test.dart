@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/services.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
@@ -148,6 +149,26 @@ void main() {
     expect(result.fileName, 'report.pdf');
     expect(result.courseName, '情報リテラシー');
     expect(result.location, 'content://downloads/report.pdf');
+  });
+
+  test('download result treats null native response as cancellation', () {
+    expect(
+      () => GakujoDownloadResult.fromMap(null),
+      throwsA(
+        isA<PlatformException>()
+            .having((error) => error.code, 'code', 'cancelled'),
+      ),
+    );
+  });
+
+  test('download result treats empty file name as cancellation', () {
+    expect(
+      () => GakujoDownloadResult.fromMap({'fileName': ''}),
+      throwsA(
+        isA<PlatformException>()
+            .having((error) => error.code, 'code', 'cancelled'),
+      ),
+    );
   });
 
   test('failed download entries round-trip through json', () {

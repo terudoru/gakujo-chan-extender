@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/migrating_secure_storage.dart';
@@ -113,6 +115,41 @@ void main() {
     expect(fallback.readKeys, ['password']);
   });
 
+  test('readKeys falls back when the primary batch times out', () async {
+    final primary = _MemorySecureStorage({'login': 'student'})
+      ..readDelay = const Duration(seconds: 4);
+    final fallback = _MemorySecureStorage({
+      'login': 'legacy-student',
+      'password': 'legacy-secret',
+    });
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+    );
+
+    final values = await storage.readKeys(['login', 'password']);
+
+    expect(values, {'login': 'legacy-student', 'password': 'legacy-secret'});
+    expect(fallback.readKeys, ['login', 'password']);
+    expect(primary.values, {'login': 'student'});
+  });
+
+  test('readKeys rethrows timeout when fallback has no requested values',
+      () async {
+    final primary = _MemorySecureStorage()
+      ..readDelay = const Duration(seconds: 4);
+    final fallback = _MemorySecureStorage();
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+    );
+
+    expect(
+      storage.readKeys(['login', 'password']),
+      throwsA(isA<TimeoutException>()),
+    );
+  });
+
   test('readAll merges values and lets primary win', () async {
     final primary = _MemorySecureStorage({'token': 'primary'});
     final fallback = _MemorySecureStorage({
@@ -168,6 +205,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
   final Map<String, String> values;
   Object? readError;
   Object? readAllError;
+  Duration readDelay = Duration.zero;
   int readAllCount = 0;
   final List<String> readKeys = [];
 
@@ -181,6 +219,9 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (readDelay > Duration.zero) {
+      await Future<void>.delayed(readDelay);
+    }
     final error = readError;
     if (error != null) {
       throw error;

@@ -57,12 +57,28 @@ class GakujoCalendarEvent {
     return {
       'id': id,
       'title': title,
-      'startMillis': start.millisecondsSinceEpoch,
-      'endMillis': end.millisecondsSinceEpoch,
+      'startMillis': _tokyoWallClockMillis(start),
+      'endMillis': _tokyoWallClockMillis(end),
       'location': location,
       'teacher': teacher,
       'notes': notes,
     };
+  }
+
+  static int _tokyoWallClockMillis(DateTime value) {
+    if (value.isUtc) {
+      return value.millisecondsSinceEpoch;
+    }
+    return DateTime.utc(
+      value.year,
+      value.month,
+      value.day,
+      value.hour - 9,
+      value.minute,
+      value.second,
+      value.millisecond,
+      value.microsecond,
+    ).millisecondsSinceEpoch;
   }
 }
 
@@ -218,18 +234,19 @@ class GakujoCalendarEventBuilder {
             time.startHour,
             time.startMinute,
           );
+          final end = DateTime(
+            date.year,
+            date.month,
+            date.day,
+            time.endHour,
+            time.endMinute,
+          );
           events.add(
             GakujoCalendarEvent(
               id: _eventInstanceId(course, uidNamespace, start),
               title: GakujoCalendarExport.displayTitleForCourse(course),
               start: start,
-              end: DateTime(
-                date.year,
-                date.month,
-                date.day,
-                time.endHour,
-                time.endMinute,
-              ),
+              end: end,
               location: GakujoCalendarExport.displayLocationForCourse(course),
               teacher: course.teacher.trim(),
               notes: GakujoCalendarExport.descriptionForCourse(
@@ -262,15 +279,16 @@ class GakujoCalendarEventBuilder {
       return value.replaceAll(RegExp(r'\s+'), ' ').trim();
     }
 
+    final tokyoStart = start.toUtc().add(const Duration(hours: 9));
     return [
       uidNamespace,
       normalize(GakujoCalendarExport.displayTitleForCourse(course)),
       course.weekday,
       course.period,
       normalize(GakujoCalendarExport.displayLocationForCourse(course)),
-      start.year,
-      start.month.toString().padLeft(2, '0'),
-      start.day.toString().padLeft(2, '0'),
+      tokyoStart.year,
+      tokyoStart.month.toString().padLeft(2, '0'),
+      tokyoStart.day.toString().padLeft(2, '0'),
     ].join('|');
   }
 }

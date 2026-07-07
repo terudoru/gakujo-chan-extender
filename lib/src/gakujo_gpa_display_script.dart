@@ -4,7 +4,7 @@ class GakujoGpaDisplayScript {
   static String build() {
     return r'''
 (function() {
-  var version = 5;
+  var version = 6;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -114,11 +114,20 @@ class GakujoGpaDisplayScript {
         var cells = expandedCells(rows[rowIndex]);
         var unitIndex = -1;
         var gpIndex = -1;
+        var numberIndex = -1;
+        var openNumberIndex = -1;
+        var scoreIndex = -1;
         var labels = [];
         for (var cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
           var label = labelOf(cells[cellIndex]);
           labels.push(label);
-          if (label.indexOf('単位数') >= 0) {
+          if (isNumberLabel(label)) {
+            numberIndex = cellIndex;
+          } else if (label.indexOf('開講番号') >= 0) {
+            openNumberIndex = cellIndex;
+          } else if (isScoreLabel(label)) {
+            scoreIndex = cellIndex;
+          } else if (label.indexOf('単位数') >= 0) {
             unitIndex = cellIndex;
           } else if (label === 'GP') {
             gpIndex = cellIndex;
@@ -132,6 +141,9 @@ class GakujoGpaDisplayScript {
             table: tables[tableIndex],
             headerCell: cells[gpIndex],
             headerRowIndex: rowIndex,
+            numberIndex: numberIndex,
+            openNumberIndex: openNumberIndex,
+            scoreIndex: scoreIndex,
             unitIndex: unitIndex,
             gpIndex: gpIndex
           };
@@ -158,6 +170,9 @@ class GakujoGpaDisplayScript {
         table: table,
         headerCell: headerCells[12],
         headerRowIndex: 0,
+        numberIndex: 0,
+        openNumberIndex: 3,
+        scoreIndex: 9,
         unitIndex: 8,
         gpIndex: 12,
         useDirectCells: true
@@ -165,6 +180,18 @@ class GakujoGpaDisplayScript {
     } catch (e) {
       return null;
     }
+  }
+
+  function isNumberLabel(label) {
+    return label === 'NO.' || label === 'NO' || label === '番号';
+  }
+
+  function isScoreLabel(label) {
+    return label === '得点' ||
+      label === '評点' ||
+      label === '点' ||
+      label.indexOf('得点') >= 0 ||
+      label.indexOf('評点') >= 0;
   }
 
   function removeGpaDisplay(headerCell) {
@@ -214,6 +241,25 @@ class GakujoGpaDisplayScript {
     }
   }
 
+  function cellsForGradeRow(row, gradeTable) {
+    return gradeTable.useDirectCells ? row.cells : expandedCells(row);
+  }
+
+  function compareNumbers(left, right) {
+    var leftFinite = isFinite(left);
+    var rightFinite = isFinite(right);
+    if (leftFinite && rightFinite) {
+      return left - right;
+    }
+    if (leftFinite) {
+      return -1;
+    }
+    if (rightFinite) {
+      return 1;
+    }
+    return 0;
+  }
+
   function sortGradeRows(compare) {
     var documents = collectDocuments();
     for (var i = 0; i < documents.length; i += 1) {
@@ -225,7 +271,9 @@ class GakujoGpaDisplayScript {
         gradeTable.table.rows,
         gradeTable.headerRowIndex + 1
       );
-      rows.sort(compare);
+      rows.sort(function(a, b) {
+        return compare(a, b, gradeTable);
+      });
       rewriteRows(gradeTable.table, rows);
       updateDocument(documents[i]);
       return;
@@ -233,20 +281,39 @@ class GakujoGpaDisplayScript {
   }
 
   function sortByNumber() {
-    sortGradeRows(function(a, b) {
-      return numberFromCell(a.cells[0]) - numberFromCell(b.cells[0]);
+    sortGradeRows(function(a, b, gradeTable) {
+      var index = gradeTable.numberIndex;
+      if (index < 0) {
+        return 0;
+      }
+      return compareNumbers(
+        numberFromCell(cellsForGradeRow(a, gradeTable)[index]),
+        numberFromCell(cellsForGradeRow(b, gradeTable)[index])
+      );
     });
   }
 
   function sortByOpenNumber() {
-    sortGradeRows(function(a, b) {
-      return textOf(a.cells[3]).localeCompare(textOf(b.cells[3]), 'ja');
+    sortGradeRows(function(a, b, gradeTable) {
+      var index = gradeTable.openNumberIndex;
+      if (index < 0) {
+        return 0;
+      }
+      return textOf(cellsForGradeRow(a, gradeTable)[index])
+        .localeCompare(textOf(cellsForGradeRow(b, gradeTable)[index]), 'ja');
     });
   }
 
   function sortByScore() {
-    sortGradeRows(function(a, b) {
-      return numberFromCell(a.cells[9]) - numberFromCell(b.cells[9]);
+    sortGradeRows(function(a, b, gradeTable) {
+      var index = gradeTable.scoreIndex;
+      if (index < 0) {
+        return 0;
+      }
+      return compareNumbers(
+        numberFromCell(cellsForGradeRow(a, gradeTable)[index]),
+        numberFromCell(cellsForGradeRow(b, gradeTable)[index])
+      );
     });
   }
 

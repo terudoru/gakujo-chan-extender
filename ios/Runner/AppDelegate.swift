@@ -105,6 +105,10 @@ private final class AppleCalendarBridge {
     }
 
     do {
+      // Refresh the store so queries below see events committed by a previous
+      // sync. EKEventStore can otherwise keep a stale snapshot and miss them,
+      // which leaves old app-created events in place on repeated syncs.
+      eventStore.reset()
       let title = args["calendarTitle"] as? String ?? "More Better Gakujo 授業"
       let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
       let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
@@ -147,6 +151,9 @@ private final class AppleCalendarBridge {
     }
 
     do {
+      // See syncEvents: refresh before resolving calendars and querying
+      // app-created events so deletion does not use a stale EventKit snapshot.
+      eventStore.reset()
       let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
       let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
       let rangeStart = Date(timeIntervalSince1970: startMillis / 1000)
@@ -212,9 +219,14 @@ private final class AppleCalendarBridge {
   }
 
   private func removeExistingEvents(start: Date, end: Date, calendars: [EKCalendar]? = nil) throws -> Int {
+    let queryEnd = Calendar(identifier: .gregorian).date(
+      byAdding: .day,
+      value: 1,
+      to: Calendar(identifier: .gregorian).startOfDay(for: end)
+    ) ?? end
     let predicate = eventStore.predicateForEvents(
       withStart: start,
-      end: end,
+      end: queryEnd,
       calendars: calendars
     )
     let events = eventStore.events(matching: predicate).filter {
@@ -627,6 +639,9 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
       )
       let finalName = try uniqueFileName(in: parent, desiredName: fileName)
       let destination = parent.appendingPathComponent(finalName)
+      guard isDescendant(destination, of: root) else {
+        throw DownloadFolderError.invalidDestination
+      }
       try typedData.data.write(to: destination, options: .atomic)
       result([
         "fileName": finalName,
@@ -743,11 +758,22 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   private func sanitizeName(_ raw: String?) -> String {
     let invalid = CharacterSet(charactersIn: "\\/:*?\"<>|")
       .union(.controlCharacters)
-    return raw
+    let trimmingCharacters = CharacterSet.whitespacesAndNewlines
+      .union(CharacterSet(charactersIn: "."))
+    let cleaned = raw
       .orEmpty
       .components(separatedBy: invalid)
       .joined()
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "\\.{2,}", with: ".", options: .regularExpression)
+      .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+      .trimmingCharacters(in: trimmingCharacters)
+    return cleaned == "." || cleaned == ".." ? "" : cleaned
+  }
+
+  private func isDescendant(_ url: URL, of root: URL) -> Bool {
+    let rootPath = root.standardizedFileURL.path
+    let path = url.standardizedFileURL.path
+    return path == rootPath || path.hasPrefix(rootPath + "/")
   }
 
   private func topViewController() -> UIViewController? {
@@ -776,11 +802,14 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
 
 private enum DownloadFolderError: LocalizedError {
   case missingRoot
+  case invalidDestination
 
   var errorDescription: String? {
     switch self {
     case .missingRoot:
       return "ダウンロード保存先が未設定です"
+    case .invalidDestination:
+      return "保存先フォルダの外には保存できません"
     }
   }
 }

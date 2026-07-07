@@ -690,8 +690,10 @@ class MainActivity : FlutterActivity() {
         return raw.orEmpty()
             .replace(Regex("[\\x00-\\x1F\\x7F]"), "")
             .replace(Regex("""[\\/:*?"<>|]"""), "")
+            .replace(Regex("\\.{2,}"), ".")
             .replace(Regex("\\s+"), " ")
             .trim()
+            .trim('.')
             .takeUnless { it == "." || it == ".." }
             .orEmpty()
     }

@@ -7,6 +7,8 @@ import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_windows/webview_windows.dart' as windows;
 
+import 'allowed_web_origins.dart';
+
 enum GakujoNavigationDecision {
   navigate,
   prevent,
@@ -259,7 +261,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
       final pairs = <String>[];
       for (final cookie in cookies) {
         final name = cookie.name.trim();
-        if (name.isEmpty || !requestPath.startsWith(cookie.path)) {
+        if (name.isEmpty || !cookiePathMatches(requestPath, cookie.path)) {
           continue;
         }
         pairs.add('$name=${cookie.value}');
@@ -278,6 +280,25 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> dispose() async {}
+}
+
+@visibleForTesting
+bool cookiePathMatches(String requestPath, String cookiePath) {
+  final normalizedRequestPath =
+      requestPath.isEmpty || !requestPath.startsWith('/') ? '/' : requestPath;
+  final normalizedCookiePath =
+      cookiePath.isEmpty || !cookiePath.startsWith('/') ? '/' : cookiePath;
+  if (normalizedRequestPath == normalizedCookiePath) {
+    return true;
+  }
+  if (!normalizedRequestPath.startsWith(normalizedCookiePath)) {
+    return false;
+  }
+  if (normalizedCookiePath.endsWith('/')) {
+    return true;
+  }
+  return normalizedRequestPath.length > normalizedCookiePath.length &&
+      normalizedRequestPath.codeUnitAt(normalizedCookiePath.length) == 0x2f;
 }
 
 class WindowsGakujoWebViewService extends GakujoWebViewService {
@@ -477,6 +498,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
         await _inner.goBack();
       } else if (_currentUrl != null && _currentUrl != url) {
         await _inner.loadUrl(_currentUrl!);
+      } else {
+        await _inner.loadUrl(AllowedWebOrigins.gakujoUrl);
       }
     } finally {
       _handlingPreventedNavigation = false;

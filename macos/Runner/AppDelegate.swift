@@ -107,6 +107,12 @@ private final class MacosCalendarBridge {
     }
 
     do {
+      // Refresh the store so the query below sees events committed by a
+      // previous sync. EKEventStore can otherwise return a stale snapshot and
+      // miss them, leaving the old events in place and accumulating duplicates
+      // on repeated syncs. Done before fetching the calendar so the calendar
+      // reference stays valid.
+      eventStore.reset()
       let title = args["calendarTitle"] as? String ?? "More Better Gakujo 授業"
       let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
       let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
@@ -149,6 +155,9 @@ private final class MacosCalendarBridge {
     }
 
     do {
+      // See syncEvents: refresh so the delete query sees the latest committed
+      // events instead of a stale snapshot.
+      eventStore.reset()
       let startMillis = (args["rangeStartMillis"] as? NSNumber)?.doubleValue ?? 0
       let endMillis = (args["rangeEndMillis"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970 * 1000
       let rangeStart = Date(timeIntervalSince1970: startMillis / 1000)
@@ -214,9 +223,15 @@ private final class MacosCalendarBridge {
   }
 
   private func removeExistingEvents(start: Date, end: Date, calendars: [EKCalendar]? = nil) throws -> Int {
+    let calendar = Calendar(identifier: .gregorian)
+    let queryEnd = calendar.date(
+      byAdding: .day,
+      value: 1,
+      to: calendar.startOfDay(for: end)
+    ) ?? end
     let predicate = eventStore.predicateForEvents(
       withStart: start,
-      end: end,
+      end: queryEnd,
       calendars: calendars
     )
     let events = eventStore.events(matching: predicate).filter {
@@ -482,6 +497,9 @@ private final class MacosDownloadsBridge: NSObject {
 
       let finalName = uniqueFileName(in: parent, desiredName: fileName.isEmpty ? "document" : fileName)
       let destination = parent.appendingPathComponent(finalName, isDirectory: false)
+      guard isDescendant(destination, of: root) else {
+        throw MacosDownloadError.invalidDestination
+      }
       try bytes.write(to: destination, options: .atomic)
       result([
         "fileName": finalName,
@@ -582,22 +600,35 @@ private final class MacosDownloadsBridge: NSObject {
   private func sanitizedName(_ value: String?) -> String {
     let forbidden = CharacterSet(charactersIn: "\\/:*?\"<>|")
       .union(.controlCharacters)
-    return value?
+    let trimmingCharacters = CharacterSet.whitespacesAndNewlines
+      .union(CharacterSet(charactersIn: "."))
+    let cleaned = value?
       .components(separatedBy: forbidden)
       .joined()
+      .replacingOccurrences(of: "\\.{2,}", with: ".", options: .regularExpression)
       .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: trimmingCharacters)
       ?? ""
+    return cleaned == "." || cleaned == ".." ? "" : cleaned
+  }
+
+  private func isDescendant(_ url: URL, of root: URL) -> Bool {
+    let rootPath = root.standardizedFileURL.path
+    let path = url.standardizedFileURL.path
+    return path == rootPath || path.hasPrefix(rootPath + "/")
   }
 }
 
 private enum MacosDownloadError: LocalizedError {
   case missingRoot
+  case invalidDestination
 
   var errorDescription: String? {
     switch self {
     case .missingRoot:
       return "ダウンロード保存先が未設定です"
+    case .invalidDestination:
+      return "保存先フォルダの外には保存できません"
     }
   }
 }

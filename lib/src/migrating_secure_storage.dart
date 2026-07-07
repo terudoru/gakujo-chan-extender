@@ -26,19 +26,27 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     StackTrace? primaryStackTrace;
     final values = <String, String?>{};
 
-    final primaryEntries = await Future.wait(
-      requestedKeys.map((key) async {
-        String? value;
-        try {
-          value =
-              await _primary.read(key: key).timeout(_storageOperationTimeout);
-        } on Object catch (error, stackTrace) {
-          primaryError ??= error;
-          primaryStackTrace ??= stackTrace;
-        }
-        return MapEntry(key, value);
-      }),
-    );
+    List<MapEntry<String, String?>> primaryEntries;
+    try {
+      primaryEntries = await Future.wait(
+        requestedKeys.map((key) async {
+          String? value;
+          try {
+            value = await _primary.read(key: key);
+          } on Object catch (error, stackTrace) {
+            primaryError ??= error;
+            primaryStackTrace ??= stackTrace;
+          }
+          return MapEntry(key, value);
+        }),
+      ).timeout(_storageOperationTimeout);
+    } on TimeoutException catch (error, stackTrace) {
+      primaryError = error;
+      primaryStackTrace = stackTrace;
+      primaryEntries = [
+        for (final key in requestedKeys) MapEntry(key, null),
+      ];
+    }
 
     for (final entry in primaryEntries) {
       values[entry.key] = entry.value;

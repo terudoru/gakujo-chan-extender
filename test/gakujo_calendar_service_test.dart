@@ -82,11 +82,11 @@ void main() {
     expect(eventJson['title'], '検証予定');
     expect(
       eventJson['startMillis'],
-      DateTime(2026, 6, 11, 8, 45).millisecondsSinceEpoch,
+      DateTime.utc(2026, 6, 10, 23, 45).millisecondsSinceEpoch,
     );
     expect(
       eventJson['endMillis'],
-      DateTime(2026, 6, 11, 10, 15).millisecondsSinceEpoch,
+      DateTime.utc(2026, 6, 11, 1, 15).millisecondsSinceEpoch,
     );
     expect(eventJson['location'], '検証教室 A');
     expect(eventJson['teacher'], 'More Better Gakujo');
@@ -122,6 +122,27 @@ void main() {
     expect(events.first.notes, contains('教室: E-260'));
     expect(events.first.notes, contains('担当教員: 山田 太郎'));
     expect(events.first.notes, contains('ターム: 2026年度 第2ターム'));
+  });
+
+  test('buildEvents serializes lesson times as Asia/Tokyo wall clock', () {
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '日本国憲法',
+          weekday: DateTime.monday,
+          period: 1,
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 15),
+      rangeEnd: DateTime(2026, 6, 15),
+    );
+
+    expect(events.single.start, DateTime(2026, 6, 15, 8, 45));
+    expect(events.single.end, DateTime(2026, 6, 15, 10, 15));
+    expect(
+      events.single.toJson()['startMillis'],
+      DateTime.utc(2026, 6, 14, 23, 45).millisecondsSinceEpoch,
+    );
   });
 
   test('buildEvents prefers official Google schedule display fields', () {

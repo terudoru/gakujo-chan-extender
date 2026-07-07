@@ -2,6 +2,7 @@
 
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
+#include <shellapi.h>
 #include <windows.h>
 
 #include <optional>
@@ -40,6 +41,42 @@ std::string StringArg(
     return value->empty() ? fallback : *value;
   }
   return fallback;
+}
+
+void CopyWideString(wchar_t* destination,
+                    size_t destination_count,
+                    const std::wstring& value) {
+  if (destination_count == 0) {
+    return;
+  }
+  wcsncpy_s(destination, destination_count, value.c_str(), _TRUNCATE);
+}
+
+void ShowDeadlineNotification(HWND hwnd,
+                              const std::wstring& title,
+                              const std::wstring& body) {
+  NOTIFYICONDATAW data = {};
+  data.cbSize = sizeof(NOTIFYICONDATAW);
+  data.hWnd = hwnd;
+  data.uID = 1;
+  data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
+  data.hIcon = LoadIcon(nullptr, IDI_INFORMATION);
+  CopyWideString(data.szTip, ARRAYSIZE(data.szTip), L"More Better Gakujo");
+  CopyWideString(data.szInfoTitle, ARRAYSIZE(data.szInfoTitle), title);
+  CopyWideString(data.szInfo, ARRAYSIZE(data.szInfo), body);
+  data.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+
+  if (!Shell_NotifyIconW(NIM_MODIFY, &data)) {
+    Shell_NotifyIconW(NIM_ADD, &data);
+  }
+}
+
+void DeleteDeadlineNotification(HWND hwnd) {
+  NOTIFYICONDATAW data = {};
+  data.cbSize = sizeof(NOTIFYICONDATAW);
+  data.hWnd = hwnd;
+  data.uID = 1;
+  Shell_NotifyIconW(NIM_DELETE, &data);
 }
 
 }  // namespace
@@ -87,8 +124,7 @@ bool FlutterWindow::OnCreate() {
             title = StringArg(*args, "title", title.c_str());
             body = StringArg(*args, "body", body.c_str());
           }
-          MessageBoxW(hwnd, Utf8ToWide(body).c_str(), Utf8ToWide(title).c_str(),
-                      MB_OK | MB_ICONINFORMATION);
+          ShowDeadlineNotification(hwnd, Utf8ToWide(title), Utf8ToWide(body));
           result->Success(flutter::EncodableValue(true));
           return;
         }
@@ -110,6 +146,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  DeleteDeadlineNotification(GetHandle());
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

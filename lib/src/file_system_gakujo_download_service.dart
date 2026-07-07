@@ -16,10 +16,34 @@ import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'secure_storage_factory.dart';
 
+typedef AuthenticatedDownloadBytesLoader = Future<AuthenticatedDownloadedFile>
+    Function(
+  GakujoDownloadRequest request, {
+  String? userAgent,
+});
+
+class AuthenticatedDownloadedFile {
+  const AuthenticatedDownloadedFile({
+    required this.bytes,
+    required this.finalUrl,
+    this.mimeType,
+    this.contentDispositionFileName,
+  });
+
+  final Uint8List bytes;
+  final String finalUrl;
+  final String? mimeType;
+  final String? contentDispositionFileName;
+}
+
 class FileSystemGakujoDownloadService extends GakujoDownloadService {
   FileSystemGakujoDownloadService({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
+    AuthenticatedDownloadBytesLoader? authenticatedBytesLoader,
+    @visibleForTesting bool? usesNativeDownloadRoot,
+  })  : _secureStorage = secureStorage ?? SecureStorageFactory.create(),
+        _authenticatedBytesLoader = authenticatedBytesLoader,
+        _usesNativeDownloadRootOverride = usesNativeDownloadRoot;
 
   static const _downloadRootPathKey = 'more_better_gakujo_download_root_path';
   static const _nativeDownloadsChannel = MethodChannel(
@@ -27,6 +51,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   );
 
   final FlutterSecureStorage _secureStorage;
+  final AuthenticatedDownloadBytesLoader? _authenticatedBytesLoader;
+  final bool? _usesNativeDownloadRootOverride;
 
   @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {
@@ -239,8 +265,24 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     String? userAgent,
     String? cookieHeader,
   }) async {
-    final method = request.method.toUpperCase() == 'POST' ? 'POST' : 'GET';
-    final uri = method == 'GET' && request.formFields.isNotEmpty
+    final normalizedCookieHeader = cookieHeader?.trim();
+    final authenticatedBytesLoader = _authenticatedBytesLoader;
+    if ((normalizedCookieHeader == null || normalizedCookieHeader.isEmpty) &&
+        authenticatedBytesLoader != null) {
+      final downloaded = await authenticatedBytesLoader(
+        request,
+        userAgent: userAgent,
+      );
+      return _DownloadedFile(
+        bytes: downloaded.bytes,
+        finalUrl: downloaded.finalUrl,
+        mimeType: downloaded.mimeType,
+        contentDispositionFileName: downloaded.contentDispositionFileName,
+      );
+    }
+
+    var method = request.method.toUpperCase() == 'POST' ? 'POST' : 'GET';
+    var uri = method == 'GET' && request.formFields.isNotEmpty
         ? Uri.parse(request.url).replace(
             queryParameters: {
               ...Uri.parse(request.url).queryParameters,
@@ -252,68 +294,106 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 30);
     try {
-      final httpRequest = await client.openUrl(method, uri);
-      httpRequest.followRedirects = true;
-      httpRequest.headers.set(HttpHeaders.acceptHeader, '*/*');
-      final normalizedUserAgent = userAgent?.trim();
-      if (normalizedUserAgent != null && normalizedUserAgent.isNotEmpty) {
-        httpRequest.headers
-            .set(HttpHeaders.userAgentHeader, normalizedUserAgent);
-      }
-      final normalizedCookieHeader = cookieHeader?.trim();
-      if (normalizedCookieHeader != null && normalizedCookieHeader.isNotEmpty) {
-        httpRequest.headers
-            .set(HttpHeaders.cookieHeader, normalizedCookieHeader);
-      }
-
-      if (method == 'POST') {
-        final body = _encodeForm(request.formFields);
-        final encodedBody = utf8.encode(body);
-        httpRequest.headers
-            .set(HttpHeaders.contentLengthHeader, encodedBody.length);
-        httpRequest.headers.contentType = ContentType(
-          'application',
-          'x-www-form-urlencoded',
-          charset: 'utf-8',
-        );
-        httpRequest.add(encodedBody);
-      }
-
-      final response = await httpRequest.close().timeout(
-            const Duration(seconds: 30),
+      for (var redirectCount = 0; redirectCount <= 10; redirectCount += 1) {
+        if (!AllowedWebOrigins.canLoad(uri.toString(), debugAllowed: false)) {
+          throw PlatformException(
+            code: 'blocked_url',
+            message: 'Gakujo以外へのリダイレクトをブロックしました',
           );
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw PlatformException(
-          code: 'download_failed',
-          message: 'ダウンロードに失敗しました HTTP ${response.statusCode}',
+        }
+
+        final httpRequest = await client.openUrl(method, uri);
+        httpRequest.followRedirects = false;
+        httpRequest.headers.set(HttpHeaders.acceptHeader, '*/*');
+        final normalizedUserAgent = userAgent?.trim();
+        if (normalizedUserAgent != null && normalizedUserAgent.isNotEmpty) {
+          httpRequest.headers
+              .set(HttpHeaders.userAgentHeader, normalizedUserAgent);
+        }
+        if (normalizedCookieHeader != null &&
+            normalizedCookieHeader.isNotEmpty) {
+          httpRequest.headers
+              .set(HttpHeaders.cookieHeader, normalizedCookieHeader);
+        }
+
+        if (method == 'POST') {
+          final body = _encodeForm(request.formFields);
+          final encodedBody = utf8.encode(body);
+          httpRequest.headers
+              .set(HttpHeaders.contentLengthHeader, encodedBody.length);
+          httpRequest.headers.contentType = ContentType(
+            'application',
+            'x-www-form-urlencoded',
+            charset: 'utf-8',
+          );
+          httpRequest.add(encodedBody);
+        }
+
+        final response = await httpRequest.close().timeout(
+              const Duration(seconds: 30),
+            );
+        final redirectLocation =
+            response.headers.value(HttpHeaders.locationHeader);
+        if (_isRedirectStatus(response.statusCode) &&
+            redirectLocation != null &&
+            redirectLocation.trim().isNotEmpty) {
+          final nextUri = uri.resolve(redirectLocation);
+          if (!AllowedWebOrigins.canLoad(
+            nextUri.toString(),
+            debugAllowed: false,
+          )) {
+            throw PlatformException(
+              code: 'blocked_url',
+              message: 'Gakujo以外へのリダイレクトをブロックしました',
+            );
+          }
+          await response.drain<void>();
+          uri = nextUri;
+          if (response.statusCode == 303 ||
+              ((response.statusCode == 301 || response.statusCode == 302) &&
+                  method == 'POST')) {
+            method = 'GET';
+          }
+          continue;
+        }
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          throw PlatformException(
+            code: 'download_failed',
+            message: 'ダウンロードに失敗しました HTTP ${response.statusCode}',
+          );
+        }
+
+        final finalUrl = resolveRedirectedDownloadUrl(
+          uri,
+          response.redirects.map((redirect) => redirect.location),
+        );
+        if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
+          throw PlatformException(
+            code: 'blocked_url',
+            message: 'Gakujo以外へのリダイレクトをブロックしました',
+          );
+        }
+
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response.timeout(
+          const Duration(seconds: 60),
+        )) {
+          builder.add(chunk);
+        }
+        final disposition =
+            response.headers.value(HttpHeaders.contentDisposition);
+        return _DownloadedFile(
+          bytes: builder.takeBytes(),
+          finalUrl: finalUrl,
+          mimeType: response.headers.contentType?.mimeType,
+          contentDispositionFileName:
+              DownloadFileNamePolicy.fileNameFromContentDisposition(
+                  disposition),
         );
       }
-
-      final finalUrl = resolveRedirectedDownloadUrl(
-        uri,
-        response.redirects.map((redirect) => redirect.location),
-      );
-      if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
-        throw PlatformException(
-          code: 'blocked_url',
-          message: 'Gakujo以外へのリダイレクトをブロックしました',
-        );
-      }
-
-      final builder = BytesBuilder(copy: false);
-      await for (final chunk in response.timeout(
-        const Duration(seconds: 60),
-      )) {
-        builder.add(chunk);
-      }
-      final disposition =
-          response.headers.value(HttpHeaders.contentDisposition);
-      return _DownloadedFile(
-        bytes: builder.takeBytes(),
-        finalUrl: finalUrl,
-        mimeType: response.headers.contentType?.mimeType,
-        contentDispositionFileName:
-            DownloadFileNamePolicy.fileNameFromContentDisposition(disposition),
+      throw PlatformException(
+        code: 'download_failed',
+        message: 'リダイレクトが多すぎます',
       );
     } finally {
       client.close(force: true);
@@ -332,7 +412,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
   }
 
-  bool get _usesNativeDownloadRoot => Platform.isIOS || Platform.isMacOS;
+  bool get _usesNativeDownloadRoot =>
+      _usesNativeDownloadRootOverride ?? (Platform.isIOS || Platform.isMacOS);
 
   Future<Directory> _configuredRootDirectory() async {
     final settings = await getDownloadRoot();
@@ -421,6 +502,14 @@ String resolveRedirectedDownloadUrl(Uri initialUri, Iterable<Uri> redirects) {
     current = current.resolveUri(redirect);
   }
   return current.toString();
+}
+
+bool _isRedirectStatus(int statusCode) {
+  return statusCode == 301 ||
+      statusCode == 302 ||
+      statusCode == 303 ||
+      statusCode == 307 ||
+      statusCode == 308;
 }
 
 class _DownloadedFile {

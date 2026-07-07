@@ -178,7 +178,7 @@ class BundledSecureStorage extends FlutterSecureStorage {
     }
     final pendingRead = _pendingRead;
     if (pendingRead != null) {
-      return pendingRead;
+      return pendingRead.then(Map<String, String>.from);
     }
     final read = _readBundleUncached(
       iOptions: iOptions,
@@ -191,7 +191,7 @@ class BundledSecureStorage extends FlutterSecureStorage {
     _pendingRead = read;
     return read.then((values) {
       _cachedValues = Map<String, String>.from(values);
-      return values;
+      return Map<String, String>.from(values);
     }).whenComplete(() {
       _pendingRead = null;
     });

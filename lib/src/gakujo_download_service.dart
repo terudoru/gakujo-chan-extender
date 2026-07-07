@@ -16,10 +16,17 @@ class GakujoDownloadResult {
   final String? location;
 
   factory GakujoDownloadResult.fromMap(Map<dynamic, dynamic>? raw) {
+    final fileName = raw?['fileName']?.toString().trim() ?? '';
+    if (raw == null || fileName.isEmpty) {
+      throw PlatformException(
+        code: 'cancelled',
+        message: '保存をキャンセルしました',
+      );
+    }
     return GakujoDownloadResult(
-      fileName: raw?['fileName']?.toString() ?? '',
-      courseName: raw?['courseName']?.toString() ?? '',
-      location: raw?['location']?.toString(),
+      fileName: fileName,
+      courseName: raw['courseName']?.toString() ?? '',
+      location: raw['location']?.toString(),
     );
   }
 }

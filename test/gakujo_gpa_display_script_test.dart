@@ -12,9 +12,16 @@ void main() {
     expect(script,
         contains("documentRef.querySelector('#taniReferListForm+table')"));
     expect(script, contains('headerCells[12]'));
+    expect(script, contains('numberIndex: 0'));
+    expect(script, contains('openNumberIndex: 3'));
+    expect(script, contains('scoreIndex: 9'));
     expect(script, contains('unitIndex: 8'));
     expect(script, contains('gpIndex: 12'));
     expect(script, contains('function labelOf(element)'));
+    expect(script, contains('function isNumberLabel(label)'));
+    expect(script, contains('function isScoreLabel(label)'));
+    expect(script, contains("label.indexOf('開講番号') >= 0"));
+    expect(script, contains('scoreIndex = cellIndex'));
     expect(script, contains("label.indexOf('単位数') >= 0"));
     expect(script, contains("label === 'GP'"));
     expect(script, contains("labels.join('|').indexOf('科目')"));
@@ -32,6 +39,13 @@ void main() {
     expect(script, contains('function sortByNumber()'));
     expect(script, contains('function sortByOpenNumber()'));
     expect(script, contains('function sortByScore()'));
+    expect(script, contains('function cellsForGradeRow(row, gradeTable)'));
+    expect(script, contains('gradeTable.numberIndex'));
+    expect(script, contains('gradeTable.openNumberIndex'));
+    expect(script, contains('gradeTable.scoreIndex'));
+    expect(script, isNot(contains('numberFromCell(a.cells[0])')));
+    expect(script, isNot(contains('textOf(a.cells[3])')));
+    expect(script, isNot(contains('numberFromCell(a.cells[9])')));
     expect(script, contains('gradeTable.headerRowIndex + 1'));
     expect(script, contains('__MBG_GPA_DISPLAY_INTERVAL'));
     expect(script, contains('.mbg-gpa-display'));

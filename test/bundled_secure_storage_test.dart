@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/bundled_secure_storage.dart';
@@ -55,6 +57,25 @@ void main() {
     expect(await storage.containsKey(key: 'login'), isFalse);
     expect(await storage.containsKey(key: 'password'), isTrue);
   });
+
+  test('concurrent pending reads return independent map snapshots', () async {
+    final backing = _DelayedReadSecureStorage('{"login":"student"}');
+    final storage = BundledSecureStorage(
+      storage: backing,
+      bundleKey: 'bundle',
+    );
+
+    final firstRead = storage.readAll();
+    final secondRead = storage.readAll();
+    backing.completeRead();
+
+    final first = await firstRead;
+    final second = await secondRead;
+    first['login'] = 'changed';
+
+    expect(second, {'login': 'student'});
+    expect(await storage.readAll(), {'login': 'student'});
+  });
 }
 
 class _MemorySecureStorage extends FlutterSecureStorage {
@@ -107,5 +128,30 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     values.remove(key);
+  }
+}
+
+class _DelayedReadSecureStorage extends FlutterSecureStorage {
+  _DelayedReadSecureStorage(this.value);
+
+  final String value;
+  final _readCompleter = Completer<void>();
+
+  void completeRead() {
+    _readCompleter.complete();
+  }
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    await _readCompleter.future;
+    return value;
   }
 }

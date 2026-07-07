@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/migrating_secure_storage.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -109,6 +112,28 @@ void main() {
         storage.readKeys.last, 'more_better_gakujo_message_exclude_keywords');
     expect(settings.pageMode, GakujoPageMode.desktop);
   });
+
+  test('load reads legacy settings when migrating primary times out', () async {
+    final primary = _TrackingSecureStorage({})
+      ..readDelay = const Duration(seconds: 4);
+    final fallback = _TrackingSecureStorage({
+      'more_better_gakujo_page_mode': 'mobile',
+      'more_better_gakujo_login_id': 'student',
+      'more_better_gakujo_login_password': 'secret',
+    });
+    final store = GakujoAppSettingsStore(
+      secureStorage: MigratingSecureStorage(
+        primary: primary,
+        fallback: fallback,
+      ),
+    );
+
+    final settings = await store.load();
+
+    expect(settings.pageMode, GakujoPageMode.mobile);
+    expect(settings.loginCredentials?.loginId, 'student');
+    expect(settings.loginCredentials?.password, 'secret');
+  });
 }
 
 class _TrackingSecureStorage extends FlutterSecureStorage {
@@ -116,6 +141,7 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
 
   final Map<String, String> values;
   Object? readAllError;
+  Duration readDelay = Duration.zero;
   int readAllCount = 0;
   final List<String> readKeys = [];
 
@@ -146,6 +172,9 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (readDelay > Duration.zero) {
+      await Future<void>.delayed(readDelay);
+    }
     readKeys.add(key);
     return values[key];
   }
