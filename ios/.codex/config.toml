@@ -1,0 +1,4 @@
+# XcodeBuildMCP is useful for iOS-specific work but expensive when loaded by
+# every Flutter task, so this project-scoped server is enabled only here.
+[mcp_servers.ios_xcodebuild]
+enabled = true
