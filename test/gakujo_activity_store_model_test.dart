@@ -704,4 +704,264 @@ void main() {
     expect(await store.loadChanges(), isEmpty);
     expect(await store.loadReportLists(), isEmpty);
   });
+
+  test('mergeDeadlines updates duplicate keys and returns only new entries',
+      () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 1));
+    const duplicateUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/duplicate-report';
+    const newUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/new-report';
+
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: '重複課題',
+        url: duplicateUrl,
+        dueText: '提出期限 2099/07/01 17:00',
+        detectedAt: base,
+      ),
+    ]);
+    final replacement = GakujoDeadlineEntry(
+      title: '重複課題',
+      url: duplicateUrl,
+      dueText: '提出期限 2099/07/01 17:00',
+      detectedAt: base.add(const Duration(hours: 2)),
+    );
+    final newEntry = GakujoDeadlineEntry(
+      title: '新規課題',
+      url: newUrl,
+      dueText: '提出期限 2099/07/02 17:00',
+      detectedAt: base.add(const Duration(hours: 1)),
+    );
+
+    final added = await store.mergeDeadlines([replacement, newEntry]);
+    final deadlines = await store.loadDeadlines();
+
+    expect(added, hasLength(1));
+    expect(added.single.key, newEntry.key);
+    expect(deadlines, hasLength(2));
+    expect(
+        deadlines.where((entry) => entry.key == replacement.key), hasLength(1));
+    expect(
+      deadlines.singleWhere((entry) => entry.key == replacement.key).detectedAt,
+      replacement.detectedAt,
+    );
+  });
+
+  test('mergeDeadlines keeps only the 80 newest entries', () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 2));
+
+    await store.replaceDeadlines([
+      for (var i = 0; i < 80; i += 1)
+        GakujoDeadlineEntry(
+          title: '既存課題$i',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-$i',
+          dueText: '提出期限 2099/07/01 17:00',
+          detectedAt: base.add(Duration(minutes: i)),
+        ),
+    ]);
+    final newest = GakujoDeadlineEntry(
+      title: '最新課題',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/latest-report',
+      dueText: '提出期限 2099/07/02 17:00',
+      detectedAt: base.add(const Duration(days: 1)),
+    );
+
+    final added = await store.mergeDeadlines([newest]);
+    final deadlines = await store.loadDeadlines();
+
+    expect(added, hasLength(1));
+    expect(deadlines, hasLength(80));
+    expect(deadlines.first.key, newest.key);
+    expect(deadlines.map((entry) => entry.title), isNot(contains('既存課題0')));
+  });
+
+  test('markSnapshotsSeen clears update flags but preserves snapshots',
+      () async {
+    final store = GakujoActivityStore();
+    const url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/notice-list';
+
+    await store.recordSnapshot(
+      category: '連絡通知',
+      title: '掲示',
+      url: url,
+      content: '更新前の掲示',
+    );
+    await store.recordSnapshot(
+      category: '連絡通知',
+      title: '掲示',
+      url: url,
+      content: '更新後の掲示',
+    );
+    final before = (await store.loadSnapshots()).single;
+    expect(before.hasUpdate, isTrue);
+
+    await store.markSnapshotsSeen();
+
+    final after = (await store.loadSnapshots()).single;
+    expect(after.hasUpdate, isFalse);
+    expect(after.contentHash, before.contentHash);
+    expect(after.contentPreview, before.contentPreview);
+    expect(after.updatedAt, before.updatedAt);
+
+    await store.clearSnapshots();
+    expect(await store.loadSnapshots(), isEmpty);
+  });
+
+  test('favorites can be added, updated by URL, and removed', () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 1));
+    const firstUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/favorite-1';
+    const secondUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/favorite-2';
+
+    await store.addFavorite(
+      GakujoFavoritePage(
+        title: '最初の名前',
+        url: firstUrl,
+        addedAt: base,
+      ),
+    );
+    await store.addFavorite(
+      GakujoFavoritePage(
+        title: '更新後の名前',
+        url: firstUrl,
+        addedAt: base.add(const Duration(hours: 2)),
+      ),
+    );
+    await store.addFavorite(
+      GakujoFavoritePage(
+        title: '別ページ',
+        url: secondUrl,
+        addedAt: base.add(const Duration(hours: 1)),
+      ),
+    );
+    await store.addFavorite(
+      GakujoFavoritePage(
+        title: '',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/invalid',
+        addedAt: base.add(const Duration(hours: 3)),
+      ),
+    );
+
+    final favorites = await store.loadFavorites();
+    expect(favorites, hasLength(2));
+    expect(favorites.first.title, '更新後の名前');
+    expect(
+        favorites.where((favorite) => favorite.url == firstUrl), hasLength(1));
+
+    await store.removeFavorite(firstUrl);
+
+    final remaining = await store.loadFavorites();
+    expect(remaining, hasLength(1));
+    expect(remaining.single.url, secondUrl);
+  });
+
+  test('replaceFavorites replaces existing data with 30 newest valid pages',
+      () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 1));
+
+    await store.addFavorite(
+      GakujoFavoritePage(
+        title: '置換前ページ',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/before-replace',
+        addedAt: base,
+      ),
+    );
+    await store.replaceFavorites([
+      GakujoFavoritePage(
+        title: '',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/invalid',
+        addedAt: base.add(const Duration(hours: 1)),
+      ),
+      for (var i = 0; i < 31; i += 1)
+        GakujoFavoritePage(
+          title: '置換ページ$i',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/replacement-$i',
+          addedAt: base.add(Duration(minutes: i)),
+        ),
+    ]);
+
+    final favorites = await store.loadFavorites();
+    expect(favorites, hasLength(30));
+    expect(favorites.first.title, '置換ページ30');
+    expect(favorites.last.title, '置換ページ1');
+    expect(
+        favorites.map((favorite) => favorite.title), isNot(contains('置換前ページ')));
+    expect(favorites.map((favorite) => favorite.title), isNot(contains('')));
+  });
+
+  test('saveReportList overwrites the same page and keeps other pages',
+      () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 1));
+    const firstUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-list-1';
+    const secondUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-list-2';
+
+    await store.saveReportList(
+      GakujoCachedReportList(
+        title: 'レポート一覧（更新前）',
+        url: firstUrl,
+        capturedAt: base,
+        items: const ['課題A'],
+      ),
+    );
+    await store.saveReportList(
+      GakujoCachedReportList(
+        title: '別のレポート一覧',
+        url: secondUrl,
+        capturedAt: base.add(const Duration(hours: 1)),
+        items: const ['課題B'],
+      ),
+    );
+    await store.saveReportList(
+      GakujoCachedReportList(
+        title: 'レポート一覧（更新後）',
+        url: firstUrl,
+        capturedAt: base.add(const Duration(hours: 2)),
+        items: const ['課題C'],
+      ),
+    );
+
+    final reportLists = await store.loadReportLists();
+    expect(reportLists, hasLength(2));
+    expect(reportLists.where((entry) => entry.url == firstUrl), hasLength(1));
+    final overwritten =
+        reportLists.singleWhere((entry) => entry.url == firstUrl);
+    expect(overwritten.title, 'レポート一覧（更新後）');
+    expect(overwritten.items, ['課題C']);
+    expect(reportLists.map((entry) => entry.url), contains(secondUrl));
+  });
+
+  test('saveReportList keeps only the 20 newest pages', () async {
+    final store = GakujoActivityStore();
+    final base = DateTime.now().subtract(const Duration(days: 2));
+
+    await store.replaceReportLists([
+      for (var i = 0; i < 20; i += 1)
+        GakujoCachedReportList(
+          title: '既存一覧$i',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-list-$i',
+          capturedAt: base.add(Duration(minutes: i)),
+          items: const ['課題'],
+        ),
+    ]);
+    final newest = GakujoCachedReportList(
+      title: '最新一覧',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/latest-report-list',
+      capturedAt: base.add(const Duration(days: 1)),
+      items: const ['最新課題'],
+    );
+
+    await store.saveReportList(newest);
+
+    final reportLists = await store.loadReportLists();
+    expect(reportLists, hasLength(20));
+    expect(reportLists.first.url, newest.url);
+    expect(reportLists.map((entry) => entry.title), isNot(contains('既存一覧0')));
+  });
 }
