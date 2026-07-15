@@ -55,6 +55,50 @@ void main() {
     );
   });
 
+  test('isMissingKeychainEntitlementError detects iOS entitlement failures',
+      () {
+    expect(
+      isMissingKeychainEntitlementError(
+        PlatformException(
+          code: '-34018',
+          message: "A required entitlement isn't present.",
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      isMissingKeychainEntitlementError(
+        PlatformException(code: 'timeout', message: 'Keychain timed out'),
+      ),
+      isFalse,
+    );
+  });
+
+  test('iOS keychain recovery guidance never references macOS utilities', () {
+    final guidance = secureStorageRecoveryGuidance(
+      PlatformException(
+        code: '-34018',
+        message: "A required entitlement isn't present.",
+      ),
+      platform: TargetPlatform.iOS,
+    );
+
+    expect(guidance, contains('アプリを最新版へ更新'));
+    expect(guidance, isNot(contains('キーチェーンアクセス.app')));
+    expect(guidance, isNot(contains('再試行')));
+    expect(guidance, isNot(contains('保存データをリセット')));
+  });
+
+  test('macOS keychain recovery guidance retains Keychain Access steps', () {
+    final guidance = secureStorageRecoveryGuidance(
+      PlatformException(code: 'errSecUserCanceled', message: 'User canceled'),
+      platform: TargetPlatform.macOS,
+    );
+
+    expect(guidance, contains('キーチェーンアクセス.app'));
+    expect(guidance, contains('再試行'));
+  });
+
   test('activity page reading follows independent feature toggles', () {
     expect(
       shouldReadPageForActivityFeatures(const GakujoAppSettings()),
@@ -96,8 +140,15 @@ void main() {
     );
   });
 
-  test('activity bell toolbar button is disabled by default', () {
-    expect(activityBellToolbarButtonEnabled, isFalse);
+  test('activity bell toolbar button is enabled', () {
+    expect(activityBellToolbarButtonEnabled, isTrue);
+  });
+
+  test('toolbar exposes every documented Gakujo quick jump', () {
+    expect(
+      GakujoQuickJumpDestination.values.map((destination) => destination.label),
+      ['成績', 'レポート', '連絡通知', 'ダウンロード', 'シラバス', 'スケジュール'],
+    );
   });
 
   test('downloadRootLabel hides local path for lightweight diagnostics', () {

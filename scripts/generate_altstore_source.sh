@@ -79,8 +79,12 @@ cat > "$output_path" <<JSON
         }
       ],
       "appPermissions": {
-        "entitlements": [],
-        "privacy": {}
+        "entitlements": ["keychain-access-groups"],
+        "privacy": {
+          "NSCalendarsFullAccessUsageDescription": "履修中の授業予定を端末のカレンダーに追加・更新するために使用します。",
+          "NSCalendarsUsageDescription": "履修中の授業予定を端末のカレンダーに追加・更新するために使用します。",
+          "NSCalendarsWriteOnlyAccessUsageDescription": "履修中の授業予定を端末のカレンダーに追加するために使用します。"
+        }
       }
     }
   ],

@@ -56,6 +56,28 @@ enum _ToolbarAction {
   reload,
 }
 
+enum GakujoQuickJumpDestination {
+  grades,
+  reports,
+  messages,
+  downloads,
+  syllabus,
+  schedule,
+}
+
+extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
+  String get label {
+    return switch (this) {
+      GakujoQuickJumpDestination.grades => '成績',
+      GakujoQuickJumpDestination.reports => 'レポート',
+      GakujoQuickJumpDestination.messages => '連絡通知',
+      GakujoQuickJumpDestination.downloads => 'ダウンロード',
+      GakujoQuickJumpDestination.syllabus => 'シラバス',
+      GakujoQuickJumpDestination.schedule => 'スケジュール',
+    };
+  }
+}
+
 enum _CalendarValidationAction { add, delete }
 
 enum _SecureStorageRecoveryAction { retry, reset, continueWithoutStorage }
@@ -120,6 +142,58 @@ bool isLikelyMacosKeychainUserDeniedError(Object error) {
       haystack.contains('-25293') ||
       haystack.contains('errsecusercanceled') ||
       haystack.contains('errsecauthfailed');
+}
+
+@visibleForTesting
+bool isMissingKeychainEntitlementError(Object error) {
+  if (error is! PlatformException) {
+    return false;
+  }
+  final haystack = [
+    error.code,
+    error.message,
+    error.details?.toString(),
+  ].whereType<String>().join(' ').toLowerCase();
+  return haystack.contains('-34018') ||
+      haystack.contains('required entitlement') ||
+      haystack.contains('missing entitlement');
+}
+
+@visibleForTesting
+String secureStorageRecoveryGuidance(
+  Object error, {
+  required TargetPlatform platform,
+}) {
+  if (isMissingKeychainEntitlementError(error)) {
+    return 'このアプリに必要なキーチェーン権限がありません。'
+        'アプリを最新版へ更新してから、もう一度起動してください。';
+  }
+  if (platform == TargetPlatform.iOS) {
+    return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
+        '再試行しても復旧しない場合はアプリを最新版へ更新してください。'
+        '保存領域の破損が疑われる場合に限り「保存データをリセット」を使用してください。'
+        'その場合はログイン情報と2FA設定の再入力が必要です。';
+  }
+
+  final userDenied = isLikelyMacosKeychainUserDeniedError(error);
+  if (platform == TargetPlatform.macOS && userDenied) {
+    return 'macOS が拒否を記憶している場合、「再試行」だけでは許可ダイアログが再表示されません。\n\n'
+        'データを残して復旧するには、キーチェーンアクセス.app を開き、'
+        'ログインキーチェーン内の More Better Gakujo / '
+        'net.yoshida.morebettergakujoFlutter.secure_storage.v2 に関連する項目を探して、'
+        'アクセス制御でこのアプリを許可してから「再試行」してください。\n\n'
+        '項目が見つからない、または許可できない場合は「保存データをリセット」で保存領域を作り直せます。'
+        'その場合はログイン情報と2FA設定の再入力が必要です。';
+  }
+  if (platform == TargetPlatform.macOS) {
+    return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
+        '以前に許可ダイアログを拒否した場合は、キーチェーンアクセス.app でこのアプリのアクセスを許可してから'
+        '再試行してください。それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+        'その場合はログイン情報と2FA設定の再入力が必要です。';
+  }
+  return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
+      'それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+      'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
 class GakujoWebApp extends StatefulWidget {
@@ -210,7 +284,7 @@ bool shouldReadPageForActivityFeatures(GakujoAppSettings settings) {
 }
 
 @visibleForTesting
-bool get activityBellToolbarButtonEnabled => false;
+bool get activityBellToolbarButtonEnabled => true;
 
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
@@ -297,7 +371,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       unawaited(_loadDownloadRoot());
       unawaited(_compactStoredData());
     }
-    if (activityBellToolbarButtonEnabled) {
+    if (_secureStorageAccessAllowed && activityBellToolbarButtonEnabled) {
       unawaited(_refreshActivityCounts());
     }
     unawaited(_loadInitialPage());
@@ -391,31 +465,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             ),
             SizedBox.square(
               dimension: _toolbarButtonExtent,
-              child: PopupMenuButton<_ToolbarAction>(
+              child: PopupMenuButton<Object>(
                 tooltip: 'メニュー',
                 padding: EdgeInsets.zero,
                 iconSize: _toolbarIconSize,
                 icon: const Icon(Icons.more_vert),
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
+                itemBuilder: (context) => [
+                  for (final destination in GakujoQuickJumpDestination.values)
+                    PopupMenuItem<Object>(
+                      value: destination,
+                      child: Text('${destination.label}へ移動'),
+                    ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<Object>(
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem<Object>(
                     value: _ToolbarAction.copyUrl,
                     child: Text('URLをコピー'),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem<Object>(
                     value: _ToolbarAction.openExternal,
                     child: Text('外部ブラウザで開く'),
                   ),
-                  PopupMenuDivider(),
-                  PopupMenuItem(
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<Object>(
                     value: _ToolbarAction.reload,
                     child: Text('再読込'),
                   ),
                 ],
-                onSelected: (action) => unawaited(_handleToolbarAction(action)),
+                onSelected: (selection) =>
+                    unawaited(_handleToolbarSelection(selection)),
               ),
             ),
           ],
@@ -1286,42 +1367,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
               actions: [
                 TextButton(
-                  onPressed: () async {
-                    Object? saveError;
-                    StackTrace? saveStackTrace;
-                    try {
-                      await _appSettingsStore.saveSetupCompleted(true);
-                    } on Object catch (error, stackTrace) {
-                      saveError = error;
-                      saveStackTrace = stackTrace;
-                    }
-                    if (!mounted) {
-                      return;
-                    }
-                    setState(() {
-                      _appSettings = _appSettings.copyWith(
-                        setupCompleted: true,
-                      );
-                    });
-                    if (!dialogContext.mounted) {
-                      return;
-                    }
-                    Navigator.of(dialogContext).pop();
-                    if (saveError != null) {
-                      developer.log(
-                        'Failed to persist initial setup skip',
-                        name: 'MoreBetterGakujo',
-                        error: saveError,
-                        stackTrace: saveStackTrace,
-                      );
-                      messenger.showSnackBar(
-                        const SnackBar(
-                          content:
-                              Text('初回セットアップ状態を保存できませんでした。キーチェーン設定を確認してください。'),
-                        ),
-                      );
-                    }
-                  },
+                  onPressed: () => Navigator.of(dialogContext).pop(),
                   child: const Text('あとで'),
                 ),
                 FilledButton(
@@ -2227,6 +2273,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+  }
+
+  Future<void> _handleToolbarSelection(Object selection) async {
+    if (selection is GakujoQuickJumpDestination) {
+      await _quickJumpTo(selection.label);
+      return;
+    }
+    await _handleToolbarAction(selection as _ToolbarAction);
   }
 
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
@@ -5934,6 +5988,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       });
       await _loadDownloadRoot();
       unawaited(_compactStoredData());
+      if (activityBellToolbarButtonEnabled) {
+        unawaited(_refreshActivityCounts());
+      }
       _scheduleAutoBackup();
       return true;
     } on Object catch (error, stackTrace) {
@@ -5994,19 +6051,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final details = error is PlatformException
             ? (error.message ?? error.code)
             : error.toString();
-        final userDenied = isLikelyMacosKeychainUserDeniedError(error);
-        final guidance = userDenied
-            ? 'macOS が拒否を記憶している場合、「再試行」だけでは許可ダイアログが再表示されません。\n\n'
-                'データを残して復旧するには、キーチェーンアクセス.app を開き、'
-                'ログインキーチェーン内の More Better Gakujo / '
-                'net.yoshida.morebettergakujoFlutter.secure_storage.v2 に関連する項目を探して、'
-                'アクセス制御でこのアプリを許可してから「再試行」してください。\n\n'
-                '項目が見つからない、または許可できない場合は「保存データをリセット」で保存領域を作り直せます。'
-                'その場合はログイン情報と2FA設定の再入力が必要です。'
-            : '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
-                '以前に許可ダイアログを拒否した場合は、キーチェーンアクセス.app でこのアプリのアクセスを許可してから'
-                '再試行してください。それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
-                'その場合はログイン情報と2FA設定の再入力が必要です。';
+        final missingEntitlement = isMissingKeychainEntitlementError(error);
+        final guidance = secureStorageRecoveryGuidance(
+          error,
+          platform: defaultTargetPlatform,
+        );
         return AlertDialog(
           title: const Text('キーチェーンにアクセスできません'),
           content: Text(
@@ -6021,18 +6070,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
               child: const Text('このまま使う'),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(
-                _SecureStorageRecoveryAction.reset,
+            if (!missingEntitlement) ...[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(
+                  _SecureStorageRecoveryAction.reset,
+                ),
+                child: const Text('保存データをリセット'),
               ),
-              child: const Text('保存データをリセット'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(
-                _SecureStorageRecoveryAction.retry,
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(
+                  _SecureStorageRecoveryAction.retry,
+                ),
+                child: const Text('再試行'),
               ),
-              child: const Text('再試行'),
-            ),
+            ],
           ],
         );
       },

@@ -322,22 +322,12 @@ class MainActivity : FlutterActivity() {
             )
         }
 
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = if (method == "POST") "POST" else "GET"
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 60_000
-            setRequestProperty("Cookie", CookieManager.getInstance().getCookie(originalUrl).orEmpty())
-            userAgent?.let { setRequestProperty("User-Agent", it) }
-
-            if (method == "POST") {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                outputStream.use { output ->
-                    output.write(encodeForm(formFields).toByteArray(Charsets.UTF_8))
-                }
-            }
-        }
+        val connection = openAllowedDownloadConnection(
+            initialUrl = url,
+            initialMethod = method,
+            formFields = formFields,
+            userAgent = userAgent
+        )
 
         try {
             val responseCode = connection.responseCode
@@ -418,22 +408,12 @@ class MainActivity : FlutterActivity() {
             )
         }
 
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = if (method == "POST") "POST" else "GET"
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 60_000
-            setRequestProperty("Cookie", CookieManager.getInstance().getCookie(originalUrl).orEmpty())
-            userAgent?.let { setRequestProperty("User-Agent", it) }
-
-            if (method == "POST") {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                outputStream.use { output ->
-                    output.write(encodeForm(formFields).toByteArray(Charsets.UTF_8))
-                }
-            }
-        }
+        val connection = openAllowedDownloadConnection(
+            initialUrl = url,
+            initialMethod = method,
+            formFields = formFields,
+            userAgent = userAgent
+        )
 
         try {
             val responseCode = connection.responseCode
@@ -501,6 +481,81 @@ class MainActivity : FlutterActivity() {
             val extension = extensionFromName(fromUrl) ?: extensionFromMime(mimeType)
             if (extension == null) base else "$base.$extension"
         }
+    }
+
+    private fun openAllowedDownloadConnection(
+        initialUrl: String,
+        initialMethod: String,
+        formFields: Map<*, *>,
+        userAgent: String?
+    ): HttpURLConnection {
+        var currentUrl = initialUrl
+        var currentMethod = if (initialMethod == "POST") "POST" else "GET"
+
+        for (redirectCount in 0..GakujoDownloadRedirectPolicy.maxRedirects) {
+            if (!GakujoDownloadRedirectPolicy.isAllowedUrl(currentUrl)) {
+                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+            }
+
+            val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = currentMethod
+                instanceFollowRedirects = false
+                connectTimeout = 30_000
+                readTimeout = 60_000
+                setRequestProperty("Accept", "*/*")
+                CookieManager.getInstance().getCookie(currentUrl)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { setRequestProperty("Cookie", it) }
+                userAgent?.let { setRequestProperty("User-Agent", it) }
+
+                if (currentMethod == "POST") {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                    outputStream.use { output ->
+                        output.write(encodeForm(formFields).toByteArray(Charsets.UTF_8))
+                    }
+                }
+            }
+
+            val responseCode = try {
+                connection.responseCode
+            } catch (error: Exception) {
+                connection.disconnect()
+                throw error
+            }
+            if (!GakujoDownloadRedirectPolicy.isRedirectStatus(responseCode)) {
+                if (responseCode !in 200..299) {
+                    connection.disconnect()
+                    throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                }
+                return connection
+            }
+
+            val location = connection.getHeaderField("Location")
+            if (location.isNullOrBlank()) {
+                connection.disconnect()
+                throw IllegalStateException("リダイレクト先を取得できませんでした HTTP $responseCode")
+            }
+            val nextUrl = GakujoDownloadRedirectPolicy.resolveAllowedRedirect(
+                currentUrl,
+                location
+            )
+            connection.disconnect()
+            if (nextUrl == null) {
+                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+            }
+            if (redirectCount == GakujoDownloadRedirectPolicy.maxRedirects) {
+                throw IllegalStateException("リダイレクト回数が上限を超えました")
+            }
+
+            currentUrl = nextUrl
+            currentMethod = GakujoDownloadRedirectPolicy.redirectedMethod(
+                responseCode,
+                currentMethod
+            )
+        }
+
+        throw IllegalStateException("リダイレクト回数が上限を超えました")
     }
 
     private fun chooseCourseFolderName(requestedCourseName: String, fileName: String): String {
@@ -662,11 +717,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isAllowedGakujoUrl(rawUrl: String?): Boolean {
-        if (rawUrl.isNullOrBlank()) {
-            return false
-        }
-        val uri = runCatching { Uri.parse(rawUrl) }.getOrNull() ?: return false
-        return uri.scheme == "https" && uri.host == "gakujo.iess.niigata-u.ac.jp"
+        return GakujoDownloadRedirectPolicy.isAllowedUrl(rawUrl)
     }
 
     private fun redactSession(rawUrl: String): String {
