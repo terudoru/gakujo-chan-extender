@@ -2316,28 +2316,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _exportCurrentScheduleToCalendar({
     GakujoCalendarImportSettings? importSettings,
   }) async {
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H0] exportCurrentSchedule enter');
-    // #endregion DEBUG
     if (!_canRunPageScripts) {
-      // #region DEBUG
-      _appendCalendarDebugLog('[DEBUG H0] exportCurrentSchedule noPageScripts');
-      // #endregion DEBUG
       _showSnackBar('スケジュールページを読み込んでから使ってください');
       return;
     }
 
     final rawSettings = importSettings ?? _appSettings.calendarImportSettings;
     final settings = _effectiveCalendarImportSettings(rawSettings);
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H0] exportCurrentSchedule method=${settings.method.name} '
-      'rawMethod=${rawSettings.method.name} '
-      'termSource=${settings.termSource.name} '
-      'termTarget=${settings.termTarget.name} '
-      'directSupported=${_calendarService.supportsDirectSync}',
-    );
-    // #endregion DEBUG
     if (settings.method == GakujoCalendarImportMethod.officialGoogle) {
       await _ensureSchedulePageForCalendarImport();
       await _openOfficialGoogleScheduleIntegration(
@@ -2390,12 +2375,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         termRange: termRange,
         termName: resolvedTerm.termName ?? '',
       );
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H10] termFilter term=${resolvedTerm.termName ?? termLabel} '
-        'before=${extractedCourses.length} after=${courses.length}',
-      );
-      // #endregion DEBUG
       if (courses.isEmpty) {
         _showSnackBar(
             '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業が見つかりませんでした');
@@ -2950,15 +2929,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
       await _saveCalendarImportSettings(result.settings);
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H0] scheduleDialogResult action=${result.action.name} '
-        'method=${result.settings.method.name} '
-        'termSource=${result.settings.termSource.name} '
-        'termTarget=${result.settings.termTarget.name} '
-        'directSupported=${_calendarService.supportsDirectSync}',
-      );
-      // #endregion DEBUG
       switch (result.action) {
         case _ScheduleIntegrationAction.syncCalendar:
           await _exportCurrentScheduleToCalendar(
@@ -3071,47 +3041,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  // #region DEBUG
-  void _appendCalendarDebugLog(String message) {
-    final line = '${DateTime.now().toIso8601String()} $message\n';
-    const paths = [
-      '/Users/yoshidateruhiko/devthings/morebettergakujo_android/morebettergakujo-flutter/.claude/debug.log',
-      '/Users/yoshidateruhiko/Library/Containers/net.yoshida.morebettergakujoFlutter/Data/Library/Application Support/MoreBetterGakujo/debug.log',
-      '/Users/yoshidateruhiko/Library/Containers/net.yoshida.morebettergakujoFlutter/Data/tmp/morebettergakujo-debug.log',
-      '/tmp/.claude/debug.log',
-    ];
-    for (final path in paths) {
-      try {
-        final file = File(path);
-        file.parent.createSync(recursive: true);
-        file.writeAsStringSync(line, mode: FileMode.append, flush: true);
-      } on Object {
-        // Best-effort debug file logging. Unified logging below still records it.
-      }
-    }
-    developer.log(message, name: 'MoreBetterGakujo');
-  }
-
-  String _calendarDebugUrl(String? rawUrl) {
-    final uri = Uri.tryParse(rawUrl ?? '');
-    if (uri == null) {
-      return 'invalid';
-    }
-    final queryKeys = uri.queryParametersAll.keys.toList()..sort();
-    return '${uri.scheme}://${uri.host}${uri.path}'
-        ' keys=${queryKeys.join(',')} length=${rawUrl?.length ?? 0}';
-  }
-
-  String _calendarDebugIntegration(
-    _OfficialGoogleScheduleIntegration integration,
-  ) {
-    return 'status=${integration.status} '
-        'url=${_calendarDebugUrl(integration.url)} '
-        'labelLength=${integration.label.length} '
-        'diagnostics=${jsonEncode(integration.diagnostics)}';
-  }
-  // #endregion DEBUG
-
   Future<bool> _openOfficialGoogleScheduleIntegration({
     required bool showMissingMessage,
     String? successMessage,
@@ -3132,11 +3061,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final integration = await _runOfficialGoogleScheduleIntegrationScript(
         activate: true,
       );
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H2 H3] openOfficial ${_calendarDebugIntegration(integration)}',
-      );
-      // #endregion DEBUG
       developer.log(
         'Official Google schedule integration status=${integration.status}',
         name: 'MoreBetterGakujo',
@@ -3540,17 +3464,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     final raw = _stringFromJavaScriptResult(result);
     final extraction = GakujoCalendarExport.extractionFromJson(raw);
-    // #region DEBUG
-    final debugCourseTitles = extraction.courses
-        .take(8)
-        .map(GakujoCalendarExport.displayTitleForCourse)
-        .join('|');
-    _appendCalendarDebugLog(
-      '[DEBUG H4 H5] pageExtraction courses=${extraction.courses.length} '
-      'hasTermRange=${extraction.termRange != null} '
-      'titles=$debugCourseTitles',
-    );
-    // #endregion DEBUG
     developer.log(
       'Calendar page extraction courses=${extraction.courses.length} '
       'hasTermRange=${extraction.termRange != null}',
@@ -3562,22 +3475,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoCalendarExtraction> _readCalendarScheduleForImport({
     GakujoCalendarTermRange? preferredTermRange,
   }) async {
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H4] importStart current=${_calendarDebugUrl(await _controller.currentUrl())}',
-    );
-    // #endregion DEBUG
     var fallbackExtraction = await _readCalendarScheduleFromPage();
 
     final scheduleReady = await _ensureSchedulePageForCalendarImport(
       forceReload: true,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H4] ensureSchedulePage ready=$scheduleReady '
-      'current=${_calendarDebugUrl(await _controller.currentUrl())}',
-    );
-    // #endregion DEBUG
     if (!scheduleReady) {
       final postLoadExtraction = await _waitForBetterScheduleExtraction(
         fallback: fallbackExtraction,
@@ -3629,11 +3531,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           GakujoCalendarExport.scheduleMonthViewActivationScript(),
         );
         final raw = _stringFromJavaScriptResult(result);
-        // #region DEBUG
-        _appendCalendarDebugLog(
-          '[DEBUG H12] monthViewActivation attempt=$attempt $raw',
-        );
-        // #endregion DEBUG
         if (raw.contains('"clicked"') || raw.contains('clicked')) {
           await Future<void>.delayed(const Duration(milliseconds: 1200));
           return;
@@ -3642,11 +3539,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           return;
         }
       } catch (error, stackTrace) {
-        // #region DEBUG
-        _appendCalendarDebugLog(
-          '[DEBUG H12] monthViewActivation attempt=$attempt error=$error',
-        );
-        // #endregion DEBUG
         developer.log(
           'Failed activating schedule month view',
           name: 'MoreBetterGakujo',
@@ -3675,13 +3567,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         break;
       }
     }
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H4 H5] betterScheduleExtraction '
-      'fallback=${fallback.courses.length} best=${best.courses.length} '
-      'hasTermRange=${best.termRange != null}',
-    );
-    // #endregion DEBUG
     return best;
   }
 
@@ -3722,23 +3607,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await Future<void>.delayed(const Duration(seconds: 1));
 
       final extraction = await _readCalendarScheduleFromPage();
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H4 H5] waitSchedule attempt=$attempt '
-        'courses=${extraction.courses.length} '
-        'hasTermRange=${extraction.termRange != null}',
-      );
-      // #endregion DEBUG
 
       final integration = await _runOfficialGoogleScheduleIntegrationScript(
         activate: false,
       );
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H2 H3] waitOfficial attempt=$attempt '
-        '${_calendarDebugIntegration(integration)}',
-      );
-      // #endregion DEBUG
       if (integration.url.isNotEmpty ||
           integration.status == 'clickable' ||
           integration.status == 'clicked') {
@@ -3757,12 +3629,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           return timetableExtraction;
         }
         if (_isBroadScheduleExtraction(extraction)) {
-          // #region DEBUG
-          _appendCalendarDebugLog(
-            '[DEBUG H4 H5] waitOfficialFallbackToPage '
-            'attempt=$attempt courses=${extraction.courses.length}',
-          );
-          // #endregion DEBUG
           return extraction;
         }
       }
@@ -3799,14 +3665,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _scheduleExtractionScore(best)) {
           best = extraction;
         }
-        // #region DEBUG
-        _appendCalendarDebugLog(
-          '[DEBUG H13] timetableExtraction attempt=$attempt '
-          'courses=${extraction.courses.length} '
-          'broad=${_isBroadScheduleExtraction(extraction)} '
-          'current=${_calendarDebugUrl(await _controller.currentUrl())}',
-        );
-        // #endregion DEBUG
         if (_isBroadScheduleExtraction(best)) {
           break;
         }
@@ -3822,11 +3680,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     } on Object catch (error, stackTrace) {
       _nextPageFinishedCompleter = null;
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H13] timetableExtraction error=$error',
-      );
-      // #endregion DEBUG
       developer.log(
         'Failed to read course timetable for calendar import',
         name: 'MoreBetterGakujo',
@@ -3851,12 +3704,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final integration = await _runOfficialGoogleScheduleIntegrationScript(
         activate: true,
       );
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H1 H2 H3] officialImport '
-        '${_calendarDebugIntegration(integration)}',
-      );
-      // #endregion DEBUG
       developer.log(
         'Official Google schedule import status=${integration.status}',
         name: 'MoreBetterGakujo',
@@ -3870,12 +3717,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           'Official Google schedule URL courses=${courses.length}',
           name: 'MoreBetterGakujo',
         );
-        // #region DEBUG
-        _appendCalendarDebugLog(
-          '[DEBUG H3 H5] officialUrlParse courses=${courses.length} '
-          'url=${_calendarDebugUrl(integration.url)}',
-        );
-        // #endregion DEBUG
         if (courses.isNotEmpty) {
           _nextPageFinishedCompleter = null;
           return GakujoCalendarExtraction(
@@ -3913,12 +3754,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
           if (currentUrl != null) currentUrl,
         ]);
-        // #region DEBUG
-        _appendCalendarDebugLog(
-          '[DEBUG H1 H5] clickedAfterNavigation '
-          'courses=${courses.length} current=${_calendarDebugUrl(currentUrl)}',
-        );
-        // #endregion DEBUG
         if (courses.isNotEmpty) {
           return GakujoCalendarExtraction(
             courses: courses,
@@ -3961,12 +3796,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       activate: false,
       termRange: termRange,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H6 H7] exportFormInspect '
-      '${_calendarDebugIntegration(inspect)}',
-    );
-    // #endregion DEBUG
     if (inspect.status != 'clickable') {
       return null;
     }
@@ -3982,22 +3811,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
       fetched.text,
     ]);
-    final fetchedTextSample = fetched.text
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .characters
-        .take(500)
-        .toString();
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H8 H9] exportFetch status=${fetched.status} '
-      'http=${fetched.httpStatus} contentType=${fetched.contentType} '
-      'textLength=${fetched.textLength} courses=${fetchedCourses.length} '
-      'googleCourses=${fetchedGoogleCourses.length} '
-      'url=${_calendarDebugUrl(fetched.url)} '
-      'sample=$fetchedTextSample',
-    );
-    // #endregion DEBUG
     final fetchedUsableCourses =
         fetchedCourses.isNotEmpty ? fetchedCourses : fetchedGoogleCourses;
     if (fetchedUsableCourses.isNotEmpty) {
@@ -4014,12 +3827,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       activate: true,
       termRange: termRange,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H6 H7] exportFormExecute '
-      '${_calendarDebugIntegration(execution)}',
-    );
-    // #endregion DEBUG
     if (execution.status != 'clicked') {
       _nextPageFinishedCompleter = null;
       return null;
@@ -4031,12 +3838,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final courses = GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
       if (currentUrl != null) currentUrl,
     ]);
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H6 H7] exportAfterNavigation '
-      'courses=${courses.length} current=${_calendarDebugUrl(currentUrl)}',
-    );
-    // #endregion DEBUG
     if (courses.isNotEmpty) {
       return GakujoCalendarExtraction(
         courses: courses,
@@ -4048,12 +3849,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final integration = await _runOfficialGoogleScheduleIntegrationScript(
       activate: false,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H6 H7] exportAfterOfficial '
-      '${_calendarDebugIntegration(integration)}',
-    );
-    // #endregion DEBUG
     if (integration.url.isNotEmpty) {
       return _readOfficialGoogleScheduleAfterActivation(
         termRange: extraction.termRange ?? termRange,
@@ -4068,12 +3863,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final currentUrl =
         ((await _controller.currentUrl()) ?? _currentPageUrl ?? '')
             .toLowerCase();
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H4] ensureSchedulePage forceReload=$forceReload '
-      'current=${_calendarDebugUrl(currentUrl)}',
-    );
-    // #endregion DEBUG
     if (!forceReload && currentUrl.contains('tabid=sch')) {
       return true;
     }
@@ -4086,12 +3875,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await Future<void>.delayed(const Duration(milliseconds: 700));
     final afterUrl = ((await _controller.currentUrl()) ?? _currentPageUrl ?? '')
         .toLowerCase();
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H4] directScheduleLoad finished=${_calendarDebugUrl(finishedUrl)} '
-      'current=${_calendarDebugUrl(afterUrl)}',
-    );
-    // #endregion DEBUG
     return afterUrl.contains('tabid=sch') ||
         (finishedUrl ?? '').toLowerCase().contains('tabid=sch');
   }
@@ -5706,13 +5489,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _loginAutofillStorageLoadAttempted = true;
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] loginAutofillStorageLoad start');
-    // #endregion DEBUG
-    final loaded = await _loadAppSettings(allowMacosKeychainPrompt: true);
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] loginAutofillStorageLoad=$loaded');
-    // #endregion DEBUG
+    await _loadAppSettings(allowMacosKeychainPrompt: true);
   }
 
   Future<void> _injectTwoFactorAutofillIfAllowed() async {
@@ -5746,29 +5523,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadInitialPage() async {
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] loadInitialPage enter');
-    // #endregion DEBUG
     await _webViewReady;
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] webViewReady complete');
-    // #endregion DEBUG
     await _webViewService.configureController(
       _controller,
       debugAllowed: _debugAllowed,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] configureController complete');
-    // #endregion DEBUG
     unawaited(_saveInitialTwoFactorSecretIfAllowed());
     final appSettingsLoaded = await _loadAppSettings();
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H11] appSettingsLoaded=$appSettingsLoaded '
-      'setupCompleted=${_appSettings.setupCompleted} '
-      'hasLogin=${_appSettings.hasLoginCredentials}',
-    );
-    // #endregion DEBUG
     if (appSettingsLoaded && !_appSettings.setupCompleted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -5783,16 +5544,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final startUrl = _resolveStartUrl(
       _appSettings.hasLoginCredentials ? null : savedUrl,
     );
-    // #region DEBUG
-    _appendCalendarDebugLog(
-      '[DEBUG H11] loadInitialPage startUrl=${_calendarDebugUrl(startUrl)} '
-      'saved=${_calendarDebugUrl(savedUrl)}',
-    );
-    // #endregion DEBUG
     await _controller.loadUrl(startUrl);
-    // #region DEBUG
-    _appendCalendarDebugLog('[DEBUG H11] loadUrl invoked');
-    // #endregion DEBUG
   }
 
   Future<String?> _loadInitialLastPageUrl() async {
@@ -5841,11 +5593,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
         onPageStarted: (url) {
-          // #region DEBUG
-          _appendCalendarDebugLog(
-            '[DEBUG H11] onPageStarted ${_calendarDebugUrl(url)}',
-          );
-          // #endregion DEBUG
           if (_isInternalBlankUrl(url)) {
             return;
           }
@@ -5861,11 +5608,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _setStatus('読込中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
-          // #region DEBUG
-          _appendCalendarDebugLog(
-            '[DEBUG H11] onPageFinished ${_calendarDebugUrl(url)}',
-          );
-          // #endregion DEBUG
           _notifyPageFinishedWaiters(url);
           if (_isInternalBlankUrl(url)) {
             await _injectDownloadCaptureIfAllowed();
@@ -5901,11 +5643,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           await _restoreLastPageAfterLoginIfNeeded(url);
         },
         onWebResourceError: (error) {
-          // #region DEBUG
-          _appendCalendarDebugLog(
-            '[DEBUG H11] onWebResourceError ${error.description}',
-          );
-          // #endregion DEBUG
           _setStatus('読込エラー: ${error.description}');
         },
       ),
@@ -5940,15 +5677,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      // #region DEBUG
-      _appendCalendarDebugLog('[DEBUG H11] loadAppSettings start');
-      // #endregion DEBUG
       final settings = allowMacosKeychainPrompt
           ? await _appSettingsStore.load()
           : await _appSettingsStore.load().timeout(const Duration(seconds: 3));
-      // #region DEBUG
-      _appendCalendarDebugLog('[DEBUG H11] loadAppSettings success');
-      // #endregion DEBUG
       await _syncLocalSettingsMirror(settings);
       if (!mounted) {
         return true;
@@ -5967,9 +5698,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _scheduleAutoBackup();
       return true;
     } on Object catch (error, stackTrace) {
-      // #region DEBUG
-      _appendCalendarDebugLog('[DEBUG H11] loadAppSettings failed=$error');
-      // #endregion DEBUG
       developer.log(
         'Failed to load app settings from secure storage',
         name: 'MoreBetterGakujo',
@@ -6139,11 +5867,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
-      // #region DEBUG
-      _appendCalendarDebugLog(
-        '[DEBUG H11] initialTwoFactorSecretSaveFailed=$error',
-      );
-      // #endregion DEBUG
     }
   }
 

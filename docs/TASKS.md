@@ -31,6 +31,12 @@
 - [x] 14. [P2] Windows の外部遷移遮断とダウンロードURL検査のタイミングを調査・改善する。`lib/src/web_view_service.dart` の Windows 実装は WebView2 の `SourceChanged` 後に `stop()` しており最初の通信は防げない。webview_windows が NavigationStarting 相当を公開しているか調査し、可能なら事前ブロックへ変更。Windows ダウンロード処理のリダイレクト追跡後検査も、追跡前/各ホップでの検査に改善できるか検討する。Windows 実機ビルドはこの Mac では検証不可のため、静的検証（analyze/test）+ 変更の保守性を重視し、確証が持てない変更はしないこと
 - [x] 15. [P3] `docs/ios-sideloading.md` を現在の CI 実態（Android・iOS・macOS・Windows すべてを GitHub Actions でビルド）に合わせて更新する
 
+## 第3バッチ: デバッグ痕跡の除去と分割の継続
+
+- [x] 16. [P2] `gakujo_web_app.dart` の `_appendCalendarDebugLog`（3075行付近）とそれを呼ぶ全ての `// #region DEBUG` ブロック（86リージョン・43呼び出し）を削除する。このデバッグ補助は開発者のホームディレクトリ等のハードコードされた絶対パス（`/Users/yoshidateruhiko/...`、`/tmp/.claude/debug.log` 等）へ同期書き込みしており、全ユーザーの環境で実行時に不要なディレクトリ作成・ファイルIOが走る本番不具合。DEBUG リージョン以外のロジックは一切変えないこと
+- [ ] 17. `gakujo_web_app.dart` 分割 (4): カレンダー/スケジュール連携系のメソッド群（`exportCurrentSchedule` 前後、`_askCalendarTermRange`、`_resolveCalendarTerm` 系など凝集した一群）を、診断系（`gakujo_web_app_diagnostics.dart`）と同じ part + extension パターンで `lib/src/gakujo_web_app_calendar.dart` へ抽出する。純粋な移動のみ、挙動変更なし
+- [ ] 18. `gakujo_web_app.dart` 分割 (5): ダウンロード処理系のメソッド群（`_handleDownloadMessage`、`_handleDownloadRequest`、`_downloadBytesWithWebViewSession`、失敗キュー・履歴まわりなど）を同じ part + extension パターンで `lib/src/gakujo_web_app_downloads.dart` へ抽出する。純粋な移動のみ、挙動変更なし
+
 ## 完了ログ
 
 - 2026-07-15 タスク1: `test/base32_test.dart` を追加（6テスト）。analyze 0件、テスト258件全通過。
@@ -48,3 +54,4 @@
 - 2026-07-15 タスク13: `parseCalendarDate` をトップレベル関数化し、範囲外・存在しない日付（2026/02/31 等）を round-trip 検証で拒否。うるう年含むテスト5件追加。analyze 0件、テスト288件全通過。
 - 2026-07-15 タスク14: 調査の結果 webview_windows 0.4.0 は NavigationStarting 未実装で事前ブロック不可（DEVELOPER_NOTES.md に既知の制約として文書化、flutter_inappwebview 移行で解消可能な旨も記載）。Windows ダウンロードの WebView fetch は本文読込前に response.url を検査して blocked を返すよう改善（Dart 側の事後検査も多層防御として維持）。analyze 0件、テスト288件全通過。Windows 実機検証は未実施（この Mac では不可）。
 - 2026-07-15 タスク15: `docs/ios-sideloading.md` を現行 CI（全プラットフォームを Release All Platforms workflow でビルド、source 自動更新）に合わせて更新。文書修正のみのため codex 委譲なしで直接実施。第2バッチ全タスク完了につきループ終了。
+- 2026-07-15 タスク16: `_appendCalendarDebugLog`・`_calendarDebugUrl`・`_calendarDebugIntegration` と DEBUG リージョン43個（278行）を削除。ハードコードされた開発者パスへの同期IOが本番から消えた。analyze 0件、テスト288件全通過。
