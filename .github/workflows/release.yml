@@ -21,6 +21,7 @@ concurrency:
 env:
   APP_NAME: MoreBetterGakujo
   RELEASE_TAG: ${{ inputs.tag_name || github.ref_name }}
+  RELEASE_NOTES: "iOS/iPadOS self-signed build. See the GitHub release notes for details."
 
 jobs:
   android:
@@ -276,3 +277,43 @@ jobs:
             - **Windows**: `*.exe`（インストーラー） / `*.zip`（ポータブル版）
             - **macOS**: `*.dmg`（未署名。初回は右クリック→開くで起動）
             - **iOS/iPadOS**: `*.ipa`（**未署名**。App Store版ではありません。AltStore / Sideloadly でのサイドロード用。無料Apple IDでは7日ごとに再署名が必要です）
+
+      - name: Checkout main for AltStore source update
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          path: repository
+
+      - name: Regenerate SideStore/AltStore source
+        working-directory: repository
+        run: |
+          set -euo pipefail
+          ipa_path="$(find ../artifacts/ios-ipa -type f -name '*.ipa' -print -quit)"
+          if [ -z "$ipa_path" ]; then
+            echo "::error::Downloaded ios-ipa artifact does not contain an IPA."
+            exit 1
+          fi
+
+          RELEASE_TAG="${RELEASE_TAG}" \
+          RELEASE_DATE="$(date +%Y-%m-%d)" \
+          RELEASE_NOTES="${RELEASE_NOTES}" \
+          ./scripts/generate_altstore_source.sh "$ipa_path"
+
+      - name: Commit AltStore source update to main
+        working-directory: repository
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- distribution/altstore-source.json; then
+            echo "AltStore source is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add distribution/altstore-source.json
+          git commit -m "Update AltStore source for ${RELEASE_TAG}"
+
+          if ! git push origin HEAD:main; then
+            echo "::warning::GitHub Release was published, but the AltStore source update could not be pushed to main."
+          fi

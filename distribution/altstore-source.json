@@ -20,13 +20,13 @@
       "category": "utilities",
       "versions": [
         {
-          "version": "0.67.0",
-          "buildVersion": "67",
-          "marketingVersion": "0.67.0 (67)",
-          "date": "2026-06-23",
+          "version": "0.68.0",
+          "buildVersion": "68",
+          "marketingVersion": "0.68.0 (68)",
+          "date": "2026-07-07",
           "localizedDescription": "Cross-platform feature parity changes, original extension README features, download/save improvements, GPA display/sort features, and desktop zoom fixes.",
-          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.67.0/MoreBetterGakujo-v0.67.0.ipa",
-          "size": 7560321,
+          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.68.0/MoreBetterGakujo-v0.68.0.ipa",
+          "size": 8079465,
           "minOSVersion": "14.0"
         }
       ],
