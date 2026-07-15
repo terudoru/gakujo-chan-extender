@@ -34,6 +34,7 @@ import 'gakujo_download_url_policy.dart';
 import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
+import 'gakujo_local_prefs_store.dart';
 import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_reader_script.dart';
 import 'gakujo_notification_service.dart';
@@ -187,6 +188,7 @@ class GakujoWebApp extends StatefulWidget {
     TotpGenerator? totpGenerator,
     GakujoLastPageStore? lastPageStore,
     GakujoAppSettingsStore? appSettingsStore,
+    GakujoLocalPrefsStore? localPrefsStore,
     String? startUrl,
     String? initialTwoFactorSecret,
     bool? debugAllowed,
@@ -194,6 +196,7 @@ class GakujoWebApp extends StatefulWidget {
         _totpGenerator = totpGenerator,
         _lastPageStore = lastPageStore,
         _appSettingsStore = appSettingsStore,
+        _localPrefsStore = localPrefsStore,
         _startUrl = startUrl,
         _initialTwoFactorSecret = initialTwoFactorSecret,
         _debugAllowed = debugAllowed;
@@ -202,6 +205,7 @@ class GakujoWebApp extends StatefulWidget {
   final TotpGenerator? _totpGenerator;
   final GakujoLastPageStore? _lastPageStore;
   final GakujoAppSettingsStore? _appSettingsStore;
+  final GakujoLocalPrefsStore? _localPrefsStore;
   final String? _startUrl;
   final String? _initialTwoFactorSecret;
   final bool? _debugAllowed;
@@ -286,6 +290,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
+  late final GakujoLocalPrefsStore _localPrefsStore;
   late final bool _debugAllowed;
   String? _currentPageUrl;
   String? _lastAllowedPageUrl;
@@ -341,6 +346,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
+    _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
     _controller = _webViewService.createController();
@@ -999,12 +1005,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         return;
                       }
                       await _appSettingsStore.saveDownloadSaveMode(mode);
+                      final nextSettings = _appSettings.copyWith(
+                        downloadSaveMode: mode,
+                      );
+                      await _syncLocalSettingsMirror(nextSettings);
                       if (!mounted) {
                         return;
                       }
                       setState(() {
-                        _appSettings =
-                            _appSettings.copyWith(downloadSaveMode: mode);
+                        _appSettings = nextSettings;
                       });
                       if (!dialogContext.mounted) {
                         return;
@@ -1033,11 +1042,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         return;
                       }
                       await _appSettingsStore.savePageMode(mode);
+                      final nextSettings = _appSettings.copyWith(
+                        pageMode: mode,
+                      );
+                      await _syncLocalSettingsMirror(nextSettings);
                       if (!mounted) {
                         return;
                       }
                       setState(() {
-                        _appSettings = _appSettings.copyWith(pageMode: mode);
+                        _appSettings = nextSettings;
                       });
                       if (!dialogContext.mounted) {
                         return;
@@ -1065,13 +1078,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       } else {
                         disabled.add(flag);
                       }
+                      final nextSettings = _appSettings.copyWith(
+                        disabledFeatureFlags: disabled,
+                      );
+                      await _syncLocalSettingsMirror(nextSettings);
                       if (!mounted) {
                         return;
                       }
                       setState(() {
-                        _appSettings = _appSettings.copyWith(
-                          disabledFeatureFlags: disabled,
-                        );
+                        _appSettings = nextSettings;
                       });
                       if (flag == GakujoFeatureFlag.autoBackup) {
                         _scheduleAutoBackup();
@@ -1232,6 +1247,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                   _appSettingsStore.saveSetupCompleted(true),
                 ]);
+                await _syncLocalSettingsMirror(wizardSettings);
               } on Object catch (error, stackTrace) {
                 saveError = error;
                 saveStackTrace = stackTrace;
@@ -2939,26 +2955,45 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoCalendarImportSettings settings,
   ) async {
     await _appSettingsStore.saveCalendarImportSettings(settings);
+    final nextSettings = _appSettings.copyWith(
+      calendarImportSettings: settings,
+    );
+    await _syncLocalSettingsMirror(nextSettings);
     if (!mounted) {
       return;
     }
     setState(() {
-      _appSettings = _appSettings.copyWith(
-        calendarImportSettings: settings,
-      );
+      _appSettings = nextSettings;
     });
+  }
+
+  Future<void> _syncLocalSettingsMirror(
+    GakujoAppSettings settings,
+  ) async {
+    try {
+      await _localPrefsStore.saveAppSettings(settings);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to update local app settings mirror',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {
     final normalized = normalizeMessageExcludeKeywords(keywords);
     await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+    final nextSettings = _appSettings.copyWith(
+      messageExcludeKeywords: normalized,
+    );
+    await _syncLocalSettingsMirror(nextSettings);
     if (!mounted) {
       return;
     }
     setState(() {
-      _appSettings = _appSettings.copyWith(
-        messageExcludeKeywords: normalized,
-      );
+      _appSettings = nextSettings;
     });
     await _injectMessageFilterIfAllowed();
   }
@@ -5127,18 +5162,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.replaceChanges(importedChanges),
         _activityStore.replaceReportLists(importedReportLists),
       ]);
+      final nextSettings = _appSettings.copyWith(
+        downloadSaveMode: downloadSaveMode,
+        pageMode: pageMode,
+        disabledFeatureFlags: disabledFeatureFlags,
+        setupCompleted: setupCompleted,
+        calendarImportSettings: calendarImportSettings,
+        messageExcludeKeywords: messageExcludeKeywords,
+      );
+      await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
         return;
       }
       setState(() {
-        _appSettings = _appSettings.copyWith(
-          downloadSaveMode: downloadSaveMode,
-          pageMode: pageMode,
-          disabledFeatureFlags: disabledFeatureFlags,
-          setupCompleted: setupCompleted,
-          calendarImportSettings: calendarImportSettings,
-          messageExcludeKeywords: messageExcludeKeywords,
-        );
+        _appSettings = nextSettings;
       });
       await _injectMessageFilterIfAllowed();
       await _refreshActivityCounts();
@@ -5708,9 +5745,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         }
       });
     }
-    final savedUrl = appSettingsLoaded
-        ? await _lastPageStore.load(debugAllowed: _debugAllowed)
-        : null;
+    final savedUrl = appSettingsLoaded ? await _loadInitialLastPageUrl() : null;
     if (_appSettings.hasLoginCredentials && savedUrl != null) {
       _pendingLoginRestoreUrl = savedUrl;
     }
@@ -5727,6 +5762,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // #region DEBUG
     _appendCalendarDebugLog('[DEBUG H11] loadUrl invoked');
     // #endregion DEBUG
+  }
+
+  Future<String?> _loadInitialLastPageUrl() async {
+    if (Platform.isMacOS && !_secureStorageAccessAllowed) {
+      try {
+        final url = (await _localPrefsStore.load())?.lastPageUrl;
+        if (AllowedWebOrigins.canRestoreLastPage(
+          url,
+          debugAllowed: _debugAllowed,
+        )) {
+          return url;
+        }
+        if (url != null) {
+          await _syncLocalLastPageMirror(null);
+        }
+        return null;
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to load local last page mirror',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        return null;
+      }
+    }
+
+    final url = await _lastPageStore.load(debugAllowed: _debugAllowed);
+    if (Platform.isMacOS) {
+      await _syncLocalLastPageMirror(url);
+    }
+    return url;
   }
 
   Future<void> _configureWebViewController() async {
@@ -5820,15 +5887,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // every launch. Keep startup usable and only touch Keychain after an
       // explicit user action such as retrying storage access or saving login
       // settings.
-      setState(() {
-        _appSettings = const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.twoFactorAutofill,
-          },
+      GakujoLocalPrefs? localPrefs;
+      try {
+        localPrefs = await _localPrefsStore.load();
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to load local app settings mirror',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
         );
+      }
+      if (!mounted) {
+        return true;
+      }
+      setState(() {
+        _appSettings = macosStartupSettingsFromLocalPrefs(localPrefs);
         _appSettingsLoaded = true;
       });
-      return false;
+      return true;
     }
 
     try {
@@ -5841,6 +5918,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // #region DEBUG
       _appendCalendarDebugLog('[DEBUG H11] loadAppSettings success');
       // #endregion DEBUG
+      await _syncLocalSettingsMirror(settings);
       if (!mounted) {
         return true;
       }
@@ -5991,6 +6069,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     try {
       await SecureStorageFactory.resetMacosStorage();
+      await _localPrefsStore.clear();
       if (!mounted) {
         return;
       }
@@ -6144,14 +6223,39 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_isInternalBlankUrl(url)) {
       return;
     }
+    if (!AllowedWebOrigins.canRestoreLastPage(
+      url,
+      debugAllowed: _debugAllowed,
+    )) {
+      return;
+    }
     if (!_secureStorageAccessAllowed) {
+      if (Platform.isMacOS) {
+        await _syncLocalLastPageMirror(url);
+      }
       return;
     }
     try {
       await _lastPageStore.saveIfAllowed(url, debugAllowed: _debugAllowed);
+      if (Platform.isMacOS) {
+        await _syncLocalLastPageMirror(url);
+      }
     } catch (error, stackTrace) {
       developer.log(
         'Failed to save last page URL',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _syncLocalLastPageMirror(String? url) async {
+    try {
+      await _localPrefsStore.saveLastPageUrl(url);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to update local last page mirror',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
