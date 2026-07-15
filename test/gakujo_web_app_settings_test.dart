@@ -6,6 +6,36 @@ import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
+  group('parseCalendarDate', () {
+    test('accepts supported valid date formats', () {
+      expect(parseCalendarDate('2026/01/02'), DateTime(2026, 1, 2));
+      expect(parseCalendarDate(' 2026-1-2 '), DateTime(2026, 1, 2));
+    });
+
+    test('completes two-digit years as 2000s', () {
+      expect(parseCalendarDate('26/01/02'), DateTime(2026, 1, 2));
+    });
+
+    test('rejects nonexistent and out-of-range dates', () {
+      expect(parseCalendarDate('2026/02/31'), isNull);
+      expect(parseCalendarDate('2026/13/01'), isNull);
+      expect(parseCalendarDate('2026/00/10'), isNull);
+      expect(parseCalendarDate('2026/01/00'), isNull);
+      expect(parseCalendarDate('2026/01/32'), isNull);
+    });
+
+    test('handles leap days', () {
+      expect(parseCalendarDate('2024/02/29'), DateTime(2024, 2, 29));
+      expect(parseCalendarDate('2023/02/29'), isNull);
+    });
+
+    test('rejects unsupported formats', () {
+      expect(parseCalendarDate('2026.01.02'), isNull);
+      expect(parseCalendarDate('2026/1'), isNull);
+      expect(parseCalendarDate('not-a-date'), isNull);
+    });
+  });
+
   test('javaScriptResultAsBool accepts platform-specific boolean strings', () {
     expect(javaScriptResultAsBool(true), isTrue);
     expect(javaScriptResultAsBool('true'), isTrue);

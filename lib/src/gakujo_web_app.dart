@@ -83,6 +83,34 @@ const _toolbarButtonExtent = 40.0;
 const _toolbarIconSize = 20.0;
 
 @visibleForTesting
+DateTime? parseCalendarDate(String raw) {
+  final match = RegExp(
+    r'^\s*((?:20)?[0-9]{2})[/-]([0-9]{1,2})[/-]([0-9]{1,2})\s*$',
+  ).firstMatch(raw);
+  if (match == null) {
+    return null;
+  }
+  final rawYear = int.tryParse(match.group(1) ?? '');
+  final month = int.tryParse(match.group(2) ?? '');
+  final day = int.tryParse(match.group(3) ?? '');
+  if (rawYear == null ||
+      month == null ||
+      day == null ||
+      month < 1 ||
+      month > 12 ||
+      day < 1 ||
+      day > 31) {
+    return null;
+  }
+  final year = rawYear < 100 ? rawYear + 2000 : rawYear;
+  final parsed = DateTime(year, month, day);
+  if (parsed.year != year || parsed.month != month || parsed.day != day) {
+    return null;
+  }
+  return parsed;
+}
+
+@visibleForTesting
 String downloadRootLabel(
   DownloadDestinationSettings root, {
   required bool includePath,
@@ -4128,8 +4156,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           return StatefulBuilder(
             builder: (context, setDialogState) {
               void submit() {
-                final start = _parseCalendarDate(startController.text);
-                final end = _parseCalendarDate(endController.text);
+                final start = parseCalendarDate(startController.text);
+                final end = parseCalendarDate(endController.text);
                 if (start == null || end == null || end.isBefore(start)) {
                   setDialogState(() {
                     errorText = 'YYYY/MM/DD形式で、終了日が開始日以降になるように入力してください';
@@ -4199,23 +4227,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       startController.dispose();
       endController.dispose();
     }
-  }
-
-  DateTime? _parseCalendarDate(String raw) {
-    final match = RegExp(
-      r'^\s*((?:20)?[0-9]{2})[/-]([0-9]{1,2})[/-]([0-9]{1,2})\s*$',
-    ).firstMatch(raw);
-    if (match == null) {
-      return null;
-    }
-    final rawYear = int.tryParse(match.group(1) ?? '');
-    final month = int.tryParse(match.group(2) ?? '');
-    final day = int.tryParse(match.group(3) ?? '');
-    if (rawYear == null || month == null || day == null) {
-      return null;
-    }
-    final year = rawYear < 100 ? rawYear + 2000 : rawYear;
-    return DateTime(year, month, day);
   }
 
   Future<File> _writeCalendarFile(
