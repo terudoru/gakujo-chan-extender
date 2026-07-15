@@ -46,6 +46,39 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Prepare Android release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing_secrets=()
+          [ -n "${ANDROID_KEYSTORE_BASE64:-}" ] || missing_secrets+=(ANDROID_KEYSTORE_BASE64)
+          [ -n "${ANDROID_KEYSTORE_PASSWORD:-}" ] || missing_secrets+=(ANDROID_KEYSTORE_PASSWORD)
+          [ -n "${ANDROID_KEY_ALIAS:-}" ] || missing_secrets+=(ANDROID_KEY_ALIAS)
+          [ -n "${ANDROID_KEY_PASSWORD:-}" ] || missing_secrets+=(ANDROID_KEY_PASSWORD)
+          if (( ${#missing_secrets[@]} > 0 )); then
+            echo "::error::Android release signing secrets are missing: ${missing_secrets[*]}"
+            echo "::error::Configure all four repository secrets before running the release workflow."
+            exit 1
+          fi
+
+          umask 077
+          keystore_path="${GITHUB_WORKSPACE}/android/upload-keystore.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          if [ ! -s "$keystore_path" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 decoded to an empty keystore."
+            exit 1
+          fi
+          printf '%s\n' \
+            "storeFile=$keystore_path" \
+            "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
+            "keyAlias=$ANDROID_KEY_ALIAS" \
+            "keyPassword=$ANDROID_KEY_PASSWORD" \
+            > "${GITHUB_WORKSPACE}/android/key.properties"
+
       - name: Build Android APK
         run: flutter build apk --release
 

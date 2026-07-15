@@ -92,6 +92,8 @@ GitHub Releases へ出す場合は、`Release iOS Sideload IPA` workflow がIPA�
 `xcode-select` がフル Xcode を指している必要があります。Command Line Tools のみを
 指している環境では `xcrun xcodebuild` が失敗します。
 
+## Androidリリース署名
+
 ローカルに秘密鍵ストアがない場合、リリースビルドはデバッグ署名にフォールバック
 します。Play Store向けのAABを作る場合は、ローカルに
 `android/key.properties` を作成してください。
@@ -108,6 +110,27 @@ keyPassword=...
 `android/upload-keystore.jks` と `android/key.properties` は必ずバックアップして
 ください。APKの更新には同じ署名鍵が必要です。署名鍵が変わると、利用者は古い
 アプリをアンインストールしてから新しいAPKを入れる必要があります。
+
+GitHub Releases用のリリースworkflowでは、リポジトリの
+`Settings` → `Secrets and variables` → `Actions` に次のRepository secretsを登録します。
+
+- `ANDROID_KEYSTORE_BASE64`: `upload-keystore.jks`をbase64化した内容
+- `ANDROID_KEYSTORE_PASSWORD`: キーストアのパスワード
+- `ANDROID_KEY_ALIAS`: リリース署名に使うキーのエイリアス
+- `ANDROID_KEY_PASSWORD`: リリース署名に使うキーのパスワード
+
+macOSでは、キーストアがあるディレクトリで次のコマンドを実行し、出力全体を
+`ANDROID_KEYSTORE_BASE64`へ登録します。
+
+```sh
+base64 -i upload-keystore.jks
+```
+
+リリースworkflowはこの値から `android/upload-keystore.jks` と
+`android/key.properties` を生成します。4件のSecretsのいずれかが未設定の場合は、
+デバッグ署名APKを公開せずにAndroidジョブが失敗します。また、CI環境では
+`android/key.properties`がないリリースビルドもエラーになり、デバッグ署名へ
+フォールバックしません。ローカル開発ビルドのフォールバック動作は維持されます。
 
 次のファイルはコミットしないでください。
 

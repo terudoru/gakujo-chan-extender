@@ -55,6 +55,23 @@ android {
     }
 }
 
+gradle.taskGraph.whenReady {
+    val runsReleaseVariant =
+        allTasks.any { task ->
+            task.path.startsWith("${project.path}:") && task.name.contains("Release")
+        }
+    if (
+        runsReleaseVariant &&
+        System.getenv("CI") == "true" &&
+        !keystorePropertiesFile.exists()
+    ) {
+        throw GradleException(
+            "Android release signing is not configured in CI: " +
+                "android/key.properties was not found. Refusing to use debug signing.",
+        )
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
