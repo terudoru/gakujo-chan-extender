@@ -28,7 +28,7 @@
 - [x] 11. [P1] SideStore 配布ソースの自動更新をリリースフローに組み込む。`distribution/altstore-source.json` が 0.67.0 のまま停止している。`scripts/generate_altstore_source.sh` を iOS IPA リリース工程から呼び出して source を再生成し、リポジトリへコミット（または Release アセットとして公開）する工程を release workflow に追加し、今回分として 0.68.0 の内容にも更新する
 - [x] 12. [P1] macOS で起動時に保存設定が無視される問題を直す。`lib/src/gakujo_web_app.dart` の `_secureStorageAccessAllowed = !Platform.isMacOS`（305行付近）により、初回ウィザード・表示モード設定・最終ページ復元が起動時に効かない。ただしこれは Keychain プロンプト回避（コミット 857e8c5）の意図的な挙動なので、単純に外さないこと。方針例: 機密でない設定（表示モード・ウィザード完了フラグ・最終ページURL等）を Keychain 非依存のストレージへ移す、または初期URL決定を Keychain 読込完了まで遅延させる。トレードオフを検討して実装し、既存の macOS keychain UX テストを壊さないこと
 - [x] 13. [P2] カレンダー日付入力の検証を追加する。日付入力をそのまま `DateTime` に渡しており、`2026/02/31` が3月に自動補正されて誤った期間で予定追加・削除・ICS出力される。パース後に年月日を入力値と突き合わせて不一致なら入力エラーにする。テストを追加する
-- [ ] 14. [P2] Windows の外部遷移遮断とダウンロードURL検査のタイミングを調査・改善する。`lib/src/web_view_service.dart` の Windows 実装は WebView2 の `SourceChanged` 後に `stop()` しており最初の通信は防げない。webview_windows が NavigationStarting 相当を公開しているか調査し、可能なら事前ブロックへ変更。Windows ダウンロード処理のリダイレクト追跡後検査も、追跡前/各ホップでの検査に改善できるか検討する。Windows 実機ビルドはこの Mac では検証不可のため、静的検証（analyze/test）+ 変更の保守性を重視し、確証が持てない変更はしないこと
+- [x] 14. [P2] Windows の外部遷移遮断とダウンロードURL検査のタイミングを調査・改善する。`lib/src/web_view_service.dart` の Windows 実装は WebView2 の `SourceChanged` 後に `stop()` しており最初の通信は防げない。webview_windows が NavigationStarting 相当を公開しているか調査し、可能なら事前ブロックへ変更。Windows ダウンロード処理のリダイレクト追跡後検査も、追跡前/各ホップでの検査に改善できるか検討する。Windows 実機ビルドはこの Mac では検証不可のため、静的検証（analyze/test）+ 変更の保守性を重視し、確証が持てない変更はしないこと
 - [ ] 15. [P3] `docs/ios-sideloading.md` を現在の CI 実態（Android・iOS・macOS・Windows すべてを GitHub Actions でビルド）に合わせて更新する
 
 ## 完了ログ
@@ -46,3 +46,4 @@
 - 2026-07-15 タスク11: `altstore-source.json` を v0.68.0 の実リリース値（size 8079465、2026-07-07）に更新。release.yml の publish ジョブに source 再生成 → main へ bot コミット/push する工程を追加（push 失敗はリリースを壊さず警告）。将来リリース向けに RELEASE_NOTES は汎用文言へ調整。YAML/JSON 構文確認、analyze 0件、テスト279件全通過。※main へ push されるのはこのブランチが main へマージされてから。
 - 2026-07-15 タスク12: 非機密設定＋最終ページURLの Keychain 非依存ミラー `GakujoLocalPrefsStore`（Application Support の local_prefs.json）を新設。macOS 起動時はミラーから表示モード・ウィザード完了・最終ページを復元し、機密（ログイン情報・2FA）は従来どおり Keychain 遅延読込のまま。設定保存時と Keychain 本読込成功時にミラー同期、ストレージリセット時はミラーも削除。テスト4件追加。analyze 0件、テスト283件全通過、macOS デバッグビルド成功。※既存 macOS ユーザーは更新後の初回起動時に一度だけウィザードが再表示される（完了でミラーに記録され再発しない）。
 - 2026-07-15 タスク13: `parseCalendarDate` をトップレベル関数化し、範囲外・存在しない日付（2026/02/31 等）を round-trip 検証で拒否。うるう年含むテスト5件追加。analyze 0件、テスト288件全通過。
+- 2026-07-15 タスク14: 調査の結果 webview_windows 0.4.0 は NavigationStarting 未実装で事前ブロック不可（DEVELOPER_NOTES.md に既知の制約として文書化、flutter_inappwebview 移行で解消可能な旨も記載）。Windows ダウンロードの WebView fetch は本文読込前に response.url を検査して blocked を返すよう改善（Dart 側の事後検査も多層防御として維持）。analyze 0件、テスト288件全通過。Windows 実機検証は未実施（この Mac では不可）。

@@ -5471,6 +5471,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     };
   }
   const response = await fetch(url.toString(), options);
+  const finalUrl = new URL(response.url);
+  const isAllowedFinalUrl =
+    finalUrl.protocol === 'https:' &&
+    finalUrl.hostname === 'gakujo.iess.niigata-u.ac.jp' &&
+    (finalUrl.port === '' || finalUrl.port === '443') &&
+    finalUrl.username === '' &&
+    finalUrl.password === '';
+  if (!isAllowedFinalUrl) {
+    return JSON.stringify({
+      blocked: true,
+      finalUrl: response.url,
+      status: response.status
+    });
+  }
   const buffer = await response.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -5501,6 +5515,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final status = int.tryParse(decoded['status']?.toString() ?? '') ?? 0;
     final finalUrl = decoded['finalUrl']?.toString() ?? request.url;
+    if (decoded['blocked'] == true) {
+      throw PlatformException(
+        code: 'blocked_url',
+        message: 'Gakujo以外へのリダイレクトをブロックしました',
+      );
+    }
     if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
       throw PlatformException(
         code: 'blocked_url',
