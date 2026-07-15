@@ -52,6 +52,30 @@ void main() {
     );
   });
 
+  test('allows only the standard Gakujo HTTPS origin', () {
+    expect(
+      AllowedWebOrigins.canLoad(
+        'https://gakujo.iess.niigata-u.ac.jp:8443/campusweb/campusportal.do',
+        debugAllowed: false,
+      ),
+      isFalse,
+    );
+    expect(
+      AllowedWebOrigins.canLoad(
+        'https://gakujo.iess.niigata-u.ac.jp:443/campusweb/campusportal.do',
+        debugAllowed: false,
+      ),
+      isTrue,
+    );
+    expect(
+      AllowedWebOrigins.canLoad(
+        'https://user:pass@gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+        debugAllowed: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('allows required university and coop pages for navigation only', () {
     final urls = [
       'https://www.niigata-u.ac.jp/campus/life/class/online_rule/',

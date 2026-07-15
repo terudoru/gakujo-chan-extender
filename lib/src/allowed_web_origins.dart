@@ -65,7 +65,11 @@ class AllowedWebOrigins {
 
   static bool _isGakujoUrl(String url) {
     final uri = Uri.tryParse(url);
-    return uri != null && uri.scheme == 'https' && uri.host == _gakujoHost;
+    return uri != null &&
+        uri.scheme == 'https' &&
+        uri.host == _gakujoHost &&
+        (!uri.hasPort || uri.port == 443) &&
+        uri.userInfo.isEmpty;
   }
 
   static bool _isAllowedExternalUrl(String url) {
