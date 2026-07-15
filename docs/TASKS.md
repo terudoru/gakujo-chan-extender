@@ -34,7 +34,7 @@
 ## 第3バッチ: デバッグ痕跡の除去と分割の継続
 
 - [x] 16. [P2] `gakujo_web_app.dart` の `_appendCalendarDebugLog`（3075行付近）とそれを呼ぶ全ての `// #region DEBUG` ブロック（86リージョン・43呼び出し）を削除する。このデバッグ補助は開発者のホームディレクトリ等のハードコードされた絶対パス（`/Users/yoshidateruhiko/...`、`/tmp/.claude/debug.log` 等）へ同期書き込みしており、全ユーザーの環境で実行時に不要なディレクトリ作成・ファイルIOが走る本番不具合。DEBUG リージョン以外のロジックは一切変えないこと
-- [ ] 17. `gakujo_web_app.dart` 分割 (4): カレンダー/スケジュール連携系のメソッド群（`exportCurrentSchedule` 前後、`_askCalendarTermRange`、`_resolveCalendarTerm` 系など凝集した一群）を、診断系（`gakujo_web_app_diagnostics.dart`）と同じ part + extension パターンで `lib/src/gakujo_web_app_calendar.dart` へ抽出する。純粋な移動のみ、挙動変更なし
+- [x] 17. `gakujo_web_app.dart` 分割 (4): カレンダー/スケジュール連携系のメソッド群（`exportCurrentSchedule` 前後、`_askCalendarTermRange`、`_resolveCalendarTerm` 系など凝集した一群）を、診断系（`gakujo_web_app_diagnostics.dart`）と同じ part + extension パターンで `lib/src/gakujo_web_app_calendar.dart` へ抽出する。純粋な移動のみ、挙動変更なし
 - [ ] 18. `gakujo_web_app.dart` 分割 (5): ダウンロード処理系のメソッド群（`_handleDownloadMessage`、`_handleDownloadRequest`、`_downloadBytesWithWebViewSession`、失敗キュー・履歴まわりなど）を同じ part + extension パターンで `lib/src/gakujo_web_app_downloads.dart` へ抽出する。純粋な移動のみ、挙動変更なし
 
 ## 完了ログ
@@ -55,3 +55,4 @@
 - 2026-07-15 タスク14: 調査の結果 webview_windows 0.4.0 は NavigationStarting 未実装で事前ブロック不可（DEVELOPER_NOTES.md に既知の制約として文書化、flutter_inappwebview 移行で解消可能な旨も記載）。Windows ダウンロードの WebView fetch は本文読込前に response.url を検査して blocked を返すよう改善（Dart 側の事後検査も多層防御として維持）。analyze 0件、テスト288件全通過。Windows 実機検証は未実施（この Mac では不可）。
 - 2026-07-15 タスク15: `docs/ios-sideloading.md` を現行 CI（全プラットフォームを Release All Platforms workflow でビルド、source 自動更新）に合わせて更新。文書修正のみのため codex 委譲なしで直接実施。第2バッチ全タスク完了につきループ終了。
 - 2026-07-15 タスク16: `_appendCalendarDebugLog`・`_calendarDebugUrl`・`_calendarDebugIntegration` と DEBUG リージョン43個（278行）を削除。ハードコードされた開発者パスへの同期IOが本番から消えた。analyze 0件、テスト288件全通過。
+- 2026-07-15 タスク17: カレンダー/スケジュール連携45メソッド（1,718行）を `lib/src/gakujo_web_app_calendar.dart`（part + extension）へ抽出（本体 6,315行→4,599行、完全一致の機械的移動を確認）。analyze 0件、テスト288件全通過。
