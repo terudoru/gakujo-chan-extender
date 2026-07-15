@@ -19,7 +19,7 @@
 - [x] 5. `gakujo_web_app.dart` 分割 (2/3): 末尾の私的データクラス（`_PageTextSnapshot`、`_MessageActivityCandidate`、`_ActivityScanResult`、`_ResolvedCalendarTerm`、`_ScheduleIntegrationDialogResult`、`_OfficialGoogleScheduleIntegration`、`_OfficialScheduleExportFetch`）と冒頭の enum 群を適切な別ファイルへ移動する。挙動変更なし
 - [x] 6. `lib/src/gakujo_activity_store.dart`（723行、テストなし）の主要ロジック（保存・差分検知・期限抽出）にユニットテストを追加する
 - [x] 7. 依存パッケージを制約内でマイナー更新する（`flutter pub upgrade`）。更新後に analyze/test を通し、`pubspec.lock` の差分をコミットする
-- [ ] 8. `gakujo_web_app.dart` 分割 (3/3): `_GakujoWebAppState`（約6,300行）から独立性の高い機能グループ（例: 設定ダイアログ構築、データ管理画面、診断情報生成のいずれか1つ）をヘルパークラスまたは別ファイルへ抽出する。挙動変更なし
+- [x] 8. `gakujo_web_app.dart` 分割 (3/3): `_GakujoWebAppState`（約6,300行）から独立性の高い機能グループ（例: 設定ダイアログ構築、データ管理画面、診断情報生成のいずれか1つ）をヘルパークラスまたは別ファイルへ抽出する。挙動変更なし
 
 ## 完了ログ
 
@@ -30,3 +30,4 @@
 - 2026-07-15 タスク5: enum 5個とデータクラス7個を `lib/src/gakujo_web_app_models.dart`（part）へ移動（6,763行→6,577行、完全一致の機械的移動を確認）。analyze 0件、テスト271件全通過。
 - 2026-07-15 タスク6: 既存の `gakujo_activity_store_model_test.dart` に未カバーだった `mergeDeadlines` / `markSnapshotsSeen` / お気に入り操作 / `saveReportList` のテスト7件を追記（既存テストは無変更）。analyze 0件、テスト278件全通過。
 - 2026-07-15 タスク7: `flutter pub upgrade` で6依存を更新（webview_flutter 4.14.1、package_info_plus 10.2.0、path_provider 2.1.6 ほか）。コマンド実行のみのため codex 委譲なしで直接実施。analyze 0件、テスト278件全通過。
+- 2026-07-15 タスク8: 診断・エラー報告系4メソッド（116行）を `lib/src/gakujo_web_app_diagnostics.dart`（part + extension）へ抽出（本体 6,577行→6,458行、完全一致の機械的移動を確認）。analyze 0件、テスト278件全通過。全タスク完了につきループ終了。
