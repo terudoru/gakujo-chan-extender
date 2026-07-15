@@ -17,18 +17,20 @@ iOS/iPadOS 14 以降が必要です。
 
 ## 配布ファイル
 
-iOS/iPadOS版のIPAは、GitHub Actionsでは作りません。macOS上のローカル環境で
-作成し、必要な場合だけ手動で配布場所へ置きます。
+iOS/iPadOS版のIPAは、`Release All Platforms` workflow（`.github/workflows/release.yml`）が
+タグ push 時に GitHub Actions 上で作成し、他プラットフォームの配布物と一緒に
+GitHub Releases へアップロードします。ローカルでの手動作成は、検証や緊急時の
+バックアップ手段として残しています。
 
-配布する場合のファイル名は次の形に揃えます。
+配布ファイル名は次の形に揃えます。
 
 ```text
-MoreBetterGakujo-v0.67.0.ipa
+MoreBetterGakujo-v0.68.0.ipa
 ```
 
-SideStore/AltStore source を使う場合は、Release asset に混ぜず、リポジトリ内の
-`distribution/altstore-source.json` を更新して raw URL を案内します。source内の
-`downloadURL` は、実際に配布するIPAのURLに合わせます。
+SideStore/AltStore source は、リポジトリ内の `distribution/altstore-source.json` を
+raw URL で案内します。source内の `downloadURL` は、実際に配布するIPA
+（GitHub Releases のアセットURL）に合わせます。
 
 ```text
 https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distribution/altstore-source.json
@@ -72,10 +74,12 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 distribution/altstore-source.json
 ```
 
-リリース前には、実際に公開するIPAからsourceを再生成して、`size`、`version`、
-`buildVersion`、リリースノートを合わせます。
+sourceの再生成は `Release All Platforms` workflow の publish ジョブが
+リリース公開後に自動で行い、`main` ブランチへコミットします。手動で
+リリースする場合だけ、実際に公開するIPAからsourceを再生成して、`size`、
+`version`、`buildVersion`、リリースノートを合わせます。
 
-## IPAを作る
+## IPAを手動で作る
 
 macOSにXcodeとFlutterが入っている環境で実行します。
 
@@ -86,18 +90,18 @@ macOSにXcodeとFlutterが入っている環境で実行します。
 出力先:
 
 ```text
-dist/MoreBetterGakujo-v0.67.0.ipa
+dist/MoreBetterGakujo-v0.68.0.ipa
 ```
 
 このIPAはApp Store用の署名済みビルドではありません。SideloadlyやSideStore側で、
 利用者が自分のApple Accountを使って署名します。
 
-## SideStore sourceを作る
+## SideStore sourceを手動で作る
 
-IPAを作ったあとに実行します。
+IPAを作ったあとに実行します（通常はリリースworkflowが自動で行います）。
 
 ```sh
-./scripts/generate_altstore_source.sh dist/MoreBetterGakujo-v0.67.0.ipa
+./scripts/generate_altstore_source.sh dist/MoreBetterGakujo-v0.68.0.ipa
 ```
 
 任意の環境変数:
@@ -113,8 +117,10 @@ RELEASE_NOTES="iOS sideloading build." \
 
 ## GitHub Actionsでの扱い
 
-このリポジトリでは、GitHub Actionsによる配布物作成はWindows版だけに限定します。
-iOS/iPadOS版のIPA作成、署名、SideStore source更新はローカル作業として扱います。
+`Release All Platforms` workflow が、タグ push（または手動実行）で
+Android・iOS・macOS・Windows の配布物をすべて作成し、GitHub Releases へ
+公開します。iOS/iPadOS版のIPA作成と SideStore source の更新もこの workflow に
+含まれます。署名は行わず、未署名IPAを配布します（署名は利用者側で行います）。
 
 ## 利用者に明記する注意点
 
