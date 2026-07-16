@@ -386,6 +386,89 @@ void main() {
     expect(raw, isNot(contains('"title":"old"')));
   });
 
+  test('compact skips failed reads and compacts successful keys', () async {
+    const snapshotsKey = 'more_better_gakujo_activity_snapshots';
+    const deadlinesKey = 'more_better_gakujo_deadlines';
+    final deadlineRaw = jsonEncode([
+      {
+        'title': '既存課題',
+        'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+        'dueText': '提出期限 2099/07/01 17:00',
+        'detectedAt': DateTime.now().toIso8601String(),
+        'kind': 'deadline',
+      },
+    ]);
+    final storage = _FailingReadSecureStorage(
+      initialValues: {
+        snapshotsKey: jsonEncode([
+          {
+            'category': 'その他',
+            'title': '期限切れ',
+            'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/old',
+            'contentHash': 'old',
+            'updatedAt': DateTime.now()
+                .subtract(const Duration(days: 220))
+                .toIso8601String(),
+            'hasUpdate': false,
+          },
+          {
+            'category': 'その他',
+            'title': '保持対象',
+            'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/recent',
+            'contentHash': 'recent',
+            'updatedAt': DateTime.now()
+                .subtract(const Duration(days: 1))
+                .toIso8601String(),
+            'hasUpdate': false,
+          },
+        ]),
+        deadlinesKey: deadlineRaw,
+      },
+      failingReadKeys: const {deadlinesKey},
+    );
+
+    await GakujoActivityStore(secureStorage: storage).compact();
+
+    expect(storage.writeKeys, contains(snapshotsKey));
+    expect(storage.writeKeys, isNot(contains(deadlinesKey)));
+    expect(storage.values[deadlinesKey], deadlineRaw);
+    final compactedSnapshots =
+        jsonDecode(storage.values[snapshotsKey]!) as List;
+    expect(compactedSnapshots, hasLength(1));
+    expect(compactedSnapshots.single['title'], '保持対象');
+  });
+
+  test('mergeDeadlines does not overwrite data after a failed read', () async {
+    const deadlinesKey = 'more_better_gakujo_deadlines';
+    final existingRaw = jsonEncode([
+      {
+        'title': '既存課題',
+        'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/existing',
+        'dueText': '提出期限 2099/07/01 17:00',
+        'detectedAt': DateTime.now().toIso8601String(),
+        'kind': 'deadline',
+      },
+    ]);
+    final storage = _FailingReadSecureStorage(
+      initialValues: {deadlinesKey: existingRaw},
+      failingReadKeys: const {deadlinesKey},
+    );
+    final store = GakujoActivityStore(secureStorage: storage);
+
+    final added = await store.mergeDeadlines([
+      GakujoDeadlineEntry(
+        title: '新規課題',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/new',
+        dueText: '提出期限 2099/07/02 17:00',
+        detectedAt: DateTime.now(),
+      ),
+    ]);
+
+    expect(added, isEmpty);
+    expect(storage.writeKeys, isNot(contains(deadlinesKey)));
+    expect(storage.values[deadlinesKey], existingRaw);
+  });
+
   test('clearSnapshots removes update badges without touching deadlines',
       () async {
     final store = GakujoActivityStore();
@@ -964,4 +1047,50 @@ void main() {
     expect(reportLists.first.url, newest.url);
     expect(reportLists.map((entry) => entry.title), isNot(contains('既存一覧0')));
   });
+}
+
+class _FailingReadSecureStorage extends FlutterSecureStorage {
+  _FailingReadSecureStorage({
+    required Map<String, String> initialValues,
+    required this.failingReadKeys,
+  }) : values = Map<String, String>.from(initialValues);
+
+  final Map<String, String> values;
+  final Set<String> failingReadKeys;
+  final List<String> writeKeys = [];
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (failingReadKeys.contains(key)) {
+      throw StateError('read failed for $key');
+    }
+    return values[key];
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    writeKeys.add(key);
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
 }

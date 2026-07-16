@@ -206,6 +206,15 @@ class GakujoFavoritePage {
   }
 }
 
+class _StorageReadResult<T> {
+  const _StorageReadResult.success(this.value) : isSuccessful = true;
+
+  const _StorageReadResult.failure(this.value) : isSuccessful = false;
+
+  final T value;
+  final bool isSuccessful;
+}
+
 class GakujoActivityStore {
   GakujoActivityStore({
     FlutterSecureStorage? secureStorage,
@@ -229,74 +238,97 @@ class GakujoActivityStore {
 
   final FlutterSecureStorage _secureStorage;
 
-  Future<String?> _readRawValue(String key) async {
+  Future<_StorageReadResult<String?>> _readRawValue(String key) async {
     try {
-      return await _secureStorage.read(key: key);
+      return _StorageReadResult.success(
+        await _secureStorage.read(key: key),
+      );
     } on Object {
       // Cached activity data is best-effort. If secure storage is briefly
       // unavailable (e.g. a cold keychain read times out), degrade to no
       // cached data rather than throwing out of a background scan.
-      return null;
+      return const _StorageReadResult.failure(null);
     }
   }
 
   Future<List<GakujoActivitySnapshot>> loadSnapshots() async {
-    final raw = await _readRawValue(_snapshotsKey);
-    final snapshots = _decodeList(raw, GakujoActivitySnapshot.fromJson)
-        .where(_isUsefulSnapshot)
-        .where(_isRecentSnapshot)
-        .toList();
-    snapshots.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return snapshots.take(_maxSnapshots).toList();
+    return (await _readSnapshots()).value;
+  }
+
+  Future<_StorageReadResult<List<GakujoActivitySnapshot>>> _readSnapshots() {
+    return _readList(
+      key: _snapshotsKey,
+      fromJson: GakujoActivitySnapshot.fromJson,
+      retain: (snapshot) =>
+          _isUsefulSnapshot(snapshot) && _isRecentSnapshot(snapshot),
+      compare: (a, b) => b.updatedAt.compareTo(a.updatedAt),
+      limit: _maxSnapshots,
+    );
   }
 
   Future<List<GakujoDeadlineEntry>> loadDeadlines() async {
-    final raw = await _readRawValue(_deadlinesKey);
-    final deadlines = _decodeList(raw, GakujoDeadlineEntry.fromJson)
-        .where(_isUsefulDeadline)
-        .where(_isActiveDeadline)
-        .toList();
-    deadlines.sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
-    return deadlines.take(_maxDeadlines).toList();
+    return (await _readDeadlines()).value;
+  }
+
+  Future<_StorageReadResult<List<GakujoDeadlineEntry>>> _readDeadlines() {
+    return _readList(
+      key: _deadlinesKey,
+      fromJson: GakujoDeadlineEntry.fromJson,
+      retain: (entry) => _isUsefulDeadline(entry) && _isActiveDeadline(entry),
+      compare: (a, b) => b.detectedAt.compareTo(a.detectedAt),
+      limit: _maxDeadlines,
+    );
   }
 
   Future<List<GakujoFavoritePage>> loadFavorites() async {
-    final raw = await _readRawValue(_favoritesKey);
-    final favorites = _decodeList(raw, GakujoFavoritePage.fromJson)
-        .where(_isUsefulFavorite)
-        .toList();
-    favorites.sort((a, b) => b.addedAt.compareTo(a.addedAt));
-    return favorites.take(_maxFavorites).toList();
+    return (await _readFavorites()).value;
+  }
+
+  Future<_StorageReadResult<List<GakujoFavoritePage>>> _readFavorites() {
+    return _readList(
+      key: _favoritesKey,
+      fromJson: GakujoFavoritePage.fromJson,
+      retain: _isUsefulFavorite,
+      compare: (a, b) => b.addedAt.compareTo(a.addedAt),
+      limit: _maxFavorites,
+    );
   }
 
   Future<List<GakujoActivityChangeEntry>> loadChanges() async {
-    final raw = await _readRawValue(_changesKey);
-    final changes = _decodeList(raw, GakujoActivityChangeEntry.fromJson)
-        .where(_isUsefulChange)
-        .where(_isRecentChange)
-        .toList();
-    changes.sort((a, b) => b.changedAt.compareTo(a.changedAt));
-    return changes.take(_maxChanges).toList();
+    return (await _readChanges()).value;
+  }
+
+  Future<_StorageReadResult<List<GakujoActivityChangeEntry>>> _readChanges() {
+    return _readList(
+      key: _changesKey,
+      fromJson: GakujoActivityChangeEntry.fromJson,
+      retain: (change) => _isUsefulChange(change) && _isRecentChange(change),
+      compare: (a, b) => b.changedAt.compareTo(a.changedAt),
+      limit: _maxChanges,
+    );
   }
 
   Future<List<GakujoCachedReportList>> loadReportLists() async {
-    final raw = await _readRawValue(_reportListsKey);
-    final reportLists = _decodeList(raw, GakujoCachedReportList.fromJson)
-        .where(_isUsefulReportList)
-        .where(_isRecentReportList)
-        .toList();
-    reportLists.sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
-    return reportLists.take(_maxReportLists).toList();
+    return (await _readReportLists()).value;
+  }
+
+  Future<_StorageReadResult<List<GakujoCachedReportList>>> _readReportLists() {
+    return _readList(
+      key: _reportListsKey,
+      fromJson: GakujoCachedReportList.fromJson,
+      retain: (reportList) =>
+          _isUsefulReportList(reportList) && _isRecentReportList(reportList),
+      compare: (a, b) => b.capturedAt.compareTo(a.capturedAt),
+      limit: _maxReportLists,
+    );
   }
 
   Future<void> compact() async {
-    await Future.wait([
-      _writeList(_snapshotsKey, await loadSnapshots()),
-      _writeList(_deadlinesKey, await loadDeadlines()),
-      _writeList(_favoritesKey, await loadFavorites()),
-      _writeList(_changesKey, await loadChanges()),
-      _writeList(_reportListsKey, await loadReportLists()),
-    ]);
+    await _compactList(_snapshotsKey, _readSnapshots);
+    await _compactList(_deadlinesKey, _readDeadlines);
+    await _compactList(_favoritesKey, _readFavorites);
+    await _compactList(_changesKey, _readChanges);
+    await _compactList(_reportListsKey, _readReportLists);
   }
 
   Future<GakujoActivitySnapshot> recordSnapshot({
@@ -317,8 +349,21 @@ class GakujoActivityStore {
         contentPreview: preview,
       );
     }
-    final snapshots = [...await loadSnapshots()];
     final hash = sha1.convert(utf8.encode(content)).toString();
+    final now = DateTime.now();
+    final snapshotRead = await _readSnapshots();
+    if (!snapshotRead.isSuccessful) {
+      return GakujoActivitySnapshot(
+        category: category,
+        title: title,
+        url: url,
+        contentHash: hash,
+        updatedAt: now,
+        hasUpdate: false,
+        contentPreview: preview,
+      );
+    }
+    final snapshots = [...snapshotRead.value];
     final existingIndex = snapshots.indexWhere(
       (snapshot) => snapshot.category == category && snapshot.url == url,
     );
@@ -326,7 +371,6 @@ class GakujoActivityStore {
     final existingHadUpdate =
         existingIndex >= 0 && snapshots[existingIndex].hasUpdate;
     final hasUpdate = existing != null && existing.contentHash != hash;
-    final now = DateTime.now();
     if (existing != null && existing.contentHash != hash) {
       await _addChange(
         GakujoActivityChangeEntry(
@@ -361,7 +405,11 @@ class GakujoActivityStore {
   }
 
   Future<void> markSnapshotsSeen() async {
-    final snapshots = (await loadSnapshots()).where(_isUsefulSnapshot);
+    final snapshotRead = await _readSnapshots();
+    if (!snapshotRead.isSuccessful) {
+      return;
+    }
+    final snapshots = snapshotRead.value.where(_isUsefulSnapshot);
     await _writeList(
       _snapshotsKey,
       snapshots
@@ -387,8 +435,12 @@ class GakujoActivityStore {
   Future<List<GakujoDeadlineEntry>> mergeDeadlines(
     List<GakujoDeadlineEntry> nextEntries,
   ) async {
+    final deadlineRead = await _readDeadlines();
+    if (!deadlineRead.isSuccessful) {
+      return const [];
+    }
     final entries = <String, GakujoDeadlineEntry>{
-      for (final entry in await loadDeadlines())
+      for (final entry in deadlineRead.value)
         if (_isUsefulDeadline(entry)) entry.key: entry,
     };
     final newEntries = <GakujoDeadlineEntry>[];
@@ -425,7 +477,11 @@ class GakujoActivityStore {
     if (!_isUsefulFavorite(page)) {
       return;
     }
-    final favorites = await loadFavorites();
+    final favoriteRead = await _readFavorites();
+    if (!favoriteRead.isSuccessful) {
+      return;
+    }
+    final favorites = favoriteRead.value;
     final filtered =
         favorites.where((favorite) => favorite.url != page.url).toList();
     await _writeList(_favoritesKey, [page, ...filtered].take(_maxFavorites));
@@ -441,7 +497,11 @@ class GakujoActivityStore {
   }
 
   Future<void> removeFavorite(String url) async {
-    final favorites = await loadFavorites();
+    final favoriteRead = await _readFavorites();
+    if (!favoriteRead.isSuccessful) {
+      return;
+    }
+    final favorites = favoriteRead.value;
     await _writeList(
       _favoritesKey,
       favorites.where((favorite) => favorite.url != url).toList(),
@@ -452,7 +512,11 @@ class GakujoActivityStore {
     if (!_isUsefulReportList(reportList) || !_isRecentReportList(reportList)) {
       return;
     }
-    final reportLists = await loadReportLists();
+    final reportListRead = await _readReportLists();
+    if (!reportListRead.isSuccessful) {
+      return;
+    }
+    final reportLists = reportListRead.value;
     final filtered =
         reportLists.where((entry) => entry.url != reportList.url).toList();
     await _writeList(
@@ -497,7 +561,11 @@ class GakujoActivityStore {
     if (!_isUsefulChange(entry)) {
       return;
     }
-    final changes = [entry, ...await loadChanges()];
+    final changeRead = await _readChanges();
+    if (!changeRead.isSuccessful) {
+      return;
+    }
+    final changes = [entry, ...changeRead.value];
     await _writeList(
       _changesKey,
       changes.where(_isRecentChange).take(_maxChanges),
@@ -710,6 +778,33 @@ class GakujoActivityStore {
     } on Object {
       return const [];
     }
+  }
+
+  Future<_StorageReadResult<List<T>>> _readList<T extends Object>({
+    required String key,
+    required T Function(Map<dynamic, dynamic>) fromJson,
+    required bool Function(T) retain,
+    required int Function(T, T) compare,
+    required int limit,
+  }) async {
+    final rawRead = await _readRawValue(key);
+    if (!rawRead.isSuccessful) {
+      return _StorageReadResult.failure(<T>[]);
+    }
+    final values = _decodeList(rawRead.value, fromJson).where(retain).toList()
+      ..sort(compare);
+    return _StorageReadResult.success(values.take(limit).toList());
+  }
+
+  Future<void> _compactList<T extends Object>(
+    String key,
+    Future<_StorageReadResult<List<T>>> Function() read,
+  ) async {
+    final result = await read();
+    if (!result.isSuccessful) {
+      return;
+    }
+    await _writeList(key, result.value);
   }
 
   Future<void> _writeList(String key, Iterable<Object> values) {
