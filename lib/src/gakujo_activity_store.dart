@@ -237,6 +237,7 @@ class GakujoActivityStore {
   static const _reportListRetention = Duration(days: 60);
 
   final FlutterSecureStorage _secureStorage;
+  Future<void> _pendingOperation = Future<void>.value();
 
   Future<_StorageReadResult<String?>> _readRawValue(String key) async {
     try {
@@ -252,6 +253,7 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoActivitySnapshot>> loadSnapshots() async {
+    await _pendingOperation;
     return (await _readSnapshots()).value;
   }
 
@@ -267,6 +269,7 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoDeadlineEntry>> loadDeadlines() async {
+    await _pendingOperation;
     return (await _readDeadlines()).value;
   }
 
@@ -281,6 +284,7 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoFavoritePage>> loadFavorites() async {
+    await _pendingOperation;
     return (await _readFavorites()).value;
   }
 
@@ -295,6 +299,7 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoActivityChangeEntry>> loadChanges() async {
+    await _pendingOperation;
     return (await _readChanges()).value;
   }
 
@@ -309,6 +314,7 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoCachedReportList>> loadReportLists() async {
+    await _pendingOperation;
     return (await _readReportLists()).value;
   }
 
@@ -323,7 +329,11 @@ class GakujoActivityStore {
     );
   }
 
-  Future<void> compact() async {
+  Future<void> compact() {
+    return _enqueue(_compact);
+  }
+
+  Future<void> _compact() async {
     await _compactList(_snapshotsKey, _readSnapshots);
     await _compactList(_deadlinesKey, _readDeadlines);
     await _compactList(_favoritesKey, _readFavorites);
@@ -332,6 +342,22 @@ class GakujoActivityStore {
   }
 
   Future<GakujoActivitySnapshot> recordSnapshot({
+    required String category,
+    required String title,
+    required String url,
+    required String content,
+  }) {
+    return _enqueue(
+      () => _recordSnapshot(
+        category: category,
+        title: title,
+        url: url,
+        content: content,
+      ),
+    );
+  }
+
+  Future<GakujoActivitySnapshot> _recordSnapshot({
     required String category,
     required String title,
     required String url,
@@ -404,7 +430,11 @@ class GakujoActivityStore {
     return snapshot;
   }
 
-  Future<void> markSnapshotsSeen() async {
+  Future<void> markSnapshotsSeen() {
+    return _enqueue(_markSnapshotsSeen);
+  }
+
+  Future<void> _markSnapshotsSeen() async {
     final snapshotRead = await _readSnapshots();
     if (!snapshotRead.isSuccessful) {
       return;
@@ -429,10 +459,18 @@ class GakujoActivityStore {
   }
 
   Future<void> clearSnapshots() {
-    return _secureStorage.delete(key: _snapshotsKey);
+    return _enqueue(
+      () => _secureStorage.delete(key: _snapshotsKey),
+    );
   }
 
   Future<List<GakujoDeadlineEntry>> mergeDeadlines(
+    List<GakujoDeadlineEntry> nextEntries,
+  ) {
+    return _enqueue(() => _mergeDeadlines(nextEntries));
+  }
+
+  Future<List<GakujoDeadlineEntry>> _mergeDeadlines(
     List<GakujoDeadlineEntry> nextEntries,
   ) async {
     final deadlineRead = await _readDeadlines();
@@ -458,6 +496,10 @@ class GakujoActivityStore {
   }
 
   Future<void> replaceDeadlines(List<GakujoDeadlineEntry> entries) {
+    return _enqueue(() => _replaceDeadlines(entries));
+  }
+
+  Future<void> _replaceDeadlines(List<GakujoDeadlineEntry> entries) {
     final compacted = entries
         .where(_isUsefulDeadline)
         .where(_isActiveDeadline)
@@ -470,10 +512,16 @@ class GakujoActivityStore {
   }
 
   Future<void> clearDeadlines() {
-    return _secureStorage.delete(key: _deadlinesKey);
+    return _enqueue(
+      () => _secureStorage.delete(key: _deadlinesKey),
+    );
   }
 
-  Future<void> addFavorite(GakujoFavoritePage page) async {
+  Future<void> addFavorite(GakujoFavoritePage page) {
+    return _enqueue(() => _addFavorite(page));
+  }
+
+  Future<void> _addFavorite(GakujoFavoritePage page) async {
     if (!_isUsefulFavorite(page)) {
       return;
     }
@@ -488,6 +536,10 @@ class GakujoActivityStore {
   }
 
   Future<void> replaceFavorites(List<GakujoFavoritePage> favorites) {
+    return _enqueue(() => _replaceFavorites(favorites));
+  }
+
+  Future<void> _replaceFavorites(List<GakujoFavoritePage> favorites) {
     final compacted = favorites.where(_isUsefulFavorite).toList()
       ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
     return _writeList(
@@ -496,7 +548,11 @@ class GakujoActivityStore {
     );
   }
 
-  Future<void> removeFavorite(String url) async {
+  Future<void> removeFavorite(String url) {
+    return _enqueue(() => _removeFavorite(url));
+  }
+
+  Future<void> _removeFavorite(String url) async {
     final favoriteRead = await _readFavorites();
     if (!favoriteRead.isSuccessful) {
       return;
@@ -508,7 +564,11 @@ class GakujoActivityStore {
     );
   }
 
-  Future<void> saveReportList(GakujoCachedReportList reportList) async {
+  Future<void> saveReportList(GakujoCachedReportList reportList) {
+    return _enqueue(() => _saveReportList(reportList));
+  }
+
+  Future<void> _saveReportList(GakujoCachedReportList reportList) async {
     if (!_isUsefulReportList(reportList) || !_isRecentReportList(reportList)) {
       return;
     }
@@ -526,6 +586,12 @@ class GakujoActivityStore {
   }
 
   Future<void> replaceReportLists(List<GakujoCachedReportList> reportLists) {
+    return _enqueue(() => _replaceReportLists(reportLists));
+  }
+
+  Future<void> _replaceReportLists(
+    List<GakujoCachedReportList> reportLists,
+  ) {
     final compacted = reportLists
         .where(_isUsefulReportList)
         .where(_isRecentReportList)
@@ -538,6 +604,10 @@ class GakujoActivityStore {
   }
 
   Future<void> replaceChanges(List<GakujoActivityChangeEntry> changes) {
+    return _enqueue(() => _replaceChanges(changes));
+  }
+
+  Future<void> _replaceChanges(List<GakujoActivityChangeEntry> changes) {
     final compacted = changes
         .where(_isUsefulChange)
         .where(_isRecentChange)
@@ -550,11 +620,15 @@ class GakujoActivityStore {
   }
 
   Future<void> clearReportLists() {
-    return _secureStorage.delete(key: _reportListsKey);
+    return _enqueue(
+      () => _secureStorage.delete(key: _reportListsKey),
+    );
   }
 
   Future<void> clearChanges() {
-    return _secureStorage.delete(key: _changesKey);
+    return _enqueue(
+      () => _secureStorage.delete(key: _changesKey),
+    );
   }
 
   Future<void> _addChange(GakujoActivityChangeEntry entry) async {
@@ -814,5 +888,14 @@ class GakujoActivityStore {
         values.map((value) => (value as dynamic).toJson()).toList(),
       ),
     );
+  }
+
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final next = _pendingOperation.then((_) => operation());
+    _pendingOperation = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 }

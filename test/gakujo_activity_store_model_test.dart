@@ -1047,6 +1047,87 @@ void main() {
     expect(reportLists.first.url, newest.url);
     expect(reportLists.map((entry) => entry.title), isNot(contains('既存一覧0')));
   });
+
+  test('concurrent favorite additions keep both pages', () async {
+    final storage = _DelayedMemorySecureStorage(
+      readDelay: const Duration(milliseconds: 20),
+    );
+    final store = GakujoActivityStore(secureStorage: storage);
+    final addedAt = DateTime.now();
+
+    await Future.wait([
+      store.addFavorite(
+        GakujoFavoritePage(
+          title: 'ページA',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/page-a',
+          addedAt: addedAt,
+        ),
+      ),
+      store.addFavorite(
+        GakujoFavoritePage(
+          title: 'ページB',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/page-b',
+          addedAt: addedAt.add(const Duration(milliseconds: 1)),
+        ),
+      ),
+    ]);
+
+    final favorites = await store.loadFavorites();
+    expect(favorites.map((favorite) => favorite.title), {'ページA', 'ページB'});
+  });
+}
+
+class _DelayedMemorySecureStorage extends FlutterSecureStorage {
+  _DelayedMemorySecureStorage({required this.readDelay});
+
+  final Duration readDelay;
+  final Map<String, String> values = {};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final valueAtReadStart = values[key];
+    await Future<void>.delayed(readDelay);
+    return valueAtReadStart;
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
 }
 
 class _FailingReadSecureStorage extends FlutterSecureStorage {

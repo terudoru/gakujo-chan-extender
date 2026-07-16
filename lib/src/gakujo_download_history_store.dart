@@ -97,8 +97,14 @@ class GakujoDownloadHistoryStore {
   static const _failedDownloadRetention = Duration(days: 30);
 
   final FlutterSecureStorage _secureStorage;
+  Future<void> _pendingOperation = Future<void>.value();
 
   Future<List<GakujoDownloadHistoryEntry>> load() async {
+    await _pendingOperation;
+    return _load();
+  }
+
+  Future<List<GakujoDownloadHistoryEntry>> _load() async {
     final raw = await _secureStorage.read(key: _historyKey);
     if (raw == null || raw.trim().isEmpty) {
       return const [];
@@ -128,6 +134,11 @@ class GakujoDownloadHistoryStore {
   }
 
   Future<List<GakujoFailedDownloadEntry>> loadFailedDownloads() async {
+    await _pendingOperation;
+    return _loadFailedDownloads();
+  }
+
+  Future<List<GakujoFailedDownloadEntry>> _loadFailedDownloads() async {
     final raw = await _secureStorage.read(key: _failedDownloadsKey);
     if (raw == null || raw.trim().isEmpty) {
       return const [];
@@ -158,20 +169,32 @@ class GakujoDownloadHistoryStore {
     }
   }
 
-  Future<void> compact() async {
+  Future<void> compact() {
+    return _enqueue(_compact);
+  }
+
+  Future<void> _compact() async {
     await Future.wait([
-      replaceHistory(await load()),
-      replaceFailedDownloads(await loadFailedDownloads()),
+      _replaceHistory(await _load()),
+      _writeFailedDownloads(await _loadFailedDownloads()),
     ]);
   }
 
-  Future<void> add(GakujoDownloadHistoryEntry entry) async {
-    final entries = [entry, ...await load()];
+  Future<void> add(GakujoDownloadHistoryEntry entry) {
+    return _enqueue(() => _add(entry));
+  }
+
+  Future<void> _add(GakujoDownloadHistoryEntry entry) async {
+    final entries = [entry, ...await _load()];
     final compacted = entries.take(_maxEntries).toList();
-    await replaceHistory(compacted);
+    await _replaceHistory(compacted);
   }
 
   Future<void> replaceHistory(List<GakujoDownloadHistoryEntry> entries) {
+    return _enqueue(() => _replaceHistory(entries));
+  }
+
+  Future<void> _replaceHistory(List<GakujoDownloadHistoryEntry> entries) {
     final compacted = entries
         .where(
           (entry) =>
@@ -189,10 +212,22 @@ class GakujoDownloadHistoryStore {
   }
 
   Future<void> clear() {
-    return _secureStorage.delete(key: _historyKey);
+    return _enqueue(() => _secureStorage.delete(key: _historyKey));
   }
 
   Future<void> addFailedDownload({
+    required GakujoDownloadRequest request,
+    required String errorMessage,
+  }) {
+    return _enqueue(
+      () => _addFailedDownload(
+        request: request,
+        errorMessage: errorMessage,
+      ),
+    );
+  }
+
+  Future<void> _addFailedDownload({
     required GakujoDownloadRequest request,
     required String errorMessage,
   }) async {
@@ -208,7 +243,7 @@ class GakujoDownloadHistoryStore {
     final requestKey = _failedRequestKey(request);
     final entries = [
       entry,
-      ...(await loadFailedDownloads()).where(
+      ...(await _loadFailedDownloads()).where(
         (existing) => _failedRequestKey(existing.request) != requestKey,
       ),
     ];
@@ -218,18 +253,24 @@ class GakujoDownloadHistoryStore {
   Future<void> replaceFailedDownloads(
     List<GakujoFailedDownloadEntry> entries,
   ) {
-    return _writeFailedDownloads(entries);
+    return _enqueue(() => _writeFailedDownloads(entries));
   }
 
-  Future<void> removeFailedDownload(String id) async {
-    final entries = await loadFailedDownloads();
+  Future<void> removeFailedDownload(String id) {
+    return _enqueue(() => _removeFailedDownload(id));
+  }
+
+  Future<void> _removeFailedDownload(String id) async {
+    final entries = await _loadFailedDownloads();
     await _writeFailedDownloads(
       entries.where((entry) => entry.id != id).toList(),
     );
   }
 
   Future<void> clearFailedDownloads() {
-    return _secureStorage.delete(key: _failedDownloadsKey);
+    return _enqueue(
+      () => _secureStorage.delete(key: _failedDownloadsKey),
+    );
   }
 
   Future<void> _writeFailedDownloads(
@@ -273,5 +314,14 @@ class GakujoDownloadHistoryStore {
       request.courseName,
       encodedFields,
     ].join('\u{1d}');
+  }
+
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final next = _pendingOperation.then((_) => operation());
+    _pendingOperation = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 }

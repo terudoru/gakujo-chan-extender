@@ -353,4 +353,85 @@ void main() {
     expect(entries, hasLength(1));
     expect(entries.single.id, 'recent');
   });
+
+  test('concurrent history additions keep both downloads', () async {
+    final storage = _DelayedMemorySecureStorage(
+      readDelay: const Duration(milliseconds: 20),
+    );
+    final store = GakujoDownloadHistoryStore(secureStorage: storage);
+    final savedAt = DateTime.now();
+
+    await Future.wait([
+      store.add(
+        GakujoDownloadHistoryEntry(
+          fileName: '資料A.pdf',
+          courseName: '科目A',
+          savedAt: savedAt,
+        ),
+      ),
+      store.add(
+        GakujoDownloadHistoryEntry(
+          fileName: '資料B.pdf',
+          courseName: '科目B',
+          savedAt: savedAt.add(const Duration(milliseconds: 1)),
+        ),
+      ),
+    ]);
+
+    final entries = await store.load();
+    expect(entries.map((entry) => entry.fileName), {'資料A.pdf', '資料B.pdf'});
+  });
+}
+
+class _DelayedMemorySecureStorage extends FlutterSecureStorage {
+  _DelayedMemorySecureStorage({required this.readDelay});
+
+  final Duration readDelay;
+  final Map<String, String> values = {};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final valueAtReadStart = values[key];
+    await Future<void>.delayed(readDelay);
+    return valueAtReadStart;
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
 }
