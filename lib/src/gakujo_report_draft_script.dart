@@ -4,7 +4,7 @@ class GakujoReportDraftScript {
   static String build() {
     return r'''
 (function() {
-  var version = 2;
+  var version = 3;
   var prefix = 'mbg-report-draft:v1:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -202,7 +202,9 @@ class GakujoReportDraftScript {
 
   function fieldValue(field) {
     if (field.matches('[contenteditable]')) {
-      return field.innerHTML || '';
+      return typeof field.innerText === 'string'
+        ? field.innerText
+        : (field.textContent || '');
     }
     return field.value || '';
   }
@@ -210,7 +212,7 @@ class GakujoReportDraftScript {
   function setFieldValue(field, value) {
     var win = field.ownerDocument.defaultView || window;
     if (field.matches('[contenteditable]')) {
-      field.innerHTML = value;
+      field.textContent = value;
     } else {
       var proto = field.tagName.toLowerCase() === 'textarea'
         ? win.HTMLTextAreaElement.prototype

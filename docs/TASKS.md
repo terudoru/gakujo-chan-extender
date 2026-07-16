@@ -46,7 +46,7 @@
 - [x] 23. [P1] バックアップ復元（`gakujo_web_app.dart` 2870行付近〜）の検証不足を直す: (a) `version` フィールドを検証し未対応版は明示エラー、(b) コレクション欠落を「空で置換」ではなく「維持」にする（または全必須の version 2 完全形式のみ受理）、(c) 全項目をパース・検証してから書き込みを開始する（部分適用の防止）
 - [x] 24. [P1] 失敗ダウンロードの `formFields`（hidden token 等の全フォーム値）が平文バックアップ・診断クリップボードへ混入する。`gakujo_download_capture_script.dart` 267行付近の無選別収集を再試行に必要な範囲に絞るか、少なくともバックアップ（`_backupPayload`）と診断出力から `formFields` を除外・マスクする
 - [x] 25. [P1] ログイン自動入力（`login_autofill_assist_script.dart`）が Gakujo ホスト上の任意の password フォームに反応し自動送信まで行う。ログインページ判定（URL パス・フォーム構造・既知フィールド名）を満たす場合のみ資格情報を JS へ渡すよう制限する。判定はスクリプト注入前の Dart 側でも行う
-- [ ] 26. [P1] レポート下書き復元（`gakujo_report_draft_script.dart` 203行・213行付近）の `innerHTML` 保存/復元が永続 DOM-XSS sink になっている。`textContent` ベースの保存・復元へ変更する（改行は `<br>` 等の最小限の変換のみ、復元時は textContent へ代入）
+- [x] 26. [P1] レポート下書き復元（`gakujo_report_draft_script.dart` 203行・213行付近）の `innerHTML` 保存/復元が永続 DOM-XSS sink になっている。`textContent` ベースの保存・復元へ変更する（改行は `<br>` 等の最小限の変換のみ、復元時は textContent へ代入）
 - [ ] 27. [P2] 機能スイッチ OFF が注入済みスクリプトに反映されない。セッション延長・レポートソート・一括既読の各スクリプトに teardown（interval 解除・追加 DOM 除去）を実装し、スイッチ変更時に enable/disable を同期する
 - [ ] 28. [P2] 一括既読（`gakujo_message_reader_script.dart` 77行付近）が HTTP 4xx/5xx を成功扱いする。`response.ok` を検査し、成功・失敗件数を最終表示する
 - [ ] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
@@ -79,3 +79,4 @@
 - 2026-07-15 タスク23: バックアップ復元のパース・検証を純粋関数 `lib/src/gakujo_backup_import.dart` に分離。version 検証（{2}のみ。v0.67以前にエクスポート機能はなく互換問題なしを git 履歴で確認）、欠落コレクションは既存維持・明示的空配列は全消去、全検証後にのみ順次書き込み。テスト5件追加。analyze 0件、テスト304件全通過。
 - 2026-07-15 タスク24: `toExternalJson()`（formFields 除外）を導入し、バックアップ（`lib/src/gakujo_backup_export.dart` に純粋関数化）と詳細診断の failedDownloads を除外版へ切替。内部の失敗キュー永続化・再試行は全フィールド維持。formFields 欠落バックアップの復元互換もテストで担保。analyze 0件、テスト307件全通過。
 - 2026-07-15 タスク25: ログインフォーム判定を positive 化（userId/loginId/userName/j_username/username の既知名を要求、password 2個以上や new/current/確認/再入力系があれば除外）。汎用フォームや変更フォームでは fill/submit しない。ninshoCode 併存も除外維持。Node DOM ハーネスでテスト5件追加。analyze 0件、テスト312件全通過。
+- 2026-07-15 タスク26: レポート下書きの contenteditable 保存/復元を innerHTML→innerText/textContent へ変更し、DOM-XSS sink を除去（旧 HTML 形式の下書きもテキストとして安全に復元）。script version を 3 へ。テスト4件追加。analyze 0件、テスト315件全通過。
