@@ -58,6 +58,7 @@ class GakujoMessageReaderScript {
   function markReadWithFrame(url) {
     return new Promise(function(resolve) {
       var frame = document.createElement('iframe');
+      frame.setAttribute('data-mbg-message-reader-owned', 'true');
       frame.style.display = 'none';
       frame.onload = function() {
         window.setTimeout(function() {
@@ -104,6 +105,7 @@ class GakujoMessageReaderScript {
       var button = document.createElement('button');
       button.id = 'mbg-read-button';
       button.type = 'button';
+      button.setAttribute('data-mbg-message-reader-owned', 'true');
       button.textContent = '指定した個数を既読にする';
       button.addEventListener('click', readerCall);
       target.appendChild(button);
@@ -112,6 +114,7 @@ class GakujoMessageReaderScript {
       var input = document.createElement('input');
       input.id = 'mbg-read-num-input';
       input.type = 'number';
+      input.setAttribute('data-mbg-message-reader-owned', 'true');
       input.defaultValue = '5';
       input.pattern = '\\d*';
       input.placeholder = '既読にする数(半角数字)';
@@ -124,6 +127,24 @@ class GakujoMessageReaderScript {
   addControls();
   window.clearInterval(window.__MBG_MESSAGE_READER_INTERVAL);
   window.__MBG_MESSAGE_READER_INTERVAL = window.setInterval(addControls, 500);
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.clearInterval(window.__MBG_MESSAGE_READER_INTERVAL);
+  delete window.__MBG_MESSAGE_READER_INTERVAL;
+  delete window.__MBG_MESSAGE_READER_VERSION;
+  delete window.__MBG_MESSAGE_READER_UPDATE;
+
+  var controls = document.querySelectorAll(
+    '[data-mbg-message-reader-owned="true"]'
+  );
+  for (var i = 0; i < controls.length; i += 1) {
+    controls[i].remove();
+  }
 })();
 ''';
   }

@@ -157,6 +157,7 @@ class GakujoReportSorterScript {
     var button = document.createElement('button');
     button.id = id;
     button.type = 'button';
+    button.setAttribute('data-mbg-report-sorter-owned', 'true');
     button.textContent = label;
     button.addEventListener('click', handler);
     target.appendChild(button);
@@ -182,6 +183,25 @@ class GakujoReportSorterScript {
   update();
   window.clearInterval(window.__MBG_REPORT_SORTER_INTERVAL);
   window.__MBG_REPORT_SORTER_INTERVAL = window.setInterval(update, 500);
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.clearInterval(window.__MBG_REPORT_SORTER_INTERVAL);
+  delete window.__MBG_REPORT_SORTER_INTERVAL;
+  delete window.__MBG_REPORT_SORTER_VERSION;
+  delete window.__MBG_REPORT_SORTER_UPDATE;
+  delete window.__MBG_REPORT_SORTER_DID_INITIAL_SORT;
+
+  var controls = document.querySelectorAll(
+    '[data-mbg-report-sorter-owned="true"]'
+  );
+  for (var i = 0; i < controls.length; i += 1) {
+    controls[i].remove();
+  }
 })();
 ''';
   }

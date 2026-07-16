@@ -47,7 +47,7 @@
 - [x] 24. [P1] 失敗ダウンロードの `formFields`（hidden token 等の全フォーム値）が平文バックアップ・診断クリップボードへ混入する。`gakujo_download_capture_script.dart` 267行付近の無選別収集を再試行に必要な範囲に絞るか、少なくともバックアップ（`_backupPayload`）と診断出力から `formFields` を除外・マスクする
 - [x] 25. [P1] ログイン自動入力（`login_autofill_assist_script.dart`）が Gakujo ホスト上の任意の password フォームに反応し自動送信まで行う。ログインページ判定（URL パス・フォーム構造・既知フィールド名）を満たす場合のみ資格情報を JS へ渡すよう制限する。判定はスクリプト注入前の Dart 側でも行う
 - [x] 26. [P1] レポート下書き復元（`gakujo_report_draft_script.dart` 203行・213行付近）の `innerHTML` 保存/復元が永続 DOM-XSS sink になっている。`textContent` ベースの保存・復元へ変更する（改行は `<br>` 等の最小限の変換のみ、復元時は textContent へ代入）
-- [ ] 27. [P2] 機能スイッチ OFF が注入済みスクリプトに反映されない。セッション延長・レポートソート・一括既読の各スクリプトに teardown（interval 解除・追加 DOM 除去）を実装し、スイッチ変更時に enable/disable を同期する
+- [x] 27. [P2] 機能スイッチ OFF が注入済みスクリプトに反映されない。セッション延長・レポートソート・一括既読の各スクリプトに teardown（interval 解除・追加 DOM 除去）を実装し、スイッチ変更時に enable/disable を同期する
 - [ ] 28. [P2] 一括既読（`gakujo_message_reader_script.dart` 77行付近）が HTTP 4xx/5xx を成功扱いする。`response.ok` を検査し、成功・失敗件数を最終表示する
 - [ ] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
 - [ ] 30. [P2] 通知タップの URL 契約が Android/iOS/macOS/Windows すべてのネイティブ実装で失われている（Android PendingIntent に URL なし、iOS/macOS userInfo 未設定、Windows は固定 uID=1 で上書き＋常に success 返却）。各プラットフォームで URL を保持して通知タップから Dart へ渡し、該当ページを開く。Windows は一意 ID と実際の成否返却に修正（Windows はビルド検証不可のため静的確認まで）
@@ -80,3 +80,4 @@
 - 2026-07-15 タスク24: `toExternalJson()`（formFields 除外）を導入し、バックアップ（`lib/src/gakujo_backup_export.dart` に純粋関数化）と詳細診断の failedDownloads を除外版へ切替。内部の失敗キュー永続化・再試行は全フィールド維持。formFields 欠落バックアップの復元互換もテストで担保。analyze 0件、テスト307件全通過。
 - 2026-07-15 タスク25: ログインフォーム判定を positive 化（userId/loginId/userName/j_username/username の既知名を要求、password 2個以上や new/current/確認/再入力系があれば除外）。汎用フォームや変更フォームでは fill/submit しない。ninshoCode 併存も除外維持。Node DOM ハーネスでテスト5件追加。analyze 0件、テスト312件全通過。
 - 2026-07-15 タスク26: レポート下書きの contenteditable 保存/復元を innerHTML→innerText/textContent へ変更し、DOM-XSS sink を除去（旧 HTML 形式の下書きもテキストとして安全に復元）。script version を 3 へ。テスト4件追加。analyze 0件、テスト315件全通過。
+- 2026-07-15 タスク27: セッション延長・レポートソート・一括既読の各スクリプトに冪等な `buildTeardown()` を追加（interval 解除・マーカー削除・所有 data 属性付き DOM の除去）。web_app に3機能限定の build/teardown 対応表を作り、フラグ切替時に許可済みページで個別に注入/teardown。Node DOM ハーネス（`test/support/`）でテスト3件追加。analyze 0件、テスト318件全通過。

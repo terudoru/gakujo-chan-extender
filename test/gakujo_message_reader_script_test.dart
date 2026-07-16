@@ -1,6 +1,8 @@
 import 'package:morebettergakujo_flutter/src/gakujo_message_reader_script.dart';
 import 'package:test/test.dart';
 
+import 'support/page_script_dom_harness.dart';
+
 void main() {
   test('builds bulk message read controls', () {
     final script = GakujoMessageReaderScript.build();
@@ -29,5 +31,33 @@ void main() {
     );
     expect(script, isNot(contains('classList')));
     expect(script, isNot(contains('fontWeight')));
+  });
+
+  test('teardown stops polling, removes controls, and is idempotent', () async {
+    final result = await evaluatePageScriptLifecycle(
+      feature: 'message',
+      buildScript: GakujoMessageReaderScript.build(),
+      teardownScript: GakujoMessageReaderScript.buildTeardown(),
+    );
+    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
+    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
+    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
+    final teardownWithoutBuild =
+        result['teardownWithoutBuild'] as Map<String, dynamic>;
+
+    expect(afterBuild['activeIntervalCount'], 1);
+    expect(afterBuild['ownedElementCount'], 2);
+    expect(afterBuild['controlIds'], [
+      'mbg-read-button',
+      'mbg-read-num-input',
+    ]);
+    expect(afterTeardown['activeIntervalCount'], 0);
+    expect(afterTeardown['ownedElementCount'], 0);
+    expect(afterTeardown['controlIds'], isEmpty);
+    expect(afterTeardown['globalMarkers'], isEmpty);
+    expect(afterRebuild['activeIntervalCount'], 1);
+    expect(afterRebuild['ownedElementCount'], 2);
+    expect(teardownWithoutBuild['activeIntervalCount'], 0);
+    expect(teardownWithoutBuild['ownedElementCount'], 0);
   });
 }

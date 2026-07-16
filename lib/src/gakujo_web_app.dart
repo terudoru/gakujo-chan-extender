@@ -86,6 +86,22 @@ const _compactToolbarHeight = 40.0;
 const _toolbarButtonExtent = 40.0;
 const _toolbarIconSize = 20.0;
 
+typedef _PageScriptBuilder = String Function();
+
+final Map<GakujoFeatureFlag, _PageScriptBuilder>
+    _originalExtensionFeatureBuilders = {
+  GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.build,
+  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.build,
+  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.build,
+};
+
+final Map<GakujoFeatureFlag, _PageScriptBuilder>
+    _originalExtensionFeatureTeardownBuilders = {
+  GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.buildTeardown,
+  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.buildTeardown,
+  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.buildTeardown,
+};
+
 @visibleForTesting
 DateTime? parseCalendarDate(String raw) {
   final match = RegExp(
@@ -1123,10 +1139,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (flag == GakujoFeatureFlag.autoBackup) {
                         _scheduleAutoBackup();
                       }
-                      if (!dialogContext.mounted) {
-                        return;
+                      if (dialogContext.mounted) {
+                        setDialogState(() {});
                       }
-                      setDialogState(() {});
+                      await _applyOriginalExtensionFeatureFlag(
+                        flag,
+                        enabled: enabled,
+                      );
                     },
                   ),
                 ),
@@ -3046,25 +3065,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    final scripts = [
-      if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.sessionExtender))
-        GakujoSessionExtenderScript.build(),
-      if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.reportTools))
-        GakujoReportSorterScript.build(),
-      if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageTools))
-        GakujoMessageReaderScript.build(),
-    ];
-    for (final script in scripts) {
-      try {
-        await _controller.runJavaScript(script);
-      } catch (error, stackTrace) {
-        developer.log(
-          'Failed to inject original extension feature script',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
+    for (final flag in _originalExtensionFeatureBuilders.keys) {
+      if (_appSettings.isFeatureEnabled(flag)) {
+        await _applyOriginalExtensionFeatureFlag(flag, enabled: true);
       }
+    }
+  }
+
+  Future<void> _applyOriginalExtensionFeatureFlag(
+    GakujoFeatureFlag flag, {
+    required bool enabled,
+  }) async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    final builder = enabled
+        ? _originalExtensionFeatureBuilders[flag]
+        : _originalExtensionFeatureTeardownBuilders[flag];
+    if (builder == null) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(builder());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to ${enabled ? 'inject' : 'tear down'} '
+        '${flag.storageValue} script',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
