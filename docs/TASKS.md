@@ -49,7 +49,7 @@
 - [x] 26. [P1] レポート下書き復元（`gakujo_report_draft_script.dart` 203行・213行付近）の `innerHTML` 保存/復元が永続 DOM-XSS sink になっている。`textContent` ベースの保存・復元へ変更する（改行は `<br>` 等の最小限の変換のみ、復元時は textContent へ代入）
 - [x] 27. [P2] 機能スイッチ OFF が注入済みスクリプトに反映されない。セッション延長・レポートソート・一括既読の各スクリプトに teardown（interval 解除・追加 DOM 除去）を実装し、スイッチ変更時に enable/disable を同期する
 - [x] 28. [P2] 一括既読（`gakujo_message_reader_script.dart` 77行付近）が HTTP 4xx/5xx を成功扱いする。`response.ok` を検査し、成功・失敗件数を最終表示する
-- [ ] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
+- [x] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
 - [ ] 30. [P2] 通知タップの URL 契約が Android/iOS/macOS/Windows すべてのネイティブ実装で失われている（Android PendingIntent に URL なし、iOS/macOS userInfo 未設定、Windows は固定 uID=1 で上書き＋常に success 返却）。各プラットフォームで URL を保持して通知タップから Dart へ渡し、該当ページを開く。Windows は一意 ID と実際の成否返却に修正（Windows はビルド検証不可のため静的確認まで）
 
 ## 完了ログ
@@ -82,3 +82,4 @@
 - 2026-07-15 タスク26: レポート下書きの contenteditable 保存/復元を innerHTML→innerText/textContent へ変更し、DOM-XSS sink を除去（旧 HTML 形式の下書きもテキストとして安全に復元）。script version を 3 へ。テスト4件追加。analyze 0件、テスト315件全通過。
 - 2026-07-15 タスク27: セッション延長・レポートソート・一括既読の各スクリプトに冪等な `buildTeardown()` を追加（interval 解除・マーカー削除・所有 data 属性付き DOM の除去）。web_app に3機能限定の build/teardown 対応表を作り、フラグ切替時に許可済みページで個別に注入/teardown。Node DOM ハーネス（`test/support/`）でテスト3件追加。analyze 0件、テスト318件全通過。
 - 2026-07-15 タスク28: 一括既読で `response.ok` を検査し、非2xxは iframe フォールバック（5秒タイムアウトで成否判定）へ。成功/失敗件数を所有属性付きステータス要素に表示し、失敗ありのときはリロードせず残す。ハーネスに fetch/iframe/reload スタブ追加、テスト4件追加。analyze 0件、テスト321件全通過。
+- 2026-07-15 タスク29: 通知済み期限キーを別キーで永続化し、「保存済み」と「通知済み」を分離。`GakujoDeadlineNotificationCoordinator`（テスト用に注入可能）が loadDeadlines のうち未通知分のみ通知し、`notifyDeadline` 成功時だけキーを記録（失敗は次回再試行）。compact で消えた期限のキーをプルーニング。テスト4件追加。analyze 0件、テスト325件全通過。

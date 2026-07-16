@@ -38,3 +38,42 @@ class GakujoNotificationService {
     }
   }
 }
+
+class GakujoDeadlineNotificationCoordinator {
+  GakujoDeadlineNotificationCoordinator({
+    required GakujoActivityStore activityStore,
+    required GakujoNotificationService notificationService,
+  })  : _activityStore = activityStore,
+        _notificationService = notificationService;
+
+  final GakujoActivityStore _activityStore;
+  final GakujoNotificationService _notificationService;
+
+  Future<void> notifyPendingDeadlines({
+    required bool notificationsEnabled,
+  }) async {
+    if (!notificationsEnabled) {
+      return;
+    }
+    final deadlines = await _activityStore.loadDeadlines();
+    final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
+    final pendingDeadlines = deadlines
+        .where((entry) => entry.isDeadline)
+        .where((entry) => !notifiedKeys.contains(entry.key))
+        .take(5)
+        .toList();
+    if (pendingDeadlines.isEmpty) {
+      return;
+    }
+    if (!await _notificationService.requestPermission()) {
+      return;
+    }
+    final notifiedNow = <String>[];
+    for (final entry in pendingDeadlines) {
+      if (await _notificationService.notifyDeadline(entry)) {
+        notifiedNow.add(entry.key);
+      }
+    }
+    await _activityStore.addNotifiedDeadlineKeys(notifiedNow);
+  }
+}

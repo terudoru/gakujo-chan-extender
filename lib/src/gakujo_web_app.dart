@@ -334,6 +334,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
   late final GakujoNotificationService _notificationService;
+  late final GakujoDeadlineNotificationCoordinator
+      _deadlineNotificationCoordinator;
   late final AppUpdateService _updateService;
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
@@ -390,6 +392,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
     _notificationService = const GakujoNotificationService();
+    _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: _activityStore,
+      notificationService: _notificationService,
+    );
     _updateService = const AppUpdateService();
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
@@ -2402,7 +2408,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         extractedDeadlines,
       );
       newDeadlineCount = newDeadlines.length;
-      await _notifyNewDeadlines(newDeadlines);
+      await _notifyPendingDeadlines();
     }
     if (category == 'レポート・小テスト' && shouldCacheReports) {
       await _activityStore.saveReportList(
@@ -2815,23 +2821,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return items;
   }
 
-  Future<void> _notifyNewDeadlines(List<GakujoDeadlineEntry> entries) async {
-    final deadlineEntries = entries.where((entry) => entry.isDeadline).toList();
-    if (deadlineEntries.isEmpty) {
-      return;
-    }
-    if (!_appSettings.isFeatureEnabled(
-      GakujoFeatureFlag.deadlineNotifications,
-    )) {
-      return;
-    }
-    final granted = await _notificationService.requestPermission();
-    if (!granted) {
-      return;
-    }
-    for (final entry in deadlineEntries.take(5)) {
-      await _notificationService.notifyDeadline(entry);
-    }
+  Future<void> _notifyPendingDeadlines() {
+    return _deadlineNotificationCoordinator.notifyPendingDeadlines(
+      notificationsEnabled: _appSettings.isFeatureEnabled(
+        GakujoFeatureFlag.deadlineNotifications,
+      ),
+    );
   }
 
   Future<void> _handleSessionExpiredIfNeeded(String url) async {

@@ -222,6 +222,8 @@ class GakujoActivityStore {
 
   static const _snapshotsKey = 'more_better_gakujo_activity_snapshots';
   static const _deadlinesKey = 'more_better_gakujo_deadlines';
+  static const _notifiedDeadlineKeysKey =
+      'more_better_gakujo_notified_deadline_keys';
   static const _favoritesKey = 'more_better_gakujo_favorites';
   static const _changesKey = 'more_better_gakujo_activity_changes';
   static const _reportListsKey = 'more_better_gakujo_cached_report_lists';
@@ -283,6 +285,59 @@ class GakujoActivityStore {
     );
   }
 
+  Future<Set<String>> loadNotifiedDeadlineKeys() async {
+    await _pendingOperation;
+    return (await _readNotifiedDeadlineKeys()).value;
+  }
+
+  Future<_StorageReadResult<Set<String>>> _readNotifiedDeadlineKeys() async {
+    final rawRead = await _readRawValue(_notifiedDeadlineKeysKey);
+    if (!rawRead.isSuccessful) {
+      return const _StorageReadResult.failure(<String>{});
+    }
+    final raw = rawRead.value;
+    if (raw == null || raw.trim().isEmpty) {
+      return const _StorageReadResult.success(<String>{});
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List<dynamic>) {
+        return const _StorageReadResult.success(<String>{});
+      }
+      return _StorageReadResult.success(
+        decoded
+            .whereType<String>()
+            .map((key) => key.trim())
+            .where((key) => key.isNotEmpty)
+            .toSet(),
+      );
+    } on Object {
+      return const _StorageReadResult.success(<String>{});
+    }
+  }
+
+  Future<void> addNotifiedDeadlineKeys(Iterable<String> deadlineKeys) {
+    final keys = deadlineKeys
+        .map((key) => key.trim())
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    return _enqueue(() => _addNotifiedDeadlineKeys(keys));
+  }
+
+  Future<void> _addNotifiedDeadlineKeys(Set<String> deadlineKeys) async {
+    if (deadlineKeys.isEmpty) {
+      return;
+    }
+    final notifiedRead = await _readNotifiedDeadlineKeys();
+    if (!notifiedRead.isSuccessful) {
+      return;
+    }
+    await _writeStringSet(
+      _notifiedDeadlineKeysKey,
+      {...notifiedRead.value, ...deadlineKeys},
+    );
+  }
+
   Future<List<GakujoFavoritePage>> loadFavorites() async {
     await _pendingOperation;
     return (await _readFavorites()).value;
@@ -336,9 +391,26 @@ class GakujoActivityStore {
   Future<void> _compact() async {
     await _compactList(_snapshotsKey, _readSnapshots);
     await _compactList(_deadlinesKey, _readDeadlines);
+    await _compactNotifiedDeadlineKeys();
     await _compactList(_favoritesKey, _readFavorites);
     await _compactList(_changesKey, _readChanges);
     await _compactList(_reportListsKey, _readReportLists);
+  }
+
+  Future<void> _compactNotifiedDeadlineKeys() async {
+    final deadlineRead = await _readDeadlines();
+    final notifiedRead = await _readNotifiedDeadlineKeys();
+    if (!deadlineRead.isSuccessful || !notifiedRead.isSuccessful) {
+      return;
+    }
+    final activeDeadlineKeys = deadlineRead.value
+        .where((entry) => entry.isDeadline)
+        .map((entry) => entry.key)
+        .toSet();
+    await _writeStringSet(
+      _notifiedDeadlineKeysKey,
+      notifiedRead.value.intersection(activeDeadlineKeys),
+    );
   }
 
   Future<GakujoActivitySnapshot> recordSnapshot({
@@ -887,6 +959,14 @@ class GakujoActivityStore {
       value: jsonEncode(
         values.map((value) => (value as dynamic).toJson()).toList(),
       ),
+    );
+  }
+
+  Future<void> _writeStringSet(String key, Set<String> values) {
+    final sorted = values.toList()..sort();
+    return _secureStorage.write(
+      key: key,
+      value: jsonEncode(sorted),
     );
   }
 

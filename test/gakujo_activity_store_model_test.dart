@@ -469,6 +469,23 @@ void main() {
     expect(storage.values[deadlinesKey], existingRaw);
   });
 
+  test('addNotifiedDeadlineKeys does not overwrite data after a failed read',
+      () async {
+    const notifiedKeysKey = 'more_better_gakujo_notified_deadline_keys';
+    final existingRaw = jsonEncode(['existing-deadline-key']);
+    final storage = _FailingReadSecureStorage(
+      initialValues: {notifiedKeysKey: existingRaw},
+      failingReadKeys: const {notifiedKeysKey},
+    );
+    final store = GakujoActivityStore(secureStorage: storage);
+
+    expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+    await store.addNotifiedDeadlineKeys(['new-deadline-key']);
+
+    expect(storage.writeKeys, isNot(contains(notifiedKeysKey)));
+    expect(storage.values[notifiedKeysKey], existingRaw);
+  });
+
   test('clearSnapshots removes update badges without touching deadlines',
       () async {
     final store = GakujoActivityStore();
