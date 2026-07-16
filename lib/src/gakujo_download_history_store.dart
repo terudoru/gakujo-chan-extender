@@ -64,6 +64,16 @@ class GakujoFailedDownloadEntry {
     };
   }
 
+  /// Serializes for external output without the request's POST form fields.
+  Map<String, Object?> toExternalJson() {
+    return {
+      'id': id,
+      'request': request.toExternalJson(),
+      'failedAt': failedAt.toIso8601String(),
+      'errorMessage': errorMessage,
+    };
+  }
+
   factory GakujoFailedDownloadEntry.fromJson(Map<dynamic, dynamic> json) {
     final rawRequest = json['request'];
     return GakujoFailedDownloadEntry(

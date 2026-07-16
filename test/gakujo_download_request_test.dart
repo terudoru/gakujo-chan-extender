@@ -20,4 +20,29 @@ void main() {
 
     expect(request.fileName, '講義資料.pdf');
   });
+
+  test('external json omits form fields while internal json keeps them', () {
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: '情報リテラシー',
+      fileName: '資料.pdf',
+      formFields: {'csrfToken': 'secret', 'sessionId': 'private'},
+    );
+
+    expect(request.toExternalJson(), isNot(contains('formFields')));
+    expect(request.toJson()['formFields'], request.formFields);
+  });
+
+  test('restores a request from json without form fields', () {
+    final request = GakujoDownloadRequest.fromJsonMap({
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      'method': 'POST',
+      'courseName': '情報リテラシー',
+      'fileName': '資料.pdf',
+    });
+
+    expect(request.method, 'POST');
+    expect(request.formFields, isEmpty);
+  });
 }

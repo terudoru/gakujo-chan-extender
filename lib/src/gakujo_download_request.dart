@@ -73,6 +73,16 @@ class GakujoDownloadRequest {
     };
   }
 
+  /// Serializes without POST form fields for file or clipboard output.
+  Map<String, Object?> toExternalJson() {
+    return {
+      'url': url,
+      'method': method,
+      'courseName': courseName,
+      'fileName': fileName,
+    };
+  }
+
   factory GakujoDownloadRequest.fromJsonMap(Map<dynamic, dynamic> raw) {
     final rawFields = raw['formFields'];
     final fields = <String, String>{};

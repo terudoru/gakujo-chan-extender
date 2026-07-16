@@ -22,6 +22,7 @@ import 'gakujo_activity_classifier.dart';
 import 'gakujo_academic_calendar.dart';
 import 'gakujo_academic_calendar_resolver.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_backup_export.dart';
 import 'gakujo_backup_import.dart';
 import 'gakujo_calendar_export.dart';
 import 'gakujo_calendar_service.dart';
@@ -2875,25 +2876,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final deadlines = await _activityStore.loadDeadlines();
     final changes = await _activityStore.loadChanges();
     final reportLists = await _activityStore.loadReportLists();
-    return {
-      'version': 2,
-      'createdAt': DateTime.now().toIso8601String(),
-      'downloadSaveMode': _appSettings.downloadSaveMode.storageValue,
-      'pageMode': _appSettings.pageMode.storageValue,
-      'setupCompleted': _appSettings.setupCompleted,
-      'calendarImportSettings': _appSettings.calendarImportSettings.toJson(),
-      'messageExcludeKeywords': _appSettings.messageExcludeKeywords,
-      'disabledFeatureFlags': _appSettings.disabledFeatureFlags
-          .map((flag) => flag.storageValue)
-          .toList(),
-      'downloadHistory': history.map((entry) => entry.toJson()).toList(),
-      'failedDownloads':
-          failedDownloads.map((entry) => entry.toJson()).toList(),
-      'favorites': favorites.map((entry) => entry.toJson()).toList(),
-      'deadlines': deadlines.map((entry) => entry.toJson()).toList(),
-      'changes': changes.map((entry) => entry.toJson()).toList(),
-      'reportLists': reportLists.map((entry) => entry.toJson()).toList(),
-    };
+    return buildGakujoBackupPayload(
+      appSettings: _appSettings,
+      downloadHistory: history,
+      failedDownloads: failedDownloads,
+      favorites: favorites,
+      deadlines: deadlines,
+      changes: changes,
+      reportLists: reportLists,
+    );
   }
 
   Future<void> _importSettingsFromClipboard() async {

@@ -115,7 +115,7 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
       payload['backup'] = await _backupPayload();
       payload['failedDownloads'] =
           (await _downloadHistoryStore.loadFailedDownloads())
-              .map((entry) => entry.toJson())
+              .map((entry) => entry.toExternalJson())
               .toList();
     }
     return payload;

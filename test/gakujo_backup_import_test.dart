@@ -83,7 +83,6 @@ void main() {
                 'method': 'GET',
                 'courseName': 'テスト科目',
                 'fileName': 'file.pdf',
-                'formFields': <String, String>{},
               },
               'failedAt': '2026-07-16T11:10:00.000',
               'errorMessage': 'timeout',
@@ -140,6 +139,7 @@ void main() {
       expect(backup.disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
       expect(backup.downloadHistory, hasLength(1));
       expect(backup.failedDownloads, hasLength(1));
+      expect(backup.failedDownloads?.single.request.formFields, isEmpty);
       expect(backup.favorites, hasLength(1));
       expect(backup.deadlines, hasLength(1));
       expect(backup.changes, hasLength(1));
