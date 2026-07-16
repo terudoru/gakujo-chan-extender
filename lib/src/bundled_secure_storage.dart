@@ -239,9 +239,7 @@ class BundledSecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     final snapshot = Map<String, String>.from(values);
-    _cachedValues = snapshot;
-    _pendingRead = Future.value(Map<String, String>.from(values));
-    final encoded = jsonEncode(values);
+    final encoded = jsonEncode(snapshot);
     try {
       await _storage.write(
         key: _bundleKey,
@@ -261,6 +259,15 @@ class BundledSecureStorage extends FlutterSecureStorage {
       // errSecDuplicateItem (-25299) on some macOS/iOS keychains: the item
       // exists but the update query does not match it, so the add is rejected.
       // Delete the stale entry and rewrite the authoritative bundle value.
+      final previousRaw = await _storage.read(
+        key: _bundleKey,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
       await _storage.delete(
         key: _bundleKey,
         iOptions: iOptions,
@@ -270,16 +277,34 @@ class BundledSecureStorage extends FlutterSecureStorage {
         mOptions: mOptions,
         wOptions: wOptions,
       );
-      await _storage.write(
-        key: _bundleKey,
-        value: encoded,
-        iOptions: iOptions,
-        aOptions: aOptions,
-        lOptions: lOptions,
-        webOptions: webOptions,
-        mOptions: mOptions,
-        wOptions: wOptions,
-      );
+      try {
+        await _storage.write(
+          key: _bundleKey,
+          value: encoded,
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        );
+      } catch (writeError, writeStackTrace) {
+        try {
+          await _storage.write(
+            key: _bundleKey,
+            value: previousRaw,
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
+        } catch (_) {
+          // Best effort: preserve the rewrite failure even if restore fails.
+        }
+        Error.throwWithStackTrace(writeError, writeStackTrace);
+      }
     }
     _cachedValues = snapshot;
     _pendingRead = null;

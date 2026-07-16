@@ -40,7 +40,7 @@
 ## 第4バッチ: 第2回 codex 調査（ストレージ整合性・注入JS・通知）で見つかった不具合
 
 - [x] 19. [P1] macOS の段階移行で設定以外の旧データが移行されない問題を直す。`migrating_secure_storage.dart` は「primary に1件でも値があれば fallback を見ない」設計のため、設定8キーが bundle へ移行された後は旧 Keychain に残る 2FA 秘密鍵・活動履歴・ダウンロード履歴が永久に読まれない（55行・123行付近、`_primaryHasAnyValue`）。キー単位の移行判定（例: 移行済みキー集合の記録、または既知の全対象キーの一括移行）へ変更する。既存の migrating_secure_storage_test.dart の「primary優先」テストは意図が変わるため設計変更として更新してよい
-- [ ] 20. [P1] `bundled_secure_storage.dart` の errSecDuplicateItem 復旧（241行・256行付近）にあるデータ消失窓を塞ぐ。delete 成功後の再 write が失敗すると bundle 全体を失い、かつメモリキャッシュを永続化成功前に更新しているため失敗が隠れる。旧 bundle 値を保持して再書き込み失敗時に例外を投げつつキャッシュを巻き戻す／キャッシュ更新を永続化成功後に移す
+- [x] 20. [P1] `bundled_secure_storage.dart` の errSecDuplicateItem 復旧（241行・256行付近）にあるデータ消失窓を塞ぐ。delete 成功後の再 write が失敗すると bundle 全体を失い、かつメモリキャッシュを永続化成功前に更新しているため失敗が隠れる。旧 bundle 値を保持して再書き込み失敗時に例外を投げつつキャッシュを巻き戻す／キャッシュ更新を永続化成功後に移す
 - [ ] 21. [P1] `gakujo_activity_store.dart` の `_readRawValue`（232行付近）が全例外を null（=データなし）に潰すため、起動時 `compact()`（292行付近）が一時的な Keychain 読込失敗を空配列で上書き永続化する。「キーなし」と「読込失敗」を区別し、読込失敗したキーは compact の書き戻し対象から除外する。テスト追加
 - [ ] 22. [P1] `gakujo_activity_store.dart` と `gakujo_download_history_store.dart` の read-modify-write（add系・168行/195行/320行付近）に排他がなく、同時実行で追加が消える。ストアインスタンス単位の書き込みキュー（`GakujoLocalPrefsStore._enqueue` と同様のパターン）で直列化する。テスト追加
 - [ ] 23. [P1] バックアップ復元（`gakujo_web_app.dart` 2870行付近〜）の検証不足を直す: (a) `version` フィールドを検証し未対応版は明示エラー、(b) コレクション欠落を「空で置換」ではなく「維持」にする（または全必須の version 2 完全形式のみ受理）、(c) 全項目をパース・検証してから書き込みを開始する（部分適用の防止）
@@ -73,3 +73,4 @@
 - 2026-07-15 タスク17: カレンダー/スケジュール連携45メソッド（1,718行）を `lib/src/gakujo_web_app_calendar.dart`（part + extension）へ抽出（本体 6,315行→4,599行、完全一致の機械的移動を確認）。analyze 0件、テスト288件全通過。
 - 2026-07-15 タスク18: ダウンロード処理17メソッド（603行）を `lib/src/gakujo_web_app_downloads.dart`（part + extension、setState 用に invalid_use_of_protected_member をファイル単位抑制）へ抽出（本体 4,599行→3,988行、完全一致の機械的移動を確認）。analyze 0件、テスト288件全通過。第3バッチ完了につきループ終了。
 - 2026-07-15 タスク19: `MigratingSecureStorage` に移行完了マーカー + 直列化された一括スイープを実装（マーカー未指定時は完全に従来挙動）。macOS 最上段チェーンに `more_better_gakujo_migration_completed_v1` を設定し、旧 Keychain の 2FA・履歴も bundle へ吸い上げられるように。スイープ失敗時はマーカーを書かずキー単位 fallback へ劣化して再試行可能。テスト5件追加。analyze 0件、テスト293件全通過。
+- 2026-07-15 タスク20: `_writeBundle` のキャッシュ更新を永続化成功後へ移動し、duplicate-item 復旧は delete 前に旧生値を保持 → 再書込失敗時にベストエフォート復元＋元例外を伝播。テスト2件追加。analyze 0件、テスト295件全通過。

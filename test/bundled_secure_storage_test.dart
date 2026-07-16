@@ -78,7 +78,61 @@ void main() {
     expect(await storage.readAll(), {'login': 'student'});
   });
 
-  test('recovers from errSecDuplicateItem by deleting then rewriting', () async {
+  test('keeps the cached bundle unchanged when a normal write fails', () async {
+    final backing = _FailingWriteSecureStorage({
+      'bundle': '{"login":"old-student","2fa":"OLD-BASE32"}',
+    });
+    final storage = BundledSecureStorage(
+      storage: backing,
+      bundleKey: 'bundle',
+    );
+
+    expect(await storage.readAll(), {
+      'login': 'old-student',
+      '2fa': 'OLD-BASE32',
+    });
+
+    await expectLater(
+      storage.write(key: 'login', value: 'new-student'),
+      throwsA(same(backing.writeError)),
+    );
+
+    expect(await storage.readAll(), {
+      'login': 'old-student',
+      '2fa': 'OLD-BASE32',
+    });
+  });
+
+  test('restores the previous bundle when duplicate recovery rewrite fails',
+      () async {
+    const previousRaw =
+        '{"login":"old-student","password":"old-secret","2fa":"OLD"}';
+    final backing = _DuplicateThenFailedRewriteSecureStorage(previousRaw);
+    final storage = BundledSecureStorage(
+      storage: backing,
+      bundleKey: 'bundle',
+    );
+
+    expect(await storage.read(key: 'login'), 'old-student');
+
+    await expectLater(
+      storage.write(key: 'login', value: 'new-student'),
+      throwsA(same(backing.rewriteError)),
+    );
+
+    expect(backing.deleteCount, 1);
+    expect(backing.writeAttempts, 3);
+    expect(backing.writtenValues.last, previousRaw);
+    expect(backing.values['bundle'], previousRaw);
+    expect(await storage.readAll(), {
+      'login': 'old-student',
+      'password': 'old-secret',
+      '2fa': 'OLD',
+    });
+  });
+
+  test('recovers from errSecDuplicateItem by deleting then rewriting',
+      () async {
     final backing = _DuplicateOnFirstWriteSecureStorage();
     final storage = BundledSecureStorage(
       storage: backing,
@@ -90,8 +144,104 @@ void main() {
 
     expect(backing.deleteCount, 1);
     expect(backing.writeAttempts, 2);
+    expect(backing.values['bundle'], '{"login":"student"}');
     expect(await storage.read(key: 'login'), 'student');
   });
+}
+
+class _FailingWriteSecureStorage extends _MemorySecureStorage {
+  _FailingWriteSecureStorage(super.initial);
+
+  final writeError = PlatformException(
+    code: 'write-failed',
+    message: 'The keychain write failed.',
+  );
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    throw writeError;
+  }
+}
+
+class _DuplicateThenFailedRewriteSecureStorage extends FlutterSecureStorage {
+  _DuplicateThenFailedRewriteSecureStorage(String previousRaw)
+      : values = {'bundle': previousRaw};
+
+  final Map<String, String> values;
+  final List<String?> writtenValues = [];
+  final rewriteError = PlatformException(
+    code: 'rewrite-failed',
+    message: 'The replacement keychain write failed.',
+  );
+  int writeAttempts = 0;
+  int deleteCount = 0;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    return values[key];
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    writeAttempts += 1;
+    writtenValues.add(value);
+    if (writeAttempts == 1) {
+      throw PlatformException(
+        code: 'Unexpected security result code',
+        message: 'Code: -25299, Message: '
+            'The specified item already exists in the keychain.',
+        details: -25299,
+      );
+    }
+    if (writeAttempts == 2) {
+      throw rewriteError;
+    }
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    deleteCount += 1;
+    values.remove(key);
+  }
 }
 
 class _DuplicateOnFirstWriteSecureStorage extends FlutterSecureStorage {
