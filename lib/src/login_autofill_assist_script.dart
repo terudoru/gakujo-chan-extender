@@ -13,7 +13,7 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var assistVersion = 6;
+  var assistVersion = 7;
   var savedUsername = $username;
   var savedPassword = $password;
   var logChannelName = $channelName;
@@ -133,19 +133,6 @@ class LoginAutofillAssistScript {
     return documents;
   }
 
-  function queryFirst(doc, selectors) {
-    for (var i = 0; i < selectors.length; i += 1) {
-      try {
-        var element = doc.querySelector(selectors[i]);
-        if (visible(element)) {
-          return element;
-        }
-      } catch (_) {
-      }
-    }
-    return null;
-  }
-
   function textAround(input) {
     var pieces = [
       input.getAttribute('name'),
@@ -171,14 +158,44 @@ class LoginAutofillAssistScript {
     return pieces.filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
   }
 
-  function isUsernameCandidate(input) {
+  function isKnownUsernameField(input) {
     var type = (input.getAttribute('type') || 'text').toLowerCase();
     if (type !== 'text' && type !== 'email' && type !== 'tel' && type !== '') {
       return false;
     }
 
+    var identifiers = [
+      input.getAttribute('name'),
+      input.getAttribute('id')
+    ].filter(Boolean);
+    var knownIdentifiers = ['userid', 'loginid', 'username', 'jusername'];
+    for (var i = 0; i < identifiers.length; i += 1) {
+      var normalized = identifiers[i].toLowerCase().replace(/[\\s_-]+/g, '');
+      if (knownIdentifiers.indexOf(normalized) !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isPasswordInput(input) {
+    return (input.getAttribute('type') || '').toLowerCase() === 'password' &&
+      input.getAttribute('name') !== 'ninshoCode' &&
+      (input.getAttribute('id') || '').toLowerCase() !== 'ninshocode';
+  }
+
+  function isPasswordChangeField(input) {
+    var identifier = [
+      input.getAttribute('name'),
+      input.getAttribute('id'),
+      input.getAttribute('autocomplete')
+    ].filter(Boolean).join(' ').toLowerCase().replace(/[\\s_-]+/g, '');
+    if (/(?:new|confirm|confirmation|old|current)(?:password|passwd|pwd)|(?:password|passwd|pwd)(?:new|confirm|confirmation|old|current)/.test(identifier)) {
+      return true;
+    }
+
     var text = textAround(input);
-    return /user|login|account|id|mail|email|ユーザー|ユーザ|ログイン|アカウント|利用者|学籍|職員|メール/.test(text);
+    return /パスワード.{0,8}(?:変更|確認|再入力)|(?:新しい|新規|現在|現行|旧|確認用|再入力).{0,8}パスワード|再入力/.test(text);
   }
 
   function firstVisible(inputs, predicate) {
@@ -192,16 +209,7 @@ class LoginAutofillAssistScript {
 
   function findLoginFields(doc) {
     var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
-    var password = queryFirst(doc, [
-      'input[type="password"]:not([name="ninshoCode"])',
-      'input[name="password"]',
-      'input[name="j_password"]',
-      'input[id*="password"]',
-      'input[name*="password"]'
-    ]) || firstVisible(inputs, function(input) {
-      return (input.getAttribute('type') || '').toLowerCase() === 'password' &&
-        input.getAttribute('name') !== 'ninshoCode';
-    });
+    var password = firstVisible(inputs, isPasswordInput);
     if (!password) {
       return null;
     }
@@ -210,24 +218,13 @@ class LoginAutofillAssistScript {
     var formInputs = form ?
       Array.prototype.slice.call(form.querySelectorAll('input')) :
       inputs;
-    var username = queryFirst(doc, [
-      'input[name="userId"]',
-      'input[id="userId"]',
-      'input[name="userName"]',
-      'input[name="loginId"]',
-      'input[id="loginId"]',
-      'input[name="j_username"]',
-      'input[id="username"]',
-      'input[name*="user"]',
-      'input[id*="user"]',
-      'input[name*="login"]',
-      'input[id*="login"]'
-    ]) || firstVisible(formInputs, isUsernameCandidate) ||
-      firstVisible(formInputs, function(input) {
-        var type = (input.getAttribute('type') || 'text').toLowerCase();
-        return input !== password &&
-          (type === 'text' || type === 'email' || type === 'tel' || type === '');
-      });
+    var passwordInputs = formInputs.filter(isPasswordInput);
+    if (passwordInputs.length >= 2 ||
+        passwordInputs.some(isPasswordChangeField)) {
+      return null;
+    }
+
+    var username = firstVisible(formInputs, isKnownUsernameField);
 
     if (!username) {
       return null;
@@ -390,7 +387,7 @@ class LoginAutofillAssistScript {
     if (!target) {
       if (attempt < 20) {
         if (attempt === 0 || attempt === 5 || attempt === 19) {
-          report('target-not-found', 'attempt=' + attempt);
+          report('skip', 'not-login-form attempt=' + attempt);
         }
         window.__MBG_LOGIN_AUTOFILL_TIMER = window.setTimeout(function() {
           assist(attempt + 1);

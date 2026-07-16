@@ -3115,6 +3115,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    // campussmart.do can reveal the login form dynamically, so the injected
+    // script positively identifies the login DOM before filling or submitting.
     try {
       final credentials = _appSettings.loginCredentials;
       if (kDebugMode) {
