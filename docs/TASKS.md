@@ -37,6 +37,21 @@
 - [x] 17. `gakujo_web_app.dart` 分割 (4): カレンダー/スケジュール連携系のメソッド群（`exportCurrentSchedule` 前後、`_askCalendarTermRange`、`_resolveCalendarTerm` 系など凝集した一群）を、診断系（`gakujo_web_app_diagnostics.dart`）と同じ part + extension パターンで `lib/src/gakujo_web_app_calendar.dart` へ抽出する。純粋な移動のみ、挙動変更なし
 - [x] 18. `gakujo_web_app.dart` 分割 (5): ダウンロード処理系のメソッド群（`_handleDownloadMessage`、`_handleDownloadRequest`、`_downloadBytesWithWebViewSession`、失敗キュー・履歴まわりなど）を同じ part + extension パターンで `lib/src/gakujo_web_app_downloads.dart` へ抽出する。純粋な移動のみ、挙動変更なし
 
+## 第4バッチ: 第2回 codex 調査（ストレージ整合性・注入JS・通知）で見つかった不具合
+
+- [x] 19. [P1] macOS の段階移行で設定以外の旧データが移行されない問題を直す。`migrating_secure_storage.dart` は「primary に1件でも値があれば fallback を見ない」設計のため、設定8キーが bundle へ移行された後は旧 Keychain に残る 2FA 秘密鍵・活動履歴・ダウンロード履歴が永久に読まれない（55行・123行付近、`_primaryHasAnyValue`）。キー単位の移行判定（例: 移行済みキー集合の記録、または既知の全対象キーの一括移行）へ変更する。既存の migrating_secure_storage_test.dart の「primary優先」テストは意図が変わるため設計変更として更新してよい
+- [ ] 20. [P1] `bundled_secure_storage.dart` の errSecDuplicateItem 復旧（241行・256行付近）にあるデータ消失窓を塞ぐ。delete 成功後の再 write が失敗すると bundle 全体を失い、かつメモリキャッシュを永続化成功前に更新しているため失敗が隠れる。旧 bundle 値を保持して再書き込み失敗時に例外を投げつつキャッシュを巻き戻す／キャッシュ更新を永続化成功後に移す
+- [ ] 21. [P1] `gakujo_activity_store.dart` の `_readRawValue`（232行付近）が全例外を null（=データなし）に潰すため、起動時 `compact()`（292行付近）が一時的な Keychain 読込失敗を空配列で上書き永続化する。「キーなし」と「読込失敗」を区別し、読込失敗したキーは compact の書き戻し対象から除外する。テスト追加
+- [ ] 22. [P1] `gakujo_activity_store.dart` と `gakujo_download_history_store.dart` の read-modify-write（add系・168行/195行/320行付近）に排他がなく、同時実行で追加が消える。ストアインスタンス単位の書き込みキュー（`GakujoLocalPrefsStore._enqueue` と同様のパターン）で直列化する。テスト追加
+- [ ] 23. [P1] バックアップ復元（`gakujo_web_app.dart` 2870行付近〜）の検証不足を直す: (a) `version` フィールドを検証し未対応版は明示エラー、(b) コレクション欠落を「空で置換」ではなく「維持」にする（または全必須の version 2 完全形式のみ受理）、(c) 全項目をパース・検証してから書き込みを開始する（部分適用の防止）
+- [ ] 24. [P1] 失敗ダウンロードの `formFields`（hidden token 等の全フォーム値）が平文バックアップ・診断クリップボードへ混入する。`gakujo_download_capture_script.dart` 267行付近の無選別収集を再試行に必要な範囲に絞るか、少なくともバックアップ（`_backupPayload`）と診断出力から `formFields` を除外・マスクする
+- [ ] 25. [P1] ログイン自動入力（`login_autofill_assist_script.dart`）が Gakujo ホスト上の任意の password フォームに反応し自動送信まで行う。ログインページ判定（URL パス・フォーム構造・既知フィールド名）を満たす場合のみ資格情報を JS へ渡すよう制限する。判定はスクリプト注入前の Dart 側でも行う
+- [ ] 26. [P1] レポート下書き復元（`gakujo_report_draft_script.dart` 203行・213行付近）の `innerHTML` 保存/復元が永続 DOM-XSS sink になっている。`textContent` ベースの保存・復元へ変更する（改行は `<br>` 等の最小限の変換のみ、復元時は textContent へ代入）
+- [ ] 27. [P2] 機能スイッチ OFF が注入済みスクリプトに反映されない。セッション延長・レポートソート・一括既読の各スクリプトに teardown（interval 解除・追加 DOM 除去）を実装し、スイッチ変更時に enable/disable を同期する
+- [ ] 28. [P2] 一括既読（`gakujo_message_reader_script.dart` 77行付近）が HTTP 4xx/5xx を成功扱いする。`response.ok` を検査し、成功・失敗件数を最終表示する
+- [ ] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
+- [ ] 30. [P2] 通知タップの URL 契約が Android/iOS/macOS/Windows すべてのネイティブ実装で失われている（Android PendingIntent に URL なし、iOS/macOS userInfo 未設定、Windows は固定 uID=1 で上書き＋常に success 返却）。各プラットフォームで URL を保持して通知タップから Dart へ渡し、該当ページを開く。Windows は一意 ID と実際の成否返却に修正（Windows はビルド検証不可のため静的確認まで）
+
 ## 完了ログ
 
 - 2026-07-15 タスク1: `test/base32_test.dart` を追加（6テスト）。analyze 0件、テスト258件全通過。
@@ -57,3 +72,4 @@
 - 2026-07-15 タスク16: `_appendCalendarDebugLog`・`_calendarDebugUrl`・`_calendarDebugIntegration` と DEBUG リージョン43個（278行）を削除。ハードコードされた開発者パスへの同期IOが本番から消えた。analyze 0件、テスト288件全通過。
 - 2026-07-15 タスク17: カレンダー/スケジュール連携45メソッド（1,718行）を `lib/src/gakujo_web_app_calendar.dart`（part + extension）へ抽出（本体 6,315行→4,599行、完全一致の機械的移動を確認）。analyze 0件、テスト288件全通過。
 - 2026-07-15 タスク18: ダウンロード処理17メソッド（603行）を `lib/src/gakujo_web_app_downloads.dart`（part + extension、setState 用に invalid_use_of_protected_member をファイル単位抑制）へ抽出（本体 4,599行→3,988行、完全一致の機械的移動を確認）。analyze 0件、テスト288件全通過。第3バッチ完了につきループ終了。
+- 2026-07-15 タスク19: `MigratingSecureStorage` に移行完了マーカー + 直列化された一括スイープを実装（マーカー未指定時は完全に従来挙動）。macOS 最上段チェーンに `more_better_gakujo_migration_completed_v1` を設定し、旧 Keychain の 2FA・履歴も bundle へ吸い上げられるように。スイープ失敗時はマーカーを書かずキー単位 fallback へ劣化して再試行可能。テスト5件追加。analyze 0件、テスト293件全通過。

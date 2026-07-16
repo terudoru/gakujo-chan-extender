@@ -12,6 +12,8 @@ class SecureStorageFactory {
   static const _macosCurrentAccountName =
       'net.yoshida.morebettergakujoFlutter.secure_storage.v2';
   static const _macosBundleKey = 'more_better_gakujo_secure_storage_bundle_v1';
+  static const _macosMigrationMarkerKey =
+      'more_better_gakujo_migration_completed_v1';
 
   static const FlutterSecureStorage _macosStorage = FlutterSecureStorage(
     mOptions: MacOsOptions(
@@ -48,6 +50,7 @@ class SecureStorageFactory {
       deleteFallbackAfterMigration: false,
     ),
     deleteFallbackAfterMigration: false,
+    migrationMarkerKey: _macosMigrationMarkerKey,
   );
 
   static FlutterSecureStorage create() {

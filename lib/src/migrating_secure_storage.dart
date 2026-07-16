@@ -7,13 +7,17 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     required FlutterSecureStorage primary,
     required FlutterSecureStorage fallback,
     bool deleteFallbackAfterMigration = true,
+    String? migrationMarkerKey,
   })  : _primary = primary,
         _fallback = fallback,
-        _deleteFallbackAfterMigration = deleteFallbackAfterMigration;
+        _deleteFallbackAfterMigration = deleteFallbackAfterMigration,
+        _migrationMarkerKey = migrationMarkerKey;
 
   final FlutterSecureStorage _primary;
   final FlutterSecureStorage _fallback;
   final bool _deleteFallbackAfterMigration;
+  final String? _migrationMarkerKey;
+  Future<bool>? _migrationSweepFuture;
   // A cold macOS keychain read (first access after launch, possibly behind an
   // unlock prompt) can take well over a second. Keep the timeout generous
   // enough that a slow-but-successful primary read is not abandoned to the
@@ -21,6 +25,8 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   static const _storageOperationTimeout = Duration(seconds: 3);
 
   Future<Map<String, String?>> readKeys(Iterable<String> keys) async {
+    final migrationCompleted =
+        _migrationMarkerKey == null ? null : await _ensureMigrationSweep();
     final requestedKeys = keys.toList(growable: false);
     Object? primaryError;
     StackTrace? primaryStackTrace;
@@ -58,7 +64,16 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     if (missingKeys.isEmpty) {
       return values;
     }
-    if (primaryError == null && values.values.any((value) => value != null)) {
+    if (migrationCompleted == true) {
+      final error = primaryError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, primaryStackTrace!);
+      }
+      return values;
+    }
+    if (migrationCompleted == null &&
+        primaryError == null &&
+        values.values.any((value) => value != null)) {
       return values;
     }
 
@@ -99,6 +114,16 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    final migrationCompleted = _migrationMarkerKey == null
+        ? null
+        : await _ensureMigrationSweep(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
     Object? primaryError;
     StackTrace? primaryStackTrace;
     String? primaryValue;
@@ -123,7 +148,16 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     if (primaryValue != null) {
       return primaryValue;
     }
-    if (primaryError == null && await _primaryHasAnyValue()) {
+    if (migrationCompleted == true) {
+      final error = primaryError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, primaryStackTrace!);
+      }
+      return null;
+    }
+    if (migrationCompleted == null &&
+        primaryError == null &&
+        await _primaryHasAnyValue()) {
       return null;
     }
 
@@ -165,6 +199,16 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    final migrationCompleted = _migrationMarkerKey == null
+        ? null
+        : await _ensureMigrationSweep(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
     Object? primaryError;
     StackTrace? primaryStackTrace;
     Map<String, String> primaryValues = const {};
@@ -183,6 +227,20 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     } on Object catch (error, stackTrace) {
       primaryError = error;
       primaryStackTrace = stackTrace;
+    }
+    if (migrationCompleted == true) {
+      final error = primaryError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, primaryStackTrace!);
+      }
+      return _withoutMigrationMarker(primaryValues);
+    }
+    if (migrationCompleted == false) {
+      final error = primaryError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, primaryStackTrace!);
+      }
+      return _withoutMigrationMarker(primaryValues);
     }
     if (primaryError == null && primaryValues.isNotEmpty) {
       return primaryValues;
@@ -315,6 +373,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    _migrationSweepFuture = null;
     await _primary.deleteAll(
       iOptions: iOptions,
       aOptions: aOptions,
@@ -360,6 +419,196 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     } on Object {
       return const {};
     }
+  }
+
+  Future<bool> _ensureMigrationSweep({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    final pending = _migrationSweepFuture;
+    if (pending != null) {
+      return pending;
+    }
+
+    late final Future<bool> tracked;
+    tracked = _runMigrationSweep(
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    ).then((completed) {
+      if (!completed && identical(_migrationSweepFuture, tracked)) {
+        _migrationSweepFuture = null;
+      }
+      return completed;
+    });
+    _migrationSweepFuture = tracked;
+    return tracked;
+  }
+
+  Future<bool> _runMigrationSweep({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final markerKey = _migrationMarkerKey!;
+    try {
+      final markerValue = await _primary
+          .read(
+            key: markerKey,
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          )
+          .timeout(_storageOperationTimeout);
+      if (markerValue != null) {
+        return true;
+      }
+
+      final primaryValues = await _primary
+          .readAll(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          )
+          .timeout(_storageOperationTimeout);
+      final fallbackValues = await _readAllForMigrationSweep(
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+
+      for (final entry in fallbackValues.entries) {
+        if (entry.key == markerKey || primaryValues.containsKey(entry.key)) {
+          continue;
+        }
+        await _primary.write(
+          key: entry.key,
+          value: entry.value,
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        );
+        if (_deleteFallbackAfterMigration) {
+          await _deleteFallbackKey(
+            key: entry.key,
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
+        }
+      }
+
+      await _primary.write(
+        key: markerKey,
+        value: '1',
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<Map<String, String>> _readAllForMigrationSweep({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final fallback = _fallback;
+    if (fallback is MigratingSecureStorage &&
+        fallback._migrationMarkerKey == null) {
+      return fallback._readAllAcrossFallbackLayers(
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    }
+    return fallback
+        .readAll(
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        )
+        .timeout(_storageOperationTimeout);
+  }
+
+  Future<Map<String, String>> _readAllAcrossFallbackLayers({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final primaryValues = await _primary
+        .readAll(
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        )
+        .timeout(_storageOperationTimeout);
+    final fallbackValues = await _readAllForMigrationSweep(
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+    return <String, String>{
+      ...fallbackValues,
+      ...primaryValues,
+    };
+  }
+
+  Map<String, String> _withoutMigrationMarker(Map<String, String> values) {
+    final markerKey = _migrationMarkerKey;
+    if (markerKey == null || !values.containsKey(markerKey)) {
+      return values;
+    }
+    return Map<String, String>.from(values)..remove(markerKey);
   }
 
   Future<bool> _primaryHasAnyValue() async {

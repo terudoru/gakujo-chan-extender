@@ -215,6 +215,125 @@ void main() {
     expect(fallback.readAllCount, 0);
   });
 
+  test('migration marker sweeps missing fallback values into primary',
+      () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({'setting': 'configured'});
+    final fallback = _MemorySecureStorage({
+      'setting': 'legacy-setting',
+      'two-factor-secret': 'legacy',
+    });
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+    expect(primary.values, {
+      'setting': 'configured',
+      'two-factor-secret': 'legacy',
+      markerKey: '1',
+    });
+    expect(fallback.values, {'setting': 'legacy-setting'});
+    expect(fallback.readAllCount, 1);
+  });
+
+  test('existing migration marker prevents every fallback read', () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({
+      'setting': 'configured',
+      markerKey: '1',
+    });
+    final fallback = _MemorySecureStorage({'two-factor-secret': 'legacy'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    expect(await storage.read(key: 'two-factor-secret'), isNull);
+    expect(
+      await storage.readKeys(['setting', 'two-factor-secret']),
+      {'setting': 'configured', 'two-factor-secret': null},
+    );
+    expect(await storage.readAll(), {'setting': 'configured'});
+    expect(fallback.readAllCount, 0);
+    expect(fallback.readKeys, isEmpty);
+  });
+
+  test('failed migration sweep leaves no marker and is retried', () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({'setting': 'configured'});
+    final fallback = _MemorySecureStorage({'two-factor-secret': 'legacy'})
+      ..readAllError = StateError('readAll unavailable');
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+    expect(primary.values.containsKey(markerKey), isFalse);
+    expect(fallback.readAllCount, 1);
+
+    fallback.readAllError = null;
+
+    expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+    expect(primary.values[markerKey], '1');
+    expect(fallback.readAllCount, 2);
+  });
+
+  test('migration sweep reads through layered fallback stores', () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({'setting': 'configured'});
+    final middle = _MemorySecureStorage({'download-history': 'recent'});
+    final legacy = _MemorySecureStorage({'two-factor-secret': 'legacy'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: MigratingSecureStorage(
+        primary: middle,
+        fallback: legacy,
+        deleteFallbackAfterMigration: false,
+      ),
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+    );
+
+    expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+    expect(primary.values, {
+      'setting': 'configured',
+      'download-history': 'recent',
+      'two-factor-secret': 'legacy',
+      markerKey: '1',
+    });
+    expect(middle.values, {'download-history': 'recent'});
+    expect(legacy.values, {'two-factor-secret': 'legacy'});
+  });
+
+  test('concurrent marked reads share one migration sweep', () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({
+      'two-factor-secret': 'legacy',
+      'download-history': 'recent',
+    })
+      ..readAllDelay = const Duration(milliseconds: 20);
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    final values = await Future.wait([
+      storage.read(key: 'two-factor-secret'),
+      storage.read(key: 'download-history'),
+    ]);
+
+    expect(values, ['legacy', 'recent']);
+    expect(fallback.readAllCount, 1);
+  });
+
   test('primary read failure is rethrown when fallback is empty', () async {
     final primary = _MemorySecureStorage()..readError = StateError('denied');
     final fallback = _MemorySecureStorage();
@@ -249,6 +368,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
   Object? readError;
   Object? readAllError;
   Duration readDelay = Duration.zero;
+  Duration readAllDelay = Duration.zero;
   int readAllCount = 0;
   final List<String> readKeys = [];
 
@@ -283,6 +403,9 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     readAllCount += 1;
+    if (readAllDelay > Duration.zero) {
+      await Future<void>.delayed(readAllDelay);
+    }
     final error = readAllError ?? readError;
     if (error != null) {
       throw error;
