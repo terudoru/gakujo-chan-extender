@@ -58,35 +58,90 @@ class GakujoMessageReaderScript {
   function markReadWithFrame(url) {
     return new Promise(function(resolve) {
       var frame = document.createElement('iframe');
+      var settled = false;
+      var timeoutId;
+
+      function finish(success) {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeoutId);
+        frame.remove();
+        resolve(success);
+      }
+
       frame.setAttribute('data-mbg-message-reader-owned', 'true');
       frame.style.display = 'none';
       frame.onload = function() {
-        window.setTimeout(function() {
-          frame.remove();
-          resolve();
-        }, 1000);
+        finish(true);
       };
       frame.onerror = function() {
-        frame.remove();
-        resolve();
+        finish(false);
       };
       document.body.appendChild(frame);
+      timeoutId = window.setTimeout(function() {
+        finish(false);
+      }, 5000);
       frame.src = url;
     });
   }
 
   async function markRead(url) {
     try {
-      await fetch(url, { credentials: 'include' });
+      var response = await fetch(url, { credentials: 'include' });
+      if (response.ok) {
+        return true;
+      }
     } catch (e) {
-      await markReadWithFrame(url);
+      // Fall through to the iframe request.
+    }
+    try {
+      return await markReadWithFrame(url);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function statusElement() {
+    var status = document.getElementById('mbg-read-status');
+    if (status) {
+      return status;
+    }
+    var target = document.getElementById('tabmenutable');
+    if (!target) {
+      return null;
+    }
+    status = document.createElement('span');
+    status.id = 'mbg-read-status';
+    status.setAttribute('data-mbg-message-reader-owned', 'true');
+    status.setAttribute('aria-live', 'polite');
+    target.appendChild(status);
+    return status;
+  }
+
+  function showStatus(successCount, failureCount) {
+    var status = statusElement();
+    if (status) {
+      status.textContent = successCount + '件を既読にしました（失敗' +
+        failureCount + '件）';
     }
   }
 
   async function readerCall() {
     var urls = unreadUrls(inputValue());
+    var successCount = 0;
+    var failureCount = 0;
     for (var i = 0; i < urls.length; i += 1) {
-      await markRead(urls[i]);
+      if (await markRead(urls[i])) {
+        successCount += 1;
+      } else {
+        failureCount += 1;
+      }
+    }
+    showStatus(successCount, failureCount);
+    if (failureCount > 0) {
+      return;
     }
     window.setTimeout(function() {
       location.reload();
@@ -120,6 +175,7 @@ class GakujoMessageReaderScript {
       input.placeholder = '既読にする数(半角数字)';
       target.appendChild(input);
     }
+    statusElement();
     return true;
   }
 

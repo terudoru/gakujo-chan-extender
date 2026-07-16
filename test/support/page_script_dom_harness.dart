@@ -24,11 +24,38 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
 }
 
+Future<Map<String, dynamic>> evaluateMessageReaderScript({
+  required String buildScript,
+  required List<int> fetchStatuses,
+  List<bool> iframeOutcomes = const [],
+}) async {
+  final scenario = jsonEncode({
+    'fetchStatuses': fetchStatuses,
+    'iframeOutcomes': iframeOutcomes,
+  });
+  final result = await Process.run('node', [
+    '-e',
+    _nodeDomHarness,
+    'message',
+    buildScript,
+    '',
+    scenario,
+  ]);
+
+  expect(
+    result.exitCode,
+    0,
+    reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+  );
+  return jsonDecode(result.stdout as String) as Map<String, dynamic>;
+}
+
 const _nodeDomHarness = r'''
 const vm = require('node:vm');
 const feature = process.argv[1];
 const buildScript = process.argv[2];
 const teardownScript = process.argv[3];
+const scenario = process.argv[4] ? JSON.parse(process.argv[4]) : null;
 
 const featureConfig = {
   session: {
@@ -48,7 +75,7 @@ const featureConfig = {
 if (!featureConfig) throw new Error(`Unknown feature: ${feature}`);
 
 class FakeElement {
-  constructor(tag) {
+  constructor(tag, onSetSource) {
     this.tagName = tag.toUpperCase();
     this.id = '';
     this.type = '';
@@ -60,6 +87,14 @@ class FakeElement {
     this.children = [];
     this.parentNode = null;
     this.listeners = {};
+    if (onSetSource) {
+      Object.defineProperty(this, 'src', {
+        set(value) {
+          this.source = value;
+          onSetSource(this);
+        }
+      });
+    }
   }
 
   setAttribute(name, value) {
@@ -90,7 +125,7 @@ class FakeElement {
   }
 
   click() {
-    if (this.listeners.click) this.listeners.click();
+    if (this.listeners.click) return this.listeners.click();
   }
 }
 
@@ -139,34 +174,52 @@ function createReportTable() {
   return table;
 }
 
-function createMessageTable() {
-  return {
-    rows: [
-      {},
-      {
+function createMessageTable(messageCount) {
+  const rows = [{}];
+  for (let i = 1; i <= messageCount; i += 1) {
+    rows.push({
         querySelector(selector) {
           if (selector !== 'a[href]') return null;
-          return {getAttribute() { return '/campusweb/message/1'; }};
+          return {
+            getAttribute() { return `/campusweb/message/${i}`; }
+          };
         }
-      }
-    ]
-  };
+      });
+  }
+  return {rows};
 }
 
 function createPage() {
   let nextIntervalId = 1;
+  let nextTimeoutId = 1;
+  let reloadCount = 0;
+  let fetchCallCount = 0;
+  let frameCallCount = 0;
   const activeIntervals = new Set();
+  const activeTimeouts = new Map();
+  const fetchStatuses = scenario ? [...scenario.fetchStatuses] : [200];
+  const iframeOutcomes = scenario ? [...scenario.iframeOutcomes] : [];
   const target = new FakeElement('div');
   target.id = 'tabmenutable';
   const body = new FakeElement('body');
   const reportTable = createReportTable();
-  const messageTable = createMessageTable();
+  const messageTable = createMessageTable(fetchStatuses.length);
   const timeoutTimer = {textContent: '20'};
   const extendButton = {click() {}};
 
   const document = {
     body,
-    createElement(tag) { return new FakeElement(tag); },
+    createElement(tag) {
+      if (tag.toLowerCase() === 'iframe') {
+        return new FakeElement(tag, (frame) => {
+          frameCallCount += 1;
+          const loaded = iframeOutcomes.shift() === true;
+          if (loaded && frame.onload) frame.onload();
+          if (!loaded && frame.onerror) frame.onerror();
+        });
+      }
+      return new FakeElement(tag);
+    },
     getElementById(id) {
       if (id === 'main-frame-if') return null;
       if (id === 'tabmenutable') return target;
@@ -197,7 +250,7 @@ function createPage() {
 
   const location = {
     href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-    reload() {}
+    reload() { reloadCount += 1; }
   };
   const window = {
     document,
@@ -208,7 +261,12 @@ function createPage() {
       activeIntervals.add(id);
       return id;
     },
-    setTimeout(callback) { callback(); return 1; }
+    setTimeout(callback) {
+      const id = nextTimeoutId++;
+      activeTimeouts.set(id, callback);
+      return id;
+    },
+    clearTimeout(id) { activeTimeouts.delete(id); }
   };
   window.window = window;
 
@@ -217,8 +275,19 @@ function createPage() {
     document,
     location,
     URL,
+    fetch: async function() {
+      fetchCallCount += 1;
+      const status = fetchStatuses.shift();
+      return {ok: status >= 200 && status < 300, status};
+    },
     console: {log() {}}
   };
+
+  function flushTimeouts() {
+    const callbacks = [...activeTimeouts.values()];
+    activeTimeouts.clear();
+    for (const callback of callbacks) callback();
+  }
 
   function snapshot() {
     return {
@@ -227,35 +296,61 @@ function createPage() {
         featureConfig.ownedSelector
       ).length,
       controlIds: target.children.map((child) => child.id),
+      statusText: (document.getElementById('mbg-read-status') || {}).textContent,
+      statusOwned: document.getElementById('mbg-read-status')?.getAttribute(
+        'data-mbg-message-reader-owned'
+      ),
+      reloadCount,
+      fetchCallCount,
+      frameCallCount,
       globalMarkers: Object.keys(window)
         .filter((key) => key.startsWith(featureConfig.markerPrefix))
         .sort()
     };
   }
 
-  return {context, snapshot};
+  return {context, snapshot, flushTimeouts};
 }
 
 function run(script, page) {
   vm.runInNewContext(script, page.context);
 }
 
-const injectedPage = createPage();
-run(buildScript, injectedPage);
-const afterBuild = injectedPage.snapshot();
-run(teardownScript, injectedPage);
-const afterTeardown = injectedPage.snapshot();
-run(buildScript, injectedPage);
-const afterRebuild = injectedPage.snapshot();
+async function main() {
+  const injectedPage = createPage();
+  run(buildScript, injectedPage);
 
-const freshPage = createPage();
-run(teardownScript, freshPage);
-const teardownWithoutBuild = freshPage.snapshot();
+  if (scenario) {
+    const input = injectedPage.context.document.getElementById(
+      'mbg-read-num-input'
+    );
+    input.value = String(scenario.fetchStatuses.length);
+    await injectedPage.context.document.getElementById('mbg-read-button').click();
+    injectedPage.flushTimeouts();
+    process.stdout.write(JSON.stringify(injectedPage.snapshot()));
+    return;
+  }
 
-process.stdout.write(JSON.stringify({
-  afterBuild,
-  afterTeardown,
-  afterRebuild,
-  teardownWithoutBuild
-}));
+  const afterBuild = injectedPage.snapshot();
+  run(teardownScript, injectedPage);
+  const afterTeardown = injectedPage.snapshot();
+  run(buildScript, injectedPage);
+  const afterRebuild = injectedPage.snapshot();
+
+  const freshPage = createPage();
+  run(teardownScript, freshPage);
+  const teardownWithoutBuild = freshPage.snapshot();
+
+  process.stdout.write(JSON.stringify({
+    afterBuild,
+    afterTeardown,
+    afterRebuild,
+    teardownWithoutBuild
+  }));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ''';
