@@ -13,6 +13,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.provider.CalendarContract
 import android.provider.OpenableColumns
 import android.util.Log
@@ -36,7 +37,36 @@ class MainActivity : FlutterActivity() {
     private var pendingNotificationPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarCall: MethodCall? = null
+    private var notificationsChannel: MethodChannel? = null
+    private var pendingNotificationUrl: String? = null
     private val downloadFolderLock = Any()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        pendingNotificationUrl = notificationUrlFromIntent(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val url = notificationUrlFromIntent(intent) ?: return
+        pendingNotificationUrl = url
+        notificationsChannel?.invokeMethod(
+            "deadlineNotificationTapped",
+            mapOf("url" to url),
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result == true && pendingNotificationUrl == url) {
+                        pendingNotificationUrl = null
+                    }
+                }
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
+
+                override fun notImplemented() = Unit
+            }
+        )
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -69,16 +99,23 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        MethodChannel(
+        notificationsChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             NOTIFICATIONS_CHANNEL
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "requestPermission" -> requestNotificationPermission(result)
-                "notifyDeadline" -> {
-                    result.success(showDeadlineNotification(call))
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "requestPermission" -> requestNotificationPermission(result)
+                    "notifyDeadline" -> {
+                        result.success(showDeadlineNotification(call))
+                    }
+                    "takePendingNotificationUrl" -> {
+                        val url = pendingNotificationUrl
+                        pendingNotificationUrl = null
+                        result.success(url)
+                    }
+                    else -> result.notImplemented()
                 }
-                else -> result.notImplemented()
             }
         }
 
@@ -871,6 +908,8 @@ class MainActivity : FlutterActivity() {
         val url = call.argument<String>("url").orEmpty()
         val notificationId = "$title\n$body\n$url".hashCode()
         val intent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        intent.putExtra(EXTRA_NOTIFICATION_URL, url)
         val pendingIntent = PendingIntent.getActivity(
             this,
             notificationId,
@@ -894,6 +933,10 @@ class MainActivity : FlutterActivity() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(notificationId, notification)
         return true
+    }
+
+    private fun notificationUrlFromIntent(intent: Intent?): String? {
+        return intent?.getStringExtra(EXTRA_NOTIFICATION_URL)?.takeIf { it.isNotBlank() }
     }
 
     private fun ensureNotificationChannel() {
@@ -1187,6 +1230,7 @@ class MainActivity : FlutterActivity() {
         const val DEADLINE_CHANNEL_ID = "gakujo_deadlines"
         const val EXTRA_DEBUG_URL = "net.yoshida.morebettergakujo.DEBUG_URL"
         const val EXTRA_DEBUG_2FA_SECRET = "net.yoshida.morebettergakujo.DEBUG_2FA_SECRET"
+        const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"
         const val REQUEST_PICK_DOWNLOAD_ROOT = 2001
         const val REQUEST_CREATE_DOWNLOAD_FILE = 2002
         const val REQUEST_POST_NOTIFICATIONS = 2003

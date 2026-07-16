@@ -20,7 +20,7 @@ void main() {
       return true;
     });
 
-    expect(await const GakujoNotificationService().requestPermission(), isTrue);
+    expect(await GakujoNotificationService().requestPermission(), isTrue);
   });
 
   test('notifyDeadline forwards title body and url', () async {
@@ -34,7 +34,7 @@ void main() {
       return false;
     });
 
-    final notified = await const GakujoNotificationService().notifyDeadline(
+    final notified = await GakujoNotificationService().notifyDeadline(
       GakujoDeadlineEntry(
         title: '課題A',
         url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
@@ -48,7 +48,7 @@ void main() {
 
   test('notification calls fail closed when the platform channel is missing',
       () async {
-    final service = const GakujoNotificationService();
+    final service = GakujoNotificationService();
 
     expect(await service.requestPermission(), isFalse);
     expect(
@@ -62,5 +62,83 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  test('takePendingNotificationUrl consumes the native pending URL', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'takePendingNotificationUrl');
+      return '  https://gakujo.iess.niigata-u.ac.jp/campusweb/report  ';
+    });
+
+    expect(
+      await GakujoNotificationService().takePendingNotificationUrl(),
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+    );
+  });
+
+  test('routes a native notification tap to the registered handler', () async {
+    final service = GakujoNotificationService();
+    String? tappedUrl;
+    service.setDeadlineNotificationTappedHandler((url) {
+      tappedUrl = url;
+    });
+
+    const codec = StandardMethodCodec();
+    final response = await messenger.handlePlatformMessage(
+      channel.name,
+      codec.encodeMethodCall(
+        const MethodCall(
+          'deadlineNotificationTapped',
+          {
+            'url': '  https://gakujo.iess.niigata-u.ac.jp/campusweb/report  ',
+          },
+        ),
+      ),
+      null,
+    );
+
+    expect(codec.decodeEnvelope(response!), isTrue);
+    expect(
+      tappedUrl,
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+    );
+    service.setDeadlineNotificationTappedHandler(null);
+  });
+
+  group('deadlineNotificationTargetUrl', () {
+    test('accepts an allowed Gakujo URL', () {
+      expect(
+        deadlineNotificationTargetUrl(
+          '  https://gakujo.iess.niigata-u.ac.jp/campusweb/report  ',
+          debugAllowed: false,
+        ),
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+      );
+    });
+
+    test('rejects external and malformed URLs', () {
+      expect(
+        deadlineNotificationTargetUrl(
+          'https://www.niigata-u.ac.jp/',
+          debugAllowed: false,
+        ),
+        isNull,
+      );
+      expect(
+        deadlineNotificationTargetUrl('not a url', debugAllowed: false),
+        isNull,
+      );
+    });
+
+    test('rejects null and empty URLs', () {
+      expect(
+        deadlineNotificationTargetUrl(null, debugAllowed: false),
+        isNull,
+      );
+      expect(
+        deadlineNotificationTargetUrl('  ', debugAllowed: false),
+        isNull,
+      );
+    });
   });
 }

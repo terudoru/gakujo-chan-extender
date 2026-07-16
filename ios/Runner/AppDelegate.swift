@@ -315,6 +315,15 @@ private enum CalendarBridgeError: LocalizedError {
 
 private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDelegate {
   private static let channelName = "net.yoshida.morebettergakujo/notifications"
+  private static let notificationURLKey = "url"
+
+  private var channel: FlutterMethodChannel?
+  private var pendingNotificationURL: String?
+
+  override init() {
+    super.init()
+    UNUserNotificationCenter.current().delegate = self
+  }
 
   func register(messenger: FlutterBinaryMessenger) {
     UNUserNotificationCenter.current().delegate = self
@@ -322,7 +331,8 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
       name: Self.channelName,
       binaryMessenger: messenger
     )
-    channel.setMethodCallHandler { call, result in
+    self.channel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "requestPermission":
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
@@ -336,6 +346,9 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
         content.title = args?["title"] as? String ?? "課題期限"
         content.body = args?["body"] as? String ?? "提出期限を検出しました"
         content.sound = .default
+        if let url = args?[Self.notificationURLKey] as? String, !url.isEmpty {
+          content.userInfo = [Self.notificationURLKey: url]
+        }
         let request = UNNotificationRequest(
           identifier: "deadline-\(Date().timeIntervalSince1970)",
           content: content,
@@ -350,6 +363,10 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
             }
           }
         }
+      case "takePendingNotificationUrl":
+        let url = self?.pendingNotificationURL
+        self?.pendingNotificationURL = nil
+        result(url)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -362,6 +379,27 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     completionHandler([.alert, .sound, .badge])
+  }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    defer { completionHandler() }
+    guard let url = response.notification.request.content.userInfo[Self.notificationURLKey] as? String,
+          !url.isEmpty else {
+      return
+    }
+    pendingNotificationURL = url
+    channel?.invokeMethod(
+      "deadlineNotificationTapped",
+      arguments: [Self.notificationURLKey: url]
+    ) { [weak self] result in
+      if result as? Bool == true, self?.pendingNotificationURL == url {
+        self?.pendingNotificationURL = nil
+      }
+    }
   }
 }
 

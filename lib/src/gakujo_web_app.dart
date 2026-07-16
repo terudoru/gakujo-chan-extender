@@ -326,6 +326,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
   late final Future<void> _webViewReady;
+  late final Future<void> _initialPageLoaded;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
   late final GakujoWebViewService _webViewService;
@@ -391,7 +392,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
-    _notificationService = const GakujoNotificationService();
+    _notificationService = GakujoNotificationService();
     _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
       activityStore: _activityStore,
       notificationService: _notificationService,
@@ -418,13 +419,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_secureStorageAccessAllowed && activityBellToolbarButtonEnabled) {
       unawaited(_refreshActivityCounts());
     }
-    unawaited(_loadInitialPage());
+    _initialPageLoaded = _loadInitialPage();
+    _notificationService.setDeadlineNotificationTappedHandler(
+      _handleDeadlineNotificationTapped,
+    );
+    unawaited(_initialPageLoaded);
   }
 
   @override
   void dispose() {
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
+    _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipeResetTimer?.cancel();
     _autoBackupTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -3240,13 +3246,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       });
     }
     final savedUrl = appSettingsLoaded ? await _loadInitialLastPageUrl() : null;
-    if (_appSettings.hasLoginCredentials && savedUrl != null) {
-      _pendingLoginRestoreUrl = savedUrl;
-    }
-    final startUrl = _resolveStartUrl(
-      _appSettings.hasLoginCredentials ? null : savedUrl,
+    final pendingNotificationUrl = _notificationService.targetUrl(
+      await _notificationService.takePendingNotificationUrl(),
+      debugAllowed: _debugAllowed,
     );
+    if (_appSettings.hasLoginCredentials) {
+      _pendingLoginRestoreUrl = pendingNotificationUrl ?? savedUrl;
+    }
+    final startUrl = pendingNotificationUrl != null &&
+            !_appSettings.hasLoginCredentials
+        ? pendingNotificationUrl
+        : _resolveStartUrl(_appSettings.hasLoginCredentials ? null : savedUrl);
     await _controller.loadUrl(startUrl);
+  }
+
+  Future<void> _handleDeadlineNotificationTapped(String url) async {
+    final targetUrl = _notificationService.targetUrl(
+      url,
+      debugAllowed: _debugAllowed,
+    );
+    if (targetUrl == null) {
+      return;
+    }
+    await _initialPageLoaded;
+    if (!mounted) {
+      return;
+    }
+    await _controller.loadUrl(targetUrl);
   }
 
   Future<String?> _loadInitialLastPageUrl() async {

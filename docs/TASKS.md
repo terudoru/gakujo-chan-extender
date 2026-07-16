@@ -51,7 +51,7 @@
 - [x] 28. [P2] 一括既読（`gakujo_message_reader_script.dart` 77行付近）が HTTP 4xx/5xx を成功扱いする。`response.ok` を検査し、成功・失敗件数を最終表示する
 - [x] 29. [P2] 期限通知の失敗が再試行されない。`mergeDeadlines` で保存してから通知するため、初回通知が失敗（権限拒否等）するとその期限は二度と通知されない。通知済みフラグを期限保存と分離し、成功時のみ確定する
 - [x] 30a. [P2] Windows 通知の正確性を直す。`windows/runner/flutter_window.cpp` は固定 `uID=1` のため複数期限が同一トレイ通知で上書きされ、また `Shell_NotifyIcon` の成否に関わらず常に `Success(true)` を返す。後者はタスク29（成功した通知だけを通知済み記録）が Windows で誤って全て通知済み扱いする原因になる。期限ごとに一意な uID を割り当て、`Shell_NotifyIcon` の実際の戻り値を Dart へ返す。Windows 実機ビルド不可のため静的確認まで
-- [ ] 30b. [P2] 通知タップの URL 契約が全ネイティブで失われている（Android PendingIntent に URL extra なし、iOS/macOS は userInfo 未設定でタップハンドラなし、Windows はトレイ通知タップの配線なし）。通知タップで対象期限ページを開けるよう、各プラットフォームで URL をペイロードに保持し、タップを Dart（`net.yoshida.morebettergakujo/notifications` チャネル等）へ通知して `AllowedWebOrigins` 検査後に WebView 遷移する経路を実装する。macOS のみビルド検証可、iOS/Android/Windows は実機検証が必要な旨を記録。※大きめの機能追加のため、Dart 側のタップ→遷移ルーティング（検査含む）はユニットテスト、ネイティブ配線は各プラットフォームで最小実装
+- [x] 30b. [P2] 通知タップの URL 契約が全ネイティブで失われている（Android PendingIntent に URL extra なし、iOS/macOS は userInfo 未設定でタップハンドラなし、Windows はトレイ通知タップの配線なし）。通知タップで対象期限ページを開けるよう、各プラットフォームで URL をペイロードに保持し、タップを Dart（`net.yoshida.morebettergakujo/notifications` チャネル等）へ通知して `AllowedWebOrigins` 検査後に WebView 遷移する経路を実装する。macOS のみビルド検証可、iOS/Android/Windows は実機検証が必要な旨を記録。※大きめの機能追加のため、Dart 側のタップ→遷移ルーティング（検査含む）はユニットテスト、ネイティブ配線は各プラットフォームで最小実装
 
 ## 完了ログ
 
@@ -85,3 +85,4 @@
 - 2026-07-15 タスク28: 一括既読で `response.ok` を検査し、非2xxは iframe フォールバック（5秒タイムアウトで成否判定）へ。成功/失敗件数を所有属性付きステータス要素に表示し、失敗ありのときはリロードせず残す。ハーネスに fetch/iframe/reload スタブ追加、テスト4件追加。analyze 0件、テスト321件全通過。
 - 2026-07-15 タスク29: 通知済み期限キーを別キーで永続化し、「保存済み」と「通知済み」を分離。`GakujoDeadlineNotificationCoordinator`（テスト用に注入可能）が loadDeadlines のうち未通知分のみ通知し、`notifyDeadline` 成功時だけキーを記録（失敗は次回再試行）。compact で消えた期限のキーをプルーニング。テスト4件追加。analyze 0件、テスト325件全通過。
 - 2026-07-15 タスク30a: Windows 通知に一意 uID（2起点で循環・使用中回避）を割り当て、`Shell_NotifyIcon` の実結果を Dart へ返却、OnDestroy で全 uID を削除。これでタスク29 の再試行が Windows でも正しく機能する。Windows ビルド不可のため C++ 静的確認のみ。Dart analyze 0件・テスト325件全通過。
+- 2026-07-15 タスク30b: 通知タップ deep-link を実装。Dart は `deadlineNotificationTargetUrl`（AllowedWebOrigins 検査つき純粋関数、`@visibleForTesting`）でフォアグラウンド遷移とコールド起動の保留URLを処理。Android（PendingIntent extra + onCreate/onNewIntent + 保留URL取得）、iOS/macOS（userInfo + UNUserNotificationCenterDelegate didReceive + 保留URL）、Windows（uCallbackMessage + NIN_BALLOONUSERCLICK + uID→URL 表）を配線。遷移は必ずオリジン検査を通す。テスト5件追加。検証: **Dart analyze 0件・テスト330件全通過、macOS デバッグビルド成功（私の環境で確認）**。iOS/Android/Windows は静的確認のみ（この環境ではビルド不可）＝実機検証が残作業。第4バッチ完了。

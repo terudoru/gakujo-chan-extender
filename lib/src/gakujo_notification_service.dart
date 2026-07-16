@@ -1,13 +1,82 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'allowed_web_origins.dart';
 import 'gakujo_activity_store.dart';
 
+typedef DeadlineNotificationTappedCallback = FutureOr<void> Function(
+  String url,
+);
+
+@visibleForTesting
+String? deadlineNotificationTargetUrl(
+  String? url, {
+  required bool debugAllowed,
+}) {
+  final normalized = url?.trim();
+  if (!AllowedWebOrigins.canLoad(
+    normalized,
+    debugAllowed: debugAllowed,
+  )) {
+    return null;
+  }
+  return normalized;
+}
+
 class GakujoNotificationService {
-  const GakujoNotificationService();
+  GakujoNotificationService();
 
   static const _channel = MethodChannel(
     'net.yoshida.morebettergakujo/notifications',
   );
+
+  DeadlineNotificationTappedCallback? _deadlineNotificationTapped;
+
+  String? targetUrl(String? url, {required bool debugAllowed}) {
+    return deadlineNotificationTargetUrl(
+      url,
+      debugAllowed: debugAllowed,
+    );
+  }
+
+  void setDeadlineNotificationTappedHandler(
+    DeadlineNotificationTappedCallback? handler,
+  ) {
+    _deadlineNotificationTapped = handler;
+    _channel.setMethodCallHandler(handler == null ? null : _handleMethodCall);
+  }
+
+  Future<Object?> _handleMethodCall(MethodCall call) async {
+    if (call.method != 'deadlineNotificationTapped') {
+      throw MissingPluginException(
+          'Unknown notification method ${call.method}');
+    }
+    final arguments = call.arguments;
+    final url = arguments is Map ? arguments['url'] : arguments;
+    final normalized = url is String ? url.trim() : '';
+    final handler = _deadlineNotificationTapped;
+    if (normalized.isEmpty || handler == null) {
+      return false;
+    }
+    await handler(normalized);
+    return true;
+  }
+
+  Future<String?> takePendingNotificationUrl() async {
+    try {
+      final url = await _channel.invokeMethod<String>(
+        'takePendingNotificationUrl',
+      );
+      final normalized = url?.trim();
+      return normalized == null || normalized.isEmpty ? null : normalized;
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
 
   Future<bool> requestPermission() async {
     try {

@@ -6,8 +6,8 @@
 #include <windows.h>
 
 #include <limits>
+#include <map>
 #include <optional>
-#include <set>
 #include <string>
 #include <variant>
 
@@ -16,8 +16,9 @@
 namespace {
 
 constexpr UINT kFirstDeadlineNotificationId = 2;
+constexpr UINT kDeadlineNotificationCallbackMessage = WM_APP + 1;
 UINT next_deadline_notification_id = kFirstDeadlineNotificationId;
-std::set<UINT> deadline_notification_ids;
+std::map<UINT, std::string> deadline_notification_urls;
 
 std::optional<UINT> NextDeadlineNotificationId() {
   const UINT first_candidate = next_deadline_notification_id;
@@ -27,8 +28,8 @@ std::optional<UINT> NextDeadlineNotificationId() {
         candidate == (std::numeric_limits<UINT>::max)()
             ? kFirstDeadlineNotificationId
             : candidate + 1;
-    if (deadline_notification_ids.find(candidate) ==
-        deadline_notification_ids.end()) {
+    if (deadline_notification_urls.find(candidate) ==
+        deadline_notification_urls.end()) {
       return candidate;
     }
   } while (next_deadline_notification_id != first_candidate);
@@ -77,7 +78,8 @@ void CopyWideString(wchar_t* destination,
 
 bool ShowDeadlineNotification(HWND hwnd,
                               const std::wstring& title,
-                              const std::wstring& body) {
+                              const std::wstring& body,
+                              const std::string& url) {
   const std::optional<UINT> notification_id = NextDeadlineNotificationId();
   if (!notification_id) {
     return false;
@@ -87,7 +89,8 @@ bool ShowDeadlineNotification(HWND hwnd,
   data.cbSize = sizeof(NOTIFYICONDATAW);
   data.hWnd = hwnd;
   data.uID = *notification_id;
-  data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
+  data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO | NIF_MESSAGE;
+  data.uCallbackMessage = kDeadlineNotificationCallbackMessage;
   data.hIcon = LoadIcon(nullptr, IDI_INFORMATION);
   CopyWideString(data.szTip, ARRAYSIZE(data.szTip), L"More Better Gakujo");
   CopyWideString(data.szInfoTitle, ARRAYSIZE(data.szInfoTitle), title);
@@ -99,21 +102,21 @@ bool ShowDeadlineNotification(HWND hwnd,
     notification_shown = Shell_NotifyIconW(NIM_ADD, &data);
   }
   if (notification_shown) {
-    deadline_notification_ids.insert(*notification_id);
+    deadline_notification_urls[*notification_id] = url;
   }
 
   return notification_shown != FALSE;
 }
 
 void DeleteDeadlineNotification(HWND hwnd) {
-  for (const UINT notification_id : deadline_notification_ids) {
+  for (const auto& notification : deadline_notification_urls) {
     NOTIFYICONDATAW data = {};
     data.cbSize = sizeof(NOTIFYICONDATAW);
     data.hWnd = hwnd;
-    data.uID = notification_id;
+    data.uID = notification.first;
     Shell_NotifyIconW(NIM_DELETE, &data);
   }
-  deadline_notification_ids.clear();
+  deadline_notification_urls.clear();
 }
 
 }  // namespace
@@ -157,14 +160,20 @@ bool FlutterWindow::OnCreate() {
           const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
           std::string title = "課題期限";
           std::string body = "提出期限を検出しました";
+          std::string url;
           if (args) {
             title = StringArg(*args, "title", title.c_str());
             body = StringArg(*args, "body", body.c_str());
+            url = StringArg(*args, "url", "");
           }
           const bool notification_shown =
               ShowDeadlineNotification(hwnd, Utf8ToWide(title),
-                                       Utf8ToWide(body));
+                                       Utf8ToWide(body), url);
           result->Success(flutter::EncodableValue(notification_shown));
+          return;
+        }
+        if (call.method_name() == "takePendingNotificationUrl") {
+          result->Success(flutter::EncodableValue());
           return;
         }
         result->NotImplemented();
@@ -197,6 +206,30 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == kDeadlineNotificationCallbackMessage &&
+      static_cast<UINT>(lparam) == NIN_BALLOONUSERCLICK) {
+    const UINT notification_id = static_cast<UINT>(wparam);
+    const auto url = deadline_notification_urls.find(notification_id);
+    if (url != deadline_notification_urls.end()) {
+      ShowWindow(hwnd, SW_RESTORE);
+      SetForegroundWindow(hwnd);
+      if (notification_channel_) {
+        notification_channel_->InvokeMethod(
+            "deadlineNotificationTapped",
+            std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+                {flutter::EncodableValue("url"),
+                 flutter::EncodableValue(url->second)}}));
+      }
+      NOTIFYICONDATAW data = {};
+      data.cbSize = sizeof(NOTIFYICONDATAW);
+      data.hWnd = hwnd;
+      data.uID = notification_id;
+      Shell_NotifyIconW(NIM_DELETE, &data);
+      deadline_notification_urls.erase(url);
+    }
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
