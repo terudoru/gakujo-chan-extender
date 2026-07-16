@@ -5,13 +5,36 @@
 #include <shellapi.h>
 #include <windows.h>
 
+#include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
 
 namespace {
+
+constexpr UINT kFirstDeadlineNotificationId = 2;
+UINT next_deadline_notification_id = kFirstDeadlineNotificationId;
+std::set<UINT> deadline_notification_ids;
+
+std::optional<UINT> NextDeadlineNotificationId() {
+  const UINT first_candidate = next_deadline_notification_id;
+  do {
+    const UINT candidate = next_deadline_notification_id;
+    next_deadline_notification_id =
+        candidate == (std::numeric_limits<UINT>::max)()
+            ? kFirstDeadlineNotificationId
+            : candidate + 1;
+    if (deadline_notification_ids.find(candidate) ==
+        deadline_notification_ids.end()) {
+      return candidate;
+    }
+  } while (next_deadline_notification_id != first_candidate);
+
+  return std::nullopt;
+}
 
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
@@ -52,13 +75,18 @@ void CopyWideString(wchar_t* destination,
   wcsncpy_s(destination, destination_count, value.c_str(), _TRUNCATE);
 }
 
-void ShowDeadlineNotification(HWND hwnd,
+bool ShowDeadlineNotification(HWND hwnd,
                               const std::wstring& title,
                               const std::wstring& body) {
+  const std::optional<UINT> notification_id = NextDeadlineNotificationId();
+  if (!notification_id) {
+    return false;
+  }
+
   NOTIFYICONDATAW data = {};
   data.cbSize = sizeof(NOTIFYICONDATAW);
   data.hWnd = hwnd;
-  data.uID = 1;
+  data.uID = *notification_id;
   data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO;
   data.hIcon = LoadIcon(nullptr, IDI_INFORMATION);
   CopyWideString(data.szTip, ARRAYSIZE(data.szTip), L"More Better Gakujo");
@@ -66,17 +94,26 @@ void ShowDeadlineNotification(HWND hwnd,
   CopyWideString(data.szInfo, ARRAYSIZE(data.szInfo), body);
   data.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
 
-  if (!Shell_NotifyIconW(NIM_MODIFY, &data)) {
-    Shell_NotifyIconW(NIM_ADD, &data);
+  BOOL notification_shown = Shell_NotifyIconW(NIM_MODIFY, &data);
+  if (!notification_shown) {
+    notification_shown = Shell_NotifyIconW(NIM_ADD, &data);
   }
+  if (notification_shown) {
+    deadline_notification_ids.insert(*notification_id);
+  }
+
+  return notification_shown != FALSE;
 }
 
 void DeleteDeadlineNotification(HWND hwnd) {
-  NOTIFYICONDATAW data = {};
-  data.cbSize = sizeof(NOTIFYICONDATAW);
-  data.hWnd = hwnd;
-  data.uID = 1;
-  Shell_NotifyIconW(NIM_DELETE, &data);
+  for (const UINT notification_id : deadline_notification_ids) {
+    NOTIFYICONDATAW data = {};
+    data.cbSize = sizeof(NOTIFYICONDATAW);
+    data.hWnd = hwnd;
+    data.uID = notification_id;
+    Shell_NotifyIconW(NIM_DELETE, &data);
+  }
+  deadline_notification_ids.clear();
 }
 
 }  // namespace
@@ -124,8 +161,10 @@ bool FlutterWindow::OnCreate() {
             title = StringArg(*args, "title", title.c_str());
             body = StringArg(*args, "body", body.c_str());
           }
-          ShowDeadlineNotification(hwnd, Utf8ToWide(title), Utf8ToWide(body));
-          result->Success(flutter::EncodableValue(true));
+          const bool notification_shown =
+              ShowDeadlineNotification(hwnd, Utf8ToWide(title),
+                                       Utf8ToWide(body));
+          result->Success(flutter::EncodableValue(notification_shown));
           return;
         }
         result->NotImplemented();
