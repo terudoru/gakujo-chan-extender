@@ -22,6 +22,7 @@ import 'gakujo_activity_classifier.dart';
 import 'gakujo_academic_calendar.dart';
 import 'gakujo_academic_calendar_resolver.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_backup_import.dart';
 import 'gakujo_calendar_export.dart';
 import 'gakujo_calendar_service.dart';
 import 'gakujo_course_name_estimator.dart';
@@ -2902,86 +2903,93 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    final GakujoBackupImport backup;
     try {
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, dynamic>) {
-        throw const FormatException('JSON object expected');
+      backup = parseGakujoBackup(text);
+    } on GakujoBackupImportException catch (error) {
+      _showSnackBar(error.message);
+      return;
+    } on Object {
+      _showSnackBar('設定JSONを読み取れませんでした');
+      return;
+    }
+
+    final downloadSaveMode =
+        backup.downloadSaveMode ?? _appSettings.downloadSaveMode;
+    final pageMode = backup.pageMode ?? _appSettings.pageMode;
+    final setupCompleted = backup.setupCompleted ?? _appSettings.setupCompleted;
+    final calendarImportSettings =
+        backup.calendarImportSettings ?? _appSettings.calendarImportSettings;
+    final messageExcludeKeywords =
+        backup.messageExcludeKeywords ?? _appSettings.messageExcludeKeywords;
+    final disabledFeatureFlags =
+        backup.disabledFeatureFlags ?? _appSettings.disabledFeatureFlags;
+
+    try {
+      if (backup.downloadSaveMode != null) {
+        await _appSettingsStore.saveDownloadSaveMode(downloadSaveMode);
       }
-      final downloadSaveMode = decoded.containsKey('downloadSaveMode')
-          ? DownloadSaveModeLabels.fromStorageValue(
-              decoded['downloadSaveMode']?.toString(),
-            )
-          : _appSettings.downloadSaveMode;
-      final pageMode = decoded.containsKey('pageMode')
-          ? GakujoPageModeLabels.fromStorageValue(
-              decoded['pageMode']?.toString(),
-            )
-          : _appSettings.pageMode;
-      final setupCompleted = decoded['setupCompleted'] is bool
-          ? decoded['setupCompleted'] as bool
-          : _appSettings.setupCompleted;
-      final calendarImportSettings =
-          decoded.containsKey('calendarImportSettings')
-              ? GakujoCalendarImportSettings.fromJson(
-                  decoded['calendarImportSettings'],
-                )
-              : _appSettings.calendarImportSettings;
-      final messageExcludeKeywords =
-          decoded.containsKey('messageExcludeKeywords')
-              ? normalizeMessageExcludeKeywords(
-                  _decodeBackupList(
-                    decoded['messageExcludeKeywords'],
-                    (value) => value.toString(),
-                  ),
-                )
-              : _appSettings.messageExcludeKeywords;
-      final disabledFeatureFlags = decoded.containsKey('disabledFeatureFlags')
-          ? _decodeBackupList(
-              decoded['disabledFeatureFlags'],
-              (value) => GakujoFeatureFlagLabels.fromStorageValue(
-                value.toString(),
-              ),
-            ).whereType<GakujoFeatureFlag>().toSet()
-          : _appSettings.disabledFeatureFlags;
-      final importedFavorites = _decodeBackupMaps(
-        decoded['favorites'],
-        GakujoFavoritePage.fromJson,
-      ).where((entry) => _isAllowedBackupNavigationUrl(entry.url)).toList();
-      final importedFailedDownloads = _decodeBackupMaps(
-        decoded['failedDownloads'],
-        GakujoFailedDownloadEntry.fromJson,
-      ).where((entry) => _isAllowedBackupUrl(entry.request.url)).toList();
-      final importedDeadlines = _decodeBackupMaps(
-        decoded['deadlines'],
-        GakujoDeadlineEntry.fromJson,
-      ).where((entry) => _isAllowedBackupUrl(entry.url)).toList();
-      final importedChanges = _decodeBackupMaps(
-        decoded['changes'],
-        GakujoActivityChangeEntry.fromJson,
-      ).where((entry) => _isAllowedBackupUrl(entry.url)).toList();
-      final importedReportLists = _decodeBackupMaps(
-        decoded['reportLists'],
-        GakujoCachedReportList.fromJson,
-      ).where((entry) => _isAllowedBackupUrl(entry.url)).toList();
-      await Future.wait([
-        _appSettingsStore.saveDownloadSaveMode(downloadSaveMode),
-        _appSettingsStore.savePageMode(pageMode),
-        _appSettingsStore.saveDisabledFeatureFlags(disabledFeatureFlags),
-        _appSettingsStore.saveSetupCompleted(setupCompleted),
-        _appSettingsStore.saveCalendarImportSettings(calendarImportSettings),
-        _appSettingsStore.saveMessageExcludeKeywords(messageExcludeKeywords),
-        _downloadHistoryStore.replaceHistory(
-          _decodeBackupMaps(
-            decoded['downloadHistory'],
-            GakujoDownloadHistoryEntry.fromJson,
-          ),
-        ),
-        _downloadHistoryStore.replaceFailedDownloads(importedFailedDownloads),
-        _activityStore.replaceFavorites(importedFavorites),
-        _activityStore.replaceDeadlines(importedDeadlines),
-        _activityStore.replaceChanges(importedChanges),
-        _activityStore.replaceReportLists(importedReportLists),
-      ]);
+      if (backup.pageMode != null) {
+        await _appSettingsStore.savePageMode(pageMode);
+      }
+      if (backup.disabledFeatureFlags != null) {
+        await _appSettingsStore.saveDisabledFeatureFlags(disabledFeatureFlags);
+      }
+      if (backup.setupCompleted != null) {
+        await _appSettingsStore.saveSetupCompleted(setupCompleted);
+      }
+      if (backup.calendarImportSettings != null) {
+        await _appSettingsStore.saveCalendarImportSettings(
+          calendarImportSettings,
+        );
+      }
+      if (backup.messageExcludeKeywords != null) {
+        await _appSettingsStore.saveMessageExcludeKeywords(
+          messageExcludeKeywords,
+        );
+      }
+      final downloadHistory = backup.downloadHistory;
+      if (downloadHistory != null) {
+        await _downloadHistoryStore.replaceHistory(downloadHistory);
+      }
+      final failedDownloads = backup.failedDownloads;
+      if (failedDownloads != null) {
+        await _downloadHistoryStore.replaceFailedDownloads(
+          failedDownloads
+              .where(
+                (entry) => _isAllowedBackupUrl(entry.request.url),
+              )
+              .toList(),
+        );
+      }
+      final favorites = backup.favorites;
+      if (favorites != null) {
+        await _activityStore.replaceFavorites(
+          favorites
+              .where(
+                (entry) => _isAllowedBackupNavigationUrl(entry.url),
+              )
+              .toList(),
+        );
+      }
+      final deadlines = backup.deadlines;
+      if (deadlines != null) {
+        await _activityStore.replaceDeadlines(
+          deadlines.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
+        );
+      }
+      final changes = backup.changes;
+      if (changes != null) {
+        await _activityStore.replaceChanges(
+          changes.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
+        );
+      }
+      final reportLists = backup.reportLists;
+      if (reportLists != null) {
+        await _activityStore.replaceReportLists(
+          reportLists.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
+        );
+      }
       final nextSettings = _appSettings.copyWith(
         downloadSaveMode: downloadSaveMode,
         pageMode: pageMode,
@@ -3002,46 +3010,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _scheduleAutoBackup();
       _showSnackBar('設定をインポートしました');
     } on Object {
-      _showSnackBar('設定JSONを読み取れませんでした');
+      _showSnackBar('設定のインポートに失敗しました');
     }
-  }
-
-  List<T> _decodeBackupMaps<T>(
-    Object? value,
-    T Function(Map<dynamic, dynamic>) fromJson,
-  ) {
-    if (value is! List<dynamic>) {
-      return const [];
-    }
-    final entries = <T>[];
-    for (final item in value.whereType<Map<dynamic, dynamic>>()) {
-      try {
-        entries.add(fromJson(item));
-      } on Object {
-        // Skip malformed entries from older backups.
-      }
-    }
-    return entries;
-  }
-
-  List<T> _decodeBackupList<T>(
-    Object? value,
-    T? Function(Object value) fromJson,
-  ) {
-    if (value is! List<dynamic>) {
-      return const [];
-    }
-    final entries = <T>[];
-    for (final item in value) {
-      if (item == null) {
-        continue;
-      }
-      final decoded = fromJson(item);
-      if (decoded != null) {
-        entries.add(decoded);
-      }
-    }
-    return entries;
   }
 
   bool _isAllowedBackupUrl(String url) {
