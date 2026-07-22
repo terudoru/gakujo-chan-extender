@@ -134,6 +134,32 @@ void main() {
     expect(settings.loginCredentials?.loginId, 'student');
     expect(settings.loginCredentials?.password, 'secret');
   });
+
+  test('concurrent feature changes preserve every disabled flag', () async {
+    final storage = _TrackingSecureStorage({})
+      ..readAllDelay = const Duration(milliseconds: 20);
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    await Future.wait([
+      store.saveFeatureEnabled(
+        GakujoFeatureFlag.gpaDisplay,
+        enabled: false,
+      ),
+      store.saveFeatureEnabled(
+        GakujoFeatureFlag.reportTools,
+        enabled: false,
+      ),
+    ]);
+
+    final settings = await store.load();
+    expect(
+      settings.disabledFeatureFlags,
+      containsAll({
+        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.reportTools,
+      }),
+    );
+  });
 }
 
 class _TrackingSecureStorage extends FlutterSecureStorage {
@@ -142,6 +168,7 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
   final Map<String, String> values;
   Object? readAllError;
   Duration readDelay = Duration.zero;
+  Duration readAllDelay = Duration.zero;
   int readAllCount = 0;
   final List<String> readKeys = [];
 
@@ -155,11 +182,15 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     readAllCount += 1;
+    final snapshot = Map<String, String>.from(values);
+    if (readAllDelay > Duration.zero) {
+      await Future<void>.delayed(readAllDelay);
+    }
     final error = readAllError;
     if (error != null) {
       throw error;
     }
-    return Map<String, String>.from(values);
+    return snapshot;
   }
 
   @override

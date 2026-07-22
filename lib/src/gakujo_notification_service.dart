@@ -117,8 +117,19 @@ class GakujoDeadlineNotificationCoordinator {
 
   final GakujoActivityStore _activityStore;
   final GakujoNotificationService _notificationService;
+  Future<void> _pendingNotificationOperation = Future<void>.value();
 
   Future<void> notifyPendingDeadlines({
+    required bool notificationsEnabled,
+  }) {
+    return _enqueueNotificationOperation(
+      () => _notifyPendingDeadlines(
+        notificationsEnabled: notificationsEnabled,
+      ),
+    );
+  }
+
+  Future<void> _notifyPendingDeadlines({
     required bool notificationsEnabled,
   }) async {
     if (!notificationsEnabled) {
@@ -144,5 +155,16 @@ class GakujoDeadlineNotificationCoordinator {
       }
     }
     await _activityStore.addNotifiedDeadlineKeys(notifiedNow);
+  }
+
+  Future<T> _enqueueNotificationOperation<T>(
+    Future<T> Function() operation,
+  ) {
+    final next = _pendingNotificationOperation.then((_) => operation());
+    _pendingNotificationOperation = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 }

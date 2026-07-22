@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
@@ -141,4 +143,73 @@ void main() {
       );
     });
   });
+
+  test('concurrent scans notify each deadline only once', () async {
+    final activityStore = _NotificationRaceActivityStore();
+    final notificationService = _BlockingNotificationService();
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: activityStore,
+      notificationService: notificationService,
+    );
+
+    final first = coordinator.notifyPendingDeadlines(
+      notificationsEnabled: true,
+    );
+    final second = coordinator.notifyPendingDeadlines(
+      notificationsEnabled: true,
+    );
+
+    await notificationService.firstNotificationStarted.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(notificationService.notifyCalls, 1);
+
+    notificationService.releaseFirstNotification.complete();
+    await Future.wait([first, second]);
+
+    expect(notificationService.notifyCalls, 1);
+    expect(activityStore.notifiedKeys, {activityStore.deadline.key});
+  });
+}
+
+class _NotificationRaceActivityStore extends GakujoActivityStore {
+  final Set<String> notifiedKeys = {};
+
+  final GakujoDeadlineEntry deadline = GakujoDeadlineEntry(
+    title: '課題A',
+    url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+    dueText: '提出期限 2026/07/31 17:00',
+    detectedAt: DateTime(2026, 7, 22),
+  );
+
+  @override
+  Future<List<GakujoDeadlineEntry>> loadDeadlines() async => [deadline];
+
+  @override
+  Future<Set<String>> loadNotifiedDeadlineKeys() async {
+    return Set<String>.from(notifiedKeys);
+  }
+
+  @override
+  Future<void> addNotifiedDeadlineKeys(Iterable<String> deadlineKeys) async {
+    notifiedKeys.addAll(deadlineKeys);
+  }
+}
+
+class _BlockingNotificationService extends GakujoNotificationService {
+  final Completer<void> firstNotificationStarted = Completer<void>();
+  final Completer<void> releaseFirstNotification = Completer<void>();
+  int notifyCalls = 0;
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
+    notifyCalls += 1;
+    if (!firstNotificationStarted.isCompleted) {
+      firstNotificationStarted.complete();
+    }
+    await releaseFirstNotification.future;
+    return true;
+  }
 }

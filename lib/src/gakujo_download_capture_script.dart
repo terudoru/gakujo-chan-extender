@@ -374,4 +374,25 @@ class GakujoDownloadCaptureScript {
 })();
 ''';
   }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  var handler = window.__MBG_DOWNLOAD_CAPTURE_HANDLER;
+  var documents = window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS || [];
+  if (handler) {
+    for (var index = 0; index < documents.length; index += 1) {
+      try {
+        documents[index].removeEventListener('click', handler, true);
+      } catch (e) {}
+    }
+  }
+  window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+  window.__MBG_DOWNLOAD_CAPTURE_HANDLER = null;
+  window.__MBG_DOWNLOAD_CAPTURE_ATTACH = null;
+  window.__MBG_ESTIMATE_COURSE_NAME = null;
+  window.__MBG_DOWNLOAD_CAPTURE_VERSION = null;
+})();
+''';
+  }
 }

@@ -284,6 +284,36 @@ Uri savedDownloadLocationUri(String location) {
 }
 
 @visibleForTesting
+Future<void> pruneJsonFilesForRetention(
+  Directory directory, {
+  required int keep,
+  String? fileNamePrefix,
+}) async {
+  final files = await directory
+      .list()
+      .where((entity) {
+        if (entity is! File || !entity.path.endsWith('.json')) {
+          return false;
+        }
+        if (fileNamePrefix == null) {
+          return true;
+        }
+        final fileName = entity.path.split(Platform.pathSeparator).last;
+        return fileName.startsWith(fileNamePrefix);
+      })
+      .cast<File>()
+      .toList();
+  files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+  for (final file in files.skip(keep)) {
+    try {
+      await file.delete();
+    } on FileSystemException {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+@visibleForTesting
 bool javaScriptResultAsBool(Object? result) {
   if (result is bool) {
     return result;
@@ -1154,7 +1184,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
-                      await _applyOriginalExtensionFeatureFlag(
+                      await _applyFeatureFlagRuntimeState(
                         flag,
                         enabled: enabled,
                       );
@@ -1905,6 +1935,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       directoryName: 'MoreBetterGakujoBackups',
       fileName: '$prefix-backup-${DateTime.now().microsecondsSinceEpoch}.json',
       payload: await _backupPayload(),
+      pruneAfterWrite: prefix == 'auto',
+      pruneFileNamePrefix: prefix == 'auto' ? 'auto-backup-' : null,
     );
   }
 
@@ -1912,6 +1944,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String directoryName,
     required String fileName,
     required Map<String, Object?> payload,
+    bool pruneAfterWrite = true,
+    String? pruneFileNamePrefix,
   }) async {
     final documents = await getApplicationDocumentsDirectory();
     final directory = Directory(_joinLocalPath(documents.path, directoryName));
@@ -1921,24 +1955,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const JsonEncoder.withIndent('  ').convert(payload),
       flush: true,
     );
-    await _pruneJsonFiles(directory, keep: 10);
-    return file;
-  }
-
-  Future<void> _pruneJsonFiles(Directory directory, {required int keep}) async {
-    final files = await directory
-        .list()
-        .where((entity) => entity is File && entity.path.endsWith('.json'))
-        .cast<File>()
-        .toList();
-    files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-    for (final file in files.skip(keep)) {
-      try {
-        await file.delete();
-      } on FileSystemException {
-        // Best-effort cleanup only.
-      }
+    if (pruneAfterWrite) {
+      await pruneJsonFilesForRetention(
+        directory,
+        keep: 10,
+        fileNamePrefix: pruneFileNamePrefix,
+      );
     }
+    return file;
   }
 
   String _joinLocalPath(String parent, String child) {
@@ -2925,6 +2949,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    final previousSettings = _appSettings;
     final downloadSaveMode =
         backup.downloadSaveMode ?? _appSettings.downloadSaveMode;
     final pageMode = backup.pageMode ?? _appSettings.pageMode;
@@ -3016,6 +3041,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       setState(() {
         _appSettings = nextSettings;
       });
+      await _applyChangedRuntimeFeatureFlags(
+        previousSettings,
+        nextSettings,
+      );
       await _injectMessageFilterIfAllowed();
       await _refreshActivityCounts();
       _scheduleAutoBackup();
@@ -3068,12 +3097,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     for (final flag in _originalExtensionFeatureBuilders.keys) {
       if (_appSettings.isFeatureEnabled(flag)) {
-        await _applyOriginalExtensionFeatureFlag(flag, enabled: true);
+        await _applyFeatureFlagRuntimeState(flag, enabled: true);
       }
     }
   }
 
-  Future<void> _applyOriginalExtensionFeatureFlag(
+  Future<void> _applyFeatureFlagRuntimeState(
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
@@ -3081,9 +3110,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    final builder = enabled
-        ? _originalExtensionFeatureBuilders[flag]
-        : _originalExtensionFeatureTeardownBuilders[flag];
+    final _PageScriptBuilder? builder;
+    if (flag == GakujoFeatureFlag.downloadCapture) {
+      builder = enabled
+          ? GakujoDownloadCaptureScript.build
+          : GakujoDownloadCaptureScript.buildTeardown;
+    } else {
+      builder = enabled
+          ? _originalExtensionFeatureBuilders[flag]
+          : _originalExtensionFeatureTeardownBuilders[flag];
+    }
     if (builder == null) {
       return;
     }
@@ -3098,6 +3134,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
+    }
+  }
+
+  Future<void> _applyChangedRuntimeFeatureFlags(
+    GakujoAppSettings previousSettings,
+    GakujoAppSettings nextSettings,
+  ) async {
+    for (final flag in GakujoFeatureFlag.values) {
+      final wasEnabled = previousSettings.isFeatureEnabled(flag);
+      final isEnabled = nextSettings.isFeatureEnabled(flag);
+      if (wasEnabled != isEnabled) {
+        await _applyFeatureFlagRuntimeState(
+          flag,
+          enabled: isEnabled,
+        );
+      }
     }
   }
 

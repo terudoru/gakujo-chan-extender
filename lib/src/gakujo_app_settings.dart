@@ -430,8 +430,14 @@ class GakujoAppSettingsStore {
   ];
 
   final FlutterSecureStorage _secureStorage;
+  Future<void> _pendingOperation = Future<void>.value();
 
   Future<GakujoAppSettings> load() async {
+    await _pendingOperation;
+    return _load();
+  }
+
+  Future<GakujoAppSettings> _load() async {
     final values = await _loadSettingsValues();
     final loginId = values[_loginIdKey]?.trim() ?? '';
     final password = values[_loginPasswordKey] ?? '';
@@ -480,34 +486,44 @@ class GakujoAppSettingsStore {
   }
 
   Future<void> saveDownloadSaveMode(DownloadSaveMode mode) {
-    return _secureStorage.write(
-      key: _downloadSaveModeKey,
-      value: mode.storageValue,
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _downloadSaveModeKey,
+        value: mode.storageValue,
+      ),
     );
   }
 
   Future<void> savePageMode(GakujoPageMode mode) {
-    return _secureStorage.write(
-      key: _pageModeKey,
-      value: mode.storageValue,
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _pageModeKey,
+        value: mode.storageValue,
+      ),
     );
   }
 
   Future<void> saveFeatureEnabled(
     GakujoFeatureFlag flag, {
     required bool enabled,
-  }) async {
-    final settings = await load();
-    final disabled = {...settings.disabledFeatureFlags};
-    if (enabled) {
-      disabled.remove(flag);
-    } else {
-      disabled.add(flag);
-    }
-    await saveDisabledFeatureFlags(disabled);
+  }) {
+    return _enqueue(() async {
+      final settings = await _load();
+      final disabled = {...settings.disabledFeatureFlags};
+      if (enabled) {
+        disabled.remove(flag);
+      } else {
+        disabled.add(flag);
+      }
+      await _writeDisabledFeatureFlags(disabled);
+    });
   }
 
   Future<void> saveDisabledFeatureFlags(Set<GakujoFeatureFlag> flags) {
+    return _enqueue(() => _writeDisabledFeatureFlags(flags));
+  }
+
+  Future<void> _writeDisabledFeatureFlags(Set<GakujoFeatureFlag> flags) {
     return _secureStorage.write(
       key: _disabledFeatureFlagsKey,
       value: flags.map((flag) => flag.storageValue).join(','),
@@ -515,49 +531,70 @@ class GakujoAppSettingsStore {
   }
 
   Future<void> saveSetupCompleted(bool completed) {
-    return _secureStorage.write(
-      key: _setupCompletedKey,
-      value: completed ? 'true' : 'false',
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _setupCompletedKey,
+        value: completed ? 'true' : 'false',
+      ),
     );
   }
 
   Future<void> saveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
   ) {
-    return _secureStorage.write(
-      key: _calendarImportSettingsKey,
-      value: jsonEncode(settings.toJson()),
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _calendarImportSettingsKey,
+        value: jsonEncode(settings.toJson()),
+      ),
     );
   }
 
   Future<void> saveMessageExcludeKeywords(List<String> keywords) {
-    return _secureStorage.write(
-      key: _messageExcludeKeywordsKey,
-      value: jsonEncode(normalizeMessageExcludeKeywords(keywords)),
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _messageExcludeKeywordsKey,
+        value: jsonEncode(normalizeMessageExcludeKeywords(keywords)),
+      ),
     );
   }
 
   Future<void> saveLoginCredentials({
     required String loginId,
     required String password,
-  }) async {
-    final trimmedLoginId = loginId.trim();
-    if (trimmedLoginId.isEmpty || password.isEmpty) {
-      await clearLoginCredentials();
-      return;
-    }
+  }) {
+    return _enqueue(() async {
+      final trimmedLoginId = loginId.trim();
+      if (trimmedLoginId.isEmpty || password.isEmpty) {
+        await _clearLoginCredentials();
+        return;
+      }
 
-    await Future.wait([
-      _secureStorage.write(key: _loginIdKey, value: trimmedLoginId),
-      _secureStorage.write(key: _loginPasswordKey, value: password),
-    ]);
+      await Future.wait([
+        _secureStorage.write(key: _loginIdKey, value: trimmedLoginId),
+        _secureStorage.write(key: _loginPasswordKey, value: password),
+      ]);
+    });
   }
 
   Future<void> clearLoginCredentials() {
+    return _enqueue(_clearLoginCredentials);
+  }
+
+  Future<void> _clearLoginCredentials() {
     return Future.wait([
       _secureStorage.delete(key: _loginIdKey),
       _secureStorage.delete(key: _loginPasswordKey),
     ]);
+  }
+
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final next = _pendingOperation.then((_) => operation());
+    _pendingOperation = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 
   static List<String> _decodeMessageExcludeKeywords(String? raw) {

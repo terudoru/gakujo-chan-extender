@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
 import 'package:test/test.dart';
 
@@ -37,4 +40,58 @@ void main() {
       ),
     );
   });
+
+  test('teardown removes the injected click handler', () async {
+    final result = await Process.run('node', [
+      '-e',
+      _downloadCaptureLifecycleHarness,
+      GakujoDownloadCaptureScript.build(),
+      GakujoDownloadCaptureScript.buildTeardown(),
+    ]);
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final lifecycle =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(lifecycle['listenersAfterBuild'], 1);
+    expect(lifecycle['listenersAfterTeardown'], 0);
+    expect(lifecycle['handlerCleared'], isTrue);
+    expect(lifecycle['versionCleared'], isTrue);
+  });
 }
+
+const _downloadCaptureLifecycleHarness = r'''
+const vm = require('node:vm');
+const buildScript = process.argv[1];
+const teardownScript = process.argv[2];
+const clickListeners = new Set();
+const document = {
+  addEventListener(type, handler) {
+    if (type === 'click') clickListeners.add(handler);
+  },
+  removeEventListener(type, handler) {
+    if (type === 'click') clickListeners.delete(handler);
+  }
+};
+const window = {
+  document,
+  frames: [],
+  location: {
+    href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
+  }
+};
+window.window = window;
+const context = vm.createContext({window, document, console, URL});
+vm.runInContext(buildScript, context);
+const listenersAfterBuild = clickListeners.size;
+vm.runInContext(teardownScript, context);
+process.stdout.write(JSON.stringify({
+  listenersAfterBuild,
+  listenersAfterTeardown: clickListeners.size,
+  handlerCleared: window.__MBG_DOWNLOAD_CAPTURE_HANDLER === null,
+  versionCleared: window.__MBG_DOWNLOAD_CAPTURE_VERSION === null
+}));
+''';
