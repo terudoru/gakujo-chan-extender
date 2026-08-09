@@ -25,4 +25,30 @@ void main() {
   test('resetMacosCache completes without throwing', () {
     expect(SecureStorageFactory.resetMacosCache, returnsNormally);
   });
+
+  test('non-macOS reset deletes all values from the active storage', () async {
+    final storage = _ResetTrackingStorage();
+
+    await SecureStorageFactory.resetNonMacosStorage(storage);
+
+    expect(storage.deleteAllCalls, 1);
+  });
+}
+
+class _ResetTrackingStorage extends FlutterSecureStorage {
+  _ResetTrackingStorage();
+
+  int deleteAllCalls = 0;
+
+  @override
+  Future<void> deleteAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    deleteAllCalls += 1;
+  }
 }

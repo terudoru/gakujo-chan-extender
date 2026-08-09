@@ -1,12 +1,25 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 class TwoFactorAutofillScript {
   static const inputName = 'ninshoCode';
 
   const TwoFactorAutofillScript._();
 
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.__MBG_2FA_AUTOFILL_DISABLED = true;
+  window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
+  delete window.__MBG_2FA_AUTOFILL_TIMER;
+})();
+''';
+  }
+
   static String build({
     required String token,
+    String? secret,
     int maxAttempts = 20,
     int intervalMillis = 250,
     bool autoSubmit = true,
@@ -23,21 +36,30 @@ class TwoFactorAutofillScript {
     }
 
     final encodedToken = jsonEncode(token);
+    final encodedSecretKey = jsonEncode(
+      secret == null
+          ? 'no-secret'
+          : sha256.convert(utf8.encode(secret)).toString(),
+    );
     final autoSubmitLiteral = autoSubmit ? 'true' : 'false';
 
     return '''
 (function() {
-  var assistVersion = 2;
+  var assistVersion = 3;
   var attempts = 0;
   var maxAttempts = $maxAttempts;
   var intervalMillis = $intervalMillis;
   var token = $encodedToken;
+  var secretKey = $encodedSecretKey;
   var autoSubmit = $autoSubmitLiteral;
   var maxAutoSubmitPerSession = 3;
+  window.__MBG_2FA_AUTOFILL_DISABLED = false;
+  window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
 
   function sessionKey(suffix) {
     var normalizedUrl = location.origin + location.pathname;
-    return 'MBG_2FA_AUTOFILL_' + suffix + ':' + normalizedUrl;
+    return 'MBG_2FA_AUTOFILL_' + suffix + ':' + normalizedUrl + ':' +
+      secretKey;
   }
 
   function sessionValue(key) {
@@ -97,18 +119,21 @@ class TwoFactorAutofillScript {
   }
 
   function shouldBlockAutoSubmit() {
-    if (!autoSubmit || window.__MBG_2FA_AUTO_SUBMITTED) {
+    if (!autoSubmit || window.__MBG_2FA_AUTO_SUBMITTED_KEY === secretKey) {
       return true;
     }
-    if (sessionValue(sessionKey('ERROR')) === '1' || hasTwoFactorError()) {
+    if (sessionValue(sessionKey('ERROR')) === '1') {
       return true;
     }
     var count = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
+    if (isFinite(count) && count > 0 && hasTwoFactorError()) {
+      return true;
+    }
     return isFinite(count) && count >= maxAutoSubmitPerSession;
   }
 
   function markAutoSubmitAttempted() {
-    window.__MBG_2FA_AUTO_SUBMITTED = true;
+    window.__MBG_2FA_AUTO_SUBMITTED_KEY = secretKey;
     var key = sessionKey('SUBMIT_COUNT');
     var count = parseInt(sessionValue(key) || '0', 10);
     if (!isFinite(count) || count < 0) {
@@ -211,6 +236,9 @@ class TwoFactorAutofillScript {
   }
 
   function submitFrom(input) {
+    if (window.__MBG_2FA_AUTOFILL_DISABLED) {
+      return false;
+    }
     if (shouldBlockAutoSubmit()) {
       reportProgress('submit-blocked', 'session-limit-or-error');
       return false;
@@ -253,18 +281,32 @@ class TwoFactorAutofillScript {
   }
 
   function fill() {
+    if (window.__MBG_2FA_AUTOFILL_DISABLED) {
+      return false;
+    }
     attempts += 1;
     var input = null;
     var documents = allDocuments();
     for (var i = 0; i < documents.length; i += 1) {
-      input = documents[i].querySelector('input[name="$inputName"]');
+      var inputs = Array.prototype.slice.call(
+        documents[i].querySelectorAll('input[name="$inputName"]')
+      );
+      for (var j = 0; j < inputs.length; j += 1) {
+        if (isVisible(inputs[j])) {
+          input = inputs[j];
+          break;
+        }
+      }
       if (input) {
         break;
       }
     }
     if (!input) {
       if (attempts < maxAttempts) {
-        window.setTimeout(fill, intervalMillis);
+        window.__MBG_2FA_AUTOFILL_TIMER = window.setTimeout(
+          fill,
+          intervalMillis
+        );
       }
       return false;
     }

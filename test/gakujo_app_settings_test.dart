@@ -79,6 +79,40 @@ void main() {
     expect(settings.toJson()['termTarget'], 'second');
   });
 
+  test('calendar import settings reserve the validation calendar title', () {
+    const settings = GakujoCalendarImportSettings(
+      calendarTitle: GakujoCalendarImportSettings.validationCalendarTitle,
+    );
+
+    expect(
+      settings.effectiveCalendarTitle,
+      GakujoCalendarImportSettings.defaultCalendarTitle,
+    );
+  });
+
+  test('calendar import settings round-trip through secure storage', () async {
+    final storage = _TrackingSecureStorage({});
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+    const expected = GakujoCalendarImportSettings(
+      method: GakujoCalendarImportMethod.icsFile,
+      termSource: GakujoCalendarTermSource.pageOrManual,
+      termTarget: GakujoCalendarTermTarget.fourth,
+      includeNoClassDates: false,
+      calendarTitle: ' 工学部授業 ',
+    );
+
+    await store.saveCalendarImportSettings(expected);
+    final settings = await GakujoAppSettingsStore(
+      secureStorage: storage,
+    ).load();
+
+    expect(settings.calendarImportSettings.method, expected.method);
+    expect(settings.calendarImportSettings.termSource, expected.termSource);
+    expect(settings.calendarImportSettings.termTarget, expected.termTarget);
+    expect(settings.calendarImportSettings.includeNoClassDates, isFalse);
+    expect(settings.calendarImportSettings.calendarTitle, '工学部授業');
+  });
+
   test('load reads settings with a single readAll call', () async {
     final storage = _TrackingSecureStorage({
       'more_better_gakujo_page_mode': 'desktop',
@@ -135,6 +169,113 @@ void main() {
     expect(settings.loginCredentials?.password, 'secret');
   });
 
+  test('load migrates a complete legacy login pair into one record', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_id': ' student ',
+      'more_better_gakujo_login_password': 'old-secret',
+    });
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    final settings = await store.load();
+
+    expect(settings.loginCredentials?.loginId, 'student');
+    expect(settings.loginCredentials?.password, 'old-secret');
+    expect(
+      storage.values['more_better_gakujo_login_credentials_v2'],
+      contains('old-secret'),
+    );
+    expect(storage.values.containsKey('more_better_gakujo_login_id'), isFalse);
+    expect(
+      storage.values.containsKey('more_better_gakujo_login_password'),
+      isFalse,
+    );
+  });
+
+  test('failed credential record write preserves the previous complete pair',
+      () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_id': 'old-student',
+      'more_better_gakujo_login_password': 'old-secret',
+    })
+      ..writeErrorKey = 'more_better_gakujo_login_credentials_v2';
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    await expectLater(
+      store.saveLoginCredentials(
+        loginId: 'new-student',
+        password: 'new-secret',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    storage.writeErrorKey = null;
+    final settings = await store.load();
+    expect(settings.loginCredentials?.loginId, 'old-student');
+    expect(settings.loginCredentials?.password, 'old-secret');
+  });
+
+  test('failed legacy cleanup cannot create mixed login credentials', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_id': 'old-student',
+      'more_better_gakujo_login_password': 'old-secret',
+    })
+      ..deleteErrorKey = 'more_better_gakujo_login_password';
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    await store.saveLoginCredentials(
+      loginId: 'new-student',
+      password: 'new-secret',
+    );
+    final settings = await store.load();
+
+    expect(settings.loginCredentials?.loginId, 'new-student');
+    expect(settings.loginCredentials?.password, 'new-secret');
+    expect(
+      storage.values['more_better_gakujo_login_password'],
+      'old-secret',
+    );
+  });
+
+  test('credential tombstone keeps a partial legacy delete cleared', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_id': 'old-student',
+      'more_better_gakujo_login_password': 'old-secret',
+    })
+      ..deleteErrorKey = 'more_better_gakujo_login_password';
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    await store.clearLoginCredentials();
+    final settings = await store.load();
+
+    expect(settings.loginCredentials, isNull);
+    expect(
+      storage.values['more_better_gakujo_login_password'],
+      'old-secret',
+    );
+    expect(
+      storage.values['more_better_gakujo_login_credentials_v2'],
+      contains('"cleared":true'),
+    );
+  });
+
+  test('malformed credential record does not revive a legacy pair', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_credentials_v2': '{broken',
+      'more_better_gakujo_login_id': 'old-student',
+      'more_better_gakujo_login_password': 'old-secret',
+      'more_better_gakujo_calendar_import_settings': '{"termTarget":"third"}',
+    });
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    final settings = await store.load();
+
+    expect(settings.loginCredentials, isNull);
+    expect(
+      settings.calendarImportSettings.termTarget,
+      GakujoCalendarTermTarget.third,
+    );
+  });
+
   test('concurrent feature changes preserve every disabled flag', () async {
     final storage = _TrackingSecureStorage({})
       ..readAllDelay = const Duration(milliseconds: 20);
@@ -167,6 +308,8 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
 
   final Map<String, String> values;
   Object? readAllError;
+  String? writeErrorKey;
+  String? deleteErrorKey;
   Duration readDelay = Duration.zero;
   Duration readAllDelay = Duration.zero;
   int readAllCount = 0;
@@ -221,10 +364,29 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (writeErrorKey == key) {
+      throw StateError('write failed for $key');
+    }
     if (value == null) {
       values.remove(key);
     } else {
       values[key] = value;
     }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (deleteErrorKey == key) {
+      throw StateError('delete failed for $key');
+    }
+    values.remove(key);
   }
 }

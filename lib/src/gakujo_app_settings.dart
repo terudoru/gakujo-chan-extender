@@ -221,6 +221,7 @@ class GakujoCalendarImportSettings {
   });
 
   static const defaultCalendarTitle = 'More Better Gakujo 授業';
+  static const validationCalendarTitle = 'More Better Gakujo 検証';
 
   final GakujoCalendarImportMethod method;
   final GakujoCalendarTermSource termSource;
@@ -230,7 +231,9 @@ class GakujoCalendarImportSettings {
 
   String get effectiveCalendarTitle {
     final trimmed = calendarTitle.trim();
-    return trimmed.isEmpty ? defaultCalendarTitle : trimmed;
+    return trimmed.isEmpty || trimmed == validationCalendarTitle
+        ? defaultCalendarTitle
+        : trimmed;
   }
 
   GakujoCalendarImportSettings copyWith({
@@ -411,6 +414,7 @@ class GakujoAppSettingsStore {
   static const _pageModeKey = 'more_better_gakujo_page_mode';
   static const _loginIdKey = 'more_better_gakujo_login_id';
   static const _loginPasswordKey = 'more_better_gakujo_login_password';
+  static const _loginCredentialsKey = 'more_better_gakujo_login_credentials_v2';
   static const _disabledFeatureFlagsKey =
       'more_better_gakujo_disabled_feature_flags';
   static const _setupCompletedKey = 'more_better_gakujo_setup_completed';
@@ -423,6 +427,7 @@ class GakujoAppSettingsStore {
     _pageModeKey,
     _loginIdKey,
     _loginPasswordKey,
+    _loginCredentialsKey,
     _disabledFeatureFlagsKey,
     _setupCompletedKey,
     _calendarImportSettingsKey,
@@ -432,15 +437,18 @@ class GakujoAppSettingsStore {
   final FlutterSecureStorage _secureStorage;
   Future<void> _pendingOperation = Future<void>.value();
 
-  Future<GakujoAppSettings> load() async {
-    await _pendingOperation;
-    return _load();
+  Future<GakujoAppSettings> load() {
+    return _enqueue(() => _load(migrateLegacyCredentials: true));
   }
 
-  Future<GakujoAppSettings> _load() async {
+  Future<GakujoAppSettings> _load({
+    bool migrateLegacyCredentials = false,
+  }) async {
     final values = await _loadSettingsValues();
-    final loginId = values[_loginIdKey]?.trim() ?? '';
-    final password = values[_loginPasswordKey] ?? '';
+    final loginCredentials = await _loadLoginCredentials(
+      values,
+      migrateLegacyCredentials: migrateLegacyCredentials,
+    );
     final disabledFeatureFlags = (values[_disabledFeatureFlagsKey] ?? '')
         .split(',')
         .map((value) => GakujoFeatureFlagLabels.fromStorageValue(value))
@@ -451,9 +459,7 @@ class GakujoAppSettingsStore {
         values[_downloadSaveModeKey],
       ),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[_pageModeKey]),
-      loginCredentials: loginId.isNotEmpty && password.isNotEmpty
-          ? GakujoLoginCredentials(loginId: loginId, password: password)
-          : null,
+      loginCredentials: loginCredentials,
       disabledFeatureFlags: disabledFeatureFlags,
       setupCompleted: values[_setupCompletedKey] == 'true',
       calendarImportSettings: GakujoCalendarImportSettings.fromJson(
@@ -570,10 +576,15 @@ class GakujoAppSettingsStore {
         return;
       }
 
-      await Future.wait([
-        _secureStorage.write(key: _loginIdKey, value: trimmedLoginId),
-        _secureStorage.write(key: _loginPasswordKey, value: password),
-      ]);
+      await _secureStorage.write(
+        key: _loginCredentialsKey,
+        value: jsonEncode({
+          'version': 1,
+          'loginId': trimmedLoginId,
+          'password': password,
+        }),
+      );
+      await _deleteLegacyLoginCredentialsBestEffort();
     });
   }
 
@@ -581,11 +592,101 @@ class GakujoAppSettingsStore {
     return _enqueue(_clearLoginCredentials);
   }
 
-  Future<void> _clearLoginCredentials() {
-    return Future.wait([
-      _secureStorage.delete(key: _loginIdKey),
-      _secureStorage.delete(key: _loginPasswordKey),
-    ]);
+  Future<void> _clearLoginCredentials() async {
+    // Keep an authoritative tombstone instead of deleting the v2 record. If a
+    // legacy-key cleanup fails, subsequent loads must not reconstruct a mixed
+    // or previously deleted credential pair from the remaining old key.
+    await _secureStorage.write(
+      key: _loginCredentialsKey,
+      value: jsonEncode(const {
+        'version': 1,
+        'cleared': true,
+      }),
+    );
+    await _deleteLegacyLoginCredentialsBestEffort();
+  }
+
+  Future<GakujoLoginCredentials?> _loadLoginCredentials(
+    Map<String, String?> values, {
+    required bool migrateLegacyCredentials,
+  }) async {
+    final storedRecord = values[_loginCredentialsKey];
+    if (storedRecord != null) {
+      return _decodeLoginCredentialsRecord(storedRecord);
+    }
+
+    final loginId = values[_loginIdKey]?.trim() ?? '';
+    final password = values[_loginPasswordKey] ?? '';
+    final legacyCredentials = loginId.isNotEmpty && password.isNotEmpty
+        ? GakujoLoginCredentials(loginId: loginId, password: password)
+        : null;
+    final hasLegacyRemainder = loginId.isNotEmpty || password.isNotEmpty;
+
+    if (migrateLegacyCredentials &&
+        (legacyCredentials != null || hasLegacyRemainder)) {
+      try {
+        if (legacyCredentials == null) {
+          await _secureStorage.write(
+            key: _loginCredentialsKey,
+            value: jsonEncode(const {
+              'version': 1,
+              'cleared': true,
+            }),
+          );
+        } else {
+          await _secureStorage.write(
+            key: _loginCredentialsKey,
+            value: jsonEncode({
+              'version': 1,
+              'loginId': legacyCredentials.loginId,
+              'password': legacyCredentials.password,
+            }),
+          );
+        }
+        await _deleteLegacyLoginCredentialsBestEffort();
+      } on Object {
+        // The complete legacy pair remains authoritative until a later load
+        // can persist the single-record format successfully.
+      }
+    }
+
+    return legacyCredentials;
+  }
+
+  GakujoLoginCredentials? _decodeLoginCredentialsRecord(String raw) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      return null;
+    }
+    if (decoded is! Map<String, dynamic> || decoded['version'] != 1) {
+      return null;
+    }
+    if (decoded['cleared'] == true) {
+      return null;
+    }
+
+    final loginId = decoded['loginId'] is String
+        ? (decoded['loginId'] as String).trim()
+        : '';
+    final password =
+        decoded['password'] is String ? decoded['password'] as String : '';
+    if (loginId.isEmpty || password.isEmpty) {
+      return null;
+    }
+    return GakujoLoginCredentials(loginId: loginId, password: password);
+  }
+
+  Future<void> _deleteLegacyLoginCredentialsBestEffort() async {
+    for (final key in const [_loginIdKey, _loginPasswordKey]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Object {
+        // The v2 record/tombstone is authoritative, so a stale legacy key can
+        // never be combined with it. Retry cleanup on a future save or clear.
+      }
+    }
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {

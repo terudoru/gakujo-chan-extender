@@ -78,7 +78,8 @@ extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
   }
 }
 
-const _calendarValidationTitle = 'More Better Gakujo 検証';
+const _calendarValidationTitle =
+    GakujoCalendarImportSettings.validationCalendarTitle;
 const _calendarValidationUidNamespace = 'calendar-validation';
 const _schedulePortalUrl =
     'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=sch';
@@ -100,7 +101,15 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.buildTeardown,
   GakujoFeatureFlag.reportTools: GakujoReportSorterScript.buildTeardown,
   GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.buildTeardown,
+  GakujoFeatureFlag.gpaDisplay: GakujoGpaDisplayScript.buildTeardown,
+  GakujoFeatureFlag.loginAutofill: LoginAutofillAssistScript.buildTeardown,
+  GakujoFeatureFlag.twoFactorAutofill: TwoFactorAutofillScript.buildTeardown,
 };
+
+@visibleForTesting
+String? gakujoRuntimeTeardownScriptForFeature(GakujoFeatureFlag flag) {
+  return _originalExtensionFeatureTeardownBuilders[flag]?.call();
+}
 
 @visibleForTesting
 DateTime? parseCalendarDate(String raw) {
@@ -352,6 +361,320 @@ bool shouldReadPageForActivityFeatures(GakujoAppSettings settings) {
 @visibleForTesting
 bool get activityBellToolbarButtonEnabled => true;
 
+enum GakujoPortalAuthState {
+  authenticated,
+  login,
+  twoFactor,
+  unknown,
+}
+
+@visibleForTesting
+GakujoPortalAuthState gakujoPortalAuthStateFromSignals({
+  required bool hasLoginFields,
+  required bool hasTwoFactorField,
+  required bool hasAuthenticatedMarker,
+}) {
+  if (hasTwoFactorField) {
+    return GakujoPortalAuthState.twoFactor;
+  }
+  if (hasLoginFields) {
+    return GakujoPortalAuthState.login;
+  }
+  if (hasAuthenticatedMarker) {
+    return GakujoPortalAuthState.authenticated;
+  }
+  return GakujoPortalAuthState.unknown;
+}
+
+@visibleForTesting
+GakujoPortalAuthState gakujoPortalAuthStateFromJavaScriptResult(
+  Object? result,
+) {
+  Object? decoded = result;
+  for (var attempt = 0; attempt < 2 && decoded is String; attempt += 1) {
+    try {
+      decoded = jsonDecode(decoded);
+    } on FormatException {
+      break;
+    }
+  }
+  if (decoded is! Map) {
+    return GakujoPortalAuthState.unknown;
+  }
+  return gakujoPortalAuthStateFromSignals(
+    hasLoginFields: decoded['hasLoginFields'] == true,
+    hasTwoFactorField: decoded['hasTwoFactorField'] == true,
+    hasAuthenticatedMarker: decoded['hasAuthenticatedMarker'] == true,
+  );
+}
+
+@visibleForTesting
+bool isGakujoAuthenticationChallenge({
+  required GakujoPortalAuthState authState,
+  required bool urlLooksLikeLoginOrTimeout,
+}) {
+  return urlLooksLikeLoginOrTimeout ||
+      authState == GakujoPortalAuthState.login ||
+      authState == GakujoPortalAuthState.twoFactor;
+}
+
+@visibleForTesting
+bool shouldResetGakujoLoginRestoreAttempt({
+  required GakujoPortalAuthState authState,
+  required bool urlLooksLikeLoginOrTimeout,
+  required bool hasRecoveryUrl,
+}) {
+  return hasRecoveryUrl &&
+      isGakujoAuthenticationChallenge(
+        authState: authState,
+        urlLooksLikeLoginOrTimeout: urlLooksLikeLoginOrTimeout,
+      );
+}
+
+@visibleForTesting
+bool shouldRestorePendingGakujoPage({
+  required GakujoPortalAuthState authState,
+  required bool restoreAttempted,
+  required bool hasRestoreUrl,
+  required bool currentUrlMatchesRestoreUrl,
+}) {
+  return authState == GakujoPortalAuthState.authenticated &&
+      !restoreAttempted &&
+      hasRestoreUrl &&
+      !currentUrlMatchesRestoreUrl;
+}
+
+@visibleForTesting
+bool shouldConsumePendingGakujoPage({
+  required GakujoPortalAuthState authState,
+  required String currentUrl,
+  required String? restoreUrl,
+}) {
+  return authState == GakujoPortalAuthState.authenticated &&
+      restoreUrl == currentUrl;
+}
+
+@visibleForTesting
+bool isGakujoNavigationRecoveryCandidateUrl(
+  String url, {
+  required bool debugAllowed,
+}) {
+  if (!AllowedWebOrigins.canRestoreLastPage(
+    url,
+    debugAllowed: debugAllowed,
+  )) {
+    return false;
+  }
+  final uri = Uri.tryParse(url);
+  if (uri == null) {
+    return false;
+  }
+  final path = uri.path.toLowerCase();
+  // These shared shell URLs can reveal login controls without changing URL.
+  // They cannot identify the protected page that triggered authentication.
+  if (path.endsWith('/campussmart.do')) {
+    return false;
+  }
+  if (path.endsWith('/campusportal.do') && !uri.hasQuery) {
+    return false;
+  }
+  return true;
+}
+
+@visibleForTesting
+String? selectGakujoSessionRecoveryUrl({
+  required String? navigationCandidateUrl,
+  required String? authenticatedUrl,
+  required String? pendingRestoreUrl,
+}) {
+  return navigationCandidateUrl ?? pendingRestoreUrl ?? authenticatedUrl;
+}
+
+@visibleForTesting
+String? usableGakujoNavigationCandidateForChallenge({
+  required String? navigationCandidateUrl,
+  required String challengeUrl,
+}) {
+  return navigationCandidateUrl == challengeUrl ? null : navigationCandidateUrl;
+}
+
+@visibleForTesting
+String? gakujoInitialPendingRestoreUrl({
+  required String? pendingNotificationUrl,
+  required String? savedUrl,
+}) {
+  return pendingNotificationUrl ?? savedUrl;
+}
+
+@visibleForTesting
+String? gakujoNotificationRestoreTarget(
+  String url, {
+  required bool debugAllowed,
+}) {
+  return AllowedWebOrigins.canRestoreLastPage(
+    url,
+    debugAllowed: debugAllowed,
+  )
+      ? url
+      : null;
+}
+
+@visibleForTesting
+class GakujoCalendarOperationGate {
+  bool _isRunning = false;
+
+  bool get isRunning => _isRunning;
+
+  bool tryStart() {
+    if (_isRunning) {
+      return false;
+    }
+    _isRunning = true;
+    return true;
+  }
+
+  void finish() {
+    _isRunning = false;
+  }
+}
+
+@visibleForTesting
+const gakujoPortalAuthStateProbeScript = r'''
+(function() {
+  var documents = [];
+  function collect(win) {
+    try {
+      if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+        return;
+      }
+      documents.push(win.document);
+      for (var i = 0; i < win.frames.length; i += 1) {
+        collect(win.frames[i]);
+      }
+    } catch (_) {}
+  }
+  function visible(element) {
+    if (!element) {
+      return false;
+    }
+    try {
+      var pageWindow = element.ownerDocument.defaultView || window;
+      var style = pageWindow.getComputedStyle(element);
+      return style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.opacity !== '0' &&
+        element.getClientRects().length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+  function normalizedIdentifiers(element) {
+    return [
+      element.getAttribute && element.getAttribute('name'),
+      element.getAttribute && element.getAttribute('id')
+    ].filter(Boolean).map(function(value) {
+      return String(value).toLowerCase().replace(/[\s_-]+/g, '');
+    });
+  }
+  function controlText(element) {
+    return [
+      element.innerText,
+      element.textContent,
+      element.value,
+      element.getAttribute && element.getAttribute('alt'),
+      element.getAttribute && element.getAttribute('aria-label'),
+      element.getAttribute && element.getAttribute('title')
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  collect(window);
+  var hasLoginFields = false;
+  var hasTwoFactorField = false;
+  var hasAuthenticatedMarker = false;
+  var knownUserIdentifiers = ['userid', 'loginid', 'username', 'jusername'];
+
+  for (var d = 0; d < documents.length; d += 1) {
+    var doc = documents[d];
+    var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
+    var hasKnownUsername = false;
+    var hasPassword = false;
+    for (var i = 0; i < inputs.length; i += 1) {
+      var input = inputs[i];
+      if (!visible(input)) {
+        continue;
+      }
+      var identifiers = normalizedIdentifiers(input);
+      var type = (input.getAttribute('type') || '').toLowerCase();
+      if (identifiers.indexOf('ninshocode') !== -1) {
+        hasTwoFactorField = true;
+      } else if (identifiers.some(function(identifier) {
+        return knownUserIdentifiers.indexOf(identifier) !== -1;
+      })) {
+        hasKnownUsername = true;
+      } else if (type === 'password') {
+        hasPassword = true;
+      }
+    }
+    if (hasKnownUsername && hasPassword) {
+      hasLoginFields = true;
+    }
+
+    var controls = Array.prototype.slice.call(
+      doc.querySelectorAll('a, button, input, [role="button"], img')
+    );
+    for (var c = 0; c < controls.length; c += 1) {
+      if (!visible(controls[c])) {
+        continue;
+      }
+      if (/ログアウト|ログオフ|sign\s*out|log\s*out/.test(controlText(controls[c]))) {
+        hasAuthenticatedMarker = true;
+        break;
+      }
+    }
+  }
+
+  return JSON.stringify({
+    hasLoginFields: hasLoginFields,
+    hasTwoFactorField: hasTwoFactorField,
+    hasAuthenticatedMarker: hasAuthenticatedMarker
+  });
+})()
+''';
+
+@visibleForTesting
+const gakujoAuthenticatedSessionResetScript = r'''
+(function() {
+  delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
+  delete window.__MBG_2FA_AUTO_SUBMITTED_KEY;
+  try {
+    if (!window.sessionStorage) {
+      return 0;
+    }
+    var prefixes = [
+      'MBG_LOGIN_AUTOFILL_ERROR:',
+      'MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:',
+      'MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL:',
+      'MBG_2FA_AUTOFILL_ERROR:',
+      'MBG_2FA_AUTOFILL_SUBMIT_COUNT:'
+    ];
+    var removed = 0;
+    for (var i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
+      var key = window.sessionStorage.key(i) || '';
+      for (var p = 0; p < prefixes.length; p += 1) {
+        if (key.indexOf(prefixes[p]) === 0) {
+          window.sessionStorage.removeItem(key);
+          removed += 1;
+          break;
+        }
+      }
+    }
+    return removed;
+  } catch (_) {
+    return 0;
+  }
+})()
+''';
+
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
@@ -384,6 +707,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _currentCourseName;
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
+  String? _navigationRecoveryCandidateUrl;
+  String? _deferredNavigationAfterPageOperationUrl;
+  String? _deferredNotificationAfterPageOperationUrl;
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
@@ -402,7 +728,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Timer? _desktopHistorySwipeResetTimer;
   Timer? _autoBackupTimer;
   Completer<String>? _nextPageFinishedCompleter;
+  ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
+  final GakujoCalendarOperationGate _calendarOperationGate =
+      GakujoCalendarOperationGate();
+  int _navigationRevision = 0;
 
   static const double _minimumDesktopZoom = 0.5;
   static const double _maximumDesktopZoom = 2.0;
@@ -496,8 +826,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           title: const SizedBox.shrink(),
           actions: [
             GakujoNavigationActions(
-              canGoBack: _canGoBack,
-              canGoForward: _canGoForward,
+              canGoBack: _canGoBack && !_calendarOperationGate.isRunning,
+              canGoForward: _canGoForward && !_calendarOperationGate.isRunning,
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
             ),
@@ -546,6 +876,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             SizedBox.square(
               dimension: _toolbarButtonExtent,
               child: PopupMenuButton<Object>(
+                enabled: !_calendarOperationGate.isRunning,
                 tooltip: 'メニュー',
                 padding: EdgeInsets.zero,
                 iconSize: _toolbarIconSize,
@@ -620,20 +951,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final content = _webViewService.buildWidget(_controller);
 
     if (!_supportsDesktopZoom) {
-      return content;
+      return AbsorbPointer(
+        absorbing: _calendarOperationGate.isRunning,
+        child: content,
+      );
     }
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: _handleDesktopZoomKeyEvent,
-      child: Listener(
-        onPointerHover: _handleDesktopPointerHover,
-        onPointerDown: _handleDesktopPointerDown,
-        onPointerSignal: _handleDesktopZoomPointerSignal,
-        onPointerPanZoomStart: _handleDesktopPanZoomStart,
-        onPointerPanZoomUpdate: _handleDesktopPanZoomUpdate,
-        onPointerPanZoomEnd: _handleDesktopPanZoomEnd,
-        child: content,
+    return AbsorbPointer(
+      absorbing: _calendarOperationGate.isRunning,
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: _handleDesktopZoomKeyEvent,
+        child: Listener(
+          onPointerHover: _handleDesktopPointerHover,
+          onPointerDown: _handleDesktopPointerDown,
+          onPointerSignal: _handleDesktopZoomPointerSignal,
+          onPointerPanZoomStart: _handleDesktopPanZoomStart,
+          onPointerPanZoomUpdate: _handleDesktopPanZoomUpdate,
+          onPointerPanZoomEnd: _handleDesktopPanZoomEnd,
+          child: content,
+        ),
       ),
     );
   }
@@ -999,49 +1336,89 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           setDialogState(() {});
                         },
                         onClear: () async {
-                          await _appSettingsStore.clearLoginCredentials();
-                          TextInput.finishAutofillContext(shouldSave: false);
-                          if (!mounted) {
-                            return;
+                          try {
+                            await _appSettingsStore.clearLoginCredentials();
+                            await _applyFeatureFlagRuntimeState(
+                              GakujoFeatureFlag.loginAutofill,
+                              enabled: false,
+                            );
+                            TextInput.finishAutofillContext(shouldSave: false);
+                            if (!mounted) {
+                              return;
+                            }
+                            setState(() {
+                              _appSettings =
+                                  _appSettings.copyWith(loginCredentials: null);
+                            });
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('ログイン情報を削除しました'),
+                              ),
+                            );
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to clear login credentials',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('ログイン情報を削除できませんでした'),
+                                ),
+                              );
+                            }
                           }
-                          setState(() {
-                            _appSettings =
-                                _appSettings.copyWith(loginCredentials: null);
-                          });
-                          if (!dialogContext.mounted) {
-                            return;
-                          }
-                          setDialogState(() {});
-                          messenger.showSnackBar(
-                            const SnackBar(content: Text('ログイン情報を削除しました')),
-                          );
                         },
                         onSave: () async {
-                          await _appSettingsStore.saveLoginCredentials(
-                            loginId: loginIdInput,
-                            password: loginPasswordInput,
-                          );
-                          TextInput.finishAutofillContext(shouldSave: true);
-                          if (!mounted) {
-                            return;
-                          }
-                          final credentials = GakujoLoginCredentials(
-                            loginId: loginIdInput.trim(),
-                            password: loginPasswordInput,
-                          );
-                          setState(() {
-                            _appSettings = _appSettings.copyWith(
-                              loginCredentials: credentials,
+                          try {
+                            await _appSettingsStore.saveLoginCredentials(
+                              loginId: loginIdInput,
+                              password: loginPasswordInput,
                             );
-                          });
-                          if (!dialogContext.mounted) {
-                            return;
+                            TextInput.finishAutofillContext(shouldSave: true);
+                            if (!mounted) {
+                              return;
+                            }
+                            final credentials = GakujoLoginCredentials(
+                              loginId: loginIdInput.trim(),
+                              password: loginPasswordInput,
+                            );
+                            setState(() {
+                              _appSettings = _appSettings.copyWith(
+                                loginCredentials: credentials,
+                              );
+                            });
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text('ログイン情報を保存しました'),
+                              ),
+                            );
+                            await _injectLoginAutofillAssistIfAllowed();
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to save login credentials',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('ログイン情報を保存できませんでした'),
+                                ),
+                              );
+                            }
                           }
-                          setDialogState(() {});
-                          messenger.showSnackBar(
-                            const SnackBar(content: Text('ログイン情報を保存しました')),
-                          );
-                          await _injectLoginAutofillAssistIfAllowed();
                         },
                       ),
                       const Divider(height: 32),
@@ -1052,11 +1429,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           setDialogState(() {});
                         },
                         onClear: () async {
-                          await _secretStore.clear();
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              const SnackBar(content: Text('2FA秘密鍵を削除しました')),
+                          try {
+                            await _secretStore.clear();
+                            await _applyFeatureFlagRuntimeState(
+                              GakujoFeatureFlag.twoFactorAutofill,
+                              enabled: false,
                             );
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('2FA秘密鍵を削除しました'),
+                                ),
+                              );
+                            }
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to clear two-factor secret',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('2FA秘密鍵を削除できませんでした'),
+                                ),
+                              );
+                            }
                           }
                         },
                         onSave: () async {
@@ -1073,6 +1472,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               messenger.showSnackBar(
                                 const SnackBar(
                                   content: Text('長いBase32秘密鍵を確認してください'),
+                                ),
+                              );
+                            }
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to save two-factor secret',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('2FA秘密鍵を保存できませんでした'),
                                 ),
                               );
                             }
@@ -1146,7 +1559,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         return;
                       }
                       setDialogState(() {});
-                      await _controller.loadUrl(mode.startUrl);
+                      await _loadAllowedPageUrl(mode.startUrl);
                     },
                   ),
                 ),
@@ -1327,6 +1740,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             );
 
             Future<void> complete() async {
+              final previousSettings = _appSettings;
               Object? saveError;
               StackTrace? saveStackTrace;
               try {
@@ -1352,6 +1766,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 _appSettings = wizardSettings;
               });
               _scheduleAutoBackup();
+              await _applyChangedRuntimeFeatureFlags(
+                previousSettings,
+                wizardSettings,
+              );
               if (!dialogContext.mounted) {
                 return;
               }
@@ -1631,6 +2049,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _showActivityDialog() async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出を処理中です');
+      return;
+    }
     var deadlines = await _activityStore.loadDeadlines();
     if (!mounted) {
       return;
@@ -2047,6 +2469,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
       case _ToolbarAction.reload:
+        if (_calendarOperationGate.isRunning) {
+          _showSnackBar('カレンダー連携または再検出の完了後に再読込してください');
+          return;
+        }
         await _controller.reload();
         return;
       case _ToolbarAction.addFavorite:
@@ -2155,9 +2581,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectMessageFilterIfAllowed();
   }
 
-  Future<void> _loadAllowedPageUrl(String url) async {
+  Future<void> _loadAllowedPageUrl(
+    String url, {
+    bool ownsPageNavigationOperation = false,
+  }) async {
     if (!AllowedWebOrigins.canNavigate(url, debugAllowed: _debugAllowed)) {
       _showSnackBar('許可されていない外部URLは開けません');
+      return;
+    }
+    if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
+      if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+        _deferredNavigationAfterPageOperationUrl = url;
+        _showSnackBar('処理完了後にページを開きます');
+      } else {
+        _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
+      }
       return;
     }
     await _controller.loadUrl(url);
@@ -2169,11 +2607,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final completer = Completer<String>();
     _nextPageFinishedCompleter = completer;
     return completer.future.timeout(timeout, onTimeout: () => '').then(
-      (url) {
+      (url) async {
         if (identical(_nextPageFinishedCompleter, completer)) {
           _nextPageFinishedCompleter = null;
         }
-        return url.isEmpty ? null : url;
+        if (url.isEmpty) {
+          return null;
+        }
+        final processing = _pageFinishedProcessing;
+        if (processing != null && processing.url == url) {
+          await processing.completer.future;
+        }
+        return url;
       },
     );
   }
@@ -2196,10 +2641,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return segments.isEmpty ? 'Gakujo' : segments.last;
   }
 
-  Future<bool> _quickJumpTo(String label, {String? fallbackUrl}) async {
+  Future<bool> _quickJumpTo(
+    String label, {
+    String? fallbackUrl,
+    bool ownsPageNavigationOperation = false,
+  }) async {
+    if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
+      _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
+      return false;
+    }
     if (!_canRunPageScripts) {
       if (fallbackUrl != null) {
-        await _loadAllowedPageUrl(fallbackUrl);
+        await _loadAllowedPageUrl(
+          fallbackUrl,
+          ownsPageNavigationOperation: ownsPageNavigationOperation,
+        );
         return true;
       } else {
         _showSnackBar('ページを読み込んでから使ってください');
@@ -2263,7 +2719,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     if (fallbackUrl != null) {
-      await _loadAllowedPageUrl(fallbackUrl);
+      await _loadAllowedPageUrl(
+        fallbackUrl,
+        ownsPageNavigationOperation: ownsPageNavigationOperation,
+      );
       return true;
     } else {
       _showSnackBar('$label が見つかりませんでした');
@@ -2299,8 +2758,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<_ActivityScanResult?> _rescanActivityForBell() async {
-    final originalUrl = await _currentActionableUrl();
+    if (!_tryStartPageNavigationOperation()) {
+      _showSnackBar('カレンダー連携または再検出を処理中です');
+      return null;
+    }
+    String? originalUrl;
     try {
+      originalUrl = await _currentActionableUrl();
       var combinedResult = await _scanCurrentActionablePageActivity();
       if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
         return combinedResult;
@@ -2330,7 +2794,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
       return combinedResult;
     } finally {
-      await _restorePageAfterBellScan(originalUrl);
+      try {
+        await _restorePageAfterBellScan(originalUrl);
+      } finally {
+        await _finishPageNavigationOperation();
+      }
     }
   }
 
@@ -2344,14 +2812,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (currentUrl == originalUrl) {
       return;
     }
-    await _loadAllowedPageUrl(originalUrl);
+    final pageFinished = _waitForNextPageFinished(
+      timeout: const Duration(seconds: 8),
+    );
+    await _loadAllowedPageUrl(
+      originalUrl,
+      ownsPageNavigationOperation: true,
+    );
+    await pageFinished;
   }
 
   Future<_ActivityScanResult?> _scanQuickJumpPageForBell({
     required String label,
   }) async {
     final finished = _waitForNextPageFinished();
-    final jumped = await _quickJumpTo(label);
+    final jumped = await _quickJumpTo(
+      label,
+      ownsPageNavigationOperation: true,
+    );
     if (!jumped) {
       return null;
     }
@@ -2859,20 +3337,96 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<void> _handleSessionExpiredIfNeeded(String url) async {
+  Future<GakujoPortalAuthState> _readPortalAuthState() async {
+    if (!_canRunPageScripts) {
+      return GakujoPortalAuthState.unknown;
+    }
+    try {
+      // campussmart.do can reveal its login controls shortly after the page
+      // callback. Give that DOM mutation time to settle before classifying the
+      // shared portal URL as an ordinary authenticated page.
+      for (var attempt = 0; attempt < 3; attempt += 1) {
+        final result = await _controller.runJavaScriptReturningResult(
+          gakujoPortalAuthStateProbeScript,
+        );
+        final state = gakujoPortalAuthStateFromJavaScriptResult(result);
+        if (state != GakujoPortalAuthState.unknown || attempt == 2) {
+          return state;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 175));
+      }
+      return GakujoPortalAuthState.unknown;
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to inspect Gakujo authentication state',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return GakujoPortalAuthState.unknown;
+    }
+  }
+
+  Future<void> _resetAutofillSessionStateAfterAuthentication() async {
+    try {
+      await _controller.runJavaScript(gakujoAuthenticatedSessionResetScript);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to reset completed login autofill session state',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  bool _isCurrentPageCallback(String url, int navigationRevision) {
+    return mounted &&
+        navigationRevision == _navigationRevision &&
+        _currentPageUrl == url;
+  }
+
+  Future<void> _handleSessionExpiredIfNeeded(
+    String url, {
+    required GakujoPortalAuthState authState,
+  }) async {
+    if (!AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+      return;
+    }
+    final urlLooksLikeLoginOrTimeout = _looksLikeLoginOrTimeoutUrl(url);
+    if (!isGakujoAuthenticationChallenge(
+      authState: authState,
+      urlLooksLikeLoginOrTimeout: urlLooksLikeLoginOrTimeout,
+    )) {
+      return;
+    }
+    final navigationCandidateUrl = usableGakujoNavigationCandidateForChallenge(
+      navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+      challengeUrl: url,
+    );
+    if (navigationCandidateUrl == null &&
+        _navigationRecoveryCandidateUrl == url) {
+      _navigationRecoveryCandidateUrl = null;
+    }
+    final recoveryUrl = selectGakujoSessionRecoveryUrl(
+      navigationCandidateUrl: navigationCandidateUrl,
+      authenticatedUrl: _sessionRecoveryUrl,
+      pendingRestoreUrl: _pendingLoginRestoreUrl,
+    );
+    if (shouldResetGakujoLoginRestoreAttempt(
+      authState: authState,
+      urlLooksLikeLoginOrTimeout: urlLooksLikeLoginOrTimeout,
+      hasRecoveryUrl: recoveryUrl != null,
+    )) {
+      _pendingLoginRestoreUrl = recoveryUrl;
+      _loginRestoreAttempted = false;
+    }
     if (!_appSettings.isFeatureEnabled(
       GakujoFeatureFlag.sessionRecoveryGuide,
     )) {
       return;
     }
-    if (!AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
-      return;
-    }
-    if (!_looksLikeLoginOrTimeoutUrl(url)) {
-      return;
-    }
     _setStatus('ログインが切れた可能性があります: ${_displayUrl(url)}');
-    final recoveryUrl = _sessionRecoveryUrl ?? _pendingLoginRestoreUrl;
     if (!mounted ||
         recoveryUrl == null ||
         !AllowedWebOrigins.canLoad(recoveryUrl, debugAllowed: _debugAllowed)) {
@@ -2882,7 +3436,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     _lastSessionRecoveryNoticeUrl = url;
-    _pendingLoginRestoreUrl = recoveryUrl;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('ログインが切れた可能性があります'),
@@ -2899,10 +3452,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool _looksLikeLoginOrTimeoutUrl(String url) {
-    final lower = url.toLowerCase();
-    return lower.contains('timeout') ||
-        lower.contains('login') ||
-        lower.contains('logout');
+    return AllowedWebOrigins.isTransientPage(url);
   }
 
   Future<void> _exportSettingsToClipboard() async {
@@ -3110,6 +3660,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    if (enabled && flag == GakujoFeatureFlag.loginAutofill) {
+      await _injectLoginAutofillAssistIfAllowed();
+      return;
+    }
+    if (enabled && flag == GakujoFeatureFlag.twoFactorAutofill) {
+      await _injectTwoFactorAutofillIfAllowed();
+      return;
+    }
+    if (enabled && flag == GakujoFeatureFlag.gpaDisplay) {
+      await _injectGpaDisplayIfAllowed();
+      return;
+    }
+
     final _PageScriptBuilder? builder;
     if (flag == GakujoFeatureFlag.downloadCapture) {
       builder = enabled
@@ -3270,7 +3833,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
 
       final token = _totpGenerator.currentToken(secret);
-      final script = TwoFactorAutofillScript.build(token: token);
+      final script = TwoFactorAutofillScript.build(
+        token: token,
+        secret: secret,
+      );
       await _controller.runJavaScript(script);
     } catch (error, stackTrace) {
       developer.log(
@@ -3302,9 +3868,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _notificationService.takePendingNotificationUrl(),
       debugAllowed: _debugAllowed,
     );
-    if (_appSettings.hasLoginCredentials) {
-      _pendingLoginRestoreUrl = pendingNotificationUrl ?? savedUrl;
-    }
+    // Preserve the requested page even when login will be completed manually.
+    // In particular, macOS can intentionally start from its non-secret mirror
+    // without loading credentials from Keychain.
+    _pendingLoginRestoreUrl = gakujoInitialPendingRestoreUrl(
+      pendingNotificationUrl: pendingNotificationUrl,
+      savedUrl: savedUrl,
+    );
     final startUrl = pendingNotificationUrl != null &&
             !_appSettings.hasLoginCredentials
         ? pendingNotificationUrl
@@ -3323,6 +3893,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _initialPageLoaded;
     if (!mounted) {
       return;
+    }
+    if (_calendarOperationGate.isRunning) {
+      // Do not publish this as the auth restore target yet. An authenticated
+      // callback from the in-flight calendar navigation would consume it and
+      // interrupt extraction before the operation releases the WebView.
+      _deferredNotificationAfterPageOperationUrl = targetUrl;
+      _showSnackBar('処理完了後に通知のページを開きます');
+      return;
+    }
+    final restoreTarget = gakujoNotificationRestoreTarget(
+      targetUrl,
+      debugAllowed: _debugAllowed,
+    );
+    if (restoreTarget != null) {
+      // A notification can be tapped while a login shell is already visible.
+      // Preserve its destination explicitly because onPageStarted cannot infer
+      // the protected request from an unauthenticated current page.
+      _pendingLoginRestoreUrl = restoreTarget;
+      _loginRestoreAttempted = false;
+      _navigationRecoveryCandidateUrl = restoreTarget;
     }
     await _controller.loadUrl(targetUrl);
   }
@@ -3376,51 +3966,129 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (_isInternalBlankUrl(url)) {
             return;
           }
+          if (_currentPageUrl == _sessionRecoveryUrl &&
+              url != _sessionRecoveryUrl &&
+              isGakujoNavigationRecoveryCandidateUrl(
+                url,
+                debugAllowed: _debugAllowed,
+              )) {
+            // Freeze the first protected destination. Redirects to a shared
+            // login shell must not replace it before the DOM probe runs.
+            _navigationRecoveryCandidateUrl = url;
+          }
+          _navigationRevision += 1;
           _currentPageUrl = url;
           if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
             _lastAllowedPageUrl = url;
-            if (!_looksLikeLoginOrTimeoutUrl(url)) {
-              _sessionRecoveryUrl = url;
-              _lastSessionRecoveryNoticeUrl = null;
-            }
           }
           unawaited(_refreshNavigationState());
           _setStatus('読込中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
-          _notifyPageFinishedWaiters(url);
-          if (_isInternalBlankUrl(url)) {
-            await _injectDownloadCaptureIfAllowed();
-            await _injectGpaDisplayIfAllowed();
-            await _injectOriginalExtensionFeaturesIfAllowed();
-            await _injectMessageFilterIfAllowed();
-            await _injectReportDraftIfAllowed();
-            await _applyDesktopZoomIfAllowed();
-            return;
-          }
-          _currentPageUrl = url;
-          if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
-            _lastAllowedPageUrl = url;
-            if (!_looksLikeLoginOrTimeoutUrl(url)) {
+          final processing = Completer<void>();
+          _pageFinishedProcessing = (url: url, completer: processing);
+          try {
+            _notifyPageFinishedWaiters(url);
+            if (_isInternalBlankUrl(url)) {
+              await _injectDownloadCaptureIfAllowed();
+              await _injectGpaDisplayIfAllowed();
+              await _injectOriginalExtensionFeaturesIfAllowed();
+              await _injectMessageFilterIfAllowed();
+              await _injectReportDraftIfAllowed();
+              await _applyDesktopZoomIfAllowed();
+              return;
+            }
+            final navigationRevision = _navigationRevision;
+            bool stillCurrent() =>
+                _isCurrentPageCallback(url, navigationRevision);
+            if (!stillCurrent()) {
+              return;
+            }
+            if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+              _lastAllowedPageUrl = url;
+            }
+            _setStatus('表示中: ${_displayUrl(url)}');
+            final authState = await _readPortalAuthState();
+            if (!stillCurrent()) {
+              return;
+            }
+            final isAuthenticationChallenge = isGakujoAuthenticationChallenge(
+              authState: authState,
+              urlLooksLikeLoginOrTimeout: _looksLikeLoginOrTimeoutUrl(url),
+            );
+            await _handleSessionExpiredIfNeeded(url, authState: authState);
+            if (!stillCurrent()) {
+              return;
+            }
+            if (authState == GakujoPortalAuthState.authenticated) {
               _sessionRecoveryUrl = url;
+              _navigationRecoveryCandidateUrl = null;
               _lastSessionRecoveryNoticeUrl = null;
+              await _resetAutofillSessionStateAfterAuthentication();
+              if (!stillCurrent()) {
+                return;
+              }
+              await _saveLastPageUrl(url);
+              if (!stillCurrent()) {
+                return;
+              }
+            }
+            await _refreshNavigationState();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectLoginAutofillAssistIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectTwoFactorAutofillIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectDownloadCaptureIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectGpaDisplayIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectOriginalExtensionFeaturesIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectMessageFilterIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectReportDraftIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _applyDesktopZoomIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _refreshEstimatedCourseName();
+            if (!stillCurrent()) {
+              return;
+            }
+            if (!isAuthenticationChallenge) {
+              await _scanCurrentPageActivity(url);
+              if (!stillCurrent()) {
+                return;
+              }
+            }
+            await _restoreLastPageAfterLoginIfNeeded(
+              url,
+              authState: authState,
+              navigationRevision: navigationRevision,
+            );
+          } finally {
+            if (!processing.isCompleted) {
+              processing.complete();
             }
           }
-          _setStatus('表示中: ${_displayUrl(url)}');
-          await _saveLastPageUrl(url);
-          await _refreshNavigationState();
-          await _injectLoginAutofillAssistIfAllowed();
-          await _injectTwoFactorAutofillIfAllowed();
-          await _injectDownloadCaptureIfAllowed();
-          await _injectGpaDisplayIfAllowed();
-          await _injectOriginalExtensionFeaturesIfAllowed();
-          await _injectMessageFilterIfAllowed();
-          await _injectReportDraftIfAllowed();
-          await _applyDesktopZoomIfAllowed();
-          await _refreshEstimatedCourseName();
-          await _handleSessionExpiredIfNeeded(url);
-          await _scanCurrentPageActivity(url);
-          await _restoreLastPageAfterLoginIfNeeded(url);
         },
         onWebResourceError: (error) {
           _setStatus('読込エラー: ${error.description}');
@@ -3500,7 +4168,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _appSettings = fallbackSettings;
         _appSettingsLoaded = true;
       });
-      _setStatus('キーチェーンにアクセスできません');
+      _setStatus('保存データにアクセスできません');
       if (error is! TimeoutException) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -3538,7 +4206,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           platform: defaultTargetPlatform,
         );
         return AlertDialog(
-          title: const Text('キーチェーンにアクセスできません'),
+          title: const Text('保存データにアクセスできません'),
           content: Text(
             '保存済みログイン情報や2FA設定を読み込めませんでした。\n\n'
             '$guidance\n\n'
@@ -3585,7 +4253,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return AlertDialog(
           title: const Text('保存データをリセットしますか'),
           content: const Text(
-            'Keychain に保存したログイン情報、2FA秘密鍵、設定、履歴データを削除します。'
+            '安全な保存領域に保存したログイン情報、2FA秘密鍵、設定、履歴データを削除します。'
             '削除後はログイン情報と2FA設定を入れ直してください。',
           ),
           actions: [
@@ -3607,17 +4275,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await SecureStorageFactory.resetMacosStorage();
+      await SecureStorageFactory.resetStorage();
       await _localPrefsStore.clear();
+      await _applyFeatureFlagRuntimeState(
+        GakujoFeatureFlag.loginAutofill,
+        enabled: false,
+      );
+      await _applyFeatureFlagRuntimeState(
+        GakujoFeatureFlag.twoFactorAutofill,
+        enabled: false,
+      );
       if (!mounted) {
         return;
       }
+      _secureStorageAccessAllowed = true;
       setState(() {
         _appSettings = const GakujoAppSettings();
         _appSettingsLoaded = true;
         _deadlineCount = 0;
       });
-      _setStatus('キーチェーン保存データをリセットしました');
+      _setStatus('保存データをリセットしました');
       _showSnackBar('保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -3627,7 +4304,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         stackTrace: stackTrace,
       );
       if (mounted) {
-        _showSnackBar('キーチェーンをリセットできませんでした: $error');
+        _showSnackBar('保存データをリセットできませんでした: $error');
       }
     }
   }
@@ -3659,12 +4336,32 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<void> _restoreLastPageAfterLoginIfNeeded(String currentUrl) async {
+  Future<void> _restoreLastPageAfterLoginIfNeeded(
+    String currentUrl, {
+    required GakujoPortalAuthState authState,
+    required int navigationRevision,
+  }) async {
     final restoreUrl = _pendingLoginRestoreUrl;
-    if (_loginRestoreAttempted ||
+    if (_isCurrentPageCallback(currentUrl, navigationRevision) &&
+        shouldConsumePendingGakujoPage(
+          authState: authState,
+          currentUrl: currentUrl,
+          restoreUrl: restoreUrl,
+        )) {
+      // The initial request may already have reached the saved page without a
+      // login challenge. Consume the pending target so a later navigation does
+      // not unexpectedly jump back to it.
+      _pendingLoginRestoreUrl = null;
+      return;
+    }
+    if (!_isCurrentPageCallback(currentUrl, navigationRevision) ||
+        !shouldRestorePendingGakujoPage(
+          authState: authState,
+          restoreAttempted: _loginRestoreAttempted,
+          hasRestoreUrl: restoreUrl != null,
+          currentUrlMatchesRestoreUrl: restoreUrl == currentUrl,
+        ) ||
         restoreUrl == null ||
-        restoreUrl == currentUrl ||
-        _looksLikeLoginOrTimeoutUrl(currentUrl) ||
         !AllowedWebOrigins.canLoad(restoreUrl, debugAllowed: _debugAllowed) ||
         !AllowedWebOrigins.canLoad(currentUrl, debugAllowed: _debugAllowed)) {
       return;
@@ -3677,6 +4374,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _handleSystemBack() async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出の完了後に戻ってください');
+      return;
+    }
     if (await _goBackIfPossible()) {
       return;
     }
@@ -3688,12 +4389,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _goBack() async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出の完了後に戻ってください');
+      return;
+    }
     if (!await _goBackIfPossible() && mounted) {
       _showSnackBar('前のページはありません');
     }
   }
 
   Future<bool> _goBackIfPossible() async {
+    if (_calendarOperationGate.isRunning) {
+      return false;
+    }
     if (!await _controller.canGoBack()) {
       await _refreshNavigationState();
       return false;
@@ -3705,11 +4413,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _goForward() async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出の完了後に進んでください');
+      return;
+    }
     await _goForwardIfPossible();
     await _refreshNavigationState();
   }
 
   Future<bool> _goForwardIfPossible() async {
+    if (_calendarOperationGate.isRunning) {
+      return false;
+    }
     if (!await _controller.canGoForward()) {
       await _refreshNavigationState();
       return false;
@@ -3738,19 +4453,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _saveCurrentPageUrl() async {
-    String? url;
-    try {
-      url = await _controller.currentUrl();
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to read current WebView URL',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    await _saveLastPageUrl(url ?? _currentPageUrl);
+    // Only a page that passed the authenticated DOM probe may replace the
+    // restorable URL. Login, 2FA, logout and timeout screens often reuse the
+    // same campusportal/campussmart paths as authenticated pages.
+    await _saveLastPageUrl(_sessionRecoveryUrl);
   }
 
   Future<void> _saveLastPageUrl(String? url) async {
@@ -3814,6 +4520,65 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  bool _tryStartPageNavigationOperation() {
+    if (!_calendarOperationGate.tryStart()) {
+      return false;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+    return true;
+  }
+
+  Future<void> _finishPageNavigationOperation() async {
+    final deferredNotificationUrl = _deferredNotificationAfterPageOperationUrl;
+    final deferredUrl =
+        deferredNotificationUrl ?? _deferredNavigationAfterPageOperationUrl;
+    _deferredNotificationAfterPageOperationUrl = null;
+    _deferredNavigationAfterPageOperationUrl = null;
+    try {
+      if (!mounted ||
+          deferredUrl == null ||
+          !AllowedWebOrigins.canLoad(
+            deferredUrl,
+            debugAllowed: _debugAllowed,
+          )) {
+        return;
+      }
+      if (deferredNotificationUrl != null) {
+        final restoreTarget = gakujoNotificationRestoreTarget(
+          deferredNotificationUrl,
+          debugAllowed: _debugAllowed,
+        );
+        if (restoreTarget != null) {
+          _pendingLoginRestoreUrl = restoreTarget;
+          _loginRestoreAttempted = false;
+          _navigationRecoveryCandidateUrl = restoreTarget;
+        }
+      }
+      final pageFinished = _waitForNextPageFinished(
+        timeout: const Duration(seconds: 8),
+      );
+      await _controller.loadUrl(deferredUrl);
+      await pageFinished;
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to open navigation deferred by a page operation',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showSnackBar('保留したページを開けませんでした');
+      }
+    } finally {
+      _calendarOperationGate.finish();
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   bool get _canRunPageScripts {

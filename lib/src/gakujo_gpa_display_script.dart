@@ -4,7 +4,7 @@ class GakujoGpaDisplayScript {
   static String build() {
     return r'''
 (function() {
-  var version = 6;
+  var version = 7;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -12,6 +12,15 @@ class GakujoGpaDisplayScript {
     return;
   }
   window.__MBG_GPA_DISPLAY_VERSION = version;
+  window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
+  var previousStartupTimers = window.__MBG_GPA_DISPLAY_STARTUP_TIMERS || [];
+  for (var timerIndex = 0;
+      timerIndex < previousStartupTimers.length;
+      timerIndex += 1) {
+    window.clearTimeout(previousStartupTimers[timerIndex]);
+  }
+  window.__MBG_GPA_DISPLAY_STARTUP_TIMERS = [];
+  window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
   if (window.__MBG_GPA_DISPLAY_OBSERVERS) {
     for (var observerIndex = 0;
         observerIndex < window.__MBG_GPA_DISPLAY_OBSERVERS.length;
@@ -209,6 +218,9 @@ class GakujoGpaDisplayScript {
     var title = 'GPが入力されている科目の加重平均 GPA: ' +
       gpa.toFixed(4) + ' / 対象単位数: ' + credits.toFixed(1);
     var display = headerCell.querySelector('.mbg-gpa-display');
+    if (display) {
+      display.setAttribute('data-mbg-gpa-display-owned', 'true');
+    }
     if (display && display.textContent === text && display.title === title) {
       return;
     }
@@ -219,6 +231,7 @@ class GakujoGpaDisplayScript {
     }
     display = headerCell.ownerDocument.createElement('div');
     display.className = 'mbg-gpa-display';
+    display.setAttribute('data-mbg-gpa-display-owned', 'true');
     display.textContent = text;
     display.title = title;
     display.style.marginTop = '1px';
@@ -325,6 +338,7 @@ class GakujoGpaDisplayScript {
     var button = document.createElement('button');
     button.id = id;
     button.type = 'button';
+    button.setAttribute('data-mbg-gpa-display-owned', 'true');
     button.textContent = label;
     button.addEventListener('click', handler);
     target.appendChild(button);
@@ -421,11 +435,110 @@ class GakujoGpaDisplayScript {
 
   window.__MBG_UPDATE_GPA_DISPLAY = updateAll;
   updateAll();
-  window.setTimeout(updateAll, 500);
-  window.setTimeout(updateAll, 1500);
-  window.setTimeout(updateAll, 3000);
-  window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
+  window.__MBG_GPA_DISPLAY_STARTUP_TIMERS = [
+    window.setTimeout(updateAll, 500),
+    window.setTimeout(updateAll, 1500),
+    window.setTimeout(updateAll, 3000)
+  ];
   window.__MBG_GPA_DISPLAY_INTERVAL = window.setInterval(updateAll, 500);
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
+  var startupTimers = window.__MBG_GPA_DISPLAY_STARTUP_TIMERS || [];
+  for (var timerIndex = 0;
+      timerIndex < startupTimers.length;
+      timerIndex += 1) {
+    window.clearTimeout(startupTimers[timerIndex]);
+  }
+  window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
+
+  var observers = window.__MBG_GPA_DISPLAY_OBSERVERS || [];
+  for (var observerIndex = 0;
+      observerIndex < observers.length;
+      observerIndex += 1) {
+    try {
+      observers[observerIndex].disconnect();
+    } catch (e) {}
+  }
+
+  var documents = [];
+  function addDocument(documentRef) {
+    if (documentRef && documents.indexOf(documentRef) < 0) {
+      documents.push(documentRef);
+    }
+  }
+
+  var observedDocuments = window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS || [];
+  for (var documentIndex = 0;
+      documentIndex < observedDocuments.length;
+      documentIndex += 1) {
+    addDocument(observedDocuments[documentIndex]);
+  }
+
+  function collectDocuments(win) {
+    try {
+      addDocument(win.document);
+      for (var frameIndex = 0; frameIndex < win.frames.length; frameIndex += 1) {
+        collectDocuments(win.frames[frameIndex]);
+      }
+    } catch (e) {}
+  }
+  collectDocuments(window);
+  try {
+    var mainFrame = window.document.getElementById('main-frame-if');
+    if (mainFrame && mainFrame.contentWindow) {
+      addDocument(mainFrame.contentWindow.document);
+    }
+  } catch (e) {}
+
+  var controlIds = [
+    'mbg-grade-no-button',
+    'mbg-grade-open-number-button',
+    'mbg-grade-score-button'
+  ];
+  for (var i = 0; i < documents.length; i += 1) {
+    try {
+      var ownedElements = documents[i].querySelectorAll(
+        '[data-mbg-gpa-display-owned="true"]'
+      );
+      for (var ownedIndex = 0;
+          ownedIndex < ownedElements.length;
+          ownedIndex += 1) {
+        ownedElements[ownedIndex].remove();
+      }
+
+      var legacyDisplays = documents[i].querySelectorAll('.mbg-gpa-display');
+      for (var displayIndex = 0;
+          displayIndex < legacyDisplays.length;
+          displayIndex += 1) {
+        legacyDisplays[displayIndex].remove();
+      }
+
+      for (var controlIndex = 0;
+          controlIndex < controlIds.length;
+          controlIndex += 1) {
+        var legacyControl = documents[i].getElementById(
+          controlIds[controlIndex]
+        );
+        if (legacyControl) {
+          legacyControl.remove();
+        }
+      }
+    } catch (e) {}
+  }
+
+  delete window.__MBG_GPA_DISPLAY_TIMER;
+  delete window.__MBG_GPA_DISPLAY_STARTUP_TIMERS;
+  delete window.__MBG_GPA_DISPLAY_INTERVAL;
+  delete window.__MBG_GPA_DISPLAY_OBSERVERS;
+  delete window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
+  delete window.__MBG_UPDATE_GPA_DISPLAY;
+  delete window.__MBG_GPA_DISPLAY_VERSION;
 })();
 ''';
   }

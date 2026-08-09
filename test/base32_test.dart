@@ -26,7 +26,19 @@ void main() {
   });
 
   test('rejects empty and invalid input', () {
-    for (final secret in ['', '1', '8', 'MZXW6!']) {
+    for (final secret in [
+      '',
+      '1',
+      '8',
+      'A',
+      'ABC',
+      'ABCDEF',
+      'MZXW6!',
+      'MY=',
+      'MY=====',
+      'MZXW6====',
+      'M=Y=====',
+    ]) {
       expect(() => Base32.decode(secret), throwsFormatException);
     }
   });
@@ -40,5 +52,7 @@ void main() {
     expect(Base32.isValid(''), isFalse);
     expect(Base32.isValid('JBSWY3DP1'), isFalse);
     expect(Base32.isValid('MZXW6==='), isTrue);
+    expect(Base32.isValid('A'), isFalse);
+    expect(Base32.isValid('MY='), isFalse);
   });
 }

@@ -426,6 +426,13 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return cookieStoreHeader;
     }
 
+    // WebView2 does not currently expose its complete cookie store through the
+    // controller. document.cookie can contain only a non-HttpOnly subset and
+    // would make the downloader skip the authenticated WebView-session path.
+    if (Platform.isWindows) {
+      return null;
+    }
+
     if (!_canRunPageScripts) {
       return null;
     }

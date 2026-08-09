@@ -289,7 +289,7 @@ class GakujoAcademicCalendarPdfParser {
       }
       for (var day = start;
           !day.isAfter(end);
-          day = day.add(const Duration(days: 1))) {
+          day = DateTime(day.year, day.month, day.day + 1)) {
         if (day.weekday != DateTime.saturday &&
             day.weekday != DateTime.sunday) {
           dates.add(day);

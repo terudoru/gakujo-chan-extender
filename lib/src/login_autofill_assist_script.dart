@@ -1,21 +1,47 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 class LoginAutofillAssistScript {
   const LoginAutofillAssistScript._();
 
   static const channelName = 'MoreBetterGakujoLoginAutofill';
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.__MBG_LOGIN_AUTOFILL_DISABLED = true;
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+  delete window.__MBG_LOGIN_AUTOFILL_TIMER;
+  delete window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER;
+  delete window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION;
+})();
+''';
+  }
 
   static String build({
     GakujoLoginAutofillCredentials? credentials,
   }) {
     final username = jsonEncode(credentials?.loginId);
     final password = jsonEncode(credentials?.password);
+    final credentialKey = jsonEncode(
+      credentials == null
+          ? null
+          : sha256
+              .convert(
+                utf8.encode(
+                    '${credentials.loginId}\u0000${credentials.password}'),
+              )
+              .toString(),
+    );
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var assistVersion = 7;
+  var assistVersion = 8;
   var savedUsername = $username;
   var savedPassword = $password;
+  var savedCredentialKey = $credentialKey;
   var logChannelName = $channelName;
   if (window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION === assistVersion) {
     if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
@@ -23,7 +49,9 @@ class LoginAutofillAssistScript {
     }
   }
   window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION = assistVersion;
+  window.__MBG_LOGIN_AUTOFILL_DISABLED = false;
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
 
   function report(event, detail) {
     var payload = {
@@ -46,9 +74,14 @@ class LoginAutofillAssistScript {
 
   report('start', 'version=' + assistVersion);
 
-  function sessionKey(suffix) {
+  function pageSessionKey(suffix) {
     var normalizedUrl = location.origin + location.pathname;
     return 'MBG_LOGIN_AUTOFILL_' + suffix + ':' + normalizedUrl;
+  }
+
+  function sessionKey(suffix) {
+    return pageSessionKey(suffix) + ':' +
+      (savedCredentialKey || 'no-credentials');
   }
 
   function sessionValue(key) {
@@ -81,19 +114,38 @@ class LoginAutofillAssistScript {
   }
 
   function shouldBlockAutoSubmit() {
-    if (window.__MBG_LOGIN_AUTOFILL_SUBMITTED) {
+    if (window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY ===
+        (savedCredentialKey || 'no-credentials')) {
       return true;
     }
-    if (sessionValue(sessionKey('ERROR')) === '1' || hasLoginError()) {
-      setSessionValue(sessionKey('ERROR'), '1');
+    if (sessionValue(sessionKey('ERROR')) === '1') {
       return true;
     }
     var attempts = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
-    return attempts >= 1;
+    if (attempts >= 1) {
+      if (hasLoginError()) {
+        setSessionValue(sessionKey('ERROR'), '1');
+      }
+      return true;
+    }
+    var currentCredentialKey = savedCredentialKey || 'no-credentials';
+    var previousCredentialKey = sessionValue(pageSessionKey('LAST_CREDENTIAL'));
+    var credentialsChanged = previousCredentialKey &&
+      previousCredentialKey !== currentCredentialKey;
+    if (hasLoginError() && !credentialsChanged) {
+      setSessionValue(sessionKey('ERROR'), '1');
+      return true;
+    }
+    return false;
   }
 
   function markAutoSubmitAttempted() {
-    window.__MBG_LOGIN_AUTOFILL_SUBMITTED = true;
+    window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY =
+      savedCredentialKey || 'no-credentials';
+    setSessionValue(
+      pageSessionKey('LAST_CREDENTIAL'),
+      savedCredentialKey || 'no-credentials'
+    );
     var key = sessionKey('SUBMIT_COUNT');
     var attempts = parseInt(sessionValue(key) || '0', 10);
     if (!isFinite(attempts) || attempts < 0) {
@@ -133,7 +185,7 @@ class LoginAutofillAssistScript {
     return documents;
   }
 
-  function textAround(input) {
+  function fieldLabelText(input) {
     var pieces = [
       input.getAttribute('name'),
       input.getAttribute('id'),
@@ -151,9 +203,9 @@ class LoginAutofillAssistScript {
       }
     }
 
-    var parent = input.closest('tr, p, div, li, label');
-    if (parent) {
-      pieces.push(parent.innerText || parent.textContent);
+    var wrappingLabel = input.closest('label');
+    if (wrappingLabel) {
+      pieces.push(wrappingLabel.innerText || wrappingLabel.textContent);
     }
     return pieces.filter(Boolean).join(' ').replace(/\\s+/g, ' ').trim().toLowerCase();
   }
@@ -180,21 +232,25 @@ class LoginAutofillAssistScript {
 
   function isPasswordInput(input) {
     return (input.getAttribute('type') || '').toLowerCase() === 'password' &&
-      input.getAttribute('name') !== 'ninshoCode' &&
+      (input.getAttribute('name') || '').toLowerCase() !== 'ninshocode' &&
       (input.getAttribute('id') || '').toLowerCase() !== 'ninshocode';
   }
 
   function isPasswordChangeField(input) {
     var identifier = [
       input.getAttribute('name'),
-      input.getAttribute('id'),
-      input.getAttribute('autocomplete')
+      input.getAttribute('id')
     ].filter(Boolean).join(' ').toLowerCase().replace(/[\\s_-]+/g, '');
     if (/(?:new|confirm|confirmation|old|current)(?:password|passwd|pwd)|(?:password|passwd|pwd)(?:new|confirm|confirmation|old|current)/.test(identifier)) {
       return true;
     }
 
-    var text = textAround(input);
+    var autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+    if (autocomplete === 'new-password') {
+      return true;
+    }
+
+    var text = fieldLabelText(input);
     return /パスワード.{0,8}(?:変更|確認|再入力)|(?:新しい|新規|現在|現行|旧|確認用|再入力).{0,8}パスワード|再入力/.test(text);
   }
 
@@ -218,9 +274,11 @@ class LoginAutofillAssistScript {
     var formInputs = form ?
       Array.prototype.slice.call(form.querySelectorAll('input')) :
       inputs;
-    var passwordInputs = formInputs.filter(isPasswordInput);
-    if (passwordInputs.length >= 2 ||
-        passwordInputs.some(isPasswordChangeField)) {
+    var visiblePasswordInputs = formInputs.filter(function(input) {
+      return visible(input) && isPasswordInput(input);
+    });
+    if (visiblePasswordInputs.length >= 2 ||
+        visiblePasswordInputs.some(isPasswordChangeField)) {
       return null;
     }
 
@@ -308,6 +366,9 @@ class LoginAutofillAssistScript {
   }
 
   function submitForm(target) {
+    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+      return;
+    }
     if (shouldBlockAutoSubmit()) {
       report('submit-blocked', 'session-limit-or-error');
       return;
@@ -350,7 +411,6 @@ class LoginAutofillAssistScript {
         element.getAttribute('class')
       ].filter(Boolean).join(' ').toLowerCase();
       return type === 'submit' ||
-        type === 'button' ||
         type === 'image' ||
         /login|log in|sign in|submit|ログイン|サインイン|送信|認証|次へ/.test(text) ||
         /login|submit|auth/.test(idText);
@@ -383,6 +443,9 @@ class LoginAutofillAssistScript {
   }
 
   function assist(attempt) {
+    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+      return;
+    }
     var target = findLoginTarget();
     if (!target) {
       if (attempt < 20) {
@@ -407,7 +470,7 @@ class LoginAutofillAssistScript {
     report('fill', 'target-found form=' + (target.form ? target.form.id : 'none'));
     setInputValue(target.username, savedUsername);
     setInputValue(target.password, savedPassword);
-    window.setTimeout(function() {
+    window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
       submitForm(target);
     }, 250);
   }

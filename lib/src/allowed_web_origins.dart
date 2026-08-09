@@ -52,15 +52,38 @@ class AllowedWebOrigins {
   static bool canRestoreLastPage(String? url, {required bool debugAllowed}) {
     final normalized = url?.trim();
     return canLoad(normalized, debugAllowed: debugAllowed) &&
-        !_isTransientPage(normalized);
+        !isTransientPage(normalized);
   }
 
-  static bool _isTransientPage(String? url) {
+  static bool isTransientPage(String? url) {
     final uri = Uri.tryParse(url ?? '');
     if (uri == null) {
       return false;
     }
-    return uri.path.endsWith('/TimeoutAlert.html');
+    final path = uri.path.toLowerCase();
+    if (path.endsWith('/timeoutalert.html') ||
+        path.contains('login') ||
+        path.contains('logout') ||
+        path.contains('timeout')) {
+      return true;
+    }
+    const transitionQueryKeys = {
+      'action',
+      'command',
+      'eventid',
+      '_eventid',
+    };
+    return uri.queryParametersAll.entries.any((entry) {
+      if (!transitionQueryKeys.contains(entry.key.toLowerCase())) {
+        return false;
+      }
+      return entry.value.any((value) {
+        final normalized = value.toLowerCase();
+        return normalized.contains('login') ||
+            normalized.contains('logout') ||
+            normalized.contains('timeout');
+      });
+    });
   }
 
   static bool _isGakujoUrl(String url) {

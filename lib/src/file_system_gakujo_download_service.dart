@@ -53,6 +53,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   final FlutterSecureStorage _secureStorage;
   final AuthenticatedDownloadBytesLoader? _authenticatedBytesLoader;
   final bool? _usesNativeDownloadRootOverride;
+  Future<void> _pendingConfiguredFolderSave = Future<void>.value();
 
   @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {
@@ -245,19 +246,30 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     required String fileName,
     required String courseFolderName,
     required bool autoSortByCourse,
-  }) async {
-    final root = await _configuredRootDirectory();
-    final parent = autoSortByCourse
-        ? await _ensureChildDirectory(root, courseFolderName)
-        : root;
-    final finalName = await _uniqueFileName(parent, fileName);
-    await _writeFile(parent, finalName, bytes);
-    final location = _join(parent.path, finalName);
-    return GakujoDownloadResult(
-      fileName: finalName,
-      courseName: autoSortByCourse ? _baseName(parent.path) : '',
-      location: location,
+  }) {
+    return _enqueueConfiguredFolderSave(() async {
+      final root = await _configuredRootDirectory();
+      final parent = autoSortByCourse
+          ? await _ensureChildDirectory(root, courseFolderName)
+          : root;
+      final finalName = await _uniqueFileName(parent, fileName);
+      await _writeFile(parent, finalName, bytes);
+      final location = _join(parent.path, finalName);
+      return GakujoDownloadResult(
+        fileName: finalName,
+        courseName: autoSortByCourse ? _baseName(parent.path) : '',
+        location: location,
+      );
+    });
+  }
+
+  Future<T> _enqueueConfiguredFolderSave<T>(Future<T> Function() operation) {
+    final next = _pendingConfiguredFolderSave.then((_) => operation());
+    _pendingConfiguredFolderSave = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
     );
+    return next;
   }
 
   Future<_DownloadedFile> _downloadBytes(
@@ -267,8 +279,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }) async {
     final normalizedCookieHeader = cookieHeader?.trim();
     final authenticatedBytesLoader = _authenticatedBytesLoader;
-    if ((normalizedCookieHeader == null || normalizedCookieHeader.isEmpty) &&
-        authenticatedBytesLoader != null) {
+    // A JavaScript cookie header can omit HttpOnly session cookies. When an
+    // authenticated WebView loader is available, it is the authoritative path.
+    if (authenticatedBytesLoader != null) {
       final downloaded = await authenticatedBytesLoader(
         request,
         userAgent: userAgent,

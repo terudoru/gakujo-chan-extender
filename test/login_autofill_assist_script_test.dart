@@ -29,7 +29,11 @@ void main() {
   test('does not treat the 2FA code field as a saved password', () {
     final script = LoginAutofillAssistScript.build();
 
-    expect(script, contains("input.getAttribute('name') !== 'ninshoCode'"));
+    expect(
+      script,
+      contains(
+          "(input.getAttribute('name') || '').toLowerCase() !== 'ninshocode'"),
+    );
   });
 
   test('embeds saved credentials and submits the login form', () {
@@ -44,7 +48,7 @@ void main() {
     expect(script, contains(r'"p@ss\\word"'));
     expect(script, contains('setInputValue(target.username, savedUsername)'));
     expect(script, contains('submitForm(target)'));
-    expect(script, contains('window.__MBG_LOGIN_AUTOFILL_SUBMITTED'));
+    expect(script, contains('window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY'));
   });
 
   test('limits automatic login submission across page reloads', () {
@@ -139,6 +143,159 @@ void main() {
     expect(_valueOf(result, 'ninshoCode'), isEmpty);
     expect(result['clickCount'], 1);
   });
+
+  test('ignores hidden password templates when identifying the login form',
+      () async {
+    final result = await _evaluateLoginAssist([
+      {'tag': 'input', 'type': 'text', 'name': 'userId'},
+      {'tag': 'input', 'type': 'password', 'name': 'password'},
+      {
+        'tag': 'input',
+        'type': 'password',
+        'name': 'passwordTemplate',
+        'display': 'none',
+      },
+      {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+    ]);
+
+    expect(_valueOf(result, 'userId'), 'saved-user');
+    expect(_valueOf(result, 'password'), 'saved-password');
+    expect(result['clickedNames'], ['login']);
+  });
+
+  test('skips unrelated type=button controls before the login submitter',
+      () async {
+    final result = await _evaluateLoginAssist([
+      {'tag': 'input', 'type': 'text', 'name': 'userId'},
+      {'tag': 'input', 'type': 'password', 'name': 'password'},
+      {'tag': 'input', 'type': 'button', 'name': 'clear', 'value': 'クリア'},
+      {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+    ]);
+
+    expect(result['clickedNames'], ['login']);
+  });
+
+  test('ignores a password-change help link beside the login password',
+      () async {
+    final result = await _evaluateLoginAssist([
+      {'tag': 'input', 'type': 'text', 'name': 'userName'},
+      {
+        'tag': 'input',
+        'type': 'password',
+        'name': 'password',
+        'rowText': 'パスワード ※パスワード変更はこちら（保護者等除く）',
+      },
+      {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+    ]);
+
+    expect(_valueOf(result, 'userName'), 'saved-user');
+    expect(_valueOf(result, 'password'), 'saved-password');
+    expect(result['clickedNames'], ['login']);
+  });
+
+  test('allows one new automatic attempt after saved credentials change',
+      () async {
+    final first = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'old-password',
+      ),
+    );
+    final corrected = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'corrected-password',
+      ),
+    );
+    final result = await _evaluateGeneratedLoginAssist(
+      '$first\n$corrected',
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+      ],
+    );
+
+    expect(
+      _valueOf(result, 'password'),
+      'corrected-password',
+      reason: jsonEncode(result),
+    );
+    expect(result['clickCount'], 2, reason: jsonEncode(result));
+  });
+
+  test('does not retry unchanged credentials on an existing login error',
+      () async {
+    final script = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'saved-password',
+      ),
+    );
+    final result = await _evaluateGeneratedLoginAssist(
+      "document.body.innerText = 'ログインに失敗しました';\n"
+      "document.body.textContent = 'ログインに失敗しました';\n"
+      '$script',
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+      ],
+    );
+
+    expect(result['clickCount'], 0, reason: jsonEncode(result));
+  });
+
+  test('changed credentials can retry while the old error remains visible',
+      () async {
+    final first = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'old-password',
+      ),
+    );
+    final corrected = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'corrected-password',
+      ),
+    );
+    final result = await _evaluateGeneratedLoginAssist(
+      '$first\n'
+      "document.body.innerText = 'ログインに失敗しました';\n"
+      "document.body.textContent = 'ログインに失敗しました';\n"
+      '$corrected',
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+      ],
+    );
+
+    expect(_valueOf(result, 'password'), 'corrected-password');
+    expect(result['clickCount'], 2, reason: jsonEncode(result));
+  });
+
+  test('teardown cancels a pending automatic submit', () async {
+    final result = await _evaluateGeneratedLoginAssist(
+      LoginAutofillAssistScript.build(
+        credentials: const GakujoLoginAutofillCredentials(
+          loginId: 'saved-user',
+          password: 'saved-password',
+        ),
+      ),
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+      ],
+      teardownScript: LoginAutofillAssistScript.buildTeardown(),
+      deferTimers: true,
+    );
+
+    expect(_valueOf(result, 'password'), 'saved-password');
+    expect(result['clickCount'], 0, reason: jsonEncode(result));
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateLoginAssist(
@@ -150,11 +307,24 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
       password: 'saved-password',
     ),
   );
+  return _evaluateGeneratedLoginAssist(script, elements);
+}
+
+Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
+  String script,
+  List<Map<String, String>> elements, {
+  String? teardownScript,
+  bool deferTimers = false,
+}) async {
   final result = await Process.run('node', [
     '-e',
     _nodeDomHarness,
     script,
-    jsonEncode({'elements': elements}),
+    jsonEncode({
+      'elements': elements,
+      'teardownScript': teardownScript,
+      'deferTimers': deferTimers,
+    }),
   ]);
 
   expect(
@@ -193,8 +363,11 @@ const spec = JSON.parse(process.argv[2]);
 const reports = [];
 const sessionValues = new Map();
 let clickCount = 0;
+const clickedNames = [];
 let requestSubmitCount = 0;
 let formSubmitCount = 0;
+let nextTimerId = 1;
+const activeTimers = new Map();
 
 class FakeEvent {
   constructor(type, options) {
@@ -239,13 +412,29 @@ class FakeElement {
   }
 
   closest(selector) {
-    return selector === 'form' ? this.form : null;
+    if (selector === 'form') return this.form;
+    if (selector === 'tr, p, div, li, label' && this.attributes.rowText) {
+      return {
+        innerText: this.attributes.rowText,
+        textContent: this.attributes.rowText
+      };
+    }
+    if (selector === 'label' && this.attributes.labelText) {
+      return {
+        innerText: this.attributes.labelText,
+        textContent: this.attributes.labelText
+      };
+    }
+    return null;
   }
 
   focus() {}
   blur() {}
   dispatchEvent() { return true; }
-  click() { clickCount += 1; }
+  click() {
+    clickCount += 1;
+    clickedNames.push(this.getAttribute('name') || this.getAttribute('id') || '');
+  }
 
   querySelectorAll(selector) {
     if (selector === 'input') {
@@ -297,10 +486,15 @@ const window = {
       opacity: element.getAttribute('opacity') || '1'
     };
   },
-  clearTimeout() {},
+  clearTimeout(id) { activeTimers.delete(id); },
   setTimeout(callback) {
-    callback();
-    return 1;
+    const id = nextTimerId++;
+    if (spec.deferTimers) {
+      activeTimers.set(id, callback);
+    } else {
+      callback();
+    }
+    return id;
   },
   MoreBetterGakujoLoginAutofill: {
     postMessage(payload) { reports.push(JSON.parse(payload)); }
@@ -316,7 +510,7 @@ for (const element of elements) {
   element.form = form;
 }
 
-vm.runInNewContext(generatedScript, {
+const context = {
   window,
   document,
   location: {
@@ -325,7 +519,16 @@ vm.runInNewContext(generatedScript, {
     pathname: '/campussmart.do'
   },
   console: {log() {}}
-});
+};
+vm.runInNewContext(generatedScript, context);
+if (spec.teardownScript) {
+  vm.runInNewContext(spec.teardownScript, context);
+}
+for (let round = 0; round < 50 && activeTimers.size > 0; round += 1) {
+  const callbacks = [...activeTimers.values()];
+  activeTimers.clear();
+  for (const callback of callbacks) callback();
+}
 
 process.stdout.write(JSON.stringify({
   elements: elements.map((element) => ({
@@ -333,6 +536,7 @@ process.stdout.write(JSON.stringify({
     value: element.value
   })),
   clickCount,
+  clickedNames,
   requestSubmitCount,
   formSubmitCount,
   reports

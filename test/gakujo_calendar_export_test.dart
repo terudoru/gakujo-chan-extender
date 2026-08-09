@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:test/test.dart';
 
@@ -15,6 +18,25 @@ void main() {
     expect(courses, hasLength(2));
     expect(courses.first.title, '日本国憲法');
     expect(courses.last.title, '人工知能入門');
+  });
+
+  test('coursesFromJson rejects normalized and malformed source dates', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {"title":"存在しない日","weekday":1,"period":1,"sourceDate":"2026-02-30"},
+  {"title":"存在しない月","weekday":2,"period":1,"sourceDate":"2026-13-01"},
+  {"title":"余分な接尾辞","weekday":3,"period":1,"sourceDate":"2026-06-23garbage"},
+  {"title":"うるう日","period":1,"sourceDate":"2028-02-29"}
+]
+''');
+
+    expect(courses, hasLength(4));
+    final byTitle = {for (final course in courses) course.title: course};
+    expect(byTitle['存在しない日']?.sourceDate, isNull);
+    expect(byTitle['存在しない月']?.sourceDate, isNull);
+    expect(byTitle['余分な接尾辞']?.sourceDate, isNull);
+    expect(byTitle['うるう日']?.sourceDate, DateTime(2028, 2, 29));
+    expect(byTitle['うるう日']?.weekday, DateTime.tuesday);
   });
 
   test('coursesFromJson rejects calendar grid noise as courses', () {
@@ -91,6 +113,104 @@ void main() {
     expect(filtered.single.title, '第2ターム科目');
   });
 
+  test('manual ranges use source dates even when courses have term codes', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title":"範囲外の第1ターム科目",
+    "weekday":1,
+    "period":1,
+    "courseCode":"261T0001",
+    "sourceDate":"2026-05-11"
+  },
+  {
+    "title":"範囲内の第2ターム科目",
+    "weekday":2,
+    "period":2,
+    "courseCode":"262G5023",
+    "sourceDate":"2026-07-07"
+  }
+]
+''');
+
+    final filtered = GakujoCalendarExport.filterCoursesForTerm(
+      courses: courses,
+      termRange: GakujoCalendarTermRange(
+        start: DateTime(2026, 6, 10),
+        end: DateTime(2026, 8, 5),
+      ),
+    );
+
+    expect(filtered.map((course) => course.title), ['範囲内の第2ターム科目']);
+  });
+
+  test('manual ranges use source dates for ambiguous code-zero courses', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title":"範囲外の通年扱い科目",
+    "weekday":1,
+    "period":1,
+    "courseCode":"260T0001",
+    "termHint":"第2ターム",
+    "sourceDate":"2026-05-11"
+  },
+  {
+    "title":"範囲内の通年扱い科目",
+    "weekday":2,
+    "period":2,
+    "courseCode":"260G5023",
+    "termHint":"第1ターム",
+    "sourceDate":"2026-07-07"
+  }
+]
+''');
+
+    final filtered = GakujoCalendarExport.filterCoursesForTerm(
+      courses: courses,
+      termRange: GakujoCalendarTermRange(
+        start: DateTime(2026, 6, 10),
+        end: DateTime(2026, 8, 5),
+      ),
+    );
+
+    expect(filtered.map((course) => course.title), ['範囲内の通年扱い科目']);
+  });
+
+  test('manual ranges keep weekly cells without an observed source date', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title":"日付リンクのない通常授業",
+    "weekday":3,
+    "period":2,
+    "courseCode":"261G5001",
+    "termHint":"第1ターム"
+  },
+  {
+    "title":"日付リンクのない通年授業",
+    "weekday":5,
+    "period":3,
+    "courseCode":"260G5002",
+    "termHint":"第4ターム"
+  }
+]
+''');
+
+    final filtered = GakujoCalendarExport.filterCoursesForTerm(
+      courses: courses,
+      termRange: GakujoCalendarTermRange(
+        start: DateTime(2026, 6, 10),
+        end: DateTime(2026, 8, 5),
+      ),
+    );
+
+    expect(filtered.map((course) => course.title), [
+      '日付リンクのない通常授業',
+      '日付リンクのない通年授業',
+    ]);
+  });
+
   test('filterCoursesForTerm keeps courses that carry no term metadata', () {
     // A weekly-grid Friday cell can be extracted with no course code, source
     // date, or term hint. It must survive term filtering rather than being
@@ -124,11 +244,41 @@ void main() {
     expect(titles, containsAll(<String>['月曜の授業', '金曜の授業']));
   });
 
-  test('filterCoursesForTerm drops make-up occurrences on the wrong weekday',
+  test('filterCoursesForTerm merges duplicate slots without term metadata', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title":"情報数学",
+    "weekday":1,
+    "period":1,
+    "location":""
+  },
+  {
+    "title":"情報数学",
+    "weekday":1,
+    "period":1,
+    "location":"A-101"
+  }
+]
+''');
+
+    final filtered = GakujoCalendarExport.filterCoursesForTerm(
+      courses: courses,
+      termRange: GakujoCalendarTermRange(
+        start: DateTime(2026, 6, 10),
+        end: DateTime(2026, 8, 5),
+      ),
+    );
+
+    expect(filtered, hasLength(1));
+    expect(filtered.single.location, 'A-101');
+  });
+
+  test('filterCoursesForTerm keeps undated same-title classes on another day',
       () {
-    // 日本国憲法 is a Monday class; a public holiday moved it to Wednesday for
-    // one week and that make-up cell has no date. 物理学基礎BⅠ is a genuine
-    // undated Friday class with no dated twin.
+    // A dated Monday occurrence does not prove that an undated Wednesday cell
+    // with the same title is a make-up class. It can be a genuine twice-weekly
+    // class, so both slots must survive unless stronger exception data exists.
     final courses = GakujoCalendarExport.coursesFromJson('''
 [
   {"title":"日本国憲法","weekday":1,"period":1,"sourceDate":"2026-06-29"},
@@ -150,8 +300,8 @@ void main() {
       for (final course in filtered) course.weekday: course.title,
     };
     expect(byWeekday[DateTime.monday], '日本国憲法');
+    expect(byWeekday[DateTime.wednesday], '日本国憲法');
     expect(byWeekday[DateTime.friday], '物理学基礎BⅠ');
-    expect(byWeekday.containsKey(DateTime.wednesday), isFalse);
   });
 
   test('coursesFromJson keeps explicit weekday when source date is different',
@@ -362,18 +512,20 @@ void main() {
   test('coursesFromJson merges single same-slot official Google fields', () {
     final courses = GakujoCalendarExport.coursesFromJson('''
 [
-  {
-    "title": "AI入門",
-    "weekday": 3,
-    "period": 4,
-    "location": ""
-  },
-  {
-    "title": "人工知能入門（Gコード）",
-    "weekday": 3,
-    "period": 4,
-    "location": "工学部 101",
-    "officialTitle": "人工知能入門（Gコード）",
+      {
+        "title": "AI入門",
+        "weekday": 3,
+        "period": 4,
+        "location": "",
+        "courseCode": "262G5001"
+      },
+      {
+        "title": "人工知能入門（Gコード）",
+        "weekday": 3,
+        "period": 4,
+        "location": "工学部 101",
+        "courseCode": "262G5001",
+        "officialTitle": "人工知能入門（Gコード）",
     "officialLocation": "工学部 101",
     "officialDescription": "Googleスケジュール連携の説明"
   }
@@ -391,6 +543,57 @@ void main() {
       '工学部 101',
     );
     expect(courses.single.officialDescription, 'Googleスケジュール連携の説明');
+  });
+
+  test('coursesFromJson does not merge unrelated singleton same-slot data', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title": "線形代数",
+    "weekday": 3,
+    "period": 4
+  },
+  {
+    "title": "英語",
+    "weekday": 3,
+    "period": 4,
+    "officialTitle": "英語",
+    "officialLocation": "B-201"
+  }
+]
+''');
+
+    expect(courses, hasLength(2));
+    expect(
+      courses.map(GakujoCalendarExport.displayTitleForCourse),
+      unorderedEquals(['線形代数', '英語']),
+    );
+  });
+
+  test('coursesFromJson does not merge different complete course codes', () {
+    final courses = GakujoCalendarExport.coursesFromJson('''
+[
+  {
+    "title": "人工知能入門",
+    "weekday": 3,
+    "period": 4,
+    "courseCode": "262G5001"
+  },
+  {
+    "title": "人工知能入門（公式）",
+    "weekday": 3,
+    "period": 4,
+    "courseCode": "262G5002",
+    "officialTitle": "人工知能入門"
+  }
+]
+''');
+
+    expect(courses, hasLength(2));
+    expect(
+      courses.map((course) => course.courseCode),
+      unorderedEquals(['262G5001', '262G5002']),
+    );
   });
 
   test(
@@ -517,6 +720,16 @@ void main() {
     expect(range?.end, DateTime(2026, 8, 8));
   });
 
+  test('termRangeFromText does not reinterpret an explicit-year range', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '第1ターム 授業期間 2026年4月8日～6月8日',
+      referenceDate: DateTime(2027, 2, 1),
+    );
+
+    expect(range?.start, DateTime(2026, 4, 8));
+    expect(range?.end, DateTime(2026, 6, 8));
+  });
+
   test('termRangeFromText handles fourth term month-day ranges in January', () {
     final range = GakujoCalendarExport.termRangeFromText(
       '第4ターム 授業期間 12月3日（木）～2月12日（金）',
@@ -525,6 +738,55 @@ void main() {
 
     expect(range?.start, DateTime(2026, 12, 3));
     expect(range?.end, DateTime(2027, 2, 12));
+  });
+
+  test('termRangeFromText selects among multiple term ranges safely', () {
+    const text = '時間割 第1ターム 授業期間 2026年4月8日～2026年6月8日 '
+        '第2ターム 授業期間 2026年6月10日～2026年8月5日';
+
+    final byReference = GakujoCalendarExport.termRangeFromText(
+      text,
+      referenceDate: DateTime(2026, 7, 1),
+    );
+    final byExplicitTarget = GakujoCalendarExport.termRangeFromText(
+      text,
+      referenceDate: DateTime(2026, 7, 1),
+      targetTermName: '第1ターム',
+    );
+    final ambiguous = GakujoCalendarExport.termRangeFromText(
+      text,
+      referenceDate: DateTime(2026, 9, 1),
+    );
+
+    expect(byReference?.start, DateTime(2026, 6, 10));
+    expect(byReference?.end, DateTime(2026, 8, 5));
+    expect(byExplicitTarget?.start, DateTime(2026, 4, 8));
+    expect(byExplicitTarget?.end, DateTime(2026, 6, 8));
+    expect(ambiguous, isNull);
+  });
+
+  test('termRangeFromText rejects invalid and contradictory dates', () {
+    expect(
+      GakujoCalendarExport.termRangeFromText(
+        '第1ターム 授業期間 2026-04-31～2026-06-08',
+        referenceDate: DateTime(2026, 4, 20),
+      ),
+      isNull,
+    );
+    expect(
+      GakujoCalendarExport.termRangeFromText(
+        '第4ターム 授業期間 12月3日～2月29日',
+        referenceDate: DateTime(2027, 1, 15),
+      ),
+      isNull,
+    );
+    expect(
+      GakujoCalendarExport.termRangeFromText(
+        '第2ターム 授業期間 2026-06-11～2025-08-08',
+        referenceDate: DateTime(2026, 6, 29),
+      ),
+      isNull,
+    );
   });
 
   test('buildIcs exports weekly recurring classes in Asia Tokyo time', () {
@@ -549,12 +811,47 @@ void main() {
     expect(ics, contains('SUMMARY:日本国憲法'));
     expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20260629T084500'));
     expect(ics, contains('DTEND;TZID=Asia/Tokyo:20260629T101500'));
-    expect(ics, contains('RRULE:FREQ=WEEKLY;UNTIL='));
+    expect(ics, contains('RRULE:FREQ=WEEKLY;UNTIL=20260808T145959Z'));
     expect(ics, contains('LOCATION:総合教育研究棟 E-260'));
     expect(unfolded, contains(r'DESCRIPTION:月曜 1限\n08:45 - 10:15'));
     expect(unfolded, contains(r'教室: 総合教育研究棟 E-260'));
     expect(unfolded, contains(r'担当教員: 山田 太郎'));
     expect(unfolded, contains(r'ターム: 2026年度 第2ターム'));
+  });
+
+  test('buildIcs preserves civil weekdays across a daylight-saving change', () {
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '月曜講義',
+          weekday: DateTime.monday,
+          period: 1,
+        ),
+      ],
+      rangeStart: DateTime(2026, 10, 30),
+      rangeEnd: DateTime(2026, 11, 9),
+      generatedAt: DateTime.utc(2026, 10, 1),
+    );
+
+    expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20261102T084500'));
+  });
+
+  test('buildIcs writes a configured calendar name safely', () {
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '日本国憲法',
+          weekday: DateTime.monday,
+          period: 1,
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 29),
+      rangeEnd: DateTime(2026, 6, 29),
+      calendarName: '大学, 第2ターム',
+      generatedAt: DateTime.utc(2026, 6, 29),
+    );
+
+    expect(ics, contains(r'X-WR-CALNAME:大学\, 第2ターム'));
   });
 
   test('buildIcs folds long lines without splitting surrogate pairs', () {
@@ -629,6 +926,26 @@ void main() {
 
     expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20260703T194500'));
     expect(ics, contains('DTEND;TZID=Asia/Tokyo:20260703T211500'));
+  });
+
+  test('buildIcs defines every referenced Tokyo timezone identifier', () {
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '時間帯検証',
+          weekday: DateTime.monday,
+          period: 1,
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 29),
+      rangeEnd: DateTime(2026, 7, 31),
+      generatedAt: DateTime.utc(2026, 6, 29),
+    );
+
+    expect(ics, contains('BEGIN:VTIMEZONE\r\nTZID:Asia/Tokyo'));
+    expect(ics, contains('TZOFFSETFROM:+0900'));
+    expect(ics, contains('TZOFFSETTO:+0900'));
+    expect(ics, contains('DTSTART;TZID=Asia/Tokyo:'));
   });
 
   test('buildIcs excludes no-class days for each course weekday', () {
@@ -726,6 +1043,75 @@ void main() {
     expect(_uidsFromIcs(firstTerm), isNot(_uidsFromIcs(secondTerm)));
   });
 
+  test('buildIcs separates colliding same-slot courses by course code', () {
+    const uidNamespace = 'niigata-2026-第2ターム';
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '同名授業',
+          weekday: DateTime.monday,
+          period: 1,
+          location: 'A-101',
+          courseCode: '262G5001',
+        ),
+        GakujoCalendarCourse(
+          title: '同名授業',
+          weekday: DateTime.monday,
+          period: 1,
+          location: 'A-101',
+          courseCode: '262G5002',
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 15),
+      rangeEnd: DateTime(2026, 6, 15),
+      uidNamespace: uidNamespace,
+      generatedAt: DateTime.utc(2026, 6, 1),
+    );
+    final releasedIdentity = [
+      uidNamespace,
+      '同名授業',
+      DateTime.monday,
+      1,
+      'A-101',
+    ].join('|');
+    final releasedUid =
+        '${base64Url.encode(utf8.encode(releasedIdentity)).replaceAll('=', '')}'
+        '@morebettergakujo.local';
+
+    expect(_uidsFromIcs(ics).toSet(), hasLength(2));
+    expect(_uidsFromIcs(ics), contains(releasedUid));
+  });
+
+  test('buildIcs preserves the released title-based UID for coded courses', () {
+    const uidNamespace = 'niigata-2026-第2ターム';
+    const course = GakujoCalendarCourse(
+      title: '日本国憲法',
+      weekday: DateTime.monday,
+      period: 1,
+      location: '総合教育研究棟 E-260',
+      courseCode: '262G5001',
+    );
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [course],
+      rangeStart: DateTime(2026, 6, 15),
+      rangeEnd: DateTime(2026, 6, 15),
+      uidNamespace: uidNamespace,
+      generatedAt: DateTime.utc(2026, 6, 1),
+    );
+    final releasedIdentity = [
+      uidNamespace,
+      course.title,
+      course.weekday,
+      course.period,
+      course.location,
+    ].join('|');
+    final releasedUid =
+        '${base64Url.encode(utf8.encode(releasedIdentity)).replaceAll('=', '')}'
+        '@morebettergakujo.local';
+
+    expect(_uidsFromIcs(ics), [releasedUid]);
+  });
+
   test('buildIcs escapes iCalendar text fields', () {
     final ics = GakujoCalendarExport.buildIcs(
       courses: const [
@@ -768,12 +1154,42 @@ void main() {
     expect(script, contains('titleLooksUseful'));
     expect(script, contains('termRangeText'));
     expect(script, contains('JSON.stringify({'));
+    expect(script, contains("host === 'calendar.google.com'"));
+    expect(script, isNot(contains("host.indexOf('google.')")));
     expect(script, isNot(contains('function scanUnsafeTable')));
     expect(script, isNot(contains('function splitCourse')));
     expect(script, isNot(contains('scanDailyScheduleLines')));
     expect(
       script,
       isNot(contains('if (courseCodeFromText(tableText))')),
+    );
+  });
+
+  test('extractionScript keeps trusted no-code cells beside coded rows',
+      () async {
+    final result = await Process.run('node', [
+      '-e',
+      _calendarExtractionHarness,
+      GakujoCalendarExport.extractionScript(),
+    ]);
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node calendar extraction failed: ${result.stderr}',
+    );
+    final payload = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    final courses =
+        (payload['courses'] as List<dynamic>).cast<Map<String, dynamic>>();
+    expect(
+      courses.map((course) => course['title']),
+      unorderedEquals(['コンピュータ基礎', '物理学基礎BⅠ']),
+    );
+    expect(
+      courses.singleWhere(
+        (course) => course['title'] == 'コンピュータ基礎',
+      )['courseCode'],
+      isEmpty,
     );
   });
 
@@ -815,6 +1231,20 @@ void main() {
     expect(courses.single.sourceDate, DateTime(2026, 6, 23));
   });
 
+  test('coursesFromOfficialGoogleCalendarUrls rejects lookalike hosts', () {
+    const query =
+        '?action=TEMPLATE&text=偽の授業&dates=20260623T084500/20260623T101500';
+    final courses = GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
+      'http://calendar.google.com/calendar/render$query',
+      'https://notgoogle.com/calendar/render$query',
+      'https://drive.google.com/calendar/render$query',
+      'https://calendar.google.com:444/calendar/render$query',
+      'https://calendar.google.com@evil.example/calendar/render$query',
+    ]);
+
+    expect(courses, isEmpty);
+  });
+
   test('course code parser reads the third digit as term', () {
     expect(
         GakujoCalendarExport.courseCodeFromText('科目名 261T0001 情報'), '261T0001');
@@ -835,6 +1265,27 @@ void main() {
     expect(courses, hasLength(1));
     expect(courses.single.weekday, DateTime.monday);
     expect(courses.single.period, 1);
+  });
+
+  test('coursesFromOfficialGoogleCalendarUrls rejects invalid start dates', () {
+    String urlFor(String dates) {
+      return Uri.https('calendar.google.com', '/calendar/render', {
+        'action': 'TEMPLATE',
+        'text': '検証講義',
+        'dates': '$dates/20260623T101500',
+      }).toString();
+    }
+
+    final courses = GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
+      urlFor('20260230T084500'),
+      urlFor('20261301T084500'),
+      urlFor('20260623T246000'),
+      urlFor('20260623T084500garbage'),
+      urlFor('20260623T084500'),
+    ]);
+
+    expect(courses, hasLength(1));
+    expect(courses.single.sourceDate, DateTime(2026, 6, 23));
   });
 
   test('coursesFromOfficialGoogleCalendarUrls extracts urls from html text',
@@ -889,6 +1340,138 @@ END:VCALENDAR
       courses.map(GakujoCalendarExport.displayTitleForCourse),
       ['日本国憲法', '物理学基礎BⅠ'],
     );
+  });
+
+  test(
+      'official iCalendar keeps EXDATE and a moved recurrence exception distinct',
+      () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+      '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:constitution@example.edu
+RECURRENCE-ID;TZID=Asia/Tokyo:20260720T084500
+DTSTART;TZID=Asia/Tokyo:20260722T084500
+DTEND;TZID=Asia/Tokyo:20260722T101500
+END:VEVENT
+BEGIN:VEVENT
+UID:constitution@example.edu
+SUMMARY:日本国憲法
+DTSTART;TZID=Asia/Tokyo:20260615T084500
+DTEND;TZID=Asia/Tokyo:20260615T101500
+RRULE:FREQ=WEEKLY;UNTIL=20260808T145959Z
+EXDATE;TZID=Asia/Tokyo:20260720T084500
+EXDATE;VALUE=DATE:20260803
+LOCATION:総合教育研究棟 E-260
+DESCRIPTION:振替授業を含む公式日程
+END:VEVENT
+END:VCALENDAR
+''',
+    );
+
+    expect(courses, hasLength(2));
+    final weekly = courses.singleWhere((course) => course.recursWeekly);
+    final moved = courses.singleWhere((course) => !course.recursWeekly);
+    expect(weekly.weekday, DateTime.monday);
+    expect(weekly.excludedDates, [
+      DateTime(2026, 7, 20),
+      DateTime(2026, 8, 3),
+    ]);
+    expect(moved.weekday, DateTime.wednesday);
+    expect(moved.sourceDate, DateTime(2026, 7, 22));
+    expect(moved.excludedDates, isEmpty);
+    expect(
+      GakujoCalendarExport.displayTitleForCourse(moved),
+      '日本国憲法',
+    );
+    expect(
+      GakujoCalendarExport.displayLocationForCourse(moved),
+      '総合教育研究棟 E-260',
+    );
+  });
+
+  test('buildIcs writes moved recurrence exceptions as one-off events', () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+      '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:constitution@example.edu
+SUMMARY:日本国憲法
+DTSTART;TZID=Asia/Tokyo:20260615T084500
+DTEND;TZID=Asia/Tokyo:20260615T101500
+RRULE:FREQ=WEEKLY;UNTIL=20260808T145959Z
+EXDATE;TZID=Asia/Tokyo:20260720T084500
+LOCATION:総合教育研究棟 E-260
+END:VEVENT
+BEGIN:VEVENT
+UID:constitution@example.edu
+RECURRENCE-ID;TZID=Asia/Tokyo:20260720T084500
+DTSTART;TZID=Asia/Tokyo:20260722T084500
+DTEND;TZID=Asia/Tokyo:20260722T101500
+END:VEVENT
+END:VCALENDAR
+''',
+    );
+
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses,
+      rangeStart: DateTime(2026, 7, 13),
+      rangeEnd: DateTime(2026, 7, 27),
+      noClassDates: [DateTime(2026, 7, 22)],
+      generatedAt: DateTime.utc(2026, 7, 1),
+    );
+    final eventBlocks = RegExp(
+      r'BEGIN:VEVENT\r\n.*?END:VEVENT',
+      dotAll: true,
+    ).allMatches(ics).map((match) => match.group(0)!).toList();
+    final weeklyBlock = eventBlocks.singleWhere(
+      (block) => block.contains('DTSTART;TZID=Asia/Tokyo:20260713T084500'),
+    );
+    final movedBlock = eventBlocks.singleWhere(
+      (block) => block.contains('DTSTART;TZID=Asia/Tokyo:20260722T084500'),
+    );
+
+    expect(eventBlocks, hasLength(2));
+    expect(weeklyBlock, contains('RRULE:FREQ=WEEKLY'));
+    expect(
+      weeklyBlock,
+      contains('EXDATE;TZID=Asia/Tokyo:20260720T084500'),
+    );
+    expect(movedBlock, isNot(contains('RRULE:')));
+    expect(movedBlock, isNot(contains('EXDATE')));
+  });
+
+  test('coursesFromOfficialScheduleExportText rejects invalid start dates', () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+      '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:存在しない日
+DTSTART;TZID=Asia/Tokyo:20260230T084500
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:存在しない月
+DTSTART;TZID=Asia/Tokyo:20261301T084500
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:存在しない時刻
+DTSTART;TZID=Asia/Tokyo:20260623T246000
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:余分な接尾辞
+DTSTART;TZID=Asia/Tokyo:20260623T084500garbage
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:有効な講義
+DTSTART;TZID=Asia/Tokyo:20260623T084500
+END:VEVENT
+END:VCALENDAR
+''',
+    );
+
+    expect(courses, hasLength(1));
+    expect(courses.single.title, '有効な講義');
+    expect(courses.single.sourceDate, DateTime(2026, 6, 23));
   });
 
   test('official Google schedule integration script detects campus action', () {
@@ -960,9 +1543,10 @@ END:VCALENDAR
 }
 
 List<String> _uidsFromIcs(String ics) {
+  final unfolded = ics.replaceAll(RegExp(r'\r?\n[ \t]'), '');
   return RegExp(r'^UID:(.+)$', multiLine: true)
-      .allMatches(ics)
-      .map((match) => match.group(1)!)
+      .allMatches(unfolded)
+      .map((match) => match.group(1)!.trim())
       .toList();
 }
 
@@ -982,3 +1566,67 @@ bool _hasUnpairedSurrogate(String value) {
   }
   return false;
 }
+
+const _calendarExtractionHarness = r'''
+const vm = require('node:vm');
+const extractionScript = process.argv[1];
+
+function cell(text) {
+  return {
+    innerText: String(text || ''),
+    textContent: String(text || ''),
+    querySelectorAll() { return []; }
+  };
+}
+
+function row(values) {
+  const children = values.map(cell);
+  const text = values.join(' ');
+  return {
+    children,
+    innerText: text,
+    textContent: text
+  };
+}
+
+function table(rows) {
+  return {
+    querySelectorAll(selector) {
+      return selector === 'tr' ? rows : [];
+    }
+  };
+}
+
+function documentWithTables(tables) {
+  return {
+    body: cell(''),
+    location: {href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'},
+    querySelectorAll(selector) {
+      return selector === 'table' ? tables : [];
+    }
+  };
+}
+
+const scheduleTable = table([
+  row(['', '月', '火', '水']),
+  row(['', '1限: コンピュータ基礎 @ A-101', '', ''])
+]);
+const structuredTable = table([
+  row(['開講番号', '科目名', '曜日', '時限', '教室']),
+  row(['262G5001', '物理学基礎BⅠ', '火', '2限', 'F-271'])
+]);
+const child = {
+  document: documentWithTables([structuredTable]),
+  frames: []
+};
+const root = {
+  document: documentWithTables([scheduleTable]),
+  frames: [child]
+};
+
+const output = vm.runInNewContext(extractionScript, {
+  window: root,
+  URL
+});
+process.stdout.write(String(output));
+''';

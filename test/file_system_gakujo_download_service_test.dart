@@ -94,6 +94,101 @@ void main() {
       }
     }
   });
+
+  test('prefers authenticated bytes loader over a partial cookie header',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final storage = _MemorySecureStorage({
+        'more_better_gakujo_download_root_path': directory.path,
+      });
+      var loaderCalls = 0;
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: storage,
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async {
+          loaderCalls += 1;
+          return AuthenticatedDownloadedFile(
+            bytes: Uint8List.fromList([4, 5, 6]),
+            finalUrl: request.url,
+            mimeType: 'application/pdf',
+            contentDispositionFileName: 'authenticated.pdf',
+          );
+        },
+      );
+
+      final result = await service.download(
+        const GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+          method: 'GET',
+          courseName: '情報リテラシー',
+          fileName: '',
+          formFields: {},
+        ),
+        cookieHeader: 'theme=dark',
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(loaderCalls, 1);
+      expect(result.fileName, 'authenticated.pdf');
+      expect(await File(result.location!).readAsBytes(), [4, 5, 6]);
+    } finally {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    }
+  });
+
+  test('concurrent same-name downloads are saved as distinct files', () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: _MemorySecureStorage({
+          'more_better_gakujo_download_root_path': directory.path,
+        }),
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async {
+          final index = int.parse(Uri.parse(request.url).queryParameters['n']!);
+          return AuthenticatedDownloadedFile(
+            bytes: Uint8List.fromList([index]),
+            finalUrl: request.url,
+            contentDispositionFileName: '同名資料.pdf',
+          );
+        },
+      );
+
+      final results = await Future.wait([
+        for (var index = 0; index < 12; index += 1)
+          service.download(
+            GakujoDownloadRequest(
+              url: 'https://gakujo.iess.niigata-u.ac.jp/file.pdf?n=$index',
+              method: 'GET',
+              courseName: '情報リテラシー',
+              fileName: '同名資料.pdf',
+              formFields: const {},
+            ),
+            saveMode: DownloadSaveMode.flatToConfiguredFolder,
+          ),
+      ]);
+
+      expect(results.map((result) => result.fileName).toSet(), hasLength(12));
+      final files = await directory
+          .list()
+          .where((entity) => entity is File)
+          .cast<File>()
+          .toList();
+      expect(files, hasLength(12));
+      final contents = <int>{};
+      for (final file in files) {
+        contents.add((await file.readAsBytes()).single);
+      }
+      expect(contents, {for (var index = 0; index < 12; index += 1) index});
+    } finally {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    }
+  });
 }
 
 class _MemorySecureStorage extends FlutterSecureStorage {

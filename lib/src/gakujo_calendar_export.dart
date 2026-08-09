@@ -11,6 +11,8 @@ class GakujoCalendarCourse {
     this.officialLocation = '',
     this.officialDescription = '',
     this.sourceDate,
+    this.recursWeekly = true,
+    this.excludedDates = const [],
     this.termHint = '',
     this.courseCode = '',
   });
@@ -24,6 +26,8 @@ class GakujoCalendarCourse {
   final String officialLocation;
   final String officialDescription;
   final DateTime? sourceDate;
+  final bool recursWeekly;
+  final List<DateTime> excludedDates;
   final String termHint;
   final String courseCode;
 
@@ -37,6 +41,8 @@ class GakujoCalendarCourse {
     String? officialLocation,
     String? officialDescription,
     Object? sourceDate = _unchanged,
+    bool? recursWeekly,
+    List<DateTime>? excludedDates,
     String? termHint,
     String? courseCode,
   }) {
@@ -51,6 +57,8 @@ class GakujoCalendarCourse {
       officialDescription: officialDescription ?? this.officialDescription,
       sourceDate:
           sourceDate == _unchanged ? this.sourceDate : sourceDate as DateTime?,
+      recursWeekly: recursWeekly ?? this.recursWeekly,
+      excludedDates: excludedDates ?? this.excludedDates,
       termHint: termHint ?? this.termHint,
       courseCode: courseCode ?? this.courseCode,
     );
@@ -67,6 +75,9 @@ class GakujoCalendarCourse {
       'officialLocation': officialLocation,
       'officialDescription': officialDescription,
       if (sourceDate != null) 'sourceDate': _dateOnly(sourceDate!),
+      if (!recursWeekly) 'recursWeekly': false,
+      if (excludedDates.isNotEmpty)
+        'excludedDates': excludedDates.map(_dateOnly).toList(),
       'termHint': termHint,
       'courseCode': courseCode,
     };
@@ -74,6 +85,13 @@ class GakujoCalendarCourse {
 
   factory GakujoCalendarCourse.fromJson(Map<dynamic, dynamic> json) {
     final sourceDate = _parseDateOnly(json['sourceDate']?.toString());
+    final excludedDates = _normalizedDateList(
+      (json['excludedDates'] is Iterable<dynamic>)
+          ? (json['excludedDates'] as Iterable<dynamic>)
+              .map((value) => _parseDateOnly(value?.toString()))
+              .whereType<DateTime>()
+          : const <DateTime>[],
+    );
     final explicitWeekday = int.tryParse(json['weekday']?.toString() ?? '');
     return GakujoCalendarCourse(
       title: json['title']?.toString() ?? '',
@@ -85,6 +103,8 @@ class GakujoCalendarCourse {
       officialLocation: json['officialLocation']?.toString() ?? '',
       officialDescription: json['officialDescription']?.toString() ?? '',
       sourceDate: sourceDate,
+      recursWeekly: json['recursWeekly'] != false,
+      excludedDates: excludedDates,
       termHint: json['termHint']?.toString() ?? '',
       courseCode: _normalizeCourseCode(json['courseCode']?.toString() ?? ''),
     );
@@ -96,8 +116,9 @@ class GakujoCalendarCourse {
   }
 
   static DateTime? _parseDateOnly(String? raw) {
-    final match = RegExp(r'^\s*(20[0-9]{2})[-/]([0-9]{1,2})[-/]([0-9]{1,2})')
-        .firstMatch(raw ?? '');
+    final match = RegExp(
+      r'^\s*(20[0-9]{2})[-/]([0-9]{1,2})[-/]([0-9]{1,2})\s*$',
+    ).firstMatch(raw ?? '');
     if (match == null) {
       return null;
     }
@@ -107,7 +128,7 @@ class GakujoCalendarCourse {
     if (year == null || month == null || day == null) {
       return null;
     }
-    return DateTime(year, month, day);
+    return _validatedLocalDate(year, month, day);
   }
 
   static String _normalizeCourseCode(String value) {
@@ -124,6 +145,40 @@ class GakujoCalendarCourse {
 }
 
 const _unchanged = Object();
+
+DateTime? _validatedLocalDate(int year, int month, int day) {
+  if (!_hasExactDateTimeParts(year, month, day, 0, 0, 0)) {
+    return null;
+  }
+  return DateTime(year, month, day);
+}
+
+List<DateTime> _normalizedDateList(Iterable<DateTime> values) {
+  final byDate = <String, DateTime>{};
+  for (final value in values) {
+    final date = DateTime(value.year, value.month, value.day);
+    byDate[GakujoCalendarCourse._dateOnly(date)] = date;
+  }
+  final dates = byDate.values.toList()..sort();
+  return dates;
+}
+
+bool _hasExactDateTimeParts(
+  int year,
+  int month,
+  int day,
+  int hour,
+  int minute,
+  int second,
+) {
+  final value = DateTime.utc(year, month, day, hour, minute, second);
+  return value.year == year &&
+      value.month == month &&
+      value.day == day &&
+      value.hour == hour &&
+      value.minute == minute &&
+      value.second == second;
+}
 
 class GakujoPeriodTime {
   const GakujoPeriodTime({
@@ -163,6 +218,21 @@ class GakujoCalendarExtraction {
 
   final List<GakujoCalendarCourse> courses;
   final GakujoCalendarTermRange? termRange;
+}
+
+class _IcalendarEvent {
+  _IcalendarEvent(this.properties);
+
+  final Map<String, List<String>> properties;
+
+  String first(String name) {
+    final values = properties[name.toUpperCase()];
+    return values == null || values.isEmpty ? '' : values.first;
+  }
+
+  Iterable<String> all(String name) {
+    return properties[name.toUpperCase()] ?? const <String>[];
+  }
 }
 
 class GakujoCalendarExport {
@@ -307,7 +377,7 @@ class GakujoCalendarExport {
   }) {
     final coursesWithTermMetadata = courses.where(_hasTermMetadata).toList();
     if (coursesWithTermMetadata.isEmpty) {
-      return courses;
+      return _mergeCourseSlots(courses);
     }
 
     final normalizedTermName = _normalizeTermHint(termName);
@@ -330,47 +400,9 @@ class GakujoCalendarExport {
     if (matched.isEmpty) {
       return const [];
     }
-    return _dropMislocatedUndatedCourses(
-      _mergeCourseSlots(
-        _coursesFromDecoded(matched.map((course) => course.toJson()).toList()),
-      ),
+    return _mergeCourseSlots(
+      _coursesFromDecoded(matched.map((course) => course.toJson()).toList()),
     );
-  }
-
-  /// Removes undated occurrences that look like a make-up class captured on the
-  /// wrong weekday.
-  ///
-  /// The month/week calendar view shows real dated occurrences. When a public
-  /// holiday falls on a class's normal weekday, that class is rescheduled onto
-  /// another weekday for that one week (e.g. Monday's 日本国憲法 held on
-  /// Wednesday 7/22). The scraper cannot always attach a date to such a cell,
-  /// so the occurrence would otherwise be treated as a *weekly recurring* class
-  /// on the wrong weekday. If the same title has a real dated occurrence on a
-  /// different weekday — and none on this undated occurrence's weekday — treat
-  /// it as a mislocated make-up and drop it. Titles that never appear dated
-  /// (e.g. a class whose cells never expose a date link) are kept untouched.
-  static List<GakujoCalendarCourse> _dropMislocatedUndatedCourses(
-    List<GakujoCalendarCourse> courses,
-  ) {
-    final datedWeekdaysByTitle = <String, Set<int>>{};
-    for (final course in courses) {
-      if (course.sourceDate != null) {
-        datedWeekdaysByTitle
-            .putIfAbsent(displayTitleForCourse(course).trim(), () => <int>{})
-            .add(course.weekday);
-      }
-    }
-    return courses.where((course) {
-      if (course.sourceDate != null) {
-        return true;
-      }
-      final datedWeekdays =
-          datedWeekdaysByTitle[displayTitleForCourse(course).trim()];
-      if (datedWeekdays == null || datedWeekdays.contains(course.weekday)) {
-        return true;
-      }
-      return false;
-    }).toList();
   }
 
   static int? termCodeFromTermName(String termName) {
@@ -411,6 +443,9 @@ class GakujoCalendarExport {
       course.weekday,
       course.period,
       displayLocationForCourse(course).trim(),
+      course.recursWeekly ? 'weekly' : 'once',
+      if (!course.recursWeekly && course.sourceDate != null)
+        GakujoCalendarCourse._dateOnly(course.sourceDate!),
     ].join('\u{1f}');
   }
 
@@ -430,38 +465,106 @@ class GakujoCalendarExport {
       return const [];
     }
 
+    final events = _icalendarEvents(text);
+    final mastersByUid = <String, _IcalendarEvent>{};
+    for (final event in events) {
+      if (event.first('RECURRENCE-ID').trim().isNotEmpty) {
+        continue;
+      }
+      final uid = event.first('UID').trim();
+      if (uid.isNotEmpty) {
+        mastersByUid.putIfAbsent(uid, () => event);
+      }
+    }
+
+    final excludedDatesByMaster = <_IcalendarEvent, List<DateTime>>{
+      for (final event in events)
+        if (event.first('RECURRENCE-ID').trim().isEmpty)
+          event: _dateTimesFromIcalendarValues(event.all('EXDATE')).toList(),
+    };
+    for (final event in events) {
+      final recurrenceId = event.first('RECURRENCE-ID').trim();
+      if (recurrenceId.isEmpty) {
+        continue;
+      }
+      final uid = event.first('UID').trim();
+      final master = uid.isEmpty ? null : mastersByUid[uid];
+      final originalStart = _dateTimeFromIcalendarValue(recurrenceId);
+      if (master != null && originalStart != null) {
+        final excludedDates = excludedDatesByMaster.putIfAbsent(
+          master,
+          () => <DateTime>[],
+        );
+        excludedDates.add(originalStart);
+      }
+    }
+
     final rawCourses = <Map<String, Object?>>[];
-    for (final event in _icalendarEvents(text)) {
-      final title = _unescapeIcalendarText(event['SUMMARY'] ?? '');
-      final location = _unescapeIcalendarText(event['LOCATION'] ?? '');
-      final description = _unescapeIcalendarText(event['DESCRIPTION'] ?? '');
-      final start = _dateTimeFromIcalendarValue(event['DTSTART'] ?? '');
-      if (start == null) {
+    for (final event in events) {
+      final recurrenceId = event.first('RECURRENCE-ID').trim();
+      final isException = recurrenceId.isNotEmpty;
+      final uid = event.first('UID').trim();
+      final master = isException && uid.isNotEmpty ? mastersByUid[uid] : null;
+      if (event.first('STATUS').trim().toUpperCase() == 'CANCELLED') {
         continue;
       }
-      final period = _periodFromStartTime(start);
-      if (period == 0) {
-        continue;
+      final course = _courseFromIcalendarEvent(
+        event,
+        inherited: master,
+        recursWeekly: !isException,
+        excludedDates:
+            isException ? const [] : excludedDatesByMaster[event] ?? const [],
+      );
+      if (course != null) {
+        rawCourses.add(course.toJson());
       }
-      rawCourses.add({
-        'title': title,
-        'weekday': start.weekday,
-        'period': period,
-        'location': location,
-        'teacher': '',
-        'officialTitle': title,
-        'officialLocation': location,
-        'officialDescription': description,
-        'sourceDate': GakujoCalendarCourse._dateOnly(start),
-        'courseCode': courseCodeFromText('$title $location $description'),
-      });
     }
     return _coursesFromDecoded(rawCourses);
+  }
+
+  static GakujoCalendarCourse? _courseFromIcalendarEvent(
+    _IcalendarEvent event, {
+    required bool recursWeekly,
+    _IcalendarEvent? inherited,
+    List<DateTime> excludedDates = const [],
+  }) {
+    String inheritedValue(String name) {
+      final own = event.first(name);
+      return own.trim().isNotEmpty ? own : inherited?.first(name) ?? '';
+    }
+
+    final title = _unescapeIcalendarText(inheritedValue('SUMMARY'));
+    final location = _unescapeIcalendarText(inheritedValue('LOCATION'));
+    final description = _unescapeIcalendarText(
+      inheritedValue('DESCRIPTION'),
+    );
+    final start = _dateTimeFromIcalendarValue(event.first('DTSTART'));
+    if (start == null) {
+      return null;
+    }
+    final period = _periodFromStartTime(start);
+    if (period == 0) {
+      return null;
+    }
+    return GakujoCalendarCourse(
+      title: title,
+      weekday: start.weekday,
+      period: period,
+      location: location,
+      officialTitle: title,
+      officialLocation: location,
+      officialDescription: description,
+      sourceDate: DateTime(start.year, start.month, start.day),
+      recursWeekly: recursWeekly,
+      excludedDates: _normalizedDateList(excludedDates),
+      courseCode: courseCodeFromText('$title $location $description'),
+    );
   }
 
   static GakujoCalendarExtraction extractionFromJson(
     String raw, {
     DateTime? referenceDate,
+    String targetTermName = '',
   }) {
     final decoded = jsonDecode(raw);
     Object? rawCourses = decoded;
@@ -479,6 +582,7 @@ class GakujoCalendarExport {
       termRange: termRangeFromText(
         termRangeText,
         referenceDate: referenceDate,
+        targetTermName: targetTermName,
       ),
     );
   }
@@ -502,6 +606,7 @@ class GakujoCalendarExport {
         course.sourceDate == null
             ? ''
             : GakujoCalendarCourse._dateOnly(course.sourceDate!),
+        course.recursWeekly,
         course.termHint.trim(),
         course.courseCode.trim(),
       ].join('\u{1f}');
@@ -545,6 +650,9 @@ class GakujoCalendarExport {
         course.weekday,
         course.period,
         course.courseCode.trim(),
+        course.recursWeekly ? 'weekly' : 'once',
+        if (!course.recursWeekly && course.sourceDate != null)
+          GakujoCalendarCourse._dateOnly(course.sourceDate!),
       ].join('\u{1f}');
       final index = seen[key];
       if (index == null) {
@@ -579,13 +687,16 @@ class GakujoCalendarExport {
     final codeTerm = termCodeFromCourseCode(course.courseCode);
     if (codeTerm != null) {
       if (codeTerm >= 1 && codeTerm <= 4) {
-        return selectedTermCode == null || selectedTermCode == codeTerm;
+        if (selectedTermCode != null) {
+          return selectedTermCode == codeTerm;
+        }
       }
       if (codeTerm == 0) {
-        return selectedTermCode != null &&
-            _selectedTermCodesFromHint(course.termHint).contains(
-              selectedTermCode,
-            );
+        if (selectedTermCode != null) {
+          return _selectedTermCodesFromHint(course.termHint).contains(
+            selectedTermCode,
+          );
+        }
       }
     }
     final sourceDate = course.sourceDate;
@@ -595,7 +706,7 @@ class GakujoCalendarExport {
       return true;
     }
     if (normalizedTermName.isEmpty) {
-      return false;
+      return sourceDate == null && course.recursWeekly;
     }
     final hint = _normalizeTermHint(course.termHint);
     return hint.isNotEmpty && hint.contains(normalizedTermName);
@@ -627,18 +738,18 @@ class GakujoCalendarExport {
     return DateTime(value.year, value.month, value.day);
   }
 
-  static List<Map<String, String>> _icalendarEvents(String text) {
+  static List<_IcalendarEvent> _icalendarEvents(String text) {
     final lines = _unfoldIcalendarLines(text);
-    final events = <Map<String, String>>[];
-    Map<String, String>? current;
+    final events = <_IcalendarEvent>[];
+    Map<String, List<String>>? current;
     for (final line in lines) {
       if (line == 'BEGIN:VEVENT') {
-        current = <String, String>{};
+        current = <String, List<String>>{};
         continue;
       }
       if (line == 'END:VEVENT') {
         if (current != null) {
-          events.add(current);
+          events.add(_IcalendarEvent(current));
         }
         current = null;
         continue;
@@ -652,7 +763,7 @@ class GakujoCalendarExport {
       }
       final name = line.substring(0, separator).split(';').first.toUpperCase();
       final value = line.substring(separator + 1);
-      current[name] = value;
+      current.putIfAbsent(name, () => <String>[]).add(value);
     }
     return events;
   }
@@ -683,8 +794,8 @@ class GakujoCalendarExport {
 
   static DateTime? _dateTimeFromIcalendarValue(String value) {
     final match = RegExp(
-      r'([0-9]{4})([0-9]{2})([0-9]{2})T?([0-9]{2})([0-9]{2})([0-9]{2})?(Z)?',
-    ).firstMatch(value);
+      r'^([0-9]{4})([0-9]{2})([0-9]{2})T?([0-9]{2})([0-9]{2})([0-9]{2})?(Z)?$',
+    ).firstMatch(value.trim());
     if (match == null) {
       return null;
     }
@@ -694,11 +805,42 @@ class GakujoCalendarExport {
     final hour = int.parse(match.group(4)!);
     final minute = int.parse(match.group(5)!);
     final second = int.tryParse(match.group(6) ?? '') ?? 0;
+    if (!_hasExactDateTimeParts(year, month, day, hour, minute, second)) {
+      return null;
+    }
     if (match.group(7) == 'Z') {
       return DateTime.utc(year, month, day, hour, minute, second)
           .add(const Duration(hours: 9));
     }
     return DateTime(year, month, day, hour, minute, second);
+  }
+
+  static Iterable<DateTime> _dateTimesFromIcalendarValues(
+    Iterable<String> values,
+  ) sync* {
+    for (final lineValue in values) {
+      for (final rawValue in lineValue.split(',')) {
+        final value = rawValue.trim();
+        final dateTime = _dateTimeFromIcalendarValue(value);
+        if (dateTime != null) {
+          yield dateTime;
+          continue;
+        }
+        final dateMatch =
+            RegExp(r'^(20[0-9]{2})([0-9]{2})([0-9]{2})$').firstMatch(value);
+        if (dateMatch == null) {
+          continue;
+        }
+        final date = _validatedLocalDate(
+          int.parse(dateMatch.group(1)!),
+          int.parse(dateMatch.group(2)!),
+          int.parse(dateMatch.group(3)!),
+        );
+        if (date != null) {
+          yield date;
+        }
+      }
+    }
   }
 
   static int _periodFromStartTime(DateTime start) {
@@ -732,6 +874,11 @@ class GakujoCalendarExport {
         incoming.officialDescription,
       ),
       sourceDate: existing.sourceDate ?? incoming.sourceDate,
+      recursWeekly: existing.recursWeekly && incoming.recursWeekly,
+      excludedDates: _normalizedDateList([
+        ...existing.excludedDates,
+        ...incoming.excludedDates,
+      ]),
       termHint: choose(existing.termHint, incoming.termHint),
       courseCode: choose(existing.courseCode, incoming.courseCode),
     );
@@ -823,6 +970,24 @@ class GakujoCalendarExport {
     GakujoCalendarCourse left,
     GakujoCalendarCourse right,
   ) {
+    if (left.recursWeekly != right.recursWeekly) {
+      return false;
+    }
+    if (!left.recursWeekly &&
+        (left.sourceDate == null ||
+            right.sourceDate == null ||
+            !_dateOnly(left.sourceDate!).isAtSameMomentAs(
+              _dateOnly(right.sourceDate!),
+            ))) {
+      return false;
+    }
+    final leftCourseCode = courseCodeFromText(left.courseCode);
+    final rightCourseCode = courseCodeFromText(right.courseCode);
+    if (leftCourseCode.isNotEmpty &&
+        rightCourseCode.isNotEmpty &&
+        leftCourseCode != rightCourseCode) {
+      return false;
+    }
     final leftCode = termCodeFromCourseCode(left.courseCode);
     final rightCode = termCodeFromCourseCode(right.courseCode);
     if (leftCode != null &&
@@ -878,8 +1043,9 @@ class GakujoCalendarExport {
     GakujoCalendarCourse baseCourse,
     GakujoCalendarCourse officialCourse,
   ) {
-    return baseCourse.courseCode.trim().isEmpty ||
-        officialCourse.courseCode.trim().isNotEmpty;
+    final baseCode = courseCodeFromText(baseCourse.courseCode);
+    final officialCode = courseCodeFromText(officialCourse.courseCode);
+    return baseCode.isNotEmpty && baseCode == officialCode;
   }
 
   static bool _titleLooksSame(String a, String b) {
@@ -906,8 +1072,11 @@ class GakujoCalendarExport {
 
     final host = uri.host.toLowerCase();
     final path = uri.path.toLowerCase();
-    if (!((host.contains('google.') || host == 'calendar.google.com') &&
-        path.contains('/calendar'))) {
+    if (uri.scheme.toLowerCase() != 'https' ||
+        uri.userInfo.isNotEmpty ||
+        (uri.hasPort && uri.port != 443) ||
+        host != 'calendar.google.com' ||
+        !path.contains('/calendar')) {
       return null;
     }
 
@@ -957,7 +1126,7 @@ class GakujoCalendarExport {
 
   static DateTime? _googleCalendarStartDate(String rawStart) {
     final match = RegExp(
-      r'^(\d{4})(\d{2})(\d{2})(?:T?(\d{2})(\d{2})(\d{2})?)?(Z)?',
+      r'^(\d{4})(\d{2})(\d{2})(?:T?(\d{2})(\d{2})(\d{2})?)?(Z)?$',
     ).firstMatch(rawStart.trim());
     if (match == null) {
       return null;
@@ -974,6 +1143,9 @@ class GakujoCalendarExport {
         hour == null ||
         minute == null ||
         second == null) {
+      return null;
+    }
+    if (!_hasExactDateTimeParts(year, month, day, hour, minute, second)) {
       return null;
     }
     if (match.group(7) == 'Z') {
@@ -1001,6 +1173,7 @@ class GakujoCalendarExport {
   static GakujoCalendarTermRange? termRangeFromText(
     String text, {
     DateTime? referenceDate,
+    String targetTermName = '',
   }) {
     final reference = referenceDate ?? DateTime.now();
     final normalized = text
@@ -1009,26 +1182,52 @@ class GakujoCalendarExport {
         .replaceAll('〜', '～')
         .replaceAll('~', '～')
         .replaceAll('－', '～')
-        .replaceAll('ー', '～')
         .replaceAll('―', '～')
         .replaceAll('から', '～');
-    final relevantLines = normalized
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((line) => line.isNotEmpty)
-        .where((line) {
+    final allSegments = _termRangeSegments(normalized);
+    final relevantLines =
+        allSegments.where((line) => line.isNotEmpty).where((line) {
       return RegExp(r'(ターム|学期|授業期間|開講期間|履修期間|授業日程|期間)').hasMatch(line);
     }).toList();
-    final candidates = relevantLines.isEmpty
-        ? normalized.split(RegExp(r'[\r\n]+')).toList()
-        : relevantLines;
+    final candidates = relevantLines.isEmpty ? allSegments : relevantLines;
+    final parsed = <(String, GakujoCalendarTermRange)>[];
     for (final line in candidates) {
-      final range = _termRangeFromLine(line, reference);
-      if (range != null) {
-        return range;
+      for (final range in _termRangesFromLine(line, reference)) {
+        parsed.add((line, range));
       }
     }
-    return null;
+    if (parsed.isEmpty) {
+      return null;
+    }
+
+    final normalizedTarget = _normalizeTermHint(targetTermName);
+    if (normalizedTarget.isNotEmpty) {
+      final targetRanges = _uniqueTermRanges([
+        for (final candidate in parsed)
+          if (_normalizeTermHint(candidate.$1).contains(normalizedTarget))
+            candidate.$2,
+      ]);
+      return targetRanges.length == 1 ? targetRanges.single : null;
+    }
+
+    final referenceDay = _dateOnly(reference);
+    final containingRanges = _uniqueTermRanges([
+      for (final candidate in parsed)
+        if (!referenceDay.isBefore(_dateOnly(candidate.$2.start)) &&
+            !referenceDay.isAfter(_dateOnly(candidate.$2.end)))
+          candidate.$2,
+    ]);
+    if (containingRanges.length == 1) {
+      return containingRanges.single;
+    }
+    if (containingRanges.length > 1) {
+      return null;
+    }
+
+    final uniqueRanges = _uniqueTermRanges([
+      for (final candidate in parsed) candidate.$2,
+    ]);
+    return uniqueRanges.length == 1 ? uniqueRanges.single : null;
   }
 
   static String buildIcs({
@@ -1038,18 +1237,19 @@ class GakujoCalendarExport {
     List<DateTime> noClassDates = const [],
     String uidNamespace = 'manual',
     String termLabel = '',
+    String calendarName = 'More Better Gakujo 授業',
     DateTime? generatedAt,
   }) {
     final stamp = _utcTimestamp(generatedAt?.toUtc() ?? DateTime.now().toUtc());
     final until = _utcTimestamp(
-      DateTime(
+      DateTime.utc(
         rangeEnd.year,
         rangeEnd.month,
         rangeEnd.day,
-        23,
+        14,
         59,
         59,
-      ).toUtc(),
+      ),
     );
     final lines = <String>[
       'BEGIN:VCALENDAR',
@@ -1057,17 +1257,62 @@ class GakujoCalendarExport {
       'PRODID:-//More Better Gakujo//Calendar Export//JA',
       'CALSCALE:GREGORIAN',
       'METHOD:PUBLISH',
-      'X-WR-CALNAME:More Better Gakujo 授業',
+      'X-WR-CALNAME:${_escape(
+        calendarName.trim().isEmpty
+            ? 'More Better Gakujo 授業'
+            : calendarName.trim(),
+      )}',
       'X-WR-TIMEZONE:Asia/Tokyo',
+      'BEGIN:VTIMEZONE',
+      'TZID:Asia/Tokyo',
+      'X-LIC-LOCATION:Asia/Tokyo',
+      'BEGIN:STANDARD',
+      'TZOFFSETFROM:+0900',
+      'TZOFFSETTO:+0900',
+      'TZNAME:JST',
+      'DTSTART:19700101T000000',
+      'END:STANDARD',
+      'END:VTIMEZONE',
     ];
 
-    for (final course in courses.where(_isUsefulCourse)) {
+    final exportCourses =
+        courses.where(_isUsefulCourse).toList(growable: false);
+    final legacyIdentityCounts = <String, int>{};
+    final legacyIdentityAnchors = <String, String>{};
+    for (final course in exportCourses.where((course) => course.recursWeekly)) {
+      final identity = _legacyEventUidIdentity(course, uidNamespace);
+      legacyIdentityCounts[identity] =
+          (legacyIdentityCounts[identity] ?? 0) + 1;
+      final discriminator = _courseUidDiscriminator(course);
+      final currentAnchor = legacyIdentityAnchors[identity];
+      if (currentAnchor == null || discriminator.compareTo(currentAnchor) < 0) {
+        legacyIdentityAnchors[identity] = discriminator;
+      }
+    }
+
+    for (final course in exportCourses) {
       final time = periodTimes[course.period];
       if (time == null) {
         continue;
       }
-      final firstDate = _firstDateOnOrAfter(rangeStart, course.weekday);
+      final DateTime firstDate;
+      if (course.recursWeekly) {
+        firstDate = _firstDateOnOrAfter(rangeStart, course.weekday);
+      } else {
+        final sourceDate = course.sourceDate;
+        if (sourceDate == null) {
+          continue;
+        }
+        firstDate = DateTime(
+          sourceDate.year,
+          sourceDate.month,
+          sourceDate.day,
+        );
+      }
       if (firstDate.isAfter(rangeEnd)) {
+        continue;
+      }
+      if (firstDate.isBefore(rangeStart)) {
         continue;
       }
       final start = DateTime(
@@ -1084,7 +1329,15 @@ class GakujoCalendarExport {
         time.endHour,
         time.endMinute,
       );
-      final uid = _eventUid(course, uidNamespace);
+      final legacyIdentity = _legacyEventUidIdentity(course, uidNamespace);
+      final courseDiscriminator = _courseUidDiscriminator(course);
+      final uid = _eventUid(
+        course,
+        uidNamespace,
+        disambiguateCourseCode: course.recursWeekly &&
+            (legacyIdentityCounts[legacyIdentity] ?? 0) > 1 &&
+            legacyIdentityAnchors[legacyIdentity] != courseDiscriminator,
+      );
       final exDates = _exDatesForCourse(
         course: course,
         periodTime: time,
@@ -1092,6 +1345,12 @@ class GakujoCalendarExport {
         rangeEnd: rangeEnd,
         noClassDates: noClassDates,
       );
+      if (!course.recursWeekly &&
+          exDates.any(
+            (date) => _dateOnly(date).isAtSameMomentAs(_dateOnly(firstDate)),
+          )) {
+        continue;
+      }
       lines.addAll([
         'BEGIN:VEVENT',
         'UID:$uid',
@@ -1101,8 +1360,8 @@ class GakujoCalendarExport {
         'SUMMARY:${_escape(displayTitleForCourse(course))}',
         'DTSTART;TZID=Asia/Tokyo:${_localTimestamp(start)}',
         'DTEND;TZID=Asia/Tokyo:${_localTimestamp(end)}',
-        'RRULE:FREQ=WEEKLY;UNTIL=$until',
-        if (exDates.isNotEmpty)
+        if (course.recursWeekly) 'RRULE:FREQ=WEEKLY;UNTIL=$until',
+        if (course.recursWeekly && exDates.isNotEmpty)
           'EXDATE;TZID=Asia/Tokyo:${exDates.map(_localTimestamp).join(',')}',
         if (displayLocationForCourse(course).isNotEmpty)
           'LOCATION:${_escape(displayLocationForCourse(course))}',
@@ -1173,6 +1432,9 @@ class GakujoCalendarExport {
           existing.sourceDate = existing.sourceDate || course.sourceDate || '';
           existing.termHint = existing.termHint || course.termHint || '';
           existing.courseCode = existing.courseCode || course.courseCode || '';
+          existing.authoritativeTimetableCell =
+            existing.authoritativeTimetableCell ||
+            course.authoritativeTimetableCell || false;
           if (!existing.location && course.location) {
             existing.location = course.location;
           }
@@ -1336,7 +1598,8 @@ class GakujoCalendarExport {
     period,
     rawTitleAndLocation,
     sourceDate,
-    termHint
+    termHint,
+    authoritativeTimetableCell
   ) {
     var split = splitTitleAndLocation(rawTitleAndLocation);
     if (!weekday || !period || !titleLooksUseful(split.title)) {
@@ -1352,7 +1615,8 @@ class GakujoCalendarExport {
       termHint: termHint ||
         termHintFromCourseCode(split.courseCode) ||
         termHintFromText(rawTitleAndLocation),
-      courseCode: split.courseCode || courseCodeFromText(rawTitleAndLocation)
+      courseCode: split.courseCode || courseCodeFromText(rawTitleAndLocation),
+      authoritativeTimetableCell: authoritativeTimetableCell === true
     });
   }
   function periodFromTimeText(text) {
@@ -1501,7 +1765,8 @@ class GakujoCalendarExport {
         Number(match[1]),
         cleanCourseText(match[2]),
         sourceDate,
-        termHintFromText(text)
+        termHintFromText(text),
+        true
       );
     }
   }
@@ -1720,6 +1985,11 @@ class GakujoCalendarExport {
     }
   }
   function canMergePotentialSameTerm(course, event) {
+    var courseCode = courseCodeFromText(course && course.courseCode || '');
+    var eventCode = courseCodeFromText(event && event.courseCode || '');
+    if (courseCode && eventCode && courseCode !== eventCode) {
+      return false;
+    }
     var courseTerm = termCodeFromCourseCode(course && course.courseCode || '');
     var eventTerm = termCodeFromCourseCode(event && event.courseCode || '');
     if (courseTerm !== null && eventTerm !== null &&
@@ -1841,8 +2111,8 @@ class GakujoCalendarExport {
         var url = new URL(matches[i], baseUrl);
         var host = url.hostname.toLowerCase();
         var path = url.pathname.toLowerCase();
-        if ((host.indexOf('google.') >= 0 ||
-             host === 'calendar.google.com') &&
+        if (url.protocol === 'https:' &&
+            host === 'calendar.google.com' &&
             path.indexOf('/calendar') >= 0 &&
             (url.searchParams.has('text') ||
              url.searchParams.has('details') ||
@@ -1988,9 +2258,14 @@ class GakujoCalendarExport {
   collect(window);
   if (results.some(function(course) { return !!course.courseCode; })) {
     results = results.filter(function(course) {
-      return !!course.courseCode || hasOfficialFields(course);
+      return !!course.courseCode ||
+        hasOfficialFields(course) ||
+        course.authoritativeTimetableCell === true;
     });
   }
+  results.forEach(function(course) {
+    delete course.authoritativeTimetableCell;
+  });
   var pageText = allPageText();
   return JSON.stringify({
     courses: results,
@@ -2119,8 +2394,8 @@ class GakujoCalendarExport {
         var url = new URL(matches[i], doc.location.href);
         var host = url.hostname.toLowerCase();
         var path = url.pathname.toLowerCase();
-        if ((host.indexOf('google.') >= 0 ||
-             host === 'calendar.google.com') &&
+        if (url.protocol === 'https:' &&
+            host === 'calendar.google.com' &&
             path.indexOf('/calendar') >= 0 &&
             (url.searchParams.has('text') ||
              url.searchParams.has('details') ||
@@ -3128,58 +3403,124 @@ class GakujoCalendarExport {
         '${minute.toString().padLeft(2, '0')}';
   }
 
-  static GakujoCalendarTermRange? _termRangeFromLine(
+  static List<String> _termRangeSegments(String text) {
+    final segments = <String>[];
+    for (final rawLine in text.split(RegExp(r'[\r\n]+'))) {
+      final line = rawLine.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (line.isEmpty) {
+        continue;
+      }
+      final termMarkers = RegExp(
+        r'(?:第\s*[1-4１-４]\s*ターム|前期|後期)',
+      ).allMatches(line).toList();
+      if (termMarkers.length <= 1) {
+        segments.add(line);
+        continue;
+      }
+      for (var index = 0; index < termMarkers.length; index += 1) {
+        final start = index == 0 ? 0 : termMarkers[index].start;
+        final end = index + 1 < termMarkers.length
+            ? termMarkers[index + 1].start
+            : line.length;
+        final segment = line.substring(start, end).trim();
+        if (segment.isNotEmpty) {
+          segments.add(segment);
+        }
+      }
+    }
+    return segments;
+  }
+
+  static List<GakujoCalendarTermRange> _uniqueTermRanges(
+    Iterable<GakujoCalendarTermRange> ranges,
+  ) {
+    final unique = <String, GakujoCalendarTermRange>{};
+    for (final range in ranges) {
+      final key = [
+        range.start.year,
+        range.start.month,
+        range.start.day,
+        range.end.year,
+        range.end.month,
+        range.end.day,
+      ].join('-');
+      unique.putIfAbsent(key, () => range);
+    }
+    return unique.values.toList(growable: false);
+  }
+
+  static List<GakujoCalendarTermRange> _termRangesFromLine(
     String line,
     DateTime reference,
   ) {
-    final fullDateRange = RegExp(
-      r'((?:20)?[0-9]{2})[年/-]([0-9]{1,2})[月/-]([0-9]{1,2})日?(?:\([^)]*\))?\s*[～-]\s*(?:(?:((?:20)?[0-9]{2})[年/-])?([0-9]{1,2})[月/-]([0-9]{1,2})日?)',
-    ).firstMatch(line);
-    if (fullDateRange != null) {
+    final fullDateRangePattern = RegExp(
+      r'((?:20)?[0-9]{2})[年/-]([0-9]{1,2})[月/-]([0-9]{1,2})日?(?:\([^)]*\))?\s*[～ー-]\s*(?:(?:((?:20)?[0-9]{2})[年/-])?([0-9]{1,2})[月/-]([0-9]{1,2})日?)',
+    );
+    final ranges = <GakujoCalendarTermRange>[];
+    final fullDateMatches = fullDateRangePattern.allMatches(line).toList();
+    for (final fullDateRange in fullDateMatches) {
       final startYear = _normalizedYear(fullDateRange.group(1));
       final startMonth = int.tryParse(fullDateRange.group(2) ?? '');
       final startDay = int.tryParse(fullDateRange.group(3) ?? '');
-      final endYear = _normalizedYear(fullDateRange.group(4)) ?? startYear;
+      final explicitEndYear = _normalizedYear(fullDateRange.group(4));
       final endMonth = int.tryParse(fullDateRange.group(5) ?? '');
       final endDay = int.tryParse(fullDateRange.group(6) ?? '');
       if (startYear != null &&
           startMonth != null &&
           startDay != null &&
-          endYear != null &&
           endMonth != null &&
           endDay != null) {
-        return _termRange(
-          DateTime(startYear, startMonth, startDay),
-          DateTime(endYear, endMonth, endDay),
-          line,
-        );
+        final start = _validatedLocalDate(startYear, startMonth, startDay);
+        var endYear = explicitEndYear ?? startYear;
+        if (explicitEndYear == null &&
+            (endMonth < startMonth ||
+                (endMonth == startMonth && endDay < startDay))) {
+          endYear += 1;
+        }
+        final end = _validatedLocalDate(endYear, endMonth, endDay);
+        if (start != null && end != null && !end.isBefore(start)) {
+          ranges.add(_termRange(start, end, line));
+        }
       }
     }
 
-    final monthDayRange = RegExp(
-      r'([0-9]{1,2})月([0-9]{1,2})日?(?:\([^)]*\))?\s*～\s*([0-9]{1,2})月([0-9]{1,2})日?',
-    ).firstMatch(line);
-    if (monthDayRange == null) {
-      return null;
-    }
-    final startMonth = int.tryParse(monthDayRange.group(1) ?? '');
-    final startDay = int.tryParse(monthDayRange.group(2) ?? '');
-    final endMonth = int.tryParse(monthDayRange.group(3) ?? '');
-    final endDay = int.tryParse(monthDayRange.group(4) ?? '');
-    if (startMonth == null ||
-        startDay == null ||
-        endMonth == null ||
-        endDay == null) {
-      return null;
-    }
-    final startYear = reference.month <= 3 && startMonth >= 4
-        ? reference.year - 1
-        : reference.year;
-    return _termRange(
-      DateTime(startYear, startMonth, startDay),
-      DateTime(startYear, endMonth, endDay),
-      line,
+    final monthDayRangePattern = RegExp(
+      r'([0-9]{1,2})月([0-9]{1,2})日?(?:\([^)]*\))?\s*[～ー-]\s*([0-9]{1,2})月([0-9]{1,2})日?',
     );
+    for (final monthDayRange in monthDayRangePattern.allMatches(line)) {
+      if (fullDateMatches.any(
+        (fullDateRange) =>
+            monthDayRange.start < fullDateRange.end &&
+            fullDateRange.start < monthDayRange.end,
+      )) {
+        continue;
+      }
+      final startMonth = int.tryParse(monthDayRange.group(1) ?? '');
+      final startDay = int.tryParse(monthDayRange.group(2) ?? '');
+      final endMonth = int.tryParse(monthDayRange.group(3) ?? '');
+      final endDay = int.tryParse(monthDayRange.group(4) ?? '');
+      if (startMonth == null ||
+          startDay == null ||
+          endMonth == null ||
+          endDay == null) {
+        continue;
+      }
+      final startYear = reference.month <= 3 && startMonth >= 4
+          ? reference.year - 1
+          : reference.year;
+      final start = _validatedLocalDate(startYear, startMonth, startDay);
+      final crossesCalendarYear = endMonth < startMonth ||
+          (endMonth == startMonth && endDay < startDay);
+      final end = _validatedLocalDate(
+        crossesCalendarYear ? startYear + 1 : startYear,
+        endMonth,
+        endDay,
+      );
+      if (start != null && end != null && !end.isBefore(start)) {
+        ranges.add(_termRange(start, end, line));
+      }
+    }
+    return _uniqueTermRanges(ranges);
   }
 
   static int? _normalizedYear(String? raw) {
@@ -3214,7 +3555,9 @@ class GakujoCalendarExport {
   }) {
     final seen = <String>{};
     final dates = <DateTime>[];
-    for (final date in noClassDates) {
+    final globalNoClassDates =
+        course.recursWeekly ? noClassDates : const <DateTime>[];
+    for (final date in [...globalNoClassDates, ...course.excludedDates]) {
       final day = DateTime(date.year, date.month, date.day);
       if (day.weekday != course.weekday ||
           day.isBefore(rangeStart) ||
@@ -3239,19 +3582,54 @@ class GakujoCalendarExport {
   static DateTime _firstDateOnOrAfter(DateTime start, int weekday) {
     final date = DateTime(start.year, start.month, start.day);
     final delta = (weekday - date.weekday) % DateTime.daysPerWeek;
-    return date.add(Duration(days: delta));
+    return DateTime(date.year, date.month, date.day + delta);
   }
 
-  static String _eventUid(GakujoCalendarCourse course, String uidNamespace) {
+  static String _eventUid(
+    GakujoCalendarCourse course,
+    String uidNamespace, {
+    required bool disambiguateCourseCode,
+  }) {
+    final normalizedCourseCode = courseCodeFromText(course.courseCode);
+    final stableCourseIdentity =
+        disambiguateCourseCode && normalizedCourseCode.isNotEmpty
+            ? normalizedCourseCode
+            : _normalizedUidPart(displayTitleForCourse(course));
     final source = [
+      uidNamespace,
+      stableCourseIdentity,
+      course.weekday,
+      course.period,
+      _normalizedUidPart(displayLocationForCourse(course)),
+      if (!course.recursWeekly) 'once',
+      if (!course.recursWeekly && course.sourceDate != null)
+        GakujoCalendarCourse._dateOnly(course.sourceDate!),
+    ].join('|');
+    final encoded = base64Url.encode(utf8.encode(source)).replaceAll('=', '');
+    return '$encoded@morebettergakujo.local';
+  }
+
+  static String _legacyEventUidIdentity(
+    GakujoCalendarCourse course,
+    String uidNamespace,
+  ) {
+    return [
       uidNamespace,
       _normalizedUidPart(displayTitleForCourse(course)),
       course.weekday,
       course.period,
       _normalizedUidPart(displayLocationForCourse(course)),
     ].join('|');
-    final encoded = base64Url.encode(utf8.encode(source)).replaceAll('=', '');
-    return '$encoded@morebettergakujo.local';
+  }
+
+  static String _courseUidDiscriminator(GakujoCalendarCourse course) {
+    return [
+      courseCodeFromText(course.courseCode),
+      _normalizedUidPart(course.teacher),
+      _normalizedUidPart(course.officialDescription),
+      if (course.sourceDate != null)
+        GakujoCalendarCourse._dateOnly(course.sourceDate!),
+    ].join('|');
   }
 
   static String _normalizedUidPart(String value) {

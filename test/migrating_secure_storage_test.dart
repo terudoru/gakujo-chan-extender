@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/bundled_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/migrating_secure_storage.dart';
 
 void main() {
@@ -358,6 +360,163 @@ void main() {
     expect(primary.values['token'], 'new');
     expect(fallback.values.containsKey('token'), isFalse);
   });
+
+  test('deleteAll waits for an in-flight migration sweep', () async {
+    const markerKey = 'migration-completed';
+    final readAllStarted = Completer<void>();
+    final releaseReadAll = Completer<void>();
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({'token': 'legacy'})
+      ..readAllStarted = readAllStarted
+      ..releaseReadAll = releaseReadAll;
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    final read = storage.read(key: 'token');
+    await readAllStarted.future;
+    final deletion = storage.deleteAll();
+    releaseReadAll.complete();
+
+    await read;
+    await deletion;
+
+    expect(await storage.read(key: 'token'), isNull);
+    expect(primary.values, {markerKey: '1'});
+    expect(fallback.values, isEmpty);
+  });
+
+  test('failed fallback deleteAll leaves a durable deletion tombstone',
+      () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({'current': 'value'});
+    final fallback = _MemorySecureStorage({'token': 'legacy'})
+      ..deleteAllError = StateError('legacy keychain unavailable');
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    await expectLater(storage.deleteAll(), throwsA(isA<StateError>()));
+
+    expect(primary.values, {markerKey: '1'});
+    expect(fallback.values, {'token': 'legacy'});
+
+    final restartedStorage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+    expect(await restartedStorage.read(key: 'token'), isNull);
+  });
+
+  test('deleteAll writes its tombstone before legacy cleanup finishes',
+      () async {
+    const markerKey = 'migration-completed';
+    final deleteAllStarted = Completer<void>();
+    final releaseDeleteAll = Completer<void>();
+    final primary = _MemorySecureStorage({'current': 'value'});
+    final fallback = _MemorySecureStorage({'token': 'legacy'})
+      ..deleteAllStarted = deleteAllStarted
+      ..releaseDeleteAll = releaseDeleteAll;
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+
+    final deletion = storage.deleteAll();
+    await deleteAllStarted.future;
+
+    expect(primary.values, {markerKey: '1'});
+    final restartedStorage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+    expect(await restartedStorage.read(key: 'token'), isNull);
+
+    releaseDeleteAll.complete();
+    await deletion;
+    expect(fallback.values, isEmpty);
+  });
+
+  test('deleteAll restores a bundled marker erased by an aliased fallback',
+      () async {
+    const markerKey = 'migration-completed';
+    const bundleKey = 'secure-storage-bundle';
+    final sharedBacking = _MemorySecureStorage();
+    final bundledPrimary = BundledSecureStorage(
+      storage: sharedBacking,
+      bundleKey: bundleKey,
+    );
+    final legacy = _MemorySecureStorage({'login': 'legacy-student'})
+      ..deleteAllError = StateError('legacy keychain unavailable');
+    final nestedFallback = MigratingSecureStorage(
+      primary: sharedBacking,
+      fallback: legacy,
+      deleteFallbackAfterMigration: false,
+    );
+    final storage = MigratingSecureStorage(
+      primary: bundledPrimary,
+      fallback: nestedFallback,
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+    );
+
+    await bundledPrimary.write(key: 'current', value: 'value');
+    await expectLater(storage.deleteAll(), throwsA(isA<StateError>()));
+
+    final persistedBundle =
+        jsonDecode(sharedBacking.values[bundleKey]!) as Map<String, dynamic>;
+    expect(persistedBundle, {markerKey: '1'});
+    expect(legacy.values, {'login': 'legacy-student'});
+
+    final restartedStorage = MigratingSecureStorage(
+      primary: BundledSecureStorage(
+        storage: sharedBacking,
+        bundleKey: bundleKey,
+      ),
+      fallback: MigratingSecureStorage(
+        primary: sharedBacking,
+        fallback: legacy,
+        deleteFallbackAfterMigration: false,
+      ),
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+    );
+    expect(await restartedStorage.read(key: 'login'), isNull);
+  });
+
+  test('failed fallback key delete cannot revive a deleted marked value',
+      () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({'token': 'legacy'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+    );
+
+    expect(await storage.read(key: 'token'), 'legacy');
+    fallback.deleteError = StateError('legacy key delete failed');
+
+    await storage.delete(key: 'token');
+
+    expect(primary.values, {markerKey: '1'});
+    expect(fallback.values, {'token': 'legacy'});
+    final restartedStorage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+    );
+    expect(await restartedStorage.read(key: 'token'), isNull);
+  });
 }
 
 class _MemorySecureStorage extends FlutterSecureStorage {
@@ -367,6 +526,12 @@ class _MemorySecureStorage extends FlutterSecureStorage {
   final Map<String, String> values;
   Object? readError;
   Object? readAllError;
+  Object? deleteError;
+  Object? deleteAllError;
+  Completer<void>? readAllStarted;
+  Completer<void>? releaseReadAll;
+  Completer<void>? deleteAllStarted;
+  Completer<void>? releaseDeleteAll;
   Duration readDelay = Duration.zero;
   Duration readAllDelay = Duration.zero;
   int readAllCount = 0;
@@ -403,6 +568,14 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     readAllCount += 1;
+    final started = readAllStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    final release = releaseReadAll;
+    if (release != null) {
+      await release.future;
+    }
     if (readAllDelay > Duration.zero) {
       await Future<void>.delayed(readAllDelay);
     }
@@ -441,6 +614,10 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    final error = deleteError;
+    if (error != null) {
+      throw error;
+    }
     values.remove(key);
   }
 
@@ -453,6 +630,18 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    final started = deleteAllStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    final release = releaseDeleteAll;
+    if (release != null) {
+      await release.future;
+    }
+    final error = deleteAllError;
+    if (error != null) {
+      throw error;
+    }
     values.clear();
   }
 }

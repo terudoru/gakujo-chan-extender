@@ -37,11 +37,11 @@ void main() {
     );
     expect(
       (capturedCall?.arguments as Map<dynamic, dynamic>)['rangeStartMillis'],
-      DateTime(2026, 6, 11).millisecondsSinceEpoch,
+      DateTime.utc(2026, 6, 10, 15).millisecondsSinceEpoch,
     );
     expect(
       (capturedCall?.arguments as Map<dynamic, dynamic>)['rangeEndMillis'],
-      DateTime(2026, 8, 5, 23, 59, 59).millisecondsSinceEpoch,
+      DateTime.utc(2026, 8, 5, 15).millisecondsSinceEpoch,
     );
   });
 
@@ -56,7 +56,7 @@ void main() {
     final result = await const MethodChannelGakujoCalendarService().syncEvents(
       events: [
         GakujoCalendarEvent(
-          id: 'validation-1',
+          id: 'validation|validation-1',
           title: '検証予定',
           start: DateTime(2026, 6, 11, 8, 45),
           end: DateTime(2026, 6, 11, 10, 15),
@@ -76,6 +76,10 @@ void main() {
       (capturedCall?.arguments as Map<dynamic, dynamic>)['calendarTitle'],
       'More Better Gakujo 検証',
     );
+    expect(
+      (capturedCall?.arguments as Map<dynamic, dynamic>)['uidNamespace'],
+      'validation',
+    );
     final payload =
         (capturedCall?.arguments as Map<dynamic, dynamic>)['events'] as List;
     final eventJson = payload.single as Map<dynamic, dynamic>;
@@ -92,6 +96,59 @@ void main() {
     expect(eventJson['teacher'], 'More Better Gakujo');
     expect(eventJson['notes'], contains('木曜 1限'));
     expect(eventJson['notes'], contains('08:45 - 10:15'));
+    expect(
+      (capturedCall?.arguments as Map<dynamic, dynamic>)['rangeStartMillis'],
+      DateTime.utc(2026, 6, 10, 15).millisecondsSinceEpoch,
+    );
+    expect(
+      (capturedCall?.arguments as Map<dynamic, dynamic>)['rangeEndMillis'],
+      DateTime.utc(2026, 6, 11, 15).millisecondsSinceEpoch,
+    );
+  });
+
+  test('syncEvents rejects an empty replacement before calling native',
+      () async {
+    var nativeCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      nativeCalls += 1;
+      return {'added': 0, 'removed': 1, 'openedFallback': false};
+    });
+
+    await expectLater(
+      const MethodChannelGakujoCalendarService().syncEvents(
+        events: const [],
+        rangeStart: DateTime(2026, 6, 11),
+        rangeEnd: DateTime(2026, 8, 5),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(nativeCalls, 0);
+  });
+
+  test('syncEvents rejects mixed namespaces before calling native', () async {
+    var nativeCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      nativeCalls += 1;
+      return {'added': 2, 'removed': 0, 'openedFallback': false};
+    });
+    GakujoCalendarEvent event(String id) => GakujoCalendarEvent(
+          id: id,
+          title: '検証予定',
+          start: DateTime(2026, 6, 11, 8, 45),
+          end: DateTime(2026, 6, 11, 10, 15),
+        );
+
+    await expectLater(
+      const MethodChannelGakujoCalendarService().syncEvents(
+        events: [event('term-1|one'), event('term-2|two')],
+        rangeStart: DateTime(2026, 6, 11),
+        rangeEnd: DateTime(2026, 8, 5),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(nativeCalls, 0);
   });
 
   test('buildEvents expands classes into concrete event instances', () {
@@ -223,6 +280,80 @@ void main() {
     );
   });
 
+  test('buildEvents excludes an EXDATE and adds its moved exception once', () {
+    final parsed =
+        GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:constitution@example.edu
+SUMMARY:日本国憲法
+DTSTART;TZID=Asia/Tokyo:20260615T084500
+DTEND;TZID=Asia/Tokyo:20260615T101500
+RRULE:FREQ=WEEKLY;UNTIL=20260808T145959Z
+EXDATE;TZID=Asia/Tokyo:20260720T084500
+LOCATION:総合教育研究棟 E-260
+END:VEVENT
+BEGIN:VEVENT
+UID:constitution@example.edu
+RECURRENCE-ID;TZID=Asia/Tokyo:20260720T084500
+DTSTART;TZID=Asia/Tokyo:20260722T084500
+DTEND;TZID=Asia/Tokyo:20260722T101500
+END:VEVENT
+END:VCALENDAR
+''');
+    final filtered = GakujoCalendarExport.filterCoursesForTerm(
+      courses: parsed,
+      termRange: GakujoCalendarTermRange(
+        start: DateTime(2026, 6, 11),
+        end: DateTime(2026, 8, 8),
+      ),
+    );
+
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: filtered,
+      rangeStart: DateTime(2026, 7, 13),
+      rangeEnd: DateTime(2026, 7, 27),
+      noClassDates: [DateTime(2026, 7, 22)],
+      uidNamespace: 'niigata-2026-第2ターム',
+    );
+
+    expect(events.map((event) => event.start), [
+      DateTime(2026, 7, 13, 8, 45),
+      DateTime(2026, 7, 22, 8, 45),
+      DateTime(2026, 7, 27, 8, 45),
+    ]);
+    expect(
+      events.where((event) => event.start.weekday == DateTime.wednesday),
+      hasLength(1),
+    );
+  });
+
+  test('buildEvents preserves civil weekdays across a daylight-saving change',
+      () {
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '月曜講義',
+          weekday: DateTime.monday,
+          period: 1,
+        ),
+      ],
+      rangeStart: DateTime(2026, 10, 26),
+      rangeEnd: DateTime(2026, 11, 9),
+    );
+
+    expect(
+      events.map((event) => event.start),
+      [
+        DateTime(2026, 10, 26, 8, 45),
+        DateTime(2026, 11, 2, 8, 45),
+        DateTime(2026, 11, 9, 8, 45),
+      ],
+    );
+    expect(events.every((event) => event.start.weekday == DateTime.monday),
+        isTrue);
+  });
+
   test('buildEvents ignores malformed weekdays and periods', () {
     final events = GakujoCalendarEventBuilder.buildEvents(
       courses: const [
@@ -269,5 +400,44 @@ void main() {
     }
 
     expect(build().single.id, build().single.id);
+  });
+
+  test('buildEvents separates same-slot courses by normalized course code', () {
+    String idFor(String courseCode) {
+      return GakujoCalendarEventBuilder.buildEvents(
+        courses: [
+          GakujoCalendarCourse(
+            title: '同名授業',
+            weekday: DateTime.monday,
+            period: 1,
+            location: 'A-101',
+            courseCode: courseCode,
+          ),
+        ],
+        rangeStart: DateTime(2026, 6, 15),
+        rangeEnd: DateTime(2026, 6, 15),
+        uidNamespace: 'niigata-2026-第2ターム',
+      ).single.id;
+    }
+
+    expect(idFor('262G5001'), isNot(idFor('262G5002')));
+    expect(idFor('２６２ｇ５００１'), idFor('262G5001'));
+  });
+
+  test('buildEvents uses the Tokyo wall date in event IDs', () {
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: const [
+        GakujoCalendarCourse(
+          title: '夜間講義',
+          weekday: DateTime.monday,
+          period: 7,
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 15),
+      rangeEnd: DateTime(2026, 6, 15),
+      uidNamespace: 'niigata-2026-第2ターム',
+    );
+
+    expect(events.single.id, endsWith('|2026|06|15'));
   });
 }

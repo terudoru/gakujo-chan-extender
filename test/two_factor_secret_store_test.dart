@@ -16,7 +16,7 @@ void main() {
     final storage = _MemorySecureStorage();
     final store = TwoFactorSecretStore(secureStorage: storage);
 
-    for (final secret in ['', 'JBSWY3DP1']) {
+    for (final secret in ['', 'JBSWY3DP1', 'A', 'MY=']) {
       expect(store.save(secret), throwsFormatException, reason: secret);
       expect(await store.load(), isNull, reason: secret);
     }

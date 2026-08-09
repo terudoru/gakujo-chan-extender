@@ -17,11 +17,17 @@ class GakujoLocalPrefs {
 }
 
 class GakujoLocalPrefsStore {
-  GakujoLocalPrefsStore({Directory? directory}) : _directory = directory;
+  GakujoLocalPrefsStore({
+    Directory? directory,
+    Future<void> Function(File temporaryFile, File targetFile)? atomicReplace,
+  })  : _directory = directory,
+        _atomicReplace = atomicReplace;
 
   static const fileName = 'local_prefs.json';
 
   final Directory? _directory;
+  final Future<void> Function(File temporaryFile, File targetFile)?
+      _atomicReplace;
   Future<void> _pendingWrite = Future<void>.value();
 
   Future<GakujoLocalPrefs?> load() async {
@@ -91,7 +97,29 @@ class GakujoLocalPrefsStore {
   Future<void> _write(GakujoLocalPrefs prefs) async {
     final file = await _file();
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(_encodePrefs(prefs)), flush: true);
+    final temporaryFile = File(
+      '${file.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    try {
+      await temporaryFile.writeAsString(
+        jsonEncode(_encodePrefs(prefs)),
+        flush: true,
+      );
+      final atomicReplace = _atomicReplace;
+      if (atomicReplace == null) {
+        await temporaryFile.rename(file.path);
+      } else {
+        await atomicReplace(temporaryFile, file);
+      }
+    } finally {
+      try {
+        if (await temporaryFile.exists()) {
+          await temporaryFile.delete();
+        }
+      } on FileSystemException {
+        // A failed cleanup must not hide the original write/replace failure.
+      }
+    }
   }
 
   Future<File> _file() async {

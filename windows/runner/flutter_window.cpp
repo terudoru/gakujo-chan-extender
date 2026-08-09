@@ -20,6 +20,15 @@ constexpr UINT kDeadlineNotificationCallbackMessage = WM_APP + 1;
 UINT next_deadline_notification_id = kFirstDeadlineNotificationId;
 std::map<UINT, std::string> deadline_notification_urls;
 
+constexpr bool IsDeadlineNotificationDismissed(UINT callback_message) {
+  return callback_message == NIN_BALLOONTIMEOUT ||
+         callback_message == NIN_BALLOONHIDE;
+}
+
+static_assert(IsDeadlineNotificationDismissed(NIN_BALLOONTIMEOUT));
+static_assert(IsDeadlineNotificationDismissed(NIN_BALLOONHIDE));
+static_assert(!IsDeadlineNotificationDismissed(NIN_BALLOONSHOW));
+
 std::optional<UINT> NextDeadlineNotificationId() {
   const UINT first_candidate = next_deadline_notification_id;
   do {
@@ -108,15 +117,20 @@ bool ShowDeadlineNotification(HWND hwnd,
   return notification_shown != FALSE;
 }
 
-void DeleteDeadlineNotification(HWND hwnd) {
-  for (const auto& notification : deadline_notification_urls) {
-    NOTIFYICONDATAW data = {};
-    data.cbSize = sizeof(NOTIFYICONDATAW);
-    data.hWnd = hwnd;
-    data.uID = notification.first;
-    Shell_NotifyIconW(NIM_DELETE, &data);
+void DeleteDeadlineNotification(HWND hwnd, UINT notification_id) {
+  NOTIFYICONDATAW data = {};
+  data.cbSize = sizeof(NOTIFYICONDATAW);
+  data.hWnd = hwnd;
+  data.uID = notification_id;
+  Shell_NotifyIconW(NIM_DELETE, &data);
+  deadline_notification_urls.erase(notification_id);
+}
+
+void DeleteAllDeadlineNotifications(HWND hwnd) {
+  while (!deadline_notification_urls.empty()) {
+    const UINT notification_id = deadline_notification_urls.begin()->first;
+    DeleteDeadlineNotification(hwnd, notification_id);
   }
-  deadline_notification_urls.clear();
 }
 
 }  // namespace
@@ -194,7 +208,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  DeleteDeadlineNotification(GetHandle());
+  DeleteAllDeadlineNotifications(GetHandle());
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -206,28 +220,29 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
-  if (message == kDeadlineNotificationCallbackMessage &&
-      static_cast<UINT>(lparam) == NIN_BALLOONUSERCLICK) {
+  if (message == kDeadlineNotificationCallbackMessage) {
     const UINT notification_id = static_cast<UINT>(wparam);
-    const auto url = deadline_notification_urls.find(notification_id);
-    if (url != deadline_notification_urls.end()) {
-      ShowWindow(hwnd, SW_RESTORE);
-      SetForegroundWindow(hwnd);
-      if (notification_channel_) {
-        notification_channel_->InvokeMethod(
-            "deadlineNotificationTapped",
-            std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
-                {flutter::EncodableValue("url"),
-                 flutter::EncodableValue(url->second)}}));
+    const UINT callback_message = static_cast<UINT>(lparam);
+    if (callback_message == NIN_BALLOONUSERCLICK) {
+      const auto url = deadline_notification_urls.find(notification_id);
+      if (url != deadline_notification_urls.end()) {
+        ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
+        if (notification_channel_) {
+          notification_channel_->InvokeMethod(
+              "deadlineNotificationTapped",
+              std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+                  {flutter::EncodableValue("url"),
+                   flutter::EncodableValue(url->second)}}));
+        }
       }
-      NOTIFYICONDATAW data = {};
-      data.cbSize = sizeof(NOTIFYICONDATAW);
-      data.hWnd = hwnd;
-      data.uID = notification_id;
-      Shell_NotifyIconW(NIM_DELETE, &data);
-      deadline_notification_urls.erase(url);
+      DeleteDeadlineNotification(hwnd, notification_id);
+      return 0;
     }
-    return 0;
+    if (IsDeadlineNotificationDismissed(callback_message)) {
+      DeleteDeadlineNotification(hwnd, notification_id);
+      return 0;
+    }
   }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.

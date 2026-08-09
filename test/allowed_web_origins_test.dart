@@ -191,4 +191,34 @@ void main() {
       isTrue,
     );
   });
+
+  test('does not restore explicit login, logout, or timeout endpoints', () {
+    const transientUrls = [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/login.do',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/logout.do',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/sessionTimeout.do',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?action=logout',
+    ];
+
+    for (final url in transientUrls) {
+      expect(
+        AllowedWebOrigins.canLoad(url, debugAllowed: false),
+        isTrue,
+        reason: url,
+      );
+      expect(
+        AllowedWebOrigins.canRestoreLastPage(url, debugAllowed: false),
+        isFalse,
+        reason: url,
+      );
+    }
+
+    expect(
+      AllowedWebOrigins.canRestoreLastPage(
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/reportList.do?keyword=login',
+        debugAllowed: false,
+      ),
+      isTrue,
+    );
+  });
 }

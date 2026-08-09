@@ -153,6 +153,26 @@ void main() {
     expect(fourth.noClassDates, contains(DateTime(2027, 1, 18)));
   });
 
+  test('holiday ranges include their final civil day across DST changes', () {
+    final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
+      const GakujoPdfText(
+        text: '''
+第１ターム 4月8日～6月8日
+第２ターム 6月10日～8月5日
+第３ターム 10月2日～12月1日
+第４ターム 12月3日～3月31日
+3/1～3/31 春期休業
+''',
+        actualTexts: [],
+      ),
+      academicYear: 2026,
+      sourceUrl: 'https://example.com/schedule_2026.pdf',
+    );
+
+    final fourth = terms.singleWhere((term) => term.name == '第4ターム');
+    expect(fourth.noClassDates, contains(DateTime(2027, 3, 31)));
+  });
+
   test('mergeWithBuiltInDetails preserves embedded detailed no-class days', () {
     final merged = GakujoAcademicCalendar.mergeWithBuiltInDetails(
       GakujoAcademicTerm(

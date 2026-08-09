@@ -26,7 +26,7 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
 
 Future<Map<String, dynamic>> evaluateMessageReaderScript({
   required String buildScript,
-  required List<int> fetchStatuses,
+  required List<int?> fetchStatuses,
   List<bool> iframeOutcomes = const [],
 }) async {
   final scenario = jsonEncode({
@@ -91,9 +91,16 @@ class FakeElement {
       Object.defineProperty(this, 'src', {
         set(value) {
           this.source = value;
-          onSetSource(this);
+          if (this.parentNode) onSetSource(this);
         }
       });
+      this.attachSource = () => {
+        if (this.source) {
+          onSetSource(this);
+        } else if (this.onload) {
+          this.onload();
+        }
+      };
     }
   }
 
@@ -110,6 +117,7 @@ class FakeElement {
   appendChild(child) {
     child.parentNode = this;
     this.children.push(child);
+    if (child.attachSource) child.attachSource();
     return child;
   }
 
@@ -278,6 +286,7 @@ function createPage() {
     fetch: async function() {
       fetchCallCount += 1;
       const status = fetchStatuses.shift();
+      if (status === null) throw new Error('simulated fetch failure');
       return {ok: status >= 200 && status < 300, status};
     },
     console: {log() {}}

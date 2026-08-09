@@ -9,7 +9,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 3;'));
+    expect(script, contains('var version = 4;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
     expect(script, contains('mbg-report-draft:v1:'));
     expect(script, contains('localStorage'));
@@ -57,7 +57,8 @@ void main() {
     expect(result['xssExecutionCount'], 0);
   });
 
-  test('preserves normal multiline contenteditable draft text', () async {
+  test('restores multiline contenteditable drafts with visible line breaks',
+      () async {
     const text = '一段落目\n二段落目';
     final result = await _evaluateContentEditableDraft(
       initialHtml: '<p>一段落目</p><p>二段落目</p>',
@@ -66,6 +67,7 @@ void main() {
 
     expect(result['storedValue'], text);
     expect(result['restoredText'], text);
+    expect(result['restoredHtml'], '一段落目<br>二段落目');
     expect(result['xssExecutionCount'], 0);
   });
 }
@@ -178,6 +180,23 @@ class FakeContentEditable {
       .replace(/>/g, '&gt;');
   }
 
+  appendChild(node) {
+    if (node.nodeType === 3) {
+      const text = String(node.textContent || '');
+      this._text += text;
+      this._innerHTML += text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return node;
+    }
+    if (node.tagName === 'BR') {
+      this._text += '\n';
+      this._innerHTML += '<br>';
+    }
+    return node;
+  }
+
   getAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name)
       ? this.attributes[name]
@@ -211,6 +230,7 @@ function createPage(html, text, storage) {
     insertedStatus: null,
     body: { cloneNode() { return bodyClone; } },
     createElement(tag) { return new FakeStatusElement(tag); },
+    createTextNode(text) { return {nodeType: 3, textContent: String(text)}; },
     getElementById(id) { return findById(this.insertedStatus, id); },
     querySelectorAll(selector) {
       if (selector === 'textarea,input,[contenteditable]') return [this.field];

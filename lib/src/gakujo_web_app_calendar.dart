@@ -1,5 +1,290 @@
 part of 'gakujo_web_app.dart';
 
+const _gakujoNativeDownloadsChannel = MethodChannel(
+  'net.yoshida.morebettergakujo/downloads',
+);
+
+@visibleForTesting
+DateTime gakujoCalendarDateAfterDays(DateTime value, int days) {
+  return DateTime(value.year, value.month, value.day + days);
+}
+
+@visibleForTesting
+String gakujoManualCalendarUidNamespace({
+  required GakujoCalendarTermRange termRange,
+}) {
+  final academicYear = GakujoAcademicCalendar.academicYearFor(termRange.start);
+  final termIdentity = _manualTermIdentityForRange(termRange);
+  final termNumber = switch (termIdentity) {
+    'first' => 1,
+    'second' => 2,
+    'third' => 3,
+    _ => 4,
+  };
+  return 'niigata-$academicYear-第$termNumberターム';
+}
+
+@visibleForTesting
+String gakujoLegacyManualIcsUidNamespace(GakujoCalendarTermRange termRange) {
+  String stamp(DateTime value) {
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${value.year}${twoDigits(value.month)}${twoDigits(value.day)}';
+  }
+
+  return 'manual-${stamp(termRange.start)}-${stamp(termRange.end)}';
+}
+
+String _manualTermIdentityForRange(GakujoCalendarTermRange range) {
+  final start =
+      DateTime.utc(range.start.year, range.start.month, range.start.day);
+  final end = DateTime.utc(range.end.year, range.end.month, range.end.day);
+  final midpoint = start.add(Duration(days: end.difference(start).inDays ~/ 2));
+  return switch (midpoint.month) {
+    4 || 5 => 'first',
+    6 || 7 || 8 || 9 => 'second',
+    10 || 11 => 'third',
+    _ => 'fourth',
+  };
+}
+
+@visibleForTesting
+bool isAllowedGakujoGoogleCalendarUrl(String rawUrl) {
+  final uri = Uri.tryParse(rawUrl.trim());
+  if (uri == null ||
+      uri.scheme.toLowerCase() != 'https' ||
+      uri.userInfo.isNotEmpty ||
+      (uri.hasPort && uri.port != 443)) {
+    return false;
+  }
+  final host = uri.host.toLowerCase();
+  return host == 'calendar.google.com';
+}
+
+@visibleForTesting
+Set<int> initialGakujoAmbiguousCourseTermSelections(
+  GakujoCalendarCourse course,
+) {
+  final normalized = course.termHint
+      .replaceAll('１', '1')
+      .replaceAll('２', '2')
+      .replaceAll('３', '3')
+      .replaceAll('４', '4');
+  return {
+    for (final match in RegExp(r'第\s*([1-4])\s*ターム').allMatches(normalized))
+      if (int.tryParse(match.group(1) ?? '') case final term?) term,
+  };
+}
+
+@visibleForTesting
+List<GakujoCalendarCourse> applyGakujoAmbiguousCourseTermSelections(
+  List<GakujoCalendarCourse> courses,
+  Map<String, Set<int>> selections,
+) {
+  return [
+    for (final course in courses)
+      if (!GakujoCalendarExport.hasAmbiguousTermCode(course))
+        course
+      else if ((selections[GakujoCalendarExport.courseIdentityKey(course)] ??
+              const <int>{})
+          case final selectedTerms when selectedTerms.isNotEmpty)
+        course.copyWith(
+          termHint: (selectedTerms.toList()..sort())
+              .map((term) => '第$termターム')
+              .join(' '),
+        ),
+  ];
+}
+
+@visibleForTesting
+Future<GakujoDownloadResult> exportGakujoCalendarWithNativePicker({
+  required String ics,
+  required String fileName,
+}) async {
+  final raw =
+      await _gakujoNativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
+    'exportDownloadedFile',
+    {
+      'bytes': Uint8List.fromList(utf8.encode(ics)),
+      'fileName': fileName,
+      'mimeType': 'text/calendar',
+    },
+  );
+  return GakujoDownloadResult.fromMap(raw);
+}
+
+@visibleForTesting
+bool isBroadGakujoScheduleExtraction(GakujoCalendarExtraction extraction) {
+  final weekdayCount = extraction.courses
+      .where((course) => course.weekday >= 1 && course.weekday <= 7)
+      .map((course) => course.weekday)
+      .toSet()
+      .length;
+  final codedCourseCount = extraction.courses
+      .where((course) => course.courseCode.trim().isNotEmpty)
+      .length;
+  return weekdayCount >= 3 && codedCourseCount >= 4;
+}
+
+@visibleForTesting
+bool isUsableGakujoScheduleExtraction(
+  GakujoCalendarExtraction extraction, {
+  required bool isOfficial,
+}) {
+  if (extraction.courses.isEmpty) {
+    return false;
+  }
+  return isOfficial || isBroadGakujoScheduleExtraction(extraction);
+}
+
+int _gakujoScheduleCourseEvidenceScore(
+  GakujoCalendarExtraction extraction,
+) {
+  return extraction.courses.length +
+      (isBroadGakujoScheduleExtraction(extraction) ? 10000 : 0);
+}
+
+@visibleForTesting
+GakujoCalendarExtraction mergeGakujoScheduleExtractionEvidence(
+  GakujoCalendarExtraction current,
+  GakujoCalendarExtraction candidate,
+) {
+  final candidateWins = _gakujoScheduleCourseEvidenceScore(candidate) >
+      _gakujoScheduleCourseEvidenceScore(current);
+  final winner = candidateWins ? candidate : current;
+  final other = candidateWins ? current : candidate;
+  return GakujoCalendarExtraction(
+    courses: winner.courses,
+    termRange: winner.termRange ?? other.termRange,
+  );
+}
+
+@visibleForTesting
+Future<GakujoCalendarTermRange?> showGakujoCalendarTermRangeDialog({
+  required BuildContext context,
+  required String title,
+  required String description,
+  required String actionLabel,
+  DateTime? initialDate,
+}) async {
+  return await showDialog<GakujoCalendarTermRange>(
+    context: context,
+    builder: (dialogContext) => _GakujoCalendarTermRangeDialog(
+      title: title,
+      description: description,
+      actionLabel: actionLabel,
+      initialDate: initialDate ?? DateTime.now(),
+    ),
+  );
+}
+
+class _GakujoCalendarTermRangeDialog extends StatefulWidget {
+  const _GakujoCalendarTermRangeDialog({
+    required this.title,
+    required this.description,
+    required this.actionLabel,
+    required this.initialDate,
+  });
+
+  final String title;
+  final String description;
+  final String actionLabel;
+  final DateTime initialDate;
+
+  @override
+  State<_GakujoCalendarTermRangeDialog> createState() =>
+      _GakujoCalendarTermRangeDialogState();
+}
+
+class _GakujoCalendarTermRangeDialogState
+    extends State<_GakujoCalendarTermRangeDialog> {
+  late final TextEditingController _startController;
+  late final TextEditingController _endController;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final date = widget.initialDate;
+    _startController = TextEditingController(
+      text: '${date.year}/${date.month.toString().padLeft(2, '0')}/01',
+    );
+    _endController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _startController.dispose();
+    _endController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final start = parseCalendarDate(_startController.text);
+    final end = parseCalendarDate(_endController.text);
+    if (start == null || end == null || end.isBefore(start)) {
+      setState(() {
+        _errorText = 'YYYY/MM/DD形式で、終了日が開始日以降になるように入力してください';
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      GakujoCalendarTermRange(start: start, end: end),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(widget.description),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _startController,
+            decoration: const InputDecoration(
+              labelText: '開始日',
+              hintText: '2026/06/11',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.datetime,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _endController,
+            decoration: const InputDecoration(
+              labelText: '終了日',
+              hintText: '2026/08/08',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.datetime,
+            onSubmitted: (_) => _submit(),
+          ),
+          if (_errorText != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _errorText!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(widget.actionLabel),
+        ),
+      ],
+    );
+  }
+}
+
 extension _GakujoWebAppCalendar on _GakujoWebAppState {
   Future<void> _exportCurrentScheduleToCalendar({
     GakujoCalendarImportSettings? importSettings,
@@ -49,12 +334,12 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       }
       final termRange = resolvedTerm.termRange;
       final uidNamespace = resolvedTerm.uidNamespace;
+      final icsUidNamespace = resolvedTerm.termName == null
+          ? gakujoLegacyManualIcsUidNamespace(termRange)
+          : uidNamespace;
       final termLabel = resolvedTerm.label;
       final coursesWithResolvedAmbiguousTerms =
-          await _resolveAmbiguousCalendarCourseTerms(
-        extractedCourses,
-        selectedTermName: resolvedTerm.termName,
-      );
+          await _resolveAmbiguousCalendarCourseTerms(extractedCourses);
       if (coursesWithResolvedAmbiguousTerms == null) {
         return;
       }
@@ -70,7 +355,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       }
       fallbackCourses = courses;
       fallbackTermRange = termRange;
-      fallbackUidNamespace = uidNamespace;
+      fallbackUidNamespace = icsUidNamespace;
       fallbackTermLabel = termLabel;
       final shouldUseDirect =
           settings.method == GakujoCalendarImportMethod.deviceCalendar ||
@@ -99,8 +384,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         await _writeCalendarFallbackFile(
           courses: courses,
           termRange: termRange,
-          uidNamespace: uidNamespace,
+          uidNamespace: icsUidNamespace,
           termLabel: termLabel,
+          calendarName: settings.effectiveCalendarTitle,
           reason: settings.method == GakujoCalendarImportMethod.deviceCalendar
               ? 'この環境ではOSカレンダー直接追加に未対応のため'
               : null,
@@ -117,8 +403,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       await _writeCalendarFallbackFile(
         courses: courses,
         termRange: termRange,
-        uidNamespace: uidNamespace,
+        uidNamespace: icsUidNamespace,
         termLabel: termLabel,
+        calendarName: settings.effectiveCalendarTitle,
         reason: null,
       );
     } on PlatformException catch (error) {
@@ -158,6 +445,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             termRange: termRange,
             uidNamespace: uidNamespace,
             termLabel: termLabel,
+            calendarName: settings.effectiveCalendarTitle,
             reason: reason,
           );
         } on PlatformException catch (fallbackError) {
@@ -259,8 +547,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           );
     return _ResolvedCalendarTerm(
       termRange: effectiveRange,
-      uidNamespace:
-          'manual-${_dateFileStamp(termRange.start)}-${_dateFileStamp(termRange.end)}',
+      uidNamespace: gakujoManualCalendarUidNamespace(
+        termRange: termRange,
+      ),
       label: _calendarRangeLabel(termRange),
       termName: null,
     );
@@ -280,9 +569,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   }
 
   Future<List<GakujoCalendarCourse>?> _resolveAmbiguousCalendarCourseTerms(
-    List<GakujoCalendarCourse> courses, {
-    required String? selectedTermName,
-  }) async {
+    List<GakujoCalendarCourse> courses,
+  ) async {
     final uniqueAmbiguous = <String, GakujoCalendarCourse>{};
     for (final course in courses) {
       if (GakujoCalendarExport.hasAmbiguousTermCode(course)) {
@@ -298,45 +586,23 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
     final selections = await _askAmbiguousCalendarCourseTerms(
       uniqueAmbiguous.values.toList(growable: false),
-      selectedTermName: selectedTermName,
     );
     if (selections == null) {
       return null;
     }
-    if (selections.isEmpty) {
-      return courses;
-    }
-
-    return [
-      for (final course in courses)
-        if (GakujoCalendarExport.hasAmbiguousTermCode(course))
-          course.copyWith(
-            termHint: [
-              course.termHint,
-              ...?selections[GakujoCalendarExport.courseIdentityKey(course)]
-                  ?.map(_calendarTermNameForCode),
-            ].where((value) => value.trim().isNotEmpty).join(' '),
-          )
-        else
-          course,
-    ];
+    return applyGakujoAmbiguousCourseTermSelections(courses, selections);
   }
 
   Future<Map<String, Set<int>>?> _askAmbiguousCalendarCourseTerms(
-    List<GakujoCalendarCourse> courses, {
-    required String? selectedTermName,
-  }) {
+    List<GakujoCalendarCourse> courses,
+  ) {
     if (!mounted) {
       return Future<Map<String, Set<int>>?>.value(null);
     }
-    final initialTermCode = selectedTermName == null
-        ? null
-        : _calendarTermCodeFromName(selectedTermName);
     final selections = <String, Set<int>>{
       for (final course in courses)
-        GakujoCalendarExport.courseIdentityKey(course): <int>{
-          if (initialTermCode != null) initialTermCode,
-        },
+        GakujoCalendarExport.courseIdentityKey(course):
+            initialGakujoAmbiguousCourseTermSelections(course),
     };
     return showDialog<Map<String, Set<int>>>(
       context: context,
@@ -410,30 +676,20 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     );
   }
 
-  int? _calendarTermCodeFromName(String termName) {
-    final match = RegExp(r'第([1-4])ターム').firstMatch(
-      termName
-          .replaceAll('１', '1')
-          .replaceAll('２', '2')
-          .replaceAll('３', '3')
-          .replaceAll('４', '4')
-          .replaceAll(RegExp(r'\s+'), ''),
-    );
-    return match == null ? null : int.tryParse(match.group(1) ?? '');
-  }
-
-  String _calendarTermNameForCode(int term) {
-    return '第$termターム';
-  }
-
   Future<void> _showScheduleIntegrationDialog() async {
-    final initialSettings = _effectiveCalendarImportSettings(
-      _appSettings.calendarImportSettings,
-    );
-    final calendarTitleController = TextEditingController(
-      text: initialSettings.effectiveCalendarTitle,
-    );
+    if (!_tryStartPageNavigationOperation()) {
+      _showSnackBar('カレンダー連携を処理中です');
+      return;
+    }
+    TextEditingController? controllerToDispose;
     try {
+      final initialSettings = _effectiveCalendarImportSettings(
+        _appSettings.calendarImportSettings,
+      );
+      final calendarTitleController = TextEditingController(
+        text: initialSettings.effectiveCalendarTitle,
+      );
+      controllerToDispose = calendarTitleController;
       var selectedSettings = initialSettings;
       final result = await showDialog<_ScheduleIntegrationDialogResult>(
         context: context,
@@ -447,6 +703,15 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
               }
 
               void popWith(_ScheduleIntegrationAction action) {
+                if (calendarTitleController.text.trim() ==
+                    GakujoCalendarImportSettings.validationCalendarTitle) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('「More Better Gakujo 検証」は検証用の予約名です'),
+                    ),
+                  );
+                  return;
+                }
                 Navigator.of(dialogContext).pop(
                   _ScheduleIntegrationDialogResult(
                     action: action,
@@ -633,7 +898,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           return;
       }
     } finally {
-      calendarTitleController.dispose();
+      controllerToDispose?.dispose();
+      await _finishPageNavigationOperation();
     }
   }
 
@@ -714,7 +980,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           }
           return false;
         }
-        if (uri.host.toLowerCase().endsWith('google.com')) {
+        if (isAllowedGakujoGoogleCalendarUrl(integration.url)) {
           final launched = await launchUrl(
             uri,
             mode: LaunchMode.externalApplication,
@@ -978,6 +1244,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       termRange: termRange,
       uidNamespace: _calendarValidationUidNamespace,
       termLabel: 'カレンダー連携検証',
+      calendarName: _calendarValidationTitle,
       reason: 'この環境ではOSカレンダー直接連携が未対応のため検証用ICSとして',
       fileName: 'more-better-gakujo-calendar-validation.ics',
     );
@@ -1024,12 +1291,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
   GakujoCalendarTermRange _calendarValidationTermRange() {
     final now = DateTime.now().toLocal();
-    final start = DateTime(now.year, now.month, now.day).add(
-      const Duration(days: 1),
-    );
+    final start = gakujoCalendarDateAfterDays(now, 1);
     return GakujoCalendarTermRange(
       start: start,
-      end: start.add(const Duration(days: 1)),
+      end: gakujoCalendarDateAfterDays(start, 1),
       sourceText: 'More Better Gakujo カレンダー検証',
     );
   }
@@ -1037,7 +1302,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   List<GakujoCalendarCourse> _calendarValidationCourses(
     GakujoCalendarTermRange termRange,
   ) {
-    final nextDay = termRange.start.add(const Duration(days: 1));
+    final nextDay = gakujoCalendarDateAfterDays(termRange.start, 1);
     return [
       GakujoCalendarCourse(
         title: '[検証] 1限カレンダー連携',
@@ -1080,6 +1345,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     required GakujoCalendarTermRange termRange,
     required String uidNamespace,
     required String termLabel,
+    required String calendarName,
     required String? reason,
     String fileName = 'more-better-gakujo-classes.ics',
   }) async {
@@ -1090,10 +1356,24 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       noClassDates: termRange.noClassDates,
       uidNamespace: uidNamespace,
       termLabel: termLabel,
+      calendarName: calendarName,
     );
+    final prefix = reason == null ? '' : '$reason、';
+    if (Platform.isIOS) {
+      final result = await exportGakujoCalendarWithNativePicker(
+        ics: ics,
+        fileName: fileName,
+      );
+      final location = result.location?.trim();
+      final destination =
+          location == null || location.isEmpty ? result.fileName : location;
+      _showSnackBar(
+        '$prefix${courses.length}件の授業を${_formatDate(termRange.start)}〜${_formatDate(termRange.end)}で書き出しました: $destination',
+      );
+      return;
+    }
     final file = await _writeCalendarFile(ics, fileName: fileName);
     unawaited(_openSavedDownload(file.path));
-    final prefix = reason == null ? '' : '$reason、';
     _showSnackBar(
       '$prefix${courses.length}件の授業を${_formatDate(termRange.start)}〜${_formatDate(termRange.end)}で書き出しました。カレンダーアプリで取り込んでください: ${file.path}',
     );
@@ -1125,7 +1405,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final postLoadExtraction = await _waitForBetterScheduleExtraction(
         fallback: fallbackExtraction,
       );
-      if (_isUsableScheduleExtraction(postLoadExtraction)) {
+      if (isUsableGakujoScheduleExtraction(
+        postLoadExtraction,
+        isOfficial: false,
+      )) {
         return postLoadExtraction;
       }
       return const GakujoCalendarExtraction(courses: [], termRange: null);
@@ -1137,8 +1420,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     final waitedExtraction = await _waitForScheduleCoursesOrOfficial(
       termRange: fallbackExtraction.termRange ?? preferredTermRange,
     );
-    if (waitedExtraction != null &&
-        _isUsableScheduleExtraction(waitedExtraction)) {
+    if (waitedExtraction != null && waitedExtraction.courses.isNotEmpty) {
       return waitedExtraction;
     }
 
@@ -1146,18 +1428,21 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       termRange: fallbackExtraction.termRange ?? preferredTermRange,
     );
     if (officialExtraction != null &&
-        _isUsableScheduleExtraction(officialExtraction)) {
+        isUsableGakujoScheduleExtraction(
+          officialExtraction,
+          isOfficial: true,
+        )) {
       return officialExtraction;
     }
 
     final timetableExtraction = await _readCourseTimetableForCalendarImport(
       preferredTermRange: fallbackExtraction.termRange ?? preferredTermRange,
     );
-    if (_isBroadScheduleExtraction(timetableExtraction)) {
+    if (isBroadGakujoScheduleExtraction(timetableExtraction)) {
       return timetableExtraction;
     }
 
-    return _isBroadScheduleExtraction(fallbackExtraction)
+    return isBroadGakujoScheduleExtraction(fallbackExtraction)
         ? fallbackExtraction
         : const GakujoCalendarExtraction(courses: [], termRange: null);
   }
@@ -1198,47 +1483,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     for (var attempt = 1; attempt <= 5; attempt += 1) {
       await Future<void>.delayed(const Duration(milliseconds: 600));
       final extraction = await _readCalendarScheduleFromPage();
-      if (_scheduleExtractionScore(extraction) >
-          _scheduleExtractionScore(best)) {
-        best = extraction;
-      }
-      // A real schedule import page should expose several classes or a term
-      // range. A tiny two-course result is usually just a sidebar/day view.
-      if (best.termRange != null || best.courses.length >= 4) {
+      best = mergeGakujoScheduleExtractionEvidence(best, extraction);
+      // A term range alone does not prove that the course list is complete.
+      if (isBroadGakujoScheduleExtraction(best)) {
         break;
       }
     }
     return best;
-  }
-
-  int _scheduleExtractionScore(GakujoCalendarExtraction extraction) {
-    return extraction.courses.length +
-        (extraction.termRange == null ? 0 : 1000);
-  }
-
-  bool _isUsableScheduleExtraction(GakujoCalendarExtraction extraction) {
-    if (extraction.courses.isEmpty) {
-      return false;
-    }
-    if (_isBroadScheduleExtraction(extraction)) {
-      return true;
-    }
-    if (extraction.courses.length >= 4) {
-      return true;
-    }
-    return false;
-  }
-
-  bool _isBroadScheduleExtraction(GakujoCalendarExtraction extraction) {
-    final weekdayCount = extraction.courses
-        .where((course) => course.weekday >= 1 && course.weekday <= 7)
-        .map((course) => course.weekday)
-        .toSet()
-        .length;
-    final codedCourseCount = extraction.courses
-        .where((course) => course.courseCode.trim().isNotEmpty)
-        .length;
-    return weekdayCount >= 3 && codedCourseCount >= 4;
   }
 
   Future<GakujoCalendarExtraction?> _waitForScheduleCoursesOrOfficial({
@@ -1260,20 +1511,26 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           termRange: extraction.termRange ?? termRange,
         );
         if (officialExtraction != null &&
-            _isUsableScheduleExtraction(officialExtraction)) {
+            isUsableGakujoScheduleExtraction(
+              officialExtraction,
+              isOfficial: true,
+            )) {
           return officialExtraction;
         }
         final timetableExtraction = await _readCourseTimetableForCalendarImport(
           preferredTermRange: extraction.termRange ?? termRange,
         );
-        if (_isBroadScheduleExtraction(timetableExtraction)) {
+        if (isBroadGakujoScheduleExtraction(timetableExtraction)) {
           return timetableExtraction;
         }
-        if (_isBroadScheduleExtraction(extraction)) {
+        if (isBroadGakujoScheduleExtraction(extraction)) {
           return extraction;
         }
       }
-      if (_isUsableScheduleExtraction(extraction)) {
+      if (isUsableGakujoScheduleExtraction(
+        extraction,
+        isOfficial: false,
+      )) {
         return extraction;
       }
     }
@@ -1291,7 +1548,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final pageFinished = _waitForNextPageFinished(
         timeout: const Duration(seconds: 8),
       );
-      final jumped = await _quickJumpTo('履修');
+      final jumped = await _quickJumpTo(
+        '履修',
+        ownsPageNavigationOperation: true,
+      );
       if (!jumped) {
         _nextPageFinishedCompleter = null;
         return const GakujoCalendarExtraction(courses: [], termRange: null);
@@ -1302,11 +1562,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       var best = const GakujoCalendarExtraction(courses: [], termRange: null);
       for (var attempt = 1; attempt <= 6; attempt += 1) {
         final extraction = await _readCalendarScheduleFromPage();
-        if (_scheduleExtractionScore(extraction) >
-            _scheduleExtractionScore(best)) {
-          best = extraction;
-        }
-        if (_isBroadScheduleExtraction(best)) {
+        best = mergeGakujoScheduleExtractionEvidence(best, extraction);
+        if (isBroadGakujoScheduleExtraction(best)) {
           break;
         }
         await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -1350,10 +1607,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         name: 'MoreBetterGakujo',
       );
       if (integration.status == 'url' && integration.url.isNotEmpty) {
-        final courses =
-            GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls(
-          [integration.url],
-        );
+        final isGoogleCalendarUrl =
+            isAllowedGakujoGoogleCalendarUrl(integration.url);
+        final courses = isGoogleCalendarUrl
+            ? GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls(
+                [integration.url],
+              )
+            : const <GakujoCalendarCourse>[];
         developer.log(
           'Official Google schedule URL courses=${courses.length}',
           name: 'MoreBetterGakujo',
@@ -1368,7 +1628,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
         final uri = Uri.tryParse(integration.url);
         if (uri != null &&
-            !uri.host.toLowerCase().endsWith('google.com') &&
+            !isGoogleCalendarUrl &&
             AllowedWebOrigins.canNavigate(
               integration.url,
               debugAllowed: _debugAllowed,
@@ -1511,7 +1771,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     final pageFinished = _waitForNextPageFinished(
       timeout: const Duration(seconds: 8),
     );
-    await _loadAllowedPageUrl(_schedulePortalUrl);
+    await _loadAllowedPageUrl(
+      _schedulePortalUrl,
+      ownsPageNavigationOperation: true,
+    );
     final finishedUrl = await pageFinished;
     await Future<void>.delayed(const Duration(milliseconds: 700));
     final afterUrl = ((await _controller.currentUrl()) ?? _currentPageUrl ?? '')
@@ -1567,90 +1830,12 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     if (!mounted) {
       return null;
     }
-    final today = DateTime.now();
-    final startController = TextEditingController(
-      text: '${today.year}/${today.month.toString().padLeft(2, '0')}/01',
+    return showGakujoCalendarTermRangeDialog(
+      context: context,
+      title: title,
+      description: description,
+      actionLabel: actionLabel,
     );
-    final endController = TextEditingController();
-    String? errorText;
-    try {
-      return showDialog<GakujoCalendarTermRange>(
-        context: context,
-        builder: (dialogContext) {
-          return StatefulBuilder(
-            builder: (context, setDialogState) {
-              void submit() {
-                final start = parseCalendarDate(startController.text);
-                final end = parseCalendarDate(endController.text);
-                if (start == null || end == null || end.isBefore(start)) {
-                  setDialogState(() {
-                    errorText = 'YYYY/MM/DD形式で、終了日が開始日以降になるように入力してください';
-                  });
-                  return;
-                }
-                Navigator.of(dialogContext).pop(
-                  GakujoCalendarTermRange(start: start, end: end),
-                );
-              }
-
-              return AlertDialog(
-                title: Text(title),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(description),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: startController,
-                      decoration: const InputDecoration(
-                        labelText: '開始日',
-                        hintText: '2026/06/11',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.datetime,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: endController,
-                      decoration: const InputDecoration(
-                        labelText: '終了日',
-                        hintText: '2026/08/08',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.datetime,
-                      onSubmitted: (_) => submit(),
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorText!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('キャンセル'),
-                  ),
-                  FilledButton(
-                    onPressed: submit,
-                    child: Text(actionLabel),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      startController.dispose();
-      endController.dispose();
-    }
   }
 
   Future<File> _writeCalendarFile(
@@ -1706,11 +1891,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     } on Object {
       return null;
     }
-  }
-
-  String _dateFileStamp(DateTime value) {
-    String twoDigits(int number) => number.toString().padLeft(2, '0');
-    return '${value.year}${twoDigits(value.month)}${twoDigits(value.day)}';
   }
 
   String _formatDate(DateTime value) {

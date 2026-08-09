@@ -95,6 +95,41 @@ void main() {
     expect(await store.load(), isNull);
   });
 
+  test('failed atomic replace preserves the previous mirror file', () async {
+    const oldUrl = 'https://gakujo.iess.niigata-u.ac.jp/old';
+    const newUrl = 'https://gakujo.iess.niigata-u.ac.jp/new';
+    await store.saveAppSettings(const GakujoAppSettings(
+      pageMode: GakujoPageMode.mobile,
+      setupCompleted: true,
+    ));
+    await store.saveLastPageUrl(oldUrl);
+    final failingStore = GakujoLocalPrefsStore(
+      directory: directory,
+      atomicReplace: (temporaryFile, targetFile) async {
+        expect(await temporaryFile.exists(), isTrue);
+        expect(await targetFile.exists(), isTrue);
+        throw const FileSystemException('atomic replace failed');
+      },
+    );
+
+    await expectLater(
+      failingStore.saveLastPageUrl(newUrl),
+      throwsA(isA<FileSystemException>()),
+    );
+
+    final loaded = await GakujoLocalPrefsStore(directory: directory).load();
+    expect(loaded?.lastPageUrl, oldUrl);
+    expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
+    expect(loaded?.appSettings?.setupCompleted, isTrue);
+    expect(
+      await directory
+          .list()
+          .where((entry) => entry.path.endsWith('.tmp'))
+          .toList(),
+      isEmpty,
+    );
+  });
+
   test('macOS startup settings restore display state without secrets', () {
     const prefs = GakujoLocalPrefs(
       appSettings: GakujoAppSettings(

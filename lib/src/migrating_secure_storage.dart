@@ -18,6 +18,8 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   final bool _deleteFallbackAfterMigration;
   final String? _migrationMarkerKey;
   Future<bool>? _migrationSweepFuture;
+  Future<void> _pendingStorageOperation = Future<void>.value();
+  bool _fallbackReadsSuppressed = false;
   // A cold macOS keychain read (first access after launch, possibly behind an
   // unlock prompt) can take well over a second. Keep the timeout generous
   // enough that a slow-but-successful primary read is not abandoned to the
@@ -25,8 +27,11 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   static const _storageOperationTimeout = Duration(seconds: 3);
 
   Future<Map<String, String?>> readKeys(Iterable<String> keys) async {
-    final migrationCompleted =
-        _migrationMarkerKey == null ? null : await _ensureMigrationSweep();
+    final migrationCompleted = _fallbackReadsSuppressed
+        ? true
+        : _migrationMarkerKey == null
+            ? null
+            : await _ensureMigrationSweep();
     final requestedKeys = keys.toList(growable: false);
     Object? primaryError;
     StackTrace? primaryStackTrace;
@@ -114,16 +119,18 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    final migrationCompleted = _migrationMarkerKey == null
-        ? null
-        : await _ensureMigrationSweep(
-            iOptions: iOptions,
-            aOptions: aOptions,
-            lOptions: lOptions,
-            webOptions: webOptions,
-            mOptions: mOptions,
-            wOptions: wOptions,
-          );
+    final migrationCompleted = _fallbackReadsSuppressed
+        ? true
+        : _migrationMarkerKey == null
+            ? null
+            : await _ensureMigrationSweep(
+                iOptions: iOptions,
+                aOptions: aOptions,
+                lOptions: lOptions,
+                webOptions: webOptions,
+                mOptions: mOptions,
+                wOptions: wOptions,
+              );
     Object? primaryError;
     StackTrace? primaryStackTrace;
     String? primaryValue;
@@ -199,16 +206,18 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    final migrationCompleted = _migrationMarkerKey == null
-        ? null
-        : await _ensureMigrationSweep(
-            iOptions: iOptions,
-            aOptions: aOptions,
-            lOptions: lOptions,
-            webOptions: webOptions,
-            mOptions: mOptions,
-            wOptions: wOptions,
-          );
+    final migrationCompleted = _fallbackReadsSuppressed
+        ? true
+        : _migrationMarkerKey == null
+            ? null
+            : await _ensureMigrationSweep(
+                iOptions: iOptions,
+                aOptions: aOptions,
+                lOptions: lOptions,
+                webOptions: webOptions,
+                mOptions: mOptions,
+                wOptions: wOptions,
+              );
     Object? primaryError;
     StackTrace? primaryStackTrace;
     Map<String, String> primaryValues = const {};
@@ -312,26 +321,41 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async {
-    await _primary.write(
-      key: key,
-      value: value,
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
-    await _deleteFallbackKey(
-      key: key,
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
+  }) {
+    final migration = _migrationMarkerKey == null || _fallbackReadsSuppressed
+        ? null
+        : _ensureMigrationSweep(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
+    return _enqueueStorageOperation(() async {
+      if (migration != null && !await migration) {
+        throw StateError('Secure-storage migration did not complete');
+      }
+      await _primary.write(
+        key: key,
+        value: value,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+      await _deleteFallbackKey(
+        key: key,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    });
   }
 
   @override
@@ -343,25 +367,40 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async {
-    await _primary.delete(
-      key: key,
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
-    await _deleteFallbackKey(
-      key: key,
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
+  }) {
+    final migration = _migrationMarkerKey == null || _fallbackReadsSuppressed
+        ? null
+        : _ensureMigrationSweep(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
+    return _enqueueStorageOperation(() async {
+      if (migration != null && !await migration) {
+        throw StateError('Secure-storage migration did not complete');
+      }
+      await _primary.delete(
+        key: key,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+      await _deleteFallbackKey(
+        key: key,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    });
   }
 
   @override
@@ -372,18 +411,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async {
-    _migrationSweepFuture = null;
-    await _primary.deleteAll(
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
-    try {
-      await _fallback.deleteAll(
+  }) {
+    return _enqueueStorageOperation(() async {
+      await _primary.deleteAll(
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,
@@ -391,10 +421,71 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         mOptions: mOptions,
         wOptions: wOptions,
       );
-    } on Object {
-      // Best effort cleanup only. The primary storage already reflects
-      // the requested delete-all state.
-    }
+      _fallbackReadsSuppressed = true;
+      _migrationSweepFuture = null;
+
+      final markerKey = _migrationMarkerKey;
+      if (markerKey != null) {
+        try {
+          // This provisional tombstone protects the common case while legacy
+          // cleanup is running. A fallback layer can share the same physical
+          // store and delete it, so it is written again after cleanup below.
+          await _primary.write(
+            key: markerKey,
+            value: '1',
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
+          _migrationSweepFuture = Future<bool>.value(true);
+        } on Object {
+          // Cleanup can make space or recover the shared backing store. The
+          // mandatory post-cleanup write below decides whether deletion is
+          // durably protected.
+        }
+      }
+
+      Object? fallbackError;
+      StackTrace? fallbackStackTrace;
+      try {
+        await _fallback.deleteAll(
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        );
+      } on Object catch (error, stackTrace) {
+        fallbackError = error;
+        fallbackStackTrace = stackTrace;
+      }
+
+      if (markerKey != null) {
+        // The macOS layout aliases the bundled primary's backing keychain with
+        // a nested fallback primary. That nested deleteAll removes the
+        // provisional bundle, including its marker. Always recreate the
+        // tombstone after fallback cleanup, even when cleanup failed, before
+        // reporting the cleanup error.
+        await _primary.write(
+          key: markerKey,
+          value: '1',
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        );
+        _migrationSweepFuture = Future<bool>.value(true);
+      }
+      if (fallbackError != null) {
+        Error.throwWithStackTrace(fallbackError, fallbackStackTrace!);
+      }
+    });
   }
 
   Future<Map<String, String>> _readFallbackAll({
@@ -435,13 +526,15 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     }
 
     late final Future<bool> tracked;
-    tracked = _runMigrationSweep(
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
+    tracked = _enqueueStorageOperation(
+      () => _runMigrationSweep(
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      ),
     ).then((completed) {
       if (!completed && identical(_migrationSweepFuture, tracked)) {
         _migrationSweepFuture = null;
@@ -731,7 +824,17 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         wOptions: wOptions,
       );
     } on Object {
-      // The fallback store may not exist or may already have been cleared.
+      // The primary value (or the migration/deletion marker) remains
+      // authoritative when a legacy keychain cannot be cleaned up.
     }
+  }
+
+  Future<T> _enqueueStorageOperation<T>(Future<T> Function() operation) {
+    final next = _pendingStorageOperation.then((_) => operation());
+    _pendingStorageOperation = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return next;
   }
 }

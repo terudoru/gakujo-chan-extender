@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 7;
+  var captureVersion = 8;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -228,9 +228,7 @@ class GakujoDownloadCaptureScript {
   }
 
   function isDownloadLike(element, url) {
-    var text = textOf(element).toLowerCase();
-    var href = (url || '').toLowerCase();
-    return hasStrongDownloadSignal(element, url) || href.indexOf('campussquare.do') >= 0;
+    return hasStrongDownloadSignal(element, url);
   }
 
   function hasStrongDownloadSignal(element, url) {
@@ -285,6 +283,22 @@ class GakujoDownloadCaptureScript {
     window.MoreBetterGakujoDownloads.postMessage(JSON.stringify(payload));
   }
 
+  function baseUrlOf(element) {
+    try {
+      var ownerDocument = element && element.ownerDocument;
+      if (ownerDocument) {
+        return ownerDocument.baseURI ||
+          ownerDocument.location && ownerDocument.location.href ||
+          window.location.href;
+      }
+    } catch (e) {}
+    return window.location.href;
+  }
+
+  function absoluteUrlOf(element, rawUrl) {
+    return new URL(rawUrl || '', baseUrlOf(element)).href;
+  }
+
   window.__MBG_DOWNLOAD_CAPTURE_HANDLER = function(event) {
     var target = event.target;
     if (!target || !target.closest) {
@@ -293,7 +307,7 @@ class GakujoDownloadCaptureScript {
 
     var anchor = target.closest('a[href]');
     if (anchor) {
-      var absoluteUrl = new URL(anchor.getAttribute('href'), window.location.href).href;
+      var absoluteUrl = absoluteUrlOf(anchor, anchor.getAttribute('href'));
       if (!isDownloadLike(anchor, absoluteUrl)) {
         return;
       }
@@ -315,12 +329,13 @@ class GakujoDownloadCaptureScript {
     }
 
     var form = submitter.form || submitter.closest('form');
-    if (!form && !isDownloadLike(submitter, window.location.href)) {
+    var submitterPageUrl = baseUrlOf(submitter);
+    if (!form && !isDownloadLike(submitter, submitterPageUrl)) {
       return;
     }
 
-    var action = form ? (form.getAttribute('action') || window.location.href) : window.location.href;
-    var absoluteAction = new URL(action, window.location.href).href;
+    var action = form ? (form.getAttribute('action') || baseUrlOf(form)) : submitterPageUrl;
+    var absoluteAction = absoluteUrlOf(form || submitter, action);
     if (isSubmissionWorkflowAction(submitter) && !hasStrongDownloadSignal(submitter, absoluteAction)) {
       return;
     }

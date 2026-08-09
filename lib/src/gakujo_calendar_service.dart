@@ -2,6 +2,50 @@ import 'package:flutter/services.dart';
 
 import 'gakujo_calendar_export.dart';
 
+int _tokyoDateBoundaryMillis(
+  DateTime value, {
+  int hour = 0,
+  int minute = 0,
+  int second = 0,
+}) {
+  return DateTime.utc(
+    value.year,
+    value.month,
+    value.day,
+    hour - 9,
+    minute,
+    second,
+  ).millisecondsSinceEpoch;
+}
+
+DateTime _calendarDateAfterDays(DateTime value, int days) {
+  return DateTime(value.year, value.month, value.day + days);
+}
+
+String _calendarEventNamespace(List<GakujoCalendarEvent> events) {
+  String? namespace;
+  for (final event in events) {
+    final separator = event.id.indexOf('|');
+    if (separator <= 0) {
+      throw ArgumentError.value(
+        event.id,
+        'events',
+        'カレンダー予定IDに同期範囲の識別子がありません',
+      );
+    }
+    final candidate = event.id.substring(0, separator);
+    if (namespace != null && namespace != candidate) {
+      throw ArgumentError.value(
+        events,
+        'events',
+        '異なる同期範囲のカレンダー予定を同時に追加できません',
+      );
+    }
+    namespace = candidate;
+  }
+  return namespace!;
+}
+
 class GakujoCalendarSyncResult {
   const GakujoCalendarSyncResult({
     required this.added,
@@ -118,23 +162,19 @@ class MethodChannelGakujoCalendarService extends GakujoCalendarService {
     required DateTime rangeEnd,
     String? calendarTitle,
   }) async {
+    if (events.isEmpty) {
+      throw ArgumentError.value(events, 'events', '同期対象のカレンダー予定がありません');
+    }
+    final uidNamespace = _calendarEventNamespace(events);
     final result = await _channel.invokeMapMethod<String, Object?>(
       'syncEvents',
       {
         'calendarTitle': calendarTitle ?? 'More Better Gakujo 授業',
-        'rangeStartMillis': DateTime(
-          rangeStart.year,
-          rangeStart.month,
-          rangeStart.day,
-        ).millisecondsSinceEpoch,
-        'rangeEndMillis': DateTime(
-          rangeEnd.year,
-          rangeEnd.month,
-          rangeEnd.day,
-          23,
-          59,
-          59,
-        ).millisecondsSinceEpoch,
+        'uidNamespace': uidNamespace,
+        'rangeStartMillis': _tokyoDateBoundaryMillis(rangeStart),
+        'rangeEndMillis': _tokyoDateBoundaryMillis(
+          _calendarDateAfterDays(rangeEnd, 1),
+        ),
         'events': events.map((event) => event.toJson()).toList(),
       },
     );
@@ -151,19 +191,10 @@ class MethodChannelGakujoCalendarService extends GakujoCalendarService {
       'deleteAddedEvents',
       {
         if (calendarTitle != null) 'calendarTitle': calendarTitle,
-        'rangeStartMillis': DateTime(
-          rangeStart.year,
-          rangeStart.month,
-          rangeStart.day,
-        ).millisecondsSinceEpoch,
-        'rangeEndMillis': DateTime(
-          rangeEnd.year,
-          rangeEnd.month,
-          rangeEnd.day,
-          23,
-          59,
-          59,
-        ).millisecondsSinceEpoch,
+        'rangeStartMillis': _tokyoDateBoundaryMillis(rangeStart),
+        'rangeEndMillis': _tokyoDateBoundaryMillis(
+          _calendarDateAfterDays(rangeEnd, 1),
+        ),
       },
     );
     return GakujoCalendarDeleteResult.fromJson(result ?? const {});
@@ -223,10 +254,16 @@ class GakujoCalendarEventBuilder {
           course.weekday > DateTime.sunday) {
         continue;
       }
-      var date = _firstDateOnOrAfter(rangeStart, course.weekday);
-      while (!date.isAfter(rangeEnd)) {
+      final excludedKeys = <DateTime>{
+        if (course.recursWeekly) ...noClassKeys,
+        ...course.excludedDates.map(
+          (date) => DateTime(date.year, date.month, date.day),
+        ),
+      };
+
+      void addEvent(DateTime date) {
         final dayKey = DateTime(date.year, date.month, date.day);
-        if (!noClassKeys.contains(dayKey)) {
+        if (!excludedKeys.contains(dayKey)) {
           final start = DateTime(
             date.year,
             date.month,
@@ -257,7 +294,27 @@ class GakujoCalendarEventBuilder {
             ),
           );
         }
-        date = date.add(const Duration(days: DateTime.daysPerWeek));
+      }
+
+      if (!course.recursWeekly) {
+        final sourceDate = course.sourceDate;
+        if (sourceDate != null) {
+          final date = DateTime(
+            sourceDate.year,
+            sourceDate.month,
+            sourceDate.day,
+          );
+          if (!date.isBefore(rangeStart) && !date.isAfter(rangeEnd)) {
+            addEvent(date);
+          }
+        }
+        continue;
+      }
+
+      var date = _firstDateOnOrAfter(rangeStart, course.weekday);
+      while (!date.isAfter(rangeEnd)) {
+        addEvent(date);
+        date = _calendarDateAfterDays(date, DateTime.daysPerWeek);
       }
     }
     events.sort((a, b) => a.start.compareTo(b.start));
@@ -267,7 +324,7 @@ class GakujoCalendarEventBuilder {
   static DateTime _firstDateOnOrAfter(DateTime start, int weekday) {
     final date = DateTime(start.year, start.month, start.day);
     final delta = (weekday - date.weekday) % DateTime.daysPerWeek;
-    return date.add(Duration(days: delta));
+    return _calendarDateAfterDays(date, delta);
   }
 
   static String _eventInstanceId(
@@ -279,16 +336,20 @@ class GakujoCalendarEventBuilder {
       return value.replaceAll(RegExp(r'\s+'), ' ').trim();
     }
 
-    final tokyoStart = start.toUtc().add(const Duration(hours: 9));
+    final normalizedCourseCode =
+        GakujoCalendarExport.courseCodeFromText(course.courseCode);
+    final stableCourseIdentity = normalizedCourseCode.isNotEmpty
+        ? normalizedCourseCode
+        : normalize(GakujoCalendarExport.displayTitleForCourse(course));
     return [
       uidNamespace,
-      normalize(GakujoCalendarExport.displayTitleForCourse(course)),
+      stableCourseIdentity,
       course.weekday,
       course.period,
       normalize(GakujoCalendarExport.displayLocationForCourse(course)),
-      tokyoStart.year,
-      tokyoStart.month.toString().padLeft(2, '0'),
-      tokyoStart.day.toString().padLeft(2, '0'),
+      start.year,
+      start.month.toString().padLeft(2, '0'),
+      start.day.toString().padLeft(2, '0'),
     ].join('|');
   }
 }

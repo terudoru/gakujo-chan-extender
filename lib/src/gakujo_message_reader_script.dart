@@ -4,7 +4,7 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 1;
+  var version = 2;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -79,11 +79,11 @@ class GakujoMessageReaderScript {
       frame.onerror = function() {
         finish(false);
       };
-      document.body.appendChild(frame);
       timeoutId = window.setTimeout(function() {
         finish(false);
       }, 5000);
       frame.src = url;
+      document.body.appendChild(frame);
     });
   }
 
@@ -93,6 +93,7 @@ class GakujoMessageReaderScript {
       if (response.ok) {
         return true;
       }
+      return false;
     } catch (e) {
       // Fall through to the iframe request.
     }

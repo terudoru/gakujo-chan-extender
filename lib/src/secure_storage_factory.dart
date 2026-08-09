@@ -78,6 +78,18 @@ class SecureStorageFactory {
     _macosBundledStorage.clearCache();
   }
 
+  static Future<void> resetStorage() {
+    if (Platform.isMacOS) {
+      return resetMacosStorage();
+    }
+    return resetNonMacosStorage(create());
+  }
+
+  @visibleForTesting
+  static Future<void> resetNonMacosStorage(FlutterSecureStorage storage) {
+    return storage.deleteAll();
+  }
+
   static Future<void> resetMacosStorage() async {
     if (!Platform.isMacOS) {
       return;
