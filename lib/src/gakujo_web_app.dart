@@ -338,6 +338,14 @@ bool javaScriptResultAsBool(Object? result) {
 }
 
 @visibleForTesting
+String? initialPendingLoginRestoreUrl({
+  required String? pendingNotificationUrl,
+  required String? savedUrl,
+}) {
+  return pendingNotificationUrl ?? savedUrl;
+}
+
+@visibleForTesting
 bool isCancelledDownloadError(PlatformException error) {
   return error.code == 'cancelled';
 }
@@ -2883,6 +2891,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     _lastSessionRecoveryNoticeUrl = url;
     _pendingLoginRestoreUrl = recoveryUrl;
+    _loginRestoreAttempted = false;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('ログインが切れた可能性があります'),
@@ -3115,6 +3124,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       builder = enabled
           ? GakujoDownloadCaptureScript.build
           : GakujoDownloadCaptureScript.buildTeardown;
+    } else if (flag == GakujoFeatureFlag.gpaDisplay) {
+      builder = enabled
+          ? GakujoGpaDisplayScript.build
+          : GakujoGpaDisplayScript.buildTeardown;
+    } else if (flag == GakujoFeatureFlag.loginAutofill) {
+      if (enabled) {
+        await _injectLoginAutofillAssistIfAllowed();
+        return;
+      }
+      builder = LoginAutofillAssistScript.buildTeardown;
+    } else if (flag == GakujoFeatureFlag.twoFactorAutofill) {
+      if (enabled) {
+        await _injectTwoFactorAutofillIfAllowed();
+        return;
+      }
+      builder = TwoFactorAutofillScript.buildTeardown;
     } else {
       builder = enabled
           ? _originalExtensionFeatureBuilders[flag]
@@ -3302,9 +3327,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _notificationService.takePendingNotificationUrl(),
       debugAllowed: _debugAllowed,
     );
-    if (_appSettings.hasLoginCredentials) {
-      _pendingLoginRestoreUrl = pendingNotificationUrl ?? savedUrl;
-    }
+    _pendingLoginRestoreUrl = initialPendingLoginRestoreUrl(
+      pendingNotificationUrl: pendingNotificationUrl,
+      savedUrl: savedUrl,
+    );
     final startUrl = pendingNotificationUrl != null &&
             !_appSettings.hasLoginCredentials
         ? pendingNotificationUrl
@@ -3324,6 +3350,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
+    _pendingLoginRestoreUrl = targetUrl;
+    _loginRestoreAttempted = false;
     await _controller.loadUrl(targetUrl);
   }
 
@@ -3661,12 +3689,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _restoreLastPageAfterLoginIfNeeded(String currentUrl) async {
     final restoreUrl = _pendingLoginRestoreUrl;
+    if (restoreUrl == null) {
+      return;
+    }
+    if (restoreUrl == currentUrl) {
+      _pendingLoginRestoreUrl = null;
+      _loginRestoreAttempted = false;
+      return;
+    }
     if (_loginRestoreAttempted ||
-        restoreUrl == null ||
-        restoreUrl == currentUrl ||
         _looksLikeLoginOrTimeoutUrl(currentUrl) ||
         !AllowedWebOrigins.canLoad(restoreUrl, debugAllowed: _debugAllowed) ||
         !AllowedWebOrigins.canLoad(currentUrl, debugAllowed: _debugAllowed)) {
+      return;
+    }
+
+    if (await _hasRecognizableLoginForm()) {
+      return;
+    }
+    if (!mounted ||
+        _currentPageUrl != currentUrl ||
+        _pendingLoginRestoreUrl != restoreUrl ||
+        _loginRestoreAttempted) {
       return;
     }
 
@@ -3674,6 +3718,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _pendingLoginRestoreUrl = null;
     _setStatus('前回のページに戻ります: ${_displayUrl(restoreUrl)}');
     await _controller.loadUrl(restoreUrl);
+  }
+
+  Future<bool> _hasRecognizableLoginForm() async {
+    final path = Uri.tryParse(_currentPageUrl ?? '')?.path ?? '';
+    final attempts = path.endsWith('/campussmart.do') ? 2 : 1;
+    for (var attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        final result = await _controller.runJavaScriptReturningResult(
+          LoginAutofillAssistScript.buildLoginFormProbe(),
+        );
+        if (javaScriptResultAsBool(result)) {
+          return true;
+        }
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to detect login form before restoring a pending page',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        return true;
+      }
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    return false;
   }
 
   Future<void> _handleSystemBack() async {

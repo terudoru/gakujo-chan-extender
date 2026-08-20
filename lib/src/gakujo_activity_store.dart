@@ -830,7 +830,7 @@ class GakujoActivityStore {
         final year = rawYear < 100 ? rawYear + 2000 : rawYear;
         final hour = int.tryParse(fullDate.group(4) ?? '') ?? 23;
         final minute = int.tryParse(fullDate.group(5) ?? '') ?? 59;
-        return DateTime(year, month, day, hour, minute);
+        return _strictDateTime(year, month, day, hour, minute);
       }
     }
 
@@ -850,12 +850,33 @@ class GakujoActivityStore {
     }
     final hour = int.tryParse(monthAndDay.group(4) ?? '') ?? 23;
     final minute = int.tryParse(monthAndDay.group(5) ?? '') ?? 59;
-    var dueAt = DateTime(now.year, month, day, hour, minute);
+    var dueAt = _strictDateTime(now.year, month, day, hour, minute);
+    if (dueAt == null) {
+      return null;
+    }
     if (dueAt.add(_deadlineGracePeriod).isBefore(now) &&
         now.difference(dueAt).inDays > 180) {
-      dueAt = DateTime(now.year + 1, month, day, hour, minute);
+      dueAt = _strictDateTime(now.year + 1, month, day, hour, minute);
     }
     return dueAt;
+  }
+
+  DateTime? _strictDateTime(
+    int year,
+    int month,
+    int day,
+    int hour,
+    int minute,
+  ) {
+    final parsed = DateTime(year, month, day, hour, minute);
+    if (parsed.year != year ||
+        parsed.month != month ||
+        parsed.day != day ||
+        parsed.hour != hour ||
+        parsed.minute != minute) {
+      return null;
+    }
+    return parsed;
   }
 
   String _contentPreview(String content) {

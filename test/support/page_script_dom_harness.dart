@@ -69,6 +69,10 @@ const featureConfig = {
   message: {
     markerPrefix: '__MBG_MESSAGE_READER_',
     ownedSelector: '[data-mbg-message-reader-owned="true"]'
+  },
+  gpa: {
+    markerPrefix: '__MBG_GPA_DISPLAY_',
+    ownedSelector: '.mbg-gpa-display'
   }
 }[feature];
 
@@ -292,6 +296,7 @@ function createPage() {
   function snapshot() {
     return {
       activeIntervalCount: activeIntervals.size,
+      activeTimeoutCount: activeTimeouts.size,
       ownedElementCount: document.querySelectorAll(
         featureConfig.ownedSelector
       ).length,

@@ -12,6 +12,16 @@ class GakujoGpaDisplayScript {
     return;
   }
   window.__MBG_GPA_DISPLAY_VERSION = version;
+  window.__MBG_GPA_DISPLAY_ACTIVE = true;
+  window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
+  if (window.__MBG_GPA_DISPLAY_BOOT_TIMERS) {
+    for (var bootTimerIndex = 0;
+        bootTimerIndex < window.__MBG_GPA_DISPLAY_BOOT_TIMERS.length;
+        bootTimerIndex += 1) {
+      window.clearTimeout(window.__MBG_GPA_DISPLAY_BOOT_TIMERS[bootTimerIndex]);
+    }
+  }
+  window.__MBG_GPA_DISPLAY_BOOT_TIMERS = [];
   if (window.__MBG_GPA_DISPLAY_OBSERVERS) {
     for (var observerIndex = 0;
         observerIndex < window.__MBG_GPA_DISPLAY_OBSERVERS.length;
@@ -389,6 +399,9 @@ class GakujoGpaDisplayScript {
   }
 
   function updateAll() {
+    if (!window.__MBG_GPA_DISPLAY_ACTIVE) {
+      return;
+    }
     var documents = collectDocuments();
     for (var i = 0; i < documents.length; i += 1) {
       observeDocument(documents[i]);
@@ -398,6 +411,9 @@ class GakujoGpaDisplayScript {
   }
 
   function scheduleUpdate() {
+    if (!window.__MBG_GPA_DISPLAY_ACTIVE) {
+      return;
+    }
     window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
     window.__MBG_GPA_DISPLAY_TIMER = window.setTimeout(updateAll, 100);
   }
@@ -421,11 +437,78 @@ class GakujoGpaDisplayScript {
 
   window.__MBG_UPDATE_GPA_DISPLAY = updateAll;
   updateAll();
-  window.setTimeout(updateAll, 500);
-  window.setTimeout(updateAll, 1500);
-  window.setTimeout(updateAll, 3000);
+  window.__MBG_GPA_DISPLAY_BOOT_TIMERS = [
+    window.setTimeout(updateAll, 500),
+    window.setTimeout(updateAll, 1500),
+    window.setTimeout(updateAll, 3000)
+  ];
   window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
   window.__MBG_GPA_DISPLAY_INTERVAL = window.setInterval(updateAll, 500);
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.__MBG_GPA_DISPLAY_ACTIVE = false;
+  window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
+  var bootTimers = window.__MBG_GPA_DISPLAY_BOOT_TIMERS || [];
+  for (var timerIndex = 0; timerIndex < bootTimers.length; timerIndex += 1) {
+    window.clearTimeout(bootTimers[timerIndex]);
+  }
+  window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
+
+  var observers = window.__MBG_GPA_DISPLAY_OBSERVERS || [];
+  for (var observerIndex = 0;
+      observerIndex < observers.length;
+      observerIndex += 1) {
+    observers[observerIndex].disconnect();
+  }
+
+  var documents = [];
+  function collect(win) {
+    try {
+      if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+        return;
+      }
+      documents.push(win.document);
+      for (var frameIndex = 0; frameIndex < win.frames.length; frameIndex += 1) {
+        collect(win.frames[frameIndex]);
+      }
+    } catch (_) {
+    }
+  }
+  collect(window);
+  for (var documentIndex = 0;
+      documentIndex < documents.length;
+      documentIndex += 1) {
+    var documentRef = documents[documentIndex];
+    var displays = documentRef.querySelectorAll('.mbg-gpa-display');
+    for (var displayIndex = 0; displayIndex < displays.length; displayIndex += 1) {
+      displays[displayIndex].remove();
+    }
+    var buttonIds = [
+      'mbg-grade-no-button',
+      'mbg-grade-open-number-button',
+      'mbg-grade-score-button'
+    ];
+    for (var buttonIndex = 0; buttonIndex < buttonIds.length; buttonIndex += 1) {
+      var button = documentRef.getElementById(buttonIds[buttonIndex]);
+      if (button) {
+        button.remove();
+      }
+    }
+  }
+
+  delete window.__MBG_GPA_DISPLAY_TIMER;
+  delete window.__MBG_GPA_DISPLAY_BOOT_TIMERS;
+  delete window.__MBG_GPA_DISPLAY_INTERVAL;
+  delete window.__MBG_GPA_DISPLAY_OBSERVERS;
+  delete window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
+  delete window.__MBG_UPDATE_GPA_DISPLAY;
+  delete window.__MBG_GPA_DISPLAY_VERSION;
+  delete window.__MBG_GPA_DISPLAY_ACTIVE;
 })();
 ''';
   }

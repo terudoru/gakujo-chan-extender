@@ -36,6 +36,23 @@ void main() {
     });
   });
 
+  test('initial login restore keeps notification and saved targets', () {
+    expect(
+      initialPendingLoginRestoreUrl(
+        pendingNotificationUrl: 'https://gakujo.example/notification',
+        savedUrl: 'https://gakujo.example/saved',
+      ),
+      'https://gakujo.example/notification',
+    );
+    expect(
+      initialPendingLoginRestoreUrl(
+        pendingNotificationUrl: null,
+        savedUrl: 'https://gakujo.example/saved',
+      ),
+      'https://gakujo.example/saved',
+    );
+  });
+
   test('javaScriptResultAsBool accepts platform-specific boolean strings', () {
     expect(javaScriptResultAsBool(true), isTrue);
     expect(javaScriptResultAsBool('true'), isTrue);

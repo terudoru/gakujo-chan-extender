@@ -596,6 +596,34 @@ void main() {
     expect(deadlines.single.title, '最近の未解析期限');
   });
 
+  test('loadDeadlines treats impossible dates and times as undated', () async {
+    final store = GakujoActivityStore();
+    final staleDetection = DateTime.now().subtract(const Duration(days: 120));
+
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: '存在しない日付',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-invalid-day',
+        dueText: '提出期限 2099/02/31 17:00',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: '存在しない時刻',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-invalid-time',
+        dueText: '提出期限 2099/07/01 25:99',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: '年なしの存在しない日付',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report-invalid-short',
+        dueText: '提出期限 02/31 17:00',
+        detectedAt: staleDetection,
+      ),
+    ]);
+
+    expect(await store.loadDeadlines(), isEmpty);
+  });
+
   test('loadChanges and report lists drop stale entries', () async {
     final store = GakujoActivityStore();
 

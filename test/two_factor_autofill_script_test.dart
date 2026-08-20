@@ -1,6 +1,8 @@
 import 'package:morebettergakujo_flutter/src/two_factor_autofill_script.dart';
 import 'package:test/test.dart';
 
+import 'support/autofill_script_lifecycle_harness.dart';
+
 void main() {
   test('builds an autofill script for ninshoCode', () {
     final script = TwoFactorAutofillScript.build(token: '123456');
@@ -63,5 +65,27 @@ void main() {
     expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
     expect(script, contains("reportProgress('submit-blocked'"));
     expect(script, contains('markAutoSubmitAttempted()'));
+  });
+
+  test('teardown cancels retries and is safe before injection', () async {
+    final result = await evaluateAutofillScriptLifecycle(
+      markerPrefix: '__MBG_2FA_AUTOFILL_',
+      buildScript: TwoFactorAutofillScript.build(token: '123456'),
+      teardownScript: TwoFactorAutofillScript.buildTeardown(),
+    );
+    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
+    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
+    final afterFlush = result['afterFlush'] as Map<String, dynamic>;
+    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
+    final teardownWithoutBuild =
+        result['teardownWithoutBuild'] as Map<String, dynamic>;
+
+    expect(afterBuild['activeTimeoutCount'], 1);
+    expect(afterBuild['globalMarkers'], isNotEmpty);
+    expect(afterTeardown['activeTimeoutCount'], 0);
+    expect(afterTeardown['globalMarkers'], isEmpty);
+    expect(afterFlush['activeTimeoutCount'], 0);
+    expect(afterRebuild['activeTimeoutCount'], 1);
+    expect(teardownWithoutBuild['globalMarkers'], isEmpty);
   });
 }

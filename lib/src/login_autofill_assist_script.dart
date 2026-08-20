@@ -5,6 +5,96 @@ class LoginAutofillAssistScript {
 
   static const channelName = 'MoreBetterGakujoLoginAutofill';
 
+  static String buildLoginFormProbe() {
+    return r'''
+(function() {
+  function allDocuments() {
+    var documents = [];
+    function collect(win) {
+      try {
+        if (!win || !win.document || documents.indexOf(win.document) !== -1) {
+          return;
+        }
+        documents.push(win.document);
+        var frames = Array.prototype.slice.call(
+          win.document.querySelectorAll('iframe, frame')
+        );
+        for (var i = 0; i < frames.length; i += 1) {
+          collect(frames[i].contentWindow);
+        }
+      } catch (_) {
+      }
+    }
+    collect(window);
+    return documents;
+  }
+
+  function normalizedIdentifiers(input) {
+    return [
+      input.getAttribute('name'),
+      input.getAttribute('id'),
+      input.getAttribute('autocomplete')
+    ].filter(Boolean).map(function(value) {
+      return value.toLowerCase().replace(/[\s_-]+/g, '');
+    });
+  }
+
+  function isKnownUsernameField(input) {
+    var type = (input.getAttribute('type') || 'text').toLowerCase();
+    if (type !== 'text' && type !== 'email' && type !== 'tel' && type !== '') {
+      return false;
+    }
+    var identifiers = normalizedIdentifiers(input);
+    var known = ['userid', 'loginid', 'username', 'jusername'];
+    return identifiers.some(function(identifier) {
+      return known.indexOf(identifier) !== -1;
+    });
+  }
+
+  function isLoginPasswordField(input) {
+    if ((input.getAttribute('type') || '').toLowerCase() !== 'password') {
+      return false;
+    }
+    var identifiers = normalizedIdentifiers(input);
+    if (identifiers.indexOf('ninshocode') !== -1) {
+      return false;
+    }
+    return !identifiers.some(function(identifier) {
+      return /(?:new|confirm|confirmation|old|current)(?:password|passwd|pwd)|(?:password|passwd|pwd)(?:new|confirm|confirmation|old|current)/.test(identifier);
+    });
+  }
+
+  var documents = allDocuments();
+  for (var documentIndex = 0;
+      documentIndex < documents.length;
+      documentIndex += 1) {
+    var inputs = Array.prototype.slice.call(
+      documents[documentIndex].querySelectorAll('input')
+    );
+    var password = null;
+    for (var inputIndex = 0; inputIndex < inputs.length; inputIndex += 1) {
+      if (isLoginPasswordField(inputs[inputIndex])) {
+        password = inputs[inputIndex];
+        break;
+      }
+    }
+    if (!password) {
+      continue;
+    }
+    var form = password.form || password.closest('form');
+    var formInputs = form
+      ? Array.prototype.slice.call(form.querySelectorAll('input'))
+      : inputs;
+    if (formInputs.filter(isLoginPasswordField).length === 1 &&
+        formInputs.some(isKnownUsernameField)) {
+      return true;
+    }
+  }
+  return false;
+})()
+''';
+  }
+
   static String build({
     GakujoLoginAutofillCredentials? credentials,
   }) {
@@ -23,7 +113,9 @@ class LoginAutofillAssistScript {
     }
   }
   window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION = assistVersion;
+  window.__MBG_LOGIN_AUTOFILL_ACTIVE = true;
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
 
   function report(event, detail) {
     var payload = {
@@ -308,6 +400,9 @@ class LoginAutofillAssistScript {
   }
 
   function submitForm(target) {
+    if (!window.__MBG_LOGIN_AUTOFILL_ACTIVE) {
+      return;
+    }
     if (shouldBlockAutoSubmit()) {
       report('submit-blocked', 'session-limit-or-error');
       return;
@@ -383,6 +478,9 @@ class LoginAutofillAssistScript {
   }
 
   function assist(attempt) {
+    if (!window.__MBG_LOGIN_AUTOFILL_ACTIVE) {
+      return;
+    }
     var target = findLoginTarget();
     if (!target) {
       if (attempt < 20) {
@@ -407,12 +505,29 @@ class LoginAutofillAssistScript {
     report('fill', 'target-found form=' + (target.form ? target.form.id : 'none'));
     setInputValue(target.username, savedUsername);
     setInputValue(target.password, savedPassword);
-    window.setTimeout(function() {
+    window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
+      if (!window.__MBG_LOGIN_AUTOFILL_ACTIVE) {
+        return;
+      }
       submitForm(target);
     }, 250);
   }
 
   assist(0);
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.__MBG_LOGIN_AUTOFILL_ACTIVE = false;
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
+  window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+  delete window.__MBG_LOGIN_AUTOFILL_TIMER;
+  delete window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER;
+  delete window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION;
+  delete window.__MBG_LOGIN_AUTOFILL_ACTIVE;
 })();
 ''';
   }

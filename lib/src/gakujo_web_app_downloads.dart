@@ -330,32 +330,32 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       );
     }
 
-    var root = _downloadRoot;
-    if (_appSettings.downloadSaveMode.needsConfiguredRoot) {
-      root = await _downloadService.getDownloadRoot();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _downloadRoot = root;
-      });
-    }
-    if (_appSettings.downloadSaveMode.needsConfiguredRoot &&
-        !root.isConfigured) {
-      _showSnackBar('ダウンロード保存先を選択してください');
-      root = await _downloadService.pickDownloadRoot();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _downloadRoot = root;
-      });
-      if (!root.isConfigured) {
-        return;
-      }
-    }
-
     try {
+      var root = _downloadRoot;
+      if (_appSettings.downloadSaveMode.needsConfiguredRoot) {
+        root = await _downloadService.getDownloadRoot();
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _downloadRoot = root;
+        });
+      }
+      if (_appSettings.downloadSaveMode.needsConfiguredRoot &&
+          !root.isConfigured) {
+        _showSnackBar('ダウンロード保存先を選択してください');
+        root = await _downloadService.pickDownloadRoot();
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _downloadRoot = root;
+        });
+        if (!root.isConfigured) {
+          return;
+        }
+      }
+
       _setStatus('ダウンロード中: ${effectiveRequest.fileName}');
       final result = await _downloadService.download(
         effectiveRequest,
@@ -389,13 +389,46 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         _showSnackBar(message);
         return;
       }
+      await _recordFailedDownload(effectiveRequest, message);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Unexpected error while preparing or saving a download',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      await _recordFailedDownload(effectiveRequest, error.toString());
+    }
+  }
+
+  Future<void> _recordFailedDownload(
+    GakujoDownloadRequest request,
+    String message,
+  ) async {
+    var queued = false;
+    try {
       await _downloadHistoryStore.addFailedDownload(
-        request: effectiveRequest,
+        request: request,
         errorMessage: message,
       );
-      _setStatus('保存エラー: $message');
-      _showSnackBar('保存できませんでした。失敗キューに追加しました: $message');
+      queued = true;
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to add a download to the retry queue',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
+    if (!mounted) {
+      return;
+    }
+    _setStatus('保存エラー: $message');
+    _showSnackBar(
+      queued
+          ? '保存できませんでした。失敗キューに追加しました: $message'
+          : '保存できませんでした: $message',
+    );
   }
 
   Future<String?> _userAgent() async {

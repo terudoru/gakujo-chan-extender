@@ -28,6 +28,9 @@ class TwoFactorAutofillScript {
     return '''
 (function() {
   var assistVersion = 2;
+  window.__MBG_2FA_AUTOFILL_VERSION = assistVersion;
+  window.__MBG_2FA_AUTOFILL_ACTIVE = true;
+  window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
   var attempts = 0;
   var maxAttempts = $maxAttempts;
   var intervalMillis = $intervalMillis;
@@ -253,6 +256,9 @@ class TwoFactorAutofillScript {
   }
 
   function fill() {
+    if (!window.__MBG_2FA_AUTOFILL_ACTIVE) {
+      return false;
+    }
     attempts += 1;
     var input = null;
     var documents = allDocuments();
@@ -264,7 +270,8 @@ class TwoFactorAutofillScript {
     }
     if (!input) {
       if (attempts < maxAttempts) {
-        window.setTimeout(fill, intervalMillis);
+        window.__MBG_2FA_AUTOFILL_TIMER =
+          window.setTimeout(fill, intervalMillis);
       }
       return false;
     }
@@ -280,6 +287,18 @@ class TwoFactorAutofillScript {
   }
 
   return fill();
+})();
+''';
+  }
+
+  static String buildTeardown() {
+    return r'''
+(function() {
+  window.__MBG_2FA_AUTOFILL_ACTIVE = false;
+  window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
+  delete window.__MBG_2FA_AUTOFILL_TIMER;
+  delete window.__MBG_2FA_AUTOFILL_VERSION;
+  delete window.__MBG_2FA_AUTOFILL_ACTIVE;
 })();
 ''';
   }

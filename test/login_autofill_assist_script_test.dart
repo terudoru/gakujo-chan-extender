@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:test/test.dart';
 
+import 'support/autofill_script_lifecycle_harness.dart';
+
 void main() {
   test('adds password manager hints to login fields', () {
     final script = LoginAutofillAssistScript.build();
@@ -61,6 +63,36 @@ void main() {
     expect(script, contains('function hasLoginError()'));
     expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
     expect(script, contains("report('submit-blocked'"));
+  });
+
+  test('teardown cancels retries and is safe before injection', () async {
+    final buildScript = LoginAutofillAssistScript.build();
+    final teardownScript = LoginAutofillAssistScript.buildTeardown();
+    expect(buildScript, contains('__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER'));
+    expect(
+      teardownScript,
+      contains('clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER)'),
+    );
+
+    final result = await evaluateAutofillScriptLifecycle(
+      markerPrefix: '__MBG_LOGIN_AUTOFILL_',
+      buildScript: buildScript,
+      teardownScript: teardownScript,
+    );
+    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
+    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
+    final afterFlush = result['afterFlush'] as Map<String, dynamic>;
+    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
+    final teardownWithoutBuild =
+        result['teardownWithoutBuild'] as Map<String, dynamic>;
+
+    expect(afterBuild['activeTimeoutCount'], 1);
+    expect(afterBuild['globalMarkers'], isNotEmpty);
+    expect(afterTeardown['activeTimeoutCount'], 0);
+    expect(afterTeardown['globalMarkers'], isEmpty);
+    expect(afterFlush['activeTimeoutCount'], 0);
+    expect(afterRebuild['activeTimeoutCount'], 1);
+    expect(teardownWithoutBuild['globalMarkers'], isEmpty);
   });
 
   test('fills and submits a positively identified login form', () async {
@@ -139,6 +171,27 @@ void main() {
     expect(_valueOf(result, 'ninshoCode'), isEmpty);
     expect(result['clickCount'], 1);
   });
+
+  test('login form probe recognizes login and rejects password changes',
+      () async {
+    final loginResult = await _evaluateLoginScript(
+      LoginAutofillAssistScript.buildLoginFormProbe(),
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+      ],
+    );
+    final changeResult = await _evaluateLoginScript(
+      LoginAutofillAssistScript.buildLoginFormProbe(),
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userName'},
+        {'tag': 'input', 'type': 'password', 'name': 'currentPassword'},
+      ],
+    );
+
+    expect(loginResult['scriptResult'], isTrue);
+    expect(changeResult['scriptResult'], isFalse);
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateLoginAssist(
@@ -150,6 +203,13 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
       password: 'saved-password',
     ),
   );
+  return _evaluateLoginScript(script, elements);
+}
+
+Future<Map<String, dynamic>> _evaluateLoginScript(
+  String script,
+  List<Map<String, String>> elements,
+) async {
   final result = await Process.run('node', [
     '-e',
     _nodeDomHarness,
@@ -316,7 +376,7 @@ for (const element of elements) {
   element.form = form;
 }
 
-vm.runInNewContext(generatedScript, {
+const scriptResult = vm.runInNewContext(generatedScript, {
   window,
   document,
   location: {
@@ -335,6 +395,7 @@ process.stdout.write(JSON.stringify({
   clickCount,
   requestSubmitCount,
   formSubmitCount,
-  reports
+  reports,
+  scriptResult
 }));
 ''';

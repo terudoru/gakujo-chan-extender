@@ -1,6 +1,8 @@
 import 'package:morebettergakujo_flutter/src/gakujo_gpa_display_script.dart';
 import 'package:test/test.dart';
 
+import 'support/page_script_dom_harness.dart';
+
 void main() {
   test('builds a GPA display script for the grades table GP header', () {
     final script = GakujoGpaDisplayScript.build();
@@ -52,5 +54,36 @@ void main() {
     expect(script, contains("display.style.background = 'transparent'"));
     expect(script, contains("display.style.border = '0'"));
     expect(script, contains("display.style.display = 'block'"));
+  });
+
+  test('teardown stops timers and is safe before injection', () async {
+    final teardown = GakujoGpaDisplayScript.buildTeardown();
+    expect(teardown, contains("querySelectorAll('.mbg-gpa-display')"));
+    expect(teardown, contains("'mbg-grade-no-button'"));
+    expect(teardown, contains("'mbg-grade-open-number-button'"));
+    expect(teardown, contains("'mbg-grade-score-button'"));
+
+    final result = await evaluatePageScriptLifecycle(
+      feature: 'gpa',
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: teardown,
+    );
+    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
+    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
+    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
+    final teardownWithoutBuild =
+        result['teardownWithoutBuild'] as Map<String, dynamic>;
+
+    expect(afterBuild['activeIntervalCount'], 1);
+    expect(afterBuild['activeTimeoutCount'], 3);
+    expect(afterBuild['globalMarkers'], isNotEmpty);
+    expect(afterTeardown['activeIntervalCount'], 0);
+    expect(afterTeardown['activeTimeoutCount'], 0);
+    expect(afterTeardown['globalMarkers'], isEmpty);
+    expect(afterRebuild['activeIntervalCount'], 1);
+    expect(afterRebuild['activeTimeoutCount'], 3);
+    expect(teardownWithoutBuild['activeIntervalCount'], 0);
+    expect(teardownWithoutBuild['activeTimeoutCount'], 0);
+    expect(teardownWithoutBuild['globalMarkers'], isEmpty);
   });
 }
