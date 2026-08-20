@@ -1574,7 +1574,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     final endController = TextEditingController();
     String? errorText;
     try {
-      return showDialog<GakujoCalendarTermRange>(
+      return await showDialog<GakujoCalendarTermRange>(
         context: context,
         builder: (dialogContext) {
           return StatefulBuilder(

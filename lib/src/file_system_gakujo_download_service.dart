@@ -139,21 +139,21 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
         if (Platform.isIOS) {
-          return _exportToNativePicker(
+          return await _exportToNativePicker(
             bytes: downloaded.bytes,
             fileName: fileName,
             mimeType: downloaded.mimeType,
           );
         }
 
-        return _saveToPickedFlutterFile(
+        return await _saveToPickedFlutterFile(
           bytes: downloaded.bytes,
           fileName: fileName,
         );
       }
 
       if (_usesNativeDownloadRoot) {
-        return _saveToNativeConfiguredFolder(
+        return await _saveToNativeConfiguredFolder(
           bytes: downloaded.bytes,
           fileName: fileName,
           courseFolderName: courseFolderName,
@@ -162,7 +162,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         );
       }
 
-      return _saveToConfiguredFlutterFolder(
+      return await _saveToConfiguredFlutterFolder(
         bytes: downloaded.bytes,
         fileName: fileName,
         courseFolderName: courseFolderName,

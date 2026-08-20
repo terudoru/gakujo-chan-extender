@@ -278,6 +278,9 @@ Uri savedDownloadLocationUri(String location) {
     if (scheme == 'content' || scheme == 'file') {
       return Uri.parse(trimmed);
     }
+    // Treat values such as `javascript:...` as local paths without passing
+    // the invalid Windows path through dart:io's File constructor.
+    return Uri(scheme: 'file', path: trimmed);
   }
 
   return Uri.file(File(trimmed).absolute.path);

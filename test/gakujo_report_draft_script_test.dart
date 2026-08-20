@@ -84,7 +84,7 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
       'initialText': initialText,
       if (legacyValue != null) 'legacyValue': legacyValue,
     }),
-  ]);
+  ], stdoutEncoding: utf8, stderrEncoding: utf8);
 
   expect(
     result.exitCode,

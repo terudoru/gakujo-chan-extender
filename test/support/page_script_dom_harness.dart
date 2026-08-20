@@ -14,7 +14,7 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
     feature,
     buildScript,
     teardownScript,
-  ]);
+  ], stdoutEncoding: utf8, stderrEncoding: utf8);
 
   expect(
     result.exitCode,
@@ -40,7 +40,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     buildScript,
     '',
     scenario,
-  ]);
+  ], stdoutEncoding: utf8, stderrEncoding: utf8);
 
   expect(
     result.exitCode,
