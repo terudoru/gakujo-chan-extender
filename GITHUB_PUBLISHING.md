@@ -30,8 +30,23 @@ https://github.com/terudoru/gakujo-chan-extender.git
 
 GitHub Releases の配布ファイル名は、利用者が迷わないように
 `MoreBetterGakujo-vX.Y.Z.<拡張子>` の形に揃えます。タグ push だけで別の
-workflow が同じ Release に asset を追加しないよう、Release 作成 workflow は
-手動実行に限定しています。
+workflow が同じ Release に asset を追加しないよう、全プラットフォームのRelease
+作成は `Release All Platforms` に集約しています。`v*` タグのpush、または既存タグを
+指定した手動実行で起動します。
+
+## GitHub ActionsでのiOS/macOSビルド
+
+動作確認用の `Cross-platform Flutter` workflow は、`Run workflow` から手動実行
+できます。macOS runnerで署名なしのiOSデバッグビルドとmacOSデバッグビルドを作成し、
+完了後に次のArtifactsをダウンロードします。
+
+- `ios-debug-app`: 署名なしiOS `.app` のzip
+- `macos-debug-app`: macOS `.app` のzip
+
+配布物を作る場合は `Release All Platforms` を使います。`v*` タグをpushするか、
+Actions画面で既存タグを `tag_name` に指定して実行すると、iOSの未署名IPAとmacOSの
+未署名DMGをGitHub Releaseへ公開します。iOSのインストールには利用者側のApple
+Accountによる署名が必要です。
 
 ## GitHub ActionsでのWindows配布物作成
 

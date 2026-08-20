@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   android:
     runs-on: ubuntu-latest
@@ -41,6 +44,44 @@ jobs:
       - run: flutter pub get
       - run: flutter build macos --debug
       - run: flutter build ios --debug --no-codesign
+      - name: Package macOS debug app
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find build/macos/Build/Products/Debug -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo "macOS .app bundle not found" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" \
+            dist/MoreBetterGakujo-macos-debug.zip
+      - name: Upload macOS debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-debug-app
+          path: dist/MoreBetterGakujo-macos-debug.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package unsigned iOS debug app
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="build/ios/iphoneos/Runner.app"
+          if [ ! -d "$app_path" ]; then
+            echo "iOS .app bundle not found: $app_path" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" \
+            dist/MoreBetterGakujo-ios-debug.zip
+      - name: Upload iOS debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-debug-app
+          path: dist/MoreBetterGakujo-ios-debug.zip
+          if-no-files-found: error
+          retention-days: 7
 
   windows:
     runs-on: windows-latest
