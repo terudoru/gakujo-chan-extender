@@ -122,6 +122,16 @@ Android・iOS・macOS・Windows の配布物をすべて作成し、GitHub Relea
 公開します。iOS/iPadOS版のIPA作成と SideStore source の更新もこの workflow に
 含まれます。署名は行わず、未署名IPAを配布します（署名は利用者側で行います）。
 
+動作確認だけを行う場合は、`Cross-platform Flutter` workflowを手動実行できます。
+macOS runner上でiOS/macOSのデバッグビルドを作成し、実行後に次のArtifactsを
+ダウンロードできます。
+
+- `ios-debug-app`: 署名なしiOS `.app` のzip（インストールには利用者側の署名が必要）
+- `macos-debug-app`: macOS `.app` のzip
+
+このworkflowは配布用の署名やGitHub Release公開は行いません。配布用IPA/DMGは
+タグまたは手動の `Release All Platforms` を使用してください。
+
 ## 利用者に明記する注意点
 
 IPAを案内する場所には、次の点を明記します。

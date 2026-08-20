@@ -83,8 +83,14 @@ SideStore 向けには `distribution/altstore-source.json` を公開します。
 ./scripts/generate_altstore_source.sh dist/morebettergakujo-ios.ipa
 ```
 
-GitHub Releases へ出す場合は、`Release iOS Sideload IPA` workflow がIPAと
-`altstore-source.json` を同じリリースへアップロードします。
+GitHub Releases へ出す場合は、`Release All Platforms` workflow がIPA、DMG、APK、
+Windows配布物を同じリリースへアップロードし、iOS IPAから
+`distribution/altstore-source.json` を更新します。iOS IPAは未署名のため、
+利用者側でSideloadlyまたはSideStoreから署名します。
+
+動作確認だけなら、GitHub Actionsの `Cross-platform Flutter` を手動実行します。
+macOS runnerでiOS/macOSのデバッグビルドを作成し、完了後に
+`ios-debug-app` と `macos-debug-app` のArtifactsを取得できます。
 
 詳しい運用は [docs/ios-sideloading.md](docs/ios-sideloading.md) を参照してください。
 
