@@ -13,7 +13,7 @@ if [ ! -f "$ipa_path" ]; then
   exit 66
 fi
 
-pubspec_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+pubspec_version="${PUBSPEC_VERSION:-$(awk '/^version:/ { print $2; exit }' pubspec.yaml)}"
 version="${pubspec_version%%+*}"
 build_version="${pubspec_version##*+}"
 

@@ -281,11 +281,14 @@ jobs:
             - **macOS**: `*.dmg`（未署名。初回は右クリック→開くで起動）
             - **iOS/iPadOS**: `*.ipa`（**未署名**。App Store版ではありません。AltStore / Sideloadly でのサイドロード用。無料Apple IDでは7日ごとに再署名が必要です）
 
+            ## Android署名鍵の変更
+            `v0.69.0`から正式なリリース署名鍵を使用します。`v0.68.0`以前のAPKからは上書き更新できないため、旧版をアンインストールしてからインストールしてください。アンインストールするとアプリ内データが削除されます。
+
       - name: Checkout main for AltStore source update
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 1
+          fetch-depth: 0
           path: repository
 
       - name: Regenerate SideStore/AltStore source
@@ -298,10 +301,23 @@ jobs:
             exit 1
           fi
 
+          release_pubspec_version="$(
+            git show "${RELEASE_TAG}:pubspec.yaml" |
+              awk '/^version:/ { print $2; exit }'
+          )"
+          if [ -z "$release_pubspec_version" ]; then
+            echo "::error::Could not read the version from ${RELEASE_TAG}:pubspec.yaml."
+            exit 1
+          fi
+
+          generator_path="${RUNNER_TEMP}/generate_altstore_source.sh"
+          git show "${RELEASE_TAG}:scripts/generate_altstore_source.sh" > "$generator_path"
+
+          PUBSPEC_VERSION="$release_pubspec_version" \
           RELEASE_TAG="${RELEASE_TAG}" \
           RELEASE_DATE="$(date +%Y-%m-%d)" \
           RELEASE_NOTES="${RELEASE_NOTES}" \
-          ./scripts/generate_altstore_source.sh "$ipa_path"
+          bash "$generator_path" "$ipa_path"
 
       - name: Commit AltStore source update to main
         working-directory: repository
