@@ -5,6 +5,7 @@ class DownloadFileNamePolicy {
 
   static const fallbackBaseName = 'document';
   static const unknownCourseFolderName = '未分類';
+  static const downloadsFolderName = 'ダウンロード';
   static const maxCourseFolderNameLength = 100;
 
   static String safeFileName({
@@ -35,6 +36,10 @@ class DownloadFileNamePolicy {
     final candidate = _cleanCandidate(name);
     if (candidate == null || candidate.length > maxCourseFolderNameLength) {
       return unknownCourseFolderName;
+    }
+    // CampusSquare exposes this generic page heading when no course is shown.
+    if (candidate == 'リスト等の変更') {
+      return downloadsFolderName;
     }
     return candidate;
   }

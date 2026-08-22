@@ -144,6 +144,20 @@ void main() {
     );
   });
 
+  test('uses the downloads folder for the generic change-list page', () {
+    expect(
+      DownloadFileNamePolicy.safeFolderName('リスト等の変更'),
+      DownloadFileNamePolicy.downloadsFolderName,
+    );
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: 'リスト等の変更',
+        fileName: '大学等への修学支援の措置に係る学修計画書.docx',
+      ),
+      'ダウンロード',
+    );
+  });
+
   test('uses requested course folder when it is useful', () {
     expect(
       DownloadFileNamePolicy.courseFolderName(
