@@ -26,7 +26,7 @@
           "date": "2026-08-22",
           "localizedDescription": "iOS/iPadOS self-signed build. See the GitHub release notes for details.",
           "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.70.0/MoreBetterGakujo-v0.70.0.ipa",
-          "size": 8267376,
+          "size": 8267373,
           "minOSVersion": "14.0"
         }
       ],
