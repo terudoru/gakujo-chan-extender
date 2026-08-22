@@ -20,19 +20,23 @@
       "category": "utilities",
       "versions": [
         {
-          "version": "0.67.0",
-          "buildVersion": "67",
-          "marketingVersion": "0.67.0 (67)",
-          "date": "2026-06-23",
-          "localizedDescription": "Cross-platform feature parity changes, original extension README features, download/save improvements, GPA display/sort features, and desktop zoom fixes.",
-          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.67.0/MoreBetterGakujo-v0.67.0.ipa",
-          "size": 7560321,
+          "version": "0.69.0",
+          "buildVersion": "69",
+          "marketingVersion": "0.69.0 (69)",
+          "date": "2026-08-22",
+          "localizedDescription": "iOS/iPadOS self-signed build. See the GitHub release notes for details.",
+          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.69.0/MoreBetterGakujo-v0.69.0.ipa",
+          "size": 8258566,
           "minOSVersion": "14.0"
         }
       ],
       "appPermissions": {
-        "entitlements": [],
-        "privacy": {}
+        "entitlements": ["keychain-access-groups"],
+        "privacy": {
+          "NSCalendarsFullAccessUsageDescription": "履修中の授業予定を端末のカレンダーに追加・更新するために使用します。",
+          "NSCalendarsUsageDescription": "履修中の授業予定を端末のカレンダーに追加・更新するために使用します。",
+          "NSCalendarsWriteOnlyAccessUsageDescription": "履修中の授業予定を端末のカレンダーに追加するために使用します。"
+        }
       }
     }
   ],
