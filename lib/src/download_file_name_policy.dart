@@ -16,13 +16,18 @@ class DownloadFileNamePolicy {
     final disposition = _cleanCandidate(contentDispositionName);
     final urlName = _cleanCandidate(_fileNameFromUrl(url));
     final usableUrlName = _isCampussquareDo(urlName) ? null : urlName;
-    // The server response is authoritative. Page controls are often labelled
-    // only "download", which must not replace the actual attachment name.
-    final base = disposition ??
-        (_isCampussquareDo(preferred) ? null : preferred) ??
-        usableUrlName ??
-        fallbackBaseName;
-    return _withExtension(base, mimeType: mimeType, urlName: usableUrlName);
+    // Gakujo's response filename can be an internal name that differs from the
+    // name shown to the user. Keep the visible page name authoritative and use
+    // response metadata only as a fallback or extension hint.
+    final displayedName = _isUsefulDisplayedName(preferred) ? preferred : null;
+    final base =
+        displayedName ?? disposition ?? usableUrlName ?? fallbackBaseName;
+    return _withExtension(
+      base,
+      contentDispositionName: disposition,
+      mimeType: mimeType,
+      urlName: usableUrlName,
+    );
   }
 
   static String safeFolderName(String? name) {
@@ -98,15 +103,21 @@ class DownloadFileNamePolicy {
     return value;
   }
 
-  static String _withExtension(String base,
-      {String? mimeType, String? urlName}) {
+  static String _withExtension(
+    String base, {
+    String? contentDispositionName,
+    String? mimeType,
+    String? urlName,
+  }) {
     if (_hasLikelyExtension(base) || _isCampussquareDo(base)) {
       return base;
     }
 
+    final dispositionExtension =
+        _extensionFromName(contentDispositionName).takeUnlessDo();
     final urlExtension = _extensionFromName(urlName).takeUnlessDo();
     final mimeExtension = _extensionFromMime(mimeType);
-    final extension = urlExtension ?? mimeExtension;
+    final extension = dispositionExtension ?? urlExtension ?? mimeExtension;
     return extension == null ? base : '$base.$extension';
   }
 
@@ -213,6 +224,16 @@ class DownloadFileNamePolicy {
 
   static bool _isCampussquareDo(String? name) {
     return name?.toLowerCase() == 'campussquare.do';
+  }
+
+  static bool _isUsefulDisplayedName(String? name) {
+    if (name == null || _isCampussquareDo(name)) {
+      return false;
+    }
+    final normalized = name.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    return !RegExp(
+      r'^(?:ダウンロード(?:する)?|保存(?:する)?|download(?:file)?|save(?:file)?)$',
+    ).hasMatch(normalized);
   }
 
   static bool _isUsefulCourseName(String name) {

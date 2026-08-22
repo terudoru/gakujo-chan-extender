@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 9'));
+    expect(script, contains('captureVersion = 10'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -98,7 +98,7 @@ void main() {
     );
     expect(
       behavior['capturedNames'],
-      ['資料', '第1回講義資料.pdf'],
+      ['画面表示の資料名', '画面表示の第1回講義資料'],
     );
   });
 }
@@ -178,37 +178,62 @@ class FakeFormData {
   forEach() {}
 }
 
-function anchor(href, text) {
+function anchor(href, text, downloadName) {
   const element = {
     ownerDocument: childDocument,
     innerText: text,
     textContent: text,
     value: '',
-    getAttribute(name) { return name === 'href' ? href : null; },
-    hasAttribute() { return false; },
+    getAttribute(name) {
+      if (name === 'href') return href;
+      if (name === 'download') return downloadName || null;
+      return null;
+    },
+    hasAttribute(name) { return name === 'download' && !!downloadName; },
     closest(selector) { return selector === 'a[href]' ? element : null; }
   };
   return element;
 }
 
 function submitterWithForm() {
+  const internalFileName = {
+    name: 'fileName',
+    id: 'fileName',
+    value: 'internal_004281.pdf',
+    getAttribute(name) {
+      if (name === 'name' || name === 'id') return 'fileName';
+      return null;
+    }
+  };
   const form = {
     ownerDocument: childDocument,
-    querySelectorAll() { return []; },
+    querySelectorAll() { return [internalFileName]; },
     getAttribute(name) {
       if (name === 'action') return 'exports/form.pdf';
       if (name === 'method') return 'POST';
       return null;
     }
   };
+  const rowNumber = {
+    innerText: '1',
+    textContent: '1',
+    value: '',
+    getAttribute() { return null; }
+  };
   const fileLabel = {
-    innerText: '第1回講義資料.pdf',
-    textContent: '第1回講義資料.pdf',
+    innerText: '画面表示の第1回講義資料',
+    textContent: '画面表示の第1回講義資料',
+    value: '',
+    getAttribute() { return null; }
+  };
+  const publishedDate = {
+    innerText: '2026/08/22',
+    textContent: '2026/08/22',
     value: '',
     getAttribute() { return null; }
   };
   const row = {
-    querySelectorAll() { return [fileLabel]; }
+    querySelectorAll() { return [rowNumber, fileLabel, publishedDate]; }
   };
   const element = {
     ownerDocument: childDocument,
@@ -259,7 +284,8 @@ const normalNavigationPrevented = click(anchor(
 ));
 click(anchor(
   '../campussquare.do?_eventId=infoDownLoad',
-  '資料'
+  '画面表示の資料名',
+  'internal_002913.bin'
 ));
 click(submitterWithForm());
 

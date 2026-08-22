@@ -14,7 +14,19 @@ void main() {
     expect(name, '授業資料.pdf');
   });
 
-  test('prefers the server attachment name over a generic page label', () {
+  test('prefers the frontend display name over a different server name', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: '画面表示の第1回講義資料',
+      contentDispositionName: 'internal_004281.pdf',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      mimeType: 'application/octet-stream',
+    );
+
+    expect(name, '画面表示の第1回講義資料.pdf');
+  });
+
+  test('uses the server attachment name when the page only has an action label',
+      () {
     final name = DownloadFileNamePolicy.safeFileName(
       preferredName: 'ダウンロード',
       contentDispositionName: '第1回講義資料.pdf',

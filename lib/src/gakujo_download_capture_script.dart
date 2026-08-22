@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 9;
+  var captureVersion = 10;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -52,7 +52,124 @@ class GakujoDownloadCaptureScript {
 
   function isGenericDownloadActionText(text) {
     var normalized = (text || '').replace(/\s+/g, '').toLowerCase();
-    return /^(ダウンロード|download|保存|save)$/.test(normalized);
+    return /^(ダウンロード(?:する)?|download(?:file)?|保存(?:する)?|save(?:file)?)$/.test(normalized);
+  }
+
+  function normalizedDisplayedFileName(text) {
+    var normalized = (text || '').replace(/\s+/g, ' ').trim();
+    var labeled = normalized.match(
+      /^(?:ファイル名|資料名|添付ファイル名?|文書名|タイトル)\s*[:：]\s*(.+)$/
+    );
+    return (labeled ? labeled[1] : normalized).trim();
+  }
+
+  function isUsefulDisplayedFileName(text) {
+    var normalized = normalizedDisplayedFileName(text);
+    if (!normalized || normalized.length > 240 ||
+        isGenericDownloadActionText(normalized)) {
+      return false;
+    }
+    var compact = normalized.replace(/\s+/g, '').toLowerCase();
+    return !/^(?:ファイル名|資料名|添付ファイル名?|文書名|タイトル|開く|閲覧|詳細|削除)$/.test(compact);
+  }
+
+  function looksLikeMetadataValue(text) {
+    var normalized = (text || '').replace(/\s+/g, ' ').trim();
+    return (
+      /^\d+$/.test(normalized) ||
+      /^\d{4}[\/.-]\d{1,2}[\/.-]\d{1,2}(?:\s+\d{1,2}:\d{2})?$/.test(normalized) ||
+      /^\d+(?:\.\d+)?\s*(?:bytes?|kb|mb|gb)$/i.test(normalized)
+    );
+  }
+
+  function directTableCells(row) {
+    var cells = [];
+    if (!row) {
+      return cells;
+    }
+    var children = row.children || [];
+    for (var i = 0; i < children.length; i += 1) {
+      var tagName = (children[i].tagName || '').toLowerCase();
+      if (tagName === 'th' || tagName === 'td') {
+        cells.push(children[i]);
+      }
+    }
+    if (!cells.length && row.querySelectorAll) {
+      var queried = row.querySelectorAll('th, td');
+      for (var j = 0; j < queried.length; j += 1) {
+        cells.push(queried[j]);
+      }
+    }
+    return cells;
+  }
+
+  function tableHeaderNameScore(actionElement, candidateElement) {
+    try {
+      if (!actionElement.closest || !candidateElement.closest) {
+        return 0;
+      }
+      var row = actionElement.closest('tr');
+      var cell = candidateElement.closest('th, td');
+      var table = row && row.closest ? row.closest('table') : null;
+      if (!row || !cell || !table || !table.querySelectorAll) {
+        return 0;
+      }
+      var cells = directTableCells(row);
+      var columnIndex = cells.indexOf(cell);
+      if (columnIndex < 0) {
+        return 0;
+      }
+      var rows = table.querySelectorAll('tr');
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i] === row) {
+          break;
+        }
+        var headerCells = directTableCells(rows[i]);
+        if (columnIndex >= headerCells.length) {
+          continue;
+        }
+        var header = textOf(headerCells[columnIndex]).replace(/\s+/g, '');
+        if (/(?:ファイル|資料|文書|添付).*(?:名|タイトル)?|^(?:タイトル|名称|件名)$/.test(header)) {
+          return 700;
+        }
+        if (/^(?:番号|no\.?|公開日|掲載日|登録日|更新日|日時|日付|サイズ|容量|操作)$/i.test(header)) {
+          return -400;
+        }
+      }
+    } catch (e) {}
+    return 0;
+  }
+
+  function displayedFileNameScore(actionElement, candidateElement, text) {
+    if (!isUsefulDisplayedFileName(text) || looksLikeMetadataValue(text)) {
+      return -1;
+    }
+    var score = Math.min(text.length, 120);
+    if (looksLikeFileName(text)) {
+      score += 1000;
+    }
+    score += tableHeaderNameScore(actionElement, candidateElement);
+    var semanticHint = (
+      candidateElement.id || ''
+    ) + ' ' + (
+      typeof candidateElement.className === 'string'
+        ? candidateElement.className
+        : ''
+    ) + ' ' + (
+      candidateElement.getAttribute
+        ? candidateElement.getAttribute('name') || ''
+        : ''
+    );
+    if (/(?:file.?name|filename|attach|document|material|title|name)/i.test(semanticHint)) {
+      score += 500;
+    }
+    var tagName = (candidateElement.tagName || '').toLowerCase();
+    if (/^(?:a|label|strong|dd)$/.test(tagName)) {
+      score += 120;
+    } else if (tagName === 'span') {
+      score += 60;
+    }
+    return score;
   }
 
   function fileNameFromForm(form) {
@@ -89,32 +206,48 @@ class GakujoDownloadCaptureScript {
       return '';
     }
     var candidates = container.querySelectorAll(
-      'th, td, a, span, label, strong'
+      'th, td, dt, dd, a, span, label, strong, p'
     );
+    var bestName = '';
+    var bestScore = -1;
     for (var i = 0; i < candidates.length; i += 1) {
-      var candidate = textOf(candidates[i]);
-      if (looksLikeFileName(candidate) && !isGenericDownloadActionText(candidate)) {
-        return candidate;
+      var candidateElement = candidates[i];
+      try {
+        if (candidateElement === element ||
+            candidateElement.contains && candidateElement.contains(element)) {
+          continue;
+        }
+      } catch (e) {}
+      var candidate = normalizedDisplayedFileName(textOf(candidateElement));
+      var score = displayedFileNameScore(
+        element,
+        candidateElement,
+        candidate
+      );
+      if (score > bestScore) {
+        bestName = candidate;
+        bestScore = score;
       }
     }
-    return '';
+    return bestName;
   }
 
   function downloadFileName(element, form) {
+    var directName = normalizedDisplayedFileName(textOf(element));
+    if (isUsefulDisplayedFileName(directName)) {
+      return directName;
+    }
+    var nearbyName = nearbyDisplayedFileName(element);
+    if (nearbyName) {
+      return nearbyName;
+    }
     var explicitName = element && element.getAttribute
       ? (element.getAttribute('download') || '').trim()
       : '';
     if (explicitName) {
       return explicitName;
     }
-    var directName = textOf(element);
-    if (looksLikeFileName(directName) &&
-        !isGenericDownloadActionText(directName)) {
-      return directName;
-    }
-    return fileNameFromForm(form) ||
-      nearbyDisplayedFileName(element) ||
-      directName;
+    return fileNameFromForm(form);
   }
 
   function collectDocuments() {

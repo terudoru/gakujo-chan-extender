@@ -51,7 +51,8 @@ void main() {
     );
   });
 
-  test('uses authenticated bytes loader and its server filename', () async {
+  test('keeps the frontend display name when the server name differs',
+      () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
     try {
       final storage = _MemorySecureStorage({
@@ -77,7 +78,7 @@ void main() {
           url: 'https://gakujo.iess.niigata-u.ac.jp/file',
           method: 'GET',
           courseName: '情報リテラシー',
-          fileName: 'ダウンロード',
+          fileName: '画面表示の講義資料',
           formFields: {},
         ),
         userAgent: 'test-agent',
@@ -85,7 +86,7 @@ void main() {
         saveMode: DownloadSaveMode.flatToConfiguredFolder,
       );
 
-      expect(result.fileName, 'report.pdf');
+      expect(result.fileName, '画面表示の講義資料.pdf');
       expect(await File(result.location!).readAsBytes(), [1, 2, 3]);
     } finally {
       if (await directory.exists()) {
@@ -202,7 +203,7 @@ void main() {
           return AuthenticatedDownloadedFile(
             bytes: Uint8List.fromList([1, 2, 3]),
             finalUrl: request.url,
-            contentDispositionFileName: '再取得資料.pdf',
+            contentDispositionFileName: 'internal_98765.pdf',
           );
         },
       );
@@ -210,7 +211,7 @@ void main() {
         url: 'https://gakujo.iess.niigata-u.ac.jp/file',
         method: 'GET',
         courseName: '情報リテラシー',
-        fileName: 'ダウンロード',
+        fileName: '再取得資料',
         formFields: {},
       );
 

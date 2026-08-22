@@ -133,11 +133,18 @@ internal object GakujoDownloadFilePolicy {
         val requested = requestedName
             ?.takeIf { it.isNotBlank() }
             ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
+            ?.takeUnless { isGenericDownloadActionName(it) }
         val disposition = dispositionName?.takeIf { it.isNotBlank() }
         val fromUrl = urlName
             ?.takeIf { it.isNotBlank() }
             ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
-        return disposition ?: requested ?: fromUrl ?: "document"
+        return requested ?: disposition ?: fromUrl ?: "document"
+    }
+
+    private fun isGenericDownloadActionName(name: String): Boolean {
+        val normalized = name.replace(Regex("\\s+"), "").lowercase(Locale.ROOT)
+        return Regex("^(?:ダウンロード(?:する)?|保存(?:する)?|download(?:file)?|save(?:file)?)$")
+            .matches(normalized)
     }
 
     fun uniqueName(existingNames: Set<String>, desiredName: String): String {
@@ -921,7 +928,9 @@ class MainActivity : FlutterActivity() {
         return if (hasUsefulExtension(base)) {
             base
         } else {
-            val extension = extensionFromName(fromUrl) ?: extensionFromMime(mimeType)
+            val extension = extensionFromName(dispositionName)
+                ?: extensionFromName(fromUrl)
+                ?: extensionFromMime(mimeType)
             if (extension == null) base else "$base.$extension"
         }
     }
