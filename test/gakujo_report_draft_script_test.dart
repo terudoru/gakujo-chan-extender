@@ -77,16 +77,20 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
   required String initialText,
   String? legacyValue,
 }) async {
-  final result = await Process.run('node', [
-    '-e',
-    _nodeDomHarness,
-    GakujoReportDraftScript.build(),
-    jsonEncode({
-      'initialHtml': initialHtml,
-      'initialText': initialText,
-      if (legacyValue != null) 'legacyValue': legacyValue,
-    }),
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _nodeDomHarness,
+        GakujoReportDraftScript.build(),
+        jsonEncode({
+          'initialHtml': initialHtml,
+          'initialText': initialText,
+          if (legacyValue != null) 'legacyValue': legacyValue,
+        }),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
 
   expect(
     result.exitCode,

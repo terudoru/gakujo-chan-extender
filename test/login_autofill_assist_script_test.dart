@@ -316,16 +316,20 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String? teardownScript,
   bool deferTimers = false,
 }) async {
-  final result = await Process.run('node', [
-    '-e',
-    _nodeDomHarness,
-    script,
-    jsonEncode({
-      'elements': elements,
-      'teardownScript': teardownScript,
-      'deferTimers': deferTimers,
-    }),
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _nodeDomHarness,
+        script,
+        jsonEncode({
+          'elements': elements,
+          'teardownScript': teardownScript,
+          'deferTimers': deferTimers,
+        }),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
 
   expect(
     result.exitCode,

@@ -8,13 +8,17 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
   required String buildScript,
   required String teardownScript,
 }) async {
-  final result = await Process.run('node', [
-    '-e',
-    _nodeDomHarness,
-    feature,
-    buildScript,
-    teardownScript,
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _nodeDomHarness,
+        feature,
+        buildScript,
+        teardownScript,
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
 
   expect(
     result.exitCode,
@@ -33,14 +37,18 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     'fetchStatuses': fetchStatuses,
     'iframeOutcomes': iframeOutcomes,
   });
-  final result = await Process.run('node', [
-    '-e',
-    _nodeDomHarness,
-    'message',
-    buildScript,
-    '',
-    scenario,
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _nodeDomHarness,
+        'message',
+        buildScript,
+        '',
+        scenario,
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
 
   expect(
     result.exitCode,

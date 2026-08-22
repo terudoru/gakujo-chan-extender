@@ -627,12 +627,16 @@ List<GakujoCalendarCourse> _coursesForWeekdays(List<int> weekdays) {
 Future<Map<String, dynamic>> _evaluateAuthProbe(
   List<Map<String, String>> elements,
 ) async {
-  final result = await Process.run('node', [
-    '-e',
-    _authProbeDomHarness,
-    gakujoPortalAuthStateProbeScript,
-    jsonEncode(elements),
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _authProbeDomHarness,
+        gakujoPortalAuthStateProbeScript,
+        jsonEncode(elements),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
   expect(
     result.exitCode,
     0,
@@ -642,11 +646,15 @@ Future<Map<String, dynamic>> _evaluateAuthProbe(
 }
 
 Future<Map<String, dynamic>> _evaluateAuthenticatedSessionReset() async {
-  final result = await Process.run('node', [
-    '-e',
-    _authenticatedSessionResetHarness,
-    gakujoAuthenticatedSessionResetScript,
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _authenticatedSessionResetHarness,
+        gakujoAuthenticatedSessionResetScript,
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
   expect(
     result.exitCode,
     0,

@@ -116,12 +116,16 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   String script, {
   String? teardownScript,
 }) async {
-  final result = await Process.run('node', [
-    '-e',
-    _nodeDomHarness,
-    script,
-    teardownScript ?? '',
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _nodeDomHarness,
+        script,
+        teardownScript ?? '',
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
   expect(
     result.exitCode,
     0,

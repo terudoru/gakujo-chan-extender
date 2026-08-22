@@ -1167,11 +1167,15 @@ void main() {
 
   test('extractionScript keeps trusted no-code cells beside coded rows',
       () async {
-    final result = await Process.run('node', [
-      '-e',
-      _calendarExtractionHarness,
-      GakujoCalendarExport.extractionScript(),
-    ]);
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _calendarExtractionHarness,
+          GakujoCalendarExport.extractionScript(),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
 
     expect(
       result.exitCode,

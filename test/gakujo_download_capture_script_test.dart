@@ -42,12 +42,16 @@ void main() {
   });
 
   test('teardown removes the injected click handler', () async {
-    final result = await Process.run('node', [
-      '-e',
-      _downloadCaptureLifecycleHarness,
-      GakujoDownloadCaptureScript.build(),
-      GakujoDownloadCaptureScript.buildTeardown(),
-    ]);
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _downloadCaptureLifecycleHarness,
+          GakujoDownloadCaptureScript.build(),
+          GakujoDownloadCaptureScript.buildTeardown(),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
 
     expect(
       result.exitCode,
@@ -64,11 +68,15 @@ void main() {
 
   test('captures only download links and resolves iframe-relative urls',
       () async {
-    final result = await Process.run('node', [
-      '-e',
-      _downloadCaptureBehaviorHarness,
-      GakujoDownloadCaptureScript.build(),
-    ]);
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _downloadCaptureBehaviorHarness,
+          GakujoDownloadCaptureScript.build(),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
 
     expect(
       result.exitCode,

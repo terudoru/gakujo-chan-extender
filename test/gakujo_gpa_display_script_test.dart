@@ -106,12 +106,16 @@ Future<Map<String, dynamic>> _evaluateGpaDisplayLifecycle({
   required String buildScript,
   required String teardownScript,
 }) async {
-  final result = await Process.run('node', [
-    '-e',
-    _gpaDisplayDomHarness,
-    buildScript,
-    teardownScript,
-  ]);
+  final result = await Process.run(
+      'node',
+      [
+        '-e',
+        _gpaDisplayDomHarness,
+        buildScript,
+        teardownScript,
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8);
 
   expect(
     result.exitCode,

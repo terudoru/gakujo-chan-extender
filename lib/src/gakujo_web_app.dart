@@ -287,6 +287,9 @@ Uri savedDownloadLocationUri(String location) {
     if (scheme == 'content' || scheme == 'file') {
       return Uri.parse(trimmed);
     }
+    // Keep malformed or untrusted URI-like values away from dart:io's
+    // platform path parser, while still treating them as local locations.
+    return Uri(scheme: 'file', path: trimmed);
   }
 
   return Uri.file(File(trimmed).absolute.path);
