@@ -151,6 +151,12 @@ jobs:
       - name: Build macOS app
         run: flutter build macos --release
 
+      - name: Verify macOS app bundle and launch
+        timeout-minutes: 2
+        run: |
+          app_path="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          bash scripts/verify_macos_release.sh "$app_path"
+
       - name: Package macOS DMG
         run: |
           set -euo pipefail
@@ -278,7 +284,7 @@ jobs:
             ## ダウンロード
             - **Android**: `*.apk`
             - **Windows**: `*.exe`（インストーラー） / `*.zip`（ポータブル版）
-            - **macOS**: `*.dmg`（未署名。初回は右クリック→開くで起動）
+            - **macOS**: `*.dmg`（Developer ID未署名。初回は「プライバシーとセキュリティ」から「このまま開く」を選択）
             - **iOS/iPadOS**: `*.ipa`（**未署名**。App Store版ではありません。AltStore / Sideloadly でのサイドロード用。無料Apple IDでは7日ごとに再署名が必要です）
 
             ## Android署名鍵の変更

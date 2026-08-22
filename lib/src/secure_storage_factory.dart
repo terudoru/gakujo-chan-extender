@@ -34,19 +34,16 @@ class SecureStorageFactory {
     ),
   );
 
-  static const FlutterSecureStorage _macosLegacyDefaultStorage =
-      FlutterSecureStorage();
-
   static final FlutterSecureStorage _macosMigratingStorage =
       MigratingSecureStorage(
     primary: _macosBundledStorage,
     fallback: MigratingSecureStorage(
       primary: _macosStorage,
-      fallback: MigratingSecureStorage(
-        primary: _macosLegacyClassicStorage,
-        fallback: _macosLegacyDefaultStorage,
-        deleteFallbackAfterMigration: false,
-      ),
+      // Direct GitHub releases are ad-hoc signed. The data-protection
+      // keychain requires the restricted keychain-access-groups entitlement
+      // and a provisioning profile, so every unsigned-distribution fallback
+      // must stay on the traditional macOS keychain.
+      fallback: _macosLegacyClassicStorage,
       deleteFallbackAfterMigration: false,
     ),
     deleteFallbackAfterMigration: false,
