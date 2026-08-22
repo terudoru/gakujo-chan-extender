@@ -16,8 +16,10 @@ class DownloadFileNamePolicy {
     final disposition = _cleanCandidate(contentDispositionName);
     final urlName = _cleanCandidate(_fileNameFromUrl(url));
     final usableUrlName = _isCampussquareDo(urlName) ? null : urlName;
-    final base = (_isCampussquareDo(preferred) ? null : preferred) ??
-        disposition ??
+    // The server response is authoritative. Page controls are often labelled
+    // only "download", which must not replace the actual attachment name.
+    final base = disposition ??
+        (_isCampussquareDo(preferred) ? null : preferred) ??
         usableUrlName ??
         fallbackBaseName;
     return _withExtension(base, mimeType: mimeType, urlName: usableUrlName);

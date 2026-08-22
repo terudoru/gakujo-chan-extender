@@ -125,6 +125,21 @@ internal object GakujoCalendarIdentityPolicy {
 }
 
 internal object GakujoDownloadFilePolicy {
+    fun preferredBaseName(
+        requestedName: String?,
+        dispositionName: String?,
+        urlName: String?
+    ): String {
+        val requested = requestedName
+            ?.takeIf { it.isNotBlank() }
+            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
+        val disposition = dispositionName?.takeIf { it.isNotBlank() }
+        val fromUrl = urlName
+            ?.takeIf { it.isNotBlank() }
+            ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
+        return disposition ?: requested ?: fromUrl ?: "document"
+    }
+
     fun uniqueName(existingNames: Set<String>, desiredName: String): String {
         if (!existingNames.contains(desiredName)) {
             return desiredName
@@ -898,7 +913,11 @@ class MainActivity : FlutterActivity() {
         val fromUrl = Uri.parse(url).lastPathSegment
             ?.let { sanitizeName(decodeUrlComponentOrRaw(it)) }
             ?.takeUnless { it.equals("campussquare.do", ignoreCase = true) }
-        val base = primary ?: sanitizeName(dispositionName).ifBlank { fromUrl.orEmpty() }.ifBlank { "document" }
+        val base = GakujoDownloadFilePolicy.preferredBaseName(
+            requestedName = primary,
+            dispositionName = sanitizeName(dispositionName),
+            urlName = fromUrl
+        )
         return if (hasUsefulExtension(base)) {
             base
         } else {

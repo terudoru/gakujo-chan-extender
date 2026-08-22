@@ -628,6 +628,18 @@ class GakujoCalendarEventPolicyTest {
     }
 
     @Test
+    fun downloadNameUsesServerDispositionBeforePageButtonText() {
+        assertEquals(
+            "第1回講義資料.pdf",
+            GakujoDownloadFilePolicy.preferredBaseName(
+                requestedName = "ダウンロード",
+                dispositionName = "第1回講義資料.pdf",
+                urlName = "campussquare.do"
+            )
+        )
+    }
+
+    @Test
     fun downloadResultUsesProviderAssignedName() {
         assertEquals(
             "プロバイダ側の名前.pdf",

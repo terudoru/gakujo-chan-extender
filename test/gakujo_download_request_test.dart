@@ -45,4 +45,44 @@ void main() {
     expect(request.method, 'POST');
     expect(request.formFields, isEmpty);
   });
+
+  test('download gate rejects only a matching in-flight request', () {
+    final gate = GakujoDownloadOperationGate();
+    const first = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: '情報リテラシー',
+      fileName: 'ダウンロード',
+      formFields: {'token': '1', 'file': '42'},
+    );
+    const duplicateFromAnotherCapturePath = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'post',
+      courseName: '未分類',
+      fileName: '',
+      formFields: {'file': '42', 'token': '1'},
+    );
+    const differentFile = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: '情報リテラシー',
+      fileName: '別の資料.pdf',
+      formFields: {'token': '1', 'file': '43'},
+    );
+
+    final firstKey = gate.tryStart(first);
+    expect(firstKey, isNotNull);
+    expect(gate.tryStart(duplicateFromAnotherCapturePath), isNull);
+
+    final differentKey = gate.tryStart(differentFile);
+    expect(differentKey, isNotNull);
+    gate.finish(differentKey!);
+
+    gate.finish(firstKey!);
+    expect(
+      gate.tryStart(duplicateFromAnotherCapturePath),
+      isNotNull,
+      reason: 'completed downloads and manually deleted files can be retried',
+    );
+  });
 }

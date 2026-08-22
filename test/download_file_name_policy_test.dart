@@ -14,6 +14,17 @@ void main() {
     expect(name, '授業資料.pdf');
   });
 
+  test('prefers the server attachment name over a generic page label', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: 'ダウンロード',
+      contentDispositionName: '第1回講義資料.pdf',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      mimeType: 'application/pdf',
+    );
+
+    expect(name, '第1回講義資料.pdf');
+  });
+
   test('does not keep campussquare.do from the URL fallback', () {
     final name = DownloadFileNamePolicy.safeFileName(
       preferredName: '',

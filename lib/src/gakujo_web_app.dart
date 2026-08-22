@@ -735,6 +735,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
   final GakujoCalendarOperationGate _calendarOperationGate =
       GakujoCalendarOperationGate();
+  final GakujoDownloadOperationGate _downloadOperationGate =
+      GakujoDownloadOperationGate();
   int _navigationRevision = 0;
 
   static const double _minimumDesktopZoom = 0.5;

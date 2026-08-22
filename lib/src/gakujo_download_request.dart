@@ -107,3 +107,28 @@ class GakujoDownloadRequest {
     );
   }
 }
+
+class GakujoDownloadOperationGate {
+  final Set<String> _activeRequestKeys = <String>{};
+
+  String? tryStart(GakujoDownloadRequest request) {
+    final key = _requestKey(request);
+    return _activeRequestKeys.add(key) ? key : null;
+  }
+
+  void finish(String key) {
+    _activeRequestKeys.remove(key);
+  }
+
+  String _requestKey(GakujoDownloadRequest request) {
+    final fields = request.formFields.entries.toList()
+      ..sort((left, right) => left.key.compareTo(right.key));
+    final url = Uri.tryParse(request.url)?.replace(fragment: '').toString() ??
+        request.url;
+    return jsonEncode([
+      request.method.toUpperCase(),
+      url,
+      for (final field in fields) [field.key, field.value],
+    ]);
+  }
+}

@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 8;
+  var captureVersion = 9;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -43,6 +43,78 @@ class GakujoDownloadCaptureScript {
       element.getAttribute('aria-label') ||
       ''
     ).replace(/\s+/g, ' ').trim();
+  }
+
+  function looksLikeFileName(text) {
+    return /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|csv|txt|odt|ods|odp|jpg|jpeg|png|gif|mp4|mov|7z|rar)$/i
+      .test((text || '').trim());
+  }
+
+  function isGenericDownloadActionText(text) {
+    var normalized = (text || '').replace(/\s+/g, '').toLowerCase();
+    return /^(ダウンロード|download|保存|save)$/.test(normalized);
+  }
+
+  function fileNameFromForm(form) {
+    if (!form || !form.querySelectorAll) {
+      return '';
+    }
+    var fields = form.querySelectorAll('input[name], input[id]');
+    for (var i = 0; i < fields.length; i += 1) {
+      var field = fields[i];
+      var fieldName = (
+        field.name ||
+        field.getAttribute && field.getAttribute('name') ||
+        field.id ||
+        field.getAttribute && field.getAttribute('id') ||
+        ''
+      ).toLowerCase();
+      var value = (field.value || '').replace(/\s+/g, ' ').trim();
+      if (value &&
+          /(file.?name|filename|attach.?name|document.?name)/.test(fieldName)) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  function nearbyDisplayedFileName(element) {
+    if (!element || !element.closest) {
+      return '';
+    }
+    var container = element.closest(
+      'tr, li, .file, .attachment, .document, .download'
+    );
+    if (!container || !container.querySelectorAll) {
+      return '';
+    }
+    var candidates = container.querySelectorAll(
+      'th, td, a, span, label, strong'
+    );
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = textOf(candidates[i]);
+      if (looksLikeFileName(candidate) && !isGenericDownloadActionText(candidate)) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  function downloadFileName(element, form) {
+    var explicitName = element && element.getAttribute
+      ? (element.getAttribute('download') || '').trim()
+      : '';
+    if (explicitName) {
+      return explicitName;
+    }
+    var directName = textOf(element);
+    if (looksLikeFileName(directName) &&
+        !isGenericDownloadActionText(directName)) {
+      return directName;
+    }
+    return fileNameFromForm(form) ||
+      nearbyDisplayedFileName(element) ||
+      directName;
   }
 
   function collectDocuments() {
@@ -316,7 +388,7 @@ class GakujoDownloadCaptureScript {
       post({
         url: absoluteUrl,
         method: 'GET',
-        fileName: textOf(anchor),
+        fileName: downloadFileName(anchor, null),
         courseName: estimateCourseName(),
         formFields: {}
       });
@@ -349,7 +421,7 @@ class GakujoDownloadCaptureScript {
     post({
       url: absoluteAction,
       method: form ? (form.getAttribute('method') || 'GET').toUpperCase() : 'GET',
-      fileName: textOf(submitter),
+      fileName: downloadFileName(submitter, form),
       courseName: estimateCourseName(),
       formFields: formFields(form, submitter)
     });

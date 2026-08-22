@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 8'));
+    expect(script, contains('captureVersion = 9'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -33,6 +33,8 @@ void main() {
     expect(script, contains('提出する'));
     expect(script, contains('取り消し'));
     expect(script, contains('提出(用)?(画面|ページ)'));
+    expect(script, contains('downloadFileName'));
+    expect(script, contains('nearbyDisplayedFileName'));
     expect(
       script,
       contains(
@@ -93,6 +95,10 @@ void main() {
             '?_eventId=infoDownLoad',
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/exports/form.pdf',
       ],
+    );
+    expect(
+      behavior['capturedNames'],
+      ['資料', '第1回講義資料.pdf'],
     );
   });
 }
@@ -188,11 +194,21 @@ function anchor(href, text) {
 function submitterWithForm() {
   const form = {
     ownerDocument: childDocument,
+    querySelectorAll() { return []; },
     getAttribute(name) {
       if (name === 'action') return 'exports/form.pdf';
       if (name === 'method') return 'POST';
       return null;
     }
+  };
+  const fileLabel = {
+    innerText: '第1回講義資料.pdf',
+    textContent: '第1回講義資料.pdf',
+    value: '',
+    getAttribute() { return null; }
+  };
+  const row = {
+    querySelectorAll() { return [fileLabel]; }
   };
   const element = {
     ownerDocument: childDocument,
@@ -209,6 +225,9 @@ function submitterWithForm() {
         return element;
       }
       if (selector === 'form') return form;
+      if (selector === 'tr, li, .file, .attachment, .document, .download') {
+        return row;
+      }
       return null;
     }
   };
@@ -246,6 +265,7 @@ click(submitterWithForm());
 
 process.stdout.write(JSON.stringify({
   normalNavigationPrevented,
-  capturedUrls: captured.map((payload) => payload.url)
+  capturedUrls: captured.map((payload) => payload.url),
+  capturedNames: captured.map((payload) => payload.fileName)
 }));
 ''';

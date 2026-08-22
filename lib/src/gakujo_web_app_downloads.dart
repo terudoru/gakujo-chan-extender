@@ -2,6 +2,32 @@
 
 part of 'gakujo_web_app.dart';
 
+@visibleForTesting
+Future<bool> recordGakujoDownloadMetadataBestEffort({
+  required GakujoDownloadHistoryStore historyStore,
+  required GakujoDownloadHistoryEntry historyEntry,
+  String? retryEntryId,
+  void Function(Object error, StackTrace stackTrace)? onError,
+}) async {
+  var succeeded = true;
+  try {
+    await historyStore.add(historyEntry);
+  } on Object catch (error, stackTrace) {
+    succeeded = false;
+    onError?.call(error, stackTrace);
+  }
+
+  if (retryEntryId != null) {
+    try {
+      await historyStore.removeFailedDownload(retryEntryId);
+    } on Object catch (error, stackTrace) {
+      succeeded = false;
+      onError?.call(error, stackTrace);
+    }
+  }
+  return succeeded;
+}
+
 extension _GakujoWebAppDownloads on _GakujoWebAppState {
   Future<void> _loadDownloadRoot() async {
     try {
@@ -303,34 +329,45 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
-    var effectiveRequest = request;
-    if (!_isUsefulCourseName(request.courseName)) {
-      final pageCourseName =
-          await _estimateCourseNameFromPage(await _controller.getTitle());
-      final cachedCourseName = _currentCourseName;
-      final courseName = _isUsefulCourseName(pageCourseName)
-          ? pageCourseName
-          : _isUsefulCourseName(cachedCourseName ?? '')
-              ? cachedCourseName!
-              : null;
-      if (courseName != null) {
-        effectiveRequest = GakujoDownloadRequest(
-          url: request.url,
-          method: request.method,
-          courseName: courseName,
-          fileName: request.fileName,
-          formFields: request.formFields,
+    final operationKey = _downloadOperationGate.tryStart(request);
+    if (operationKey == null) {
+      if (kDebugMode) {
+        debugPrint(
+          'Ignored duplicate in-flight download ${request.method} '
+          '${_displayUrl(request.url)}',
         );
       }
-    }
-    if (kDebugMode) {
-      debugPrint(
-        'Download request course="${effectiveRequest.courseName}" '
-        'file="${effectiveRequest.fileName}"',
-      );
+      return;
     }
 
+    var effectiveRequest = request;
     try {
+      if (!_isUsefulCourseName(request.courseName)) {
+        final pageCourseName =
+            await _estimateCourseNameFromPage(await _controller.getTitle());
+        final cachedCourseName = _currentCourseName;
+        final courseName = _isUsefulCourseName(pageCourseName)
+            ? pageCourseName
+            : _isUsefulCourseName(cachedCourseName ?? '')
+                ? cachedCourseName!
+                : null;
+        if (courseName != null) {
+          effectiveRequest = GakujoDownloadRequest(
+            url: request.url,
+            method: request.method,
+            courseName: courseName,
+            fileName: request.fileName,
+            formFields: request.formFields,
+          );
+        }
+      }
+      if (kDebugMode) {
+        debugPrint(
+          'Download request course="${effectiveRequest.courseName}" '
+          'file="${effectiveRequest.fileName}"',
+        );
+      }
+
       var root = _downloadRoot;
       if (_appSettings.downloadSaveMode.needsConfiguredRoot) {
         root = await _downloadService.getDownloadRoot();
@@ -364,8 +401,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         sharePositionOrigin: _sharePositionOrigin(),
         saveMode: _appSettings.downloadSaveMode,
       );
-      await _downloadHistoryStore.add(
-        GakujoDownloadHistoryEntry(
+      final historyRecorded = await recordGakujoDownloadMetadataBestEffort(
+        historyStore: _downloadHistoryStore,
+        historyEntry: GakujoDownloadHistoryEntry(
           fileName: result.fileName,
           courseName: result.courseName.isEmpty
               ? effectiveRequest.courseName
@@ -373,15 +411,28 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           savedAt: DateTime.now(),
           location: _nonEmptyOrNull(result.location),
         ),
+        retryEntryId: retryEntryId,
+        onError: (error, stackTrace) {
+          developer.log(
+            'Download was saved but its history metadata could not be updated',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        },
       );
-      if (retryEntryId != null) {
-        await _downloadHistoryStore.removeFailedDownload(retryEntryId);
-      }
       final savedPath = result.courseName.isEmpty
           ? result.fileName
           : '${result.courseName}/${result.fileName}';
-      _setStatus('保存しました: $savedPath');
-      _showDownloadSavedSnackBar(result);
+      _setStatus(
+        historyRecorded
+            ? '保存しました: $savedPath'
+            : '保存しました（履歴は更新できませんでした）: $savedPath',
+      );
+      _showDownloadSavedSnackBar(
+        result,
+        historyRecorded: historyRecorded,
+      );
     } on PlatformException catch (error) {
       final message = error.message ?? error.code;
       if (isCancelledDownloadError(error)) {
@@ -398,6 +449,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         stackTrace: stackTrace,
       );
       await _recordFailedDownload(effectiveRequest, error.toString());
+    } finally {
+      _downloadOperationGate.finish(operationKey);
     }
   }
 
@@ -619,7 +672,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  void _showDownloadSavedSnackBar(GakujoDownloadResult result) {
+  void _showDownloadSavedSnackBar(
+    GakujoDownloadResult result, {
+    required bool historyRecorded,
+  }) {
     if (!mounted) {
       return;
     }
@@ -627,7 +683,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     final location = _nonEmptyOrNull(result.location);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('保存しました: ${result.fileName}'),
+        content: Text(
+          historyRecorded
+              ? '保存しました: ${result.fileName}'
+              : '保存しました: ${result.fileName}（履歴の更新のみ失敗しました）',
+        ),
         action: location == null
             ? null
             : SnackBarAction(

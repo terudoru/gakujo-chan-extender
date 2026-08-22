@@ -51,8 +51,7 @@ void main() {
     );
   });
 
-  test('uses authenticated bytes loader when no cookie header is available',
-      () async {
+  test('uses authenticated bytes loader and its server filename', () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
     try {
       final storage = _MemorySecureStorage({
@@ -78,7 +77,7 @@ void main() {
           url: 'https://gakujo.iess.niigata-u.ac.jp/file',
           method: 'GET',
           courseName: '情報リテラシー',
-          fileName: '',
+          fileName: 'ダウンロード',
           formFields: {},
         ),
         userAgent: 'test-agent',
@@ -183,6 +182,51 @@ void main() {
         contents.add((await file.readAsBytes()).single);
       }
       expect(contents, {for (var index = 0; index < 12; index += 1) index});
+    } finally {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    }
+  });
+
+  test('a deleted download can be saved again with its original name',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: _MemorySecureStorage({
+          'more_better_gakujo_download_root_path': directory.path,
+        }),
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async {
+          return AuthenticatedDownloadedFile(
+            bytes: Uint8List.fromList([1, 2, 3]),
+            finalUrl: request.url,
+            contentDispositionFileName: '再取得資料.pdf',
+          );
+        },
+      );
+      const request = GakujoDownloadRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+        method: 'GET',
+        courseName: '情報リテラシー',
+        fileName: 'ダウンロード',
+        formFields: {},
+      );
+
+      final first = await service.download(
+        request,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+      await File(first.location!).delete();
+      final second = await service.download(
+        request,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(first.fileName, '再取得資料.pdf');
+      expect(second.fileName, '再取得資料.pdf');
+      expect(await File(second.location!).readAsBytes(), [1, 2, 3]);
     } finally {
       if (await directory.exists()) {
         await directory.delete(recursive: true);
