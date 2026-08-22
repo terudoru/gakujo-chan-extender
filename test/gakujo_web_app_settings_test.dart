@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -170,8 +172,53 @@ void main() {
     );
   });
 
-  test('activity bell toolbar button is enabled', () {
-    expect(activityBellToolbarButtonEnabled, isTrue);
+  test('activity bell toolbar button is removed', () {
+    expect(activityBellToolbarButtonEnabled, isFalse);
+  });
+
+  test('edge swipes map to browser back and forward navigation', () {
+    expect(
+      gakujoEdgeSwipeNavigation(
+        startX: 8,
+        viewportWidth: 400,
+        delta: const Offset(100, 12),
+      ),
+      GakujoHistoryNavigation.back,
+    );
+    expect(
+      gakujoEdgeSwipeNavigation(
+        startX: 392,
+        viewportWidth: 400,
+        delta: const Offset(-100, 12),
+      ),
+      GakujoHistoryNavigation.forward,
+    );
+    expect(
+      gakujoEdgeSwipeNavigation(
+        startX: 200,
+        viewportWidth: 400,
+        delta: const Offset(120, 0),
+      ),
+      isNull,
+    );
+    expect(
+      gakujoEdgeSwipeNavigation(
+        startX: 8,
+        viewportWidth: 400,
+        delta: const Offset(100, 100),
+      ),
+      isNull,
+    );
+  });
+
+  test('transient app messages time out even when they have an action', () {
+    final snackBar = buildTransientGakujoSnackBar(
+      '保存しました',
+      action: SnackBarAction(label: '開く', onPressed: () {}),
+    );
+
+    expect(snackBar.duration, const Duration(seconds: 7));
+    expect(snackBar.persist, isFalse);
   });
 
   test('toolbar exposes every documented Gakujo quick jump', () {
@@ -282,6 +329,34 @@ void main() {
       tester.getSize(find.widgetWithIcon(IconButton, Icons.arrow_forward)),
       const Size(40, 40),
     );
+  });
+
+  testWidgets('toolbar reload button is always visible and compact',
+      (tester) async {
+    var reloadCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          appBar: AppBar(
+            toolbarHeight: 40,
+            actions: [
+              GakujoReloadAction(
+                enabled: true,
+                onReload: () {
+                  reloadCount += 1;
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final reloadButton = find.widgetWithIcon(IconButton, Icons.refresh);
+    expect(tester.getSize(reloadButton), const Size(40, 40));
+    expect(find.byTooltip('再読込'), findsOneWidget);
+    await tester.tap(reloadButton);
+    expect(reloadCount, 1);
   });
 
   testWidgets('toolbar zoom buttons keep hittable compact targets',
@@ -627,7 +702,7 @@ void main() {
     expect(find.text('バックアップと診断'), findsOneWidget);
     expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(OutlinedButton, '更新を確認'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, '設定をコピー'));
     await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
@@ -643,6 +718,49 @@ void main() {
     expect(imported, isTrue);
     expect(checked, isTrue);
     expect(diagnostics, isTrue);
+  });
+
+  testWidgets('update check button reports progress and blocks duplicate taps',
+      (tester) async {
+    final pendingCheck = Completer<void>();
+    var checkCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppMaintenanceSection(
+            onCheckUpdates: () {
+              checkCount += 1;
+              return pendingCheck.future;
+            },
+            onCreateBackup: () async {},
+            onCreateErrorReport: () async {},
+            onExportSettings: () async {},
+            onImportSettings: () async {},
+            onCheckDownloadDestination: () async {},
+            onCopyDiagnostics: () async {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'アップデートを確認'),
+    );
+    await tester.pump();
+    expect(find.text('確認中...'), findsOneWidget);
+    expect(checkCount, 1);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, '確認中...'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    pendingCheck.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('アップデートを確認'), findsOneWidget);
   });
 
   testWidgets('data shortcuts section exposes stored data actions',

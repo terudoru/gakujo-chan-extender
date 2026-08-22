@@ -9,6 +9,7 @@ void main() {
     final script = LoginAutofillAssistScript.build();
 
     expect(script, contains('__MBG_LOGIN_AUTOFILL_ASSIST_VERSION'));
+    expect(script, contains('var assistVersion = 9;'));
     expect(script, contains('autocomplete\', \'username'));
     expect(script, contains('autocomplete\', \'current-password'));
     expect(script, contains('autocapitalize\', \'none'));
@@ -23,7 +24,8 @@ void main() {
     expect(script, contains('element.ownerDocument.defaultView || window'));
     expect(script, contains('ownerDocument.querySelector'));
     expect(script, contains('MBG_LOGIN_AUTOFILL_ASSIST_READY'));
-    expect(script, contains("report('skip', 'not-login-form"));
+    expect(script, contains("reportState('skip', 'not-login-form')"));
+    expect(script, contains('__MBG_LOGIN_AUTOFILL_MONITOR'));
   });
 
   test('does not treat the 2FA code field as a saved password', () {
@@ -224,6 +226,33 @@ void main() {
     expect(result['clickCount'], 2, reason: jsonEncode(result));
   });
 
+  test('automatically submits again when an authenticated page times out',
+      () async {
+    final result = await _evaluateGeneratedLoginAssist(
+      LoginAutofillAssistScript.build(
+        credentials: const GakujoLoginAutofillCredentials(
+          loginId: 'saved-user',
+          password: 'saved-password',
+        ),
+      ),
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+      ],
+      simulateAuthenticatedTimeout: true,
+    );
+
+    expect(result['clickCount'], 2, reason: jsonEncode(result));
+    expect(_hasReport(result, 'authenticated', 'attempt-reset'), isTrue);
+    expect(
+      (result['reports'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .where((report) => report['event'] == 'challenge'),
+      hasLength(2),
+    );
+  });
+
   test('does not retry unchanged credentials on an existing login error',
       () async {
     final script = LoginAutofillAssistScript.build(
@@ -315,28 +344,32 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   List<Map<String, String>> elements, {
   String? teardownScript,
   bool deferTimers = false,
+  bool simulateAuthenticatedTimeout = false,
 }) async {
-  final result = await Process.run(
-      'node',
-      [
-        '-e',
-        _nodeDomHarness,
-        script,
-        jsonEncode({
-          'elements': elements,
-          'teardownScript': teardownScript,
-          'deferTimers': deferTimers,
-        }),
-      ],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8);
+  final process = await Process.start('node', [
+    '-e',
+    _nodeDomHarness,
+    jsonEncode({
+      'elements': elements,
+      'teardownScript': teardownScript,
+      'deferTimers': deferTimers,
+      'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
+    }),
+  ]);
+  final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+  final stderrFuture = process.stderr.transform(utf8.decoder).join();
+  process.stdin.write(script);
+  await process.stdin.close();
+  final exitCode = await process.exitCode;
+  final stdoutText = await stdoutFuture;
+  final stderrText = await stderrFuture;
 
   expect(
-    result.exitCode,
+    exitCode,
     0,
-    reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    reason: 'Node JavaScript evaluation failed: $stderrText',
   );
-  return jsonDecode(result.stdout as String) as Map<String, dynamic>;
+  return jsonDecode(stdoutText) as Map<String, dynamic>;
 }
 
 String _valueOf(Map<String, dynamic> result, String name) {
@@ -362,8 +395,8 @@ bool _hasReport(
 
 const _nodeDomHarness = r'''
 const vm = require('node:vm');
-const generatedScript = process.argv[1];
-const spec = JSON.parse(process.argv[2]);
+const generatedScript = require('node:fs').readFileSync(0, 'utf8');
+const spec = JSON.parse(process.argv[1]);
 const reports = [];
 const sessionValues = new Map();
 let clickCount = 0;
@@ -372,6 +405,7 @@ let requestSubmitCount = 0;
 let formSubmitCount = 0;
 let nextTimerId = 1;
 const activeTimers = new Map();
+const activeIntervals = new Map();
 
 class FakeEvent {
   constructor(type, options) {
@@ -444,9 +478,10 @@ class FakeElement {
     if (selector === 'input') {
       return this.children.filter((element) => element.tagName === 'INPUT');
     }
-    if (selector === 'button, input, a, [role="button"]') {
+    if (selector === 'button, input, a, [role="button"]' ||
+        selector === 'a, button, input, [role="button"], img') {
       return this.children.filter((element) =>
-        ['BUTTON', 'INPUT', 'A'].includes(element.tagName) ||
+        ['BUTTON', 'INPUT', 'A', 'IMG'].includes(element.tagName) ||
         element.getAttribute('role') === 'button'
       );
     }
@@ -481,7 +516,8 @@ const window = {
   KeyboardEvent: FakeEvent,
   sessionStorage: {
     getItem(key) { return sessionValues.get(key) || null; },
-    setItem(key, value) { sessionValues.set(key, String(value)); }
+    setItem(key, value) { sessionValues.set(key, String(value)); },
+    removeItem(key) { sessionValues.delete(key); }
   },
   getComputedStyle(element) {
     return {
@@ -498,6 +534,12 @@ const window = {
     } else {
       callback();
     }
+    return id;
+  },
+  clearInterval(id) { activeIntervals.delete(id); },
+  setInterval(callback) {
+    const id = nextTimerId++;
+    activeIntervals.set(id, callback);
     return id;
   },
   MoreBetterGakujoLoginAutofill: {
@@ -525,6 +567,19 @@ const context = {
   console: {log() {}}
 };
 vm.runInNewContext(generatedScript, context);
+if (spec.simulateAuthenticatedTimeout) {
+  delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
+  const logout = new FakeElement('button', {text: 'ログアウト'});
+  logout.ownerDocument = document;
+  form.children = [logout];
+  for (const callback of [...activeIntervals.values()]) callback();
+
+  for (const element of elements) {
+    element.value = '';
+  }
+  form.children = elements;
+  for (const callback of [...activeIntervals.values()]) callback();
+}
 if (spec.teardownScript) {
   vm.runInNewContext(spec.teardownScript, context);
 }

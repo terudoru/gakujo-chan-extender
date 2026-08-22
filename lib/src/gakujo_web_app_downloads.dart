@@ -686,20 +686,16 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
 
     final location = _nonEmptyOrNull(result.location);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          historyRecorded
-              ? '保存しました: ${result.fileName}'
-              : '保存しました: ${result.fileName}（履歴の更新のみ失敗しました）',
-        ),
-        action: location == null
-            ? null
-            : SnackBarAction(
-                label: '開く',
-                onPressed: () => unawaited(_openSavedDownload(location)),
-              ),
-      ),
+    _showSnackBar(
+      historyRecorded
+          ? '保存しました: ${result.fileName}'
+          : '保存しました: ${result.fileName}（履歴の更新のみ失敗しました）',
+      action: location == null
+          ? null
+          : SnackBarAction(
+              label: '開く',
+              onPressed: () => unawaited(_openSavedDownload(location)),
+            ),
     );
   }
 

@@ -13,8 +13,12 @@ class LoginAutofillAssistScript {
   window.__MBG_LOGIN_AUTOFILL_DISABLED = true;
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+  window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
   delete window.__MBG_LOGIN_AUTOFILL_TIMER;
   delete window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER;
+  delete window.__MBG_LOGIN_AUTOFILL_MONITOR;
+  delete window.__MBG_LOGIN_AUTOFILL_LAST_REPORT;
+  delete window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE;
   delete window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION;
 })();
 ''';
@@ -38,20 +42,16 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var assistVersion = 8;
+  var assistVersion = 9;
   var savedUsername = $username;
   var savedPassword = $password;
   var savedCredentialKey = $credentialKey;
   var logChannelName = $channelName;
-  if (window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION === assistVersion) {
-    if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
-      return;
-    }
-  }
   window.__MBG_LOGIN_AUTOFILL_ASSIST_VERSION = assistVersion;
   window.__MBG_LOGIN_AUTOFILL_DISABLED = false;
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+  window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
 
   function report(event, detail) {
     var payload = {
@@ -70,6 +70,15 @@ class LoginAutofillAssistScript {
       console.log('MBG_LOGIN_AUTOFILL ' + JSON.stringify(payload));
     } catch (_) {
     }
+  }
+
+  function reportState(event, detail) {
+    var state = event + ':' + (detail || '');
+    if (window.__MBG_LOGIN_AUTOFILL_LAST_REPORT === state) {
+      return;
+    }
+    window.__MBG_LOGIN_AUTOFILL_LAST_REPORT = state;
+    report(event, detail);
   }
 
   report('start', 'version=' + assistVersion);
@@ -96,6 +105,15 @@ class LoginAutofillAssistScript {
     try {
       if (window.sessionStorage) {
         window.sessionStorage.setItem(key, value);
+      }
+    } catch (_) {
+    }
+  }
+
+  function removeSessionValue(key) {
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.removeItem(key);
       }
     } catch (_) {
     }
@@ -183,6 +201,48 @@ class LoginAutofillAssistScript {
     }
     collect(window);
     return documents;
+  }
+
+  function hasAuthenticatedMarker() {
+    var documents = allDocuments();
+    for (var d = 0; d < documents.length; d += 1) {
+      var controls = Array.prototype.slice.call(
+        documents[d].querySelectorAll('a, button, input, [role="button"], img')
+      );
+      for (var i = 0; i < controls.length; i += 1) {
+        if (!visible(controls[i])) {
+          continue;
+        }
+        var text = [
+          controls[i].innerText,
+          controls[i].textContent,
+          controls[i].value,
+          controls[i].getAttribute('alt'),
+          controls[i].getAttribute('aria-label'),
+          controls[i].getAttribute('title')
+        ].filter(Boolean).join(' ').replace(/\\s+/g, ' ').toLowerCase();
+        if (/ログアウト|ログオフ|sign\\s*out|log\\s*out/.test(text)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function resetAttemptAfterAuthentication() {
+    var attempts = parseInt(
+      sessionValue(sessionKey('SUBMIT_COUNT')) || '0',
+      10
+    );
+    if (!window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY &&
+        (!isFinite(attempts) || attempts < 1)) {
+      return;
+    }
+    delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
+    removeSessionValue(sessionKey('ERROR'));
+    removeSessionValue(sessionKey('SUBMIT_COUNT'));
+    removeSessionValue(pageSessionKey('LAST_CREDENTIAL'));
+    reportState('authenticated', 'attempt-reset');
   }
 
   function fieldLabelText(input) {
@@ -442,27 +502,28 @@ class LoginAutofillAssistScript {
     }));
   }
 
-  function assist(attempt) {
+  function assist() {
     if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
       return;
     }
     var target = findLoginTarget();
     if (!target) {
-      if (attempt < 20) {
-        if (attempt === 0 || attempt === 5 || attempt === 19) {
-          report('skip', 'not-login-form attempt=' + attempt);
-        }
-        window.__MBG_LOGIN_AUTOFILL_TIMER = window.setTimeout(function() {
-          assist(attempt + 1);
-        }, 500);
+      window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
+      if (hasAuthenticatedMarker()) {
+        resetAttemptAfterAuthentication();
       }
+      reportState('skip', 'not-login-form');
       return;
     }
 
+    if (!window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE) {
+      window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = true;
+      report('challenge', 'target-found');
+    }
     enableCredentialAutofill(target);
 
     if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
-      report('ready-no-submit', 'target-found');
+      reportState('ready-no-submit', 'target-found');
       console.log('MBG_LOGIN_AUTOFILL_ASSIST_READY');
       return;
     }
@@ -475,7 +536,8 @@ class LoginAutofillAssistScript {
     }, 250);
   }
 
-  assist(0);
+  assist();
+  window.__MBG_LOGIN_AUTOFILL_MONITOR = window.setInterval(assist, 1000);
 })();
 ''';
   }

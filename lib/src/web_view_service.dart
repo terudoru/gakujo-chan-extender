@@ -118,11 +118,31 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       inner,
       debugAllowed: debugAllowed,
     );
+    await _configureAppleHistoryNavigationGestures(inner);
 
     if (kDebugMode) {
       developer.log(
         'Using ${inner.platform.runtimeType} via webview_flutter',
         name: 'MoreBetterGakujo',
+      );
+    }
+  }
+
+  Future<void> _configureAppleHistoryNavigationGestures(
+    WebViewController controller,
+  ) async {
+    if (!supportsNativeGakujoHistoryGestures(defaultTargetPlatform)) {
+      return;
+    }
+    try {
+      await (controller.platform as dynamic)
+          .setAllowsBackForwardNavigationGestures(true);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to enable native WebView history gestures',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
       );
     }
   }
@@ -282,6 +302,10 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> dispose() async {}
+}
+
+bool supportsNativeGakujoHistoryGestures(TargetPlatform platform) {
+  return platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
 }
 
 @visibleForTesting

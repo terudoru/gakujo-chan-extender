@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-class AppMaintenanceSection extends StatelessWidget {
+class AppMaintenanceSection extends StatefulWidget {
   const AppMaintenanceSection({
     super.key,
     required this.onCheckUpdates,
@@ -23,6 +23,31 @@ class AppMaintenanceSection extends StatelessWidget {
   final Future<void> Function() onCopyDiagnostics;
 
   @override
+  State<AppMaintenanceSection> createState() => _AppMaintenanceSectionState();
+}
+
+class _AppMaintenanceSectionState extends State<AppMaintenanceSection> {
+  bool _isCheckingForUpdates = false;
+
+  Future<void> _checkForUpdates() async {
+    if (_isCheckingForUpdates) {
+      return;
+    }
+    setState(() {
+      _isCheckingForUpdates = true;
+    });
+    try {
+      await widget.onCheckUpdates();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingForUpdates = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -41,37 +66,46 @@ class AppMaintenanceSection extends StatelessWidget {
           runSpacing: 8,
           children: [
             OutlinedButton.icon(
-              onPressed: () => unawaited(onCheckUpdates()),
-              icon: const Icon(Icons.system_update_alt),
-              label: const Text('更新を確認'),
+              onPressed: _isCheckingForUpdates
+                  ? null
+                  : () => unawaited(_checkForUpdates()),
+              icon: _isCheckingForUpdates
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.system_update_alt),
+              label: Text(
+                _isCheckingForUpdates ? '確認中...' : 'アップデートを確認',
+              ),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(onCreateBackup()),
+              onPressed: () => unawaited(widget.onCreateBackup()),
               icon: const Icon(Icons.backup_outlined),
               label: const Text('バックアップ作成'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(onExportSettings()),
+              onPressed: () => unawaited(widget.onExportSettings()),
               icon: const Icon(Icons.upload_file),
               label: const Text('設定をコピー'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(onImportSettings()),
+              onPressed: () => unawaited(widget.onImportSettings()),
               icon: const Icon(Icons.download),
               label: const Text('設定を読み込み'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(onCheckDownloadDestination()),
+              onPressed: () => unawaited(widget.onCheckDownloadDestination()),
               icon: const Icon(Icons.health_and_safety_outlined),
               label: const Text('保存先を確認'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(onCreateErrorReport()),
+              onPressed: () => unawaited(widget.onCreateErrorReport()),
               icon: const Icon(Icons.inventory_2_outlined),
               label: const Text('エラー報告パッケージ作成'),
             ),
             TextButton.icon(
-              onPressed: () => unawaited(onCopyDiagnostics()),
+              onPressed: () => unawaited(widget.onCopyDiagnostics()),
               icon: const Icon(Icons.bug_report_outlined),
               label: const Text('診断情報をコピー'),
             ),

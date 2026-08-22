@@ -4,7 +4,7 @@ class GakujoReportDraftScript {
   static String build() {
     return r'''
 (function() {
-  var version = 4;
+  var version = 5;
   var prefix = 'mbg-report-draft:v1:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -102,7 +102,9 @@ class GakujoReportDraftScript {
     }
     var clone = doc.body.cloneNode(true);
     Array.prototype.slice.call(
-      clone.querySelectorAll('textarea,input,select,button,[contenteditable]')
+      clone.querySelectorAll(
+        'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
+      )
     ).forEach(function(node) {
       node.remove();
     });
@@ -333,6 +335,8 @@ class GakujoReportDraftScript {
   function ensureStatus(doc, store, key) {
     var status = doc.getElementById('mbg-report-draft-status');
     if (status) {
+      status.__MBG_REPORT_DRAFT_STORE = store;
+      status.__MBG_REPORT_DRAFT_KEY = key;
       return status;
     }
     var firstField = saveableFields(doc)[0];
@@ -361,10 +365,15 @@ class GakujoReportDraftScript {
     clearButton.textContent = '下書きを削除';
     clearButton.style.fontSize = '12px';
     clearButton.addEventListener('click', function() {
-      removeDraft(store, key);
+      removeDraft(
+        status.__MBG_REPORT_DRAFT_STORE,
+        status.__MBG_REPORT_DRAFT_KEY
+      );
       label.textContent = '下書きを削除しました';
     });
     status.appendChild(clearButton);
+    status.__MBG_REPORT_DRAFT_STORE = store;
+    status.__MBG_REPORT_DRAFT_KEY = key;
 
     var form = firstField.closest('form');
     var anchor = form || firstField;
@@ -403,6 +412,9 @@ class GakujoReportDraftScript {
     if (!hasContent) {
       removeDraft(store, key);
       updateStatus(doc, '下書きは空です');
+      fields.forEach(function(field) {
+        field.__MBG_REPORT_DRAFT_DIRTY = false;
+      });
       return;
     }
     writeDraft(store, key, {
@@ -411,16 +423,13 @@ class GakujoReportDraftScript {
       url: (doc.location && doc.location.href) || '',
       fields: values
     });
+    fields.forEach(function(field) {
+      field.__MBG_REPORT_DRAFT_DIRTY = false;
+    });
     updateStatus(doc, '下書きを保存しました');
   }
 
   function restoreDraft(doc, store, key, fields) {
-    var state = doc.defaultView.__MBG_REPORT_DRAFT_STATE ||
-      (doc.defaultView.__MBG_REPORT_DRAFT_STATE = { restored: {} });
-    if (state.restored[key]) {
-      return;
-    }
-    state.restored[key] = true;
     var draft = readDraft(store, key);
     if (!draft || !Array.isArray(draft.fields)) {
       return;
@@ -432,7 +441,8 @@ class GakujoReportDraftScript {
     var restored = false;
     fields.forEach(function(field, index) {
       var value = byKey[fieldKey(field, index)];
-      if (!value || compactText(fieldValue(field)).length > 0) {
+      if (!value || field.__MBG_REPORT_DRAFT_DIRTY ||
+          compactText(fieldValue(field)).length > 0) {
         return;
       }
       setFieldValue(field, value);
@@ -444,23 +454,64 @@ class GakujoReportDraftScript {
     }
   }
 
-  function bindDraft(doc) {
+  function currentDraftContext(doc) {
     var fields = saveableFields(doc);
     if (!looksLikeReportSubmission(doc, fields)) {
+      return null;
+    }
+    var store = storageFor(doc);
+    return {
+      fields: fields,
+      store: store,
+      key: draftKey(doc, fields)
+    };
+  }
+
+  function saveCurrentDraft(doc) {
+    var context = currentDraftContext(doc) ||
+      doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+    if (!context) {
+      return;
+    }
+    saveDraft(doc, context.store, context.key, context.fields);
+  }
+
+  function bindDraft(doc) {
+    var context = currentDraftContext(doc);
+    if (!context) {
       removeStatus(doc);
       return false;
     }
-    var store = storageFor(doc);
+    var fields = context.fields;
+    var store = context.store;
     cleanup(store);
-    var key = draftKey(doc, fields);
+    var key = context.key;
     ensureStatus(doc, store, key);
     restoreDraft(doc, store, key, fields);
 
     var saveTimer = null;
-    function scheduleSave() {
+    function scheduleSave(field) {
+      field.__MBG_REPORT_DRAFT_DIRTY = true;
+      var pendingContext = currentDraftContext(doc);
+      if (!pendingContext) {
+        return;
+      }
+      var pendingFields = pendingContext.fields.slice();
+      var pendingStore = pendingContext.store;
+      var pendingKey = pendingContext.key;
+      var pendingSnapshot = {
+        fields: pendingFields,
+        store: pendingStore,
+        key: pendingKey
+      };
+      doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT = pendingSnapshot;
       doc.defaultView.clearTimeout(saveTimer);
       saveTimer = doc.defaultView.setTimeout(function() {
-        saveDraft(doc, store, key, saveableFields(doc));
+        saveDraft(doc, pendingStore, pendingKey, pendingFields);
+        if (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT ===
+            pendingSnapshot) {
+          delete doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+        }
       }, 250);
     }
 
@@ -469,9 +520,9 @@ class GakujoReportDraftScript {
         return;
       }
       field.__MBG_REPORT_DRAFT_BOUND = true;
-      field.addEventListener('input', scheduleSave);
-      field.addEventListener('change', scheduleSave);
-      field.addEventListener('keyup', scheduleSave);
+      field.addEventListener('input', function() { scheduleSave(field); });
+      field.addEventListener('change', function() { scheduleSave(field); });
+      field.addEventListener('keyup', function() { scheduleSave(field); });
     });
 
     Array.prototype.slice.call(doc.querySelectorAll('form')).forEach(function(form) {
@@ -480,14 +531,22 @@ class GakujoReportDraftScript {
       }
       form.__MBG_REPORT_DRAFT_BOUND = true;
       form.addEventListener('submit', function() {
-        saveDraft(doc, store, key, saveableFields(doc));
+        saveCurrentDraft(doc);
       }, true);
     });
 
     if (!doc.defaultView.__MBG_REPORT_DRAFT_BEFORE_UNLOAD_BOUND) {
       doc.defaultView.__MBG_REPORT_DRAFT_BEFORE_UNLOAD_BOUND = true;
       doc.defaultView.addEventListener('beforeunload', function() {
-        saveDraft(doc, store, key, saveableFields(doc));
+        saveCurrentDraft(doc);
+      });
+      doc.defaultView.addEventListener('pagehide', function() {
+        saveCurrentDraft(doc);
+      });
+      doc.addEventListener('visibilitychange', function() {
+        if (doc.visibilityState === 'hidden') {
+          saveCurrentDraft(doc);
+        }
       });
     }
     return true;

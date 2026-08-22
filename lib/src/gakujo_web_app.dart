@@ -363,7 +363,48 @@ bool shouldReadPageForActivityFeatures(GakujoAppSettings settings) {
 }
 
 @visibleForTesting
-bool get activityBellToolbarButtonEnabled => true;
+bool get activityBellToolbarButtonEnabled => false;
+
+enum GakujoHistoryNavigation {
+  back,
+  forward,
+}
+
+@visibleForTesting
+GakujoHistoryNavigation? gakujoEdgeSwipeNavigation({
+  required double startX,
+  required double viewportWidth,
+  required Offset delta,
+  double edgeExtent = 36,
+  double triggerDistance = 80,
+  double horizontalDominance = 1.25,
+}) {
+  if (viewportWidth <= 0 ||
+      delta.dx.abs() < triggerDistance ||
+      delta.dx.abs() <= delta.dy.abs() * horizontalDominance) {
+    return null;
+  }
+  if (startX <= edgeExtent && delta.dx > 0) {
+    return GakujoHistoryNavigation.back;
+  }
+  if (startX >= viewportWidth - edgeExtent && delta.dx < 0) {
+    return GakujoHistoryNavigation.forward;
+  }
+  return null;
+}
+
+@visibleForTesting
+SnackBar buildTransientGakujoSnackBar(
+  String message, {
+  SnackBarAction? action,
+}) {
+  return SnackBar(
+    content: Text(message),
+    action: action,
+    duration: const Duration(seconds: 7),
+    persist: false,
+  );
+}
 
 enum GakujoPortalAuthState {
   authenticated,
@@ -727,6 +768,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _desktopPanZoomIsPinching = false;
   double _desktopHistorySwipeDistance = 0;
   bool _desktopHistorySwipeTriggered = false;
+  int? _touchHistorySwipePointer;
+  Offset? _touchHistorySwipeStart;
+  double _touchHistorySwipeViewportWidth = 0;
   int _desktopZoomApplyRevision = 0;
   Offset? _desktopZoomOrigin;
   Timer? _desktopHistorySwipeResetTimer;
@@ -837,6 +881,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               canGoForward: _canGoForward && !_calendarOperationGate.isRunning,
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
+            ),
+            GakujoReloadAction(
+              enabled: !_calendarOperationGate.isRunning,
+              onReload: () => unawaited(
+                _handleToolbarAction(_ToolbarAction.reload),
+              ),
             ),
             if (activityBellToolbarButtonEnabled)
               IconButton(
@@ -955,7 +1005,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Widget _buildWebViewArea() {
-    final content = _webViewService.buildWidget(_controller);
+    final content = Listener(
+      onPointerDown: _handleTouchHistorySwipeDown,
+      onPointerMove: _handleTouchHistorySwipeMove,
+      onPointerUp: _handleTouchHistorySwipeEnd,
+      onPointerCancel: _handleTouchHistorySwipeEnd,
+      child: _webViewService.buildWidget(_controller),
+    );
 
     if (!_supportsDesktopZoom) {
       return AbsorbPointer(
@@ -980,6 +1036,64 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
       ),
     );
+  }
+
+  void _handleTouchHistorySwipeDown(PointerDownEvent event) {
+    if (supportsNativeGakujoHistoryGestures(defaultTargetPlatform) ||
+        event.kind != PointerDeviceKind.touch ||
+        _touchHistorySwipePointer != null) {
+      return;
+    }
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final startX = event.localPosition.dx;
+    const edgeExtent = 36.0;
+    if (startX > edgeExtent && startX < viewportWidth - edgeExtent) {
+      return;
+    }
+    _touchHistorySwipePointer = event.pointer;
+    _touchHistorySwipeStart = event.localPosition;
+    _touchHistorySwipeViewportWidth = viewportWidth;
+  }
+
+  void _handleTouchHistorySwipeMove(PointerMoveEvent event) {
+    final start = _touchHistorySwipeStart;
+    if (_touchHistorySwipePointer != event.pointer || start == null) {
+      return;
+    }
+    final delta = event.localPosition - start;
+    if (delta.dy.abs() > 32 && delta.dy.abs() > delta.dx.abs()) {
+      _resetTouchHistorySwipe();
+      return;
+    }
+    final navigation = gakujoEdgeSwipeNavigation(
+      startX: start.dx,
+      viewportWidth: _touchHistorySwipeViewportWidth,
+      delta: delta,
+    );
+    if (navigation == null) {
+      return;
+    }
+    _resetTouchHistorySwipe();
+    switch (navigation) {
+      case GakujoHistoryNavigation.back:
+        unawaited(_goBackIfPossible());
+        break;
+      case GakujoHistoryNavigation.forward:
+        unawaited(_goForwardIfPossible());
+        break;
+    }
+  }
+
+  void _handleTouchHistorySwipeEnd(PointerEvent event) {
+    if (_touchHistorySwipePointer == event.pointer) {
+      _resetTouchHistorySwipe();
+    }
+  }
+
+  void _resetTouchHistorySwipe() {
+    _touchHistorySwipePointer = null;
+    _touchHistorySwipeStart = null;
+    _touchHistorySwipeViewportWidth = 0;
   }
 
   void _handleDesktopPointerHover(PointerHoverEvent event) {
@@ -1029,7 +1143,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (!HardwareKeyboard.instance.isMetaPressed &&
         !HardwareKeyboard.instance.isControlPressed) {
-      _handleDesktopHistorySwipeDelta(event.scrollDelta);
+      _handleDesktopHistorySwipeDelta(
+        event.scrollDelta,
+        positiveIsBack: false,
+      );
       return;
     }
 
@@ -1058,7 +1175,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    _handleDesktopHistorySwipeDelta(event.panDelta);
+    _handleDesktopHistorySwipeDelta(
+      event.panDelta,
+      positiveIsBack: true,
+    );
   }
 
   void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
@@ -1066,7 +1186,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _scheduleDesktopHistorySwipeReset();
   }
 
-  void _handleDesktopHistorySwipeDelta(Offset delta) {
+  void _handleDesktopHistorySwipeDelta(
+    Offset delta, {
+    required bool positiveIsBack,
+  }) {
     if (!_supportsDesktopZoom || _desktopHistorySwipeTriggered) {
       return;
     }
@@ -1080,7 +1203,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    _desktopHistorySwipeDistance += delta.dx;
+    _desktopHistorySwipeDistance += positiveIsBack ? delta.dx : -delta.dx;
     _scheduleDesktopHistorySwipeReset();
 
     if (_desktopHistorySwipeDistance.abs() < _desktopHistorySwipeThreshold) {
@@ -1088,7 +1211,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _desktopHistorySwipeTriggered = true;
-    if (_desktopHistorySwipeDistance < 0) {
+    if (_desktopHistorySwipeDistance > 0) {
       unawaited(_goBackIfPossible());
     } else {
       unawaited(_goForwardIfPossible());
@@ -1275,8 +1398,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var loginPasswordInput = '';
     var messageExcludeKeywordInput = '';
     final messageExcludeKeywordController = TextEditingController();
-    final messenger = ScaffoldMessenger.of(context);
-
     setState(() {
       _isSettingsDialogOpen = true;
     });
@@ -1309,12 +1430,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   setDialogState(() {});
                 } on PlatformException catch (error) {
                   if (mounted) {
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
-                        ),
-                      ),
+                    _showSnackBar(
+                      'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
                     );
                   }
                 }
@@ -1361,11 +1478,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               return;
                             }
                             setDialogState(() {});
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('ログイン情報を削除しました'),
-                              ),
-                            );
+                            _showSnackBar('ログイン情報を削除しました');
                           } on Object catch (error, stackTrace) {
                             developer.log(
                               'Failed to clear login credentials',
@@ -1374,11 +1487,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               stackTrace: stackTrace,
                             );
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('ログイン情報を削除できませんでした'),
-                                ),
-                              );
+                              _showSnackBar('ログイン情報を削除できませんでした');
                             }
                           }
                         },
@@ -1405,11 +1514,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               return;
                             }
                             setDialogState(() {});
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('ログイン情報を保存しました'),
-                              ),
-                            );
+                            _showSnackBar('ログイン情報を保存しました');
                             await _injectLoginAutofillAssistIfAllowed();
                           } on Object catch (error, stackTrace) {
                             developer.log(
@@ -1419,11 +1524,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               stackTrace: stackTrace,
                             );
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('ログイン情報を保存できませんでした'),
-                                ),
-                              );
+                              _showSnackBar('ログイン情報を保存できませんでした');
                             }
                           }
                         },
@@ -1443,11 +1544,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               enabled: false,
                             );
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('2FA秘密鍵を削除しました'),
-                                ),
-                              );
+                              _showSnackBar('2FA秘密鍵を削除しました');
                             }
                           } on Object catch (error, stackTrace) {
                             developer.log(
@@ -1457,11 +1554,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               stackTrace: stackTrace,
                             );
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('2FA秘密鍵を削除できませんでした'),
-                                ),
-                              );
+                              _showSnackBar('2FA秘密鍵を削除できませんでした');
                             }
                           }
                         },
@@ -1469,18 +1562,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           try {
                             await _secretStore.save(secretInput);
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(content: Text('2FA秘密鍵を保存しました')),
-                              );
+                              _showSnackBar('2FA秘密鍵を保存しました');
                             }
                             await _injectTwoFactorAutofillIfAllowed();
                           } on FormatException {
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('長いBase32秘密鍵を確認してください'),
-                                ),
-                              );
+                              _showSnackBar('長いBase32秘密鍵を確認してください');
                             }
                           } on Object catch (error, stackTrace) {
                             developer.log(
@@ -1490,11 +1577,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               stackTrace: stackTrace,
                             );
                             if (mounted) {
-                              messenger.showSnackBar(
-                                const SnackBar(
-                                  content: Text('2FA秘密鍵を保存できませんでした'),
-                                ),
-                              );
+                              _showSnackBar('2FA秘密鍵を保存できませんでした');
                             }
                           }
                         },
@@ -1731,8 +1814,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var selectedDownloadSaveMode = _appSettings.downloadSaveMode;
     var selectedPageMode = _appSettings.pageMode;
     final disabledFeatureFlags = {..._appSettings.disabledFeatureFlags};
-    final messenger = ScaffoldMessenger.of(context);
-
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
@@ -1788,10 +1869,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   error: saveError,
                   stackTrace: saveStackTrace,
                 );
-                messenger.showSnackBar(
-                  const SnackBar(
-                    content: Text('初回セットアップを保存できませんでした。キーチェーン設定を確認してください。'),
-                  ),
+                _showSnackBar(
+                  '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
                 );
               }
               await _controller.loadUrl(selectedPageMode.startUrl);
@@ -1845,12 +1924,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           if (!mounted || !dialogContext.mounted) {
                             return;
                           }
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '保存先を設定できませんでした: ${error.message ?? error.code}',
-                              ),
-                            ),
+                          _showSnackBar(
+                            '保存先を設定できませんでした: ${error.message ?? error.code}',
                           );
                         }
                       },
@@ -2295,27 +2370,74 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (!mounted) {
         return;
       }
-      if (!info.hasUpdate) {
-        _showSnackBar('最新版です: ${info.currentVersion}');
+      _setStatus(
+        info.hasUpdate
+            ? 'アップデートがあります: ${info.latestVersion}'
+            : '最新版です: ${info.currentVersion}',
+      );
+      await _showUpdateCheckResult(info);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to check for application updates',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('新しいバージョンがあります: ${info.latestVersion}'),
-          action: SnackBarAction(
-            label: '開く',
-            onPressed: () => unawaited(
-              launchUrl(
-                Uri.parse(info.releaseUrl),
-                mode: LaunchMode.externalApplication,
-              ),
-            ),
-          ),
-        ),
-      );
-    } on Object catch (error) {
-      _showSnackBar('更新を確認できませんでした: $error');
+      _setStatus('アップデートを確認できませんでした');
+      await _showUpdateCheckError(error);
     }
+  }
+
+  Future<void> _showUpdateCheckResult(AppUpdateInfo info) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(info.hasUpdate ? 'アップデートがあります' : '最新版です'),
+          content: Text(
+            '現在のバージョン: ${info.currentVersion}\n'
+            '最新のバージョン: ${info.latestVersion}',
+          ),
+          actions: [
+            if (info.hasUpdate)
+              TextButton(
+                onPressed: () => unawaited(
+                  launchUrl(
+                    Uri.parse(info.releaseUrl),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                ),
+                child: const Text('リリースページを開く'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('閉じる'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showUpdateCheckError(Object error) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('アップデートを確認できませんでした'),
+          content: SelectableText(error.toString()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('閉じる'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _createManualBackup() async {
@@ -3443,18 +3565,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     _lastSessionRecoveryNoticeUrl = url;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('ログインが切れた可能性があります'),
-        action: SnackBarAction(
-          label: '復帰予約',
-          onPressed: () {
-            _pendingLoginRestoreUrl = recoveryUrl;
-            _loginRestoreAttempted = false;
-            _showSnackBar('再ログイン後に前のページへ戻ります');
-          },
-        ),
-      ),
+    final canAutoLogin = _appSettings.isFeatureEnabled(
+          GakujoFeatureFlag.loginAutofill,
+        ) &&
+        (_appSettings.loginCredentials?.isComplete ?? false);
+    _showSnackBar(
+      canAutoLogin
+          ? 'ログインが切れました。自動ログイン後に前のページへ戻ります'
+          : 'ログインが切れました。再ログイン後に前のページへ戻ります',
     );
   }
 
@@ -3620,6 +3738,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleLoginAutofillMessage(String message) {
+    try {
+      final decoded = jsonDecode(message);
+      if (decoded is Map && decoded['event'] == 'challenge') {
+        final recoveryUrl = selectGakujoSessionRecoveryUrl(
+          navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+          authenticatedUrl: _sessionRecoveryUrl,
+          pendingRestoreUrl: _pendingLoginRestoreUrl,
+        );
+        if (recoveryUrl != null &&
+            AllowedWebOrigins.canLoad(
+              recoveryUrl,
+              debugAllowed: _debugAllowed,
+            )) {
+          _pendingLoginRestoreUrl = recoveryUrl;
+          _loginRestoreAttempted = false;
+        }
+        _setStatus(
+          decoded['hasCredentials'] == true
+              ? 'ログインが切れました。自動ログインしています'
+              : 'ログインが切れました。ログイン情報を入力してください',
+        );
+      }
+    } on FormatException {
+      // Older injected scripts may still send a plain diagnostic message.
+    }
     if (kDebugMode) {
       debugPrint('MoreBetterGakujo login autofill $message');
       developer.log(
@@ -4520,12 +4663,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
-  void _showSnackBar(String message) {
+  void _showSnackBar(
+    String message, {
+    SnackBarAction? action,
+  }) {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      buildTransientGakujoSnackBar(message, action: action),
     );
   }
 

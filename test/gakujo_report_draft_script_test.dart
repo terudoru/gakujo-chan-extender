@@ -9,7 +9,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 4;'));
+    expect(script, contains('var version = 5;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
     expect(script, contains('mbg-report-draft:v1:'));
     expect(script, contains('localStorage'));
@@ -27,6 +27,10 @@ void main() {
     expect(script, contains('下書きを削除'));
     expect(script, contains('function removeStatus'));
     expect(script, contains('beforeunload'));
+    expect(script, contains('pagehide'));
+    expect(script, contains('visibilitychange'));
+    expect(script, contains('function currentDraftContext'));
+    expect(script, contains('#mbg-report-draft-status'));
     expect(script, contains('form.addEventListener'));
     expect(script, isNot(contains('field.innerHTML')));
   });
@@ -70,12 +74,52 @@ void main() {
     expect(result['restoredHtml'], '一段落目<br>二段落目');
     expect(result['xssExecutionCount'], 0);
   });
+
+  test('restores a field replaced in the same document after timeout',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: 'タイムアウト前の入力',
+      initialText: 'タイムアウト前の入力',
+      replaceFieldInSameDocument: true,
+    );
+
+    expect(result['sameDocumentRestoredText'], 'タイムアウト前の入力');
+  });
+
+  test('saves immediately when the page is hidden before debounce completes',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: '画面遷移直前の入力',
+      initialText: '画面遷移直前の入力',
+      deferSaveTimer: true,
+      firePageHide: true,
+    );
+
+    expect(result['storedValue'], '画面遷移直前の入力');
+  });
+
+  test('keeps the pending value when timeout replaces the form before unload',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: 'フォーム消失直前の入力',
+      initialText: 'フォーム消失直前の入力',
+      deferSaveTimer: true,
+      dropFieldBeforePageHide: true,
+      firePageHide: true,
+    );
+
+    expect(result['storedValue'], 'フォーム消失直前の入力');
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateContentEditableDraft({
   required String initialHtml,
   required String initialText,
   String? legacyValue,
+  bool replaceFieldInSameDocument = false,
+  bool deferSaveTimer = false,
+  bool firePageHide = false,
+  bool dropFieldBeforePageHide = false,
 }) async {
   final result = await Process.run(
       'node',
@@ -87,6 +131,10 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
           'initialHtml': initialHtml,
           'initialText': initialText,
           if (legacyValue != null) 'legacyValue': legacyValue,
+          'replaceFieldInSameDocument': replaceFieldInSameDocument,
+          'deferSaveTimer': deferSaveTimer,
+          'firePageHide': firePageHide,
+          'dropFieldBeforePageHide': dropFieldBeforePageHide,
         }),
       ],
       stdoutEncoding: utf8,
@@ -106,6 +154,8 @@ const generatedScript = process.argv[1];
 const spec = JSON.parse(process.argv[2]);
 const storageValues = new Map();
 let xssExecutionCount = 0;
+let nextTimerId = 1;
+const pendingTimers = new Map();
 
 class FakeEvent {
   constructor(type, options) {
@@ -232,10 +282,14 @@ function createPage(html, text, storage) {
     },
     defaultView: null,
     insertedStatus: null,
+    listeners: {},
     body: { cloneNode() { return bodyClone; } },
     createElement(tag) { return new FakeStatusElement(tag); },
     createTextNode(text) { return {nodeType: 3, textContent: String(text)}; },
     getElementById(id) { return findById(this.insertedStatus, id); },
+    addEventListener(type, callback) {
+      (this.listeners[type] ||= []).push(callback);
+    },
     querySelectorAll(selector) {
       if (selector === 'textarea,input,[contenteditable]') return [this.field];
       return [];
@@ -245,14 +299,25 @@ function createPage(html, text, storage) {
     document,
     localStorage: storage,
     CSS: null,
+    listeners: {},
     Event: FakeEvent,
     InputEvent: FakeEvent,
     getComputedStyle() { return {display: 'block', visibility: 'visible'}; },
-    clearTimeout() {},
-    setTimeout(callback) { callback(); return 1; },
+    clearTimeout(id) { pendingTimers.delete(id); },
+    setTimeout(callback) {
+      const id = nextTimerId++;
+      if (spec.deferSaveTimer) {
+        pendingTimers.set(id, callback);
+      } else {
+        callback();
+      }
+      return id;
+    },
     clearInterval() {},
     setInterval() { return 1; },
-    addEventListener() {}
+    addEventListener(type, callback) {
+      (this.listeners[type] ||= []).push(callback);
+    }
   };
   window.window = window;
   document.defaultView = window;
@@ -272,6 +337,12 @@ const storage = new FakeStorage();
 const savingPage = createPage(spec.initialHtml, spec.initialText, storage);
 runPage(savingPage);
 savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+if (spec.dropFieldBeforePageHide) {
+  savingPage.document.field = null;
+}
+if (spec.firePageHide) {
+  for (const callback of savingPage.window.listeners.pagehide || []) callback();
+}
 
 const key = storage.key(0);
 if (!key) throw new Error('Draft was not saved');
@@ -282,6 +353,18 @@ if (Object.prototype.hasOwnProperty.call(spec, 'legacyValue')) {
   storage.setItem(key, JSON.stringify(savedDraft));
 }
 
+let sameDocumentRestoredText = null;
+if (spec.replaceFieldInSameDocument) {
+  savingPage.document.field = new FakeContentEditable(
+    savingPage.document,
+    '',
+    ''
+  );
+  savingPage.field = savingPage.document.field;
+  savingPage.window.__MBG_REPORT_DRAFT_UPDATE();
+  sameDocumentRestoredText = savingPage.field.textContent;
+}
+
 const restoringPage = createPage('', '', storage);
 runPage(restoringPage);
 
@@ -289,6 +372,7 @@ process.stdout.write(JSON.stringify({
   storedValue,
   restoredText: restoringPage.field.textContent,
   restoredHtml: restoringPage.field.innerHTML,
+  sameDocumentRestoredText,
   xssExecutionCount
 }));
 ''';

@@ -50,6 +50,32 @@ class GakujoNavigationActions extends StatelessWidget {
   }
 }
 
+class GakujoReloadAction extends StatelessWidget {
+  const GakujoReloadAction({
+    super.key,
+    required this.enabled,
+    required this.onReload,
+  });
+
+  final bool enabled;
+  final VoidCallback onReload;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: '再読込',
+      onPressed: enabled ? onReload : null,
+      icon: const Icon(Icons.refresh),
+      iconSize: _toolbarIconSize,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(
+        width: _toolbarButtonExtent,
+        height: _toolbarButtonExtent,
+      ),
+    );
+  }
+}
+
 class GakujoZoomActions extends StatelessWidget {
   const GakujoZoomActions({
     super.key,
