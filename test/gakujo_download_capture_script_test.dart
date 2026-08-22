@@ -9,12 +9,14 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 10'));
+    expect(script, contains('captureVersion = 12'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_DOCUMENTS'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_ATTACH'));
+    expect(script, contains('__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER'));
+    expect(script, contains('__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS'));
     expect(script, contains('function attachClickHandlers()'));
     expect(script, contains('documents[i].addEventListener'));
     expect(script, contains('removeEventListener'));
@@ -23,6 +25,7 @@ void main() {
     expect(script, contains('科目名'));
     expect(script, contains(r'(?:[A-Z0-9]{4,}\s+)?'));
     expect(script, contains('isIgnoredCourseName'));
+    expect(script, contains('text.length > 100'));
     expect(script, contains('extractCourseNameFromText'));
     expect(script, contains('trimAtKnownFieldLabel'));
     expect(script,
@@ -63,9 +66,46 @@ void main() {
     final lifecycle =
         jsonDecode(result.stdout as String) as Map<String, dynamic>;
     expect(lifecycle['listenersAfterBuild'], 1);
+    expect(lifecycle['loadListenersAfterBuild'], 1);
     expect(lifecycle['listenersAfterTeardown'], 0);
+    expect(lifecycle['loadListenersAfterTeardown'], 0);
     expect(lifecycle['handlerCleared'], isTrue);
+    expect(lifecycle['loadHandlerCleared'], isTrue);
     expect(lifecycle['versionCleared'], isTrue);
+  });
+
+  test('reattaches capture after a CampusSquare iframe document loads',
+      () async {
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _downloadCaptureIframeReloadHarness,
+          GakujoDownloadCaptureScript.build(),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['oldDocumentHadListener'], isTrue);
+    expect(behavior['oldDocumentListenerRemoved'], isTrue);
+    expect(behavior['newDocumentHasListener'], isTrue);
+    expect(behavior['downloadPrevented'], isTrue);
+    expect(
+      behavior['capturedUrl'],
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+      '?_flowId=SDW-filerefer-flow&fileId=41475',
+    );
+    expect(
+      behavior['capturedName'],
+      '大学等への修学支援の措置に係る学修計画書.docx',
+    );
   });
 
   test('captures only download links and resolves iframe-relative urls',
@@ -108,12 +148,15 @@ const vm = require('node:vm');
 const buildScript = process.argv[1];
 const teardownScript = process.argv[2];
 const clickListeners = new Set();
+const loadListeners = new Set();
 const document = {
   addEventListener(type, handler) {
     if (type === 'click') clickListeners.add(handler);
+    if (type === 'load') loadListeners.add(handler);
   },
   removeEventListener(type, handler) {
     if (type === 'click') clickListeners.delete(handler);
+    if (type === 'load') loadListeners.delete(handler);
   }
 };
 const window = {
@@ -127,12 +170,107 @@ window.window = window;
 const context = vm.createContext({window, document, console, URL});
 vm.runInContext(buildScript, context);
 const listenersAfterBuild = clickListeners.size;
+const loadListenersAfterBuild = loadListeners.size;
 vm.runInContext(teardownScript, context);
 process.stdout.write(JSON.stringify({
   listenersAfterBuild,
+  loadListenersAfterBuild,
   listenersAfterTeardown: clickListeners.size,
+  loadListenersAfterTeardown: loadListeners.size,
   handlerCleared: window.__MBG_DOWNLOAD_CAPTURE_HANDLER === null,
+  loadHandlerCleared: window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER === null,
   versionCleared: window.__MBG_DOWNLOAD_CAPTURE_VERSION === null
+}));
+''';
+
+const _downloadCaptureIframeReloadHarness = r'''
+const vm = require('node:vm');
+const buildScript = process.argv[1];
+const captured = [];
+
+function createDocument(baseURI) {
+  const listeners = new Map();
+  return {
+    baseURI,
+    location: {href: baseURI},
+    title: '',
+    listeners,
+    querySelectorAll() { return []; },
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type, handler) {
+      if (listeners.get(type) === handler) listeners.delete(type);
+    }
+  };
+}
+
+const topDocument = createDocument(
+  'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
+);
+const oldChildDocument = createDocument(
+  'https://gakujo.iess.niigata-u.ac.jp/campusweb/loading.do'
+);
+const loadedChildDocument = createDocument(
+  'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+);
+const childWindow = {document: oldChildDocument, frames: []};
+const window = {
+  document: topDocument,
+  frames: [childWindow],
+  location: {href: topDocument.baseURI},
+  MoreBetterGakujoDownloads: {
+    postMessage(message) { captured.push(JSON.parse(message)); }
+  }
+};
+window.window = window;
+
+class FakeFormData {
+  set() {}
+  forEach() {}
+}
+
+const context = vm.createContext({
+  window,
+  document: topDocument,
+  console,
+  URL,
+  FormData: FakeFormData
+});
+vm.runInContext(buildScript, context);
+
+const oldDocumentHadListener = oldChildDocument.listeners.has('click');
+childWindow.document = loadedChildDocument;
+topDocument.listeners.get('load')({target: {tagName: 'IFRAME'}});
+
+const fileName = '大学等への修学支援の措置に係る学修計画書.docx';
+const element = {
+  ownerDocument: loadedChildDocument,
+  innerText: fileName,
+  textContent: fileName,
+  value: '',
+  getAttribute(name) {
+    if (name === 'href') {
+      return 'campussquare.do?_flowId=SDW-filerefer-flow&fileId=41475';
+    }
+    return null;
+  },
+  hasAttribute() { return false; },
+  closest(selector) { return selector === 'a[href]' ? element : null; }
+};
+
+let downloadPrevented = false;
+loadedChildDocument.listeners.get('click')({
+  target: element,
+  preventDefault() { downloadPrevented = true; },
+  stopPropagation() {}
+});
+
+process.stdout.write(JSON.stringify({
+  oldDocumentHadListener,
+  oldDocumentListenerRemoved: !oldChildDocument.listeners.has('click'),
+  newDocumentHasListener: loadedChildDocument.listeners.has('click'),
+  downloadPrevented,
+  capturedUrl: captured[0] && captured[0].url,
+  capturedName: captured[0] && captured[0].fileName
 }));
 ''';
 

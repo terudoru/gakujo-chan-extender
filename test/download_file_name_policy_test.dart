@@ -132,6 +132,16 @@ void main() {
   test('sanitizes folder names and falls back to unclassified', () {
     expect(DownloadFileNamePolicy.safeFolderName(r'講義/資料'), '講義資料');
     expect(DownloadFileNamePolicy.safeFolderName('  '), '未分類');
+    expect(
+      DownloadFileNamePolicy.safeFolderName(
+        List.filled(
+          DownloadFileNamePolicy.maxCourseFolderNameLength + 1,
+          '長',
+        ).join(),
+      ),
+      '未分類',
+      reason: 'a page dump must not become an OS directory component',
+    );
   });
 
   test('uses requested course folder when it is useful', () {

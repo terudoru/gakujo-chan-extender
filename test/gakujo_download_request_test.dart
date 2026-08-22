@@ -46,8 +46,10 @@ void main() {
     expect(request.formFields, isEmpty);
   });
 
-  test('download gate rejects only a matching in-flight request', () {
+  test('download gate debounces duplicate capture but allows repeated saves',
+      () {
     final gate = GakujoDownloadOperationGate();
+    final startedAt = DateTime.utc(2026, 8, 22);
     const first = GakujoDownloadRequest(
       url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
       method: 'POST',
@@ -70,19 +72,34 @@ void main() {
       formFields: {'token': '1', 'file': '43'},
     );
 
-    final firstKey = gate.tryStart(first);
+    final firstKey = gate.tryStart(first, now: startedAt);
     expect(firstKey, isNotNull);
-    expect(gate.tryStart(duplicateFromAnotherCapturePath), isNull);
+    expect(
+      gate.tryStart(
+        duplicateFromAnotherCapturePath,
+        now: startedAt.add(const Duration(milliseconds: 100)),
+      ),
+      isNull,
+    );
 
-    final differentKey = gate.tryStart(differentFile);
+    final differentKey = gate.tryStart(
+      differentFile,
+      now: startedAt.add(const Duration(milliseconds: 100)),
+    );
     expect(differentKey, isNotNull);
     gate.finish(differentKey!);
 
-    gate.finish(firstKey!);
-    expect(
-      gate.tryStart(duplicateFromAnotherCapturePath),
-      isNotNull,
-      reason: 'completed downloads and manually deleted files can be retried',
+    final concurrentRepeat = gate.tryStart(
+      duplicateFromAnotherCapturePath,
+      now: startedAt.add(const Duration(milliseconds: 300)),
     );
+    expect(
+      concurrentRepeat,
+      isNotNull,
+      reason: 'the same file can be saved again while its first save is active',
+    );
+
+    gate.finish(concurrentRepeat!);
+    gate.finish(firstKey!);
   });
 }

@@ -51,6 +51,7 @@ import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
 import 'web_view_service.dart';
+import 'windows_webview_authenticated_download.dart';
 import 'widgets/app_data_sections.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/settings_sections.dart';
@@ -737,6 +738,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoCalendarOperationGate();
   final GakujoDownloadOperationGate _downloadOperationGate =
       GakujoDownloadOperationGate();
+  int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
 
   static const double _minimumDesktopZoom = 0.5;
@@ -4798,7 +4800,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   bool _isUsefulCourseName(String value) {
     final normalized = value.trim();
-    if (normalized.isEmpty || normalized == '未分類') {
+    if (normalized.isEmpty ||
+        normalized.length > DownloadFileNamePolicy.maxCourseFolderNameLength ||
+        normalized == '未分類') {
       return false;
     }
 

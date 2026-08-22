@@ -109,15 +109,36 @@ class GakujoDownloadRequest {
 }
 
 class GakujoDownloadOperationGate {
-  final Set<String> _activeRequestKeys = <String>{};
+  GakujoDownloadOperationGate({
+    this.duplicateCaptureWindow = const Duration(milliseconds: 250),
+  });
 
-  String? tryStart(GakujoDownloadRequest request) {
-    final key = _requestKey(request);
-    return _activeRequestKeys.add(key) ? key : null;
+  final Duration duplicateCaptureWindow;
+  final Map<String, DateTime> _recentRequestStarts = <String, DateTime>{};
+  final Set<String> _activeOperationIds = <String>{};
+  var _nextOperationId = 0;
+
+  String? tryStart(GakujoDownloadRequest request, {DateTime? now}) {
+    final startedAt = now ?? DateTime.now();
+    _recentRequestStarts.removeWhere(
+      (_, previous) =>
+          startedAt.difference(previous) > const Duration(minutes: 1),
+    );
+    final requestKey = _requestKey(request);
+    final previousStart = _recentRequestStarts[requestKey];
+    if (previousStart != null &&
+        startedAt.difference(previousStart) < duplicateCaptureWindow) {
+      return null;
+    }
+
+    _recentRequestStarts[requestKey] = startedAt;
+    final operationId = '${_nextOperationId++}:$requestKey';
+    _activeOperationIds.add(operationId);
+    return operationId;
   }
 
-  void finish(String key) {
-    _activeRequestKeys.remove(key);
+  void finish(String operationId) {
+    _activeOperationIds.remove(operationId);
   }
 
   String _requestKey(GakujoDownloadRequest request) {

@@ -554,69 +554,31 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       );
     }
 
-    final script = '''
-(async function() {
-  const inputUrl = ${jsonEncode(request.url)};
-  const method = ${jsonEncode(request.method.toUpperCase() == 'POST' ? 'POST' : 'GET')};
-  const fields = ${jsonEncode(request.formFields)};
-  const url = new URL(inputUrl, window.location.href);
-  const options = { method, credentials: 'include', redirect: 'follow' };
-  if (method === 'GET') {
-    Object.keys(fields || {}).forEach(function(key) {
-      url.searchParams.set(key, String(fields[key]));
-    });
-  } else {
-    const body = new URLSearchParams();
-    Object.keys(fields || {}).forEach(function(key) {
-      body.append(key, String(fields[key]));
-    });
-    options.body = body.toString();
-    options.headers = {
-      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-    };
-  }
-  const response = await fetch(url.toString(), options);
-  const finalUrl = new URL(response.url);
-  const isAllowedFinalUrl =
-    finalUrl.protocol === 'https:' &&
-    finalUrl.hostname === 'gakujo.iess.niigata-u.ac.jp' &&
-    (finalUrl.port === '' || finalUrl.port === '443') &&
-    finalUrl.username === '' &&
-    finalUrl.password === '';
-  if (!isAllowedFinalUrl) {
-    return JSON.stringify({
-      blocked: true,
-      finalUrl: response.url,
-      status: response.status
-    });
-  }
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(
-      null,
-      bytes.subarray(i, i + chunkSize)
+    final requestId = 'download-${DateTime.now().microsecondsSinceEpoch}-'
+        '${_webViewDownloadRequestSequence++}';
+    await _controller.runJavaScript(
+      WindowsWebViewAuthenticatedDownloadScript.start(
+        requestId: requestId,
+        request: request,
+      ),
     );
-  }
-  return JSON.stringify({
-    status: response.status,
-    ok: response.ok,
-    finalUrl: response.url,
-    mimeType: response.headers.get('content-type') || '',
-    contentDisposition: response.headers.get('content-disposition') || '',
-    bodyBase64: btoa(binary)
-  });
-})()
-''';
 
-    final raw = _stringFromJavaScriptResult(
-      await _controller.runJavaScriptReturningResult(script),
-    );
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('WebView download result must be an object');
+    late final Map<String, dynamic> decoded;
+    try {
+      decoded = await _pollWindowsWebViewDownloadResult(requestId);
+    } finally {
+      try {
+        await _controller.runJavaScript(
+          WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
+        );
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to clean up a Windows WebView download result',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     }
     final status = int.tryParse(decoded['status']?.toString() ?? '') ?? 0;
     final finalUrl = decoded['finalUrl']?.toString() ?? request.url;
@@ -646,6 +608,49 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           DownloadFileNamePolicy.fileNameFromContentDisposition(
         decoded['contentDisposition']?.toString(),
       ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _pollWindowsWebViewDownloadResult(
+    String requestId,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(minutes: 5));
+    while (DateTime.now().isBefore(deadline)) {
+      final raw = _stringFromJavaScriptResult(
+        await _controller.runJavaScriptReturningResult(
+          WindowsWebViewAuthenticatedDownloadScript.poll(requestId),
+        ),
+      );
+      if (raw.isNotEmpty && raw != 'null') {
+        final state = jsonDecode(raw);
+        if (state is! Map<String, dynamic>) {
+          throw const FormatException(
+            'WebView download state must be an object',
+          );
+        }
+        if (state['state'] == 'done') {
+          final payload = state['payload'];
+          if (payload is! Map<String, dynamic>) {
+            throw const FormatException(
+              'WebView download result must be an object',
+            );
+          }
+          return payload;
+        }
+        if (state['state'] == 'error') {
+          final detail = state['message']?.toString().trim() ?? '';
+          throw PlatformException(
+            code: 'download_failed',
+            message:
+                detail.isEmpty ? 'ダウンロード通信に失敗しました' : 'ダウンロード通信に失敗しました: $detail',
+          );
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw PlatformException(
+      code: 'download_timeout',
+      message: 'ダウンロードがタイムアウトしました',
     );
   }
 

@@ -5,6 +5,7 @@ class DownloadFileNamePolicy {
 
   static const fallbackBaseName = 'document';
   static const unknownCourseFolderName = '未分類';
+  static const maxCourseFolderNameLength = 100;
 
   static String safeFileName({
     String? preferredName,
@@ -31,7 +32,11 @@ class DownloadFileNamePolicy {
   }
 
   static String safeFolderName(String? name) {
-    return _cleanCandidate(name) ?? unknownCourseFolderName;
+    final candidate = _cleanCandidate(name);
+    if (candidate == null || candidate.length > maxCourseFolderNameLength) {
+      return unknownCourseFolderName;
+    }
+    return candidate;
   }
 
   static String courseFolderName({
@@ -237,7 +242,9 @@ class DownloadFileNamePolicy {
   }
 
   static bool _isUsefulCourseName(String name) {
-    if (name.isEmpty || name == unknownCourseFolderName) {
+    if (name.isEmpty ||
+        name.length > maxCourseFolderNameLength ||
+        name == unknownCourseFolderName) {
       return false;
     }
     const genericPageLabels = {

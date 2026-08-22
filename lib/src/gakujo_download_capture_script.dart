@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 10;
+  var captureVersion = 12;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -30,6 +30,23 @@ class GakujoDownloadCaptureScript {
     }
   }
   window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+
+  if (window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER &&
+      window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS) {
+    for (var oldLoadDocIndex = 0;
+        oldLoadDocIndex < window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.length;
+        oldLoadDocIndex += 1) {
+      try {
+        window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS[oldLoadDocIndex]
+          .removeEventListener(
+            'load',
+            window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
+            true
+          );
+      } catch (e) {}
+    }
+  }
+  window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
 
   function textOf(element) {
     if (!element) {
@@ -409,6 +426,9 @@ class GakujoDownloadCaptureScript {
   }
 
   function isIgnoredCourseName(text) {
+    if (!text || text.length > 100) {
+      return true;
+    }
     var lower = (text || '').toLowerCase();
     var genericPageLabels = [
       '開設一覧',
@@ -560,6 +580,17 @@ class GakujoDownloadCaptureScript {
     });
   };
 
+  window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER = function(event) {
+    var target = event && event.target;
+    var tagName = (target && target.tagName || '').toLowerCase();
+    if (tagName !== 'iframe' && tagName !== 'frame') {
+      return;
+    }
+    if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
+      window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
+    }
+  };
+
   function attachClickHandlers() {
     if (window.__MBG_DOWNLOAD_CAPTURE_HANDLER &&
         window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS) {
@@ -576,6 +607,22 @@ class GakujoDownloadCaptureScript {
       }
     }
     window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+    if (window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER &&
+        window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS) {
+      for (var oldLoadDocIndex = 0;
+          oldLoadDocIndex < window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.length;
+          oldLoadDocIndex += 1) {
+        try {
+          window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS[oldLoadDocIndex]
+            .removeEventListener(
+              'load',
+              window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
+              true
+            );
+        } catch (e) {}
+      }
+    }
+    window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
     var documents = collectDocuments();
     for (var i = 0; i < documents.length; i += 1) {
       try {
@@ -585,6 +632,12 @@ class GakujoDownloadCaptureScript {
           true
         );
         window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.push(documents[i]);
+        documents[i].addEventListener(
+          'load',
+          window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
+          true
+        );
+        window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS.push(documents[i]);
       } catch (e) {}
     }
   }
@@ -607,8 +660,23 @@ class GakujoDownloadCaptureScript {
       } catch (e) {}
     }
   }
+  var loadHandler = window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER;
+  var loadDocuments = window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS || [];
+  if (loadHandler) {
+    for (var loadIndex = 0; loadIndex < loadDocuments.length; loadIndex += 1) {
+      try {
+        loadDocuments[loadIndex].removeEventListener(
+          'load',
+          loadHandler,
+          true
+        );
+      } catch (e) {}
+    }
+  }
   window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
+  window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
   window.__MBG_DOWNLOAD_CAPTURE_HANDLER = null;
+  window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER = null;
   window.__MBG_DOWNLOAD_CAPTURE_ATTACH = null;
   window.__MBG_ESTIMATE_COURSE_NAME = null;
   window.__MBG_DOWNLOAD_CAPTURE_VERSION = null;
