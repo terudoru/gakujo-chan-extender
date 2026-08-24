@@ -23,10 +23,10 @@
           "version": "0.70.0",
           "buildVersion": "70",
           "marketingVersion": "0.70.0 (70)",
-          "date": "2026-08-22",
+          "date": "2026-08-24",
           "localizedDescription": "iOS/iPadOS self-signed build. See the GitHub release notes for details.",
           "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.70.0/MoreBetterGakujo-v0.70.0.ipa",
-          "size": 8267373,
+          "size": 8267927,
           "minOSVersion": "14.0"
         }
       ],
