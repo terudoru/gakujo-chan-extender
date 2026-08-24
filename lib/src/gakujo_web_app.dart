@@ -47,6 +47,7 @@ import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
+import 'macos_input_focus_service.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
@@ -740,6 +741,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
   late final GakujoLocalPrefsStore _localPrefsStore;
+  late final MacosInputFocusService _macosInputFocusService;
   late final bool _debugAllowed;
   String? _currentPageUrl;
   String? _lastAllowedPageUrl;
@@ -813,6 +815,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
+    _macosInputFocusService = const MacosInputFocusService();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
     _controller = _webViewService.createController();
@@ -1409,6 +1412,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // Removing WKWebView and waiting for that frame prevents its native view
       // from remaining the macOS keyboard first responder behind the dialog.
       await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) {
+        return;
+      }
+      final firstResponderRestored =
+          await _macosInputFocusService.restoreFlutterFirstResponder();
+      if (!firstResponderRestored) {
+        developer.log(
+          'Failed to restore the Flutter first responder before settings',
+          name: 'MoreBetterGakujo',
+        );
+      }
       if (!mounted) {
         return;
       }
@@ -2710,11 +2724,30 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {
     final normalized = normalizeMessageExcludeKeywords(keywords);
-    await _appSettingsStore.saveMessageExcludeKeywords(normalized);
     final nextSettings = _appSettings.copyWith(
       messageExcludeKeywords: normalized,
     );
-    await _syncLocalSettingsMirror(nextSettings);
+    if (Platform.isMacOS) {
+      // These keywords are non-sensitive and macOS starts from this local
+      // mirror before Keychain access is granted. Persist them there first so
+      // a stale or unavailable Keychain cannot make this setting unusable.
+      await _syncLocalSettingsMirror(nextSettings);
+      if (_secureStorageAccessAllowed) {
+        try {
+          await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to mirror message filters to secure storage',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
+    } else {
+      await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+      await _syncLocalSettingsMirror(nextSettings);
+    }
     if (!mounted) {
       return;
     }
@@ -4289,9 +4322,44 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      final settings = allowMacosKeychainPrompt
+      final secureSettings = allowMacosKeychainPrompt
           ? await _appSettingsStore.load()
           : await _appSettingsStore.load().timeout(const Duration(seconds: 3));
+      var settings = secureSettings;
+      if (Platform.isMacOS) {
+        GakujoLocalPrefs? localPrefs;
+        try {
+          localPrefs = await _localPrefsStore.load();
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to merge local macOS app settings',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+        settings = mergeMacosLocalMessageFiltersWithSecureSettings(
+          secureSettings: secureSettings,
+          localPrefs: localPrefs,
+        );
+        if (!listEquals(
+          secureSettings.messageExcludeKeywords,
+          settings.messageExcludeKeywords,
+        )) {
+          try {
+            await _appSettingsStore.saveMessageExcludeKeywords(
+              settings.messageExcludeKeywords,
+            );
+          } on Object catch (error, stackTrace) {
+            developer.log(
+              'Failed to reconcile local macOS message filters',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
+        }
+      }
       await _syncLocalSettingsMirror(settings);
       if (!mounted) {
         return true;

@@ -207,3 +207,17 @@ GakujoAppSettings macosStartupSettingsFromLocalPrefs(
     },
   );
 }
+
+GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
+  required GakujoAppSettings secureSettings,
+  required GakujoLocalPrefs? localPrefs,
+}) {
+  final localSettings = localPrefs?.appSettings;
+  if (localSettings == null) {
+    return secureSettings;
+  }
+
+  return secureSettings.copyWith(
+    messageExcludeKeywords: localSettings.messageExcludeKeywords,
+  );
+}

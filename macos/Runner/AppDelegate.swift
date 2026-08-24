@@ -8,12 +8,17 @@ class AppDelegate: FlutterAppDelegate {
   private let downloadsBridge = MacosDownloadsBridge()
   private let notificationsBridge = MacosNotificationsBridge()
   private let calendarBridge = MacosCalendarBridge()
+  private let inputFocusBridge = MacosInputFocusBridge()
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
     if let controller = mainFlutterWindow?.contentViewController as? FlutterViewController {
       downloadsBridge.register(messenger: controller.engine.binaryMessenger)
       notificationsBridge.register(messenger: controller.engine.binaryMessenger)
       calendarBridge.register(messenger: controller.engine.binaryMessenger)
+      inputFocusBridge.register(
+        controller: controller,
+        messenger: controller.engine.binaryMessenger
+      )
     }
     super.applicationDidFinishLaunching(notification)
   }
@@ -24,6 +29,40 @@ class AppDelegate: FlutterAppDelegate {
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
+  }
+}
+
+private final class MacosInputFocusBridge {
+  private static let channelName = "net.yoshida.morebettergakujo/input_focus"
+
+  func register(
+    controller: FlutterViewController,
+    messenger: FlutterBinaryMessenger
+  ) {
+    let channel = FlutterMethodChannel(
+      name: Self.channelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak controller] call, result in
+      guard call.method == "restoreFlutterFirstResponder" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let controller, let window = controller.view.window else {
+        result(FlutterError(
+          code: "flutter_window_unavailable",
+          message: "Flutter window is not available",
+          details: nil
+        ))
+        return
+      }
+
+      guard window.makeFirstResponder(nil) else {
+        result(false)
+        return
+      }
+      result(window.makeFirstResponder(controller.view))
+    }
   }
 }
 

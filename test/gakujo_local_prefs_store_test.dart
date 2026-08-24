@@ -157,4 +157,50 @@ void main() {
       }),
     );
   });
+
+  test('macOS keeps local filters when secure credentials become available',
+      () {
+    const localPrefs = GakujoLocalPrefs(
+      appSettings: GakujoAppSettings(
+        pageMode: GakujoPageMode.mobile,
+        disabledFeatureFlags: {
+          GakujoFeatureFlag.gpaDisplay,
+          GakujoFeatureFlag.loginAutofill,
+        },
+        messageExcludeKeywords: ['アンケート'],
+      ),
+    );
+    const secureSettings = GakujoAppSettings(
+      loginCredentials: GakujoLoginCredentials(
+        loginId: 'student',
+        password: 'password',
+      ),
+      disabledFeatureFlags: {GakujoFeatureFlag.twoFactorAutofill},
+      messageExcludeKeywords: ['古い設定'],
+    );
+
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: secureSettings,
+      localPrefs: localPrefs,
+    );
+
+    expect(merged.pageMode, secureSettings.pageMode);
+    expect(merged.messageExcludeKeywords, ['アンケート']);
+    expect(merged.loginCredentials?.loginId, 'student');
+    expect(merged.disabledFeatureFlags, secureSettings.disabledFeatureFlags);
+  });
+
+  test('macOS falls back to secure settings when no local mirror exists', () {
+    const secureSettings = GakujoAppSettings(
+      pageMode: GakujoPageMode.mobile,
+      messageExcludeKeywords: ['アンケート'],
+    );
+
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: secureSettings,
+      localPrefs: null,
+    );
+
+    expect(identical(merged, secureSettings), isTrue);
+  });
 }
