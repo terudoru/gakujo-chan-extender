@@ -275,12 +275,14 @@ class SettingsExpansionSection extends StatelessWidget {
     required this.icon,
     required this.child,
     this.initiallyExpanded = false,
+    this.focusNodeOnExpand,
   });
 
   final String title;
   final IconData icon;
   final Widget child;
   final bool initiallyExpanded;
+  final FocusNode? focusNodeOnExpand;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +294,17 @@ class SettingsExpansionSection extends StatelessWidget {
       tilePadding: EdgeInsets.zero,
       childrenPadding: const EdgeInsets.only(bottom: 16),
       expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+      onExpansionChanged: (expanded) {
+        final focusNode = focusNodeOnExpand;
+        if (!expanded || focusNode == null) {
+          return;
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted && focusNode.canRequestFocus) {
+            focusNode.requestFocus();
+          }
+        });
+      },
       children: [child],
     );
   }
@@ -374,6 +387,7 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
     required this.onChanged,
     required this.onAdd,
     required this.onRemove,
+    this.focusNode,
   });
 
   final List<String> keywords;
@@ -382,6 +396,7 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final Future<void> Function() onAdd;
   final Future<void> Function(String keyword) onRemove;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -403,6 +418,7 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
             Expanded(
               child: TextField(
                 controller: controller,
+                focusNode: focusNode,
                 decoration: const InputDecoration(
                   labelText: 'キーワード',
                   hintText: '例: アンケート',

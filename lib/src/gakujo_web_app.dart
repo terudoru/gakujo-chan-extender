@@ -1398,12 +1398,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var loginPasswordInput = '';
     var messageExcludeKeywordInput = '';
     final messageExcludeKeywordController = TextEditingController();
+    final messageExcludeKeywordFocusNode = FocusNode(
+      debugLabel: 'message-exclude-keyword',
+    );
     setState(() {
       _isSettingsDialogOpen = true;
     });
+    FocusManager.instance.primaryFocus?.unfocus();
     try {
+      // Removing WKWebView and waiting for that frame prevents its native view
+      // from remaining the macOS keyboard first responder behind the dialog.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) {
+        return;
+      }
       await showDialog<void>(
         context: context,
+        requestFocus: true,
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
@@ -1697,9 +1708,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: '連絡通知フィルタ',
                   icon: Icons.filter_alt_outlined,
+                  focusNodeOnExpand: messageExcludeKeywordFocusNode,
                   child: MessageExcludeKeywordsSection(
                     keywords: _appSettings.messageExcludeKeywords,
                     controller: messageExcludeKeywordController,
+                    focusNode: messageExcludeKeywordFocusNode,
                     canAdd: canAddMessageExcludeKeyword,
                     onChanged: (value) {
                       messageExcludeKeywordInput = value;
@@ -1803,6 +1816,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         });
       }
       messageExcludeKeywordController.dispose();
+      messageExcludeKeywordFocusNode.dispose();
     }
   }
 

@@ -439,6 +439,45 @@ void main() {
     expect(removedKeyword, 'アンケート');
   });
 
+  testWidgets('message exclude keyword input takes focus when section opens',
+      (tester) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsExpansionSection(
+            title: '連絡通知フィルタ',
+            icon: Icons.filter_alt_outlined,
+            focusNodeOnExpand: focusNode,
+            child: MessageExcludeKeywordsSection(
+              keywords: const [],
+              controller: controller,
+              focusNode: focusNode,
+              canAdd: false,
+              onChanged: (_) {},
+              onAdd: () async {},
+              onRemove: (_) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('連絡通知フィルタ'));
+    await tester.pumpAndSettle();
+
+    final editableText = tester.widget<EditableText>(find.byType(EditableText));
+    expect(editableText.focusNode.hasFocus, isTrue);
+
+    tester.testTextInput.enterText('集中講義');
+    await tester.pump();
+    expect(controller.text, '集中講義');
+  });
+
   testWidgets('settings expansion section hides and reveals its content',
       (tester) async {
     await tester.pumpWidget(
