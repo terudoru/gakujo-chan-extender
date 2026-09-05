@@ -12,14 +12,69 @@ void main() {
   test('returns the completed payload after pending states', () async {
     final states = [
       '{"state":"pending"}',
-      '{"state":"done","payload":{"status":200,"bodyBase64":"AQID"}}',
+      '{"state":"done","payload":{"status":200,"ok":true,"bodyByteLength":0,"chunkCount":0}}',
     ];
     final result = await pollWindowsWebViewDownloadResult(
       readState: () async => states.removeAt(0),
       pollInterval: Duration.zero,
     );
-    expect(result, {'status': 200, 'bodyBase64': 'AQID'});
+    expect(result, {
+      'status': 200,
+      'ok': true,
+      'bodyByteLength': 0,
+      'chunkCount': 0,
+      'bodyBytes': isEmpty
+    });
   });
+
+  test('assembles chunks in order and checks the declared byte count',
+      () async {
+    final states = [
+      '{"state":"chunk","index":0,"bodyBase64":"AQID"}',
+      '{"state":"chunk","index":1,"bodyBase64":"BAU="}',
+      '{"state":"done","payload":{"bodyByteLength":5,"chunkCount":2}}',
+    ];
+    final result = await pollWindowsWebViewDownloadResult(
+        readState: () async => states.removeAt(0));
+    expect(result['bodyBytes'], [1, 2, 3, 4, 5]);
+  });
+
+  test('waits for the receiver before requesting another chunk', () async {
+    final receiverStarted = Completer<void>();
+    final receiverFinished = Completer<void>();
+    var calls = 0;
+    final receiving = pollWindowsWebViewDownloadResult(
+      readState: () async => calls++ == 0
+          ? '{"state":"chunk","index":0,"bodyBase64":"AQID"}'
+          : '{"state":"done","payload":{"bodyByteLength":3,"chunkCount":1}}',
+      onChunk: (bytes) async {
+        receiverStarted.complete();
+        await receiverFinished.future;
+      },
+    );
+    await receiverStarted.future;
+    expect(calls, 1);
+    receiverFinished.complete();
+    final result = await receiving;
+    expect(result.containsKey('bodyBytes'), isFalse);
+  });
+
+  for (final chunk in [
+    {'state': 'chunk', 'index': 1, 'bodyBase64': 'AQID'},
+    {'state': 'chunk', 'index': 0, 'bodyBase64': ''},
+    {'state': 'chunk', 'index': 0, 'bodyBase64': '!invalid!'},
+    {'state': 'chunk', 'index': 0, 'bodyBase64': 'A' * 349532},
+  ]) {
+    test(
+        'rejects malformed or oversized chunks (${chunk['index']}, ${(chunk['bodyBase64'] as String).length})',
+        () async {
+      await expectLater(
+          pollWindowsWebViewDownloadResult(
+            readState: () async => jsonEncode(chunk),
+          ),
+          throwsFormatException);
+    });
+  }
 
   test('stops immediately when navigation has discarded the result store',
       () async {

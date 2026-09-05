@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -24,16 +25,44 @@ typedef AuthenticatedDownloadBytesLoader = Future<AuthenticatedDownloadedFile>
 
 class AuthenticatedDownloadedFile {
   const AuthenticatedDownloadedFile({
-    required this.bytes,
+    required Uint8List bytes,
     required this.finalUrl,
     this.mimeType,
     this.contentDispositionFileName,
-  });
+  })  : _bytes = bytes,
+        _file = null,
+        _cleanup = null;
 
-  final Uint8List bytes;
+  /// Transfers ownership of a completed temporary file to the save operation.
+  const AuthenticatedDownloadedFile.fromFile({
+    required File file,
+    required Future<void> Function() cleanup,
+    required this.finalUrl,
+    this.mimeType,
+    this.contentDispositionFileName,
+  })  : _file = file,
+        _cleanup = cleanup,
+        _bytes = null;
+
+  final Uint8List? _bytes;
+  final File? _file;
+  final Future<void> Function()? _cleanup;
   final String finalUrl;
   final String? mimeType;
   final String? contentDispositionFileName;
+
+  Future<Uint8List> readBytes() async => _bytes ?? await _file!.readAsBytes();
+
+  Future<void> saveTo(String path) async {
+    final file = _file;
+    if (file != null) {
+      await file.copy(path);
+    } else {
+      await File(path).writeAsBytes(_bytes!);
+    }
+  }
+
+  Future<void> dispose() async => _cleanup?.call();
 }
 
 class FileSystemGakujoDownloadService extends GakujoDownloadService {
@@ -120,6 +149,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
   }) async {
+    AuthenticatedDownloadedFile? downloaded;
     try {
       if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
         throw PlatformException(
@@ -128,7 +158,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         );
       }
 
-      final downloaded = await _downloadBytes(
+      downloaded = await _downloadBytes(
         request,
         userAgent: userAgent,
         cookieHeader: cookieHeader,
@@ -147,21 +177,21 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
         if (Platform.isIOS) {
           return await _exportToNativePicker(
-            bytes: downloaded.bytes,
+            bytes: await downloaded.readBytes(),
             fileName: fileName,
             mimeType: downloaded.mimeType,
           );
         }
 
         return await _saveToPickedFlutterFile(
-          bytes: downloaded.bytes,
+          downloaded: downloaded,
           fileName: fileName,
         );
       }
 
       if (_usesNativeDownloadRoot) {
         return await _saveToNativeConfiguredFolder(
-          bytes: downloaded.bytes,
+          bytes: await downloaded.readBytes(),
           fileName: fileName,
           courseFolderName: courseFolderName,
           mimeType: downloaded.mimeType,
@@ -170,7 +200,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       }
 
       return await _saveToConfiguredFlutterFolder(
-        bytes: downloaded.bytes,
+        downloaded: downloaded,
         fileName: fileName,
         courseFolderName: courseFolderName,
         autoSortByCourse: saveMode.autoSortByCourse,
@@ -182,6 +212,13 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         code: 'download_failed',
         message: '保存できませんでした: $error',
       );
+    } finally {
+      try {
+        await downloaded?.dispose();
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to remove a temporary download',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
     }
   }
 
@@ -224,7 +261,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }
 
   Future<GakujoDownloadResult> _saveToPickedFlutterFile({
-    required Uint8List bytes,
+    required AuthenticatedDownloadedFile downloaded,
     required String fileName,
   }) async {
     final location = await getSaveLocation(
@@ -239,7 +276,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         message: '保存をキャンセルしました',
       );
     }
-    await File(location.path).writeAsBytes(bytes);
+    await downloaded.saveTo(location.path);
     return GakujoDownloadResult(
       fileName: _baseName(location.path),
       courseName: '',
@@ -248,7 +285,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }
 
   Future<GakujoDownloadResult> _saveToConfiguredFlutterFolder({
-    required Uint8List bytes,
+    required AuthenticatedDownloadedFile downloaded,
     required String fileName,
     required String courseFolderName,
     required bool autoSortByCourse,
@@ -259,8 +296,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           ? await _ensureChildDirectory(root, courseFolderName)
           : root;
       final finalName = await _uniqueFileName(parent, fileName);
-      await _writeFile(parent, finalName, bytes);
       final location = _join(parent.path, finalName);
+      await downloaded.saveTo(location);
       return GakujoDownloadResult(
         fileName: finalName,
         courseName: autoSortByCourse ? _baseName(parent.path) : '',
@@ -278,7 +315,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     return next;
   }
 
-  Future<_DownloadedFile> _downloadBytes(
+  Future<AuthenticatedDownloadedFile> _downloadBytes(
     GakujoDownloadRequest request, {
     String? userAgent,
     String? cookieHeader,
@@ -288,15 +325,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     // A JavaScript cookie header can omit HttpOnly session cookies. When an
     // authenticated WebView loader is available, it is the authoritative path.
     if (authenticatedBytesLoader != null) {
-      final downloaded = await authenticatedBytesLoader(
+      return authenticatedBytesLoader(
         request,
         userAgent: userAgent,
-      );
-      return _DownloadedFile(
-        bytes: downloaded.bytes,
-        finalUrl: downloaded.finalUrl,
-        mimeType: downloaded.mimeType,
-        contentDispositionFileName: downloaded.contentDispositionFileName,
       );
     }
 
@@ -400,7 +431,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         }
         final disposition =
             response.headers.value(HttpHeaders.contentDisposition);
-        return _DownloadedFile(
+        return AuthenticatedDownloadedFile(
           bytes: builder.takeBytes(),
           finalUrl: finalUrl,
           mimeType: response.headers.contentType?.mimeType,
@@ -472,14 +503,6 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     return directory;
   }
 
-  Future<File> _writeFile(
-    Directory directory,
-    String fileName,
-    Uint8List bytes,
-  ) async {
-    return File(_join(directory.path, fileName)).writeAsBytes(bytes);
-  }
-
   Future<String> _uniqueFileName(
       Directory directory, String desiredName) async {
     final existing =
@@ -528,18 +551,4 @@ bool _isRedirectStatus(int statusCode) {
       statusCode == 303 ||
       statusCode == 307 ||
       statusCode == 308;
-}
-
-class _DownloadedFile {
-  const _DownloadedFile({
-    required this.bytes,
-    required this.finalUrl,
-    required this.mimeType,
-    required this.contentDispositionFileName,
-  });
-
-  final Uint8List bytes;
-  final String finalUrl;
-  final String? mimeType;
-  final String? contentDispositionFileName;
 }

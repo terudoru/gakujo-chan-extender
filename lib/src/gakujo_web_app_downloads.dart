@@ -31,6 +31,7 @@ Future<bool> recordGakujoDownloadMetadataBestEffort({
 @visibleForTesting
 Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
   required Future<String> Function() readState,
+  Future<void> Function(Uint8List bytes)? onChunk,
   Duration timeout = const Duration(minutes: 5),
   Duration pollInterval = const Duration(milliseconds: 100),
 }) async {
@@ -39,6 +40,9 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
         message: 'ダウンロードがタイムアウトしました',
       );
   final elapsed = Stopwatch()..start();
+  final collected = onChunk == null ? BytesBuilder(copy: false) : null;
+  var nextChunkIndex = 0;
+  var receivedBytes = 0;
   while (elapsed.elapsed < timeout) {
     final raw = await readState().timeout(
       timeout - elapsed.elapsed,
@@ -56,12 +60,45 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
         'WebView download state must be an object',
       );
     }
+    if (state['state'] == 'chunk') {
+      final encoded = state['bodyBase64'];
+      if (state['index'] != nextChunkIndex ||
+          encoded is! String ||
+          encoded.length > 349528) {
+        throw const FormatException('Invalid WebView download chunk');
+      }
+      final bytes = base64Decode(encoded);
+      if (bytes.isEmpty || bytes.length > 256 * 1024) {
+        throw const FormatException('Invalid WebView download chunk size');
+      }
+      nextChunkIndex++;
+      receivedBytes += bytes.length;
+      if (onChunk != null) {
+        await onChunk(bytes);
+      } else {
+        collected!.add(bytes);
+      }
+      continue;
+    }
     if (state['state'] == 'done') {
       final payload = state['payload'];
       if (payload is! Map<String, dynamic>) {
         throw const FormatException(
           'WebView download result must be an object',
         );
+      }
+      if (payload.containsKey('bodyBase64')) {
+        throw const FormatException('Unexpected unchunked WebView download');
+      }
+      if (payload['ok'] == true ||
+          payload.containsKey('bodyByteLength') || nextChunkIndex > 0) {
+        if (payload['bodyByteLength'] is! int ||
+            payload['chunkCount'] is! int ||
+            payload['bodyByteLength'] != receivedBytes ||
+            payload['chunkCount'] != nextChunkIndex) {
+          throw const FormatException('Incomplete WebView download body');
+        }
+        if (collected != null) payload['bodyBytes'] = collected.takeBytes();
       }
       return payload;
     }
@@ -85,6 +122,84 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
     );
   }
   throw timeoutError();
+}
+
+@visibleForTesting
+Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
+  required GakujoDownloadRequest request,
+  required Future<void> Function() start,
+  required Future<String> Function() readState,
+  required Future<void> Function() cleanup,
+  Directory? temporaryRoot,
+}) async {
+  if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
+    throw PlatformException(
+        code: 'blocked_url', message: 'Gakujo以外のダウンロードをブロックしました');
+  }
+  final directory = await (temporaryRoot ?? Directory.systemTemp)
+      .createTemp('mbg-webview-download-');
+  final file = File('${directory.path}${Platform.pathSeparator}payload');
+  RandomAccessFile? output;
+  var transferred = false;
+  try {
+    output = await file.open(mode: FileMode.write);
+    await start().timeout(const Duration(seconds: 15));
+    final decoded = await pollWindowsWebViewDownloadResult(
+      readState: readState,
+      onChunk: (bytes) async {
+        await output!.writeFrom(bytes);
+      },
+    );
+    await output.close();
+    output = null;
+    final status = int.tryParse(decoded['status']?.toString() ?? '') ?? 0;
+    final finalUrl = decoded['finalUrl']?.toString() ?? request.url;
+    if (decoded['blocked'] == true ||
+        !AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
+      throw PlatformException(
+          code: 'blocked_url', message: 'Gakujo以外へのリダイレクトをブロックしました');
+    }
+    if (status < 200 || status > 299 || decoded['ok'] != true) {
+      throw PlatformException(
+          code: 'download_failed', message: 'ダウンロードに失敗しました HTTP $status');
+    }
+    final mimeType =
+        decoded['mimeType']?.toString().split(';').first.trim().toLowerCase();
+    final downloaded = AuthenticatedDownloadedFile.fromFile(
+      file: file,
+      cleanup: () async {
+        await directory.delete(recursive: true);
+      },
+      finalUrl: finalUrl,
+      mimeType: mimeType == null || mimeType.isEmpty ? null : mimeType,
+      contentDispositionFileName:
+          DownloadFileNamePolicy.fileNameFromContentDisposition(
+              decoded['contentDisposition']?.toString()),
+    );
+    transferred = true;
+    return downloaded;
+  } finally {
+    try {
+      await output?.close();
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to close a temporary WebView download',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+    try {
+      await cleanup().timeout(const Duration(seconds: 3));
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to clean up a Windows WebView download result',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+    if (!transferred) {
+      try {
+        await directory.delete(recursive: true);
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to remove an incomplete WebView download',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+  }
 }
 
 extension _GakujoWebAppDownloads on _GakujoWebAppState {
@@ -615,79 +730,22 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
     final requestId = 'download-${DateTime.now().microsecondsSinceEpoch}-'
         '${_webViewDownloadRequestSequence++}';
-    late final Map<String, dynamic> decoded;
-    try {
-      await _controller
-          .runJavaScript(
-            WindowsWebViewAuthenticatedDownloadScript.start(
-              requestId: requestId,
-              request: request,
-            ),
-          )
-          .timeout(const Duration(seconds: 15));
-      decoded = await _pollWindowsWebViewDownloadResult(requestId);
-    } finally {
-      try {
-        await _controller
-            .runJavaScript(
-              WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
-            )
-            .timeout(const Duration(seconds: 3));
-      } on Object catch (error, stackTrace) {
-        developer.log(
-          'Failed to clean up a Windows WebView download result',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
-    }
-    final status = int.tryParse(decoded['status']?.toString() ?? '') ?? 0;
-    final finalUrl = decoded['finalUrl']?.toString() ?? request.url;
-    if (decoded['blocked'] == true) {
-      throw PlatformException(
-        code: 'blocked_url',
-        message: 'Gakujo以外へのリダイレクトをブロックしました',
-      );
-    }
-    if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
-      throw PlatformException(
-        code: 'blocked_url',
-        message: 'Gakujo以外へのリダイレクトをブロックしました',
-      );
-    }
-    if (status < 200 || status > 299 || decoded['ok'] != true) {
-      throw PlatformException(
-        code: 'download_failed',
-        message: 'ダウンロードに失敗しました HTTP $status',
-      );
-    }
-    return AuthenticatedDownloadedFile(
-      bytes: base64Decode(decoded['bodyBase64']?.toString() ?? ''),
-      finalUrl: finalUrl,
-      mimeType: _mimeTypeFromContentType(decoded['mimeType']?.toString()),
-      contentDispositionFileName:
-          DownloadFileNamePolicy.fileNameFromContentDisposition(
-        decoded['contentDisposition']?.toString(),
+    return receiveWindowsWebViewDownload(
+      request: request,
+      start: () => _controller.runJavaScript(
+        WindowsWebViewAuthenticatedDownloadScript.start(
+          requestId: requestId, request: request,
+        ),
       ),
-    );
-  }
-
-  Future<Map<String, dynamic>> _pollWindowsWebViewDownloadResult(
-    String requestId,
-  ) {
-    return pollWindowsWebViewDownloadResult(
       readState: () async => _stringFromJavaScriptResult(
         await _controller.runJavaScriptReturningResult(
           WindowsWebViewAuthenticatedDownloadScript.poll(requestId),
         ),
       ),
+      cleanup: () => _controller.runJavaScript(
+        WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
+      ),
     );
-  }
-
-  String? _mimeTypeFromContentType(String? raw) {
-    final value = raw?.split(';').first.trim().toLowerCase();
-    return value == null || value.isEmpty ? null : value;
   }
 
   Future<void> _injectDownloadCaptureIfAllowed() async {

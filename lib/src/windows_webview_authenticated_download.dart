@@ -20,7 +20,11 @@ class WindowsWebViewAuthenticatedDownloadScript {
     return false;
   }
   const controller = new AbortController();
-  const pending = { state: 'pending', cancel: () => controller.abort() };
+  const pending = { state: 'pending', chunks: [], resume: null, completion: null };
+  pending.cancel = () => {
+    controller.abort();
+    if (pending.resume) pending.resume();
+  };
   results[requestId] = pending;
   const setResult = function(value) {
     if (results[requestId] === pending) {
@@ -62,6 +66,7 @@ class WindowsWebViewAuthenticatedDownloadScript {
         finalUrl.username === '' &&
         finalUrl.password === '';
       if (!isAllowedFinalUrl) {
+        controller.abort();
         setResult({
           state: 'done',
           payload: {
@@ -72,29 +77,66 @@ class WindowsWebViewAuthenticatedDownloadScript {
         });
         return;
       }
-      const buffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      const chunkSize = 0x8000;
-      for (let index = 0; index < bytes.length; index += chunkSize) {
-        binary += String.fromCharCode.apply(
-          null,
-          bytes.subarray(index, index + chunkSize)
-        );
+      const metadata = {
+        status: response.status,
+        ok: response.ok,
+        finalUrl: response.url,
+        mimeType: response.headers.get('content-type') || '',
+        contentDisposition: response.headers.get('content-disposition') || ''
+      };
+      if (!response.ok) {
+        controller.abort();
+        setResult({ state: 'done', payload: metadata });
+        return;
       }
-      setResult({
-        state: 'done',
-        payload: {
-          status: response.status,
-          ok: response.ok,
-          finalUrl: response.url,
-          mimeType: response.headers.get('content-type') || '',
-          contentDisposition:
-            response.headers.get('content-disposition') || '',
-          bodyBase64: btoa(binary)
+      const chunkSize = 256 * 1024;
+      let chunkIndex = 0;
+      let totalBytes = 0;
+      async function emitChunk(bytes) {
+        while (pending.chunks.length >= 4 && !controller.signal.aborted) {
+          await new Promise(resolve => { pending.resume = resolve; });
+          pending.resume = null;
         }
-      });
+        if (controller.signal.aborted || results[requestId] !== pending) {
+          throw new Error('Download cancelled');
+        }
+        let binary = '';
+        for (let index = 0; index < bytes.length; index += 0x8000) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 0x8000));
+        }
+        pending.chunks.push({ state: 'chunk', index: chunkIndex++, bodyBase64: btoa(binary) });
+        totalBytes += bytes.length;
+      }
+      if (response.body) {
+        const reader = response.body.getReader();
+        try {
+          let chunk = new Uint8Array(chunkSize);
+          let used = 0;
+          while (true) {
+            const result = await reader.read();
+            if (result.done) break;
+            const bytes = result.value;
+            let offset = 0;
+            while (offset < bytes.length) {
+              const count = Math.min(chunkSize - used, bytes.length - offset);
+              chunk.set(bytes.subarray(offset, offset + count), used);
+              used += count;
+              offset += count;
+              if (used === chunkSize) {
+                await emitChunk(chunk);
+                chunk = new Uint8Array(chunkSize);
+                used = 0;
+              }
+            }
+          }
+          if (used > 0) await emitChunk(chunk.subarray(0, used));
+        } finally {
+          reader.releaseLock();
+        }
+      }
+      pending.completion = { ...metadata, bodyByteLength: totalBytes, chunkCount: chunkIndex };
     } catch (error) {
+      controller.abort();
       setResult({
         state: 'error',
         errorName: error && error.name || '',
@@ -111,7 +153,16 @@ class WindowsWebViewAuthenticatedDownloadScript {
     return '''
 (function() {
   const results = window.$_resultStore;
-  return JSON.stringify(results && results[${jsonEncode(requestId)}] || null);
+  const entry = results && results[${jsonEncode(requestId)}];
+  if (!entry) return 'null';
+  if (entry.state !== 'pending') return JSON.stringify(entry);
+  if (entry.chunks.length > 0) {
+    const chunk = entry.chunks.shift();
+    if (entry.resume) entry.resume();
+    return JSON.stringify(chunk);
+  }
+  if (entry.completion) return JSON.stringify({ state: 'done', payload: entry.completion });
+  return JSON.stringify({ state: 'pending' });
 })()
 ''';
   }

@@ -6,6 +6,38 @@ import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_downl
 import 'package:test/test.dart';
 
 void main() {
+  test('large responses use bounded messages and pause for the receiver',
+      () async {
+    const requestId = 'large-download';
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'GET',
+      fileName: 'fixture.bin',
+      courseName: '',
+      formFields: {},
+    );
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _largeDownloadHarness,
+          WindowsWebViewAuthenticatedDownloadScript.start(
+              requestId: requestId, request: request),
+          WindowsWebViewAuthenticatedDownloadScript.poll(requestId),
+          WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['receivedBytes'], 8 * 1024 * 1024 + 13);
+    expect(behavior['validBytes'], isTrue);
+    expect(behavior['maximumMessageBytes'], lessThan(400 * 1024));
+    expect(behavior['readBeforePolling'], lessThanOrEqualTo(2 * 1024 * 1024));
+    expect(behavior['afterCleanup'], isNull);
+  });
+
   test('cleanup aborts a pending fetch and discards a late result', () async {
     const requestId = 'cancelled-download';
     const request = GakujoDownloadRequest(
@@ -121,8 +153,18 @@ const cleanupScript = process.argv[3];
             return null;
           }
         },
-        async arrayBuffer() {
-          return Uint8Array.from([1, 2, 3]).buffer;
+        body: {
+          getReader() {
+            let sent = false;
+            return {
+              async read() {
+                if (sent) return {done: true};
+                sent = true;
+                return {done: false, value: Uint8Array.from([1, 2, 3])};
+              },
+              releaseLock() {}
+            };
+          }
         }
       };
     },
@@ -133,7 +175,12 @@ const cleanupScript = process.argv[3];
 
   const started = vm.runInContext(startScript, context);
   await new Promise((resolve) => setImmediate(resolve));
-  const polled = JSON.parse(vm.runInContext(pollScript, context));
+  let polled;
+  const chunks = [];
+  do {
+    polled = JSON.parse(vm.runInContext(pollScript, context));
+    if (polled.state === 'chunk') chunks.push(Buffer.from(polled.bodyBase64, 'base64'));
+  } while (polled.state === 'chunk');
   vm.runInContext(cleanupScript, context);
   const afterCleanup = JSON.parse(vm.runInContext(pollScript, context));
 
@@ -144,7 +191,7 @@ const cleanupScript = process.argv[3];
     credentials: requestOptions && requestOptions.credentials,
     state: polled && polled.state,
     status: polled && polled.payload && polled.payload.status,
-    bodyBase64: polled && polled.payload && polled.payload.bodyBase64,
+    bodyBase64: Buffer.concat(chunks).toString('base64'),
     contentDisposition:
       polled && polled.payload && polled.payload.contentDisposition,
     afterCleanup
@@ -179,5 +226,56 @@ const vm = require('node:vm');
   vm.runInContext(cleanup, context);
   process.stdout.write(JSON.stringify({aborted, afterCleanup, restarted,
     lateResultIgnored: afterLateResult && afterLateResult.state === 'pending'}));
+})();
+''';
+
+const _largeDownloadHarness = r'''
+const vm = require('node:vm');
+(async function() {
+  const [start, poll, cleanup] = process.argv.slice(1);
+  const length = 8 * 1024 * 1024 + 13;
+  let sourceOffset = 0, receivedBytes = 0, maximumMessageBytes = 0, validBytes = true;
+  function makeBytes(size, offset) {
+    const bytes = new Uint8Array(size);
+    for (let i=0;i<size;i++) bytes[i] = (offset + i) % 251;
+    return bytes;
+  }
+  const context = vm.createContext({
+    window: {location: {href: 'https://gakujo.iess.niigata-u.ac.jp/'}},
+    URL, URLSearchParams, Uint8Array, AbortController,
+    fetch: async url => ({url, status: 200, ok: true, headers: {get: () => ''},
+      arrayBuffer: async () => { sourceOffset=length; return makeBytes(length, 0).buffer; },
+      body: { getReader: () => ({
+        async read() {
+          if (sourceOffset===length) return {done:true};
+          const size=Math.min(65537, length-sourceOffset);
+          const value=makeBytes(size, sourceOffset); sourceOffset+=size;
+          return {value, done:false};
+        },
+        releaseLock() {}, async cancel() {}
+      })}
+    }),
+    btoa: binary => Buffer.from(binary, 'binary').toString('base64')
+  });
+  vm.runInContext(start, context);
+  await new Promise(resolve=>setImmediate(resolve));
+  const readBeforePolling=sourceOffset;
+  for (let attempts=0; attempts<1000; attempts++) {
+    const raw=vm.runInContext(poll, context);
+    maximumMessageBytes=Math.max(maximumMessageBytes, Buffer.byteLength(raw));
+    const state=JSON.parse(raw);
+    if (state.state==='error') throw Error(state.message);
+    const encoded=state.state==='chunk' ? state.bodyBase64 : state.payload && state.payload.bodyBase64;
+    if (encoded) {
+      const bytes=Buffer.from(encoded,'base64');
+      for(let i=0;i<bytes.length;i++) if(bytes[i] !== (receivedBytes+i)%251) validBytes=false;
+      receivedBytes+=bytes.length;
+    }
+    if(state.state==='done') break;
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  vm.runInContext(cleanup,context);
+  process.stdout.write(JSON.stringify({receivedBytes,validBytes,maximumMessageBytes,
+    readBeforePolling,afterCleanup:JSON.parse(vm.runInContext(poll,context))}));
 })();
 ''';
