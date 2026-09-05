@@ -43,6 +43,7 @@ import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_reader_script.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_report_draft_script.dart';
+import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
 import 'platform/platform_service.dart';
@@ -2843,47 +2844,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      final escapedLabel = jsonEncode(label);
-      final result = await _controller.runJavaScriptReturningResult('''
-(function() {
-  var label = $escapedLabel;
-  var documents = [];
-  function collect(win) {
-    try {
-      if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-        return;
-      }
-      documents.push(win.document);
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
-  for (var d = 0; d < documents.length; d += 1) {
-    var candidates = Array.prototype.slice.call(
-      documents[d].querySelectorAll('a, button, input, img, td, div, span')
-    );
-    for (var i = 0; i < candidates.length; i += 1) {
-      var node = candidates[i];
-      var text = [
-        node.innerText || '',
-        node.textContent || '',
-        node.getAttribute && node.getAttribute('alt') || '',
-        node.getAttribute && node.getAttribute('title') || '',
-        node.getAttribute && node.getAttribute('value') || ''
-      ].join(' ');
-      if (text.indexOf(label) === -1) {
-        continue;
-      }
-      var clickable = node.closest && node.closest('a, button, input');
-      (clickable || node).click();
-      return true;
-    }
-  }
-  return false;
-})()
-''');
+      final result = await _controller.runJavaScriptReturningResult(
+        GakujoQuickJumpScript.build(label),
+      );
       if (_boolFromJavaScriptResult(result)) {
         _setStatus('$label へ移動します');
         return true;
