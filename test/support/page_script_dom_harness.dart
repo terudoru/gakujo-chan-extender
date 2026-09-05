@@ -37,6 +37,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   String teardownScript = '',
   bool teardownDuringRead = false,
   bool teardownAfterRead = false,
+  List<String>? messageUrls,
 }) async {
   final scenario = jsonEncode({
     'fetchStatuses': fetchStatuses,
@@ -45,6 +46,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     'clickCount': clickCount,
     'teardownDuringRead': teardownDuringRead,
     'teardownAfterRead': teardownAfterRead,
+    'messageUrls': messageUrls,
   });
   final result = await Process.run(
       'node',
@@ -206,7 +208,9 @@ function createMessageTable(messageCount) {
         querySelector(selector) {
           if (selector !== 'a[href]') return null;
           return {
-            getAttribute() { return `/campusweb/message/${i}`; }
+            getAttribute() {
+              return scenario?.messageUrls?.[i - 1] ?? `/campusweb/message/${i}`;
+            }
           };
         }
       });

@@ -4,7 +4,7 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 3;
+  var version = 4;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -43,10 +43,22 @@ class GakujoMessageReaderScript {
   }
 
   function absoluteCampusUrl(url) {
-    if (!url) {
+    var value = String(url || '').trim();
+    if (!value || value.charAt(0) === '#') {
       return '';
     }
-    return new URL(url, 'https://gakujo.iess.niigata-u.ac.jp/campusweb/').href;
+    try {
+      var parsed = new URL(value, 'https://gakujo.iess.niigata-u.ac.jp/campusweb/');
+      if (parsed.protocol !== 'https:' ||
+          parsed.hostname !== 'gakujo.iess.niigata-u.ac.jp' ||
+          (parsed.port !== '' && parsed.port !== '443') ||
+          parsed.username !== '' || parsed.password !== '') {
+        return '';
+      }
+      return parsed.href;
+    } catch (e) {
+      return '';
+    }
   }
 
   function unreadUrls(limit) {
@@ -58,7 +70,10 @@ class GakujoMessageReaderScript {
     for (var i = 1; i < table.rows.length && urls.length < limit; i += 1) {
       var link = table.rows[i].querySelector('a[href]');
       if (link) {
-        urls.push(absoluteCampusUrl(link.getAttribute('href')));
+        var url = absoluteCampusUrl(link.getAttribute('href'));
+        if (url) {
+          urls.push(url);
+        }
       }
     }
     return urls;

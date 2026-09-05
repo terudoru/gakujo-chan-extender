@@ -96,6 +96,27 @@ void main() {
     }
   });
 
+  test('ignores links that cannot identify an allowed notification page',
+      () async {
+    for (final url in [
+      'https://example.com/message',
+      'javascript:alert(1)',
+      'https://[invalid',
+      '#',
+      'https://gakujo.iess.niigata-u.ac.jp:8443/message',
+      'https://user:pass@gakujo.iess.niigata-u.ac.jp/message',
+    ]) {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [200],
+        messageUrls: [url],
+      );
+      expect(result['fetchCallCount'], 0, reason: url);
+      expect(result['frameCallCount'], 0, reason: url);
+      expect(result['reloadCount'], 0, reason: url);
+    }
+  });
+
   test('coalesces repeated clicks while a read is pending', () async {
     final result = await evaluateMessageReaderScript(
       buildScript: GakujoMessageReaderScript.build(),
