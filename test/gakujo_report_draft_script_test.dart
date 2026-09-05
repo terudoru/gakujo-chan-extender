@@ -5,11 +5,48 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('failed storage keeps pending text and reports failure until retry',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+        initialHtml: '未保存の本文', initialText: '未保存の本文', scenario: 'saveFailure');
+    expect(result['failureStatus'], contains('保存できませんでした'));
+    expect(result['dirtyAfterFailure'], isTrue);
+    expect(result['pendingAfterFailure'], isTrue);
+    expect(result['storedAfterRetry'], '未保存の本文');
+  });
+
+  test('failed deletion can be retried without claiming success', () async {
+    final result = await _evaluateContentEditableDraft(
+        initialHtml: '削除対象', initialText: '削除対象', scenario: 'deleteFailure');
+    expect(result['failureStatus'], contains('削除できませんでした'));
+    expect(result['hasRetry'], isTrue);
+    expect(result['remainingAfterRetry'], 0);
+  });
+
+  test('deleted drafts stay deleted through debounce and pagehide', () async {
+    final result = await _evaluateContentEditableDraft(
+        initialHtml: '削除対象',
+        initialText: '削除対象',
+        scenario: 'deletePending',
+        deferSaveTimer: true);
+    expect(result['remainingAfterPageHide'], 0);
+    expect(result['storedAfterNewInput'], '新しい入力');
+  });
+
+  test('failed removal of empty text does not restore the older draft',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+        initialHtml: '古い下書き', initialText: '古い下書き', scenario: 'clearFailure');
+    expect(result['textAfterUpdate'], '');
+    expect(result['dirtyAfterFailure'], isTrue);
+    expect(result['failureStatus'], contains('保存できませんでした'));
+  });
+
   test('builds report submission draft autosave script', () {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 5;'));
+    expect(script, contains('var version = 6;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
     expect(script, contains('mbg-report-draft:v1:'));
     expect(script, contains('localStorage'));
@@ -120,6 +157,7 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
   bool deferSaveTimer = false,
   bool firePageHide = false,
   bool dropFieldBeforePageHide = false,
+  String? scenario,
 }) async {
   final result = await Process.run(
       'node',
@@ -135,6 +173,7 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
           'deferSaveTimer': deferSaveTimer,
           'firePageHide': firePageHide,
           'dropFieldBeforePageHide': dropFieldBeforePageHide,
+          'scenario': scenario,
         }),
       ],
       stdoutEncoding: utf8,
@@ -167,8 +206,14 @@ class FakeEvent {
 class FakeStorage {
   get length() { return storageValues.size; }
   getItem(key) { return storageValues.get(key) || null; }
-  setItem(key, value) { storageValues.set(key, String(value)); }
-  removeItem(key) { storageValues.delete(key); }
+  setItem(key, value) {
+    if (this.failWrite) throw new Error('QuotaExceededError');
+    storageValues.set(key, String(value));
+  }
+  removeItem(key) {
+    if (this.failRemove) throw new Error('SecurityError');
+    storageValues.delete(key);
+  }
   key(index) { return Array.from(storageValues.keys())[index] || null; }
 }
 
@@ -333,10 +378,47 @@ function runPage(page) {
   });
 }
 
+(function runScenario() {
 const storage = new FakeStorage();
 const savingPage = createPage(spec.initialHtml, spec.initialText, storage);
 runPage(savingPage);
+if (spec.scenario === 'saveFailure') storage.failWrite = true;
 savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+function statusText() { return savingPage.document.getElementById('mbg-report-draft-status-label').textContent; }
+function pageHide() { for (const callback of savingPage.window.listeners.pagehide || []) callback(); }
+function clearDraft() { savingPage.document.insertedStatus.children.find(child=>child.textContent==='下書きを削除').listeners.click(); }
+function retry() {
+  const button=savingPage.document.insertedStatus.children.find(child=>child.textContent==='再試行');
+  if(button)button.listeners.click();
+  return !!button;
+}
+function flushTimers() { const callbacks=Array.from(pendingTimers.values());pendingTimers.clear();for(const callback of callbacks)callback(); }
+if (spec.scenario === 'saveFailure') {
+  const failureStatus=statusText(), dirtyAfterFailure=!!savingPage.field.__MBG_REPORT_DRAFT_DIRTY;
+  const pendingAfterFailure=!!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+  storage.failWrite=false;
+  savingPage.document.field=null;
+  pageHide();
+  const saved=storage.key(0) && JSON.parse(storage.getItem(storage.key(0)));
+  return process.stdout.write(JSON.stringify({failureStatus,dirtyAfterFailure,pendingAfterFailure,storedAfterRetry:saved && saved.fields[0].value}));
+}
+if (spec.scenario === 'deleteFailure') {
+  storage.failRemove=true;clearDraft();const failureStatus=statusText();
+  storage.failRemove=false;const hasRetry=retry();
+  return process.stdout.write(JSON.stringify({failureStatus,hasRetry,remainingAfterRetry:storage.length}));
+}
+if (spec.scenario === 'deletePending') {
+  clearDraft();flushTimers();pageHide();const remainingAfterPageHide=storage.length;
+  savingPage.field.textContent='新しい入力';savingPage.field.dispatchEvent(new FakeEvent('input',{}));flushTimers();
+  const saved=JSON.parse(storage.getItem(storage.key(0)));
+  return process.stdout.write(JSON.stringify({remainingAfterPageHide,storedAfterNewInput:saved.fields[0].value}));
+}
+if (spec.scenario === 'clearFailure') {
+  storage.failRemove=true;savingPage.field.textContent='';savingPage.field.dispatchEvent(new FakeEvent('input',{}));
+  const failureStatus=statusText(),dirtyAfterFailure=!!savingPage.field.__MBG_REPORT_DRAFT_DIRTY;
+  savingPage.window.__MBG_REPORT_DRAFT_UPDATE();
+  return process.stdout.write(JSON.stringify({failureStatus,dirtyAfterFailure,textAfterUpdate:savingPage.field.textContent}));
+}
 if (spec.dropFieldBeforePageHide) {
   savingPage.document.field = null;
 }
@@ -375,4 +457,5 @@ process.stdout.write(JSON.stringify({
   sameDocumentRestoredText,
   xssExecutionCount
 }));
+})();
 ''';
