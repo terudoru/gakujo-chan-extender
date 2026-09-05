@@ -4,14 +4,29 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 2;
+  var version = 3;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
     }
     return;
   }
+  if (window.__MBG_MESSAGE_READER_DISPOSE) {
+    window.__MBG_MESSAGE_READER_DISPOSE();
+  }
   window.__MBG_MESSAGE_READER_VERSION = version;
+  var disposed = false;
+  var reading = false;
+  var reloadTimeout;
+  var cancelPendingFrame;
+
+  window.__MBG_MESSAGE_READER_DISPOSE = function() {
+    disposed = true;
+    window.clearTimeout(reloadTimeout);
+    if (cancelPendingFrame) {
+      cancelPendingFrame();
+    }
+  };
 
   function mainFrameDocument() {
     try {
@@ -66,12 +81,14 @@ class GakujoMessageReaderScript {
           return;
         }
         settled = true;
+        cancelPendingFrame = null;
         window.clearTimeout(timeoutId);
         frame.remove();
         resolve(success);
       }
 
       frame.setAttribute('data-mbg-message-reader-owned', 'true');
+      cancelPendingFrame = function() { finish(false); };
       frame.style.display = 'none';
       frame.onload = function() {
         finish(true);
@@ -96,6 +113,9 @@ class GakujoMessageReaderScript {
       return false;
     } catch (e) {
       // Fall through to the iframe request.
+    }
+    if (disposed) {
+      return false;
     }
     try {
       return await markReadWithFrame(url);
@@ -130,26 +150,53 @@ class GakujoMessageReaderScript {
   }
 
   async function readerCall() {
-    var urls = unreadUrls(inputValue());
-    var successCount = 0;
-    var failureCount = 0;
-    for (var i = 0; i < urls.length; i += 1) {
-      if (await markRead(urls[i])) {
-        successCount += 1;
-      } else {
-        failureCount += 1;
-      }
-    }
-    showStatus(successCount, failureCount);
-    if (failureCount > 0) {
+    if (disposed || reading || reloadTimeout) {
       return;
     }
-    window.setTimeout(function() {
-      location.reload();
-    }, 1000);
+    var urls = unreadUrls(inputValue());
+    if (!urls.length) {
+      return;
+    }
+    reading = true;
+    var button = document.getElementById('mbg-read-button');
+    if (button) {
+      button.disabled = true;
+    }
+    var successCount = 0;
+    var failureCount = 0;
+    try {
+      for (var i = 0; i < urls.length && !disposed; i += 1) {
+        if (await markRead(urls[i])) {
+          successCount += 1;
+        } else {
+          failureCount += 1;
+        }
+      }
+      if (disposed) {
+        return;
+      }
+      showStatus(successCount, failureCount);
+      if (failureCount > 0) {
+        return;
+      }
+      reloadTimeout = window.setTimeout(function() {
+        reloadTimeout = null;
+        if (!disposed) {
+          location.reload();
+        }
+      }, 1000);
+    } finally {
+      reading = false;
+      if (button && !disposed && !reloadTimeout) {
+        button.disabled = false;
+      }
+    }
   }
 
   function addControls() {
+    if (disposed) {
+      return false;
+    }
     if (!messageTable()) {
       return false;
     }
@@ -191,6 +238,10 @@ class GakujoMessageReaderScript {
   static String buildTeardown() {
     return r'''
 (function() {
+  if (window.__MBG_MESSAGE_READER_DISPOSE) {
+    window.__MBG_MESSAGE_READER_DISPOSE();
+  }
+  delete window.__MBG_MESSAGE_READER_DISPOSE;
   window.clearInterval(window.__MBG_MESSAGE_READER_INTERVAL);
   delete window.__MBG_MESSAGE_READER_INTERVAL;
   delete window.__MBG_MESSAGE_READER_VERSION;

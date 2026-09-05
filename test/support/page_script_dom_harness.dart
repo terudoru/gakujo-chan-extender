@@ -32,10 +32,19 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   required String buildScript,
   required List<int?> fetchStatuses,
   List<bool> iframeOutcomes = const [],
+  String? inputValue,
+  int clickCount = 1,
+  String teardownScript = '',
+  bool teardownDuringRead = false,
+  bool teardownAfterRead = false,
 }) async {
   final scenario = jsonEncode({
     'fetchStatuses': fetchStatuses,
     'iframeOutcomes': iframeOutcomes,
+    'inputValue': inputValue,
+    'clickCount': clickCount,
+    'teardownDuringRead': teardownDuringRead,
+    'teardownAfterRead': teardownAfterRead,
   });
   final result = await Process.run(
       'node',
@@ -44,7 +53,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
         _nodeDomHarness,
         'message',
         buildScript,
-        '',
+        teardownScript,
         scenario,
       ],
       stdoutEncoding: utf8,
@@ -341,8 +350,13 @@ async function main() {
     const input = injectedPage.context.document.getElementById(
       'mbg-read-num-input'
     );
-    input.value = String(scenario.fetchStatuses.length);
-    await injectedPage.context.document.getElementById('mbg-read-button').click();
+    input.value = scenario.inputValue ?? String(scenario.fetchStatuses.length);
+    const button = injectedPage.context.document.getElementById('mbg-read-button');
+    const reads = [];
+    for (let i = 0; i < scenario.clickCount; i += 1) reads.push(button.click());
+    if (scenario.teardownDuringRead) run(teardownScript, injectedPage);
+    await Promise.all(reads);
+    if (scenario.teardownAfterRead) run(teardownScript, injectedPage);
     injectedPage.flushTimeouts();
     process.stdout.write(JSON.stringify(injectedPage.snapshot()));
     return;

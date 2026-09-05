@@ -84,6 +84,53 @@ void main() {
     expect(result['controlIds'], contains('mbg-read-status'));
   });
 
+  test('does not reload or fetch for an empty or invalid count', () async {
+    for (final input in ['', '0', '-1', 'invalid', '0.5']) {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [200],
+        inputValue: input,
+      );
+      expect(result['fetchCallCount'], 0, reason: input);
+      expect(result['reloadCount'], 0, reason: input);
+    }
+  });
+
+  test('coalesces repeated clicks while a read is pending', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200],
+      clickCount: 2,
+    );
+    expect(result['fetchCallCount'], 2);
+    expect(result['reloadCount'], 1);
+    expect(result['statusText'], '2件を既読にしました（失敗0件）');
+  });
+
+  test('disabling during a read prevents further requests and late controls',
+      () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200, 200],
+      teardownScript: GakujoMessageReaderScript.buildTeardown(),
+      teardownDuringRead: true,
+    );
+    expect(result['fetchCallCount'], 1);
+    expect(result['reloadCount'], 0);
+    expect(result['ownedElementCount'], 0);
+  });
+
+  test('disabling after reading cancels the delayed page reload', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200],
+      teardownScript: GakujoMessageReaderScript.buildTeardown(),
+      teardownAfterRead: true,
+    );
+    expect(result['reloadCount'], 0);
+    expect(result['ownedElementCount'], 0);
+  });
+
   test('teardown stops polling, removes controls, and is idempotent', () async {
     final result = await evaluatePageScriptLifecycle(
       feature: 'message',
