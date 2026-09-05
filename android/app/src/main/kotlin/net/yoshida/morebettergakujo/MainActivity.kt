@@ -791,7 +791,7 @@ class MainActivity : FlutterActivity() {
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
                 ?: "application/octet-stream"
-            val dispositionName = fileNameFromContentDisposition(connection.getHeaderField("Content-Disposition"))
+            val dispositionName = GakujoContentDisposition.fileName(connection.getHeaderField("Content-Disposition"))
             val desiredName = chooseFileName(
                 requestedName = requestedFileName,
                 dispositionName = dispositionName,
@@ -887,7 +887,7 @@ class MainActivity : FlutterActivity() {
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
                 ?: "application/octet-stream"
-            val dispositionName = fileNameFromContentDisposition(connection.getHeaderField("Content-Disposition"))
+            val dispositionName = GakujoContentDisposition.fileName(connection.getHeaderField("Content-Disposition"))
             val finalName = displayName(destination)
                 ?: chooseFileName(
                     requestedName = requestedFileName,
@@ -1226,34 +1226,6 @@ class MainActivity : FlutterActivity() {
             "image/png" -> "png"
             else -> null
         }
-    }
-
-    private fun fileNameFromContentDisposition(header: String?): String? {
-        if (header.isNullOrBlank()) {
-            return null
-        }
-
-        Regex("""filename\*\s*=\s*"?([^'";]*)'[^']*'([^";]+)"?""", RegexOption.IGNORE_CASE)
-            .find(header)
-            ?.let { match ->
-                val charset = match.groupValues.getOrNull(1)?.trim()?.lowercase(Locale.ROOT)
-                val encodedName = match.groupValues.getOrNull(2)?.trim()?.trim('"')
-                if (encodedName != null) {
-                    return if (charset.isNullOrEmpty() || charset == "utf-8") {
-                        decodeUrlComponentOrRaw(encodedName)
-                    } else {
-                        encodedName
-                    }
-                }
-            }
-
-        Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE)
-            .find(header)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.let { return it }
-
-        return null
     }
 
     private fun decodeUrlComponentOrRaw(value: String): String {
