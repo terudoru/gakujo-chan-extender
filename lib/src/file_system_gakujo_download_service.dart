@@ -40,9 +40,13 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   FileSystemGakujoDownloadService({
     FlutterSecureStorage? secureStorage,
     AuthenticatedDownloadBytesLoader? authenticatedBytesLoader,
+    HttpClient Function()? httpClientFactory,
+    @visibleForTesting Duration requestTimeout = const Duration(seconds: 30),
     @visibleForTesting bool? usesNativeDownloadRoot,
   })  : _secureStorage = secureStorage ?? SecureStorageFactory.create(),
         _authenticatedBytesLoader = authenticatedBytesLoader,
+        _httpClientFactory = httpClientFactory ?? HttpClient.new,
+        _requestTimeout = requestTimeout,
         _usesNativeDownloadRootOverride = usesNativeDownloadRoot;
 
   static const _downloadRootPathKey = 'more_better_gakujo_download_root_path';
@@ -52,6 +56,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
   final FlutterSecureStorage _secureStorage;
   final AuthenticatedDownloadBytesLoader? _authenticatedBytesLoader;
+  final HttpClient Function() _httpClientFactory;
+  final Duration _requestTimeout;
   final bool? _usesNativeDownloadRootOverride;
   Future<void> _pendingConfiguredFolderSave = Future<void>.value();
 
@@ -304,8 +310,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           )
         : Uri.parse(request.url);
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 30);
+    final client = _httpClientFactory();
+    client.connectionTimeout = _requestTimeout;
     try {
       for (var redirectCount = 0; redirectCount <= 10; redirectCount += 1) {
         if (!AllowedWebOrigins.canLoad(uri.toString(), debugAllowed: false)) {
@@ -315,7 +321,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           );
         }
 
-        final httpRequest = await client.openUrl(method, uri);
+        final httpRequest =
+            await client.openUrl(method, uri).timeout(_requestTimeout);
         httpRequest.followRedirects = false;
         httpRequest.headers.set(HttpHeaders.acceptHeader, '*/*');
         final normalizedUserAgent = userAgent?.trim();
@@ -342,9 +349,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           httpRequest.add(encodedBody);
         }
 
-        final response = await httpRequest.close().timeout(
-              const Duration(seconds: 30),
-            );
+        final response = await httpRequest.close().timeout(_requestTimeout);
         final redirectLocation =
             response.headers.value(HttpHeaders.locationHeader);
         if (_isRedirectStatus(response.statusCode) &&
@@ -360,7 +365,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
               message: 'Gakujo以外へのリダイレクトをブロックしました',
             );
           }
-          await response.drain<void>();
+          await response.drain<void>().timeout(_requestTimeout);
           uri = nextUri;
           if (response.statusCode == 303 ||
               ((response.statusCode == 301 || response.statusCode == 302) &&
