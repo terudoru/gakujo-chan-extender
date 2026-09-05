@@ -814,12 +814,18 @@ class MainActivity : FlutterActivity() {
                 createdFile to allocatedName
             }
             val savedFileName = GakujoDownloadFilePolicy.resolvedName(file.name, finalName)
-            val output = contentResolver.openOutputStream(file.uri)
-                ?: throw IllegalStateException("ファイルを書き込めませんでした")
-
-            BufferedInputStream(connection.inputStream).use { input ->
-                output.use { input.copyTo(it) }
-            }
+            GakujoDownloadStreams.copy(
+                openInput = { BufferedInputStream(connection.inputStream) },
+                openOutput = {
+                    contentResolver.openOutputStream(file.uri)
+                        ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                },
+                cleanupFailedDestination = {
+                    if (!file.delete()) {
+                        throw IllegalStateException("未完了のファイルを削除できませんでした")
+                    }
+                }
+            )
             val savedCourseName = if (autoSortByCourse) courseName else ""
             if (isDebuggable()) {
                 Log.i(TAG, "Download saved course=$savedCourseName file=$savedFileName")
@@ -889,12 +895,13 @@ class MainActivity : FlutterActivity() {
                     url = finalUrl,
                     mimeType = mimeType
                 )
-            val output = contentResolver.openOutputStream(destination)
-                ?: throw IllegalStateException("ファイルを書き込めませんでした")
-
-            BufferedInputStream(connection.inputStream).use { input ->
-                output.use { input.copyTo(it) }
-            }
+            GakujoDownloadStreams.copy(
+                openInput = { BufferedInputStream(connection.inputStream) },
+                openOutput = {
+                    contentResolver.openOutputStream(destination)
+                        ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                }
+            )
             if (isDebuggable()) {
                 Log.i(TAG, "Download saved file=$finalName")
             }
