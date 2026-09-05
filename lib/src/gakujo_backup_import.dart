@@ -81,6 +81,23 @@ GakujoBackupImport parseGakujoBackup(String text) {
     );
   }
 
+  final Map<String, dynamic> settings = decoded;
+  void validateSetting(String key, bool Function(Object?) accepts) {
+    if (settings.containsKey(key) && !accepts(settings[key])) {
+      throw GakujoBackupImportException('バックアップの「$key」に不正な値があります');
+    }
+  }
+
+  validateSetting(
+      'downloadSaveMode',
+      (value) =>
+          DownloadSaveMode.values.any((mode) => mode.storageValue == value));
+  validateSetting(
+      'pageMode',
+      (value) =>
+          GakujoPageMode.values.any((mode) => mode.storageValue == value));
+  validateSetting('setupCompleted', (value) => value is bool);
+
   return GakujoBackupImport(
     version: version,
     downloadSaveMode: decoded.containsKey('downloadSaveMode')
@@ -97,7 +114,7 @@ GakujoBackupImport parseGakujoBackup(String text) {
         ? decoded['setupCompleted'] as bool
         : null,
     calendarImportSettings: decoded.containsKey('calendarImportSettings')
-        ? GakujoCalendarImportSettings.fromJson(
+        ? _decodeCalendarImportSettings(
             decoded['calendarImportSettings'],
           )
         : null,
@@ -154,6 +171,24 @@ GakujoBackupImport parseGakujoBackup(String text) {
   );
 }
 
+GakujoCalendarImportSettings _decodeCalendarImportSettings(Object? raw) {
+  if (raw is String) {
+    try {
+      raw = jsonDecode(raw);
+    } on FormatException {
+      throw const GakujoBackupImportException(
+        'バックアップの「calendarImportSettings」に不正な値があります',
+      );
+    }
+  }
+  if (raw is! Map<String, dynamic>) {
+    throw const GakujoBackupImportException(
+      'バックアップの「calendarImportSettings」はオブジェクトである必要があります',
+    );
+  }
+  return GakujoCalendarImportSettings.fromJson(raw);
+}
+
 List<T>? _decodeMapList<T>(
   Map<String, dynamic> decoded,
   String key,
@@ -194,7 +229,9 @@ List<T> _decodeList<T>(
   final entries = <T>[];
   for (final item in value) {
     if (item == null) {
-      continue;
+      throw GakujoBackupImportException(
+        'バックアップの「$key」に不正な項目があります',
+      );
     }
     entries.add(fromJson(item));
   }

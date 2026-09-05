@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
 
 void main() {
@@ -48,6 +49,45 @@ void main() {
 
       expect(backup.favorites, isEmpty);
       expect(backup.downloadHistory, isNull);
+    });
+
+    test(
+        'rejects null records instead of treating them as an empty replacement',
+        () {
+      for (final key in [
+        'favorites',
+        'downloadHistory',
+        'deadlines',
+        'failedDownloads',
+        'changes',
+        'reportLists',
+        'messageExcludeKeywords'
+      ]) {
+        expect(
+          () => parseGakujoBackup(jsonEncode({
+            'version': 2,
+            key: [null]
+          })),
+          throwsA(isA<GakujoBackupImportException>()),
+          reason: key,
+        );
+      }
+    });
+
+    test('rejects invalid settings instead of overwriting with defaults', () {
+      for (final entry in {
+        'downloadSaveMode': 'invalid-mode',
+        'pageMode': 123,
+        'setupCompleted': 'true',
+        'calendarImportSettings': null,
+      }.entries) {
+        expect(
+          () => parseGakujoBackup(
+              jsonEncode({'version': 2, entry.key: entry.value})),
+          throwsA(isA<GakujoBackupImportException>()),
+          reason: entry.key,
+        );
+      }
     });
 
     test('accepts a complete version 2 backup', () {
@@ -144,6 +184,40 @@ void main() {
       expect(backup.deadlines, hasLength(1));
       expect(backup.changes, hasLength(1));
       expect(backup.reportLists, hasLength(1));
+    });
+
+    test('imports exported settings for every supported page and save mode',
+        () {
+      for (final saveMode in DownloadSaveMode.values) {
+        for (final pageMode in GakujoPageMode.values) {
+          final payload = buildGakujoBackupPayload(
+            appSettings: GakujoAppSettings(
+              downloadSaveMode: saveMode,
+              pageMode: pageMode,
+              disabledFeatureFlags: GakujoFeatureFlag.values.toSet(),
+            ),
+            downloadHistory: const [],
+            failedDownloads: const [],
+            favorites: const [],
+            deadlines: const [],
+            changes: const [],
+            reportLists: const [],
+          );
+          final imported = parseGakujoBackup(jsonEncode(payload));
+          expect(imported.downloadSaveMode, saveMode);
+          expect(imported.pageMode, pageMode);
+          expect(
+              imported.disabledFeatureFlags, GakujoFeatureFlag.values.toSet());
+        }
+      }
+    });
+
+    test('keeps support for calendar settings encoded as a JSON string', () {
+      final backup = parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'calendarImportSettings': jsonEncode({'calendarTitle': '授業'}),
+      }));
+      expect(backup.calendarImportSettings?.calendarTitle, '授業');
     });
 
     test('rejects an invalid collection before returning import data', () {
