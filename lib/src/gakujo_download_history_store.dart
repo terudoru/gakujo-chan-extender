@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_download_request.dart';
 import 'secure_storage_factory.dart';
+import 'secure_storage_transaction.dart';
 
 class GakujoDownloadHistoryEntry {
   const GakujoDownloadHistoryEntry({
@@ -107,11 +108,19 @@ class GakujoDownloadHistoryStore {
   static const _failedDownloadRetention = Duration(days: 30);
 
   final FlutterSecureStorage _secureStorage;
-  Future<void> _pendingOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
 
-  Future<List<GakujoDownloadHistoryEntry>> load() async {
-    await _pendingOperation;
-    return _load();
+  BackupStorageParticipant get backupStorage => BackupStorageParticipant(
+        _operations,
+        _secureStorage,
+        const [
+          _historyKey,
+          _failedDownloadsKey,
+        ],
+      );
+
+  Future<List<GakujoDownloadHistoryEntry>> load() {
+    return _enqueue(_load);
   }
 
   Future<List<GakujoDownloadHistoryEntry>> _load() async {
@@ -143,9 +152,8 @@ class GakujoDownloadHistoryStore {
     }
   }
 
-  Future<List<GakujoFailedDownloadEntry>> loadFailedDownloads() async {
-    await _pendingOperation;
-    return _loadFailedDownloads();
+  Future<List<GakujoFailedDownloadEntry>> loadFailedDownloads() {
+    return _enqueue(_loadFailedDownloads);
   }
 
   Future<List<GakujoFailedDownloadEntry>> _loadFailedDownloads() async {
@@ -327,11 +335,6 @@ class GakujoDownloadHistoryStore {
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {
-    final next = _pendingOperation.then((_) => operation());
-    _pendingOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return next;
+    return _operations.run(operation);
   }
 }

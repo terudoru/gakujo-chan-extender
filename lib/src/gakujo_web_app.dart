@@ -24,6 +24,7 @@ import 'gakujo_academic_calendar_resolver.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_backup_export.dart';
 import 'gakujo_backup_import.dart';
+import 'gakujo_backup_restore.dart';
 import 'gakujo_calendar_export.dart';
 import 'gakujo_calendar_service.dart';
 import 'gakujo_course_name_estimator.dart';
@@ -45,6 +46,7 @@ import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
+import 'secure_storage_transaction.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'macos_input_focus_service.dart';
@@ -3684,70 +3686,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         backup.disabledFeatureFlags ?? _appSettings.disabledFeatureFlags;
 
     try {
-      if (backup.downloadSaveMode != null) {
-        await _appSettingsStore.saveDownloadSaveMode(downloadSaveMode);
-      }
-      if (backup.pageMode != null) {
-        await _appSettingsStore.savePageMode(pageMode);
-      }
-      if (backup.disabledFeatureFlags != null) {
-        await _appSettingsStore.saveDisabledFeatureFlags(disabledFeatureFlags);
-      }
-      if (backup.setupCompleted != null) {
-        await _appSettingsStore.saveSetupCompleted(setupCompleted);
-      }
-      if (backup.calendarImportSettings != null) {
-        await _appSettingsStore.saveCalendarImportSettings(
-          calendarImportSettings,
-        );
-      }
-      if (backup.messageExcludeKeywords != null) {
-        await _appSettingsStore.saveMessageExcludeKeywords(
-          messageExcludeKeywords,
-        );
-      }
-      final downloadHistory = backup.downloadHistory;
-      if (downloadHistory != null) {
-        await _downloadHistoryStore.replaceHistory(downloadHistory);
-      }
-      final failedDownloads = backup.failedDownloads;
-      if (failedDownloads != null) {
-        await _downloadHistoryStore.replaceFailedDownloads(
-          failedDownloads
-              .where(
-                (entry) => _isAllowedBackupUrl(entry.request.url),
-              )
-              .toList(),
-        );
-      }
-      final favorites = backup.favorites;
-      if (favorites != null) {
-        await _activityStore.replaceFavorites(
-          favorites
-              .where(
-                (entry) => _isAllowedBackupNavigationUrl(entry.url),
-              )
-              .toList(),
-        );
-      }
-      final deadlines = backup.deadlines;
-      if (deadlines != null) {
-        await _activityStore.replaceDeadlines(
-          deadlines.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
-        );
-      }
-      final changes = backup.changes;
-      if (changes != null) {
-        await _activityStore.replaceChanges(
-          changes.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
-        );
-      }
-      final reportLists = backup.reportLists;
-      if (reportLists != null) {
-        await _activityStore.replaceReportLists(
-          reportLists.where((entry) => _isAllowedBackupUrl(entry.url)).toList(),
-        );
-      }
+      await restoreGakujoBackup(
+        backup: backup,
+        settingsStore: _appSettingsStore,
+        historyStore: _downloadHistoryStore,
+        activityStore: _activityStore,
+        isAllowedUrl: _isAllowedBackupUrl,
+        isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
+      );
       final nextSettings = _appSettings.copyWith(
         downloadSaveMode: downloadSaveMode,
         pageMode: pageMode,
@@ -3771,6 +3717,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _refreshActivityCounts();
       _scheduleAutoBackup();
       _showSnackBar('設定をインポートしました');
+    } on BackupRollbackException {
+      _showSnackBar('設定の復元に失敗し、一部の変更を元に戻せませんでした。保存先を確認してください');
     } on Object {
       _showSnackBar('設定のインポートに失敗しました');
     }

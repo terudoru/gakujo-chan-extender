@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'migrating_secure_storage.dart';
 import 'secure_storage_factory.dart';
+import 'secure_storage_transaction.dart';
 
 enum DownloadSaveMode {
   autoSortToConfiguredFolder,
@@ -435,7 +436,20 @@ class GakujoAppSettingsStore {
   ];
 
   final FlutterSecureStorage _secureStorage;
-  Future<void> _pendingOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
+
+  BackupStorageParticipant get backupStorage => BackupStorageParticipant(
+        _operations,
+        _secureStorage,
+        const [
+          _downloadSaveModeKey,
+          _pageModeKey,
+          _disabledFeatureFlagsKey,
+          _setupCompletedKey,
+          _calendarImportSettingsKey,
+          _messageExcludeKeywordsKey,
+        ],
+      );
 
   Future<GakujoAppSettings> load() {
     return _enqueue(() => _load(migrateLegacyCredentials: true));
@@ -690,12 +704,7 @@ class GakujoAppSettingsStore {
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {
-    final next = _pendingOperation.then((_) => operation());
-    _pendingOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return next;
+    return _operations.run(operation);
   }
 
   static List<String> _decodeMessageExcludeKeywords(String? raw) {

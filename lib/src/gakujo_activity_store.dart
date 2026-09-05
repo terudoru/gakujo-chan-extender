@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_dated_activity.dart';
 import 'secure_storage_factory.dart';
+import 'secure_storage_transaction.dart';
 
 class GakujoActivitySnapshot {
   const GakujoActivitySnapshot({
@@ -239,7 +240,18 @@ class GakujoActivityStore {
   static const _reportListRetention = Duration(days: 60);
 
   final FlutterSecureStorage _secureStorage;
-  Future<void> _pendingOperation = Future<void>.value();
+  final _operations = StorageOperationQueue();
+
+  BackupStorageParticipant get backupStorage => BackupStorageParticipant(
+        _operations,
+        _secureStorage,
+        const [
+          _deadlinesKey,
+          _favoritesKey,
+          _changesKey,
+          _reportListsKey,
+        ],
+      );
 
   Future<_StorageReadResult<String?>> _readRawValue(String key) async {
     try {
@@ -254,9 +266,8 @@ class GakujoActivityStore {
     }
   }
 
-  Future<List<GakujoActivitySnapshot>> loadSnapshots() async {
-    await _pendingOperation;
-    return (await _readSnapshots()).value;
+  Future<List<GakujoActivitySnapshot>> loadSnapshots() {
+    return _enqueue(() async => (await _readSnapshots()).value);
   }
 
   Future<_StorageReadResult<List<GakujoActivitySnapshot>>> _readSnapshots() {
@@ -270,9 +281,8 @@ class GakujoActivityStore {
     );
   }
 
-  Future<List<GakujoDeadlineEntry>> loadDeadlines() async {
-    await _pendingOperation;
-    return (await _readDeadlines()).value;
+  Future<List<GakujoDeadlineEntry>> loadDeadlines() {
+    return _enqueue(() async => (await _readDeadlines()).value);
   }
 
   Future<_StorageReadResult<List<GakujoDeadlineEntry>>> _readDeadlines() {
@@ -285,9 +295,8 @@ class GakujoActivityStore {
     );
   }
 
-  Future<Set<String>> loadNotifiedDeadlineKeys() async {
-    await _pendingOperation;
-    return (await _readNotifiedDeadlineKeys()).value;
+  Future<Set<String>> loadNotifiedDeadlineKeys() {
+    return _enqueue(() async => (await _readNotifiedDeadlineKeys()).value);
   }
 
   Future<_StorageReadResult<Set<String>>> _readNotifiedDeadlineKeys() async {
@@ -338,9 +347,8 @@ class GakujoActivityStore {
     );
   }
 
-  Future<List<GakujoFavoritePage>> loadFavorites() async {
-    await _pendingOperation;
-    return (await _readFavorites()).value;
+  Future<List<GakujoFavoritePage>> loadFavorites() {
+    return _enqueue(() async => (await _readFavorites()).value);
   }
 
   Future<_StorageReadResult<List<GakujoFavoritePage>>> _readFavorites() {
@@ -353,9 +361,8 @@ class GakujoActivityStore {
     );
   }
 
-  Future<List<GakujoActivityChangeEntry>> loadChanges() async {
-    await _pendingOperation;
-    return (await _readChanges()).value;
+  Future<List<GakujoActivityChangeEntry>> loadChanges() {
+    return _enqueue(() async => (await _readChanges()).value);
   }
 
   Future<_StorageReadResult<List<GakujoActivityChangeEntry>>> _readChanges() {
@@ -368,9 +375,8 @@ class GakujoActivityStore {
     );
   }
 
-  Future<List<GakujoCachedReportList>> loadReportLists() async {
-    await _pendingOperation;
-    return (await _readReportLists()).value;
+  Future<List<GakujoCachedReportList>> loadReportLists() {
+    return _enqueue(() async => (await _readReportLists()).value);
   }
 
   Future<_StorageReadResult<List<GakujoCachedReportList>>> _readReportLists() {
@@ -992,11 +998,6 @@ class GakujoActivityStore {
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {
-    final next = _pendingOperation.then((_) => operation());
-    _pendingOperation = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return next;
+    return _operations.run(operation);
   }
 }
