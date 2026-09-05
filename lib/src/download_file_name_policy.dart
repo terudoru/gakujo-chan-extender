@@ -82,23 +82,28 @@ class DownloadFileNamePolicy {
       return null;
     }
 
-    final encodedMatch = RegExp(
-      r'''filename\*\s*=\s*"?([^'";]*)'[^']*'([^";]+)"?''',
-      caseSensitive: false,
-    ).firstMatch(header);
-    if (encodedMatch != null) {
-      final charset = encodedMatch.group(1)?.trim().toLowerCase();
-      return _decodeExtendedFilename(
-        encodedMatch.group(2)?.trim().replaceAll('"', '') ?? '',
-        charset,
-      );
+    final parameters = <String, String>{};
+    for (final match in RegExp(
+      r'''(?:^|;)\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;]*))''',
+    ).allMatches(header)) {
+      final quoted = match.group(2);
+      final value = quoted == null
+          ? match.group(3)!.trim()
+          : quoted.replaceAllMapped(RegExp(r'\\(.)'), (m) => m.group(1)!);
+      parameters.putIfAbsent(match.group(1)!.toLowerCase(), () => value);
     }
 
-    final quotedMatch = RegExp(
-      r'''filename="?([^";]+)"?''',
-      caseSensitive: false,
-    ).firstMatch(header);
-    return quotedMatch?.group(1);
+    final extended = parameters['filename*'];
+    final encodedMatch = extended == null
+        ? null
+        : RegExp(r"^([^']*)'[^']*'(.+)$").firstMatch(extended);
+    if (encodedMatch != null) {
+      return _decodeExtendedFilename(
+        encodedMatch.group(2)!,
+        encodedMatch.group(1)!.trim().toLowerCase(),
+      );
+    }
+    return parameters['filename'];
   }
 
   static String? _cleanCandidate(String? raw, {String replacement = ''}) {
@@ -106,9 +111,17 @@ class DownloadFileNamePolicy {
         ?.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), replacement)
         .replaceAll(RegExp(r'''[\\/:*?"<>|]'''), replacement)
         .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+        .trim()
+        .replaceFirst(RegExp(r'[. ]+$'), '');
     if (value == null || value.isEmpty || value == '.' || value == '..') {
       return null;
+    }
+    // Windows reserves these device names even when an extension is present.
+    final stem = value.split('.').first.trimRight();
+    if (RegExp(r'^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$',
+            caseSensitive: false)
+        .hasMatch(stem)) {
+      return '_$value';
     }
     return value;
   }

@@ -64,6 +64,26 @@ void main() {
     expect(name, 'document.txt');
   });
 
+  test('makes Windows device names safe for files and course folders', () {
+    for (final name in ['CON', 'nul.txt', 'COM1.pdf', 'Lpt9', 'AUX.data']) {
+      expect(
+          DownloadFileNamePolicy.safeFileName(preferredName: name), '_$name');
+      expect(DownloadFileNamePolicy.safeFolderName(name), '_$name');
+    }
+    expect(DownloadFileNamePolicy.safeFileName(preferredName: 'console.pdf'),
+        'console.pdf');
+  });
+
+  test('removes trailing dots before extension inference or folder creation',
+      () {
+    expect(
+        DownloadFileNamePolicy.safeFileName(
+            preferredName: '資料. ', mimeType: 'application/pdf'),
+        '資料.pdf');
+    expect(DownloadFileNamePolicy.safeFolderName('情報数学... '), '情報数学');
+    expect(DownloadFileNamePolicy.safeFolderName('...'), '未分類');
+  });
+
   test('adds a numeric suffix when a name already exists', () {
     final name = DownloadFileNamePolicy.uniqueName(
       '資料.pdf',
@@ -112,6 +132,27 @@ void main() {
     );
 
     expect(name, 'lecture.pdf');
+  });
+
+  test('keeps semicolons inside quoted attachment filenames', () {
+    expect(
+        DownloadFileNamePolicy.fileNameFromContentDisposition(
+            'attachment; filename="lecture; part 1.pdf"; size=123'),
+        'lecture; part 1.pdf');
+  });
+
+  test('accepts parameter whitespace and unescapes quoted filenames', () {
+    expect(
+        DownloadFileNamePolicy.fileNameFromContentDisposition(
+            r'attachment; filename = "lecture \"one\".pdf"'),
+        'lecture "one".pdf');
+  });
+
+  test('does not mistake another parameter for filename', () {
+    expect(
+        DownloadFileNamePolicy.fileNameFromContentDisposition(
+            'attachment; x-filename="wrong.pdf"; filename="right.pdf"'),
+        'right.pdf');
   });
 
   test('does not fail on malformed encoded filename hints', () {

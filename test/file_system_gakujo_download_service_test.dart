@@ -139,6 +139,41 @@ void main() {
     }
   });
 
+  test('saves reserved device names as readable files in a safe course folder',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: _MemorySecureStorage({
+          'more_better_gakujo_download_root_path': directory.path,
+        }),
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async =>
+            AuthenticatedDownloadedFile(
+          bytes: Uint8List.fromList([7, 8, 9]),
+          finalUrl: request.url,
+          mimeType: 'application/pdf',
+        ),
+      );
+      final result = await service.download(
+        const GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+          method: 'GET',
+          courseName: 'AUX',
+          fileName: 'NUL.pdf',
+          formFields: {},
+        ),
+        saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
+      );
+      expect(result.fileName, '_NUL.pdf');
+      expect(File(result.location!).parent.path,
+          '${directory.path}${Platform.pathSeparator}_AUX');
+      expect(await File(result.location!).readAsBytes(), [7, 8, 9]);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('concurrent same-name downloads are saved as distinct files', () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
     try {
