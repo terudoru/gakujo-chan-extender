@@ -6,6 +6,36 @@ import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_downl
 import 'package:test/test.dart';
 
 void main() {
+  test('cleanup aborts a pending fetch and discards a late result', () async {
+    const requestId = 'cancelled-download';
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'GET',
+      fileName: 'fixture.pdf',
+      courseName: '',
+      formFields: {},
+    );
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _cancellationHarness,
+          WindowsWebViewAuthenticatedDownloadScript.start(
+              requestId: requestId, request: request),
+          WindowsWebViewAuthenticatedDownloadScript.poll(requestId),
+          WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['aborted'], isTrue);
+    expect(behavior['afterCleanup'], isNull);
+    expect(behavior['restarted'], isTrue);
+    expect(behavior['lateResultIgnored'], isTrue);
+  });
+
   test('starts fetch synchronously and exposes its result through polling',
       () async {
     const requestId = 'download-1';
@@ -72,6 +102,7 @@ const cleanupScript = process.argv[3];
     URL,
     URLSearchParams,
     Uint8Array,
+    AbortController,
     fetch: async function(url, options) {
       requestedUrl = url;
       requestOptions = options;
@@ -118,5 +149,35 @@ const cleanupScript = process.argv[3];
       polled && polled.payload && polled.payload.contentDisposition,
     afterCleanup
   }));
+})();
+''';
+
+const _cancellationHarness = r'''
+const vm = require('node:vm');
+(async function() {
+  const [start, poll, cleanup] = process.argv.slice(1);
+  const pending = [];
+  const context = vm.createContext({
+    window: { location: { href: 'https://gakujo.iess.niigata-u.ac.jp/' } },
+    URL, URLSearchParams, Uint8Array, AbortController,
+    fetch(url, options) {
+      return new Promise(resolve => pending.push({ url, options, resolve }));
+    },
+    btoa: binary => Buffer.from(binary, 'binary').toString('base64')
+  });
+  vm.runInContext(start, context);
+  vm.runInContext(cleanup, context);
+  const aborted = !!(pending[0].options.signal && pending[0].options.signal.aborted);
+  const afterCleanup = JSON.parse(vm.runInContext(poll, context));
+  const restarted = vm.runInContext(start, context);
+  // Simulate a fetch that resolves despite cancellation; it must not overwrite
+  // a later request that reuses the same identifier.
+  pending[0].resolve({url: pending[0].url, ok: true, status: 200,
+    headers: { get: () => '' }, arrayBuffer: async () => Uint8Array.from([1]).buffer});
+  await new Promise(resolve => setImmediate(resolve));
+  const afterLateResult = JSON.parse(vm.runInContext(poll, context));
+  vm.runInContext(cleanup, context);
+  process.stdout.write(JSON.stringify({aborted, afterCleanup, restarted,
+    lateResultIgnored: afterLateResult && afterLateResult.state === 'pending'}));
 })();
 ''';

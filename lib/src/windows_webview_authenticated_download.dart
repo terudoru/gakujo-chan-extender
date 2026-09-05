@@ -19,13 +19,13 @@ class WindowsWebViewAuthenticatedDownloadScript {
   if (Object.prototype.hasOwnProperty.call(results, requestId)) {
     return false;
   }
-  results[requestId] = { state: 'pending' };
+  const controller = new AbortController();
+  const pending = { state: 'pending', cancel: () => controller.abort() };
+  results[requestId] = pending;
   const setResult = function(value) {
-    if (results[requestId] && results[requestId].state === 'cancelled') {
-      delete results[requestId];
-      return;
+    if (results[requestId] === pending) {
+      results[requestId] = value;
     }
-    results[requestId] = value;
   };
   (async function() {
     try {
@@ -36,7 +36,8 @@ class WindowsWebViewAuthenticatedDownloadScript {
       const options = {
         method,
         credentials: 'include',
-        redirect: 'follow'
+        redirect: 'follow',
+        signal: controller.signal
       };
       if (method === 'GET') {
         Object.keys(fields || {}).forEach(function(key) {
@@ -121,10 +122,10 @@ class WindowsWebViewAuthenticatedDownloadScript {
   const results = window.$_resultStore;
   if (results) {
     const requestId = ${jsonEncode(requestId)};
-    if (results[requestId] && results[requestId].state === 'pending') {
-      results[requestId] = { state: 'cancelled' };
-    } else {
-      delete results[requestId];
+    const entry = results[requestId];
+    delete results[requestId];
+    if (entry && typeof entry.cancel === 'function') {
+      entry.cancel();
     }
   }
   return true;
