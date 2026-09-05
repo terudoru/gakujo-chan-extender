@@ -21,10 +21,14 @@ class AppUpdateService {
   const AppUpdateService({
     this.owner = 'terudoru',
     this.repository = 'gakujo-chan-extender',
+    this.httpClientFactory,
+    this.requestTimeout = const Duration(seconds: 15),
   });
 
   final String owner;
   final String repository;
+  final HttpClient Function()? httpClientFactory;
+  final Duration requestTimeout;
 
   @visibleForTesting
   static int compareVersionsForTesting(String left, String right) {
@@ -38,19 +42,10 @@ class AppUpdateService {
       'api.github.com',
       '/repos/$owner/$repository/releases/latest',
     );
-    final client = HttpClient();
+    final client = httpClientFactory?.call() ?? HttpClient();
     client.connectionTimeout = const Duration(seconds: 10);
     try {
-      final request = await client.getUrl(uri);
-      request.headers
-          .set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'MoreBetterGakujo');
-      final response =
-          await request.close().timeout(const Duration(seconds: 15));
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw HttpException('HTTP ${response.statusCode}', uri: uri);
-      }
-      final body = await utf8.decodeStream(response);
+      final body = await _readReleaseBody(client, uri).timeout(requestTimeout);
       final decoded = jsonDecode(body);
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('Release response must be an object');
@@ -68,6 +63,18 @@ class AppUpdateService {
     } finally {
       client.close(force: true);
     }
+  }
+
+  Future<String> _readReleaseBody(HttpClient client, Uri uri) async {
+    final request = await client.getUrl(uri);
+    request.headers
+        .set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
+    request.headers.set(HttpHeaders.userAgentHeader, 'MoreBetterGakujo');
+    final response = await request.close();
+    if (response.statusCode < 200 || response.statusCode > 299) {
+      throw HttpException('HTTP ${response.statusCode}', uri: uri);
+    }
+    return utf8.decodeStream(response);
   }
 
   String _normalizeVersion(String value) {
