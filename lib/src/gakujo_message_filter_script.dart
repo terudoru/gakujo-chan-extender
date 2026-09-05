@@ -11,7 +11,7 @@ class GakujoMessageFilterScript {
     );
     return '''
 (function() {
-  var version = 1;
+  var version = 2;
   var keywords = $encodedKeywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -109,11 +109,21 @@ class GakujoMessageFilterScript {
       }
       var text = compactText(row);
       var hide = keywords.length > 0 && shouldHide(text);
-      row.style.display = hide ? 'none' : '';
-      row.setAttribute('data-mbg-message-filtered', hide ? 'true' : 'false');
+      var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
       if (hide) {
-        hiddenCount += 1;
+        if (originalDisplay === null) {
+          originalDisplay = row.style.display || '';
+          row.setAttribute('data-mbg-message-filter-display', originalDisplay);
+        }
+        row.style.display = 'none';
+        if (originalDisplay !== 'none') {
+          hiddenCount += 1;
+        }
+      } else if (originalDisplay !== null) {
+        row.style.display = originalDisplay;
+        row.removeAttribute('data-mbg-message-filter-display');
       }
+      row.setAttribute('data-mbg-message-filtered', hide ? 'true' : 'false');
     });
     updateStatus(doc, hiddenCount);
     return true;

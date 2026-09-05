@@ -17,7 +17,6 @@ void main() {
     expect(script, contains('"アンケート"'));
     expect(script, contains('"集中 講義"'));
     expect(script, contains('data-mbg-message-filtered'));
-    expect(script, contains("row.style.display = hide ? 'none' : ''"));
     expect(script, contains('除外中: '));
   });
 
@@ -43,13 +42,44 @@ void main() {
     expect(cleared['statusText'], isNull);
     expect(cleared['activeIntervalCount'], 1);
   });
+
+  test('preserves page-owned hidden rows and explicit display styles',
+      () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['アンケート']),
+        GakujoMessageFilterScript.build(keywords: const []),
+      ],
+      initialDisplays: ['table-row', 'none'],
+    );
+    expect((result[0] as Map)['rowDisplays'], ['none', 'none']);
+    expect((result[1] as Map)['rowDisplays'], ['table-row', 'none']);
+  });
+
+  test('does not count rows that were already hidden by the page', () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['重要'])
+      ],
+      initialDisplays: ['', 'none'],
+    );
+    expect((result.single as Map)['statusText'], isNull);
+    expect((result.single as Map)['rowDisplays'], ['', 'none']);
+  });
 }
 
 Future<List<dynamic>> _evaluateMessageFilterScripts(
-    List<String> scripts) async {
+  List<String> scripts, {
+  List<String> initialDisplays = const ['', ''],
+}) async {
   final result = await Process.run(
     'node',
-    ['-e', _messageFilterDomHarness, jsonEncode(scripts)],
+    [
+      '-e',
+      _messageFilterDomHarness,
+      jsonEncode(scripts),
+      jsonEncode(initialDisplays)
+    ],
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
   );
@@ -83,6 +113,14 @@ class FakeElement {
     this.attributes[name] = String(value);
   }
 
+  getAttribute(name) {
+    return this.attributes[name] ?? null;
+  }
+
+  removeAttribute(name) {
+    delete this.attributes[name];
+  }
+
   appendChild(child) {
     child.parentNode = this;
     this.children.push(child);
@@ -111,6 +149,7 @@ target.id = 'tabmenutable';
 const header = new FakeElement('tr', '件名');
 const survey = new FakeElement('tr', '授業アンケートのお願い');
 const important = new FakeElement('tr', '重要なお知らせ');
+[survey.style.display, important.style.display] = JSON.parse(process.argv[2]);
 const rows = [header, survey, important];
 const table = new FakeElement(
   'table',
