@@ -2,6 +2,18 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_url_policy.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('ignores undecodable event query values without throwing', () {
+    for (final query in ['_eventId=%FF', '_eventId=%E3%81', '%FF=value']) {
+      expect(
+        GakujoDownloadUrlPolicy.shouldDownload(
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/page?$query',
+        ),
+        isFalse,
+        reason: query,
+      );
+    }
+  });
+
   test('detects Gakujo info download event urls', () {
     expect(
       GakujoDownloadUrlPolicy.shouldDownload(

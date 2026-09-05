@@ -22,7 +22,11 @@ class GakujoDownloadUrlPolicy {
       return true;
     }
 
-    final eventId = uri.queryParameters['_eventId']?.toLowerCase();
-    return eventId != null && eventId.contains('download');
+    try {
+      final eventId = uri.queryParameters['_eventId']?.toLowerCase();
+      return eventId != null && eventId.contains('download');
+    } on FormatException {
+      return false;
+    }
   }
 }

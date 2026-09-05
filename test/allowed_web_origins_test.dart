@@ -2,6 +2,16 @@ import 'package:morebettergakujo_flutter/src/allowed_web_origins.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('does not restore a URL whose query cannot be decoded', () {
+    for (final query in ['action=%FF', '_eventId=%E3%81', '%FF=value']) {
+      final url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/page?$query';
+      expect(AllowedWebOrigins.canRestoreLastPage(url, debugAllowed: false),
+          isFalse,
+          reason: query);
+      expect(AllowedWebOrigins.isTransientPage(url), isTrue, reason: query);
+    }
+  });
+
   test('allows only HTTPS Gakujo pages in release mode', () {
     expect(
       AllowedWebOrigins.canLoad(

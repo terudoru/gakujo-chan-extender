@@ -73,7 +73,15 @@ class AllowedWebOrigins {
       'eventid',
       '_eventid',
     };
-    return uri.queryParametersAll.entries.any((entry) {
+    final Map<String, List<String>> query;
+    try {
+      query = uri.queryParametersAll;
+    } on FormatException {
+      // A syntactically valid URI may still contain invalid UTF-8 escapes.
+      // Do not persist an unclassifiable URL as the next startup page.
+      return true;
+    }
+    return query.entries.any((entry) {
       if (!transitionQueryKeys.contains(entry.key.toLowerCase())) {
         return false;
       }
