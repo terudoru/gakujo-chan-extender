@@ -28,6 +28,65 @@ Future<bool> recordGakujoDownloadMetadataBestEffort({
   return succeeded;
 }
 
+@visibleForTesting
+Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
+  required Future<String> Function() readState,
+  Duration timeout = const Duration(minutes: 5),
+  Duration pollInterval = const Duration(milliseconds: 100),
+}) async {
+  PlatformException timeoutError() => PlatformException(
+        code: 'download_timeout',
+        message: 'ダウンロードがタイムアウトしました',
+      );
+  final elapsed = Stopwatch()..start();
+  while (elapsed.elapsed < timeout) {
+    final raw = await readState().timeout(
+      timeout - elapsed.elapsed,
+      onTimeout: () => throw timeoutError(),
+    );
+    if (raw.trim().isEmpty || raw.trim() == 'null') {
+      throw PlatformException(
+        code: 'download_interrupted',
+        message: '画面が切り替わったため取得を中断しました。元の画面から再試行してください',
+      );
+    }
+    final state = jsonDecode(raw);
+    if (state is! Map<String, dynamic>) {
+      throw const FormatException(
+        'WebView download state must be an object',
+      );
+    }
+    if (state['state'] == 'done') {
+      final payload = state['payload'];
+      if (payload is! Map<String, dynamic>) {
+        throw const FormatException(
+          'WebView download result must be an object',
+        );
+      }
+      return payload;
+    }
+    if (state['state'] == 'error') {
+      final detail = state['message']?.toString().trim() ?? '';
+      throw PlatformException(
+        code: 'download_failed',
+        message:
+            detail.isEmpty ? 'ダウンロード通信に失敗しました' : 'ダウンロード通信に失敗しました: $detail',
+      );
+    }
+    if (state['state'] != 'pending') {
+      throw const FormatException('Unknown WebView download state');
+    }
+    final remaining = timeout - elapsed.elapsed;
+    if (remaining <= Duration.zero) {
+      break;
+    }
+    await Future<void>.delayed(
+      pollInterval < remaining ? pollInterval : remaining,
+    );
+  }
+  throw timeoutError();
+}
+
 extension _GakujoWebAppDownloads on _GakujoWebAppState {
   Future<void> _loadDownloadRoot() async {
     try {
@@ -556,21 +615,24 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
     final requestId = 'download-${DateTime.now().microsecondsSinceEpoch}-'
         '${_webViewDownloadRequestSequence++}';
-    await _controller.runJavaScript(
-      WindowsWebViewAuthenticatedDownloadScript.start(
-        requestId: requestId,
-        request: request,
-      ),
-    );
-
     late final Map<String, dynamic> decoded;
     try {
+      await _controller
+          .runJavaScript(
+            WindowsWebViewAuthenticatedDownloadScript.start(
+              requestId: requestId,
+              request: request,
+            ),
+          )
+          .timeout(const Duration(seconds: 15));
       decoded = await _pollWindowsWebViewDownloadResult(requestId);
     } finally {
       try {
-        await _controller.runJavaScript(
-          WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
-        );
+        await _controller
+            .runJavaScript(
+              WindowsWebViewAuthenticatedDownloadScript.cleanup(requestId),
+            )
+            .timeout(const Duration(seconds: 3));
       } on Object catch (error, stackTrace) {
         developer.log(
           'Failed to clean up a Windows WebView download result',
@@ -613,44 +675,13 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
   Future<Map<String, dynamic>> _pollWindowsWebViewDownloadResult(
     String requestId,
-  ) async {
-    final deadline = DateTime.now().add(const Duration(minutes: 5));
-    while (DateTime.now().isBefore(deadline)) {
-      final raw = _stringFromJavaScriptResult(
+  ) {
+    return pollWindowsWebViewDownloadResult(
+      readState: () async => _stringFromJavaScriptResult(
         await _controller.runJavaScriptReturningResult(
           WindowsWebViewAuthenticatedDownloadScript.poll(requestId),
         ),
-      );
-      if (raw.isNotEmpty && raw != 'null') {
-        final state = jsonDecode(raw);
-        if (state is! Map<String, dynamic>) {
-          throw const FormatException(
-            'WebView download state must be an object',
-          );
-        }
-        if (state['state'] == 'done') {
-          final payload = state['payload'];
-          if (payload is! Map<String, dynamic>) {
-            throw const FormatException(
-              'WebView download result must be an object',
-            );
-          }
-          return payload;
-        }
-        if (state['state'] == 'error') {
-          final detail = state['message']?.toString().trim() ?? '';
-          throw PlatformException(
-            code: 'download_failed',
-            message:
-                detail.isEmpty ? 'ダウンロード通信に失敗しました' : 'ダウンロード通信に失敗しました: $detail',
-          );
-        }
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    throw PlatformException(
-      code: 'download_timeout',
-      message: 'ダウンロードがタイムアウトしました',
+      ),
     );
   }
 
