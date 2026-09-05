@@ -1314,6 +1314,52 @@ void main() {
     );
   });
 
+  test('official iCalendar decodes escaped text in one pass', () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(r'''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:Programming \\new\, paths\; strings
+DTSTART;TZID=Asia/Tokyo:20260622T084500
+LOCATION:C:\\new
+DESCRIPTION:literal \\n then newline\nnext line
+END:VEVENT
+END:VCALENDAR
+''');
+    expect(courses.single.officialTitle, r'Programming \new, paths; strings');
+    expect(courses.single.officialLocation, r'C:\new');
+    expect(courses.single.officialDescription,
+        'literal \\n then newline\nnext line');
+  });
+
+  test('official iCalendar ignores alarm descriptions inside an event', () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Alarm only
+END:VALARM
+SUMMARY:Actual course
+DTSTART;TZID=Asia/Tokyo:20260622T084500
+DESCRIPTION:Actual description
+END:VEVENT
+END:VCALENDAR
+''');
+    expect(courses.single.officialDescription, 'Actual description');
+  });
+
+  test('official iCalendar accepts colon inside a quoted parameter', () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY;ALTREP="cid:part1@example.com":Actual course
+DTSTART;TZID=Asia/Tokyo:20260622T084500
+END:VEVENT
+END:VCALENDAR
+''');
+    expect(courses.single.officialTitle, 'Actual course');
+  });
+
   test('coursesFromOfficialScheduleExportText parses iCalendar events', () {
     final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(
       '''

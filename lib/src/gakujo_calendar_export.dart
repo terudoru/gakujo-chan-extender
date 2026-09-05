@@ -742,22 +742,40 @@ class GakujoCalendarExport {
     final lines = _unfoldIcalendarLines(text);
     final events = <_IcalendarEvent>[];
     Map<String, List<String>>? current;
+    var nestedDepth = 0;
     for (final line in lines) {
-      if (line == 'BEGIN:VEVENT') {
-        current = <String, List<String>>{};
+      if (current == null) {
+        if (line == 'BEGIN:VEVENT') {
+          current = <String, List<String>>{};
+          nestedDepth = 0;
+        }
+        continue;
+      }
+      if (line.startsWith('BEGIN:')) {
+        nestedDepth++;
+        continue;
+      }
+      if (line.startsWith('END:') && nestedDepth > 0) {
+        nestedDepth--;
         continue;
       }
       if (line == 'END:VEVENT') {
-        if (current != null) {
-          events.add(_IcalendarEvent(current));
-        }
+        events.add(_IcalendarEvent(current));
         current = null;
         continue;
       }
-      if (current == null) {
+      if (nestedDepth > 0) {
         continue;
       }
-      final separator = line.indexOf(':');
+      var separator = -1;
+      var quoted = false;
+      for (var index = 0; index < line.length; index++) {
+        if (line[index] == '"') quoted = !quoted;
+        if (line[index] == ':' && !quoted) {
+          separator = index;
+          break;
+        }
+      }
       if (separator <= 0) {
         continue;
       }
@@ -784,11 +802,10 @@ class GakujoCalendarExport {
 
   static String _unescapeIcalendarText(String value) {
     return value
-        .replaceAll(r'\n', '\n')
-        .replaceAll(r'\N', '\n')
-        .replaceAll(r'\,', ',')
-        .replaceAll(r'\;', ';')
-        .replaceAll(r'\\', '\\')
+        .replaceAllMapped(RegExp(r'\\([\\nN,;])'), (match) {
+          final escaped = match.group(1)!;
+          return escaped == 'n' || escaped == 'N' ? '\n' : escaped;
+        })
         .trim();
   }
 
