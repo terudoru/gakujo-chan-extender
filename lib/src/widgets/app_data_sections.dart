@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 
@@ -28,6 +29,33 @@ class AppMaintenanceSection extends StatefulWidget {
 
 class _AppMaintenanceSectionState extends State<AppMaintenanceSection> {
   bool _isCheckingForUpdates = false;
+  String? _activeDataAction;
+
+  VoidCallback? _dataAction(String label, Future<void> Function() action) {
+    if (_activeDataAction != null) return null;
+    return () => unawaited(_runDataAction(label, action));
+  }
+
+  Future<void> _runDataAction(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    if (_activeDataAction != null) return;
+    setState(() => _activeDataAction = label);
+    try {
+      await action();
+    } on Object catch (error, stackTrace) {
+      developer.log('Maintenance action failed: $label',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('「$label」を完了できませんでした。もう一度お試しください'),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _activeDataAction = null);
+    }
+  }
 
   Future<void> _checkForUpdates() async {
     if (_isCheckingForUpdates) {
@@ -80,37 +108,51 @@ class _AppMaintenanceSectionState extends State<AppMaintenanceSection> {
               ),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(widget.onCreateBackup()),
+              onPressed: _dataAction('バックアップ作成', widget.onCreateBackup),
               icon: const Icon(Icons.backup_outlined),
               label: const Text('バックアップ作成'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(widget.onExportSettings()),
+              onPressed: _dataAction('設定をコピー', widget.onExportSettings),
               icon: const Icon(Icons.upload_file),
               label: const Text('設定をコピー'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(widget.onImportSettings()),
+              onPressed: _dataAction('設定を読み込み', widget.onImportSettings),
               icon: const Icon(Icons.download),
               label: const Text('設定を読み込み'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(widget.onCheckDownloadDestination()),
+              onPressed:
+                  _dataAction('保存先を確認', widget.onCheckDownloadDestination),
               icon: const Icon(Icons.health_and_safety_outlined),
               label: const Text('保存先を確認'),
             ),
             OutlinedButton.icon(
-              onPressed: () => unawaited(widget.onCreateErrorReport()),
+              onPressed:
+                  _dataAction('エラー報告パッケージ作成', widget.onCreateErrorReport),
               icon: const Icon(Icons.inventory_2_outlined),
               label: const Text('エラー報告パッケージ作成'),
             ),
             TextButton.icon(
-              onPressed: () => unawaited(widget.onCopyDiagnostics()),
+              onPressed: _dataAction('診断情報をコピー', widget.onCopyDiagnostics),
               icon: const Icon(Icons.bug_report_outlined),
               label: const Text('診断情報をコピー'),
             ),
           ],
         ),
+        if (_activeDataAction != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Row(children: [
+              const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text('「$_activeDataAction」を処理しています...')),
+            ]),
+          ),
       ],
     );
   }

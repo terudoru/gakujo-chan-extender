@@ -764,6 +764,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
+  bool _isImportingSettings = false;
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
   bool _loginAutofillStorageLoadAttempted = false;
@@ -3620,6 +3621,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _importSettingsFromClipboard() async {
+    // The settings dialog can be closed and reopened during a storage call.
+    // Keep the import guard on the app, beyond the maintenance widget's life.
+    if (_isImportingSettings) {
+      _showSnackBar('設定の読み込みを処理しています');
+      return;
+    }
+    _isImportingSettings = true;
+    try {
+      await _restoreSettingsFromClipboard();
+    } finally {
+      _isImportingSettings = false;
+    }
+  }
+
+  Future<void> _restoreSettingsFromClipboard() async {
     final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
     if (text == null || text.trim().isEmpty) {
       _showSnackBar('クリップボードに設定JSONがありません');
@@ -3637,18 +3653,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    final previousSettings = _appSettings;
-    final downloadSaveMode =
-        backup.downloadSaveMode ?? _appSettings.downloadSaveMode;
-    final pageMode = backup.pageMode ?? _appSettings.pageMode;
-    final setupCompleted = backup.setupCompleted ?? _appSettings.setupCompleted;
-    final calendarImportSettings =
-        backup.calendarImportSettings ?? _appSettings.calendarImportSettings;
-    final messageExcludeKeywords =
-        backup.messageExcludeKeywords ?? _appSettings.messageExcludeKeywords;
-    final disabledFeatureFlags =
-        backup.disabledFeatureFlags ?? _appSettings.disabledFeatureFlags;
-
     try {
       await restoreGakujoBackup(
         backup: backup,
@@ -3658,13 +3662,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         isAllowedUrl: _isAllowedBackupUrl,
         isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
       );
+      final previousSettings = _appSettings;
       final nextSettings = _appSettings.copyWith(
-        downloadSaveMode: downloadSaveMode,
-        pageMode: pageMode,
-        disabledFeatureFlags: disabledFeatureFlags,
-        setupCompleted: setupCompleted,
-        calendarImportSettings: calendarImportSettings,
-        messageExcludeKeywords: messageExcludeKeywords,
+        downloadSaveMode: backup.downloadSaveMode,
+        pageMode: backup.pageMode,
+        disabledFeatureFlags: backup.disabledFeatureFlags,
+        setupCompleted: backup.setupCompleted,
+        calendarImportSettings: backup.calendarImportSettings,
+        messageExcludeKeywords: backup.messageExcludeKeywords,
       );
       await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
