@@ -5,7 +5,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_windows/webview_windows.dart' as windows;
+import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
 
 import 'allowed_web_origins.dart';
 

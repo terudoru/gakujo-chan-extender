@@ -41,7 +41,7 @@ build/app/outputs/flutter-apk/app-release.apk
 
 ## セットアップ
 
-Flutterをインストールしたあと、依存関係を取得します。
+Flutter 3.44以降（Dart 3.12以降）をインストールしたあと、依存関係を取得します。
 
 ```sh
 cd morebettergakujo-flutter
@@ -188,17 +188,21 @@ WebView とダウンロード処理を抽象化しています。
 - macOS は `webview_flutter` と Dart ダウンロード処理を使います。Sandbox で
   `network.client` と user-selected read/write entitlement を付与し、保存先フォルダは
   ネイティブブリッジで security-scoped bookmark として保持します。
-- Windows は `webview_windows` と Dart ダウンロード処理を使います。実行環境には
+- Windows は `webview_flutter_windows` 1.2.0 と Dart ダウンロード処理を使います。実行環境には
   Microsoft Edge WebView2 Runtime が必要です。
 
-`webview_windows` はキャンセル可能な事前フックである `NavigationStarting` を
+Windowsの選択メニューをWebViewの表示位置に合わせるため、`webview_windows` 0.4.0
+から、その座標通知とフォーカス処理を修正した同系統のパッケージへ移行しています。
+WindowsビルドにはVisual Studio 2022のC++ワークロードとCMake 3.20以降が必要です。
+
+`webview_flutter_windows` はキャンセル可能な事前フックである `NavigationStarting` を
 Dart API に公開していません。そのため、Windows の外部遷移遮断は
 `SourceChanged` を検出した後の `stop()` であり、最初のリクエスト自体は防げません。
 将来 `flutter_inappwebview` の Windows 対応へ移行し、
 `shouldOverrideUrlLoading` を使えば遷移前のブロックが可能になります。
 
 元の移植メモでは `flutter_inappwebview` への移行も候補にしていましたが、現時点では
-WebView を `GakujoWebViewService` で抽象化したうえで、Windows は `webview_windows`、
+WebView を `GakujoWebViewService` で抽象化したうえで、Windows は `webview_flutter_windows`、
 Android/iOS/macOS は `webview_flutter` を使っています。Windows の実ビルドまで通る
 構成を優先した判断です。将来 `flutter_inappwebview` の Windows 対応を採用する場合も、
 差し替え箇所は `lib/src/web_view_service.dart` と
