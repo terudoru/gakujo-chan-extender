@@ -112,6 +112,16 @@ Future<GakujoDownloadResult> exportGakujoCalendarWithNativePicker({
   return GakujoDownloadResult.fromMap(raw);
 }
 
+String gakujoCalendarPermissionSettingsHint() {
+  if (Platform.isMacOS) {
+    return 'システム設定＞プライバシーとセキュリティ＞カレンダーで許可できます';
+  }
+  if (Platform.isIOS) {
+    return '設定アプリ＞プライバシーとセキュリティ＞カレンダーで許可できます';
+  }
+  return '端末の設定＞アプリ＞More Better Gakujo＞権限で許可できます';
+}
+
 @visibleForTesting
 bool isBroadGakujoScheduleExtraction(GakujoCalendarExtraction extraction) {
   final weekdayCount = extraction.courses
@@ -367,9 +377,16 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           rangeStart: termRange.start,
           rangeEnd: termRange.end,
           noClassDates: termRange.noClassDates,
+          classDaySwaps: termRange.classDaySwaps,
           uidNamespace: uidNamespace,
           termLabel: termLabel,
         );
+        if (events.isEmpty) {
+          _showSnackBar(
+            '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業日がありませんでした',
+          );
+          return;
+        }
         final result = await _calendarService.syncEvents(
           events: events,
           rangeStart: termRange.start,
@@ -434,7 +451,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         }
         final reason = error.code == 'calendar_permission_denied'
             ? 'カレンダーへのアクセスが許可されていないため'
-                '（システム設定＞プライバシーとセキュリティ＞カレンダーで許可できます）'
+                '（${gakujoCalendarPermissionSettingsHint()}）'
             : 'OSカレンダーに追加できなかったため';
         // The fallback runs inside this catch block, so its own exceptions
         // (notably the user cancelling the save dialog) would otherwise escape
@@ -565,6 +582,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       sourceText:
           '${officialTerm.academicYear}年度 ${officialTerm.name} 公式授業暦 ${officialTerm.sourceUrl}',
       noClassDates: includeNoClassDates ? officialTerm.noClassDates : const [],
+      classDaySwaps:
+          includeNoClassDates ? officialTerm.classDaySwaps : const [],
     );
   }
 
@@ -811,8 +830,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       CheckboxListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('授業なしの日を除外する'),
-                        subtitle: const Text('公式授業暦から取得できた休講日を予定生成から外します。'),
+                        title: const Text('授業なしの日・授業振替日を反映する'),
+                        subtitle: const Text(
+                          '公式授業暦から取得できた休講日を予定から外し、授業振替日には振替先の曜日の授業を入れます。',
+                        ),
                         value: selectedSettings.includeNoClassDates,
                         onChanged: (value) {
                           selectedSettings = selectedSettings.copyWith(
@@ -1354,12 +1375,16 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       rangeStart: termRange.start,
       rangeEnd: termRange.end,
       noClassDates: termRange.noClassDates,
+      classDaySwaps: termRange.classDaySwaps,
       uidNamespace: uidNamespace,
       termLabel: termLabel,
       calendarName: calendarName,
     );
     final prefix = reason == null ? '' : '$reason、';
-    if (Platform.isIOS) {
+    // file_selector cannot show a save dialog on iOS or Android, and a file in
+    // the app's private documents folder cannot be opened by a calendar app,
+    // so both platforms hand the bytes to the system document picker.
+    if (Platform.isIOS || Platform.isAndroid) {
       final result = await exportGakujoCalendarWithNativePicker(
         ics: ics,
         fileName: fileName,
@@ -1368,7 +1393,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final destination =
           location == null || location.isEmpty ? result.fileName : location;
       _showSnackBar(
-        '$prefix${courses.length}件の授業を${_formatDate(termRange.start)}〜${_formatDate(termRange.end)}で書き出しました: $destination',
+        '$prefix${courses.length}件の授業を${_formatDate(termRange.start)}〜${_formatDate(termRange.end)}で書き出しました。カレンダーアプリで取り込んでください: $destination',
       );
       return;
     }
@@ -1609,9 +1634,12 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       if (integration.status == 'url' && integration.url.isNotEmpty) {
         final isGoogleCalendarUrl =
             isAllowedGakujoGoogleCalendarUrl(integration.url);
+        // The integration script reports only the first template link, while
+        // a schedule page carries one link per class. Use all of them.
         final courses = isGoogleCalendarUrl
-            ? GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls(
-                [integration.url],
+            ? GakujoCalendarExport.officialGoogleCourses(
+                pageCourses: (await _readCalendarScheduleFromPage()).courses,
+                urls: [integration.url],
               )
             : const <GakujoCalendarCourse>[];
         developer.log(
@@ -1651,17 +1679,17 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         await pageFinished;
         await Future<void>.delayed(const Duration(milliseconds: 700));
         final currentUrl = await _controller.currentUrl();
-        final courses =
-            GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
-          if (currentUrl != null) currentUrl,
-        ]);
+        final extraction = await _readCalendarScheduleFromPage();
+        final courses = GakujoCalendarExport.officialGoogleCourses(
+          pageCourses: extraction.courses,
+          urls: [if (currentUrl != null) currentUrl],
+        );
         if (courses.isNotEmpty) {
           return GakujoCalendarExtraction(
             courses: courses,
             termRange: termRange,
           );
         }
-        final extraction = await _readCalendarScheduleFromPage();
         final exportExtraction =
             await _readOfficialScheduleExportAfterExecution(
           termRange: extraction.termRange ?? termRange,
@@ -1787,39 +1815,40 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     DateTime date, {
     GakujoCalendarTermTarget target = GakujoCalendarTermTarget.current,
   }) async {
-    final academicYear = GakujoAcademicCalendar.academicYearFor(date);
-    GakujoAcademicTerm? pickTerm(List<GakujoAcademicTerm> terms) {
-      final termName = target.termName;
-      if (termName == null) {
-        return GakujoAcademicCalendar.termForDateIn(date, terms);
-      }
-      for (final term in terms) {
-        if (term.academicYear == academicYear && term.name == termName) {
-          return term;
+    Future<List<GakujoAcademicTerm>> termsFor(int academicYear) async {
+      try {
+        final fetched = await _academicCalendarResolver
+            .fetchTermsForAcademicYear(academicYear);
+        if (fetched.isNotEmpty) {
+          return fetched;
         }
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to fetch official academic calendar PDF',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
-      return null;
+      return GakujoAcademicCalendar.officialTerms
+          .where((term) => term.academicYear == academicYear)
+          .toList(growable: false);
     }
 
-    try {
-      final terms = await _academicCalendarResolver
-          .fetchTermsForAcademicYear(academicYear);
-      final fetched = pickTerm(terms);
-      if (fetched != null) {
-        return GakujoAcademicCalendar.mergeWithBuiltInDetails(fetched);
-      }
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to fetch official academic calendar PDF',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-    final fallback = pickTerm(GakujoAcademicCalendar.officialTerms);
-    return fallback == null
+    final academicYear = GakujoAcademicCalendar.academicYearFor(date);
+    final terms = await termsFor(academicYear);
+    final planningYear =
+        GakujoAcademicCalendar.planningAcademicYearFor(date, terms);
+    final picked = GakujoAcademicCalendar.selectTerm(
+      date,
+      planningYear == academicYear
+          ? terms
+          : [...terms, ...await termsFor(planningYear)],
+      termName: target.termName,
+    );
+    return picked == null
         ? null
-        : GakujoAcademicCalendar.mergeWithBuiltInDetails(fallback);
+        : GakujoAcademicCalendar.mergeWithBuiltInDetails(picked);
   }
 
   Future<GakujoCalendarTermRange?> _askCalendarTermRange({

@@ -176,7 +176,7 @@ enum GakujoCalendarTermTarget {
 extension GakujoCalendarTermTargetLabels on GakujoCalendarTermTarget {
   String get label {
     return switch (this) {
-      GakujoCalendarTermTarget.current => '現在のタームを自動判定',
+      GakujoCalendarTermTarget.current => '現在のターム（休業中は次のターム）',
       GakujoCalendarTermTarget.first => '第1ターム',
       GakujoCalendarTermTarget.second => '第2ターム',
       GakujoCalendarTermTarget.third => '第3ターム',

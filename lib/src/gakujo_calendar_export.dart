@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'gakujo_academic_calendar.dart';
+
 class GakujoCalendarCourse {
   const GakujoCalendarCourse({
     required this.title,
@@ -200,12 +202,14 @@ class GakujoCalendarTermRange {
     required this.end,
     this.sourceText = '',
     this.noClassDates = const [],
+    this.classDaySwaps = const [],
   });
 
   final DateTime start;
   final DateTime end;
   final String sourceText;
   final List<DateTime> noClassDates;
+  final List<GakujoClassDaySwap> classDaySwaps;
 
   bool get isValid => !end.isBefore(start);
 }
@@ -346,6 +350,20 @@ class GakujoCalendarExport {
       rawCourses.add(course.toJson());
     }
     return _coursesFromDecoded(rawCourses);
+  }
+
+  /// Courses backed by Gakujo's Google Calendar template links: every course
+  /// the page scan enriched from such a link, plus the courses in [urls].
+  static List<GakujoCalendarCourse> officialGoogleCourses({
+    required List<GakujoCalendarCourse> pageCourses,
+    Iterable<String> urls = const [],
+  }) {
+    return _coursesFromDecoded([
+      for (final course in pageCourses)
+        if (_hasOfficialCalendarData(course)) course.toJson(),
+      for (final course in coursesFromOfficialGoogleCalendarUrls(urls))
+        course.toJson(),
+    ]);
   }
 
   static Iterable<String> _googleCalendarUrlsFromText(String raw) sync* {
@@ -1252,6 +1270,7 @@ class GakujoCalendarExport {
     required DateTime rangeStart,
     required DateTime rangeEnd,
     List<DateTime> noClassDates = const [],
+    List<GakujoClassDaySwap> classDaySwaps = const [],
     String uidNamespace = 'manual',
     String termLabel = '',
     String calendarName = 'More Better Gakujo 授業',
@@ -1292,8 +1311,28 @@ class GakujoCalendarExport {
       'END:VTIMEZONE',
     ];
 
-    final exportCourses =
+    final usefulCourses =
         courses.where(_isUsefulCourse).toList(growable: false);
+    final swapsInRange = _classDaySwapsInRange(
+      classDaySwaps,
+      rangeStart: rangeStart,
+      rangeEnd: rangeEnd,
+    );
+    // A 授業振替日 holds another weekday's timetable, so each weekly course
+    // gains a one-off occurrence there; its own instance on that date is
+    // removed through EXDATE below.
+    final exportCourses = [
+      ...usefulCourses,
+      for (final course in usefulCourses)
+        if (course.recursWeekly)
+          for (final swap in swapsInRange)
+            if (swap.weekday == course.weekday &&
+                swap.date.weekday != course.weekday)
+              course.copyWith(
+                recursWeekly: false,
+                sourceDate: swap.date,
+              ),
+    ];
     final legacyIdentityCounts = <String, int>{};
     final legacyIdentityAnchors = <String, String>{};
     for (final course in exportCourses.where((course) => course.recursWeekly)) {
@@ -1360,7 +1399,11 @@ class GakujoCalendarExport {
         periodTime: time,
         rangeStart: rangeStart,
         rangeEnd: rangeEnd,
-        noClassDates: noClassDates,
+        noClassDates: [
+          ...noClassDates,
+          for (final swap in swapsInRange)
+            if (swap.weekday != swap.date.weekday) swap.date,
+        ],
       );
       if (!course.recursWeekly &&
           exDates.any(
@@ -3594,6 +3637,36 @@ class GakujoCalendarExport {
     }
     dates.sort();
     return dates;
+  }
+
+  static List<GakujoClassDaySwap> _classDaySwapsInRange(
+    List<GakujoClassDaySwap> swaps, {
+    required DateTime rangeStart,
+    required DateTime rangeEnd,
+  }) {
+    final start = _dateOnly(rangeStart);
+    final end = _dateOnly(rangeEnd);
+    return [
+      for (final swap in swaps)
+        if (!_dateOnly(swap.date).isBefore(start) &&
+            !_dateOnly(swap.date).isAfter(end))
+          GakujoClassDaySwap(date: _dateOnly(swap.date), weekday: swap.weekday),
+    ];
+  }
+
+  /// Weekday whose timetable is held on [date], honouring 授業振替日.
+  static int timetableWeekdayFor(
+    DateTime date,
+    List<GakujoClassDaySwap> classDaySwaps,
+  ) {
+    for (final swap in classDaySwaps) {
+      if (swap.date.year == date.year &&
+          swap.date.month == date.month &&
+          swap.date.day == date.day) {
+        return swap.weekday;
+      }
+    }
+    return date.weekday;
   }
 
   static DateTime _firstDateOnOrAfter(DateTime start, int weekday) {

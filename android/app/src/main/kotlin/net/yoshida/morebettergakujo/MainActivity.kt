@@ -438,6 +438,9 @@ class MainActivity : FlutterActivity() {
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
     private var pendingPickFileArgs: Map<*, *>? = null
+    private var pendingExportResult: MethodChannel.Result? = null
+    private var pendingExportBytes: ByteArray? = null
+    private var pendingExportFileName: String? = null
     private var pendingNotificationPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarCall: MethodCall? = null
@@ -500,6 +503,7 @@ class MainActivity : FlutterActivity() {
                 "downloadToCourseFolder",
                 "downloadToConfiguredFolder" -> downloadToConfiguredFolder(call, result)
                 "downloadToPickedFile" -> downloadToPickedFile(call, result)
+                "exportDownloadedFile" -> exportDownloadedFile(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -574,11 +578,85 @@ class MainActivity : FlutterActivity() {
         when (requestCode) {
             REQUEST_PICK_DOWNLOAD_ROOT -> handlePickDownloadRootResult(resultCode, data)
             REQUEST_CREATE_DOWNLOAD_FILE -> handleCreateDownloadFileResult(resultCode, data)
+            REQUEST_EXPORT_FILE -> handleExportFileResult(resultCode, data)
         }
     }
 
+    private fun isPickerActive(): Boolean {
+        return pendingPickRootResult != null ||
+            pendingPickFileResult != null ||
+            pendingExportResult != null
+    }
+
+    private fun exportDownloadedFile(call: MethodCall, result: MethodChannel.Result) {
+        val args = call.arguments as? Map<*, *>
+        val bytes = args?.get("bytes") as? ByteArray
+        if (args == null || bytes == null) {
+            result.error("missing_arguments", "保存するデータを取得できませんでした", null)
+            return
+        }
+        if (isPickerActive()) {
+            result.error("picker_active", "保存先選択がすでに開いています", null)
+            return
+        }
+        val fileName = sanitizeName(args["fileName"]?.toString()).ifBlank { "export" }
+        val mimeType = args["mimeType"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: "application/octet-stream"
+        pendingExportResult = result
+        pendingExportBytes = bytes
+        pendingExportFileName = fileName
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType
+            putExtra(Intent.EXTRA_TITLE, fileName)
+        }
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, REQUEST_EXPORT_FILE)
+    }
+
+    private fun handleExportFileResult(resultCode: Int, data: Intent?) {
+        val result = pendingExportResult ?: return
+        val bytes = pendingExportBytes
+        val requestedName = pendingExportFileName
+        pendingExportResult = null
+        pendingExportBytes = null
+        pendingExportFileName = null
+
+        if (resultCode != Activity.RESULT_OK) {
+            result.error("cancelled", "保存をキャンセルしました", null)
+            return
+        }
+        val uri = data?.data
+        if (uri == null || bytes == null) {
+            result.error("missing_file_uri", "保存先ファイルを取得できませんでした", null)
+            return
+        }
+        Thread {
+            try {
+                val stream = contentResolver.openOutputStream(uri, "wt")
+                    ?: throw IllegalStateException("保存先を開けませんでした")
+                stream.use { it.write(bytes) }
+                val savedName = displayName(uri) ?: requestedName ?: "export"
+                runOnUiThread {
+                    result.success(
+                        mapOf(
+                            "fileName" to savedName,
+                            "courseName" to "",
+                            "location" to savedName
+                        )
+                    )
+                }
+            } catch (error: Exception) {
+                Log.e(TAG, "Export failed", error)
+                runOnUiThread {
+                    result.error("export_failed", error.message ?: "保存できませんでした", null)
+                }
+            }
+        }.start()
+    }
+
     private fun pickDownloadRoot(result: MethodChannel.Result) {
-        if (pendingPickRootResult != null || pendingPickFileResult != null) {
+        if (isPickerActive()) {
             result.error("picker_active", "フォルダ選択がすでに開いています", null)
             return
         }
@@ -715,7 +793,7 @@ class MainActivity : FlutterActivity() {
             result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
             return
         }
-        if (pendingPickFileResult != null || pendingPickRootResult != null) {
+        if (isPickerActive()) {
             result.error("picker_active", "保存先選択がすでに開いています", null)
             return
         }
@@ -1939,6 +2017,7 @@ class MainActivity : FlutterActivity() {
         const val REQUEST_CREATE_DOWNLOAD_FILE = 2002
         const val REQUEST_POST_NOTIFICATIONS = 2003
         const val REQUEST_CALENDAR_PERMISSION = 2004
+        const val REQUEST_EXPORT_FILE = 2005
         const val PREFS_NAME = "morebettergakujo_downloads"
         const val KEY_DOWNLOAD_ROOT_URI = "download_root_uri"
         const val KEY_CALENDAR_SYNC_RANGE_PREFIX = "calendar_sync_range_"

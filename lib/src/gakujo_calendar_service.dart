@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import 'gakujo_academic_calendar.dart';
 import 'gakujo_calendar_export.dart';
 
 int _tokyoDateBoundaryMillis(
@@ -239,6 +240,7 @@ class GakujoCalendarEventBuilder {
     required DateTime rangeStart,
     required DateTime rangeEnd,
     List<DateTime> noClassDates = const [],
+    List<GakujoClassDaySwap> classDaySwaps = const [],
     String uidNamespace = 'manual',
     String termLabel = '',
   }) {
@@ -311,20 +313,20 @@ class GakujoCalendarEventBuilder {
         continue;
       }
 
-      var date = _firstDateOnOrAfter(rangeStart, course.weekday);
-      while (!date.isAfter(rangeEnd)) {
-        addEvent(date);
-        date = _calendarDateAfterDays(date, DateTime.daysPerWeek);
+      // Walk every day so that a 授業振替日 runs the timetable of the swapped
+      // weekday instead of its own.
+      for (var date =
+              DateTime(rangeStart.year, rangeStart.month, rangeStart.day);
+          !date.isAfter(rangeEnd);
+          date = _calendarDateAfterDays(date, 1)) {
+        if (GakujoCalendarExport.timetableWeekdayFor(date, classDaySwaps) ==
+            course.weekday) {
+          addEvent(date);
+        }
       }
     }
     events.sort((a, b) => a.start.compareTo(b.start));
     return events;
-  }
-
-  static DateTime _firstDateOnOrAfter(DateTime start, int weekday) {
-    final date = DateTime(start.year, start.month, start.day);
-    final delta = (weekday - date.weekday) % DateTime.daysPerWeek;
-    return _calendarDateAfterDays(date, delta);
   }
 
   static String _eventInstanceId(
