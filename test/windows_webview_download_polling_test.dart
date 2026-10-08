@@ -59,6 +59,40 @@ void main() {
     expect(result.containsKey('bodyBytes'), isFalse);
   });
 
+  test('bounds a chunk receiver that never returns', () async {
+    await expectLater(
+      pollWindowsWebViewDownloadResult(
+        readState: () async =>
+            '{"state":"chunk","index":0,"bodyBase64":"AQID"}',
+        onChunk: (_) => Completer<void>().future,
+        timeout: const Duration(milliseconds: 30),
+      ).timeout(const Duration(seconds: 1)),
+      throwsA(failure('download_timeout')),
+    );
+  });
+
+  test('accepts a slow chunk receiver that finishes within the timeout',
+      () async {
+    final states = [
+      '{"state":"chunk","index":0,"bodyBase64":"AQID"}',
+      '{"state":"done","payload":{"bodyByteLength":3,"chunkCount":1}}',
+    ];
+    var receivedBytes = 0;
+
+    final result = await pollWindowsWebViewDownloadResult(
+      readState: () async => states.removeAt(0),
+      onChunk: (bytes) async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        receivedBytes += bytes.length;
+      },
+      timeout: const Duration(milliseconds: 200),
+    );
+
+    expect(receivedBytes, 3);
+    expect(result['bodyByteLength'], 3);
+    expect(result.containsKey('bodyBytes'), isFalse);
+  });
+
   for (final chunk in [
     {'state': 'chunk', 'index': 1, 'bodyBase64': 'AQID'},
     {'state': 'chunk', 'index': 0, 'bodyBase64': ''},

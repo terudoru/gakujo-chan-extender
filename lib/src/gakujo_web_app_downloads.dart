@@ -74,7 +74,14 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
       nextChunkIndex++;
       receivedBytes += bytes.length;
       if (onChunk != null) {
-        await onChunk(bytes);
+        final remaining = timeout - elapsed.elapsed;
+        if (remaining <= Duration.zero) {
+          throw timeoutError();
+        }
+        await onChunk(bytes).timeout(
+          remaining,
+          onTimeout: () => throw timeoutError(),
+        );
       } else {
         collected!.add(bytes);
       }
@@ -140,14 +147,24 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
       .createTemp('mbg-webview-download-');
   final file = File('${directory.path}${Platform.pathSeparator}payload');
   RandomAccessFile? output;
+  Future<void>? inFlightWrite;
   var transferred = false;
+  var fileCleanupDeferred = false;
   try {
     output = await file.open(mode: FileMode.write);
     await start().timeout(const Duration(seconds: 15));
     final decoded = await pollWindowsWebViewDownloadResult(
       readState: readState,
       onChunk: (bytes) async {
-        await output!.writeFrom(bytes);
+        final write = output!.writeFrom(bytes).then<void>((_) {});
+        inFlightWrite = write;
+        try {
+          await write;
+        } finally {
+          if (identical(inFlightWrite, write)) {
+            inFlightWrite = null;
+          }
+        }
       },
     );
     await output.close();
@@ -180,18 +197,51 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
     return downloaded;
   } finally {
     try {
-      await output?.close();
-    } on Object catch (error, stackTrace) {
-      developer.log('Failed to close a temporary WebView download',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
-    }
-    try {
       await cleanup().timeout(const Duration(seconds: 3));
     } on Object catch (error, stackTrace) {
       developer.log('Failed to clean up a Windows WebView download result',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
     }
-    if (!transferred) {
+    final pendingWrite = inFlightWrite;
+    if (pendingWrite != null) {
+      try {
+        await pendingWrite.timeout(const Duration(seconds: 3));
+      } on TimeoutException {
+        final pendingOutput = output;
+        output = null;
+        fileCleanupDeferred = true;
+        unawaited(() async {
+          try {
+            await pendingWrite;
+          } on Object catch (error, stackTrace) {
+            developer.log('A timed-out WebView download write failed',
+                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          }
+          try {
+            await pendingOutput?.close();
+          } on Object catch (error, stackTrace) {
+            developer.log('Failed to close a temporary WebView download',
+                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          }
+          try {
+            await directory.delete(recursive: true);
+          } on Object catch (error, stackTrace) {
+            developer.log('Failed to remove an incomplete WebView download',
+                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          }
+        }());
+      } on Object catch (error, stackTrace) {
+        developer.log('A timed-out WebView download write failed',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+    try {
+      await output?.close();
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to close a temporary WebView download',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+    if (!transferred && !fileCleanupDeferred) {
       try {
         await directory.delete(recursive: true);
       } on Object catch (error, stackTrace) {
