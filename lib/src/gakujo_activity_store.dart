@@ -815,8 +815,8 @@ class GakujoActivityStore {
           return '${2018 + reiwaYear}年';
         })
         .replaceAll(RegExp(r'[（(][月火水木金土日][）)]'), '')
-        .replaceAll('～', '/')
-        .replaceAll('〜', '/')
+        .replaceAll('～', ' ')
+        .replaceAll('〜', ' ')
         .replaceAll('年', '/')
         .replaceAll('月', '/')
         .replaceAll('日', '')

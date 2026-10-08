@@ -573,6 +573,60 @@ void main() {
     expect(deadlines.map((entry) => entry.title), contains('元号表記の予定'));
   });
 
+  test('loadDeadlines keeps year-less ranges until their end date', () async {
+    final store = GakujoActivityStore();
+    final now = DateTime.now();
+    final rangeStart = DateTime(now.year, now.month);
+    final rangeEnd = now.add(const Duration(days: 10));
+    final staleDetection = now.subtract(const Duration(days: 120));
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    String monthDay(DateTime value) =>
+        '${twoDigits(value.month)}/${twoDigits(value.day)}';
+    String japaneseMonthDay(DateTime value) =>
+        '${twoDigits(value.month)}月${twoDigits(value.day)}日';
+    String fullDate(DateTime value) => '${value.year}/${monthDay(value)}';
+
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: '年月なし和文範囲',
+        url: 'https://gakujo.example/report-japanese-range',
+        dueText:
+            '${japaneseMonthDay(rangeStart)}～${japaneseMonthDay(rangeEnd)}',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: '年月なしスラッシュ範囲',
+        url: 'https://gakujo.example/report-slash-range',
+        dueText: '${monthDay(rangeStart)}～${monthDay(rangeEnd)}',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: '年月なし波ダッシュ範囲',
+        url: 'https://gakujo.example/report-wave-dash-range',
+        dueText: '${monthDay(rangeStart)}〜${monthDay(rangeEnd)} 17:00',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: '年つき範囲',
+        url: 'https://gakujo.example/report-full-year-range',
+        dueText:
+            '${fullDate(DateTime(now.year - 1))} 10:00～${fullDate(rangeEnd)} 17:00',
+        detectedAt: staleDetection,
+      ),
+    ]);
+
+    final deadlines = await store.loadDeadlines();
+    expect(
+      deadlines.map((entry) => entry.title),
+      unorderedEquals([
+        '年月なし和文範囲',
+        '年月なしスラッシュ範囲',
+        '年月なし波ダッシュ範囲',
+        '年つき範囲',
+      ]),
+    );
+  });
+
   test('loadDeadlines drops stale undated entries', () async {
     final store = GakujoActivityStore();
 
