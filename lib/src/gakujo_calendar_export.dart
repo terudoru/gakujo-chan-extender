@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'gakujo_academic_calendar.dart';
+import 'gakujo_dated_activity.dart';
 
 class GakujoCalendarCourse {
   const GakujoCalendarCourse({
@@ -1211,12 +1212,11 @@ class GakujoCalendarExport {
     String targetTermName = '',
   }) {
     final reference = referenceDate ?? DateTime.now();
-    final normalized = text
+    final normalized = GakujoDatedActivity.normalizeDateText(text)
         .replaceAll('（', '(')
         .replaceAll('）', ')')
         .replaceAll('〜', '～')
         .replaceAll('~', '～')
-        .replaceAll('－', '～')
         .replaceAll('―', '～')
         .replaceAll('から', '～');
     final allSegments = _termRangeSegments(normalized);

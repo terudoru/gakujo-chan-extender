@@ -710,6 +710,78 @@ void main() {
     expect(range?.end, DateTime(2026, 6, 10));
   });
 
+  void expectEquivalentTermRanges(
+    String fullWidth,
+    String halfWidth, {
+    required DateTime referenceDate,
+  }) {
+    final fullWidthRange = GakujoCalendarExport.termRangeFromText(
+      fullWidth,
+      referenceDate: referenceDate,
+    );
+    final halfWidthRange = GakujoCalendarExport.termRangeFromText(
+      halfWidth,
+      referenceDate: referenceDate,
+    );
+
+    expect(halfWidthRange, isNotNull, reason: halfWidth);
+    expect(fullWidthRange, isNotNull, reason: fullWidth);
+    expect(fullWidthRange?.start, halfWidthRange?.start, reason: fullWidth);
+    expect(fullWidthRange?.end, halfWidthRange?.end, reason: fullWidth);
+  }
+
+  test('termRangeFromText normalizes full-width month-day digits', () {
+    expectEquivalentTermRanges(
+      '第1ターム 授業期間 ４月８日（水）～６月１０日（水）',
+      '第1ターム 授業期間 4月8日（水）～6月10日（水）',
+      referenceDate: DateTime(2026, 4, 20),
+    );
+  });
+
+  test('termRangeFromText normalizes full-width full-date digits', () {
+    expectEquivalentTermRanges(
+      '第１ターム 授業期間 ２０２６年４月８日～２０２６年６月８日',
+      '第1ターム 授業期間 2026年4月8日～2026年6月8日',
+      referenceDate: DateTime(2026, 4, 20),
+    );
+  });
+
+  test('termRangeFromText normalizes full-width date slashes', () {
+    expectEquivalentTermRanges(
+      '第1ターム 授業期間 2026／4／8～2026／6／8',
+      '第1ターム 授業期間 2026/4/8～2026/6/8',
+      referenceDate: DateTime(2026, 4, 20),
+    );
+  });
+
+  test('termRangeFromText normalizes full-width date hyphens', () {
+    expectEquivalentTermRanges(
+      '第2ターム 授業期間 2026－06－11～2026－08－08',
+      '第2ターム 授業期間 2026-06-11 - 2026-08-08',
+      referenceDate: DateTime(2026, 6, 29),
+    );
+  });
+
+  test('termRangeFromText accepts a full-width month-day hyphen', () {
+    expectEquivalentTermRanges(
+      '第1ターム 授業期間 ４月８日－６月１０日',
+      '第1ターム 授業期間 4月8日-6月10日',
+      referenceDate: DateTime(2026, 4, 20),
+    );
+  });
+
+  test('termRangeFromText matches a half-width target to full-width text', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '時間割 第１ターム 授業期間 ２０２６年４月８日～２０２６年６月８日 '
+      '第２ターム 授業期間 ２０２６年６月１０日～２０２６年８月５日',
+      referenceDate: DateTime(2026, 7, 1),
+      targetTermName: '第1ターム',
+    );
+
+    expect(range?.start, DateTime(2026, 4, 8));
+    expect(range?.end, DateTime(2026, 6, 8));
+  });
+
   test('termRangeFromText reads hyphenated full-date ranges', () {
     final range = GakujoCalendarExport.termRangeFromText(
       '第2ターム 授業期間 2026-06-11 - 2026-08-08',
