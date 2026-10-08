@@ -748,6 +748,55 @@ void main() {
     );
   });
 
+  test('loadDeadlines accepts sentence punctuation after full dates', () async {
+    final store = GakujoActivityStore();
+    final staleDetection = DateTime.now().subtract(const Duration(days: 120));
+
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: 'Bare date',
+        url: 'https://example.test/bare',
+        dueText: 'Due 2099/07/01',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Sentence date',
+        url: 'https://example.test/sentence',
+        dueText: 'Due 2099/07/01.',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Japanese sentence date',
+        url: 'https://example.test/japanese-sentence',
+        dueText: 'Due 2099/07/01。',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Dot sentence date',
+        url: 'https://example.test/dot-sentence',
+        dueText: 'Due 2099.07.01.',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Version-like number',
+        url: 'https://example.test/version',
+        dueText: 'v2099.07.01.5',
+        detectedAt: staleDetection,
+      ),
+    ]);
+
+    final deadlines = await store.loadDeadlines();
+    expect(
+      deadlines.map((entry) => entry.title),
+      unorderedEquals([
+        'Bare date',
+        'Sentence date',
+        'Japanese sentence date',
+        'Dot sentence date',
+      ]),
+    );
+  });
+
   test('loadDeadlines drops stale undated entries', () async {
     final store = GakujoActivityStore();
 
