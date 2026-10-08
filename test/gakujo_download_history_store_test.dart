@@ -221,6 +221,32 @@ void main() {
     expect(entries.single.errorMessage, 'network error');
   });
 
+  test('failed download queue preserves and deduplicates unresolved names',
+      () async {
+    final store = GakujoDownloadHistoryStore();
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      method: 'POST',
+      courseName: 'x',
+      fileName: '',
+      formFields: {},
+    );
+
+    await store.addFailedDownload(
+      request: request,
+      errorMessage: 'timeout',
+    );
+    await store.addFailedDownload(
+      request: request,
+      errorMessage: 'network error',
+    );
+
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(1));
+    expect(entries.single.request.fileName, isEmpty);
+    expect(entries.single.errorMessage, 'network error');
+  });
+
   test('failed download queue treats different form fields separately',
       () async {
     final store = GakujoDownloadHistoryStore();

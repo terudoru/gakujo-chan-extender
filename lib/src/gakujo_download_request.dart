@@ -94,15 +94,20 @@ class GakujoDownloadRequest {
       });
     }
 
+    final rawFileName = raw['fileName']?.toString();
+    final fileName = rawFileName == null || rawFileName.trim().isEmpty
+        ? ''
+        : DownloadFileNamePolicy.safeFileName(
+            preferredName: rawFileName,
+            url: raw['url']?.toString(),
+          );
+
     return GakujoDownloadRequest(
       url: raw['url']?.toString() ?? '',
       method: (raw['method']?.toString() ?? 'GET').toUpperCase(),
       courseName:
           DownloadFileNamePolicy.safeFolderName(raw['courseName']?.toString()),
-      fileName: DownloadFileNamePolicy.safeFileName(
-        preferredName: raw['fileName']?.toString(),
-        url: raw['url']?.toString(),
-      ),
+      fileName: fileName,
       formFields: fields,
     );
   }

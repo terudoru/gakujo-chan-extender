@@ -21,6 +21,41 @@ void main() {
     expect(request.fileName, '講義資料.pdf');
   });
 
+  test('fromJsonMap keeps an empty file name unresolved', () {
+    final request = GakujoDownloadRequest.fromJsonMap({
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      'method': 'POST',
+      'courseName': 'x',
+      'fileName': '',
+      'formFields': <String, String>{},
+    });
+
+    expect(request.fileName, isEmpty);
+  });
+
+  test('fromJsonMap keeps a missing file name unresolved', () {
+    final request = GakujoDownloadRequest.fromJsonMap({
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      'method': 'POST',
+      'courseName': 'x',
+      'formFields': <String, String>{},
+    });
+
+    expect(request.fileName, isEmpty);
+  });
+
+  test('fromJsonMap still sanitizes a non-empty file name', () {
+    final request = GakujoDownloadRequest.fromJsonMap({
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      'method': 'POST',
+      'courseName': 'x',
+      'fileName': 'folder/report.pdf',
+      'formFields': <String, String>{},
+    });
+
+    expect(request.fileName, 'folderreport.pdf');
+  });
+
   test('external json omits form fields while internal json keeps them', () {
     const request = GakujoDownloadRequest(
       url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
