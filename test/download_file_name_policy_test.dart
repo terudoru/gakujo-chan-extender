@@ -93,6 +93,33 @@ void main() {
     expect(name, '資料 (2).pdf');
   });
 
+  test('adds a suffix for a name that differs only by case', () {
+    final name = DownloadFileNamePolicy.uniqueName(
+      'lecture.pdf',
+      {'Lecture.PDF'},
+    );
+
+    expect(name, 'lecture (1).pdf');
+  });
+
+  test('skips generated suffixes that differ only by case', () {
+    final name = DownloadFileNamePolicy.uniqueName(
+      'a.pdf',
+      {'a.pdf', 'A (1).pdf'},
+    );
+
+    expect(name, 'a (2).pdf');
+  });
+
+  test('keeps exact-case numeric suffix behavior unchanged', () {
+    final name = DownloadFileNamePolicy.uniqueName(
+      'lecture.pdf',
+      {'lecture.pdf', 'lecture (1).pdf'},
+    );
+
+    expect(name, 'lecture (2).pdf');
+  });
+
   test('decodes RFC 5987 content disposition filenames', () {
     final name = DownloadFileNamePolicy.fileNameFromContentDisposition(
       "attachment; filename*=UTF-8''%E7%94%9F%E5%90%88%E6%88%90.pdf",

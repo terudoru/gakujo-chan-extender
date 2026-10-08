@@ -56,7 +56,9 @@ class DownloadFileNamePolicy {
   }
 
   static String uniqueName(String desiredName, Set<String> existingNames) {
-    if (!existingNames.contains(desiredName)) {
+    final lowercaseExistingNames =
+        existingNames.map((name) => name.toLowerCase()).toSet();
+    if (!lowercaseExistingNames.contains(desiredName.toLowerCase())) {
       return desiredName;
     }
 
@@ -70,7 +72,7 @@ class DownloadFileNamePolicy {
     var index = 1;
     while (true) {
       final candidate = '$base ($index)$extension';
-      if (!existingNames.contains(candidate)) {
+      if (!lowercaseExistingNames.contains(candidate.toLowerCase())) {
         return candidate;
       }
       index += 1;

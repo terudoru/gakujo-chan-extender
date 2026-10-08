@@ -95,6 +95,48 @@ void main() {
     }
   });
 
+  test('does not overwrite an existing file whose name differs only by case',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final existingFile = File(
+        '${directory.path}${Platform.pathSeparator}Lecture.PDF',
+      );
+      await existingFile.writeAsBytes([9, 9, 9]);
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: _MemorySecureStorage({
+          'more_better_gakujo_download_root_path': directory.path,
+        }),
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async =>
+            AuthenticatedDownloadedFile(
+          bytes: Uint8List.fromList([1, 2, 3]),
+          finalUrl: request.url,
+          mimeType: 'application/pdf',
+        ),
+      );
+
+      final result = await service.download(
+        const GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+          method: 'GET',
+          courseName: 'course',
+          fileName: 'lecture.pdf',
+          formFields: {},
+        ),
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(result.fileName, 'lecture (1).pdf');
+      expect(await existingFile.readAsBytes(), [9, 9, 9]);
+      expect(await File(result.location!).readAsBytes(), [1, 2, 3]);
+    } finally {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    }
+  });
+
   test('prefers authenticated bytes loader over a partial cookie header',
       () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
