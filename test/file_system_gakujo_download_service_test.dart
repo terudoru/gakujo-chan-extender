@@ -137,6 +137,69 @@ void main() {
     }
   });
 
+  test('does not overwrite a file addressed by its Windows short name',
+      () async {
+    if (!Platform.isWindows) {
+      markTestSkipped('Windows 8.3 short names are required for this test.');
+      return;
+    }
+
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final existingFile = File(
+        '${directory.path}${Platform.pathSeparator}LongLectureMaterial.pdf',
+      );
+      await existingFile.writeAsBytes([9, 9, 9]);
+      final directoryListing = await Process.run(
+        'cmd',
+        ['/c', 'dir', '/x', directory.path],
+      );
+      final shortNameMatch = RegExp(
+        r'\s([^\s]*~[^\s]*)\s+LongLectureMaterial\.pdf\s*$',
+        multiLine: true,
+        caseSensitive: false,
+      ).firstMatch(directoryListing.stdout as String);
+      if (shortNameMatch == null) {
+        markTestSkipped(
+          'The temporary volume did not generate an 8.3 short name.',
+        );
+        return;
+      }
+      final shortName = shortNameMatch.group(1)!;
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: _MemorySecureStorage({
+          'more_better_gakujo_download_root_path': directory.path,
+        }),
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async =>
+            AuthenticatedDownloadedFile(
+          bytes: Uint8List.fromList([1, 2, 3]),
+          finalUrl: request.url,
+          mimeType: 'application/pdf',
+        ),
+      );
+
+      final result = await service.download(
+        GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+          method: 'GET',
+          courseName: 'course',
+          fileName: shortName,
+          formFields: const {},
+        ),
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(await existingFile.readAsBytes(), [9, 9, 9]);
+      expect(result.fileName, isNot(equalsIgnoringCase(shortName)));
+      expect(await File(result.location!).readAsBytes(), [1, 2, 3]);
+    } finally {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    }
+  });
+
   test('prefers authenticated bytes loader over a partial cookie header',
       () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');

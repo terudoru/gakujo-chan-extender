@@ -295,13 +295,27 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       final parent = autoSortByCourse
           ? await _ensureChildDirectory(root, courseFolderName)
           : root;
-      final finalName = await _uniqueFileName(parent, fileName);
-      final location = _join(parent.path, finalName);
-      await downloaded.saveTo(location);
+      final reservedFile = await _reserveUniqueFile(parent, fileName);
+      try {
+        await downloaded.saveTo(reservedFile.path);
+      } on Object {
+        try {
+          await reservedFile.delete();
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to remove a reserved download file',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+        rethrow;
+      }
+      final finalName = _baseName(reservedFile.path);
       return GakujoDownloadResult(
         fileName: finalName,
         courseName: autoSortByCourse ? _baseName(parent.path) : '',
-        location: location,
+        location: reservedFile.path,
       );
     });
   }
@@ -503,11 +517,28 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     return directory;
   }
 
-  Future<String> _uniqueFileName(
+  Future<File> _reserveUniqueFile(
       Directory directory, String desiredName) async {
-    final existing =
+    final listedNames =
         await directory.list().map((entity) => _baseName(entity.path)).toSet();
-    return DownloadFileNamePolicy.uniqueName(desiredName, existing);
+    final namesAlreadyTried = <String>{};
+    for (var attempt = 0; attempt < 1000; attempt += 1) {
+      final candidateName = DownloadFileNamePolicy.uniqueName(
+        desiredName,
+        {...listedNames, ...namesAlreadyTried},
+      );
+      final candidate = File(_join(directory.path, candidateName));
+      try {
+        await candidate.create(exclusive: true);
+        return candidate;
+      } on PathExistsException {
+        namesAlreadyTried.add(candidateName);
+      }
+    }
+    throw FileSystemException(
+      'Could not reserve a unique download file after 1000 attempts',
+      directory.path,
+    );
   }
 
   static String _encodeForm(Map<String, String> fields) {
