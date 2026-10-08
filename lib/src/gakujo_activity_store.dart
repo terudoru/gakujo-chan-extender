@@ -830,6 +830,23 @@ class GakujoActivityStore {
   }
 
   DateTime? _deadlineDueAt(String text, {required DateTime now}) {
+    DateTime? deadlineDateTime(
+      int year,
+      int month,
+      int day,
+      int hour,
+      int minute,
+    ) {
+      if (hour == 24) {
+        if (minute != 0) {
+          return null;
+        }
+        return _strictDateTime(year, month, day, 0, 0)
+            ?.add(const Duration(days: 1));
+      }
+      return _strictDateTime(year, month, day, hour, minute);
+    }
+
     final normalized = GakujoDatedActivity.normalizeDateText(text)
         .replaceAllMapped(RegExp(r'令和([0-9]{1,2})年'), (match) {
           final reiwaYear = int.tryParse(match.group(1) ?? '');
@@ -848,10 +865,10 @@ class GakujoActivityStore {
         .replaceAll('分', '')
         .replaceAll('-', '/');
     final fullDate = RegExp(
-      r'((?:20)?[0-9]{2})/([0-9]{1,2})/([0-9]{1,2})(?:\s*([0-9]{1,2}):([0-9]{2}))?',
+      r'((?:20)?[0-9]{2})[/.]([0-9]{1,2})[/.]([0-9]{1,2})(?![0-9.])(?:\s*([0-9]{1,2}):([0-9]{2}))?',
     );
     final monthAndDayPattern = RegExp(
-      r'(^|[^0-9])([0-9]{1,2})/([0-9]{1,2})(?:\s*([0-9]{1,2}):([0-9]{2}))?',
+      r'(^|[^0-9.])([0-9]{1,2})[/.]([0-9]{1,2})(?![0-9.])(?:\s*([0-9]{1,2}):([0-9]{2}))?',
     );
     final fullDateMatches = fullDate.allMatches(normalized).toList();
     if (fullDateMatches.isNotEmpty) {
@@ -863,7 +880,7 @@ class GakujoActivityStore {
         final year = rawYear < 100 ? rawYear + 2000 : rawYear;
         final hour = int.tryParse(fullDate.group(4) ?? '') ?? 23;
         final minute = int.tryParse(fullDate.group(5) ?? '') ?? 59;
-        final fullDateDueAt = _strictDateTime(
+        final fullDateDueAt = deadlineDateTime(
           year,
           month,
           day,
@@ -886,7 +903,7 @@ class GakujoActivityStore {
                   int.tryParse(trailingMonthAndDay.group(4) ?? '') ?? 23;
               final trailingMinute =
                   int.tryParse(trailingMonthAndDay.group(5) ?? '') ?? 59;
-              final sameYearDueAt = _strictDateTime(
+              final sameYearDueAt = deadlineDateTime(
                 year,
                 trailingMonth,
                 trailingDay,
@@ -895,7 +912,7 @@ class GakujoActivityStore {
               );
               if (sameYearDueAt != null) {
                 if (sameYearDueAt.isBefore(fullDateDueAt)) {
-                  return _strictDateTime(
+                  return deadlineDateTime(
                         year + 1,
                         trailingMonth,
                         trailingDay,
@@ -926,13 +943,13 @@ class GakujoActivityStore {
     }
     final hour = int.tryParse(monthAndDay.group(4) ?? '') ?? 23;
     final minute = int.tryParse(monthAndDay.group(5) ?? '') ?? 59;
-    var dueAt = _strictDateTime(now.year, month, day, hour, minute);
+    var dueAt = deadlineDateTime(now.year, month, day, hour, minute);
     if (dueAt == null) {
       return null;
     }
     if (dueAt.add(_deadlineGracePeriod).isBefore(now) &&
         now.difference(dueAt).inDays > 180) {
-      dueAt = _strictDateTime(now.year + 1, month, day, hour, minute);
+      dueAt = deadlineDateTime(now.year + 1, month, day, hour, minute);
     }
     return dueAt;
   }

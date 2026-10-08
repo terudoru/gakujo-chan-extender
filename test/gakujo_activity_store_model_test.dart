@@ -683,6 +683,71 @@ void main() {
     },
   );
 
+  test('loadDeadlines parses 24:00 and dot-separated due dates', () async {
+    final store = GakujoActivityStore();
+    final now = DateTime.now();
+    final futureDue = now.add(const Duration(days: 30));
+    final pastDue = now.subtract(const Duration(days: 30));
+    final staleDetection = now.subtract(const Duration(days: 120));
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    String slashDate(DateTime value) =>
+        '${value.year}/${twoDigits(value.month)}/${twoDigits(value.day)}';
+    String dotDate(DateTime value) =>
+        '${value.year}.${twoDigits(value.month)}.${twoDigits(value.day)}';
+    String dotMonthDay(DateTime value) =>
+        '${twoDigits(value.month)}.${twoDigits(value.day)}';
+
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: 'Future 24:00 deadline',
+        url: 'https://gakujo.example/report-future-24-00',
+        dueText: '${slashDate(futureDue)} 24:00',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Past 24:00 deadline',
+        url: 'https://gakujo.example/report-past-24-00',
+        dueText: '${slashDate(pastDue)} 24:00',
+        detectedAt: now,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Future dot-separated deadline',
+        url: 'https://gakujo.example/report-future-dot-date',
+        dueText: '${dotDate(futureDue)} 17:00',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Past dot-separated deadline',
+        url: 'https://gakujo.example/report-past-dot-date',
+        dueText: '${dotDate(pastDue)} 17:00',
+        detectedAt: now,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Future year-less dot-separated deadline',
+        url: 'https://gakujo.example/report-future-dot-month-day',
+        dueText: '${dotMonthDay(futureDue)} 17:00',
+        detectedAt: staleDetection,
+      ),
+      GakujoDeadlineEntry(
+        title: 'Invalid 24:30 deadline',
+        url: 'https://gakujo.example/report-invalid-24-30',
+        dueText: '${slashDate(futureDue)} 24:30',
+        detectedAt: now,
+      ),
+    ]);
+
+    final deadlines = await store.loadDeadlines();
+    expect(
+      deadlines.map((entry) => entry.title),
+      unorderedEquals([
+        'Future 24:00 deadline',
+        'Future dot-separated deadline',
+        'Future year-less dot-separated deadline',
+        'Invalid 24:30 deadline',
+      ]),
+    );
+  });
+
   test('loadDeadlines drops stale undated entries', () async {
     final store = GakujoActivityStore();
 
