@@ -38,6 +38,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   bool teardownDuringRead = false,
   bool teardownAfterRead = false,
   List<String>? messageUrls,
+  Map<String, Object?> owningDocument = const {},
 }) async {
   final scenario = jsonEncode({
     'fetchStatuses': fetchStatuses,
@@ -47,6 +48,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     'teardownDuringRead': teardownDuringRead,
     'teardownAfterRead': teardownAfterRead,
     'messageUrls': messageUrls,
+    'owningDocument': owningDocument,
   });
   final result = await Process.run(
       'node',
@@ -224,6 +226,7 @@ function createPage() {
   let reloadCount = 0;
   let fetchCallCount = 0;
   let frameCallCount = 0;
+  const fetchUrls = [];
   const activeIntervals = new Set();
   const activeTimeouts = new Map();
   const fetchStatuses = scenario ? [...scenario.fetchStatuses] : [200];
@@ -236,7 +239,20 @@ function createPage() {
   const timeoutTimer = {textContent: '20'};
   const extendButton = {click() {}};
 
+  const defaultLocationHref =
+    'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+  const owningDocument = scenario?.owningDocument || {};
+  const location = {
+    href: Object.prototype.hasOwnProperty.call(owningDocument, 'locationHref')
+      ? owningDocument.locationHref
+      : defaultLocationHref,
+    reload() { reloadCount += 1; }
+  };
   const document = {
+    baseURI: Object.prototype.hasOwnProperty.call(owningDocument, 'baseURI')
+      ? owningDocument.baseURI
+      : defaultLocationHref,
+    location,
     body,
     createElement(tag) {
       if (tag.toLowerCase() === 'iframe') {
@@ -277,10 +293,6 @@ function createPage() {
     }
   };
 
-  const location = {
-    href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-    reload() { reloadCount += 1; }
-  };
   const window = {
     document,
     location,
@@ -304,8 +316,9 @@ function createPage() {
     document,
     location,
     URL,
-    fetch: async function() {
+    fetch: async function(url) {
       fetchCallCount += 1;
+      fetchUrls.push(String(url));
       const status = fetchStatuses.shift();
       if (status === null) throw new Error('simulated fetch failure');
       return {ok: status >= 200 && status < 300, status};
@@ -332,6 +345,7 @@ function createPage() {
       ),
       reloadCount,
       fetchCallCount,
+      fetchUrls,
       frameCallCount,
       globalMarkers: Object.keys(window)
         .filter((key) => key.startsWith(featureConfig.markerPrefix))

@@ -4,7 +4,7 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 4;
+  var version = 5;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -37,40 +37,57 @@ class GakujoMessageReaderScript {
     }
   }
 
-  function messageTable() {
-    var doc = mainFrameDocument();
+  function messageTable(doc) {
+    doc = doc || mainFrameDocument();
     return doc.querySelector('table.normal:nth-child(9)');
   }
 
-  function absoluteCampusUrl(url) {
+  function absoluteCampusUrl(url, doc) {
     var value = String(url || '').trim();
     if (!value || value.charAt(0) === '#') {
       return '';
     }
+    var bases = [];
     try {
-      var parsed = new URL(value, 'https://gakujo.iess.niigata-u.ac.jp/campusweb/');
-      if (parsed.protocol !== 'https:' ||
-          parsed.hostname !== 'gakujo.iess.niigata-u.ac.jp' ||
-          (parsed.port !== '' && parsed.port !== '443') ||
-          parsed.username !== '' || parsed.password !== '') {
-        return '';
+      bases.push(doc && doc.baseURI);
+    } catch (e) {}
+    try {
+      bases.push(doc && doc.location && doc.location.href);
+    } catch (e) {}
+    bases.push('https://gakujo.iess.niigata-u.ac.jp/campusweb/');
+    var parsed;
+    for (var i = 0; i < bases.length; i += 1) {
+      if (!bases[i]) {
+        continue;
       }
-      return parsed.href;
-    } catch (e) {
+      try {
+        parsed = new URL(value, bases[i]);
+        break;
+      } catch (e) {
+        // Try the next owning-document base or the fixed fallback.
+      }
+    }
+    if (!parsed || parsed.protocol !== 'https:' ||
+        parsed.hostname !== 'gakujo.iess.niigata-u.ac.jp' ||
+        (parsed.port !== '' && parsed.port !== '443') ||
+        parsed.username !== '' || parsed.password !== '') {
       return '';
     }
+    return parsed.href;
   }
 
   function unreadUrls(limit) {
-    var table = messageTable();
+    var doc = mainFrameDocument();
+    var table = messageTable(doc);
     if (!table) {
       return [];
     }
+    var owningDocument = table.ownerDocument || doc;
     var urls = [];
     for (var i = 1; i < table.rows.length && urls.length < limit; i += 1) {
       var link = table.rows[i].querySelector('a[href]');
       if (link) {
-        var url = absoluteCampusUrl(link.getAttribute('href'));
+        var url = absoluteCampusUrl(link.getAttribute('href'), owningDocument);
         if (url) {
           urls.push(url);
         }

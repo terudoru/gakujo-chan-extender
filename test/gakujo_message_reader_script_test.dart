@@ -96,6 +96,73 @@ void main() {
     }
   });
 
+  test('resolves query-only links against the owning document', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200],
+      messageUrls: ['?_flowId=notice-flow&_eventId=detail'],
+    );
+
+    expect(result['fetchUrls'], [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
+          '?_flowId=notice-flow&_eventId=detail',
+    ]);
+  });
+
+  test('resolves document-relative links against the owning document',
+      () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200],
+      messageUrls: ['message/1'],
+      owningDocument: {
+        'baseURI':
+            'https://gakujo.iess.niigata-u.ac.jp/campusweb/notices/list.do',
+        'locationHref':
+            'https://gakujo.iess.niigata-u.ac.jp/campusweb/ignored.do',
+      },
+    );
+
+    expect(result['fetchUrls'], [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/notices/message/1',
+    ]);
+  });
+
+  test('keeps root-relative and absolute allowed links unchanged', () async {
+    const absoluteUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/message/2';
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200],
+      messageUrls: [
+        '/campusweb/message/1',
+        absoluteUrl,
+      ],
+    );
+
+    expect(result['fetchUrls'], [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/message/1',
+      absoluteUrl,
+    ]);
+  });
+
+  test('falls back to the fixed base when the owning document has no base',
+      () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200],
+      messageUrls: ['message/1'],
+      owningDocument: {
+        'baseURI': null,
+        'locationHref': 'not a usable URL',
+      },
+    );
+
+    expect(result['fetchUrls'], [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/message/1',
+    ]);
+  });
+
   test('ignores links that cannot identify an allowed notification page',
       () async {
     for (final url in [
@@ -112,9 +179,23 @@ void main() {
         messageUrls: [url],
       );
       expect(result['fetchCallCount'], 0, reason: url);
+      expect(result['fetchUrls'], isEmpty, reason: url);
       expect(result['frameCallCount'], 0, reason: url);
       expect(result['reloadCount'], 0, reason: url);
     }
+
+    final disallowedBaseResult = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200],
+      messageUrls: ['message/1'],
+      owningDocument: {
+        'baseURI': 'https://example.com/notifications/list.do',
+      },
+    );
+    expect(disallowedBaseResult['fetchCallCount'], 0);
+    expect(disallowedBaseResult['fetchUrls'], isEmpty);
+    expect(disallowedBaseResult['frameCallCount'], 0);
+    expect(disallowedBaseResult['reloadCount'], 0);
   });
 
   test('coalesces repeated clicks while a read is pending', () async {
