@@ -285,6 +285,12 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readDeadlines()).value);
   }
 
+  Future<List<GakujoDeadlineEntry>> loadDeadlinesForBackup() {
+    return _enqueue(
+      () => _readForBackup(_deadlinesKey, _readDeadlines),
+    );
+  }
+
   Future<_StorageReadResult<List<GakujoDeadlineEntry>>> _readDeadlines() {
     return _readList(
       key: _deadlinesKey,
@@ -351,6 +357,12 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readFavorites()).value);
   }
 
+  Future<List<GakujoFavoritePage>> loadFavoritesForBackup() {
+    return _enqueue(
+      () => _readForBackup(_favoritesKey, _readFavorites),
+    );
+  }
+
   Future<_StorageReadResult<List<GakujoFavoritePage>>> _readFavorites() {
     return _readList(
       key: _favoritesKey,
@@ -365,6 +377,12 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readChanges()).value);
   }
 
+  Future<List<GakujoActivityChangeEntry>> loadChangesForBackup() {
+    return _enqueue(
+      () => _readForBackup(_changesKey, _readChanges),
+    );
+  }
+
   Future<_StorageReadResult<List<GakujoActivityChangeEntry>>> _readChanges() {
     return _readList(
       key: _changesKey,
@@ -377,6 +395,12 @@ class GakujoActivityStore {
 
   Future<List<GakujoCachedReportList>> loadReportLists() {
     return _enqueue(() async => (await _readReportLists()).value);
+  }
+
+  Future<List<GakujoCachedReportList>> loadReportListsForBackup() {
+    return _enqueue(
+      () => _readForBackup(_reportListsKey, _readReportLists),
+    );
   }
 
   Future<_StorageReadResult<List<GakujoCachedReportList>>> _readReportLists() {
@@ -1013,6 +1037,17 @@ class GakujoActivityStore {
     final values = _decodeList(rawRead.value, fromJson).where(retain).toList()
       ..sort(compare);
     return _StorageReadResult.success(values.take(limit).toList());
+  }
+
+  Future<T> _readForBackup<T>(
+    String key,
+    Future<_StorageReadResult<T>> Function() read,
+  ) async {
+    final result = await read();
+    if (!result.isSuccessful) {
+      throw StateError('Failed to read $key for backup');
+    }
+    return result.value;
   }
 
   Future<void> _compactList<T extends Object>(
