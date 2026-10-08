@@ -826,6 +826,9 @@ class GakujoActivityStore {
     final fullDate = RegExp(
       r'((?:20)?[0-9]{2})/([0-9]{1,2})/([0-9]{1,2})(?:\s*([0-9]{1,2}):([0-9]{2}))?',
     );
+    final monthAndDayPattern = RegExp(
+      r'(^|[^0-9])([0-9]{1,2})/([0-9]{1,2})(?:\s*([0-9]{1,2}):([0-9]{2}))?',
+    );
     final fullDateMatches = fullDate.allMatches(normalized).toList();
     if (fullDateMatches.isNotEmpty) {
       final fullDate = fullDateMatches.last;
@@ -836,13 +839,56 @@ class GakujoActivityStore {
         final year = rawYear < 100 ? rawYear + 2000 : rawYear;
         final hour = int.tryParse(fullDate.group(4) ?? '') ?? 23;
         final minute = int.tryParse(fullDate.group(5) ?? '') ?? 59;
-        return _strictDateTime(year, month, day, hour, minute);
+        final fullDateDueAt = _strictDateTime(
+          year,
+          month,
+          day,
+          hour,
+          minute,
+        );
+        if (fullDateDueAt != null) {
+          final trailingMonthAndDayMatches =
+              monthAndDayPattern.allMatches(normalized, fullDate.end).toList();
+          if (trailingMonthAndDayMatches.isNotEmpty) {
+            final trailingMonthAndDay = trailingMonthAndDayMatches.last;
+            final trailingMonth = int.tryParse(
+              trailingMonthAndDay.group(2) ?? '',
+            );
+            final trailingDay = int.tryParse(
+              trailingMonthAndDay.group(3) ?? '',
+            );
+            if (trailingMonth != null && trailingDay != null) {
+              final trailingHour =
+                  int.tryParse(trailingMonthAndDay.group(4) ?? '') ?? 23;
+              final trailingMinute =
+                  int.tryParse(trailingMonthAndDay.group(5) ?? '') ?? 59;
+              final sameYearDueAt = _strictDateTime(
+                year,
+                trailingMonth,
+                trailingDay,
+                trailingHour,
+                trailingMinute,
+              );
+              if (sameYearDueAt != null) {
+                if (sameYearDueAt.isBefore(fullDateDueAt)) {
+                  return _strictDateTime(
+                        year + 1,
+                        trailingMonth,
+                        trailingDay,
+                        trailingHour,
+                        trailingMinute,
+                      ) ??
+                      fullDateDueAt;
+                }
+                return sameYearDueAt;
+              }
+            }
+          }
+          return fullDateDueAt;
+        }
       }
     }
 
-    final monthAndDayPattern = RegExp(
-      r'(^|[^0-9])([0-9]{1,2})/([0-9]{1,2})(?:\s*([0-9]{1,2}):([0-9]{2}))?',
-    );
     final monthAndDayMatches =
         monthAndDayPattern.allMatches(normalized).toList();
     if (monthAndDayMatches.isEmpty) {

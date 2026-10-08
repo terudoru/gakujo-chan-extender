@@ -627,6 +627,62 @@ void main() {
     );
   });
 
+  test(
+    'loadDeadlines uses a year-less end after a full-year range start',
+    () async {
+      final store = GakujoActivityStore();
+      final now = DateTime.now();
+      final rangeStart = now.subtract(const Duration(days: 20));
+      final rangeEnd = now.add(const Duration(days: 10));
+      final staleDetection = now.subtract(const Duration(days: 120));
+      String twoDigits(int value) => value.toString().padLeft(2, '0');
+      String slashDate(DateTime value) =>
+          '${value.year}/${twoDigits(value.month)}/${twoDigits(value.day)}';
+      String japaneseMonthDay(DateTime value) => '${value.month}月${value.day}日';
+
+      await store.replaceDeadlines([
+        GakujoDeadlineEntry(
+          title: '西暦開始の和文範囲',
+          url: 'https://gakujo.example/report-gregorian-year-start',
+          dueText: '${rangeStart.year}年${japaneseMonthDay(rangeStart)}～'
+              '${japaneseMonthDay(rangeEnd)}',
+          detectedAt: staleDetection,
+        ),
+        GakujoDeadlineEntry(
+          title: '西暦開始の時刻つき範囲',
+          url: 'https://gakujo.example/report-timed-year-start',
+          dueText: '${slashDate(rangeStart)} 10:00～'
+              '${twoDigits(rangeEnd.month)}/${twoDigits(rangeEnd.day)} 17:00',
+          detectedAt: staleDetection,
+        ),
+        GakujoDeadlineEntry(
+          title: '令和開始の和文範囲',
+          url: 'https://gakujo.example/report-reiwa-year-start',
+          dueText:
+              '令和${rangeStart.year - 2018}年${japaneseMonthDay(rangeStart)}～'
+              '${japaneseMonthDay(rangeEnd)}',
+          detectedAt: staleDetection,
+        ),
+        GakujoDeadlineEntry(
+          title: '過去の単一日',
+          url: 'https://gakujo.example/report-single-past-date',
+          dueText: '${slashDate(rangeStart)} 10:00',
+          detectedAt: staleDetection,
+        ),
+      ]);
+
+      final deadlines = await store.loadDeadlines();
+      expect(
+        deadlines.map((entry) => entry.title),
+        unorderedEquals([
+          '西暦開始の和文範囲',
+          '西暦開始の時刻つき範囲',
+          '令和開始の和文範囲',
+        ]),
+      );
+    },
+  );
+
   test('loadDeadlines drops stale undated entries', () async {
     final store = GakujoActivityStore();
 
