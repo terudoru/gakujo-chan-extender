@@ -41,7 +41,7 @@ enum MacosWebViewFileUploadSupport {
   private typealias UIDelegateSetter = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
   private typealias OpenPanelCompletion = @convention(block) (NSArray?) -> Void
   private typealias OpenPanelHandler = @convention(block) (
-    AnyObject, WKWebView, WKOpenPanelParameters, WKFrameInfo, OpenPanelCompletion
+    AnyObject, WKWebView, WKOpenPanelParameters, WKFrameInfo, @escaping OpenPanelCompletion
   ) -> Void
 
   private static var installed = false
