@@ -74,4 +74,23 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.runAsync(controller.dispose);
   });
+
+  testWidgets('Windows service enables the right-click context menu', (
+    tester,
+  ) async {
+    final native = windows.WebviewController();
+    await tester.runAsync(native.initialize);
+    final controller = WindowsGakujoWebViewController(native);
+    const service = WindowsGakujoWebViewService();
+
+    await tester.runAsync(
+      () => service.configureController(controller, debugAllowed: false),
+    );
+
+    final call = calls.lastWhere(
+      (call) => call.method == 'setDefaultContextMenusEnabled',
+    );
+    expect(call.arguments, isTrue);
+    await tester.runAsync(controller.dispose);
+  });
 }

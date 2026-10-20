@@ -616,6 +616,9 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
     await windowsController._inner.setPopupWindowPolicy(
       windows.WebviewPopupWindowPolicy.sameWindow,
     );
+    // The plugin turns WebView2's context menu off, which left Windows users
+    // without right-click copy while other platforms keep their native menus.
+    await windowsController._inner.setDefaultContextMenusEnabled(true);
   }
 }
 
