@@ -101,6 +101,7 @@ enum GakujoFeatureFlag {
   reportListCache,
   sessionRecoveryGuide,
   autoBackup,
+  uploadCompression,
 }
 
 enum GakujoCalendarImportMethod {
@@ -311,6 +312,7 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
       GakujoFeatureFlag.reportListCache => '課題一覧の保存',
       GakujoFeatureFlag.sessionRecoveryGuide => 'セッション復帰ガイド',
       GakujoFeatureFlag.autoBackup => '自動バックアップ',
+      GakujoFeatureFlag.uploadCompression => '5MB超の添付画像を自動圧縮',
     };
   }
 
@@ -329,6 +331,7 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
       GakujoFeatureFlag.reportListCache => 'report_list_cache',
       GakujoFeatureFlag.sessionRecoveryGuide => 'session_recovery_guide',
       GakujoFeatureFlag.autoBackup => 'auto_backup',
+      GakujoFeatureFlag.uploadCompression => 'upload_compression',
     };
   }
 

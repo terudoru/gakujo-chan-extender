@@ -46,6 +46,7 @@ import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
+import 'gakujo_upload_compression_script.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
@@ -100,6 +101,7 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.build,
   GakujoFeatureFlag.reportTools: GakujoReportSorterScript.build,
   GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.build,
+  GakujoFeatureFlag.uploadCompression: GakujoUploadCompressionScript.build,
 };
 
 final Map<GakujoFeatureFlag, _PageScriptBuilder>
@@ -110,6 +112,8 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.gpaDisplay: GakujoGpaDisplayScript.buildTeardown,
   GakujoFeatureFlag.loginAutofill: LoginAutofillAssistScript.buildTeardown,
   GakujoFeatureFlag.twoFactorAutofill: TwoFactorAutofillScript.buildTeardown,
+  GakujoFeatureFlag.uploadCompression:
+      GakujoUploadCompressionScript.buildTeardown,
 };
 
 @visibleForTesting
