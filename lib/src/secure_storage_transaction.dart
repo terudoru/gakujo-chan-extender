@@ -51,51 +51,59 @@ class BackupRollbackException implements Exception {
       'Backup restore failed and some previous values could not be restored';
 }
 
+/// Acquires stores in the same order for both backup reads and restores.
+Future<T> runWithBackupStorageLocks<T>(
+  List<BackupStorageParticipant> participants,
+  Future<T> Function() operation,
+) {
+  Future<T> acquire(int index) async {
+    if (index < participants.length) {
+      return participants[index].queue.runExclusive(() => acquire(index + 1));
+    }
+    return operation();
+  }
+
+  return acquire(0);
+}
+
 /// Holds all participating stores until either the import or its rollback ends.
 /// This handles storage errors during a running import, not process termination.
 Future<void> runBackupStorageTransaction(
   List<BackupStorageParticipant> participants,
   Future<void> Function() operation,
-) {
-  Future<void> acquire(int index) async {
-    if (index < participants.length) {
-      await participants[index].queue.runExclusive(() => acquire(index + 1));
-      return;
-    }
-
-    // Read exact raw values before any writes. Tolerant cache loaders can hide
-    // read errors or discard expired data, so cannot provide a rollback image.
-    final snapshots = <(FlutterSecureStorage, String, String?)>[];
-    for (final participant in participants) {
-      for (final key in participant.keys) {
-        snapshots.add((
-          participant.storage,
-          key,
-          await participant.storage.read(key: key)
-        ));
-      }
-    }
-    try {
-      await operation();
-    } on Object catch (error) {
-      final rollbackErrors = <Object>[];
-      for (final (storage, key, value) in snapshots.reversed) {
-        try {
-          if (value == null) {
-            await storage.delete(key: key);
-          } else {
-            await storage.write(key: key, value: value);
-          }
-        } on Object catch (rollbackError) {
-          rollbackErrors.add(rollbackError);
+) =>
+    runWithBackupStorageLocks(participants, () async {
+      // Read exact raw values before any writes. Tolerant cache loaders can hide
+      // read errors or discard expired data, so cannot provide a rollback image.
+      final snapshots = <(FlutterSecureStorage, String, String?)>[];
+      for (final participant in participants) {
+        for (final key in participant.keys) {
+          snapshots.add((
+            participant.storage,
+            key,
+            await participant.storage.read(key: key)
+          ));
         }
       }
-      if (rollbackErrors.isNotEmpty) {
-        throw BackupRollbackException(error, List.unmodifiable(rollbackErrors));
+      try {
+        await operation();
+      } on Object catch (error) {
+        final rollbackErrors = <Object>[];
+        for (final (storage, key, value) in snapshots.reversed) {
+          try {
+            if (value == null) {
+              await storage.delete(key: key);
+            } else {
+              await storage.write(key: key, value: value);
+            }
+          } on Object catch (rollbackError) {
+            rollbackErrors.add(rollbackError);
+          }
+        }
+        if (rollbackErrors.isNotEmpty) {
+          throw BackupRollbackException(
+              error, List.unmodifiable(rollbackErrors));
+        }
+        rethrow;
       }
-      rethrow;
-    }
-  }
-
-  return acquire(0);
-}
+    });

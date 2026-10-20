@@ -770,6 +770,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
   bool _isImportingSettings = false;
+  final _backupOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
   bool _loginAutofillStorageLoadAttempted = false;
@@ -3607,23 +3608,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _showSnackBar('設定をクリップボードにコピーしました');
   }
 
-  Future<Map<String, Object?>> _backupPayload() async {
-    final history = await _downloadHistoryStore.load();
-    final failedDownloads = await _downloadHistoryStore.loadFailedDownloads();
-    final favorites = await _activityStore.loadFavorites();
-    final deadlines = await _activityStore.loadDeadlines();
-    final changes = await _activityStore.loadChanges();
-    final reportLists = await _activityStore.loadReportLists();
-    return buildGakujoBackupPayload(
-      appSettings: _appSettings,
-      downloadHistory: history,
-      failedDownloads: failedDownloads,
-      favorites: favorites,
-      deadlines: deadlines,
-      changes: changes,
-      reportLists: reportLists,
-    );
-  }
+  Future<Map<String, Object?>> _backupPayload() => _backupOperations.run(
+        () => readGakujoBackupPayload(
+          currentSettings: () => _appSettings,
+          settingsStore: _appSettingsStore,
+          historyStore: _downloadHistoryStore,
+          activityStore: _activityStore,
+        ),
+      );
 
   Future<void> _importSettingsFromClipboard() async {
     // The settings dialog can be closed and reopened during a storage call.
@@ -3634,7 +3626,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     _isImportingSettings = true;
     try {
-      await _restoreSettingsFromClipboard();
+      await _backupOperations.run(_restoreSettingsFromClipboard);
     } finally {
       _isImportingSettings = false;
     }
@@ -4071,16 +4063,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _configureWebViewController() async {
     await _controller.setJavaScriptModeUnrestricted();
     await _controller.addJavaScriptChannel(
-      GakujoUploadCompressionLibraries.channelName,
-      onMessageReceived: _handleUploadCompressionLibraryRequest,
-    );
-    await _controller.addJavaScriptChannel(
       GakujoDownloadCaptureScript.channelName,
       onMessageReceived: _handleDownloadMessage,
     );
     await _controller.addJavaScriptChannel(
       LoginAutofillAssistScript.channelName,
       onMessageReceived: _handleLoginAutofillMessage,
+    );
+    await _controller.addJavaScriptChannel(
+      GakujoUploadCompressionLibraries.channelName,
+      onMessageReceived: _handleUploadCompressionLibraryRequest,
     );
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(

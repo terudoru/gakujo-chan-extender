@@ -1,6 +1,35 @@
 import 'gakujo_activity_store.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_download_history_store.dart';
+import 'secure_storage_transaction.dart';
+
+Future<Map<String, Object?>> readGakujoBackupPayload({
+  required GakujoAppSettings Function() currentSettings,
+  required GakujoAppSettingsStore settingsStore,
+  required GakujoDownloadHistoryStore historyStore,
+  required GakujoActivityStore activityStore,
+}) =>
+    runWithBackupStorageLocks([
+      settingsStore.backupStorage,
+      historyStore.backupStorage,
+      activityStore.backupStorage,
+    ], () async {
+      final history = await historyStore.load();
+      final failedDownloads = await historyStore.loadFailedDownloads();
+      final favorites = await activityStore.loadFavoritesForBackup();
+      final deadlines = await activityStore.loadDeadlinesForBackup();
+      final changes = await activityStore.loadChangesForBackup();
+      final reportLists = await activityStore.loadReportListsForBackup();
+      return buildGakujoBackupPayload(
+        appSettings: currentSettings(),
+        downloadHistory: history,
+        failedDownloads: failedDownloads,
+        favorites: favorites,
+        deadlines: deadlines,
+        changes: changes,
+        reportLists: reportLists,
+      );
+    });
 
 Map<String, Object?> buildGakujoBackupPayload({
   required GakujoAppSettings appSettings,

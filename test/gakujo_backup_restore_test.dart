@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
@@ -14,6 +15,64 @@ const _historyKey = 'more_better_gakujo_download_history';
 const _favoritesKey = 'more_better_gakujo_favorites';
 
 void main() {
+  for (final key in [
+    _historyKey,
+    _favoritesKey,
+    'more_better_gakujo_deadlines',
+    'more_better_gakujo_activity_changes',
+    'more_better_gakujo_cached_report_lists',
+  ]) {
+    test('backup fails on unreadable $key and releases all stores', () async {
+      final storage = _Storage({})..failReadKey = key;
+      final settings = GakujoAppSettingsStore(secureStorage: storage);
+      final history = GakujoDownloadHistoryStore(secureStorage: storage);
+      final activity = GakujoActivityStore(secureStorage: storage);
+      await expectLater(readGakujoBackupPayload(
+        currentSettings: () => const GakujoAppSettings(),
+        settingsStore: settings, historyStore: history, activityStore: activity,
+      ), throwsStateError);
+      storage.failReadKey = null;
+      await _restore(storage, settings: settings, history: history, activity: activity)
+          .timeout(const Duration(seconds: 2));
+    });
+  }
+
+  test('backup capture does not mix records from before and after a restore',
+      () async {
+    final storage = _Storage({});
+    final settings = GakujoAppSettingsStore(secureStorage: storage);
+    final history = GakujoDownloadHistoryStore(secureStorage: storage);
+    final activity = GakujoActivityStore(secureStorage: storage);
+    await history.add(GakujoDownloadHistoryEntry(
+        fileName: 'before.pdf', courseName: 'course', savedAt: DateTime.now()));
+    await activity.addFavorite(GakujoFavoritePage(
+        title: 'before',
+        url: 'https://example.com/before',
+        addedAt: DateTime.now()));
+    storage.pauseReadKey = _historyKey;
+    storage.readStarted = Completer<void>();
+    storage.continueRead = Completer<void>();
+    final capture = readGakujoBackupPayload(
+        currentSettings: () => const GakujoAppSettings(),
+        settingsStore: settings,
+        historyStore: history,
+        activityStore: activity);
+    await storage.readStarted!.future;
+    final restore = _restore(storage,
+        settings: settings, history: history, activity: activity);
+    await Future<void>.delayed(Duration.zero);
+    storage.continueRead!.complete();
+    final payload = await capture;
+    await restore;
+    expect(
+        (payload['downloadHistory'] as List).single['fileName'], 'before.pdf');
+    expect((payload['favorites'] as List).map((e) => e['title']), ['before']);
+    expect(await history.load(), isEmpty);
+    expect(await activity.loadFavorites(), isEmpty);
+    expect(storage.readKeys,
+        isNot(contains('more_better_gakujo_login_credentials_v2')));
+  });
+
   test('snapshot read failure does not start any writes', () async {
     final storage = _Storage({_modeKey: 'flat_configured'})
       ..failReadKey = _favoritesKey;
@@ -162,6 +221,9 @@ class _Storage extends FlutterSecureStorage {
   int writes = 0;
   Completer<void>? writeStarted;
   Completer<void>? continueWrite;
+  String? pauseReadKey;
+  Completer<void>? readStarted;
+  Completer<void>? continueRead;
 
   @override
   Future<String?> read(
@@ -174,7 +236,13 @@ class _Storage extends FlutterSecureStorage {
       WindowsOptions? wOptions}) async {
     readKeys.add(key);
     if (key == failReadKey) throw StateError('read unavailable');
-    return values[key];
+    final value = values[key];
+    if (key == pauseReadKey) {
+      pauseReadKey = null;
+      readStarted!.complete();
+      await continueRead!.future;
+    }
+    return value;
   }
 
   @override
