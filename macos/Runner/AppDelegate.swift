@@ -61,7 +61,7 @@ enum MacosWebViewFileUploadSupport {
     let originalSetter = unsafeBitCast(method_getImplementation(method), to: UIDelegateSetter.self)
     let replacement: @convention(block) (AnyObject, AnyObject?) -> Void = { webView, delegate in
       if let delegate, let delegateClass = object_getClass(delegate) {
-        addOpenPanelHandlerIfNeeded(to: delegateClass)
+        Self.addOpenPanelHandlerIfNeeded(to: delegateClass)
       }
       originalSetter(webView, setterSelector, delegate)
     }
