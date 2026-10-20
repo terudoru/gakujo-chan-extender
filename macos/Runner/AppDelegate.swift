@@ -954,7 +954,11 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    completionHandler([.alert, .sound, .badge])
+    if #available(macOS 11.0, *) {
+      completionHandler([.banner, .list, .sound, .badge])
+    } else {
+      completionHandler([.alert, .sound, .badge])
+    }
   }
 
   func userNotificationCenter(

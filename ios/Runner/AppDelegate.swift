@@ -801,7 +801,7 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    completionHandler([.alert, .sound, .badge])
+    completionHandler([.banner, .list, .sound, .badge])
   }
 
   func userNotificationCenter(
