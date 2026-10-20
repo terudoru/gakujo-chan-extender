@@ -100,6 +100,48 @@ enum MacosWebViewFileUploadSupport {
   }
 }
 
+/// WKWebView ignores the back/forward buttons of multi-button mice, so route
+/// them to the WebView's history like Safari does.
+enum MacosWebViewMouseNavigation {
+  private static let backButtonNumber = 3
+  private static let forwardButtonNumber = 4
+  private static var monitor: Any?
+
+  static func install() {
+    guard monitor == nil else { return }
+    monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { event in
+      guard event.buttonNumber == Self.backButtonNumber ||
+              event.buttonNumber == Self.forwardButtonNumber,
+            let webView = Self.webView(under: event) else {
+        return event
+      }
+      if event.buttonNumber == Self.backButtonNumber {
+        if webView.canGoBack {
+          webView.goBack()
+        }
+      } else if webView.canGoForward {
+        webView.goForward()
+      }
+      return nil
+    }
+  }
+
+  private static func webView(under event: NSEvent) -> WKWebView? {
+    guard let contentView = event.window?.contentView else { return nil }
+    // hitTest expects a point in the coordinate system of the view's superview.
+    let point = contentView.superview?.convert(event.locationInWindow, from: nil)
+      ?? event.locationInWindow
+    var view = contentView.hitTest(point)
+    while let current = view {
+      if let webView = current as? WKWebView {
+        return webView
+      }
+      view = current.superview
+    }
+    return nil
+  }
+}
+
 private final class MacosInputFocusBridge {
   private static let channelName = "net.yoshida.morebettergakujo/input_focus"
 

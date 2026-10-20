@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
@@ -40,5 +41,36 @@ void main() {
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.macOS), isTrue);
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.android), isFalse);
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.windows), isFalse);
+  });
+
+  test('mouse side buttons map to WebView history navigation', () {
+    expect(
+      mouseHistoryNavigation(const PointerDownEvent(
+        kind: PointerDeviceKind.mouse,
+        buttons: kBackMouseButton,
+      )),
+      MouseHistoryNavigation.back,
+    );
+    expect(
+      mouseHistoryNavigation(const PointerDownEvent(
+        kind: PointerDeviceKind.mouse,
+        buttons: kForwardMouseButton,
+      )),
+      MouseHistoryNavigation.forward,
+    );
+    expect(
+      mouseHistoryNavigation(const PointerDownEvent(
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton | kBackMouseButton,
+      )),
+      isNull,
+    );
+    expect(
+      mouseHistoryNavigation(const PointerDownEvent(
+        kind: PointerDeviceKind.touch,
+        buttons: kBackMouseButton,
+      )),
+      isNull,
+    );
   });
 }

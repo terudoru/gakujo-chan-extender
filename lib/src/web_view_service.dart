@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
@@ -553,6 +554,22 @@ bool cookiePathMatches(String requestPath, String cookiePath) {
       normalizedRequestPath.codeUnitAt(normalizedCookiePath.length) == 0x2f;
 }
 
+enum MouseHistoryNavigation { back, forward }
+
+@visibleForTesting
+MouseHistoryNavigation? mouseHistoryNavigation(PointerDownEvent event) {
+  if (event.kind != PointerDeviceKind.mouse) {
+    return null;
+  }
+  if (event.buttons == kBackMouseButton) {
+    return MouseHistoryNavigation.back;
+  }
+  if (event.buttons == kForwardMouseButton) {
+    return MouseHistoryNavigation.forward;
+  }
+  return null;
+}
+
 class WindowsGakujoWebViewService extends GakujoWebViewService {
   const WindowsGakujoWebViewService();
 
@@ -564,14 +581,28 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
   @override
   Widget buildWidget(GakujoWebViewController controller) {
     final windowsController = controller as WindowsGakujoWebViewController;
-    return ValueListenableBuilder<windows.WebviewValue>(
-      valueListenable: windowsController._inner,
-      builder: (context, value, child) {
-        if (!value.isInitialized) {
-          return const Center(child: Text('WebViewを準備中...'));
+    // The WebView2 texture only forwards primary, secondary and middle
+    // buttons, so mouse back/forward buttons would otherwise do nothing.
+    return Listener(
+      onPointerDown: (event) {
+        switch (mouseHistoryNavigation(event)) {
+          case MouseHistoryNavigation.back:
+            unawaited(windowsController.goBack());
+          case MouseHistoryNavigation.forward:
+            unawaited(windowsController.goForward());
+          case null:
+            break;
         }
-        return windows.Webview(windowsController._inner);
       },
+      child: ValueListenableBuilder<windows.WebviewValue>(
+        valueListenable: windowsController._inner,
+        builder: (context, value, child) {
+          if (!value.isInitialized) {
+            return const Center(child: Text('WebViewを準備中...'));
+          }
+          return windows.Webview(windowsController._inner);
+        },
+      ),
     );
   }
 
