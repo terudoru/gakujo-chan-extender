@@ -3,6 +3,9 @@ import FlutterMacOS
 
 class MainFlutterWindow: NSWindow {
   override func awakeFromNib() {
+    // Must run before the WebView plugin assigns its first UI delegate.
+    MacosWebViewFileUploadSupport.install()
+
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController

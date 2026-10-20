@@ -2,6 +2,7 @@ import Cocoa
 import EventKit
 import FlutterMacOS
 import UserNotifications
+import WebKit
 
 @main
 class AppDelegate: FlutterAppDelegate {
@@ -29,6 +30,73 @@ class AppDelegate: FlutterAppDelegate {
 
   override func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     return true
+  }
+}
+
+/// webview_flutter_wkwebview's WKUIDelegate does not implement the open panel
+/// callback, so WKWebView silently ignores clicks on `<input type="file">` and
+/// assignment attachments cannot be chosen. Add an NSOpenPanel implementation
+/// to each UI delegate class before WebKit caches which callbacks it supports.
+enum MacosWebViewFileUploadSupport {
+  private typealias UIDelegateSetter = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
+  private typealias OpenPanelCompletion = @convention(block) (NSArray?) -> Void
+  private typealias OpenPanelHandler = @convention(block) (
+    AnyObject, WKWebView, WKOpenPanelParameters, WKFrameInfo, OpenPanelCompletion
+  ) -> Void
+
+  private static var installed = false
+  private static let openPanelSelector = NSSelectorFromString(
+    "webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:"
+  )
+
+  static func install() {
+    guard !installed else { return }
+    installed = true
+
+    let setterSelector = #selector(setter: WKWebView.uiDelegate)
+    guard let method = class_getInstanceMethod(WKWebView.self, setterSelector) else {
+      NSLog("MoreBetterGakujo: WKWebView.setUIDelegate: is unavailable; file uploads are disabled")
+      return
+    }
+    let originalSetter = unsafeBitCast(method_getImplementation(method), to: UIDelegateSetter.self)
+    let replacement: @convention(block) (AnyObject, AnyObject?) -> Void = { webView, delegate in
+      if let delegate, let delegateClass = object_getClass(delegate) {
+        addOpenPanelHandlerIfNeeded(to: delegateClass)
+      }
+      originalSetter(webView, setterSelector, delegate)
+    }
+    method_setImplementation(
+      method,
+      imp_implementationWithBlock(unsafeBitCast(replacement, to: AnyObject.self))
+    )
+  }
+
+  private static func addOpenPanelHandlerIfNeeded(to delegateClass: AnyClass) {
+    guard !class_respondsToSelector(delegateClass, openPanelSelector) else { return }
+
+    let handler: OpenPanelHandler = { _, webView, parameters, _, completion in
+      let panel = NSOpenPanel()
+      panel.canChooseFiles = true
+      panel.canChooseDirectories = parameters.allowsDirectories
+      panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+      panel.resolvesAliases = true
+
+      let finish: (NSApplication.ModalResponse) -> Void = { response in
+        completion(response == .OK ? panel.urls as NSArray : nil)
+      }
+      if let window = webView.window {
+        panel.beginSheetModal(for: window, completionHandler: finish)
+      } else {
+        finish(panel.runModal())
+      }
+    }
+    // v = void, @ = self, : = _cmd, then webView, parameters, frame, block.
+    class_addMethod(
+      delegateClass,
+      openPanelSelector,
+      imp_implementationWithBlock(unsafeBitCast(handler, to: AnyObject.self)),
+      "v@:@@@@?"
+    )
   }
 }
 
