@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
 
 import 'allowed_web_origins.dart';
+import 'macos_input_focus_service.dart';
 
 enum GakujoNavigationDecision {
   navigate,
@@ -441,7 +442,17 @@ class _JavaScriptDialogHostState extends State<_JavaScriptDialogHost> {
     }
   }
 
+  /// WKWebView keeps the macOS keyboard first responder, so keys typed into a
+  /// Flutter dialog would otherwise go to the page behind it.
+  Future<void> _prepareKeyboardFocus() async {
+    await const MacosInputFocusService().restoreFlutterFirstResponder();
+  }
+
   Future<T?> _show<T>(String message, {required bool cancellable}) async {
+    if (!mounted) {
+      return null;
+    }
+    await _prepareKeyboardFocus();
     if (!mounted) {
       return null;
     }
@@ -466,6 +477,10 @@ class _JavaScriptDialogHostState extends State<_JavaScriptDialogHost> {
   }
 
   Future<String?> _showTextInput(String message, String? defaultText) async {
+    if (!mounted) {
+      return null;
+    }
+    await _prepareKeyboardFocus();
     if (!mounted) {
       return null;
     }
