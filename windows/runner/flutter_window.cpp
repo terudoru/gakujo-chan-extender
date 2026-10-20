@@ -12,6 +12,7 @@
 #include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "resource.h"
 
 namespace {
 
@@ -100,7 +101,11 @@ bool ShowDeadlineNotification(HWND hwnd,
   data.uID = *notification_id;
   data.uFlags = NIF_ICON | NIF_TIP | NIF_INFO | NIF_MESSAGE;
   data.uCallbackMessage = kDeadlineNotificationCallbackMessage;
-  data.hIcon = LoadIcon(nullptr, IDI_INFORMATION);
+  // Show the app's own icon so the tray entry and toast are recognizable.
+  data.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  if (!data.hIcon) {
+    data.hIcon = LoadIcon(nullptr, IDI_INFORMATION);
+  }
   CopyWideString(data.szTip, ARRAYSIZE(data.szTip), L"More Better Gakujo");
   CopyWideString(data.szInfoTitle, ARRAYSIZE(data.szInfoTitle), title);
   CopyWideString(data.szInfo, ARRAYSIZE(data.szInfo), body);
