@@ -196,11 +196,11 @@ Windowsの選択メニューをWebViewの表示位置に合わせるため、`we
 から、その座標通知とフォーカス処理を修正した同系統のパッケージへ移行しています。
 WindowsビルドにはVisual Studio 2022のC++ワークロードとCMake 3.20以降が必要です。
 
-`webview_flutter_windows` はキャンセル可能な事前フックである `NavigationStarting` を
-Dart API に公開していません。そのため、Windows の外部遷移遮断は
-`SourceChanged` を検出した後の `stop()` であり、最初のリクエスト自体は防げません。
-将来 `flutter_inappwebview` の Windows 対応へ移行し、
-`shouldOverrideUrlLoading` を使えば遷移前のブロックが可能になります。
+上流の `webview_flutter_windows` はキャンセル可能な `NavigationStarting` を公開して
+いないため、同梱版に `setNavigationAllowlist` を追加しています。Windows では
+`AllowedWebOrigins.navigationHosts` / `navigationHostSuffixes` 以外へのメインフレーム遷移と
+リダイレクトを、リクエスト送信前にネイティブ側で取り消します。`SourceChanged` 後の
+`stop()` による遮断は、その後ろの二重の防御として残しています。
 
 元の移植メモでは `flutter_inappwebview` への移行も候補にしていましたが、現時点では
 WebView を `GakujoWebViewService` で抽象化したうえで、Windows は `webview_flutter_windows`、
