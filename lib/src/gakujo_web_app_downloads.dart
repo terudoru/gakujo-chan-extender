@@ -524,6 +524,29 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
+  /// Injects pdf.js/pdf-lib or JSZip when the upload compression script
+  /// meets an oversized PDF or Office file.
+  Future<void> _handleUploadCompressionLibraryRequest(String message) async {
+    if (!_canRunPageScripts ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression)) {
+      return;
+    }
+    try {
+      final script = await GakujoUploadCompressionLibraries.scriptFor(message);
+      if (script == null) {
+        return;
+      }
+      await _controller.runJavaScript(script);
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject upload compression libraries',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   Future<void> _handleDownloadMessage(String message) async {
     if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture)) {
       return;

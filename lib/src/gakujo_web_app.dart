@@ -46,6 +46,7 @@ import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
+import 'gakujo_upload_compression_libraries.dart';
 import 'gakujo_upload_compression_script.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
@@ -4069,6 +4070,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _configureWebViewController() async {
     await _controller.setJavaScriptModeUnrestricted();
+    await _controller.addJavaScriptChannel(
+      GakujoUploadCompressionLibraries.channelName,
+      onMessageReceived: _handleUploadCompressionLibraryRequest,
+    );
     await _controller.addJavaScriptChannel(
       GakujoDownloadCaptureScript.channelName,
       onMessageReceived: _handleDownloadMessage,

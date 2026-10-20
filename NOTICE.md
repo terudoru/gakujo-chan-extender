@@ -26,3 +26,6 @@ Android WebView向けに実装したものです。
   （BSD 3-Clause、https://github.com/omar-hanafy/webview_flutter_windows）。
   タッチパッドのスクロール処理を修正しています。ライセンスは同ディレクトリの
   `LICENSE` を参照してください。
+- `assets/js/upload_compression/`: 添付ファイル圧縮に使う pdf.js 3.11.174
+  （Apache-2.0、Mozilla）、pdf-lib 1.17.1（MIT）、JSZip 3.10.1（MIT）。
+  ライセンスは同ディレクトリの `LICENSE.*` を参照してください。

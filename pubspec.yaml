@@ -30,3 +30,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # pdf.js, pdf-lib and JSZip for compressing oversized uploads.
+    - assets/js/upload_compression/

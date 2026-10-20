@@ -312,7 +312,7 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
       GakujoFeatureFlag.reportListCache => '課題一覧の保存',
       GakujoFeatureFlag.sessionRecoveryGuide => 'セッション復帰ガイド',
       GakujoFeatureFlag.autoBackup => '自動バックアップ',
-      GakujoFeatureFlag.uploadCompression => '5MB超の添付画像を自動圧縮',
+      GakujoFeatureFlag.uploadCompression => '5MB超の添付ファイルを自動圧縮',
     };
   }
 

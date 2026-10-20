@@ -5,7 +5,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_script.da
 import 'package:test/test.dart';
 
 void main() {
-  test('compresses an oversized photo below the limit before the page sees it',
+  test('compresses an oversized photo in place, keeping name and format',
       () async {
     final result = await _run({
       'files': [
@@ -18,39 +18,14 @@ void main() {
     expect(result['stopped'], isTrue);
     expect(result['replayed'], ['input', 'change']);
     final files = result['files'] as List;
-    expect(files.single['name'], 'scan.jpg');
+    expect(files.single['name'], 'scan.JPG');
     expect(files.single['type'], 'image/jpeg');
     expect(files.single['size'], lessThanOrEqualTo(4700000));
-    expect(result['status'], contains('画像を圧縮しました'));
+    expect(result['status'], contains('5MB以下に圧縮しました'));
   });
 
-  test('leaves oversized non-images to the page and explains why', () async {
+  test('keeps PNG files as PNG', () async {
     final result = await _run({
-      'files': [
-        {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000},
-      ],
-    });
-
-    expect(result['stopped'], isFalse);
-    expect(result['replayed'], isEmpty);
-    expect((result['files'] as List).single['name'], 'report.pdf');
-    expect(result['status'], contains('画像以外は自動で圧縮できません'));
-  });
-
-  test('ignores files that already fit', () async {
-    final result = await _run({
-      'files': [
-        {'name': 'small.png', 'type': 'image/png', 'size': 1024},
-      ],
-    });
-
-    expect(result['stopped'], isFalse);
-    expect(result['status'], isNull);
-  });
-
-  test('keeps PNG when the input does not accept JPEG', () async {
-    final result = await _run({
-      'accept': '.png',
       'files': [
         {'name': 'diagram.png', 'type': 'image/png', 'size': 9000000},
       ],
@@ -64,7 +39,66 @@ void main() {
     expect(file['size'], lessThanOrEqualTo(4700000));
   });
 
-  test('teardown stops compressing and removes status messages', () async {
+  test('requests the PDF libraries from the app', () async {
+    final result = await _run({
+      'channel': true,
+      'files': [
+        {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000},
+      ],
+    });
+
+    expect(result['stopped'], isTrue);
+    expect(result['channelMessages'], ['pdf']);
+    expect(result['status'], contains('PDFを圧縮しています'));
+  });
+
+  test('requests JSZip for Word files', () async {
+    final result = await _run({
+      'channel': true,
+      'files': [
+        {'name': 'report.docx', 'type': '', 'size': 8000000},
+      ],
+    });
+
+    expect(result['channelMessages'], ['office']);
+  });
+
+  test('keeps the original file when the libraries are unavailable', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000},
+      ],
+    });
+
+    expect(result['stopped'], isTrue);
+    expect(result['replayed'], ['input', 'change']);
+    expect((result['files'] as List).single['size'], 8000000);
+    expect(result['status'], contains('圧縮できませんでした'));
+  });
+
+  test('explains formats it cannot compress', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'data.zip', 'type': 'application/zip', 'size': 8000000},
+      ],
+    });
+
+    expect(result['stopped'], isFalse);
+    expect(result['status'], contains('この形式は自動で圧縮できません'));
+  });
+
+  test('ignores files that already fit', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'small.png', 'type': 'image/png', 'size': 1024},
+      ],
+    });
+
+    expect(result['stopped'], isFalse);
+    expect(result['status'], isNull);
+  });
+
+  test('teardown stops compressing', () async {
     final result = await _run({
       'teardownFirst': true,
       'files': [
@@ -146,7 +180,7 @@ const document = {
         toBlob: (callback, type, quality) => {
           // A rough model: bytes scale with pixels, JPEG with quality.
           const perPixel = type === 'image/jpeg' ? 1.2 * (quality || 0.9) : 1.5;
-          callback({ size: Math.round(canvas.width * canvas.height * perPixel) });
+          callback({ type, size: Math.round(canvas.width * canvas.height * perPixel) });
         },
       };
       return canvas;
@@ -181,7 +215,15 @@ const context = {
   }),
   setInterval: () => 1,
   clearInterval: () => {},
+  setTimeout: () => 1,
+  clearTimeout: () => {},
+  RegExp,
+  Uint8Array,
 };
+const channelMessages = [];
+if (scenario.channel) {
+  context.MbgUploadCompression = { postMessage: (m) => channelMessages.push(m) };
+}
 context.window = context;
 document.defaultView = context;
 vm.createContext(context);
@@ -204,6 +246,7 @@ setTimeout(() => {
       name: f.name, type: f.type, size: f.size,
     })),
     status: statusNode ? statusNode.textContent : null,
+    channelMessages,
   }));
 }, 50);
 ''';

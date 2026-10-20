@@ -1,17 +1,27 @@
-/// Shrinks images chosen in Gakujo file inputs that exceed the 5 MB upload
-/// limit, before the page sees them.
+import 'gakujo_upload_compression_libraries.dart';
+
+/// Shrinks files chosen in Gakujo file inputs that exceed the 5 MB upload
+/// limit, before the page sees them. Every file keeps its name and format:
 ///
-/// Only raster images can be recompressed in the WebView. Other oversized
-/// files are left untouched and the user is told why.
+/// - JPEG, PNG and WebP images are re-encoded in the same format.
+/// - PDFs are rebuilt with each page rendered as a JPEG image.
+/// - Word, PowerPoint and Excel files keep their content and have their
+///   embedded pictures re-encoded.
+///
+/// PDF and Office support uses bundled libraries that the app injects on
+/// request through [GakujoUploadCompressionLibraries.channelName].
 class GakujoUploadCompressionScript {
   const GakujoUploadCompressionScript._();
 
   static const limitBytes = 5 * 1024 * 1024;
 
   static String build() {
-    return r'''
+    return '''
 (function() {
-  var version = 1;
+  var version = 2;
+  var libraryChannelName = '${GakujoUploadCompressionLibraries.channelName}';
+'''
+        r'''
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = true;
   if (window.__MBG_UPLOAD_COMPRESSION_VERSION === version) {
     if (window.__MBG_UPLOAD_COMPRESSION_UPDATE) {
@@ -25,11 +35,16 @@ class GakujoUploadCompressionScript {
   // Leave headroom for multipart overhead and servers that count 5,000,000.
   var targetBytes = 4700000;
   var maxCanvasPixels = 16000000;
-  var compressibleTypes = [
-    'image/jpeg', 'image/png', 'image/webp', 'image/bmp',
-    'image/heic', 'image/heif'
-  ];
+  var libraryTimeoutMs = 30000;
   var replaying = typeof WeakSet === 'function' ? new WeakSet() : null;
+  var libraryWaiters = {};
+
+  var imageTypes = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp'
+  };
+  var officeTypes = {
+    docx: 'word', docm: 'word', pptx: 'ppt', pptm: 'ppt', xlsx: 'xl', xlsm: 'xl'
+  };
 
   function documents() {
     var result = [document];
@@ -60,70 +75,117 @@ class GakujoUploadCompressionScript {
       String(element.type || '').toLowerCase() === 'file';
   }
 
-  function fileType(file) {
+  function extensionOf(file) {
+    var match = /\.([^./\\]+)$/.exec(String(file.name || ''));
+    return match ? match[1].toLowerCase() : '';
+  }
+
+  function kindOf(file) {
+    var extension = extensionOf(file);
     var type = String(file.type || '').toLowerCase();
-    if (type) {
-      return type;
+    if (imageTypes[extension] || /^image\/(jpeg|png|webp)$/.test(type)) {
+      return 'image';
     }
-    var name = String(file.name || '').toLowerCase();
-    if (/\.jpe?g$/.test(name)) return 'image/jpeg';
-    if (/\.png$/.test(name)) return 'image/png';
-    if (/\.webp$/.test(name)) return 'image/webp';
-    if (/\.bmp$/.test(name)) return 'image/bmp';
-    if (/\.hei[cf]$/.test(name)) return 'image/heic';
-    return '';
-  }
-
-  function acceptAllows(input, type, extension) {
-    var accept = String(input.getAttribute('accept') || '').trim();
-    if (!accept) {
-      return true;
+    if (extension === 'pdf' || type === 'application/pdf') {
+      return 'pdf';
     }
-    var entries = accept.toLowerCase().split(',');
-    for (var i = 0; i < entries.length; i += 1) {
-      var entry = entries[i].trim();
-      if (entry === type || entry === '*/*' || entry === 'image/*' ||
-          entry === '.' + extension ||
-          (extension === 'jpg' && entry === '.jpeg')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // JPEG compresses photos and scans far better. Keep PNG only when the
-  // input's accept list rules JPEG out.
-  function outputFormat(input, file) {
-    if (acceptAllows(input, 'image/jpeg', 'jpg')) {
-      return { type: 'image/jpeg', extension: 'jpg' };
-    }
-    if (fileType(file) === 'image/png' && acceptAllows(input, 'image/png', 'png')) {
-      return { type: 'image/png', extension: 'png' };
+    if (officeTypes[extension]) {
+      return 'office';
     }
     return null;
   }
 
-  function renamed(name, extension) {
-    var base = String(name || 'image').replace(/\.[^./\\]*$/, '');
-    return (base || 'image') + '.' + extension;
+  function imageTypeOf(file) {
+    var type = String(file.type || '').toLowerCase();
+    if (/^image\/(jpeg|png|webp)$/.test(type)) {
+      return type;
+    }
+    return imageTypes[extensionOf(file)] || 'image/jpeg';
   }
 
-  function loadImage(file) {
+  function makeFile(input, parts, file, type) {
+    var FileCtor = viewOf(input).File || File;
+    return new FileCtor(parts, file.name, {
+      type: type || file.type || '',
+      lastModified: file.lastModified || Date.now()
+    });
+  }
+
+  function readBytes(blob) {
+    if (blob.arrayBuffer) {
+      return blob.arrayBuffer();
+    }
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() { resolve(reader.result); };
+      reader.onerror = function() { reject(reader.error); };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  // ---------------------------------------------------------------- libraries
+
+  function libraryReady(kind) {
+    if (kind === 'pdf') {
+      return !!(window.pdfjsLib && window.PDFLib);
+    }
+    return !!window.JSZip;
+  }
+
+  window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED = function(kind) {
+    var waiters = libraryWaiters[kind] || [];
+    delete libraryWaiters[kind];
+    for (var i = 0; i < waiters.length; i += 1) {
+      waiters[i]();
+    }
+  };
+
+  function requestLibrary(kind) {
+    if (libraryReady(kind)) {
+      return Promise.resolve();
+    }
+    return new Promise(function(resolve, reject) {
+      var channel = window[libraryChannelName];
+      if (!channel || typeof channel.postMessage !== 'function') {
+        reject(new Error('圧縮に必要な機能を読み込めませんでした'));
+        return;
+      }
+      var timer = window.setTimeout(function() {
+        reject(new Error('圧縮に必要な機能の読み込みがタイムアウトしました'));
+      }, libraryTimeoutMs);
+      var waiters = libraryWaiters[kind] = libraryWaiters[kind] || [];
+      waiters.push(function() {
+        window.clearTimeout(timer);
+        if (libraryReady(kind)) {
+          resolve();
+        } else {
+          reject(new Error('圧縮に必要な機能を読み込めませんでした'));
+        }
+      });
+      if (waiters.length === 1) {
+        channel.postMessage(kind);
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------ images
+
+  function loadImage(blob) {
     if (typeof createImageBitmap === 'function') {
-      return createImageBitmap(file, { imageOrientation: 'from-image' })
+      return createImageBitmap(blob, { imageOrientation: 'from-image' })
         .catch(function() {
-          return createImageBitmap(file);
+          return createImageBitmap(blob);
         })
         .catch(function() {
-          return loadImageElement(file);
+          return loadImageElement(blob);
         });
     }
-    return loadImageElement(file);
+    return loadImageElement(blob);
   }
 
-  function loadImageElement(file) {
+  function loadImageElement(blob) {
     return new Promise(function(resolve, reject) {
-      var url = URL.createObjectURL(file);
+      var url = URL.createObjectURL(blob);
       var image = new Image();
       image.onload = function() {
         URL.revokeObjectURL(url);
@@ -137,39 +199,63 @@ class GakujoUploadCompressionScript {
     });
   }
 
-  function encode(image, width, height, format, quality) {
+  function canvasToBlob(canvas, type, quality) {
     return new Promise(function(resolve, reject) {
-      var canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      var context = canvas.getContext('2d');
-      if (!context) {
-        reject(new Error('画像を処理できませんでした'));
-        return;
-      }
-      if (format.type === 'image/jpeg') {
-        // JPEG has no alpha; transparent areas would otherwise turn black.
-        context.fillStyle = '#ffffff';
-        context.fillRect(0, 0, width, height);
-      }
-      context.drawImage(image, 0, 0, width, height);
       canvas.toBlob(function(blob) {
-        canvas.width = 0;
-        canvas.height = 0;
         if (blob) {
           resolve(blob);
         } else {
           reject(new Error('画像を書き出せませんでした'));
         }
-      }, format.type, quality);
+      }, type, quality);
     });
   }
 
-  function compressImage(input, file) {
-    var format = outputFormat(input, file);
-    if (!format) {
-      return Promise.reject(new Error('この欄で受け付ける形式に圧縮できません'));
+  function newCanvas(width, height) {
+    var canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+
+  function releaseCanvas(canvas) {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  // Re-encodes an image in the same format, at most maxSide pixels on its
+  // longer edge. Returns null when the browser cannot write that format.
+  function encodeImage(image, type, scale, quality) {
+    var width = image.width || image.naturalWidth;
+    var height = image.height || image.naturalHeight;
+    var w = Math.max(1, Math.round(width * scale));
+    var h = Math.max(1, Math.round(height * scale));
+    var canvas = newCanvas(w, h);
+    var context = canvas.getContext('2d');
+    if (!context) {
+      return Promise.reject(new Error('画像を処理できませんでした'));
     }
+    if (type === 'image/jpeg') {
+      // JPEG has no alpha; transparent areas would otherwise turn black.
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, w, h);
+    }
+    context.drawImage(image, 0, 0, w, h);
+    return canvasToBlob(canvas, type, quality).then(function(blob) {
+      releaseCanvas(canvas);
+      if (blob.type && blob.type !== type) {
+        return null;
+      }
+      return blob;
+    });
+  }
+
+  function qualitiesFor(type) {
+    return type === 'image/png' ? [undefined] : [0.85, 0.72, 0.6];
+  }
+
+  function compressImage(input, file) {
+    var type = imageTypeOf(file);
     return loadImage(file).then(function(image) {
       var width = image.width || image.naturalWidth;
       var height = image.height || image.naturalHeight;
@@ -177,23 +263,20 @@ class GakujoUploadCompressionScript {
         throw new Error('画像サイズを取得できませんでした');
       }
       var scale = Math.min(1, Math.sqrt(maxCanvasPixels / (width * height)));
-      var qualities = format.type === 'image/jpeg' ? [0.85, 0.72, 0.6] : [undefined];
+      var qualities = qualitiesFor(type);
       var attempt = 0;
 
       function tryNext() {
         var quality = qualities[attempt % qualities.length];
-        var w = Math.max(1, Math.round(width * scale));
-        var h = Math.max(1, Math.round(height * scale));
-        return encode(image, w, h, format, quality).then(function(blob) {
+        return encodeImage(image, type, scale, quality).then(function(blob) {
+          if (!blob) {
+            throw new Error('この形式の画像は圧縮できません');
+          }
           if (blob.size <= targetBytes) {
             if (image.close) {
               image.close();
             }
-            var FileCtor = viewOf(input).File || File;
-            return new FileCtor([blob], renamed(file.name, format.extension), {
-              type: format.type,
-              lastModified: file.lastModified || Date.now()
-            });
+            return makeFile(input, [blob], file, type);
           }
           attempt += 1;
           if (attempt % qualities.length === 0) {
@@ -208,6 +291,196 @@ class GakujoUploadCompressionScript {
       return tryNext();
     });
   }
+
+  // --------------------------------------------------------------------- PDF
+
+  // Rendering resolution and JPEG quality, tried in order until it fits.
+  var pdfSteps = [
+    { dpi: 150, quality: 0.75 },
+    { dpi: 120, quality: 0.65 },
+    { dpi: 96, quality: 0.6 },
+    { dpi: 72, quality: 0.5 },
+    { dpi: 56, quality: 0.45 }
+  ];
+
+  function compressPdf(input, file, progress) {
+    return requestLibrary('pdf').then(function() {
+      return readBytes(file);
+    }).then(function(buffer) {
+      return window.pdfjsLib.getDocument({
+        data: new Uint8Array(buffer),
+        isEvalSupported: false,
+        useSystemFonts: true
+      }).promise;
+    }).then(function(pdf) {
+      var step = 0;
+      function tryStep() {
+        if (step >= pdfSteps.length) {
+          pdf.destroy();
+          throw new Error('5MB以下まで小さくできませんでした');
+        }
+        var settings = pdfSteps[step];
+        return rasterizePdf(pdf, settings, progress).then(function(bytes) {
+          if (bytes && bytes.length <= targetBytes) {
+            pdf.destroy();
+            return makeFile(input, [bytes], file, 'application/pdf');
+          }
+          step += 1;
+          return tryStep();
+        });
+      }
+      return tryStep();
+    }, function(error) {
+      if (error && error.name === 'PasswordException') {
+        throw new Error('パスワード付きのPDFは圧縮できません');
+      }
+      throw error;
+    });
+  }
+
+  // Returns the rebuilt PDF bytes, or null as soon as the pages alone already
+  // exceed the target so the next, smaller step can start.
+  function rasterizePdf(pdf, settings, progress) {
+    var PDFDocument = window.PDFLib.PDFDocument;
+    return PDFDocument.create().then(function(output) {
+      var pageNumber = 0;
+      var imageBytes = 0;
+      function nextPage() {
+        pageNumber += 1;
+        if (pageNumber > pdf.numPages) {
+          return output.save({ useObjectStreams: true });
+        }
+        progress('PDFを圧縮しています… ' + pageNumber + '/' + pdf.numPages + 'ページ');
+        return pdf.getPage(pageNumber).then(function(page) {
+          var size = page.getViewport({ scale: 1 });
+          var scale = settings.dpi / 72;
+          var pixels = size.width * scale * size.height * scale;
+          if (pixels > maxCanvasPixels) {
+            scale *= Math.sqrt(maxCanvasPixels / pixels);
+          }
+          var viewport = page.getViewport({ scale: scale });
+          var canvas = newCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+          var context = canvas.getContext('2d');
+          context.fillStyle = '#ffffff';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          return page.render({ canvasContext: context, viewport: viewport }).promise
+            .then(function() {
+              return canvasToBlob(canvas, 'image/jpeg', settings.quality);
+            })
+            .then(function(blob) {
+              releaseCanvas(canvas);
+              page.cleanup();
+              return readBytes(blob);
+            })
+            .then(function(jpeg) {
+              imageBytes += jpeg.byteLength;
+              if (imageBytes > targetBytes) {
+                return null;
+              }
+              return output.embedJpg(jpeg).then(function(image) {
+                var outputPage = output.addPage([size.width, size.height]);
+                outputPage.drawImage(image, {
+                  x: 0, y: 0, width: size.width, height: size.height
+                });
+                return nextPage();
+              });
+            });
+        });
+      }
+      return nextPage();
+    });
+  }
+
+  // ------------------------------------------------------------------ Office
+
+  // Longest edge in pixels and JPEG quality for embedded pictures.
+  var officeSteps = [
+    { maxSide: 2400, quality: 0.8 },
+    { maxSide: 1600, quality: 0.7 },
+    { maxSide: 1200, quality: 0.6 },
+    { maxSide: 900, quality: 0.5 },
+    { maxSide: 640, quality: 0.45 }
+  ];
+
+  function compressOffice(input, file, progress) {
+    var folder = officeTypes[extensionOf(file)];
+    var mediaPattern = new RegExp('^' + folder + '/media/[^/]+\\.(jpe?g|png)$', 'i');
+    var original;
+    return requestLibrary('office').then(function() {
+      return readBytes(file);
+    }).then(function(buffer) {
+      original = buffer;
+      var step = 0;
+      function tryStep() {
+        if (step >= officeSteps.length) {
+          throw new Error('5MB以下まで小さくできませんでした');
+        }
+        progress('文書内の画像を圧縮しています…');
+        return rebuildOffice(original, mediaPattern, officeSteps[step], file.type)
+          .then(function(bytes) {
+            if (bytes.length <= targetBytes) {
+              return makeFile(input, [bytes], file);
+            }
+            step += 1;
+            return tryStep();
+          });
+      }
+      return tryStep();
+    });
+  }
+
+  function rebuildOffice(buffer, mediaPattern, settings, mimeType) {
+    return window.JSZip.loadAsync(buffer).then(function(zip) {
+      var names = Object.keys(zip.files).filter(function(name) {
+        return mediaPattern.test(name) && !zip.files[name].dir;
+      });
+      var index = 0;
+      function nextImage() {
+        if (index >= names.length) {
+          return zip.generateAsync({
+            type: 'uint8array',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 9 },
+            mimeType: mimeType || undefined
+          });
+        }
+        var name = names[index];
+        index += 1;
+        var type = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg';
+        return zip.file(name).async('uint8array').then(function(bytes) {
+          var blob = new Blob([bytes], { type: type });
+          return loadImage(blob).then(function(image) {
+            var width = image.width || image.naturalWidth;
+            var height = image.height || image.naturalHeight;
+            var scale = Math.min(1, settings.maxSide / Math.max(width, height));
+            // A PNG only shrinks by losing pixels; leave small ones untouched.
+            if (type === 'image/png' && scale >= 1) {
+              return null;
+            }
+            return encodeImage(image, type, scale,
+              type === 'image/png' ? undefined : settings.quality);
+          }).then(function(encoded) {
+            if (!encoded || encoded.size >= bytes.length) {
+              return null;
+            }
+            return readBytes(encoded);
+          }, function() {
+            // Pictures the WebView cannot decode stay as they are.
+            return null;
+          }).then(function(replacement) {
+            if (replacement) {
+              // Real Office files have no folder entries; do not add any.
+              zip.file(name, replacement, { createFolders: false });
+            }
+            return nextImage();
+          });
+        });
+      }
+      return nextImage();
+    });
+  }
+
+  // -------------------------------------------------------------- page glue
 
   function statusFor(input) {
     var doc = input.ownerDocument;
@@ -255,6 +528,21 @@ class GakujoUploadCompressionScript {
     return replaying ? replaying.has(input) : !!input.__mbgUploadCompressionReplaying;
   }
 
+  function compress(input, file, progress) {
+    switch (kindOf(file)) {
+      case 'image':
+        progress('5MBを超える画像を圧縮しています…');
+        return compressImage(input, file);
+      case 'pdf':
+        progress('5MBを超えるPDFを圧縮しています…');
+        return compressPdf(input, file, progress);
+      case 'office':
+        return compressOffice(input, file, progress);
+      default:
+        return Promise.reject(new Error('この形式は自動で圧縮できません'));
+    }
+  }
+
   function handleChange(event) {
     var input = event.target;
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED || !isFileInput(input) ||
@@ -269,19 +557,19 @@ class GakujoUploadCompressionScript {
       return;
     }
     var unsupported = oversized.filter(function(file) {
-      return compressibleTypes.indexOf(fileType(file)) < 0;
+      return !kindOf(file);
     });
     if (unsupported.length) {
       showStatus(input,
         '5MBを超えるファイルがあります（' + unsupported[0].name + '、' +
-        formatSize(unsupported[0].size) + '）。画像以外は自動で圧縮できません。',
+        formatSize(unsupported[0].size) + '）。この形式は自動で圧縮できません。',
         true);
       return;
     }
     var DataTransferCtor = viewOf(input).DataTransfer ||
       (typeof DataTransfer === 'function' ? DataTransfer : null);
     if (typeof DataTransferCtor !== 'function') {
-      showStatus(input, 'このWebViewでは画像を自動で圧縮できません。', true);
+      showStatus(input, 'このWebViewではファイルを自動で圧縮できません。', true);
       return;
     }
 
@@ -290,11 +578,25 @@ class GakujoUploadCompressionScript {
     var originalTotal = oversized.reduce(function(sum, file) {
       return sum + file.size;
     }, 0);
-    showStatus(input, '5MBを超える画像を圧縮しています…', false);
+    function progress(message) {
+      showStatus(input, message, false);
+    }
 
-    Promise.all(files.map(function(file) {
-      return file.size > limitBytes ? compressImage(input, file) : file;
-    })).then(function(results) {
+    // One file at a time keeps memory use bounded on phones.
+    var results = [];
+    var chain = Promise.resolve();
+    files.forEach(function(file) {
+      chain = chain.then(function() {
+        if (file.size <= limitBytes) {
+          return file;
+        }
+        return compress(input, file, progress);
+      }).then(function(result) {
+        results.push(result);
+      });
+    });
+
+    chain.then(function() {
       var transfer = new DataTransferCtor();
       var compressedTotal = 0;
       for (var i = 0; i < results.length; i += 1) {
@@ -305,12 +607,12 @@ class GakujoUploadCompressionScript {
       }
       input.files = transfer.files;
       showStatus(input,
-        '画像を圧縮しました: ' + formatSize(originalTotal) + ' → ' +
+        '5MB以下に圧縮しました: ' + formatSize(originalTotal) + ' → ' +
         formatSize(compressedTotal), false);
       replayChange(input);
     }, function(error) {
       showStatus(input,
-        '画像を圧縮できませんでした: ' + (error && error.message || error) +
+        '圧縮できませんでした: ' + (error && error.message || error) +
         '。元のファイルのままです。', true);
       replayChange(input);
     });
