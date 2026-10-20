@@ -1411,7 +1411,7 @@ class MainActivity : FlutterActivity() {
             Notification.Builder(this)
         }
         val notification = builder
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_deadline)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
