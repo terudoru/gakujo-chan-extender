@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
@@ -21,5 +22,16 @@ void main() {
     final uri = savedDownloadLocationUri('javascript:alert(1)');
 
     expect(uri.scheme, 'file');
+  });
+
+  test('opens Android content uris through the native read grant', () {
+    final content = savedDownloadLocationUri(
+      'content://com.android.externalstorage.documents/document/primary%3Ax.pdf',
+    );
+    final file = savedDownloadLocationUri('/tmp/x.pdf');
+
+    expect(opensSavedDownloadNatively(content, TargetPlatform.android), isTrue);
+    expect(opensSavedDownloadNatively(file, TargetPlatform.android), isFalse);
+    expect(opensSavedDownloadNatively(content, TargetPlatform.iOS), isFalse);
   });
 }

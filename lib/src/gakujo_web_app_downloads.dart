@@ -2,6 +2,13 @@
 
 part of 'gakujo_web_app.dart';
 
+/// Android saves downloads as SAF content URIs, which viewer apps can read
+/// only through an intent that carries a read grant.
+@visibleForTesting
+bool opensSavedDownloadNatively(Uri uri, TargetPlatform platform) {
+  return platform == TargetPlatform.android && uri.scheme == 'content';
+}
+
 @visibleForTesting
 Future<bool> recordGakujoDownloadMetadataBestEffort({
   required GakujoDownloadHistoryStore historyStore,
@@ -840,9 +847,31 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
   Future<void> _openSavedDownload(String location) async {
     final uri = savedDownloadLocationUri(location);
-    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final launched = opensSavedDownloadNatively(uri, defaultTargetPlatform)
+        ? await _openSavedDownloadNatively(uri)
+        : await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched) {
       _showSnackBar('ファイルを開けませんでした');
+    }
+  }
+
+  Future<bool> _openSavedDownloadNatively(Uri uri) async {
+    try {
+      final opened = await _gakujoNativeDownloadsChannel.invokeMethod<bool>(
+        'openDownloadedFile',
+        {'location': uri.toString()},
+      );
+      return opened ?? false;
+    } on PlatformException catch (error, stackTrace) {
+      developer.log(
+        'Failed to open saved download',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    } on MissingPluginException {
+      return false;
     }
   }
 

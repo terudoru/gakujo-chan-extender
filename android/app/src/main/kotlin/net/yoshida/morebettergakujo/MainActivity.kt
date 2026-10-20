@@ -504,6 +504,7 @@ class MainActivity : FlutterActivity() {
                 "downloadToConfiguredFolder" -> downloadToConfiguredFolder(call, result)
                 "downloadToPickedFile" -> downloadToPickedFile(call, result)
                 "exportDownloadedFile" -> exportDownloadedFile(call, result)
+                "openDownloadedFile" -> openDownloadedFile(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -586,6 +587,36 @@ class MainActivity : FlutterActivity() {
         return pendingPickRootResult != null ||
             pendingPickFileResult != null ||
             pendingExportResult != null
+    }
+
+    /**
+     * Saved downloads are SAF document URIs that only this app can read. A bare
+     * ACTION_VIEW (as url_launcher sends) carries neither the MIME type nor a
+     * read grant, so viewer apps cannot be found or cannot open the file.
+     */
+    private fun openDownloadedFile(call: MethodCall, result: MethodChannel.Result) {
+        val location = (call.arguments as? Map<*, *>)?.get("location")?.toString()?.trim()
+        val uri = location?.takeIf { it.isNotEmpty() }?.let(Uri::parse)
+        if (uri == null || uri.scheme != "content") {
+            result.success(false)
+            return
+        }
+        val mimeType = try {
+            contentResolver.getType(uri)
+        } catch (error: Exception) {
+            null
+        }?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivity(intent)
+            result.success(true)
+        } catch (error: Exception) {
+            Log.w(TAG, "Failed to open saved download", error)
+            result.success(false)
+        }
     }
 
     private fun exportDownloadedFile(call: MethodCall, result: MethodChannel.Result) {
