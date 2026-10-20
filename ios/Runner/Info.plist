@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>課題などに添付する写真や動画をその場で撮影するために使用します。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>課題などに添付する動画をその場で撮影するときに音声を録音するために使用します。</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>履修中の授業予定を端末のカレンダーに追加・更新するために使用します。</string>
 	<key>NSCalendarsUsageDescription</key>
