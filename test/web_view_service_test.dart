@@ -34,4 +34,11 @@ void main() {
     expect(androidUploadTypeGroups(['.pdf', '*/*']), isEmpty);
     expect(androidUploadTypeGroups(['audio']), isEmpty);
   });
+
+  test('Flutter handles JavaScript dialogs only for WKWebView platforms', () {
+    expect(needsFlutterJavaScriptDialogs(TargetPlatform.iOS), isTrue);
+    expect(needsFlutterJavaScriptDialogs(TargetPlatform.macOS), isTrue);
+    expect(needsFlutterJavaScriptDialogs(TargetPlatform.android), isFalse);
+    expect(needsFlutterJavaScriptDialogs(TargetPlatform.windows), isFalse);
+  });
 }

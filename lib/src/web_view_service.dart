@@ -4,7 +4,7 @@ import 'dart:developer' as developer;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
 
@@ -104,9 +104,12 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
 
   @override
   Widget buildWidget(GakujoWebViewController controller) {
-    return WebViewWidget(
-      controller: (controller as WebViewFlutterGakujoWebViewController)._inner,
-    );
+    final inner = (controller as WebViewFlutterGakujoWebViewController)._inner;
+    final webView = WebViewWidget(controller: inner);
+    if (!needsFlutterJavaScriptDialogs(defaultTargetPlatform)) {
+      return webView;
+    }
+    return _JavaScriptDialogHost(controller: inner, child: webView);
   }
 
   @override
@@ -377,6 +380,158 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
 bool supportsNativeGakujoHistoryGestures(TargetPlatform platform) {
   return platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+}
+
+/// webview_flutter_wkwebview drops `alert()` and makes `confirm()` return
+/// false unless Flutter handles the panels, which silently cancels confirmed
+/// actions such as submissions. Android and Windows show native dialogs.
+@visibleForTesting
+bool needsFlutterJavaScriptDialogs(TargetPlatform platform) {
+  return platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
+}
+
+class _JavaScriptDialogHost extends StatefulWidget {
+  const _JavaScriptDialogHost({
+    required this.controller,
+    required this.child,
+  });
+
+  final WebViewController controller;
+  final Widget child;
+
+  @override
+  State<_JavaScriptDialogHost> createState() => _JavaScriptDialogHostState();
+}
+
+class _JavaScriptDialogHostState extends State<_JavaScriptDialogHost> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_register(widget.controller));
+  }
+
+  @override
+  void didUpdateWidget(_JavaScriptDialogHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      unawaited(_register(widget.controller));
+    }
+  }
+
+  Future<void> _register(WebViewController controller) async {
+    try {
+      await controller.setOnJavaScriptAlertDialog((request) async {
+        await _show<void>(request.message, cancellable: false);
+      });
+      await controller.setOnJavaScriptConfirmDialog((request) async {
+        return await _show<bool>(request.message, cancellable: true) ?? false;
+      });
+      await controller.setOnJavaScriptTextInputDialog((request) async {
+        return await _showTextInput(request.message, request.defaultText) ??
+            '';
+      });
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to register WebView JavaScript dialogs',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<T?> _show<T>(String message, {required bool cancellable}) async {
+    if (!mounted) {
+      return null;
+    }
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        content: SingleChildScrollView(child: Text(message)),
+        actions: [
+          if (cancellable)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('キャンセル'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showTextInput(String message, String? defaultText) async {
+    if (!mounted) {
+      return null;
+    }
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _JavaScriptTextInputDialog(
+        message: message,
+        defaultText: defaultText ?? '',
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// Owns its text controller so the field is not disposed while the dialog's
+/// closing animation still renders it.
+class _JavaScriptTextInputDialog extends StatefulWidget {
+  const _JavaScriptTextInputDialog({
+    required this.message,
+    required this.defaultText,
+  });
+
+  final String message;
+  final String defaultText;
+
+  @override
+  State<_JavaScriptTextInputDialog> createState() =>
+      _JavaScriptTextInputDialogState();
+}
+
+class _JavaScriptTextInputDialogState
+    extends State<_JavaScriptTextInputDialog> {
+  late final TextEditingController _text =
+      TextEditingController(text: widget.defaultText);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.message),
+          TextField(controller: _text, autofocus: true),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_text.text),
+          child: const Text('OK'),
+        ),
+      ],
+    );
+  }
 }
 
 @visibleForTesting
