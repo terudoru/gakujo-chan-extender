@@ -8,6 +8,7 @@
 
 #include "texture_bridge_gpu.h"
 #include "util/cursor_util.h"
+#include "util/navigation_allowlist.h"
 #include "util/surface_geometry.h"
 
 namespace {
@@ -127,6 +128,7 @@ constexpr auto kMethodClearCookies = "clearCookies";
 constexpr auto kMethodClearCache = "clearCache";
 constexpr auto kMethodSetCacheDisabled = "setCacheDisabled";
 constexpr auto kMethodSetPopupWindowPolicy = "setPopupWindowPolicy";
+constexpr auto kMethodSetNavigationAllowlist = "setNavigationAllowlist";
 constexpr auto kMethodSetDefaultContextMenusEnabled =
     "setDefaultContextMenusEnabled";
 constexpr auto kMethodSetFpsLimit = "setFpsLimit";
@@ -138,6 +140,24 @@ constexpr auto kEventValue = "value";
 constexpr auto kErrorNotSupported = "not_supported";
 constexpr auto kScriptFailed = "script_failed";
 constexpr auto kMethodFailed = "method_failed";
+
+// More Better Gakujo patch: reads a list of strings, lowercased.
+static std::vector<std::string> GetLowercaseStrings(
+    const flutter::EncodableMap& map, const char* key) {
+  std::vector<std::string> values;
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return values;
+  }
+  if (const auto list = std::get_if<flutter::EncodableList>(&it->second)) {
+    for (const auto& item : *list) {
+      if (const auto value = std::get_if<std::string>(&item)) {
+        values.push_back(util::AsciiLower(*value));
+      }
+    }
+  }
+  return values;
+}
 
 static const std::optional<std::pair<double, double>> GetPointFromArgs(
     const flutter::EncodableValue* args) {
@@ -258,6 +278,15 @@ WebviewBridge::~WebviewBridge() {
 }
 
 void WebviewBridge::RegisterEventHandlers() {
+  webview_->OnNavigationBlocked([this](const std::string& url) {
+    const auto event = flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue(kEventType),
+         flutter::EncodableValue("navigationBlocked")},
+        {flutter::EncodableValue(kEventValue), flutter::EncodableValue(url)},
+    });
+    EmitEvent(event);
+  });
+
   webview_->OnUrlChanged([this](const std::string& url) {
     const auto event = flutter::EncodableValue(flutter::EncodableMap{
         {flutter::EncodableValue(kEventType),
@@ -844,6 +873,24 @@ void WebviewBridge::HandleMethodCall(
       if (webview_->SetCacheDisabled(*disabled)) {
         return result->Success();
       }
+    }
+    return result->Error(kErrorInvalidArgs);
+  }
+
+  // setNavigationAllowlist: {"hosts": [String], "hostSuffixes": [String]}
+  // or null to allow every navigation.
+  if (method_name.compare(kMethodSetNavigationAllowlist) == 0) {
+    if (std::holds_alternative<std::monostate>(*method_call.arguments())) {
+      webview_->SetNavigationAllowlist(std::nullopt);
+      return result->Success();
+    }
+    if (const auto map =
+            std::get_if<flutter::EncodableMap>(method_call.arguments())) {
+      util::NavigationAllowlist allowlist;
+      allowlist.hosts = GetLowercaseStrings(*map, "hosts");
+      allowlist.host_suffixes = GetLowercaseStrings(*map, "hostSuffixes");
+      webview_->SetNavigationAllowlist(std::move(allowlist));
+      return result->Success();
     }
     return result->Error(kErrorInvalidArgs);
   }

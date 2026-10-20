@@ -246,6 +246,32 @@ void Webview::RegisterEventHandlers() {
           .Get(),
       &event_registrations_.history_changed_token_);
 
+  // More Better Gakujo patch: block disallowed navigations, including
+  // redirects, before WebView2 sends the request.
+  webview_->add_NavigationStarting(
+      Callback<ICoreWebView2NavigationStartingEventHandler>(
+          [this](ICoreWebView2* sender,
+                 ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+            if (!navigation_allowlist_) {
+              return S_OK;
+            }
+            wil::unique_cotaskmem_string wuri;
+            if (FAILED(args->get_Uri(&wuri)) || !wuri) {
+              return S_OK;
+            }
+            const std::string uri = util::Utf8FromUtf16(wuri.get());
+            if (util::IsNavigationAllowed(uri, *navigation_allowlist_)) {
+              return S_OK;
+            }
+            args->put_Cancel(TRUE);
+            if (navigation_blocked_callback_) {
+              navigation_blocked_callback_(uri);
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.navigation_starting_token_);
+
   webview_->add_SourceChanged(
       Callback<ICoreWebView2SourceChangedEventHandler>(
           [this](ICoreWebView2* sender, IUnknown* args) -> HRESULT {

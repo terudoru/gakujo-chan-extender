@@ -634,6 +634,12 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
     // The plugin turns WebView2's context menu off, which left Windows users
     // without right-click copy while other platforms keep their native menus.
     await windowsController._inner.setDefaultContextMenusEnabled(true);
+    // Block disallowed sites before the request is sent; the URL listener
+    // below only sees a navigation after it has started.
+    await windowsController._inner.setNavigationAllowlist(
+      hosts: AllowedWebOrigins.navigationHosts,
+      hostSuffixes: AllowedWebOrigins.navigationHostSuffixes,
+    );
   }
 }
 
@@ -672,6 +678,26 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       );
     }));
     _subscriptions.add(_inner.webMessage.listen(_handleWebMessage));
+    _subscriptions.add(_inner.navigationBlocked.listen((url) {
+      unawaited(_reportBlockedNavigation(url));
+    }));
+  }
+
+  /// The native side already cancelled the navigation; this lets the app
+  /// explain the block the same way as on other platforms.
+  Future<void> _reportBlockedNavigation(String url) async {
+    try {
+      await _delegate?.onNavigationRequest?.call(
+        GakujoNavigationRequest(url: url),
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Windows WebView blocked-navigation handler failed',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   final windows.WebviewController _inner;

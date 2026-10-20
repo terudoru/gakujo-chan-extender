@@ -13,9 +13,11 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late List<MethodCall> calls;
+  late MockStreamHandlerEventSink? eventSink;
 
   setUp(() {
     calls = [];
+    eventSink = null;
     messenger.setMockMethodCallHandler(plugin, (call) async {
       if (call.method == 'initialize') return {'textureId': 73};
       return null;
@@ -26,7 +28,9 @@ void main() {
     });
     messenger.setMockStreamHandler(
       events,
-      MockStreamHandler.inline(onListen: (arguments, sink) {}),
+      MockStreamHandler.inline(onListen: (arguments, sink) {
+        eventSink = sink;
+      }),
     );
   });
 
@@ -91,6 +95,48 @@ void main() {
       (call) => call.method == 'setDefaultContextMenusEnabled',
     );
     expect(call.arguments, isTrue);
+    await tester.runAsync(controller.dispose);
+  });
+
+  testWidgets('Windows service blocks disallowed sites before navigation', (
+    tester,
+  ) async {
+    final native = windows.WebviewController();
+    await tester.runAsync(native.initialize);
+    final controller = WindowsGakujoWebViewController(native);
+    const service = WindowsGakujoWebViewService();
+    final requested = <String>[];
+    await tester.runAsync(
+      () => controller.setNavigationDelegate(
+        GakujoNavigationDelegate(
+          onNavigationRequest: (request) {
+            requested.add(request.url);
+            return GakujoNavigationDecision.prevent;
+          },
+        ),
+      ),
+    );
+
+    await tester.runAsync(
+      () => service.configureController(controller, debugAllowed: false),
+    );
+
+    final call = calls.lastWhere(
+      (call) => call.method == 'setNavigationAllowlist',
+    );
+    final arguments = call.arguments as Map<Object?, Object?>;
+    expect(arguments['hosts'], contains('gakujo.iess.niigata-u.ac.jp'));
+    expect(arguments['hostSuffixes'], contains('.niigata-u.ac.jp'));
+
+    await tester.runAsync(() async {
+      eventSink!.success({
+        'type': 'navigationBlocked',
+        'value': 'https://example.com/',
+      });
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+    });
+    expect(requested, ['https://example.com/']);
     await tester.runAsync(controller.dispose);
   });
 }

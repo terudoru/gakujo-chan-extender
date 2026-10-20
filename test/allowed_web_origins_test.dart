@@ -231,4 +231,37 @@ void main() {
       isTrue,
     );
   });
+
+  test('native navigation allow-list matches canNavigate', () {
+    for (final host in AllowedWebOrigins.navigationHosts) {
+      expect(
+        AllowedWebOrigins.canNavigate('https://$host/', debugAllowed: false),
+        isTrue,
+        reason: host,
+      );
+      expect(host, host.toLowerCase());
+    }
+    for (final suffix in AllowedWebOrigins.navigationHostSuffixes) {
+      expect(suffix, startsWith('.'));
+      expect(
+        AllowedWebOrigins.canNavigate(
+          'https://sub$suffix/',
+          debugAllowed: false,
+        ),
+        isTrue,
+        reason: suffix,
+      );
+    }
+    for (final url in [
+      'https://example.com/',
+      'https://evilniigata-u.ac.jp/',
+      'https://notyoutube.com/',
+    ]) {
+      expect(
+        AllowedWebOrigins.canNavigate(url, debugAllowed: false),
+        isFalse,
+        reason: url,
+      );
+    }
+  });
 }

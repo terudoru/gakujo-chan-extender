@@ -280,6 +280,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// A stream reflecting the current URL.
   Stream<String> get url => _urlStreamController.stream;
 
+  final StreamController<String> _navigationBlockedStreamController =
+      StreamController<String>.broadcast();
+
+  /// More Better Gakujo patch: URLs whose navigation was cancelled by
+  /// [setNavigationAllowlist] before any request was sent.
+  Stream<String> get navigationBlocked =>
+      _navigationBlockedStreamController.stream;
+
   final StreamController<LoadingState> _loadingStateStreamController =
       StreamController<LoadingState>.broadcast();
 
@@ -420,6 +428,9 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       case 'urlChanged':
         _urlStreamController.add(map['value']);
         break;
+      case 'navigationBlocked':
+        _navigationBlockedStreamController.add(map['value']);
+        break;
       case 'onLoadError':
         // The native side forwards COREWEBVIEW2_WEB_ERROR_STATUS verbatim and
         // the WebView2 runtime versions independently of this package, so a
@@ -551,6 +562,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     // the controllers can be garbage collected.
     for (final controller in <StreamController<dynamic>>[
       _urlStreamController,
+      _navigationBlockedStreamController,
       _loadingStateStreamController,
       _downloadEventStreamController,
       _onLoadErrorStreamController,
@@ -766,6 +778,24 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   /// Sets the [WebviewPopupWindowPolicy].
+  /// More Better Gakujo patch: cancels main-frame navigations, including
+  /// redirects, unless the URL is `about:blank` or an https URL on the
+  /// default port without credentials whose host is in [hosts] or ends with
+  /// one of [hostSuffixes] (each including its leading dot). Blocked URLs are
+  /// reported on [navigationBlocked].
+  Future<void> setNavigationAllowlist({
+    required Iterable<String> hosts,
+    required Iterable<String> hostSuffixes,
+  }) async {
+    if (_isDisposed) {
+      return;
+    }
+    return _channel.invokeMethod('setNavigationAllowlist', {
+      'hosts': hosts.toList(),
+      'hostSuffixes': hostSuffixes.toList(),
+    });
+  }
+
   Future<void> setPopupWindowPolicy(
     WebviewPopupWindowPolicy popupPolicy,
   ) async {

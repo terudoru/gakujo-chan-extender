@@ -25,6 +25,22 @@ class AllowedWebOrigins {
 
   const AllowedWebOrigins._();
 
+  /// Exact hosts accepted by [canNavigate], for WebViews that enforce the
+  /// policy natively before a request is sent.
+  static Set<String> get navigationHosts => {
+        _gakujoHost,
+        _externalUniversityRootHost,
+        _externalCoopRootHost,
+        ..._allowedExternalHosts,
+      };
+
+  /// Host suffixes (with their leading dot) accepted by [canNavigate].
+  static Set<String> get navigationHostSuffixes => {
+        _externalUniversityHostSuffix,
+        _externalCoopHostSuffix,
+        ..._allowedExternalHostSuffixes,
+      };
+
   static bool canLoad(String? url, {required bool debugAllowed}) {
     final normalized = url?.trim();
     if (normalized == null || normalized.isEmpty) {

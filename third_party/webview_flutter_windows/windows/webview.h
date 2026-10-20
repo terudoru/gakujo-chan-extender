@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+#include <optional>
+
+#include "util/navigation_allowlist.h"
 #include "util/surface_geometry.h"
 
 class WebviewHost;
@@ -109,6 +112,7 @@ struct VirtualKeyState {
 
 struct EventRegistrations {
   EventRegistrationToken source_changed_token_{};
+  EventRegistrationToken navigation_starting_token_{};
   EventRegistrationToken content_loading_token_{};
   EventRegistrationToken navigation_completed_token_{};
   EventRegistrationToken history_changed_token_{};
@@ -132,6 +136,7 @@ class Webview {
   friend class WebviewHost;
 
   typedef std::function<void(const std::string&)> UrlChangedCallback;
+  typedef std::function<void(const std::string&)> NavigationBlockedCallback;
   typedef std::function<void(WebviewLoadingState)> LoadingStateChangedCallback;
   typedef std::function<void(COREWEBVIEW2_WEB_ERROR_STATUS)>
       OnLoadErrorCallback;
@@ -205,6 +210,12 @@ class Webview {
   bool ClearCache();
   bool SetCacheDisabled(bool disabled);
   void SetPopupWindowPolicy(WebviewPopupWindowPolicy policy);
+  // More Better Gakujo patch: cancel main-frame navigations whose URL is not
+  // allowed before the request is sent. std::nullopt allows everything.
+  void SetNavigationAllowlist(
+      std::optional<util::NavigationAllowlist> allowlist) {
+    navigation_allowlist_ = std::move(allowlist);
+  }
   bool SetDefaultContextMenusEnabled(bool enabled);
   bool SetUserAgent(const std::string& user_agent);
   bool OpenDevTools();
@@ -220,6 +231,10 @@ class Webview {
   bool ClearVirtualHostNameMapping(const std::string& hostName);
 
   void UpdateDownloadProgress(ICoreWebView2DownloadOperation* download);
+
+  void OnNavigationBlocked(NavigationBlockedCallback callback) {
+    navigation_blocked_callback_ = std::move(callback);
+  }
 
   void OnUrlChanged(UrlChangedCallback callback) {
     url_changed_callback_ = std::move(callback);
@@ -303,6 +318,8 @@ class Webview {
   EventRegistrations event_registrations_{};
 
   UrlChangedCallback url_changed_callback_;
+  NavigationBlockedCallback navigation_blocked_callback_;
+  std::optional<util::NavigationAllowlist> navigation_allowlist_;
   LoadingStateChangedCallback loading_state_changed_callback_;
   DownloadEventCallback download_event_callback_;
   OnLoadErrorCallback on_load_error_callback_;
