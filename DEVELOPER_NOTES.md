@@ -188,7 +188,8 @@ WebView とダウンロード処理を抽象化しています。
 - macOS は `webview_flutter` と Dart ダウンロード処理を使います。Sandbox で
   `network.client` と user-selected read/write entitlement を付与し、保存先フォルダは
   ネイティブブリッジで security-scoped bookmark として保持します。
-- Windows は `webview_flutter_windows` 1.2.0 と Dart ダウンロード処理を使います。実行環境には
+- Windows は `third_party/` に同梱した `webview_flutter_windows` 1.2.0（タッチパッドのスクロール修正入り）と
+  Dart ダウンロード処理を使います。実行環境には
   Microsoft Edge WebView2 Runtime が必要です。
 
 Windowsの選択メニューをWebViewの表示位置に合わせるため、`webview_windows` 0.4.0
