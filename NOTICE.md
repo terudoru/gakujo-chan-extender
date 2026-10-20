@@ -19,3 +19,10 @@ Android WebView向けに実装したものです。
 として扱ってください。
 
 このアプリは、新潟大学および元のブラウザ拡張機能の作者と関係ありません。
+
+同梱しているサードパーティのコード:
+
+- `third_party/webview_flutter_windows`: webview_flutter_windows 1.2.0
+  （BSD 3-Clause、https://github.com/omar-hanafy/webview_flutter_windows）。
+  タッチパッドのスクロール処理を修正しています。ライセンスは同ディレクトリの
+  `LICENSE` を参照してください。
