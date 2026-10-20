@@ -20,4 +20,18 @@ void main() {
     expect(
         supportsNativeGakujoHistoryGestures(TargetPlatform.windows), isFalse);
   });
+
+  test('Android upload filters map HTML accept values to type groups', () {
+    final groups = androidUploadTypeGroups(['.PDF, image/*', '.docx']);
+    expect(groups, hasLength(1));
+    expect(groups.single.extensions, unorderedEquals(['pdf', 'docx']));
+    expect(groups.single.mimeTypes, ['image/*']);
+  });
+
+  test('Android upload filters allow any file without a usable filter', () {
+    expect(androidUploadTypeGroups(const []), isEmpty);
+    expect(androidUploadTypeGroups(['']), isEmpty);
+    expect(androidUploadTypeGroups(['.pdf', '*/*']), isEmpty);
+    expect(androidUploadTypeGroups(['audio']), isEmpty);
+  });
 }

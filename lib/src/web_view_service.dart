@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -164,6 +165,10 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       await (platformController as dynamic).setLoadWithOverviewMode(true);
       await (platformController as dynamic).setBuiltInZoomControls(true);
       await (platformController as dynamic).setDisplayZoomControls(false);
+      // Without this callback Android WebView ignores <input type="file">, so
+      // assignment attachments cannot be chosen.
+      await (platformController as dynamic)
+          .setOnShowFileSelector(_pickAndroidUploadFiles);
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to configure Android WebView platform controller',
@@ -173,6 +178,72 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       );
     }
   }
+}
+
+/// Receives webview_flutter_android's `FileSelectorParams`. The parameter is
+/// dynamic, like the other Android-only calls above, so this file does not
+/// depend on the Android implementation package directly.
+Future<List<String>> _pickAndroidUploadFiles(dynamic params) async {
+  try {
+    final acceptTypes = [
+      for (final value in params.acceptTypes as List<Object?>)
+        if (value != null) value.toString(),
+    ];
+    final typeGroups = androidUploadTypeGroups(acceptTypes);
+    final allowsMultiple = (params.mode as Enum).name == 'openMultiple';
+    final files = allowsMultiple
+        ? await openFiles(acceptedTypeGroups: typeGroups)
+        : [
+            if (await openFile(acceptedTypeGroups: typeGroups)
+                case final file?)
+              file,
+          ];
+    return [
+      for (final file in files)
+        if (file.path.isNotEmpty) Uri.file(file.path).toString(),
+    ];
+  } on Object catch (error, stackTrace) {
+    developer.log(
+      'Android WebView file selection failed',
+      name: 'MoreBetterGakujo',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    // An empty result cancels the chooser so the page can be used again.
+    return const [];
+  }
+}
+
+/// Converts an HTML `accept` list such as `.pdf,image/*` into file_selector
+/// type groups. Unsupported or empty filters allow any file.
+@visibleForTesting
+List<XTypeGroup> androidUploadTypeGroups(List<String> acceptTypes) {
+  final extensions = <String>{};
+  final mimeTypes = <String>{};
+  for (final rawGroup in acceptTypes) {
+    for (final raw in rawGroup.split(',')) {
+      final value = raw.trim().toLowerCase();
+      if (value.isEmpty || value == '*/*') {
+        // Any explicit wildcard makes the whole filter permissive.
+        return const [];
+      }
+      if (value.startsWith('.') && value.length > 1) {
+        extensions.add(value.substring(1));
+      } else if (value.contains('/')) {
+        mimeTypes.add(value);
+      }
+    }
+  }
+  if (extensions.isEmpty && mimeTypes.isEmpty) {
+    return const [];
+  }
+  return [
+    XTypeGroup(
+      label: 'accepted',
+      extensions: extensions.isEmpty ? null : extensions.toList(),
+      mimeTypes: mimeTypes.isEmpty ? null : mimeTypes.toList(),
+    ),
+  ];
 }
 
 class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
