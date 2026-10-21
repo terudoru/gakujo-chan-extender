@@ -39,10 +39,23 @@ class GakujoDatedActivity {
   /// line turned rows like "12 [休日]祝日 13 14 1限:…" into deadlines.
   /// Assignments appear there as `[小テスト][開講番号 科目名]題名【日付まで】`,
   /// and in the 提出物情報 list as `レポート "題名" 開始日 ～ 終了日`.
-  static List<({String title, String dueText})> scheduleCourseworkItems(
+  static List<
+      ({
+        String title,
+        String dueText,
+        String course,
+        String courseCode,
+        String name,
+      })> scheduleCourseworkItems(
     String text,
   ) {
-    final items = <({String title, String dueText})>[];
+    final items = <({
+      String title,
+      String dueText,
+      String course,
+      String courseCode,
+      String name,
+    })>[];
     final seen = <String>{};
     String key(String name, String due) {
       final date = RegExp(r'([0-9]{4})\D+([0-9]{1,2})\D+([0-9]{1,2})')
@@ -55,21 +68,24 @@ class GakujoDatedActivity {
     }
 
     final listed = RegExp(
-      r'\[(レポート|小テスト|アンケート)\]\[(?:[0-9]{3}[A-Z][0-9]{4}\s*)?([^\]]*)\]'
+      r'\[(レポート|小テスト|アンケート)\]\[(?:([0-9]{3}[A-Z][0-9]{4})\s*)?([^\]]*)\]'
       // A title may carry its own 【…〆切】 before the 【…まで】 date.
       r'\s*([^\[\n\t]+?)\s*【([^】]*まで)】',
     );
     for (final match in listed.allMatches(text)) {
-      final name = match.group(3)!.trim();
-      if (!seen.add(key(name, match.group(4)!))) {
+      final name = match.group(4)!.trim();
+      if (!seen.add(key(name, match.group(5)!))) {
         continue;
       }
       items.add((
         title: compactText(
-          '${match.group(1)} ${match.group(2)!.trim()} $name',
+          '${match.group(1)} ${match.group(3)!.trim()} $name',
           maxLength: 80,
         ),
-        dueText: match.group(4)!.trim(),
+        dueText: match.group(5)!.trim(),
+        course: match.group(3)!.trim(),
+        courseCode: match.group(2) ?? '',
+        name: name,
       ));
     }
     final submissions = RegExp(
@@ -86,6 +102,9 @@ class GakujoDatedActivity {
       items.add((
         title: compactText('${match.group(1)} $name', maxLength: 80),
         dueText: '${match.group(4)}まで',
+        course: '',
+        courseCode: '',
+        name: name,
       ));
     }
     return items;

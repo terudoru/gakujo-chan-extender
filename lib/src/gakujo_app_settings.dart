@@ -552,6 +552,142 @@ class GakujoMessageNotificationSettings {
   }
 }
 
+/// When to be reminded of an assignment that has not been handed in yet.
+enum GakujoReminderOffset {
+  threeDays,
+  oneDay,
+  threeHours,
+  oneHour,
+}
+
+extension GakujoReminderOffsetLabels on GakujoReminderOffset {
+  String get label {
+    return switch (this) {
+      GakujoReminderOffset.threeDays => '3日前',
+      GakujoReminderOffset.oneDay => '1日前',
+      GakujoReminderOffset.threeHours => '3時間前',
+      GakujoReminderOffset.oneHour => '1時間前',
+    };
+  }
+
+  Duration get before {
+    return switch (this) {
+      GakujoReminderOffset.threeDays => const Duration(days: 3),
+      GakujoReminderOffset.oneDay => const Duration(days: 1),
+      GakujoReminderOffset.threeHours => const Duration(hours: 3),
+      GakujoReminderOffset.oneHour => const Duration(hours: 1),
+    };
+  }
+
+  String get storageValue {
+    return switch (this) {
+      GakujoReminderOffset.threeDays => 'three_days',
+      GakujoReminderOffset.oneDay => 'one_day',
+      GakujoReminderOffset.threeHours => 'three_hours',
+      GakujoReminderOffset.oneHour => 'one_hour',
+    };
+  }
+
+  static GakujoReminderOffset? fromStorageValue(String? value) {
+    for (final offset in GakujoReminderOffset.values) {
+      if (offset.storageValue == value) {
+        return offset;
+      }
+    }
+    return null;
+  }
+}
+
+/// The rest of the student's notification choices: what to leave out and
+/// when to be reminded.
+class GakujoNotificationPreferences {
+  const GakujoNotificationPreferences({
+    this.skipSubmitted = true,
+    this.mutedCourses = const {},
+    this.reminderOffsets = defaultReminderOffsets,
+  });
+
+  static const defaultReminderOffsets = {
+    GakujoReminderOffset.oneDay,
+    GakujoReminderOffset.oneHour,
+  };
+
+  /// Leave out assignments the レポート・小テスト list shows as handed in.
+  final bool skipSubmitted;
+
+  /// Courses whose deadlines and reminders are not notified.
+  final Set<String> mutedCourses;
+
+  /// Empty when reminders are off.
+  final Set<GakujoReminderOffset> reminderOffsets;
+
+  bool isMuted(String course) {
+    final compact = course.replaceAll(RegExp(r'\s+'), '');
+    return compact.isNotEmpty &&
+        mutedCourses.any(
+          (muted) => muted.replaceAll(RegExp(r'\s+'), '') == compact,
+        );
+  }
+
+  GakujoNotificationPreferences copyWith({
+    bool? skipSubmitted,
+    Set<String>? mutedCourses,
+    Set<GakujoReminderOffset>? reminderOffsets,
+  }) {
+    return GakujoNotificationPreferences(
+      skipSubmitted: skipSubmitted ?? this.skipSubmitted,
+      mutedCourses: mutedCourses ?? this.mutedCourses,
+      reminderOffsets: reminderOffsets ?? this.reminderOffsets,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'skipSubmitted': skipSubmitted,
+      'mutedCourses': mutedCourses.toList()..sort(),
+      'reminderOffsets': [
+        for (final offset in GakujoReminderOffset.values)
+          if (reminderOffsets.contains(offset)) offset.storageValue,
+      ],
+    };
+  }
+
+  factory GakujoNotificationPreferences.fromJson(Object? raw) {
+    var decoded = raw;
+    if (raw is String) {
+      try {
+        decoded = jsonDecode(raw);
+      } on FormatException {
+        decoded = null;
+      }
+    }
+    if (decoded is! Map) {
+      return const GakujoNotificationPreferences();
+    }
+    final muted = decoded['mutedCourses'];
+    final offsets = decoded['reminderOffsets'];
+    return GakujoNotificationPreferences(
+      skipSubmitted: decoded['skipSubmitted'] != false,
+      mutedCourses: muted is List
+          ? {
+              for (final value in muted)
+                if (value.toString().trim().isNotEmpty) value.toString().trim(),
+            }
+          : const {},
+      reminderOffsets: offsets is List
+          ? {
+              for (final value in offsets)
+                if (GakujoReminderOffsetLabels.fromStorageValue(
+                  value.toString(),
+                )
+                    case final offset?)
+                  offset,
+            }
+          : defaultReminderOffsets,
+    );
+  }
+}
+
 class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
@@ -563,6 +699,7 @@ class GakujoAppSettings {
     this.messageExcludeKeywords = const [],
     this.notificationTopics = GakujoNotificationTopicLabels.defaults,
     this.messageNotification = const GakujoMessageNotificationSettings(),
+    this.notificationPreferences = const GakujoNotificationPreferences(),
   });
 
   final DownloadSaveMode downloadSaveMode;
@@ -574,6 +711,7 @@ class GakujoAppSettings {
   final List<String> messageExcludeKeywords;
   final Set<GakujoNotificationTopic> notificationTopics;
   final GakujoMessageNotificationSettings messageNotification;
+  final GakujoNotificationPreferences notificationPreferences;
 
   bool get hasLoginCredentials => loginCredentials?.isComplete ?? false;
 
@@ -591,6 +729,7 @@ class GakujoAppSettings {
     List<String>? messageExcludeKeywords,
     Set<GakujoNotificationTopic>? notificationTopics,
     GakujoMessageNotificationSettings? messageNotification,
+    GakujoNotificationPreferences? notificationPreferences,
   }) {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
@@ -606,6 +745,8 @@ class GakujoAppSettings {
           messageExcludeKeywords ?? this.messageExcludeKeywords,
       notificationTopics: notificationTopics ?? this.notificationTopics,
       messageNotification: messageNotification ?? this.messageNotification,
+      notificationPreferences:
+          notificationPreferences ?? this.notificationPreferences,
     );
   }
 }
@@ -645,6 +786,8 @@ class GakujoAppSettingsStore {
       'more_better_gakujo_notification_topics';
   static const _messageNotificationKey =
       'more_better_gakujo_message_notification';
+  static const _notificationPreferencesKey =
+      'more_better_gakujo_notification_preferences';
   static const _settingsKeys = [
     _downloadSaveModeKey,
     _pageModeKey,
@@ -657,6 +800,7 @@ class GakujoAppSettingsStore {
     _messageExcludeKeywordsKey,
     _notificationTopicsKey,
     _messageNotificationKey,
+    _notificationPreferencesKey,
   ];
 
   final FlutterSecureStorage _secureStorage;
@@ -674,6 +818,7 @@ class GakujoAppSettingsStore {
           _messageExcludeKeywordsKey,
           _notificationTopicsKey,
           _messageNotificationKey,
+          _notificationPreferencesKey,
         ],
       );
 
@@ -714,6 +859,9 @@ class GakujoAppSettingsStore {
       messageNotification: GakujoMessageNotificationSettings.fromJson(
         values[_messageNotificationKey],
         legacyTopics: values[_notificationTopicsKey],
+      ),
+      notificationPreferences: GakujoNotificationPreferences.fromJson(
+        values[_notificationPreferencesKey],
       ),
     );
   }
@@ -828,6 +976,17 @@ class GakujoAppSettingsStore {
       () => _secureStorage.write(
         key: _messageNotificationKey,
         value: jsonEncode(settings.toJson()),
+      ),
+    );
+  }
+
+  Future<void> saveNotificationPreferences(
+    GakujoNotificationPreferences preferences,
+  ) {
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _notificationPreferencesKey,
+        value: jsonEncode(preferences.toJson()),
       ),
     );
   }

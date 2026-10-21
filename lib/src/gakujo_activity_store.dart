@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
@@ -60,6 +61,9 @@ class GakujoDeadlineEntry {
     required this.detectedAt,
     this.kind = 'deadline',
     this.source = '',
+    this.course = '',
+    this.courseCode = '',
+    this.assignment = '',
   });
 
   final String title;
@@ -71,6 +75,12 @@ class GakujoDeadlineEntry {
   /// Category of the page the deadline was read from, such as 連絡通知.
   /// Older entries have none.
   final String source;
+
+  /// Course and bare assignment title, when the page names them, so the
+  /// same assignment found on two pages is told about once.
+  final String course;
+  final String courseCode;
+  final String assignment;
 
   bool get isDeadline => kind == 'deadline';
 
@@ -86,6 +96,9 @@ class GakujoDeadlineEntry {
       'detectedAt': detectedAt.toIso8601String(),
       'kind': kind,
       if (source.isNotEmpty) 'source': source,
+      if (course.isNotEmpty) 'course': course,
+      if (courseCode.isNotEmpty) 'courseCode': courseCode,
+      if (assignment.isNotEmpty) 'assignment': assignment,
     };
   }
 
@@ -98,6 +111,9 @@ class GakujoDeadlineEntry {
           DateTime.fromMillisecondsSinceEpoch(0),
       kind: json['kind']?.toString() ?? 'deadline',
       source: json['source']?.toString() ?? '',
+      course: json['course']?.toString() ?? '',
+      courseCode: json['courseCode']?.toString() ?? '',
+      assignment: json['assignment']?.toString() ?? '',
     );
   }
 }
@@ -263,6 +279,9 @@ class GakujoActivityStore {
   static const _favoritesKey = 'more_better_gakujo_favorites';
   static const _changesKey = 'more_better_gakujo_activity_changes';
   static const _reportListsKey = 'more_better_gakujo_cached_report_lists';
+  static const _assignmentsKey = 'more_better_gakujo_assignments';
+  static const _maxAssignments = 200;
+  static const _assignmentRetention = Duration(days: 30);
   static const _maxSnapshots = 120;
   // 連絡通知 alone can hold hundreds of dated rows, so they get their own
   // share instead of pushing coursework deadlines out.
@@ -495,6 +514,7 @@ class GakujoActivityStore {
     await _compactList(_favoritesKey, _readFavorites);
     await _compactList(_changesKey, _readChanges);
     await _compactList(_reportListsKey, _readReportLists);
+    await _compactList(_assignmentsKey, _readAssignments);
   }
 
   Future<void> _compactNotifiedDeadlineKeys() async {
@@ -681,6 +701,47 @@ class GakujoActivityStore {
     );
   }
 
+  /// Assignments from the レポート・小テスト list, newest closing time first.
+  Future<List<GakujoAssignment>> loadAssignments() {
+    return _enqueue(() async => (await _readAssignments()).value);
+  }
+
+  Future<_StorageReadResult<List<GakujoAssignment>>> _readAssignments() {
+    return _readList(
+      key: _assignmentsKey,
+      fromJson: (json) => GakujoAssignment.fromJson(json) ?? _droppedAssignment,
+      retain: (assignment) =>
+          !identical(assignment, _droppedAssignment) &&
+          assignment.dueAt.isAfter(
+            DateTime.now().subtract(_assignmentRetention),
+          ),
+      compare: (a, b) => b.dueAt.compareTo(a.dueAt),
+      limit: _maxAssignments,
+    );
+  }
+
+  /// Replaces stored assignments with the ones just read from the list. The
+  /// list may be paged, so assignments not on this page are kept.
+  Future<void> mergeAssignments(Iterable<GakujoAssignment> assignments) {
+    final next = assignments.toList();
+    if (next.isEmpty) {
+      return Future<void>.value();
+    }
+    return _enqueue(() async {
+      final read = await _readAssignments();
+      if (!read.isSuccessful) {
+        return;
+      }
+      final byId = <String, GakujoAssignment>{
+        for (final assignment in read.value) assignment.id: assignment,
+        for (final assignment in next) assignment.id: assignment,
+      };
+      final sorted = byId.values.toList()
+        ..sort((a, b) => b.dueAt.compareTo(a.dueAt));
+      await _writeList(_assignmentsKey, sorted.take(_maxAssignments));
+    });
+  }
+
   Future<void> addFavorite(GakujoFavoritePage page) {
     return _enqueue(() => _addFavorite(page));
   }
@@ -784,9 +845,11 @@ class GakujoActivityStore {
   }
 
   Future<void> clearReportLists() {
-    return _enqueue(
-      () => _secureStorage.delete(key: _reportListsKey),
-    );
+    return _enqueue(() async {
+      await _secureStorage.delete(key: _reportListsKey);
+      // Assignments are read from the same list.
+      await _secureStorage.delete(key: _assignmentsKey);
+    });
   }
 
   Future<void> clearChanges() {
@@ -1162,3 +1225,12 @@ class GakujoActivityStore {
     return _operations.run(operation);
   }
 }
+
+final _droppedAssignment = GakujoAssignment(
+  kind: '',
+  title: '',
+  status: '',
+  course: '',
+  dueAt: DateTime.fromMillisecondsSinceEpoch(0),
+  capturedAt: DateTime.fromMillisecondsSinceEpoch(0),
+);

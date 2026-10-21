@@ -43,6 +43,11 @@ Future<void> restoreGakujoBackup({
       if (backup.notificationTopics != null) {
         await settingsStore.saveNotificationTopics(backup.notificationTopics!);
       }
+      if (backup.notificationPreferences != null) {
+        await settingsStore.saveNotificationPreferences(
+          backup.notificationPreferences!,
+        );
+      }
       if (backup.messageNotification != null) {
         await settingsStore.saveMessageNotification(
           backup.messageNotification!,

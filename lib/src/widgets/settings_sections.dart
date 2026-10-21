@@ -389,7 +389,21 @@ class NotificationTopicsSection extends StatelessWidget {
     required this.keywordController,
     required this.canAddKeyword,
     required this.onKeywordInputChanged,
+    required this.preferences,
+    required this.onPreferencesChanged,
+    required this.knownCourses,
+    this.remindersOnlyWhileOpen = false,
   });
+
+  final GakujoNotificationPreferences preferences;
+  final Future<void> Function(GakujoNotificationPreferences preferences)
+      onPreferencesChanged;
+
+  /// Courses met on the レポート・小テスト list, for per-course choices.
+  final List<String> knownCourses;
+
+  /// The OS cannot book reminders ahead here; they come from the open app.
+  final bool remindersOnlyWhileOpen;
 
   final Set<GakujoNotificationTopic> topics;
   final GakujoMessageNotificationSettings messages;
@@ -437,6 +451,83 @@ class NotificationTopicsSection extends StatelessWidget {
                 ? (value) => onChanged(topic, value ?? false)
                 : null,
           ),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('提出済みの課題は通知しない'),
+          subtitle: const Text('レポート・小テスト一覧で「提出済」になっているものを除きます。'),
+          value: preferences.skipSubmitted,
+          onChanged: notificationsEnabled
+              ? (value) => unawaited(
+                    onPreferencesChanged(
+                      preferences.copyWith(skipSubmitted: value),
+                    ),
+                  )
+              : null,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '締切前のリマインド',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          remindersOnlyWhileOpen
+              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間だけ届きます。'
+              : '未提出の課題を締切の前にもう一度知らせます。アプリを閉じていても届きます。',
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final offset in GakujoReminderOffset.values)
+              FilterChip(
+                label: Text(offset.label),
+                selected: preferences.reminderOffsets.contains(offset),
+                onSelected: notificationsEnabled
+                    ? (selected) => unawaited(
+                          onPreferencesChanged(
+                            preferences.copyWith(
+                              reminderOffsets: {
+                                for (final value in preferences.reminderOffsets)
+                                  if (value != offset) value,
+                                if (selected) offset,
+                              },
+                            ),
+                          ),
+                        )
+                    : null,
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '科目ごとの通知',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        if (knownCourses.isEmpty)
+          const Text('レポート・小テスト一覧を一度開くと、科目がここに並びます。')
+        else
+          for (final course in knownCourses)
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(course),
+              value: !preferences.isMuted(course),
+              onChanged: notificationsEnabled
+                  ? (notify) => unawaited(
+                        onPreferencesChanged(
+                          preferences.copyWith(
+                            mutedCourses: {
+                              for (final value in preferences.mutedCourses)
+                                if (value != course) value,
+                              if (!notify) course,
+                            },
+                          ),
+                        ),
+                      )
+                  : null,
+            ),
         const SizedBox(height: 12),
         Text(
           '連絡通知',

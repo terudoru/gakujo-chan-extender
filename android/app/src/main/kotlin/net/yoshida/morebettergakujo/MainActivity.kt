@@ -519,6 +519,13 @@ class MainActivity : FlutterActivity() {
                     "notifyDeadline" -> {
                         result.success(showDeadlineNotification(call))
                     }
+                    "scheduleReminders" -> {
+                        DeadlineReminders.replace(
+                            this,
+                            DeadlineReminders.parse(call.argument<List<*>>("reminders"))
+                        )
+                        result.success(true)
+                    }
                     "takePendingNotificationUrl" -> {
                         val url = pendingNotificationUrl
                         pendingNotificationUrl = null

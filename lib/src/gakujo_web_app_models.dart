@@ -31,11 +31,16 @@ class _PageTextSnapshot {
     required this.title,
     required this.text,
     required this.messageItems,
+    this.reportItems = const [],
   });
 
   final String title;
   final String text;
   final List<_MessageActivityCandidate> messageItems;
+
+  /// Rows of the レポート・小テスト list: kind, title, status, code, course
+  /// and period.
+  final List<Map<dynamic, dynamic>> reportItems;
 }
 
 class _MessageActivityCandidate {

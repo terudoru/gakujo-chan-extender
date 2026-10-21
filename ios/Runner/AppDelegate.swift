@@ -821,6 +821,44 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
             }
           }
         }
+      case "scheduleReminders":
+        // Replaces every booked reminder. The system keeps at most 64
+        // pending requests, so only the earliest ones are booked.
+        let args = call.arguments as? [String: Any]
+        let items = args?["reminders"] as? [[String: Any]] ?? []
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+          let booked = requests.map(\.identifier).filter { $0.hasPrefix("reminder-") }
+          center.removePendingNotificationRequests(withIdentifiers: booked)
+          let now = Date()
+          for item in items.prefix(60) {
+            guard let id = (item["id"] as? NSNumber)?.intValue,
+                  let atMillis = (item["atMillis"] as? NSNumber)?.doubleValue else {
+              continue
+            }
+            let interval = Date(timeIntervalSince1970: atMillis / 1000).timeIntervalSince(now)
+            if interval < 1 {
+              continue
+            }
+            let content = UNMutableNotificationContent()
+            content.title = item["title"] as? String ?? "課題の締切"
+            content.body = item["body"] as? String ?? ""
+            content.sound = .default
+            if let url = item[Self.notificationURLKey] as? String, !url.isEmpty {
+              content.userInfo = [Self.notificationURLKey: url]
+            }
+            center.add(
+              UNNotificationRequest(
+                identifier: "reminder-\(id)",
+                content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+              )
+            )
+          }
+          DispatchQueue.main.async {
+            result(true)
+          }
+        }
       case "takePendingNotificationUrl":
         let url = self?.pendingNotificationURL
         self?.pendingNotificationURL = nil

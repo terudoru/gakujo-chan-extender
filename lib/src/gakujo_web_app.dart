@@ -23,6 +23,7 @@ import 'gakujo_activity_classifier.dart';
 import 'gakujo_academic_calendar.dart';
 import 'gakujo_academic_calendar_resolver.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_assignment.dart';
 import 'gakujo_backup_export.dart';
 import 'gakujo_backup_import.dart';
 import 'gakujo_backup_restore.dart';
@@ -1419,6 +1420,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordController = TextEditingController();
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
+    final knownCourses = await _knownAssignmentCourses();
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
@@ -1734,6 +1736,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         flag,
                         enabled: enabled,
                       );
+                      if (flag == GakujoFeatureFlag.deadlineNotifications) {
+                        unawaited(_syncReminders());
+                      }
                     },
                   ),
                 ),
@@ -1743,6 +1748,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   child: NotificationTopicsSection(
                     topics: _appSettings.notificationTopics,
                     messages: _appSettings.messageNotification,
+                    preferences: _appSettings.notificationPreferences,
+                    knownCourses: knownCourses,
+                    remindersOnlyWhileOpen: Platform.isWindows,
+                    onPreferencesChanged: (preferences) async {
+                      await _saveNotificationPreferences(preferences);
+                      if (dialogContext.mounted) {
+                        setDialogState(() {});
+                      }
+                    },
                     keywordController: messageNotificationKeywordController,
                     canAddKeyword:
                         messageNotificationKeywordInput.trim().isNotEmpty,
@@ -2863,6 +2877,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = nextSettings;
     });
+    unawaited(_syncReminders());
+  }
+
+  Future<void> _saveNotificationPreferences(
+    GakujoNotificationPreferences preferences,
+  ) async {
+    final nextSettings = _appSettings.copyWith(
+      notificationPreferences: preferences,
+    );
+    if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+      try {
+        await _appSettingsStore.saveNotificationPreferences(preferences);
+      } on Object catch (error, stackTrace) {
+        if (!Platform.isMacOS) {
+          rethrow;
+        }
+        developer.log(
+          'Failed to mirror notification preferences to secure storage',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    await _syncLocalSettingsMirror(nextSettings);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _appSettings = nextSettings;
+    });
+    unawaited(_syncReminders());
   }
 
   Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {
@@ -3186,12 +3232,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     var newDeadlineCount = 0;
     if (shouldScanDeadlines) {
+      final assignments = [
+        for (final row in result.reportItems)
+          if (GakujoAssignment.fromReportRow(
+            row,
+            capturedAt: DateTime.now(),
+            url: url,
+          )
+              case final assignment?)
+            assignment,
+      ];
+      await _activityStore.mergeAssignments(assignments);
+      if (assignments.isNotEmpty) {
+        unawaited(_syncReminders());
+      }
       final extractedDeadlines = _extractDeadlines(
         category: category,
         title: title,
         url: url,
         text: result.text,
         messageItems: result.messageItems,
+        assignments: assignments,
       );
       final newDeadlines = await _activityStore.mergeDeadlines(
         extractedDeadlines,
@@ -3225,6 +3286,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 (function() {
   var texts = [];
   var messageItems = [];
+  var reportItems = [];
   var seenMessageItems = {};
   var datePattern = /((?:令和[0-9]{1,2}年|(?:20)?[0-9]{2}(?:[\/.\-]|年))[0-9]{1,2}(?:[\/.\-]|月)[0-9]{1,2}日?(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}[\/.][0-9]{1,2}(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}月[0-9]{1,2}日(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?)/;
   function compactText(element) {
@@ -3415,6 +3477,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (!title || !period) {
           continue;
         }
+        reportItems.push({
+          kind: compactText(cells[0]),
+          title: title,
+          status: status,
+          code: number,
+          course: compactText(cells[4]),
+          period: period
+        });
         rows.push(
           'レポート課題: ' + title +
           (number ? ' / 開講番号: ' + number : '') +
@@ -3444,7 +3514,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   return JSON.stringify({
     title: document.title || '',
     text: texts.join('\n'),
-    messageItems: messageItems
+    messageItems: messageItems,
+    reportItems: reportItems
   });
 })()
 ''');
@@ -3454,7 +3525,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return null;
       }
       final rawMessageItems = decoded['messageItems'];
+      final rawReportItems = decoded['reportItems'];
       return _PageTextSnapshot(
+        reportItems: rawReportItems is List<dynamic>
+            ? rawReportItems.whereType<Map<dynamic, dynamic>>().toList()
+            : const [],
         title: decoded['title']?.toString() ?? '',
         text: decoded['text']?.toString() ?? '',
         messageItems: rawMessageItems is List<dynamic>
@@ -3481,6 +3556,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String url,
     required String text,
     required List<_MessageActivityCandidate> messageItems,
+    List<GakujoAssignment> assignments = const [],
   }) {
     final now = DateTime.now();
     final entries = <GakujoDeadlineEntry>[];
@@ -3490,6 +3566,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       required String entryUrl,
       required String entryText,
       required String kind,
+      String course = '',
+      String courseCode = '',
+      String assignment = '',
     }) {
       final normalizedText = _datedActivityText(entryText);
       if (GakujoDatedActivity.isNoiseText(normalizedText) ||
@@ -3512,6 +3591,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           detectedAt: now,
           kind: kind,
           source: category,
+          course: course,
+          courseCode: courseCode,
+          assignment: assignment,
         ),
       );
     }
@@ -3538,6 +3620,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           entryUrl: url,
           entryText: item.dueText,
           kind: 'deadline',
+          course: item.course,
+          courseCode: item.courseCode,
+          assignment: item.name,
+        );
+      }
+      return entries;
+    }
+
+    if (assignments.isNotEmpty) {
+      // The list gives each assignment's exact closing time.
+      String two(int value) => value.toString().padLeft(2, '0');
+      for (final assignment in assignments) {
+        final due = assignment.dueInJapan;
+        addEntry(
+          entryTitle:
+              '${assignment.kind} ${assignment.course} ${assignment.title}',
+          entryUrl: url,
+          entryText: '${due.year}/${two(due.month)}/${two(due.day)} '
+              '${two(due.hour)}:${two(due.minute)}まで',
+          kind: 'deadline',
+          course: assignment.course,
+          courseCode: assignment.courseCode,
+          assignment: assignment.title,
         );
       }
       return entries;
@@ -3632,6 +3737,32 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
       topics: _appSettings.notificationTopics,
       messages: _appSettings.messageNotification,
+      preferences: _appSettings.notificationPreferences,
+    );
+  }
+
+  Future<List<String>> _knownAssignmentCourses() async {
+    try {
+      final assignments = await _activityStore.loadAssignments();
+      return {
+        for (final assignment in assignments)
+          if (assignment.course.trim().isNotEmpty) assignment.course.trim(),
+        // Keep a muted course listed so it can be turned back on.
+        ..._appSettings.notificationPreferences.mutedCourses,
+      }.toList()
+        ..sort();
+    } on Object {
+      return const [];
+    }
+  }
+
+  Future<void> _syncReminders() {
+    return _deadlineNotificationCoordinator.syncReminders(
+      notificationsEnabled: _appSettings.isFeatureEnabled(
+        GakujoFeatureFlag.deadlineNotifications,
+      ),
+      topics: _appSettings.notificationTopics,
+      preferences: _appSettings.notificationPreferences,
     );
   }
 
@@ -3818,6 +3949,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         messageExcludeKeywords: backup.messageExcludeKeywords,
         notificationTopics: backup.notificationTopics,
         messageNotification: backup.messageNotification,
+        notificationPreferences: backup.notificationPreferences,
       );
       await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
@@ -4118,6 +4250,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     unawaited(_saveInitialTwoFactorSecretIfAllowed());
     final appSettingsLoaded = await _loadAppSettings();
+    if (appSettingsLoaded) {
+      unawaited(_syncReminders());
+    }
     if (appSettingsLoaded && !_appSettings.setupCompleted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {

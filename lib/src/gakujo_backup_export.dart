@@ -52,6 +52,7 @@ Map<String, Object?> buildGakujoBackupPayload({
     'notificationTopics':
         encodeNotificationTopics(appSettings.notificationTopics),
     'messageNotification': appSettings.messageNotification.toJson(),
+    'notificationPreferences': appSettings.notificationPreferences.toJson(),
     'disabledFeatureFlags': appSettings.disabledFeatureFlags
         .map((flag) => flag.storageValue)
         .toList(),
