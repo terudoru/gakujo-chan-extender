@@ -1966,6 +1966,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const Text('ここでの設定は、あとから「設定」画面でいつでも変えられます。'),
+                    const SizedBox(height: 12),
                     GakujoPageModeSection(
                       pageMode: selectedPageMode,
                       onChanged: (mode) {
@@ -2056,6 +2058,32 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+    // 「あとで」 or a tap outside used to bring the wizard back on every
+    // launch. Keep the defaults and leave changes to the settings screen.
+    if (mounted && !_appSettings.setupCompleted) {
+      await _markInitialSetupSeen();
+    }
+  }
+
+  Future<void> _markInitialSetupSeen() async {
+    final nextSettings = _appSettings.copyWith(setupCompleted: true);
+    try {
+      await _appSettingsStore.saveSetupCompleted(true);
+      await _syncLocalSettingsMirror(nextSettings);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to remember that the initial setup was seen',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _appSettings = nextSettings;
+      });
+    }
   }
 
   Future<void> _compactStoredData() async {
