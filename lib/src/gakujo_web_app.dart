@@ -2174,6 +2174,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ? null
                   : () async {
                       await _activityStore.clearReportLists();
+                      // The assignments go with the lists, and so do their
+                      // booked reminders.
+                      unawaited(_syncReminders());
                       if (!dialogContext.mounted) {
                         return;
                       }
@@ -2441,6 +2444,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.replaceFavorites(const []),
       ]);
       await _refreshActivityCounts();
+      // Reminders booked with the OS were for the assignments just removed.
+      unawaited(_syncReminders());
     }
 
     await showDialog<void>(
@@ -3976,6 +3981,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
       await _injectMessageFilterIfAllowed();
       await _refreshActivityCounts();
+      // The imported notification choices decide which reminders to book.
+      unawaited(_syncReminders());
       _scheduleAutoBackup();
       _showSnackBar('設定をインポートしました');
     } on BackupRollbackException {
