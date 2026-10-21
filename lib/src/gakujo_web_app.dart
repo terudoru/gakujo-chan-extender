@@ -3820,7 +3820,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   /// list reads them. Skipped while 連絡通知 are not notified at all.
   Future<List<GakujoDeadlineEntry>> _fetchMessageDeadlinesInBackground() async {
     if (_appSettings.messageNotification.mode ==
-        GakujoMessageNotificationMode.off) {
+            GakujoMessageNotificationMode.off ||
+        !_appSettings.isFeatureEnabled(
+          GakujoFeatureFlag.deadlineNotifications,
+        )) {
       return const [];
     }
     final result = await _controller.runJavaScriptReturningResult(
