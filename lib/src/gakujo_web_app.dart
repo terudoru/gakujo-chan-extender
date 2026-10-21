@@ -1008,9 +1008,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
             ),
             Expanded(
-              child: _isSettingsDialogOpen
-                  ? const SizedBox.expand()
-                  : _buildWebViewArea(),
+              // Android 15+ draws edge to edge; without this the end of a
+              // page (often a submit button) stays under the navigation bar.
+              child: SafeArea(
+                top: false,
+                child: _isSettingsDialogOpen
+                    ? const SizedBox.expand()
+                    : _buildWebViewArea(),
+              ),
             ),
           ],
         ),
