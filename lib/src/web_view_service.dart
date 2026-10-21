@@ -439,12 +439,33 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
           await delegate.onPageFinished?.call(url);
         },
         onWebResourceError: (error) {
+          if (error.errorType ==
+              WebResourceErrorType.webContentProcessTerminated) {
+            unawaited(_recoverFromTerminatedContentProcess());
+          }
           delegate.onWebResourceError?.call(
             GakujoWebResourceError(description: error.description),
           );
         },
       ),
     );
+  }
+
+  /// WKWebView leaves a blank page after the system ends its content process
+  /// (often while another app such as the camera is open). Load the page
+  /// again with GET; reload() could resubmit a POSTed report form.
+  Future<void> _recoverFromTerminatedContentProcess() async {
+    try {
+      final target = contentProcessRecoveryUrl(await _inner.currentUrl());
+      await _inner.loadRequest(Uri.parse(target));
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to reload after the WebView content process ended',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   @override
@@ -515,6 +536,17 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// The page to load after the WebView content process ended: the current
+/// page when the app may show it, otherwise the Gakujo portal.
+@visibleForTesting
+String contentProcessRecoveryUrl(String? currentUrl) {
+  final url = currentUrl?.trim();
+  if (url != null && AllowedWebOrigins.canNavigate(url, debugAllowed: false)) {
+    return url;
+  }
+  return AllowedWebOrigins.gakujoUrl;
 }
 
 bool supportsNativeGakujoHistoryGestures(TargetPlatform platform) {

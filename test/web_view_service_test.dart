@@ -82,4 +82,22 @@ void main() {
     expect(androidUploadAcceptsPhotos(['.png']), isFalse);
     expect(androidUploadAcceptsPhotos(['application/pdf']), isFalse);
   });
+
+  test('reloads the current allowed page after a content process ends', () {
+    const report =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=e1s2';
+    expect(contentProcessRecoveryUrl(report), report);
+    expect(
+      contentProcessRecoveryUrl(null),
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+    );
+    expect(
+      contentProcessRecoveryUrl('about:blank'),
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+    );
+    expect(
+      contentProcessRecoveryUrl('https://example.com/'),
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+    );
+  });
 }
