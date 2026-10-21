@@ -463,6 +463,75 @@ class GakujoCalendarExport {
     ];
   }
 
+  /// Reads the timetable of Gakujo's 履修登録・登録状況照会 page, which lists
+  /// every registered class of the semester with its classroom, including
+  /// classes of a term whose month the schedule page is not showing.
+  ///
+  /// Each class is a `CallDetail(年度, 所属, 開講番号, 曜日, 時限)` link
+  /// followed by "科目名&nbsp;教室&nbsp;単位". Classes listed only under
+  /// 不許可となった科目 have no such link and are not read.
+  static List<GakujoCalendarCourse> coursesFromRegistrationPage(String html) {
+    final pattern = RegExp(
+      r"CallDetail\('[0-9]{4}',\s*'[^']*',\s*'([^']+)',\s*'([1-7])',"
+      r"\s*'([1-7])'\)[^>]*>[^<]*</a>\s*<br\s*/?>\s*([^<]*)",
+    );
+    String clean(String value) => value
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final courses = <GakujoCalendarCourse>[];
+    for (final match in pattern.allMatches(html)) {
+      final parts = match.group(4)!.split('&nbsp;').map(clean).toList();
+      // ◆ marks a remote class; the schedule export omits it.
+      final title = parts.first.replaceAll(RegExp(r'[◆◇]+$'), '').trim();
+      if (title.isEmpty) {
+        continue;
+      }
+      courses.add(
+        GakujoCalendarCourse(
+          title: title,
+          weekday: int.parse(match.group(2)!),
+          period: int.parse(match.group(3)!),
+          // The last part is the credit count; an empty room is "　".
+          location:
+              parts.length >= 3 ? parts[1].replaceAll('　', ' ').trim() : '',
+          courseCode: clean(match.group(1)!),
+        ),
+      );
+    }
+    return courses;
+  }
+
+  /// Fetches the 履修登録・登録状況照会 page of both semesters without leaving
+  /// the current page. It opens on the current semester and links the other
+  /// one as `_eventId=search&gakkiKbnCode=N`.
+  static String registrationPageFetchScript() {
+    return r'''
+(function() {
+  function get(url) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, false);
+    xhr.send(null);
+    return xhr.status >= 200 && xhr.status < 400 ? xhr.responseText : '';
+  }
+  try {
+    var first = get('/campusweb/campussquare.do?_flowId=RSW0001000-flow');
+    var pages = [first];
+    var links = first.match(/href="[^"]*_eventId=search(?:&amp;|&)gakkiKbnCode=[0-9]+"/g) || [];
+    for (var i = 0; i < links.length; i += 1) {
+      pages.push(get(links[i].slice(6, -1).replace(/&amp;/g, '&')));
+    }
+    return JSON.stringify({status: first ? 200 : 0, text: pages.join('\n')});
+  } catch (e) {
+    return JSON.stringify({status: 0, text: ''});
+  }
+})()
+''';
+  }
+
   /// Gakujo's schedule export has no classrooms, while the schedule page
   /// shows one per class; fill the gaps from the page.
   static List<GakujoCalendarCourse> withPageLocations(

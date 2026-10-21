@@ -1469,6 +1469,40 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     return extraction;
   }
 
+  /// Classes on the registration page, used only for their classrooms: the
+  /// schedule export has none, and the schedule page shows only one month.
+  Future<List<GakujoCalendarCourse>> _readRegistrationCoursesForLocations() async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        GakujoCalendarExport.registrationPageFetchScript(),
+      );
+      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+      final html = decoded is Map ? decoded['text']?.toString() ?? '' : '';
+      return GakujoCalendarExport.coursesFromRegistrationPage(html);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to read the registration page for classrooms',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return const [];
+    }
+  }
+
+  Future<GakujoCalendarExtraction> _withClassrooms(
+    GakujoCalendarExtraction official,
+    List<GakujoCalendarCourse> pageCourses,
+  ) async {
+    return GakujoCalendarExtraction(
+      courses: GakujoCalendarExport.withPageLocations(
+        official.courses,
+        [...pageCourses, ...await _readRegistrationCoursesForLocations()],
+      ),
+      termRange: official.termRange,
+    );
+  }
+
   Future<GakujoCalendarExtraction> _readCalendarScheduleForImport({
     GakujoCalendarTermRange? preferredTermRange,
   }) async {
@@ -1508,13 +1542,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           officialExtraction,
           isOfficial: true,
         )) {
-      return GakujoCalendarExtraction(
-        courses: GakujoCalendarExport.withPageLocations(
-          officialExtraction.courses,
-          fallbackExtraction.courses,
-        ),
-        termRange: officialExtraction.termRange,
-      );
+      return _withClassrooms(officialExtraction, fallbackExtraction.courses);
     }
 
     final timetableExtraction = await _readCourseTimetableForCalendarImport(
@@ -1597,13 +1625,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
               officialExtraction,
               isOfficial: true,
             )) {
-          return GakujoCalendarExtraction(
-            courses: GakujoCalendarExport.withPageLocations(
-              officialExtraction.courses,
-              extraction.courses,
-            ),
-            termRange: officialExtraction.termRange,
-          );
+          return _withClassrooms(officialExtraction, extraction.courses);
         }
         final timetableExtraction = await _readCourseTimetableForCalendarImport(
           preferredTermRange: extraction.termRange ?? termRange,

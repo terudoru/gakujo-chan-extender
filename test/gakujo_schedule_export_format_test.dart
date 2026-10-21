@@ -99,6 +99,43 @@ void main() {
     expect(payload['body'], isNot(contains('check1=true')));
   });
 
+  test('the registration page lists each class with its classroom', () {
+    String cell(String code, String weekday, String period, String text) =>
+        '<div class="tblDivNml"><a href="" onclick="return '
+        "InputCallA('$weekday','$period')\">追加</a><br> "
+        '<a href="#" onclick="return '
+        "CallDetail('2026','09','$code','$weekday','$period')\"> "
+        '$code (T4) </a><br> $text<br> &nbsp;&nbsp; '
+        '<input type="button" name="del" value="削除" disabled="disabled">'
+        '</div>';
+    final html = [
+      '<table><tr><td>',
+      cell('264T0507', '3', '1',
+          'プログラミング基礎Ⅱ&nbsp;工学部 計算機演習室&nbsp;2.0単位'),
+      cell('264T0004', '3', '3', '技術者の心がまえ◆&nbsp;備考欄参照&nbsp;2.0単位'),
+      cell('264G3531', '1', '6', '生成AI活用基礎&nbsp;　&nbsp;1.0単位'),
+      '</td></tr></table>',
+      // Rejected classes are listed without a CallDetail link.
+      '<table><tr><td>260G2509 (T3,4)</td><td>健康スポーツ科学実習 I</td>'
+          '<td>第1体育館</td><td>金2</td></tr></table>',
+    ].join();
+
+    final courses = GakujoCalendarExport.coursesFromRegistrationPage(html);
+
+    expect(
+      [
+        for (final course in courses)
+          '${course.courseCode} ${course.title} ${course.weekday} '
+              '${course.period} [${course.location}]',
+      ],
+      [
+        '264T0507 プログラミング基礎Ⅱ 3 1 [工学部 計算機演習室]',
+        '264T0004 技術者の心がまえ 3 3 [備考欄参照]',
+        '264G3531 生成AI活用基礎 1 6 []',
+      ],
+    );
+  });
+
   test('classrooms from the schedule page fill the export gaps', () {
     const exported = [
       GakujoCalendarCourse(
