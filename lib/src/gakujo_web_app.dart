@@ -90,6 +90,8 @@ extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
 const _calendarValidationTitle =
     GakujoCalendarImportSettings.validationCalendarTitle;
 const _calendarValidationUidNamespace = 'calendar-validation';
+const _reportListPortalUrl =
+    'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=en';
 const _schedulePortalUrl =
     'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=sch';
 const _compactToolbarHeight = 40.0;
@@ -770,6 +772,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
+  DateTime? _lastAssignmentRefresh;
   bool _isImportingSettings = false;
   final _backupOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
@@ -3463,38 +3466,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
     } catch (e) {}
   }
+''' +
+          gakujoAssignmentRowsScript +
+          r'''
   function collectReportRows(doc) {
     var rows = [];
     try {
-      var table = doc.querySelector('#enqListForm table:nth-of-type(2)');
-      if (!table || !table.rows) {
-        return rows;
-      }
-      for (var i = 1; i < table.rows.length; i += 1) {
-        var cells = table.rows[i].cells;
-        if (!cells || cells.length < 8) {
-          continue;
-        }
-        var title = compactText(cells[1]);
-        var status = compactText(cells[2]);
-        var number = compactText(cells[3]);
-        var period = compactText(cells[7]);
-        if (!title || !period) {
-          continue;
-        }
-        reportItems.push({
-          kind: compactText(cells[0]),
-          title: title,
-          status: status,
-          code: number,
-          course: compactText(cells[4]),
-          period: period
-        });
+      var items = readAssignmentRows(doc);
+      for (var i = 0; i < items.length; i += 1) {
+        var item = items[i];
+        reportItems.push(item);
         rows.push(
-          'レポート課題: ' + title +
-          (number ? ' / 開講番号: ' + number : '') +
-          (status ? ' / 状態: ' + status : '') +
-          ' / 提出期間: ' + period
+          'レポート課題: ' + item.title +
+          (item.code ? ' / 開講番号: ' + item.code : '') +
+          (item.status ? ' / 状態: ' + item.status : '') +
+          ' / 提出期間: ' + item.period
         );
       }
     } catch (e) {}
@@ -3647,22 +3633,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     if (assignments.isNotEmpty) {
       // The list gives each assignment's exact closing time.
-      String two(int value) => value.toString().padLeft(2, '0');
-      for (final assignment in assignments) {
-        final due = assignment.dueInJapan;
-        addEntry(
-          entryTitle:
-              '${assignment.kind} ${assignment.course} ${assignment.title}',
-          entryUrl: url,
-          entryText: '${due.year}/${two(due.month)}/${two(due.day)} '
-              '${two(due.hour)}:${two(due.minute)}まで',
-          kind: 'deadline',
-          course: assignment.course,
-          courseCode: assignment.courseCode,
-          assignment: assignment.title,
-        );
-      }
-      return entries;
+      return deadlineEntriesForAssignments(
+        assignments,
+        url: durableGakujoLink(url, category),
+        detectedAt: now,
+      );
     }
 
     final lines = GakujoActivityClassifier.stableLinesFor(text).where((line) {
@@ -3756,6 +3731,65 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       messages: _appSettings.messageNotification,
       preferences: _appSettings.notificationPreferences,
     );
+  }
+
+  /// Keeps assignments current without opening the レポート・小テスト list:
+  /// fetches it in the background at most every half hour while signed in,
+  /// then tells about new deadlines and rebooks reminders.
+  Future<void> _refreshAssignmentsInBackground() async {
+    if (!_canRunPageScripts ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastAssignmentRefresh;
+    if (last != null && now.difference(last) < const Duration(minutes: 30)) {
+      return;
+    }
+    _lastAssignmentRefresh = now;
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoAssignmentListFetchScript,
+      );
+      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+      if (decoded is! Map || decoded['status'] != 'ok') {
+        // Not signed in yet; try again on a later page.
+        _lastAssignmentRefresh = null;
+        return;
+      }
+      final rows = decoded['rows'];
+      final assignments = [
+        if (rows is List)
+          for (final row in rows.whereType<Map<dynamic, dynamic>>())
+            if (GakujoAssignment.fromReportRow(
+              row,
+              capturedAt: now,
+              url: _reportListPortalUrl,
+            )
+                case final assignment?)
+              assignment,
+      ];
+      if (assignments.isEmpty) {
+        return;
+      }
+      await _activityStore.mergeAssignments(assignments);
+      await _activityStore.mergeDeadlines(
+        deadlineEntriesForAssignments(
+          assignments,
+          url: _reportListPortalUrl,
+          detectedAt: now,
+        ),
+      );
+      await _notifyPendingDeadlines();
+      await _syncReminders();
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to refresh assignments in the background',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<List<String>> _knownAssignmentCourses() async {
@@ -4495,6 +4529,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             }
             if (!isAuthenticationChallenge) {
               await _scanCurrentPageActivity(url);
+              if (!stillCurrent()) {
+                return;
+              }
+              await _refreshAssignmentsInBackground();
               if (!stillCurrent()) {
                 return;
               }

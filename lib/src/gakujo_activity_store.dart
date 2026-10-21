@@ -125,6 +125,34 @@ String stableGakujoUrl(String url) {
       .replaceAll(RegExp(r'[?&]$'), '');
 }
 
+/// One deadline per assignment of the レポート・小テスト list, closing time in
+/// Japan time, tied to the assignment so it is notified once.
+List<GakujoDeadlineEntry> deadlineEntriesForAssignments(
+  Iterable<GakujoAssignment> assignments, {
+  required String url,
+  required DateTime detectedAt,
+}) {
+  String two(int value) => value.toString().padLeft(2, '0');
+  return [
+    for (final assignment in assignments)
+      if (assignment.dueInJapan case final due)
+        GakujoDeadlineEntry(
+          title: GakujoDatedActivity.compactText(
+            '${assignment.kind} ${assignment.course} ${assignment.title}',
+            maxLength: 80,
+          ),
+          url: url,
+          dueText: '${due.year}/${two(due.month)}/${two(due.day)} '
+              '${two(due.hour)}:${two(due.minute)}まで',
+          detectedAt: detectedAt,
+          source: 'レポート・小テスト',
+          course: assignment.course,
+          courseCode: assignment.courseCode,
+          assignment: assignment.title,
+        ),
+  ];
+}
+
 /// A link that still opens later. One carrying a per-visit
 /// `_flowExecutionKey` expires, so a tapped notification would land on
 /// 「ページの有効期限ぎれ」; such a link is replaced by the portal tab of its

@@ -131,6 +131,91 @@ const _japanOffset = Duration(hours: 9);
 /// [moment] as Japan wall-clock time (fields read as JST, flagged UTC).
 DateTime japanWallClock(DateTime moment) => moment.toUtc().add(_japanOffset);
 
+/// JavaScript defining `readAssignmentRows(doc)`, which reads the
+/// レポート・小テスト・アンケート提出 list into rows for
+/// [GakujoAssignment.fromReportRow]. Gakujo serves the list as a table in the
+/// PC portal and as `ul.campussmart-list` groups for smartphones and for a
+/// page fetched on its own.
+const gakujoAssignmentRowsScript = r'''
+function readAssignmentRows(doc) {
+  function text(node) {
+    return String(node && (node.innerText || node.textContent) || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  var rows = [];
+  var table = doc.querySelector('#enqListForm table:nth-of-type(2)');
+  if (table && table.rows) {
+    for (var i = 1; i < table.rows.length; i += 1) {
+      var cells = table.rows[i].cells;
+      if (!cells || cells.length < 8 || !text(cells[1]) || !text(cells[7])) {
+        continue;
+      }
+      rows.push({
+        kind: text(cells[0]),
+        title: text(cells[1]),
+        status: text(cells[2]),
+        code: text(cells[3]),
+        course: text(cells[4]),
+        period: text(cells[7])
+      });
+    }
+  }
+  var groups = doc.querySelectorAll('#enqListForm ul.campussmart-list');
+  for (var g = 0; g < groups.length; g += 1) {
+    var kind = text(groups[g].querySelector('li.header'));
+    var titles = groups[g].querySelectorAll('span.h3');
+    for (var t = 0; t < titles.length; t += 1) {
+      var block = titles[t].closest('td') || titles[t].parentElement;
+      var all = text(block);
+      var course = (all.match(/\(\s*(.+?)\s*\)\s*実施期間/) || [])[1] || '';
+      var period = (all.match(/実施期間[：:]\s*(.+?)\s*(?:状態|$)/) || [])[1] || '';
+      var row = titles[t].closest('tr') || block;
+      var action = row.querySelector('[onclick*="callEnqInfoSearch"]');
+      var code = (String(action && action.getAttribute('onclick') || '')
+        .match(/'([0-9]{3}[A-Z][0-9]{4})'\s*\)/) || [])[1] || '';
+      if (!text(titles[t]) || !period) {
+        continue;
+      }
+      rows.push({
+        kind: kind,
+        title: text(titles[t]),
+        status: (all.match(/状態[：:]\s*(\S+)/) || [])[1] || '',
+        code: code,
+        course: course.split(' / ')[0].trim(),
+        period: period
+      });
+    }
+  }
+  return rows;
+}
+''';
+
+/// Fetches the レポート・小テスト・アンケート提出 list without leaving the
+/// current page, so assignments stay current without opening the list.
+/// Status is "missing" when Gakujo answers with something else, such as its
+/// login page.
+const gakujoAssignmentListFetchScript = '''
+(function() {
+  $gakujoAssignmentRowsScript
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/campusweb/campussquare.do?_flowId=ENW3411100-flow', false);
+    xhr.send(null);
+    if (xhr.status < 200 || xhr.status >= 400) {
+      return JSON.stringify({status: 'error', rows: []});
+    }
+    var doc = new DOMParser().parseFromString(xhr.responseText, 'text/html');
+    if (!doc.querySelector('#enqListForm')) {
+      return JSON.stringify({status: 'missing', rows: []});
+    }
+    return JSON.stringify({status: 'ok', rows: readAssignmentRows(doc)});
+  } catch (e) {
+    return JSON.stringify({status: 'error', rows: []});
+  }
+})()
+''';
+
 /// Identity of an assignment across Gakujo's pages. The course code is the
 /// stable part when a page has it; the schedule page and the list both do.
 String assignmentId({

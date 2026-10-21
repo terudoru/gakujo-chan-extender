@@ -51,6 +51,14 @@ void main() {
     expect(open.isSubmitted, isFalse);
     expect(open.id, '260G3529|第三回（通信とネットワーク）');
 
+    // The smartphone list, also served when the list is fetched on its own.
+    expect(
+      _assignment(
+        _row('小テスト', '第三回', '未提出', '2026/10/21 17:01 - 2026/10/28 16:31'),
+      ).dueAt,
+      _jst(2026, 10, 28, 16, 31),
+    );
+
     final done = _assignment(
       _row('レポート', 'レポート１', '提出済', '2026/10/09 09:44 ～2026/10/23 08:45'),
     );
