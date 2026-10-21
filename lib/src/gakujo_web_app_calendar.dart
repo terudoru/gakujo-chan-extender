@@ -24,6 +24,48 @@ String gakujoManualCalendarUidNamespace({
   return 'niigata-$academicYear-第$termNumberターム';
 }
 
+/// A period typed in by hand carries no holidays, so "授業なしの日・授業振替日
+/// を反映する" did nothing for it. Add the official no-class days and class
+/// day swaps that fall inside the period, and the vacation days between
+/// terms of an academic year the official calendar covers.
+@visibleForTesting
+GakujoCalendarTermRange gakujoManualTermRangeWithOfficialDays(
+  GakujoCalendarTermRange range,
+  Iterable<GakujoAcademicTerm> officialTerms,
+) {
+  DateTime day(DateTime value) => DateTime(value.year, value.month, value.day);
+  bool inRange(DateTime value) =>
+      !day(value).isBefore(day(range.start)) &&
+      !day(value).isAfter(day(range.end));
+  final coveredYears = {for (final term in officialTerms) term.academicYear};
+  final noClassDates = <DateTime>{
+    for (final date in range.noClassDates) day(date),
+    for (final term in officialTerms)
+      for (final date in term.noClassDates)
+        if (inRange(date)) day(date),
+    for (var date = day(range.start);
+        !date.isAfter(day(range.end));
+        date = DateTime(date.year, date.month, date.day + 1))
+      if (coveredYears.contains(GakujoAcademicCalendar.academicYearFor(date)) &&
+          !officialTerms.any((term) => term.contains(date)))
+        date,
+  };
+  final swapsByDate = <DateTime, GakujoClassDaySwap>{
+    for (final term in officialTerms)
+      for (final swap in term.classDaySwaps)
+        if (inRange(swap.date)) day(swap.date): swap,
+    for (final swap in range.classDaySwaps) day(swap.date): swap,
+  };
+  return GakujoCalendarTermRange(
+    start: range.start,
+    end: range.end,
+    sourceText: range.sourceText,
+    noClassDates: noClassDates.toList()..sort(),
+    classDaySwaps: swapsByDate.values.toList()
+      ..sort((a, b) => a.date.compareTo(b.date)),
+  );
+}
+
 @visibleForTesting
 String gakujoLegacyManualIcsUidNamespace(GakujoCalendarTermRange termRange) {
   String stamp(DateTime value) {
@@ -588,7 +630,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       return null;
     }
     final effectiveRange = settings.includeNoClassDates
-        ? termRange
+        ? gakujoManualTermRangeWithOfficialDays(
+            termRange,
+            GakujoAcademicCalendar.officialTerms,
+          )
         : GakujoCalendarTermRange(
             start: termRange.start,
             end: termRange.end,
@@ -605,6 +650,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         ...termRange.classDaySwaps,
         for (final term in GakujoAcademicCalendar.officialTerms)
           ...term.classDaySwaps,
+      ],
+      knownNoClassDates: [
+        for (final term in GakujoAcademicCalendar.officialTerms)
+          ...term.noClassDates,
       ],
     );
   }
