@@ -370,7 +370,11 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         return;
       }
       final courses = GakujoCalendarExport.filterCoursesForTerm(
-        courses: coursesWithResolvedAmbiguousTerms,
+        courses: GakujoCalendarExport.applyClassDaySwaps(
+          coursesWithResolvedAmbiguousTerms,
+          resolvedTerm.knownClassDaySwaps,
+          noClassDates: resolvedTerm.knownNoClassDates,
+        ),
         termRange: termRange,
         termName: resolvedTerm.termName ?? '',
       );
@@ -567,6 +571,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
               'niigata-${officialTerm.academicYear}-${officialTerm.name}',
           label: '${officialTerm.academicYear}年度 ${officialTerm.name}',
           termName: officialTerm.name,
+          knownClassDaySwaps: officialTerm.classDaySwaps,
+          knownNoClassDates: officialTerm.noClassDates,
         );
       }
     }
@@ -595,6 +601,11 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       ),
       label: _calendarRangeLabel(termRange),
       termName: null,
+      knownClassDaySwaps: [
+        ...termRange.classDaySwaps,
+        for (final term in GakujoAcademicCalendar.officialTerms)
+          ...term.classDaySwaps,
+      ],
     );
   }
 

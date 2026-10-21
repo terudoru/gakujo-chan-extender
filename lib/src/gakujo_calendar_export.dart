@@ -424,6 +424,59 @@ class GakujoCalendarExport {
     );
   }
 
+  /// Places Gakujo's dated meetings on the official academic calendar before
+  /// they are folded into weekly courses.
+  ///
+  /// - A meeting on a 授業振替日 is listed under that calendar date, so a
+  ///   Monday class moved to Tuesday 10/13 arrives as a Tuesday meeting.
+  ///   Read as a Tuesday course it adds a whole extra weekly series on the
+  ///   wrong day; it belongs to the weekday whose timetable runs that date.
+  /// - No regular class meets on a holiday or exam day, so a meeting listed
+  ///   there (an exam or make-up class) must not become a weekly series at
+  ///   that weekday and period; it stays a one-off.
+  static List<GakujoCalendarCourse> applyClassDaySwaps(
+    List<GakujoCalendarCourse> courses,
+    Iterable<GakujoClassDaySwap> swaps, {
+    Iterable<DateTime> noClassDates = const [],
+  }) {
+    final weekdayByDate = <DateTime, int>{
+      for (final swap in swaps)
+        if (swap.weekday != swap.date.weekday)
+          _dateOnly(swap.date): swap.weekday,
+    };
+    final noClassDays = {
+      for (final date in noClassDates) _dateOnly(date),
+    }..removeAll(weekdayByDate.keys);
+    if (weekdayByDate.isEmpty && noClassDays.isEmpty) {
+      return courses;
+    }
+    return [
+      for (final course in courses)
+        if (course.recursWeekly && course.sourceDate != null)
+          _placeDatedMeeting(
+            course,
+            swapWeekday: weekdayByDate[_dateOnly(course.sourceDate!)],
+            isNoClassDay: noClassDays.contains(_dateOnly(course.sourceDate!)),
+          )
+        else
+          course,
+    ];
+  }
+
+  static GakujoCalendarCourse _placeDatedMeeting(
+    GakujoCalendarCourse course, {
+    required int? swapWeekday,
+    required bool isNoClassDay,
+  }) {
+    if (swapWeekday != null && swapWeekday != course.weekday) {
+      return course.copyWith(weekday: swapWeekday);
+    }
+    if (isNoClassDay) {
+      return course.copyWith(recursWeekly: false);
+    }
+    return course;
+  }
+
   static int? termCodeFromTermName(String termName) {
     final normalized = _normalizeTermHint(termName);
     final match = RegExp(r'第([1-4])ターム').firstMatch(normalized);
@@ -820,12 +873,10 @@ class GakujoCalendarExport {
   }
 
   static String _unescapeIcalendarText(String value) {
-    return value
-        .replaceAllMapped(RegExp(r'\\([\\nN,;])'), (match) {
-          final escaped = match.group(1)!;
-          return escaped == 'n' || escaped == 'N' ? '\n' : escaped;
-        })
-        .trim();
+    return value.replaceAllMapped(RegExp(r'\\([\\nN,;])'), (match) {
+      final escaped = match.group(1)!;
+      return escaped == 'n' || escaped == 'N' ? '\n' : escaped;
+    }).trim();
   }
 
   static DateTime? _dateTimeFromIcalendarValue(String value) {

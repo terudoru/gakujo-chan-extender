@@ -74,12 +74,22 @@ class _ResolvedCalendarTerm {
     required this.uidNamespace,
     required this.label,
     required this.termName,
+    this.knownClassDaySwaps = const [],
+    this.knownNoClassDates = const [],
   });
 
   final GakujoCalendarTermRange termRange;
   final String uidNamespace;
   final String label;
   final String? termName;
+
+  /// Every known 授業振替日 for the term, kept even when the user chose not
+  /// to apply them to the calendar, because reading Gakujo's dated classes
+  /// still needs them to place each class on its real weekday.
+  final List<GakujoClassDaySwap> knownClassDaySwaps;
+
+  /// Holidays and exam days of the official term, kept for the same reason.
+  final List<DateTime> knownNoClassDates;
 }
 
 class _ScheduleIntegrationDialogResult {
