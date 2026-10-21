@@ -299,7 +299,9 @@ class _AndroidUploadHost extends StatefulWidget {
 class _AndroidUploadHostState extends State<_AndroidUploadHost> {
   /// A photo taken just before Android ended the app while the camera was
   /// open. The page that asked for it is gone, so offer it on the next pick.
-  String? _recoveredPhotoPath;
+  /// Static because this widget is rebuilt whenever the settings dialog
+  /// temporarily removes the WebView.
+  static String? _recoveredPhotoPath;
 
   @override
   void initState() {
