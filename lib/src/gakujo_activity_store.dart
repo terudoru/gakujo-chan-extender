@@ -125,6 +125,28 @@ String stableGakujoUrl(String url) {
       .replaceAll(RegExp(r'[?&]$'), '');
 }
 
+/// A link that still opens later. One carrying a per-visit
+/// `_flowExecutionKey` expires, so a tapped notification would land on
+/// 「ページの有効期限ぎれ」; such a link is replaced by the portal tab of its
+/// page [category].
+String durableGakujoLink(String url, String category) {
+  if (!url.contains('_flowExecutionKey=')) {
+    return url;
+  }
+  final tab = switch (category) {
+    'レポート・小テスト' => 'en',
+    'スケジュール' => 'sch',
+    '連絡通知' => 'kj',
+    '成績' => 'si',
+    _ => null,
+  };
+  if (tab == null) {
+    return url;
+  }
+  return 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+      'campusportal.do?page=main&tabId=$tab';
+}
+
 /// A link that opens a 連絡通知 again later. The list row's link only works
 /// with the flow key of that visit, so point at the 連絡通知 flow instead and
 /// keep the message's number.

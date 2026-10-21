@@ -3237,7 +3237,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (GakujoAssignment.fromReportRow(
             row,
             capturedAt: DateTime.now(),
-            url: url,
+            url: durableGakujoLink(url, category),
           )
               case final assignment?)
             assignment,
@@ -3578,7 +3578,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final normalizedTitle = entryTitle.trim().isEmpty
           ? _datedActivityTitle(normalizedText)
           : GakujoDatedActivity.compactText(entryTitle, maxLength: 80);
-      final safeUrl = entryUrl.trim().isEmpty ? url : entryUrl;
+      final safeUrl = durableGakujoLink(
+        entryUrl.trim().isEmpty ? url : entryUrl,
+        category,
+      );
       final key = '$kind|$safeUrl|$normalizedTitle|$normalizedText';
       if (!seen.add(key)) {
         return;

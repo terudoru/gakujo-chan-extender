@@ -241,6 +241,20 @@ void main() {
       );
     });
 
+    test('tapped later, links still open a page', () {
+      const expiring = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+          'campussquare.do?_flowExecutionKey=_cAAA_kBBB';
+      expect(
+        durableGakujoLink(expiring, 'レポート・小テスト'),
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+        'campusportal.do?page=main&tabId=en',
+      );
+      const portal = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+          'campusportal.do?page=main&tabId=sch';
+      expect(durableGakujoLink(portal, 'スケジュール'), portal);
+      expect(durableGakujoLink(expiring, 'Gakujo'), expiring);
+    });
+
     test('keep one identity across visits', () {
       const first = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
           'campussquare.do?_flowExecutionKey=_cAAA_kBBB'
