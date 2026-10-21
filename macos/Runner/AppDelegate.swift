@@ -100,15 +100,35 @@ enum MacosWebViewFileUploadSupport {
   }
 }
 
-/// WKWebView ignores the back/forward buttons of multi-button mice, so route
-/// them to the WebView's history like Safari does.
+/// WKWebView ignores the back/forward buttons of multi-button mice and the
+/// Cmd+[ / Cmd+] shortcuts, so route them to the WebView's history like
+/// Safari does (Windows gets Alt+Left/Right from WebView2).
 enum MacosWebViewMouseNavigation {
   private static let backButtonNumber = 3
   private static let forwardButtonNumber = 4
   private static var monitor: Any?
+  private static var keyMonitor: Any?
 
   static func install() {
     guard monitor == nil else { return }
+    keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      guard modifiers == .command,
+            let key = event.charactersIgnoringModifiers,
+            key == "[" || key == "]",
+            let window = event.window,
+            let webView = Self.webView(in: window) else {
+        return event
+      }
+      if key == "[" {
+        if webView.canGoBack {
+          webView.goBack()
+        }
+      } else if webView.canGoForward {
+        webView.goForward()
+      }
+      return nil
+    }
     monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { event in
       guard event.buttonNumber == Self.backButtonNumber ||
               event.buttonNumber == Self.forwardButtonNumber,
@@ -124,6 +144,31 @@ enum MacosWebViewMouseNavigation {
       }
       return nil
     }
+  }
+
+  /// The focused WebView, or else the window's only WebView.
+  private static func webView(in window: NSWindow) -> WKWebView? {
+    var responder: NSResponder? = window.firstResponder
+    while let current = responder {
+      if let webView = current as? WKWebView {
+        return webView
+      }
+      responder = current.nextResponder
+    }
+    guard let contentView = window.contentView else { return nil }
+    return firstWebView(in: contentView)
+  }
+
+  private static func firstWebView(in view: NSView) -> WKWebView? {
+    if let webView = view as? WKWebView {
+      return webView.isHiddenOrHasHiddenAncestor ? nil : webView
+    }
+    for subview in view.subviews {
+      if let webView = firstWebView(in: subview) {
+        return webView
+      }
+    }
+    return nil
   }
 
   private static func webView(under event: NSEvent) -> WKWebView? {
