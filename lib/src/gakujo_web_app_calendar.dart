@@ -112,6 +112,20 @@ Future<GakujoDownloadResult> exportGakujoCalendarWithNativePicker({
   return GakujoDownloadResult.fromMap(raw);
 }
 
+@visibleForTesting
+String gakujoCalendarSourceMissingMessage(
+  GakujoPortalAuthState authState, {
+  required String fallback,
+}) {
+  return switch (authState) {
+    GakujoPortalAuthState.login =>
+      '学務情報システムのログインが切れています。ログインしてから、もう一度実行してください',
+    GakujoPortalAuthState.twoFactor =>
+      '2段階認証が完了していません。認証を済ませてから、もう一度実行してください',
+    _ => fallback,
+  };
+}
+
 String gakujoCalendarPermissionSettingsHint() {
   if (Platform.isMacOS) {
     return 'システム設定＞プライバシーとセキュリティ＞カレンダーで許可できます';
@@ -330,7 +344,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       );
       final extractedCourses = extraction.courses;
       if (extractedCourses.isEmpty) {
-        _showSnackBar('本家Google連携から取り込める授業が見つかりませんでした。スケジュールページで再実行してください');
+        await _showCalendarSourceMissingMessage(
+          '本家Google連携から取り込める授業が見つかりませんでした。スケジュールページで再実行してください',
+        );
         return;
       }
 
@@ -488,6 +504,16 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       );
       _showSnackBar('カレンダー用ファイルを作成できませんでした: $error');
     }
+  }
+
+  /// Calendar import reads the logged-in schedule page. When the session has
+  /// expired the portal shows its login form instead, and the generic "not
+  /// found" message would send the student to the wrong fix.
+  Future<void> _showCalendarSourceMissingMessage(String fallback) async {
+    final authState = await _readPortalAuthState();
+    _showSnackBar(
+      gakujoCalendarSourceMissingMessage(authState, fallback: fallback),
+    );
   }
 
   GakujoCalendarImportSettings _effectiveCalendarImportSettings(
@@ -751,6 +777,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<GakujoCalendarImportMethod>(
+                        isExpanded: true,
                         initialValue: selectedSettings.method,
                         decoration: const InputDecoration(
                           labelText: '取り込み方法',
@@ -760,7 +787,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           for (final method in _calendarImportMethodChoices())
                             DropdownMenuItem(
                               value: method,
-                              child: Text(method.label),
+                              child: Text(
+                                method.label,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                         ],
                         onChanged: (method) {
@@ -775,6 +805,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<GakujoCalendarTermSource>(
+                        isExpanded: true,
                         initialValue: selectedSettings.termSource,
                         decoration: const InputDecoration(
                           labelText: 'ターム期間の決め方',
@@ -784,7 +815,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           for (final source in GakujoCalendarTermSource.values)
                             DropdownMenuItem(
                               value: source,
-                              child: Text(source.label),
+                              child: Text(
+                                source.label,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                         ],
                         onChanged: (source) {
@@ -802,6 +836,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                               .officialAcademicCalendar) ...[
                         const SizedBox(height: 12),
                         DropdownButtonFormField<GakujoCalendarTermTarget>(
+                          isExpanded: true,
                           initialValue: selectedSettings.termTarget,
                           decoration: const InputDecoration(
                             labelText: '追加するターム',
@@ -812,7 +847,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                                 in GakujoCalendarTermTarget.values)
                               DropdownMenuItem(
                                 value: target,
-                                child: Text(target.label),
+                                child: Text(
+                                  target.label,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                           ],
                           onChanged: (target) {
@@ -1042,7 +1080,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         return true;
       }
       if (showMissingMessage) {
-        _showSnackBar('本家Googleスケジュール連携が見つかりませんでした。スケジュールタブで実行してください');
+        await _showCalendarSourceMissingMessage(
+          '本家Googleスケジュール連携が見つかりませんでした。スケジュールタブで実行してください',
+        );
       }
       if (waitForNavigation) {
         _nextPageFinishedCompleter = null;
