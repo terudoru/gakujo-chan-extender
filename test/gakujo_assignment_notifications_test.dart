@@ -1,8 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_dated_activity.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 
@@ -253,6 +259,53 @@ void main() {
     expect(loaded.skipSubmitted, isFalse);
     expect(loaded.mutedCourses, {'知的財産概論'});
     expect(loaded.reminderOffsets, {GakujoReminderOffset.threeHours});
+  });
+
+  group('the notification choices travel', () {
+    const chosen = GakujoAppSettings(
+      notificationPreferences: GakujoNotificationPreferences(
+        skipSubmitted: false,
+        mutedCourses: {'知的財産概論'},
+        reminderOffsets: {GakujoReminderOffset.threeDays},
+      ),
+    );
+    void expectChosen(GakujoNotificationPreferences? restored) {
+      expect(restored?.skipSubmitted, isFalse);
+      expect(restored?.mutedCourses, {'知的財産概論'});
+      expect(restored?.reminderOffsets, {GakujoReminderOffset.threeDays});
+    }
+
+    test('through a backup', () {
+      final exported = buildGakujoBackupPayload(
+        appSettings: chosen,
+        downloadHistory: const [],
+        failedDownloads: const [],
+        favorites: const [],
+        deadlines: const [],
+        changes: const [],
+        reportLists: const [],
+      );
+      expectChosen(
+        parseGakujoBackup(jsonEncode(exported)).notificationPreferences,
+      );
+    });
+
+    test('through the local mirror macOS starts from', () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-prefs');
+      addTearDown(() => directory.delete(recursive: true));
+      final store = GakujoLocalPrefsStore(directory: directory);
+      await store.saveAppSettings(chosen);
+      final loaded = await GakujoLocalPrefsStore(directory: directory).load();
+      expectChosen(
+        macosStartupSettingsFromLocalPrefs(loaded).notificationPreferences,
+      );
+      expectChosen(
+        mergeMacosLocalMessageFiltersWithSecureSettings(
+          secureSettings: const GakujoAppSettings(),
+          localPrefs: loaded,
+        ).notificationPreferences,
+      );
+    });
   });
 }
 
