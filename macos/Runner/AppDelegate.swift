@@ -466,17 +466,52 @@ private final class MacosCalendarBridge {
       return existing
     }
 
-    let calendar = EKCalendar(for: .event, eventStore: eventStore)
-    calendar.title = title
-    calendar.source = eventStore.defaultCalendarForNewEvents?.source
-      ?? eventStore.sources.first(where: { $0.sourceType == .local })
-      ?? eventStore.sources.first
-    guard calendar.source != nil else {
-      throw MacosCalendarBridgeError.missingWritableCalendar
+    // The default calendar's account may not allow new calendars (Google or
+    // Exchange, for example), which made every import fall back to a file.
+    // Try each account that can hold one until a calendar can be created.
+    var lastError: Error?
+    for source in calendarSourceCandidates() {
+      let calendar = EKCalendar(for: .event, eventStore: eventStore)
+      calendar.title = title
+      calendar.source = source
+      do {
+        try eventStore.saveCalendar(calendar, commit: true)
+        rememberCalendar(calendar, title: title, managedByApp: true)
+        return calendar
+      } catch {
+        lastError = error
+      }
     }
-    try eventStore.saveCalendar(calendar, commit: true)
-    rememberCalendar(calendar, title: title, managedByApp: true)
-    return calendar
+    throw lastError ?? MacosCalendarBridgeError.missingWritableCalendar
+  }
+
+  /// Accounts that may hold a new calendar, most preferred first: the default
+  /// calendar's account, iCloud, then the on-device store and the rest.
+  private func calendarSourceCandidates() -> [EKSource] {
+    var candidates: [EKSource] = []
+    func add(_ source: EKSource?) {
+      guard let source,
+            source.sourceType != .subscribed,
+            source.sourceType != .birthdays,
+            !candidates.contains(where: {
+              $0.sourceIdentifier == source.sourceIdentifier
+            }) else {
+        return
+      }
+      candidates.append(source)
+    }
+    add(eventStore.defaultCalendarForNewEvents?.source)
+    for source in eventStore.sources
+      where source.sourceType == .calDAV && source.title == "iCloud" {
+      add(source)
+    }
+    for source in eventStore.sources where source.sourceType == .local {
+      add(source)
+    }
+    for source in eventStore.sources {
+      add(source)
+    }
+    return candidates
   }
 
   private func existingCalendar(title: String) -> EKCalendar? {

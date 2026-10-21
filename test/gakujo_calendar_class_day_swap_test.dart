@@ -135,4 +135,31 @@ void main() {
       [weekly],
     );
   });
+
+  test('the iCalendar export matches the device calendar events', () {
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: importedCourses(),
+      rangeStart: _term3.start,
+      rangeEnd: _term3.end,
+      noClassDates: _term3.noClassDates,
+      classDaySwaps: _term3.classDaySwaps,
+      uidNamespace: 'test',
+    );
+    final starts = RegExp(r'DTSTART;TZID=Asia/Tokyo:(\d{8}T\d{4})')
+        .allMatches(ics)
+        .map((m) => m.group(1))
+        .toList();
+
+    // Weekly series start on their real weekdays only.
+    expect(starts, contains('20261005T0845')); // 線形代数 (Mon)
+    expect(starts, contains('20261006T0845')); // 英語 (Tue)
+    expect(starts, contains('20261007T0845')); // 物理学 (Wed)
+    // Swap-day meetings and the exam stay as single events.
+    expect(starts, contains('20261013T0845'));
+    expect(starts, contains('20261106T0845'));
+    expect(starts, contains('20261125T1030'));
+    // No weekly copy on the swap weekdays.
+    expect(starts.where((s) => s == '20261009T0845'), isEmpty);
+    expect(RegExp('RRULE').allMatches(ics), hasLength(3));
+  });
 }

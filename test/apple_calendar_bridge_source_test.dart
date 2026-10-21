@@ -46,6 +46,13 @@ void main() {
         expect(source, contains('missingWritableCalendar'));
       });
 
+      test('tries other accounts when the default cannot hold a calendar', () {
+        expect(source, contains('for source in calendarSourceCandidates()'));
+        expect(source, contains('source.sourceType != .subscribed'));
+        expect(source, contains('source.sourceType != .birthdays'));
+        expect(source, contains('throw lastError ??'));
+      });
+
       test('renames only calendars created and managed by the app', () {
         expect(
           source,
