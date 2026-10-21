@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>課題などに添付する写真や動画をその場で撮影するために使用します。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>課題などに添付する写真を選ぶために使用します。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>課題などに添付する動画をその場で撮影するときに音声を録音するために使用します。</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
