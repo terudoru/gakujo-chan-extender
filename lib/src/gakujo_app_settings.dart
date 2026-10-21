@@ -525,7 +525,7 @@ class GakujoMessageNotificationSettings {
     return {
       'mode': mode.storageValue,
       'keywords': normalizeMessageExcludeKeywords(keywords),
-      if (since != null) 'since': since!.toIso8601String(),
+      if (since != null) 'since': since!.toUtc().toIso8601String(),
     };
   }
 
