@@ -63,6 +63,27 @@ void main() {
         GakujoDatedActivity.isScheduleCalendarRow('2026/10/14まで'),
         isFalse,
       );
+      // Whole rows of the レポート・小テスト list and of 提出物情報.
+      expect(
+        GakujoDatedActivity.isScheduleCalendarRow(
+          '小テスト 第三回 未提出 260G3529 情報処理概論Ａ II 第3,4ターム 水5 '
+          '2026/10/21 17:01 ～2026/10/28 16:31',
+        ),
+        isTrue,
+      );
+      expect(
+        GakujoDatedActivity.isScheduleCalendarRow(
+          'レポート "レポート１" 2026年10月9日 ～ 2026年10月23日 '
+          '小テスト "第２回課題" 2026年10月14日 ～ 2026年10月28日',
+        ),
+        isTrue,
+      );
+      expect(
+        GakujoDatedActivity.isScheduleCalendarRow(
+          '小テスト 情報処理概論Ａ II 第三回 2026/10/28 16:31まで',
+        ),
+        isFalse,
+      );
     });
   });
 

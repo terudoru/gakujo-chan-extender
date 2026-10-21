@@ -114,7 +114,11 @@ class GakujoDatedActivity {
   /// stored it: several periods or a holiday label, not one deadline.
   static bool isScheduleCalendarRow(String text) {
     return text.contains('[休日]') ||
-        RegExp(r'[1-7]\s*限\s*[:：]').allMatches(text).length >= 2;
+        RegExp(r'[1-7]\s*限\s*[:：]').allMatches(text).length >= 2 ||
+        // A whole レポート・小テスト list row: 状態 then 開講番号.
+        RegExp(r'(未提出|提出済|一時保存)\s+[0-9]{3}[A-Z][0-9]{4}').hasMatch(text) ||
+        // Several 提出物情報 entries run together.
+        RegExp(r'"[^"]+"\s*[0-9]{4}年').allMatches(text).length >= 2;
   }
 
   static bool isNoiseText(String text) {

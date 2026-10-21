@@ -3601,7 +3601,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     }
 
-    for (final item in messageItems) {
+    // The schedule page and the レポート・小テスト list are read item by item
+    // below. Their table rows also look like dated notices to the page scan,
+    // and taken as such each assignment came again as one whole row, with
+    // 「未提出」 read as a deadline word.
+    final readsItemsItself = category == 'スケジュール' ||
+        category == 'レポート・小テスト' ||
+        assignments.isNotEmpty;
+    for (final item in readsItemsItself
+        ? const <_MessageActivityCandidate>[]
+        : messageItems) {
       // 「[新着]」 disappears once read and would make it a new entry.
       final text = item.text.replaceAll('[新着]', ' ');
       addEntry(
