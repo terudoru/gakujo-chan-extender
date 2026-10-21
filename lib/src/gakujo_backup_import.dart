@@ -31,6 +31,7 @@ class GakujoBackupImport {
     this.calendarImportSettings,
     this.messageExcludeKeywords,
     this.notificationTopics,
+    this.messageNotification,
     this.disabledFeatureFlags,
     this.downloadHistory,
     this.failedDownloads,
@@ -47,6 +48,7 @@ class GakujoBackupImport {
   final GakujoCalendarImportSettings? calendarImportSettings;
   final List<String>? messageExcludeKeywords;
   final Set<GakujoNotificationTopic>? notificationTopics;
+  final GakujoMessageNotificationSettings? messageNotification;
   final Set<GakujoFeatureFlag>? disabledFeatureFlags;
   final List<GakujoDownloadHistoryEntry>? downloadHistory;
   final List<GakujoFailedDownloadEntry>? failedDownloads;
@@ -134,6 +136,11 @@ GakujoBackupImport parseGakujoBackup(String text) {
             GakujoNotificationTopicLabels.decode(
               decoded['notificationTopics'],
             ),
+          )
+        : null,
+    messageNotification: decoded['messageNotification'] is Map
+        ? GakujoMessageNotificationSettings.fromJson(
+            decoded['messageNotification'],
           )
         : null,
     disabledFeatureFlags: decoded.containsKey('disabledFeatureFlags')

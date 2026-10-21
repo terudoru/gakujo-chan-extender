@@ -382,13 +382,35 @@ class NotificationTopicsSection extends StatelessWidget {
   const NotificationTopicsSection({
     super.key,
     required this.topics,
+    required this.messages,
     required this.notificationsEnabled,
     required this.onChanged,
+    required this.onMessagesChanged,
+    required this.keywordController,
+    required this.canAddKeyword,
+    required this.onKeywordInputChanged,
   });
 
   final Set<GakujoNotificationTopic> topics;
+  final GakujoMessageNotificationSettings messages;
   final bool notificationsEnabled;
   final void Function(GakujoNotificationTopic topic, bool enabled) onChanged;
+  final Future<void> Function(GakujoMessageNotificationSettings messages)
+      onMessagesChanged;
+  final TextEditingController keywordController;
+  final bool canAddKeyword;
+  final ValueChanged<String> onKeywordInputChanged;
+
+  Future<void> _addKeyword() {
+    return onMessagesChanged(
+      messages.copyWith(
+        keywords: normalizeMessageExcludeKeywords([
+          ...messages.keywords,
+          keywordController.text,
+        ]),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -415,6 +437,99 @@ class NotificationTopicsSection extends StatelessWidget {
                 ? (value) => onChanged(topic, value ?? false)
                 : null,
           ),
+        const SizedBox(height: 12),
+        Text(
+          '連絡通知',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          '全学への案内が多いため、通知するものを絞れます。切り替えた後に届いた連絡通知から通知します。',
+        ),
+        RadioGroup<GakujoMessageNotificationMode>(
+          groupValue: messages.mode,
+          onChanged: (mode) {
+            if (notificationsEnabled && mode != null) {
+              unawaited(onMessagesChanged(messages.copyWith(mode: mode)));
+            }
+          },
+          child: Column(
+            children: [
+              for (final mode in GakujoMessageNotificationMode.values)
+                RadioListTile<GakujoMessageNotificationMode>(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(mode.label),
+                  value: mode,
+                  enabled: notificationsEnabled,
+                ),
+            ],
+          ),
+        ),
+        if (messages.mode == GakujoMessageNotificationMode.keywords) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: keywordController,
+                  enabled: notificationsEnabled,
+                  decoration: const InputDecoration(
+                    labelText: '通知するキーワード',
+                    hintText: '例: 授業連絡、休講、締切',
+                    border: OutlineInputBorder(),
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onChanged: onKeywordInputChanged,
+                  onSubmitted: canAddKeyword
+                      ? (_) {
+                          unawaited(_addKeyword());
+                        }
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: notificationsEnabled && canAddKeyword
+                    ? () => unawaited(_addKeyword())
+                    : null,
+                icon: const Icon(Icons.add),
+                label: const Text('追加'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            messages.keywords.isEmpty
+                ? 'キーワードが未設定のため、連絡通知は通知されません。'
+                : '表題・ジャンル・差出人などにいずれかを含む連絡通知を通知します。'
+                    '「授業連絡」で授業の連絡だけになります。',
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final keyword in messages.keywords)
+                InputChip(
+                  label: Text(keyword),
+                  onDeleted: notificationsEnabled
+                      ? () => unawaited(
+                            onMessagesChanged(
+                              messages.copyWith(
+                                keywords: [
+                                  for (final value in messages.keywords)
+                                    if (value != keyword) value,
+                                ],
+                              ),
+                            ),
+                          )
+                      : null,
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }

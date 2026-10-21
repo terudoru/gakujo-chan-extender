@@ -345,34 +345,29 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   }
 }
 
-/// What an OS notification can be about. Students choose which of these
-/// reach the notification center instead of being told about every dated
-/// line the app finds.
+/// What an OS notification about a deadline can be about. Students choose
+/// which of these reach the notification center instead of being told about
+/// every dated line the app finds. 連絡通知 have their own rule,
+/// [GakujoMessageNotificationSettings].
 enum GakujoNotificationTopic {
-  report,
-  quiz,
+  coursework,
   survey,
-  message,
   other,
 }
 
 extension GakujoNotificationTopicLabels on GakujoNotificationTopic {
   String get label {
     return switch (this) {
-      GakujoNotificationTopic.report => 'レポート・課題の提出期限',
-      GakujoNotificationTopic.quiz => '小テストの期限',
+      GakujoNotificationTopic.coursework => 'レポート・小テストの期限',
       GakujoNotificationTopic.survey => 'アンケートの回答期限',
-      GakujoNotificationTopic.message => '連絡通知に書かれた期限',
       GakujoNotificationTopic.other => 'その他の期限（学内の手続きなど）',
     };
   }
 
   String get storageValue {
     return switch (this) {
-      GakujoNotificationTopic.report => 'report',
-      GakujoNotificationTopic.quiz => 'quiz',
+      GakujoNotificationTopic.coursework => 'coursework',
       GakujoNotificationTopic.survey => 'survey',
-      GakujoNotificationTopic.message => 'message',
       GakujoNotificationTopic.other => 'other',
     };
   }
@@ -383,13 +378,16 @@ extension GakujoNotificationTopicLabels on GakujoNotificationTopic {
         return topic;
       }
     }
+    // Reports and quizzes were separate choices before.
+    if (value == 'report' || value == 'quiz') {
+      return GakujoNotificationTopic.coursework;
+    }
     return null;
   }
 
   /// Coursework only, until the student picks otherwise.
   static const defaults = {
-    GakujoNotificationTopic.report,
-    GakujoNotificationTopic.quiz,
+    GakujoNotificationTopic.coursework,
     GakujoNotificationTopic.survey,
   };
 
@@ -412,6 +410,148 @@ extension GakujoNotificationTopicLabels on GakujoNotificationTopic {
   }
 }
 
+/// How 連絡通知 reach OS notifications. Most of them are university-wide
+/// announcements whose display period reads like a deadline, so they are
+/// off unless the student asks for them.
+enum GakujoMessageNotificationMode {
+  off,
+  deadlines,
+  keywords,
+}
+
+extension GakujoMessageNotificationModeLabels on GakujoMessageNotificationMode {
+  String get label {
+    return switch (this) {
+      GakujoMessageNotificationMode.off => '通知しない',
+      GakujoMessageNotificationMode.deadlines => '期限が書かれたものを通知',
+      GakujoMessageNotificationMode.keywords => 'キーワードを含むものだけ通知',
+    };
+  }
+
+  String get storageValue {
+    return switch (this) {
+      GakujoMessageNotificationMode.off => 'off',
+      GakujoMessageNotificationMode.deadlines => 'deadlines',
+      GakujoMessageNotificationMode.keywords => 'keywords',
+    };
+  }
+
+  static GakujoMessageNotificationMode fromStorageValue(String? value) {
+    for (final mode in GakujoMessageNotificationMode.values) {
+      if (mode.storageValue == value) {
+        return mode;
+      }
+    }
+    return GakujoMessageNotificationMode.off;
+  }
+}
+
+class GakujoMessageNotificationSettings {
+  const GakujoMessageNotificationSettings({
+    this.mode = GakujoMessageNotificationMode.off,
+    this.keywords = const [],
+    this.since,
+  });
+
+  final GakujoMessageNotificationMode mode;
+  final List<String> keywords;
+
+  /// When the student last changed this rule. Messages posted before then
+  /// are not notified, so a new rule does not bring a backlog of the
+  /// hundreds of announcements already in the list.
+  final DateTime? since;
+
+  /// Whether a 連絡通知 whose list row reads [text] should be notified. The
+  /// row starts with its 掲載日時.
+  bool allows({required String text, required bool isDeadline}) {
+    final since = this.since;
+    final posted = RegExp(
+      r'([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})\s+([0-9]{1,2}):([0-9]{2})',
+    ).firstMatch(text);
+    if (since != null && posted != null) {
+      // 掲載日時 is Japan time whatever the device's time zone is.
+      final postedAt = DateTime.utc(
+        int.parse(posted.group(1)!),
+        int.parse(posted.group(2)!),
+        int.parse(posted.group(3)!),
+        int.parse(posted.group(4)!),
+        int.parse(posted.group(5)!),
+      ).subtract(const Duration(hours: 9));
+      if (postedAt.isBefore(
+        since.toUtc().subtract(const Duration(minutes: 1)),
+      )) {
+        return false;
+      }
+    }
+    return switch (mode) {
+      GakujoMessageNotificationMode.off => false,
+      GakujoMessageNotificationMode.deadlines => isDeadline,
+      GakujoMessageNotificationMode.keywords =>
+        keywords.any((keyword) => text.contains(keyword)),
+    };
+  }
+
+  GakujoMessageNotificationSettings copyWith({
+    GakujoMessageNotificationMode? mode,
+    List<String>? keywords,
+    DateTime? since,
+  }) {
+    return GakujoMessageNotificationSettings(
+      mode: mode ?? this.mode,
+      keywords: keywords ?? this.keywords,
+      since: since ?? this.since,
+    );
+  }
+
+  Map<String, Object?> toJson() {
+    return {
+      'mode': mode.storageValue,
+      'keywords': normalizeMessageExcludeKeywords(keywords),
+      if (since != null) 'since': since!.toIso8601String(),
+    };
+  }
+
+  /// Reads the saved rule. Before it existed, choosing 連絡通知 among the
+  /// topics meant notifying their deadlines, so [legacyTopics] keeps that.
+  factory GakujoMessageNotificationSettings.fromJson(
+    Object? raw, {
+    Object? legacyTopics,
+  }) {
+    var decoded = raw;
+    if (raw is String) {
+      try {
+        decoded = jsonDecode(raw);
+      } on FormatException {
+        decoded = null;
+      }
+    }
+    if (decoded is Map) {
+      final keywords = decoded['keywords'];
+      return GakujoMessageNotificationSettings(
+        mode: GakujoMessageNotificationModeLabels.fromStorageValue(
+          decoded['mode']?.toString(),
+        ),
+        keywords: keywords is List
+            ? normalizeMessageExcludeKeywords(
+                keywords.map((value) => value.toString()),
+              )
+            : const [],
+        since: DateTime.tryParse(decoded['since']?.toString() ?? ''),
+      );
+    }
+    final legacy = switch (legacyTopics) {
+      final String text => text.split(','),
+      final Iterable<Object?> list => list.map((value) => '$value'),
+      _ => const <String>[],
+    };
+    return GakujoMessageNotificationSettings(
+      mode: legacy.any((value) => value.trim() == 'message')
+          ? GakujoMessageNotificationMode.deadlines
+          : GakujoMessageNotificationMode.off,
+    );
+  }
+}
+
 class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
@@ -422,6 +562,7 @@ class GakujoAppSettings {
     this.calendarImportSettings = const GakujoCalendarImportSettings(),
     this.messageExcludeKeywords = const [],
     this.notificationTopics = GakujoNotificationTopicLabels.defaults,
+    this.messageNotification = const GakujoMessageNotificationSettings(),
   });
 
   final DownloadSaveMode downloadSaveMode;
@@ -432,6 +573,7 @@ class GakujoAppSettings {
   final GakujoCalendarImportSettings calendarImportSettings;
   final List<String> messageExcludeKeywords;
   final Set<GakujoNotificationTopic> notificationTopics;
+  final GakujoMessageNotificationSettings messageNotification;
 
   bool get hasLoginCredentials => loginCredentials?.isComplete ?? false;
 
@@ -448,6 +590,7 @@ class GakujoAppSettings {
     GakujoCalendarImportSettings? calendarImportSettings,
     List<String>? messageExcludeKeywords,
     Set<GakujoNotificationTopic>? notificationTopics,
+    GakujoMessageNotificationSettings? messageNotification,
   }) {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
@@ -462,6 +605,7 @@ class GakujoAppSettings {
       messageExcludeKeywords:
           messageExcludeKeywords ?? this.messageExcludeKeywords,
       notificationTopics: notificationTopics ?? this.notificationTopics,
+      messageNotification: messageNotification ?? this.messageNotification,
     );
   }
 }
@@ -499,6 +643,8 @@ class GakujoAppSettingsStore {
       'more_better_gakujo_message_exclude_keywords';
   static const _notificationTopicsKey =
       'more_better_gakujo_notification_topics';
+  static const _messageNotificationKey =
+      'more_better_gakujo_message_notification';
   static const _settingsKeys = [
     _downloadSaveModeKey,
     _pageModeKey,
@@ -510,6 +656,7 @@ class GakujoAppSettingsStore {
     _calendarImportSettingsKey,
     _messageExcludeKeywordsKey,
     _notificationTopicsKey,
+    _messageNotificationKey,
   ];
 
   final FlutterSecureStorage _secureStorage;
@@ -526,6 +673,7 @@ class GakujoAppSettingsStore {
           _calendarImportSettingsKey,
           _messageExcludeKeywordsKey,
           _notificationTopicsKey,
+          _messageNotificationKey,
         ],
       );
 
@@ -562,6 +710,10 @@ class GakujoAppSettingsStore {
       ),
       notificationTopics: GakujoNotificationTopicLabels.decode(
         values[_notificationTopicsKey],
+      ),
+      messageNotification: GakujoMessageNotificationSettings.fromJson(
+        values[_messageNotificationKey],
+        legacyTopics: values[_notificationTopicsKey],
       ),
     );
   }
@@ -665,6 +817,17 @@ class GakujoAppSettingsStore {
       () => _secureStorage.write(
         key: _notificationTopicsKey,
         value: encodeNotificationTopics(topics).join(','),
+      ),
+    );
+  }
+
+  Future<void> saveMessageNotification(
+    GakujoMessageNotificationSettings settings,
+  ) {
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _messageNotificationKey,
+        value: jsonEncode(settings.toJson()),
       ),
     );
   }

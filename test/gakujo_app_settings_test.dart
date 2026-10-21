@@ -142,7 +142,7 @@ void main() {
 
     expect(storage.readAllCount, 1);
     expect(storage.readKeys.first, 'more_better_gakujo_download_save_mode');
-    expect(storage.readKeys.last, 'more_better_gakujo_notification_topics');
+    expect(storage.readKeys.last, 'more_better_gakujo_message_notification');
     expect(settings.pageMode, GakujoPageMode.desktop);
   });
 

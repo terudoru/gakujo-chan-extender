@@ -74,7 +74,9 @@ class GakujoDeadlineEntry {
 
   bool get isDeadline => kind == 'deadline';
 
-  String get key => '$kind|$url|$title|$dueText';
+  /// Gakujo puts a per-visit `_flowExecutionKey` in its links; leaving it
+  /// in made the same deadline look new, and notify again, on every visit.
+  String get key => '$kind|${stableGakujoUrl(url)}|$title|$dueText';
 
   Map<String, Object?> toJson() {
     return {
@@ -98,6 +100,32 @@ class GakujoDeadlineEntry {
       source: json['source']?.toString() ?? '',
     );
   }
+}
+
+/// [url] without Gakujo's per-visit `_flowExecutionKey` parameter.
+String stableGakujoUrl(String url) {
+  return url
+      .replaceAll(RegExp(r'_flowExecutionKey=[^&#]*&?'), '')
+      .replaceAll(RegExp(r'[?&]$'), '');
+}
+
+/// A link that opens a 連絡通知 again later. The list row's link only works
+/// with the flow key of that visit, so point at the 連絡通知 flow instead and
+/// keep the message's number.
+String gakujoMessageLinkFor(String url) {
+  final uri = Uri.tryParse(url);
+  final seqNo = uri?.queryParameters['seqNo'];
+  if (uri == null || seqNo == null || seqNo.isEmpty) {
+    return url;
+  }
+  return uri.replace(
+    queryParameters: {
+      '_flowId': 'KJW0001100-flow',
+      for (final name in const ['keijitype', 'genrecd'])
+        if (uri.queryParameters[name] case final value?) name: value,
+      'seqNo': seqNo,
+    },
+  ).toString();
 }
 
 class GakujoActivityChangeEntry {
@@ -236,7 +264,11 @@ class GakujoActivityStore {
   static const _changesKey = 'more_better_gakujo_activity_changes';
   static const _reportListsKey = 'more_better_gakujo_cached_report_lists';
   static const _maxSnapshots = 120;
+  // 連絡通知 alone can hold hundreds of dated rows, so they get their own
+  // share instead of pushing coursework deadlines out.
   static const _maxDeadlines = 80;
+  static const _maxMessageDeadlines = 80;
+  static const _maxNotifiedDeadlineKeys = 1000;
   static const _maxFavorites = 30;
   static const _maxChanges = 120;
   static const _maxReportLists = 20;
@@ -304,8 +336,26 @@ class GakujoActivityStore {
       fromJson: GakujoDeadlineEntry.fromJson,
       retain: (entry) => _isUsefulDeadline(entry) && _isActiveDeadline(entry),
       compare: (a, b) => b.detectedAt.compareTo(a.detectedAt),
-      limit: _maxDeadlines,
+      limit: _maxDeadlines + _maxMessageDeadlines,
     );
+  }
+
+  /// The newest deadlines within each share, newest first.
+  static List<GakujoDeadlineEntry> _capDeadlines(
+    Iterable<GakujoDeadlineEntry> newestFirst,
+  ) {
+    final messages = <GakujoDeadlineEntry>[];
+    final others = <GakujoDeadlineEntry>[];
+    for (final entry in newestFirst) {
+      final share = entry.source == '連絡通知' ? messages : others;
+      final limit =
+          entry.source == '連絡通知' ? _maxMessageDeadlines : _maxDeadlines;
+      if (share.length < limit) {
+        share.add(entry);
+      }
+    }
+    return [...others, ...messages]
+      ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
   }
 
   Future<Set<String>> loadNotifiedDeadlineKeys() {
@@ -354,9 +404,22 @@ class GakujoActivityStore {
     if (!notifiedRead.isSuccessful) {
       return;
     }
-    await _writeStringSet(
-      _notifiedDeadlineKeysKey,
-      {...notifiedRead.value, ...deadlineKeys},
+    await _writeNotifiedDeadlineKeys([
+      ...notifiedRead.value.where((key) => !deadlineKeys.contains(key)),
+      ...deadlineKeys,
+    ]);
+  }
+
+  /// Keeps the newest keys, oldest first. They are not tied to the stored
+  /// deadlines: a deadline pushed out of storage and found again on the next
+  /// visit must still count as notified, or it is notified once more.
+  Future<void> _writeNotifiedDeadlineKeys(List<String> oldestFirst) {
+    final kept = oldestFirst.length > _maxNotifiedDeadlineKeys
+        ? oldestFirst.sublist(oldestFirst.length - _maxNotifiedDeadlineKeys)
+        : oldestFirst;
+    return _secureStorage.write(
+      key: _notifiedDeadlineKeysKey,
+      value: jsonEncode(kept),
     );
   }
 
@@ -435,19 +498,11 @@ class GakujoActivityStore {
   }
 
   Future<void> _compactNotifiedDeadlineKeys() async {
-    final deadlineRead = await _readDeadlines();
     final notifiedRead = await _readNotifiedDeadlineKeys();
-    if (!deadlineRead.isSuccessful || !notifiedRead.isSuccessful) {
+    if (!notifiedRead.isSuccessful) {
       return;
     }
-    final activeDeadlineKeys = deadlineRead.value
-        .where((entry) => entry.isDeadline)
-        .map((entry) => entry.key)
-        .toSet();
-    await _writeStringSet(
-      _notifiedDeadlineKeysKey,
-      notifiedRead.value.intersection(activeDeadlineKeys),
-    );
+    await _writeNotifiedDeadlineKeys(notifiedRead.value.toList());
   }
 
   Future<GakujoActivitySnapshot> recordSnapshot({
@@ -600,7 +655,7 @@ class GakujoActivityStore {
     }
     final sorted = entries.values.toList()
       ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
-    await _writeList(_deadlinesKey, sorted.take(_maxDeadlines).toList());
+    await _writeList(_deadlinesKey, _capDeadlines(sorted));
     return newEntries;
   }
 
@@ -616,7 +671,7 @@ class GakujoActivityStore {
       ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
     return _writeList(
       _deadlinesKey,
-      compacted.take(_maxDeadlines),
+      _capDeadlines(compacted),
     );
   }
 
@@ -1100,14 +1155,6 @@ class GakujoActivityStore {
       value: jsonEncode(
         values.map((value) => (value as dynamic).toJson()).toList(),
       ),
-    );
-  }
-
-  Future<void> _writeStringSet(String key, Set<String> values) {
-    final sorted = values.toList()..sort();
-    return _secureStorage.write(
-      key: key,
-      value: jsonEncode(sorted),
     );
   }
 

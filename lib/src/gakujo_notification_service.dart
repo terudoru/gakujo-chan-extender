@@ -26,24 +26,36 @@ String? deadlineNotificationTargetUrl(
   return normalized;
 }
 
-/// Which [GakujoNotificationTopic] a detected deadline is about. Gakujo
-/// writes some tab names in half-width katakana (ﾚﾎﾟｰﾄ・小ﾃｽﾄ・ｱﾝｹｰﾄ).
+/// Which [GakujoNotificationTopic] a deadline outside 連絡通知 is about.
+/// Gakujo writes some tab names in half-width katakana (ﾚﾎﾟｰﾄ・小ﾃｽﾄ・ｱﾝｹｰﾄ).
 GakujoNotificationTopic notificationTopicFor(GakujoDeadlineEntry entry) {
-  if (entry.source == '連絡通知') {
-    return GakujoNotificationTopic.message;
-  }
   final text = '${entry.title} ${entry.dueText}';
   bool mentions(List<String> words) => words.any(text.contains);
   if (mentions(const ['アンケート', 'ｱﾝｹｰﾄ'])) {
     return GakujoNotificationTopic.survey;
   }
-  if (mentions(const ['小テスト', '小ﾃｽﾄ'])) {
-    return GakujoNotificationTopic.quiz;
-  }
-  if (mentions(const ['レポート', 'ﾚﾎﾟｰﾄ', '課題']) || entry.source == 'レポート・小テスト') {
-    return GakujoNotificationTopic.report;
+  if (mentions(const ['小テスト', '小ﾃｽﾄ', 'レポート', 'ﾚﾎﾟｰﾄ', '課題']) ||
+      entry.source == 'レポート・小テスト') {
+    return GakujoNotificationTopic.coursework;
   }
   return GakujoNotificationTopic.other;
+}
+
+/// Whether [entry] may become an OS notification under the student's
+/// choices. A 連絡通知 follows [messages]; in keyword mode it need not carry
+/// a deadline.
+bool isNotifiableDeadline(
+  GakujoDeadlineEntry entry, {
+  required Set<GakujoNotificationTopic> topics,
+  required GakujoMessageNotificationSettings messages,
+}) {
+  if (entry.source == '連絡通知') {
+    return messages.allows(
+      text: '${entry.title} ${entry.dueText}',
+      isDeadline: entry.isDeadline,
+    );
+  }
+  return entry.isDeadline && topics.contains(notificationTopicFor(entry));
 }
 
 class GakujoNotificationService {
@@ -140,17 +152,23 @@ class GakujoDeadlineNotificationCoordinator {
   final GakujoNotificationService _notificationService;
   Future<void> _pendingNotificationOperation = Future<void>.value();
 
-  /// Notifies new deadlines whose topic is one of [topics].
+  /// Notifies new deadlines the student chose through [topics] and
+  /// [messages].
   Future<void> notifyPendingDeadlines({
     required bool notificationsEnabled,
     Set<GakujoNotificationTopic> topics = const {
       ...GakujoNotificationTopic.values,
     },
+    GakujoMessageNotificationSettings messages =
+        const GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.deadlines,
+    ),
   }) {
     return _enqueueNotificationOperation(
       () => _notifyPendingDeadlines(
         notificationsEnabled: notificationsEnabled,
         topics: topics,
+        messages: messages,
       ),
     );
   }
@@ -158,15 +176,21 @@ class GakujoDeadlineNotificationCoordinator {
   Future<void> _notifyPendingDeadlines({
     required bool notificationsEnabled,
     required Set<GakujoNotificationTopic> topics,
+    required GakujoMessageNotificationSettings messages,
   }) async {
-    if (!notificationsEnabled || topics.isEmpty) {
+    if (!notificationsEnabled) {
       return;
     }
     final deadlines = await _activityStore.loadDeadlines();
     final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
     final pendingDeadlines = deadlines
-        .where((entry) => entry.isDeadline)
-        .where((entry) => topics.contains(notificationTopicFor(entry)))
+        .where(
+          (entry) => isNotifiableDeadline(
+            entry,
+            topics: topics,
+            messages: messages,
+          ),
+        )
         .where((entry) => !_activityStore.isDeadlinePassed(entry))
         .where((entry) => !notifiedKeys.contains(entry.key))
         .take(5)

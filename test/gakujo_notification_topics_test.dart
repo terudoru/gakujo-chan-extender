@@ -72,11 +72,11 @@ void main() {
 
     expect(
       topic(_entry('レポート プログラミング基礎Ⅰ レポート１')),
-      GakujoNotificationTopic.report,
+      GakujoNotificationTopic.coursework,
     );
     expect(
-      topic(_entry('小テスト 情報処理概論Ａ II 第２回課題（レポート）')),
-      GakujoNotificationTopic.quiz,
+      topic(_entry('小テスト 情報処理概論Ａ II 第２回課題')),
+      GakujoNotificationTopic.coursework,
     );
     expect(
       topic(_entry('授業評価ｱﾝｹｰﾄ', source: 'レポート・小テスト')),
@@ -84,11 +84,7 @@ void main() {
     );
     expect(
       topic(_entry('第3回', source: 'レポート・小テスト')),
-      GakujoNotificationTopic.report,
-    );
-    expect(
-      topic(_entry('レポートの提出について', source: '連絡通知')),
-      GakujoNotificationTopic.message,
+      GakujoNotificationTopic.coursework,
     );
     expect(
       topic(_entry('マイナー・プログラムの履修登録の締切は')),
@@ -109,14 +105,17 @@ void main() {
 
     await coordinator.notifyPendingDeadlines(
       notificationsEnabled: true,
-      topics: {GakujoNotificationTopic.report},
+      topics: {GakujoNotificationTopic.coursework},
     );
     expect(notifications.notified, [report.key]);
 
     // Choosing a topic later still tells about its pending deadlines.
     await coordinator.notifyPendingDeadlines(
       notificationsEnabled: true,
-      topics: {GakujoNotificationTopic.report, GakujoNotificationTopic.other},
+      topics: {
+        GakujoNotificationTopic.coursework,
+        GakujoNotificationTopic.other,
+      },
     );
     expect(notifications.notified, [report.key, procedure.key]);
   });
@@ -149,17 +148,124 @@ void main() {
     await GakujoDeadlineNotificationCoordinator(
       activityStore: store,
       notificationService: notifications,
-    ).notifyPendingDeadlines(notificationsEnabled: true, topics: {});
+    ).notifyPendingDeadlines(
+      notificationsEnabled: true,
+      topics: {},
+      messages: const GakujoMessageNotificationSettings(),
+    );
 
     expect(notifications.notified, isEmpty);
     expect(notifications.permissionRequests, 0);
   });
 
+  group('連絡通知', () {
+    // A row of Gakujo's 連絡通知 list: 掲載日時, 表題, ジャンル, 差出人, 期間.
+    GakujoDeadlineEntry message(String title, String genre, [String? posted]) {
+      final row = '${posted ?? '2026/10/20 12:39:16'} $title - $genre (工) 教員 '
+          '2026/10/20 16:20から 2099/12/1 23:59まで';
+      return GakujoDeadlineEntry(
+        title: title,
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$title',
+        dueText: row,
+        detectedAt: DateTime.utc(2026, 10, 21),
+        kind: GakujoDatedActivity.kindFor(text: row, category: '連絡通知'),
+        source: '連絡通知',
+      );
+    }
+
+    final course = message('第3回目授業の資料です', '授業連絡');
+    final campus = message('奨学生募集の締切について', '全学連絡通知', '2026/10/19 15:15:58');
+
+    Future<List<String>> notify(GakujoMessageNotificationSettings rule) async {
+      final store = GakujoActivityStore();
+      final notifications = _FakeNotificationService();
+      await store.mergeDeadlines([course, campus]);
+      await GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: notifications,
+      ).notifyPendingDeadlines(
+        notificationsEnabled: true,
+        topics: GakujoNotificationTopicLabels.defaults,
+        messages: rule,
+      );
+      return notifications.notified;
+    }
+
+    test('are off unless chosen', () async {
+      expect(await notify(const GakujoMessageNotificationSettings()), isEmpty);
+    });
+
+    test('can be limited to those with a deadline', () async {
+      expect(
+        await notify(
+          const GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.deadlines,
+          ),
+        ),
+        [campus.key],
+      );
+    });
+
+    test('can be limited to keywords, deadline or not', () async {
+      expect(
+        await notify(
+          const GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.keywords,
+            keywords: ['授業連絡'],
+          ),
+        ),
+        [course.key],
+      );
+      expect(
+        await notify(
+          const GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.keywords,
+          ),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a new rule leaves out messages posted before it', () async {
+      expect(
+        await notify(
+          GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.keywords,
+            keywords: const ['連絡'],
+            // Between the two messages' 掲載日時 below.
+            // 2026/10/20 12:00 in Japan, in UTC.
+            since: DateTime.utc(2026, 10, 20, 3),
+          ),
+        ),
+        [course.key],
+      );
+    });
+
+    test('keep one identity across visits', () {
+      const first = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+          'campussquare.do?_flowExecutionKey=_cAAA_kBBB'
+          '&_eventId=displayMidoku&keijitype=1&genrecd=40&seqNo=507795';
+      const second = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+          'campussquare.do?_flowExecutionKey=_cCCC_kDDD'
+          '&_eventId=displayMidoku&keijitype=1&genrecd=40&seqNo=507795';
+
+      expect(gakujoMessageLinkFor(first), gakujoMessageLinkFor(second));
+      expect(
+        gakujoMessageLinkFor(first),
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+        '?_flowId=KJW0001100-flow&keijitype=1&genrecd=40&seqNo=507795',
+      );
+      expect(
+        _entry('x', dueText: '2099/1/1').copyWithUrl(first).key,
+        _entry('x', dueText: '2099/1/1').copyWithUrl(second).key,
+      );
+    });
+  });
+
   group('the topic choice', () {
     test('defaults to coursework and keeps an empty choice', () {
       expect(GakujoNotificationTopicLabels.decode(null), {
-        GakujoNotificationTopic.report,
-        GakujoNotificationTopic.quiz,
+        GakujoNotificationTopic.coursework,
         GakujoNotificationTopic.survey,
       });
       expect(GakujoNotificationTopicLabels.decode(''), isEmpty);
@@ -168,17 +274,47 @@ void main() {
       });
     });
 
+    test('reads the earlier separate report and quiz choices', () {
+      expect(GakujoNotificationTopicLabels.decode('quiz,message'), {
+        GakujoNotificationTopic.coursework,
+      });
+      expect(
+        GakujoMessageNotificationSettings.fromJson(
+          null,
+          legacyTopics: 'report,message',
+        ).mode,
+        GakujoMessageNotificationMode.deadlines,
+      );
+      expect(
+        GakujoMessageNotificationSettings.fromJson(null, legacyTopics: 'report')
+            .mode,
+        GakujoMessageNotificationMode.off,
+      );
+    });
+
     test('is saved and loaded', () async {
       final store = GakujoAppSettingsStore();
       expect(
         (await store.load()).notificationTopics,
         GakujoNotificationTopicLabels.defaults,
       );
+      expect(
+        (await store.load()).messageNotification.mode,
+        GakujoMessageNotificationMode.off,
+      );
 
-      await store.saveNotificationTopics({GakujoNotificationTopic.message});
-      expect((await store.load()).notificationTopics, {
-        GakujoNotificationTopic.message,
-      });
+      await store.saveNotificationTopics({GakujoNotificationTopic.other});
+      await store.saveMessageNotification(
+        const GakujoMessageNotificationSettings(
+          mode: GakujoMessageNotificationMode.keywords,
+          keywords: ['休講'],
+        ),
+      );
+      final loaded = await store.load();
+      expect(loaded.notificationTopics, {GakujoNotificationTopic.other});
+      expect(loaded.messageNotification.mode,
+          GakujoMessageNotificationMode.keywords);
+      expect(loaded.messageNotification.keywords, ['休講']);
 
       await store.saveNotificationTopics({});
       expect((await store.load()).notificationTopics, isEmpty);
@@ -187,7 +323,11 @@ void main() {
     test('travels through a backup', () {
       final exported = buildGakujoBackupPayload(
         appSettings: const GakujoAppSettings(
-          notificationTopics: {GakujoNotificationTopic.quiz},
+          notificationTopics: {GakujoNotificationTopic.survey},
+          messageNotification: GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.keywords,
+            keywords: ['授業連絡'],
+          ),
         ),
         downloadHistory: const [],
         failedDownloads: const [],
@@ -197,11 +337,22 @@ void main() {
         reportLists: const [],
       );
 
-      expect(parseGakujoBackup(jsonEncode(exported)).notificationTopics, {
-        GakujoNotificationTopic.quiz,
-      });
+      final restored = parseGakujoBackup(jsonEncode(exported));
+      expect(restored.notificationTopics, {GakujoNotificationTopic.survey});
+      expect(restored.messageNotification?.keywords, ['授業連絡']);
     });
   });
+}
+
+extension on GakujoDeadlineEntry {
+  GakujoDeadlineEntry copyWithUrl(String url) => GakujoDeadlineEntry(
+        title: title,
+        url: url,
+        dueText: dueText,
+        detectedAt: detectedAt,
+        kind: kind,
+        source: source,
+      );
 }
 
 class _FakeNotificationService extends GakujoNotificationService {

@@ -55,18 +55,49 @@ void main() {
     expect(notificationService.permissionRequestCount, 1);
   });
 
-  test('compact prunes notified keys for deadlines that no longer exist',
+  test('a deadline pushed out of storage stays notified when found again',
       () async {
     final store = GakujoActivityStore();
-    final active = _deadline('残る課題');
-    final removed = _deadline('消えた課題');
-    await store.replaceDeadlines([active, removed]);
-    await store.addNotifiedDeadlineKeys([active.key, removed.key]);
-    await store.replaceDeadlines([active]);
+    final notificationService = _FakeNotificationService(notifyResult: true);
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: notificationService,
+    );
+    final deadline = _deadline('押し出される課題');
+    await store.mergeDeadlines([deadline]);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
 
+    // Other entries take its place, and storage is compacted.
+    await store.replaceDeadlines([_deadline('別の課題')]);
     await store.compact();
+    await store.mergeDeadlines([deadline]);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
 
-    expect(await store.loadNotifiedDeadlineKeys(), {active.key});
+    expect(
+      notificationService.notifiedEntries.map((entry) => entry.title),
+      ['押し出される課題', '別の課題'],
+    );
+  });
+
+  test('連絡通知 do not push coursework deadlines out of storage', () async {
+    final store = GakujoActivityStore();
+    final coursework = _deadline('レポート');
+    await store.mergeDeadlines([coursework]);
+    await store.mergeDeadlines([
+      for (var i = 0; i < 200; i += 1)
+        GakujoDeadlineEntry(
+          title: '全学のお知らせ$i',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/m$i',
+          dueText: '2099/12/1 23:59まで',
+          detectedAt: DateTime.utc(2026, 10, 21, 0, i),
+          kind: 'notice',
+          source: '連絡通知',
+        ),
+    ]);
+
+    final stored = await store.loadDeadlines();
+    expect(stored.map((entry) => entry.key), contains(coursework.key));
+    expect(stored.where((entry) => entry.source == '連絡通知'), hasLength(80));
   });
 }
 

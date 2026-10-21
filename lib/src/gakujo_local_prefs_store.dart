@@ -143,6 +143,7 @@ class GakujoLocalPrefsStore {
             normalizeMessageExcludeKeywords(settings.messageExcludeKeywords),
         'notificationTopics':
             encodeNotificationTopics(settings.notificationTopics),
+        'messageNotification': settings.messageNotification.toJson(),
       },
       if (prefs.lastPageUrl != null) 'lastPageUrl': prefs.lastPageUrl,
     };
@@ -157,6 +158,7 @@ class GakujoLocalPrefsStore {
       'calendarImportSettings',
       'messageExcludeKeywords',
       'notificationTopics',
+      'messageNotification',
     };
     final hasSettings = settingsKeys.any(raw.containsKey);
     final disabledFeatureFlags = switch (raw['disabledFeatureFlags']) {
@@ -192,6 +194,10 @@ class GakujoLocalPrefsStore {
               notificationTopics: GakujoNotificationTopicLabels.decode(
                 raw['notificationTopics'],
               ),
+              messageNotification: GakujoMessageNotificationSettings.fromJson(
+                raw['messageNotification'],
+                legacyTopics: raw['notificationTopics'],
+              ),
             )
           : null,
       lastPageUrl:
@@ -226,5 +232,6 @@ GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
   return secureSettings.copyWith(
     messageExcludeKeywords: localSettings.messageExcludeKeywords,
     notificationTopics: localSettings.notificationTopics,
+    messageNotification: localSettings.messageNotification,
   );
 }

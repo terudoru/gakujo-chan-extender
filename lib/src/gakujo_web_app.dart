@@ -1417,6 +1417,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var loginPasswordInput = '';
     var messageExcludeKeywordInput = '';
     final messageExcludeKeywordController = TextEditingController();
+    var messageNotificationKeywordInput = '';
+    final messageNotificationKeywordController = TextEditingController();
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
@@ -1740,6 +1742,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   icon: Icons.notifications_outlined,
                   child: NotificationTopicsSection(
                     topics: _appSettings.notificationTopics,
+                    messages: _appSettings.messageNotification,
+                    keywordController: messageNotificationKeywordController,
+                    canAddKeyword:
+                        messageNotificationKeywordInput.trim().isNotEmpty,
+                    onKeywordInputChanged: (value) {
+                      messageNotificationKeywordInput = value;
+                      setDialogState(() {});
+                    },
+                    onMessagesChanged: (messages) async {
+                      await _saveMessageNotification(messages);
+                      messageNotificationKeywordInput = '';
+                      messageNotificationKeywordController.clear();
+                      if (dialogContext.mounted) {
+                        setDialogState(() {});
+                      }
+                    },
                     notificationsEnabled: _appSettings.isFeatureEnabled(
                       GakujoFeatureFlag.deadlineNotifications,
                     ),
@@ -1867,6 +1885,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
       messageExcludeKeywordController.dispose();
       messageExcludeKeywordFocusNode.dispose();
+      messageNotificationKeywordController.dispose();
     }
   }
 
@@ -2758,6 +2777,36 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _saveMessageNotification(
+    GakujoMessageNotificationSettings messages,
+  ) async {
+    // Only messages posted from now on follow the new rule.
+    messages = messages.copyWith(since: DateTime.now());
+    final nextSettings = _appSettings.copyWith(messageNotification: messages);
+    if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+      try {
+        await _appSettingsStore.saveMessageNotification(messages);
+      } on Object catch (error, stackTrace) {
+        if (!Platform.isMacOS) {
+          rethrow;
+        }
+        developer.log(
+          'Failed to mirror message notification rule to secure storage',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    await _syncLocalSettingsMirror(nextSettings);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _appSettings = nextSettings;
+    });
+  }
+
   Future<void> _saveNotificationTopics(
     Set<GakujoNotificationTopic> topics,
   ) async {
@@ -3440,11 +3489,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     for (final item in messageItems) {
+      // 「[新着]」 disappears once read and would make it a new entry.
+      final text = item.text.replaceAll('[新着]', ' ');
       addEntry(
-        entryTitle: item.title,
-        entryUrl: item.url,
-        entryText: item.text,
-        kind: GakujoDatedActivity.kindFor(text: item.text, category: category),
+        entryTitle: item.title.replaceAll('[新着]', '').trim(),
+        entryUrl: gakujoMessageLinkFor(item.url),
+        entryText: text,
+        kind: GakujoDatedActivity.kindFor(text: text, category: category),
       );
     }
 
@@ -3552,6 +3603,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         GakujoFeatureFlag.deadlineNotifications,
       ),
       topics: _appSettings.notificationTopics,
+      messages: _appSettings.messageNotification,
     );
   }
 
@@ -3737,6 +3789,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         calendarImportSettings: backup.calendarImportSettings,
         messageExcludeKeywords: backup.messageExcludeKeywords,
         notificationTopics: backup.notificationTopics,
+        messageNotification: backup.messageNotification,
       );
       await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
