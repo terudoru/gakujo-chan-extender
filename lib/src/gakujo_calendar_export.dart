@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'gakujo_academic_calendar.dart';
+import 'gakujo_assignment.dart';
+import 'gakujo_calendar_service.dart';
 import 'gakujo_dated_activity.dart';
 
 class GakujoCalendarCourse {
@@ -213,6 +215,52 @@ class GakujoCalendarTermRange {
   final List<GakujoClassDaySwap> classDaySwaps;
 
   bool get isValid => !end.isBefore(start);
+}
+
+/// A change on Gakujo's 休講補講 page for one class meeting.
+enum GakujoClassChangeKind { cancelled, makeUp, roomChange }
+
+class GakujoClassChange {
+  const GakujoClassChange({
+    required this.kind,
+    required this.date,
+    required this.period,
+    required this.course,
+    this.courseCode = '',
+    this.room = '',
+  });
+
+  final GakujoClassChangeKind kind;
+  final DateTime date;
+  final int period;
+  final String course;
+  final String courseCode;
+  final String room;
+
+  /// Reads a row the 休講補講 script sent. Its class tells the change:
+  /// kyuko-kyuko (休講), kyuko-hoko (補講), kyuko-kyoshitsu (教室変更).
+  static GakujoClassChange? fromJson(Map<dynamic, dynamic> json) {
+    final kind = switch (json['kind']?.toString()) {
+      'kyuko-kyuko' => GakujoClassChangeKind.cancelled,
+      'kyuko-hoko' => GakujoClassChangeKind.makeUp,
+      'kyuko-kyoshitsu' => GakujoClassChangeKind.roomChange,
+      _ => null,
+    };
+    final date = DateTime.tryParse(json['date']?.toString() ?? '');
+    final period = int.tryParse(json['period']?.toString() ?? '');
+    final course = json['course']?.toString().trim() ?? '';
+    if (kind == null || date == null || period == null || course.isEmpty) {
+      return null;
+    }
+    return GakujoClassChange(
+      kind: kind,
+      date: DateTime(date.year, date.month, date.day),
+      period: period,
+      course: course,
+      courseCode: json['code']?.toString().trim() ?? '',
+      room: json['room']?.toString().trim() ?? '',
+    );
+  }
 }
 
 class GakujoCalendarExtraction {
@@ -505,6 +553,175 @@ class GakujoCalendarExport {
     return courses;
   }
 
+  /// Reads every 休講・補講・教室変更 of the student's classes from
+  /// [start] to [end], a week at a time, without leaving the current page.
+  static String classChangesFetchScript({
+    required DateTime start,
+    required DateTime end,
+  }) {
+    String day(DateTime value) => '${value.year}'
+        '${value.month.toString().padLeft(2, '0')}'
+        '${value.day.toString().padLeft(2, '0')}';
+    final startDay = day(start);
+    final endDay = day(end);
+    return """
+(function() {
+  var startDay = '$startDay';
+  var endDay = '$endDay';
+  function get(url) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, false);
+    xhr.send(null);
+    if (xhr.status < 200 || xhr.status >= 400) {
+      throw new Error('HTTP ' + xhr.status);
+    }
+    return new DOMParser().parseFromString(xhr.responseText, 'text/html');
+  }
+  function keyOf(doc) {
+    var input = doc.querySelector('input[name="_flowExecutionKey"]');
+    return input ? input.value : '';
+  }
+  function text(node) {
+    return String(node && node.textContent || '').replace(/\\s+/g, ' ').trim();
+  }
+  function pad(value) {
+    return String(value).padStart(2, '0');
+  }
+  try {
+    var key = keyOf(get('/campusweb/campussquare.do?_flowId=KHW0001100-flow'));
+    var changes = [];
+    var day = new Date(
+      Number(startDay.slice(0, 4)),
+      Number(startDay.slice(4, 6)) - 1,
+      Number(startDay.slice(6, 8))
+    );
+    for (var week = 0; week < 60 && key; week += 1) {
+      var stamp = day.getFullYear() + pad(day.getMonth() + 1) + pad(day.getDate());
+      if (stamp > endDay) {
+        break;
+      }
+      var doc = get(
+        '/campusweb/campussquare.do?_flowExecutionKey=' + key +
+        '&_eventId_linkSearch=_eventId_linkSearch&shozokuCode=&gakunen=' +
+        '&kyokanCode=&day=' + stamp +
+        '&dispData=chg&dispType=list&jikanwaricd=&kamokunm='
+      );
+      key = keyOf(doc) || key;
+      var rows = doc.querySelectorAll(
+        'tr.kyuko-kyuko, tr.kyuko-hoko, tr.kyuko-kyoshitsu'
+      );
+      for (var i = 0; i < rows.length; i += 1) {
+        var cells = Array.prototype.slice.call(rows[i].cells || []).map(text);
+        var date = '';
+        var period = '';
+        var code = '';
+        var course = '';
+        for (var c = 0; c < cells.length; c += 1) {
+          var dateMatch = cells[c].match(/([0-9]{1,2})月([0-9]{1,2})日/);
+          var periodMatch = cells[c].match(/^([1-7])限/);
+          var codeMatch = cells[c].match(/^[0-9]{3}[A-Z][0-9]{4}\$/);
+          if (!date && dateMatch) {
+            var month = Number(dateMatch[1]);
+            var year = day.getFullYear() +
+              (month < day.getMonth() + 1 - 6 ? 1 : 0);
+            date = year + '-' + pad(month) + '-' + pad(dateMatch[2]);
+          } else if (!period && periodMatch) {
+            period = periodMatch[1];
+          } else if (!code && codeMatch) {
+            code = cells[c];
+            course = cells[c + 1] || '';
+          }
+        }
+        changes.push({
+          kind: rows[i].className.trim(),
+          date: date,
+          period: period,
+          code: code,
+          course: course,
+          room: cells[cells.length - 1] || ''
+        });
+      }
+      day.setDate(day.getDate() + 7);
+    }
+    return JSON.stringify({status: 'ok', changes: changes});
+  } catch (e) {
+    return JSON.stringify({status: 'error', changes: []});
+  }
+})()
+""";
+  }
+
+  /// Applies 休講・補講・教室変更 to weekly courses: a cancelled meeting is
+  /// left out, a make-up class is added once, and a room change moves that
+  /// one meeting to the new room.
+  static List<GakujoCalendarCourse> applyClassChanges(
+    List<GakujoCalendarCourse> courses,
+    Iterable<GakujoClassChange> changes,
+  ) {
+    String compact(String value) => value.replaceAll(RegExp(r'\s+'), '');
+    bool sameCourse(GakujoCalendarCourse course, GakujoClassChange change) {
+      final code = courseCodeFromText(course.courseCode);
+      if (code.isNotEmpty && change.courseCode.isNotEmpty) {
+        return code == change.courseCode;
+      }
+      return compact(displayTitleForCourse(course)) == compact(change.course);
+    }
+
+    final excluded = <int, List<DateTime>>{};
+    final added = <GakujoCalendarCourse>[];
+    for (final change in changes) {
+      final matches = [
+        for (var i = 0; i < courses.length; i += 1)
+          if (courses[i].recursWeekly &&
+              courses[i].period == change.period &&
+              sameCourse(courses[i], change))
+            i,
+      ];
+      if (change.kind != GakujoClassChangeKind.makeUp) {
+        for (final index in matches) {
+          excluded.putIfAbsent(index, () => []).add(change.date);
+        }
+      }
+      if (change.kind == GakujoClassChangeKind.cancelled) {
+        continue;
+      }
+      final base = matches.isEmpty ? null : courses[matches.first];
+      final room = change.room.isNotEmpty
+          ? change.room
+          : base == null
+              ? ''
+              : displayLocationForCourse(base);
+      added.add(
+        (base ??
+                GakujoCalendarCourse(
+                  title: change.course,
+                  weekday: change.date.weekday,
+                  period: change.period,
+                  courseCode: change.courseCode,
+                ))
+            .copyWith(
+          weekday: change.date.weekday,
+          period: change.period,
+          location: room,
+          officialLocation: room,
+          sourceDate: change.date,
+          recursWeekly: false,
+          excludedDates: const [],
+        ),
+      );
+    }
+    return [
+      for (var i = 0; i < courses.length; i += 1)
+        if (excluded[i] case final dates?)
+          courses[i].copyWith(
+            excludedDates: [...courses[i].excludedDates, ...dates],
+          )
+        else
+          courses[i],
+      ...added,
+    ];
+  }
+
   /// Fetches the 履修登録・登録状況照会 page of both semesters without leaving
   /// the current page. It opens on the current semester and links the other
   /// one as `_eventId=search&gakkiKbnCode=N`.
@@ -559,9 +776,9 @@ class GakujoCalendarExport {
     return [
       for (final course in courses)
         if (displayLocationForCourse(course).isEmpty)
-          switch (bySlot[
-                  '${title(course)}|${course.weekday}|${course.period}'] ??
-              byPeriod['${title(course)}|${course.period}']) {
+          switch (
+              bySlot['${title(course)}|${course.weekday}|${course.period}'] ??
+                  byPeriod['${title(course)}|${course.period}']) {
             final location? => course.copyWith(location: location),
             null => course,
           }
@@ -722,8 +939,8 @@ class GakujoCalendarExport {
     var period = start == null ? 0 : _periodFromStartTime(start);
     // Gakujo's schedule export writes each class as an all-day event titled
     // "1限：科目名", so the period comes from the title instead of the time.
-    final allDayMatch = RegExp(r'^([0-9]{4})([0-9]{2})([0-9]{2})$')
-        .firstMatch(rawStart);
+    final allDayMatch =
+        RegExp(r'^([0-9]{4})([0-9]{2})([0-9]{2})$').firstMatch(rawStart);
     final periodTitleMatch =
         RegExp(r'^\s*([1-7])\s*限\s*[:：]\s*(.+)$').firstMatch(title);
     if (start == null && allDayMatch != null && periodTitleMatch != null) {
@@ -1446,6 +1663,7 @@ class GakujoCalendarExport {
     String termLabel = '',
     String calendarName = 'More Better Gakujo 授業',
     DateTime? generatedAt,
+    List<GakujoCalendarEvent> extraEvents = const [],
   }) {
     final stamp = _utcTimestamp(generatedAt?.toUtc() ?? DateTime.now().toUtc());
     final until = _utcTimestamp(
@@ -1630,6 +1848,26 @@ class GakujoCalendarExport {
             termLabel: termLabel,
           ),
         )}',
+        'END:VEVENT',
+      ]);
+    }
+
+    for (final event in extraEvents) {
+      // Absolute moments are written as Japan wall-clock time.
+      DateTime tokyo(DateTime value) =>
+          value.isUtc ? japanWallClock(value) : value;
+      final uid = base64Url.encode(utf8.encode(event.id)).replaceAll('=', '');
+      lines.addAll([
+        'BEGIN:VEVENT',
+        'UID:$uid@morebettergakujo.local',
+        'DTSTAMP:$stamp',
+        'LAST-MODIFIED:$stamp',
+        'SEQUENCE:0',
+        'SUMMARY:${_escape(event.title)}',
+        'DTSTART;TZID=Asia/Tokyo:${_localTimestamp(tokyo(event.start))}',
+        'DTEND;TZID=Asia/Tokyo:${_localTimestamp(tokyo(event.end))}',
+        if (event.location.isNotEmpty) 'LOCATION:${_escape(event.location)}',
+        if (event.notes.isNotEmpty) 'DESCRIPTION:${_escape(event.notes)}',
         'END:VEVENT',
       ]);
     }

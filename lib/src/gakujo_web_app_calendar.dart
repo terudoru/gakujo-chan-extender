@@ -160,10 +160,8 @@ String gakujoCalendarSourceMissingMessage(
   required String fallback,
 }) {
   return switch (authState) {
-    GakujoPortalAuthState.login =>
-      '学務情報システムのログインが切れています。ログインしてから、もう一度実行してください',
-    GakujoPortalAuthState.twoFactor =>
-      '2段階認証が完了していません。認証を済ませてから、もう一度実行してください',
+    GakujoPortalAuthState.login => '学務情報システムのログインが切れています。ログインしてから、もう一度実行してください',
+    GakujoPortalAuthState.twoFactor => '2段階認証が完了していません。認証を済ませてから、もう一度実行してください',
     _ => fallback,
   };
 }
@@ -375,6 +373,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     GakujoCalendarTermRange? fallbackTermRange;
     String? fallbackUidNamespace;
     String? fallbackTermLabel;
+    var fallbackDeadlineEvents = const <GakujoCalendarEvent>[];
 
     try {
       final preferredTerm = settings.termSource ==
@@ -411,7 +410,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       if (coursesWithResolvedAmbiguousTerms == null) {
         return;
       }
-      final courses = GakujoCalendarExport.filterCoursesForTerm(
+      var courses = GakujoCalendarExport.filterCoursesForTerm(
         courses: GakujoCalendarExport.applyClassDaySwaps(
           coursesWithResolvedAmbiguousTerms,
           resolvedTerm.knownClassDaySwaps,
@@ -420,6 +419,21 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         termRange: termRange,
         termName: resolvedTerm.termName ?? '',
       );
+      if (settings.applyClassChanges && courses.isNotEmpty) {
+        courses = GakujoCalendarExport.applyClassChanges(
+          courses,
+          await _readClassChanges(termRange),
+        );
+      }
+      final deadlineEvents = settings.includeAssignmentDeadlines
+          ? GakujoCalendarEventBuilder.buildAssignmentEvents(
+              assignments: await _activityStore.loadAssignments(),
+              rangeStart: termRange.start,
+              rangeEnd: termRange.end,
+              uidNamespace: uidNamespace,
+            )
+          : const <GakujoCalendarEvent>[];
+      fallbackDeadlineEvents = deadlineEvents;
       if (courses.isEmpty) {
         _showSnackBar(
             '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業が見つかりませんでした');
@@ -455,7 +469,19 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           rangeEnd: termRange.end,
           calendarTitle: settings.effectiveCalendarTitle,
         );
-        _showSnackBar(_calendarSyncMessage(result, resolvedTerm.termName));
+        var deadlineText = '';
+        if (deadlineEvents.isNotEmpty) {
+          final deadlineResult = await _calendarService.syncEvents(
+            events: deadlineEvents,
+            rangeStart: termRange.start,
+            rangeEnd: termRange.end,
+            calendarTitle: settings.effectiveCalendarTitle,
+          );
+          deadlineText = '。課題の締切${deadlineResult.added}件も追加しました';
+        }
+        _showSnackBar(
+          '${_calendarSyncMessage(result, resolvedTerm.termName)}$deadlineText',
+        );
         return;
       }
       if (settings.method == GakujoCalendarImportMethod.icsFile ||
@@ -466,6 +492,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           uidNamespace: icsUidNamespace,
           termLabel: termLabel,
           calendarName: settings.effectiveCalendarTitle,
+          extraEvents: deadlineEvents,
           reason: settings.method == GakujoCalendarImportMethod.deviceCalendar
               ? 'この環境ではOSカレンダー直接追加に未対応のため'
               : null,
@@ -485,6 +512,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         uidNamespace: icsUidNamespace,
         termLabel: termLabel,
         calendarName: settings.effectiveCalendarTitle,
+        extraEvents: deadlineEvents,
         reason: null,
       );
     } on PlatformException catch (error) {
@@ -525,6 +553,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             uidNamespace: uidNamespace,
             termLabel: termLabel,
             calendarName: settings.effectiveCalendarTitle,
+            extraEvents: fallbackDeadlineEvents,
             reason: reason,
           );
         } on PlatformException catch (fallbackError) {
@@ -936,6 +965,36 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                         onChanged: (value) {
                           selectedSettings = selectedSettings.copyWith(
                             includeNoClassDates: value ?? true,
+                          );
+                          setDialogState(() {});
+                        },
+                      ),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('休講・補講・教室変更を反映する'),
+                        subtitle: const Text(
+                          '学務の休講補講ページを読み取り、休講の回を外し、補講を追加し、教室変更を反映します。',
+                        ),
+                        value: selectedSettings.applyClassChanges,
+                        onChanged: (value) {
+                          selectedSettings = selectedSettings.copyWith(
+                            applyClassChanges: value ?? true,
+                          );
+                          setDialogState(() {});
+                        },
+                      ),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('課題の締切も追加する'),
+                        subtitle: const Text(
+                          'レポート・小テスト一覧で読み取った締切を、締切時刻の予定として追加します。一覧を開いたことがある課題が対象です。',
+                        ),
+                        value: selectedSettings.includeAssignmentDeadlines,
+                        onChanged: (value) {
+                          selectedSettings = selectedSettings.copyWith(
+                            includeAssignmentDeadlines: value ?? true,
                           );
                           setDialogState(() {});
                         },
@@ -1469,8 +1528,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     required String calendarName,
     required String? reason,
     String fileName = 'more-better-gakujo-classes.ics',
+    List<GakujoCalendarEvent> extraEvents = const [],
   }) async {
     final ics = GakujoCalendarExport.buildIcs(
+      extraEvents: extraEvents,
       courses: courses,
       rangeStart: termRange.start,
       rangeEnd: termRange.end,
@@ -1520,7 +1581,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
   /// Classes on the registration page, used only for their classrooms: the
   /// schedule export has none, and the schedule page shows only one month.
-  Future<List<GakujoCalendarCourse>> _readRegistrationCoursesForLocations() async {
+  Future<List<GakujoCalendarCourse>>
+      _readRegistrationCoursesForLocations() async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
         GakujoCalendarExport.registrationPageFetchScript(),
@@ -1550,6 +1612,35 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       ),
       termRange: official.termRange,
     );
+  }
+
+  /// 休講・補講・教室変更 in [termRange], from the 休講補講 page.
+  Future<List<GakujoClassChange>> _readClassChanges(
+    GakujoCalendarTermRange termRange,
+  ) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        GakujoCalendarExport.classChangesFetchScript(
+          start: termRange.start,
+          end: termRange.end,
+        ),
+      );
+      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+      final changes = decoded is Map ? decoded['changes'] : null;
+      return [
+        if (changes is List)
+          for (final change in changes.whereType<Map<dynamic, dynamic>>())
+            if (GakujoClassChange.fromJson(change) case final parsed?) parsed,
+      ];
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to read class changes',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return const [];
+    }
   }
 
   Future<GakujoCalendarExtraction> _readCalendarScheduleForImport({

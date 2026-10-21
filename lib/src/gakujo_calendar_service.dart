@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import 'gakujo_academic_calendar.dart';
+import 'gakujo_assignment.dart';
 import 'gakujo_calendar_export.dart';
 
 int _tokyoDateBoundaryMillis(
@@ -336,6 +337,50 @@ class GakujoCalendarEventBuilder {
     unique.sort((a, b) => a.start.compareTo(b.start));
     return unique;
   }
+
+  /// One event per assignment closing within the range, ending at its
+  /// closing time. They use their own namespace so syncing the classes and
+  /// syncing the deadlines never remove each other's events.
+  static List<GakujoCalendarEvent> buildAssignmentEvents({
+    required Iterable<GakujoAssignment> assignments,
+    required DateTime rangeStart,
+    required DateTime rangeEnd,
+    required String uidNamespace,
+  }) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    final first =
+        DateTime.utc(rangeStart.year, rangeStart.month, rangeStart.day);
+    final last = DateTime.utc(rangeEnd.year, rangeEnd.month, rangeEnd.day + 1);
+    final events = <GakujoCalendarEvent>[];
+    for (final assignment in assignments) {
+      final shown = assignment.dueInJapan;
+      if (shown.isBefore(first) || !shown.isBefore(last)) {
+        continue;
+      }
+      final done = assignment.isSubmitted ? '（${assignment.status}）' : '';
+      events.add(
+        GakujoCalendarEvent(
+          id: '${assignmentDeadlineNamespace(uidNamespace)}|${assignment.id}',
+          title: '〆切 ${assignment.kind} ${assignment.title}$done',
+          start: assignment.dueAt.subtract(const Duration(minutes: 30)),
+          end: assignment.dueAt,
+          location: assignment.course,
+          notes: [
+            assignment.course,
+            '${assignment.kind}: ${assignment.title}',
+            '締切: ${shown.month}/${shown.day} '
+                '${two(shown.hour)}:${two(shown.minute)}',
+            if (assignment.status.isNotEmpty) '状態: ${assignment.status}',
+          ].join('\n'),
+        ),
+      );
+    }
+    events.sort((a, b) => a.start.compareTo(b.start));
+    return events;
+  }
+
+  static String assignmentDeadlineNamespace(String uidNamespace) =>
+      '$uidNamespace-deadlines';
 
   static String _eventInstanceId(
     GakujoCalendarCourse course,

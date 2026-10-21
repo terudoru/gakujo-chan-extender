@@ -220,6 +220,8 @@ class GakujoCalendarImportSettings {
     this.termTarget = GakujoCalendarTermTarget.current,
     this.includeNoClassDates = true,
     this.calendarTitle = defaultCalendarTitle,
+    this.applyClassChanges = true,
+    this.includeAssignmentDeadlines = true,
   });
 
   static const defaultCalendarTitle = 'More Better Gakujo 授業';
@@ -230,6 +232,13 @@ class GakujoCalendarImportSettings {
   final GakujoCalendarTermTarget termTarget;
   final bool includeNoClassDates;
   final String calendarTitle;
+
+  /// Reflect the 休講補講 page: drop cancelled classes, add make-ups and
+  /// move room changes.
+  final bool applyClassChanges;
+
+  /// Also add each レポート・小テスト closing time as an event.
+  final bool includeAssignmentDeadlines;
 
   String get effectiveCalendarTitle {
     final trimmed = calendarTitle.trim();
@@ -244,6 +253,8 @@ class GakujoCalendarImportSettings {
     GakujoCalendarTermTarget? termTarget,
     bool? includeNoClassDates,
     String? calendarTitle,
+    bool? applyClassChanges,
+    bool? includeAssignmentDeadlines,
   }) {
     return GakujoCalendarImportSettings(
       method: method ?? this.method,
@@ -251,6 +262,9 @@ class GakujoCalendarImportSettings {
       termTarget: termTarget ?? this.termTarget,
       includeNoClassDates: includeNoClassDates ?? this.includeNoClassDates,
       calendarTitle: calendarTitle ?? this.calendarTitle,
+      applyClassChanges: applyClassChanges ?? this.applyClassChanges,
+      includeAssignmentDeadlines:
+          includeAssignmentDeadlines ?? this.includeAssignmentDeadlines,
     );
   }
 
@@ -261,6 +275,8 @@ class GakujoCalendarImportSettings {
       'termTarget': termTarget.storageValue,
       'includeNoClassDates': includeNoClassDates,
       'calendarTitle': effectiveCalendarTitle,
+      'applyClassChanges': applyClassChanges,
+      'includeAssignmentDeadlines': includeAssignmentDeadlines,
     };
   }
 
@@ -292,6 +308,8 @@ class GakujoCalendarImportSettings {
           (raw['calendarTitle']?.toString().trim().isNotEmpty == true)
               ? raw['calendarTitle'].toString().trim()
               : defaultCalendarTitle,
+      applyClassChanges: raw['applyClassChanges'] != false,
+      includeAssignmentDeadlines: raw['includeAssignmentDeadlines'] != false,
     );
   }
 }
