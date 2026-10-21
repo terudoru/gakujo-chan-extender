@@ -206,10 +206,18 @@ const gakujoAssignmentListFetchScript = '''
       return JSON.stringify({status: 'error', rows: []});
     }
     var doc = new DOMParser().parseFromString(xhr.responseText, 'text/html');
-    if (!doc.querySelector('#enqListForm')) {
+    var form = doc.querySelector('#enqListForm');
+    if (!form) {
       return JSON.stringify({status: 'missing', rows: []});
     }
-    return JSON.stringify({status: 'ok', rows: readAssignmentRows(doc)});
+    // The list states how many there are in all, as 「11件」 or 「1～11/11件」.
+    var counts = String(form.textContent || '').match(/([0-9]+)件/g) || [];
+    var total = counts.length ? parseInt(counts[0], 10) : -1;
+    return JSON.stringify({
+      status: 'ok',
+      total: total,
+      rows: readAssignmentRows(doc)
+    });
   } catch (e) {
     return JSON.stringify({status: 'error', rows: []});
   }

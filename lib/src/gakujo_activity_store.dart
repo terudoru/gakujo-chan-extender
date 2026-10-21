@@ -771,8 +771,13 @@ class GakujoActivityStore {
   }
 
   /// Replaces stored assignments with the ones just read from the list. The
-  /// list may be paged, so assignments not on this page are kept.
-  Future<void> mergeAssignments(Iterable<GakujoAssignment> assignments) {
+  /// list may be paged, so assignments not on this page are kept, unless
+  /// [isWholeList]: then one still open but no longer listed was withdrawn
+  /// and is dropped, so it is not reminded of.
+  Future<void> mergeAssignments(
+    Iterable<GakujoAssignment> assignments, {
+    bool isWholeList = false,
+  }) {
     final next = assignments.toList();
     if (next.isEmpty) {
       return Future<void>.value();
@@ -782,8 +787,14 @@ class GakujoActivityStore {
       if (!read.isSuccessful) {
         return;
       }
+      final listed = {for (final assignment in next) assignment.id};
+      final now = DateTime.now();
       final byId = <String, GakujoAssignment>{
-        for (final assignment in read.value) assignment.id: assignment,
+        for (final assignment in read.value)
+          if (!isWholeList ||
+              listed.contains(assignment.id) ||
+              !assignment.dueAt.isAfter(now))
+            assignment.id: assignment,
         for (final assignment in next) assignment.id: assignment,
       };
       final sorted = byId.values.toList()

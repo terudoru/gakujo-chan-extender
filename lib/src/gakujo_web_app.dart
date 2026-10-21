@@ -3787,7 +3787,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 case final assignment?)
               assignment,
       ];
-      await _activityStore.mergeAssignments(assignments);
+      final total = decoded['total'];
+      await _activityStore.mergeAssignments(
+        assignments,
+        isWholeList: rows is List && total is num && rows.length == total,
+      );
       await _activityStore.mergeDeadlines([
         ...deadlineEntriesForAssignments(
           assignments,

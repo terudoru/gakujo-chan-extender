@@ -269,6 +269,30 @@ void main() {
     expect(loaded.reminderOffsets, {GakujoReminderOffset.threeHours});
   });
 
+  test('a withdrawn assignment leaves when the whole list is read', () async {
+    final store = GakujoActivityStore();
+    final kept = _assignment(
+      _row('小テスト', '残る課題', '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+    );
+    final withdrawn = _assignment(
+      _row('小テスト', '取り下げ', '未提出', '2099/10/21 17:01 ～2099/10/29 16:31'),
+    );
+    final past = _assignment(
+      _row('レポート', '終わった課題', '提出済', '2026/10/01 00:00 ～2026/10/02 00:00'),
+    );
+    await store.mergeAssignments([kept, withdrawn, past]);
+
+    // One page of a longer list says nothing about the others.
+    await store.mergeAssignments([kept]);
+    expect((await store.loadAssignments()).map((a) => a.title),
+        containsAll(['残る課題', '取り下げ']));
+
+    await store.mergeAssignments([kept], isWholeList: true);
+    final titles = (await store.loadAssignments()).map((a) => a.title);
+    expect(titles, contains('残る課題'));
+    expect(titles, isNot(contains('取り下げ')));
+  });
+
   group('the notification choices travel', () {
     const chosen = GakujoAppSettings(
       notificationPreferences: GakujoNotificationPreferences(
