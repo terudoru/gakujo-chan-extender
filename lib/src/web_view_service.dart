@@ -746,10 +746,26 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
             break;
         }
       },
-      child: ValueListenableBuilder<windows.WebviewValue>(
-        valueListenable: windowsController._inner,
-        builder: (context, value, child) {
-          if (!value.isInitialized) {
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          windowsController._inner,
+          windowsController._initializationError,
+        ]),
+        builder: (context, child) {
+          if (windowsController._initializationError.value != null) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'WebViewを起動できませんでした。\n'
+                  'Microsoft Edge WebView2 Runtime をインストールしてから、'
+                  'アプリを再起動してください。',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          if (!windowsController._inner.value.isInitialized) {
             return const Center(child: Text('WebViewを準備中...'));
           }
           return windows.Webview(windowsController._inner);
@@ -785,6 +801,19 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
 class WindowsGakujoWebViewController implements GakujoWebViewController {
   WindowsGakujoWebViewController(this._inner) {
     _ready = _inner.initialize();
+    // Without this the page would show "preparing" forever when WebView2 is
+    // missing or fails to start.
+    unawaited(
+      _ready.then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
+        _initializationError.value = error;
+        developer.log(
+          'Windows WebView initialization failed',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
     _subscriptions.add(_inner.url.listen((url) {
       unawaited(
         _handleUrlChanged(url).catchError(
@@ -843,6 +872,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   final Map<String, FutureOr<void> Function(String)> _javaScriptHandlers = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   late final Future<void> _ready;
+  final ValueNotifier<Object?> _initializationError = ValueNotifier(null);
   GakujoNavigationDelegate? _delegate;
   String? _currentUrl;
   String? _title;
@@ -951,6 +981,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       await subscription.cancel();
     }
     await _inner.dispose();
+    _initializationError.dispose();
   }
 
   Future<void> _handleUrlChanged(String url) async {

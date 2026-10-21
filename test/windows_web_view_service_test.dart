@@ -143,4 +143,26 @@ void main() {
     expect(requested, ['https://example.com/']);
     await tester.runAsync(controller.dispose);
   });
+
+  testWidgets('Windows service explains a WebView2 startup failure', (
+    tester,
+  ) async {
+    messenger.setMockMethodCallHandler(plugin, (call) async {
+      if (call.method == 'initialize') {
+        throw PlatformException(code: 'environment_creation_failed');
+      }
+      return null;
+    });
+    final controller =
+        WindowsGakujoWebViewController(windows.WebviewController());
+    const service = WindowsGakujoWebViewService();
+
+    await tester.pumpWidget(
+      MaterialApp(home: service.buildWidget(controller)),
+    );
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+
+    expect(find.textContaining('WebView2 Runtime'), findsOneWidget);
+  });
 }
