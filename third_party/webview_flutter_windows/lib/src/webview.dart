@@ -280,6 +280,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// A stream reflecting the current URL.
   Stream<String> get url => _urlStreamController.stream;
 
+  final StreamController<int> _processFailedStreamController =
+      StreamController<int>.broadcast();
+
+  /// More Better Gakujo patch: WebView2 process failures as
+  /// `COREWEBVIEW2_PROCESS_FAILED_KIND` values (0 = browser process exited,
+  /// 1 = render process exited, 2 = render process unresponsive, ...).
+  Stream<int> get processFailed => _processFailedStreamController.stream;
+
   final StreamController<String> _navigationBlockedStreamController =
       StreamController<String>.broadcast();
 
@@ -431,6 +439,9 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       case 'navigationBlocked':
         _navigationBlockedStreamController.add(map['value']);
         break;
+      case 'processFailed':
+        _processFailedStreamController.add(map['value'] as int);
+        break;
       case 'onLoadError':
         // The native side forwards COREWEBVIEW2_WEB_ERROR_STATUS verbatim and
         // the WebView2 runtime versions independently of this package, so a
@@ -563,6 +574,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     for (final controller in <StreamController<dynamic>>[
       _urlStreamController,
       _navigationBlockedStreamController,
+      _processFailedStreamController,
       _loadingStateStreamController,
       _downloadEventStreamController,
       _onLoadErrorStreamController,

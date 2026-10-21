@@ -781,19 +781,15 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
       child: ListenableBuilder(
         listenable: Listenable.merge([
           windowsController._inner,
-          windowsController._initializationError,
+          windowsController._unavailableMessage,
         ]),
         builder: (context, child) {
-          if (windowsController._initializationError.value != null) {
-            return const Center(
+          final unavailable = windowsController._unavailableMessage.value;
+          if (unavailable != null) {
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'WebViewを起動できませんでした。\n'
-                  'Microsoft Edge WebView2 Runtime をインストールしてから、'
-                  'アプリを再起動してください。',
-                  textAlign: TextAlign.center,
-                ),
+                padding: const EdgeInsets.all(24),
+                child: Text(unavailable, textAlign: TextAlign.center),
               ),
             );
           }
@@ -837,7 +833,9 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     // missing or fails to start.
     unawaited(
       _ready.then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
-        _initializationError.value = error;
+        _unavailableMessage.value = 'WebViewを起動できませんでした。\n'
+            'Microsoft Edge WebView2 Runtime をインストールしてから、'
+            'アプリを再起動してください。';
         developer.log(
           'Windows WebView initialization failed',
           name: 'MoreBetterGakujo',
@@ -878,9 +876,40 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       );
     }));
     _subscriptions.add(_inner.webMessage.listen(_handleWebMessage));
+    _subscriptions.add(_inner.processFailed.listen(_handleProcessFailed));
     _subscriptions.add(_inner.navigationBlocked.listen((url) {
       unawaited(_reportBlockedNavigation(url));
     }));
+  }
+
+  // COREWEBVIEW2_PROCESS_FAILED_KIND values.
+  static const _browserProcessExited = 0;
+  static const _renderProcessExited = 1;
+
+  void _handleProcessFailed(int kind) {
+    if (kind == _browserProcessExited) {
+      // The WebView2 instance cannot be used again in this run.
+      _unavailableMessage.value = 'WebViewが停止しました。アプリを再起動してください。';
+      return;
+    }
+    if (kind == _renderProcessExited) {
+      // The page is blank until it is loaded again. A briefly unresponsive
+      // renderer (for example while compressing a PDF) is left alone.
+      unawaited(_reloadAfterRendererExit());
+    }
+  }
+
+  Future<void> _reloadAfterRendererExit() async {
+    try {
+      await _inner.loadUrl(contentProcessRecoveryUrl(_currentUrl));
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to reload after the WebView2 renderer exited',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   /// The native side already cancelled the navigation; this lets the app
@@ -904,7 +933,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   final Map<String, FutureOr<void> Function(String)> _javaScriptHandlers = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   late final Future<void> _ready;
-  final ValueNotifier<Object?> _initializationError = ValueNotifier(null);
+  /// Replaces the WebView with this message when WebView2 cannot be used.
+  final ValueNotifier<String?> _unavailableMessage = ValueNotifier(null);
   GakujoNavigationDelegate? _delegate;
   String? _currentUrl;
   String? _title;
@@ -1013,7 +1043,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       await subscription.cancel();
     }
     await _inner.dispose();
-    _initializationError.dispose();
+    _unavailableMessage.dispose();
   }
 
   Future<void> _handleUrlChanged(String url) async {

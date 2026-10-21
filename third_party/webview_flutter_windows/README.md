@@ -18,6 +18,9 @@ Local changes, all marked "More Better Gakujo patch":
   `windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
 - `setDevToolsEnabled` so release builds can turn off WebView2 DevTools
   (`windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
+- `processFailed` stream from WebView2's `ProcessFailed` so a crashed renderer
+  can be reloaded (`windows/webview.{h,cc}`, `windows/webview_bridge.cc`,
+  `lib/src/webview.dart`).
 
 When upgrading, re-apply these changes or drop the vendored copy if upstream
 covers them.

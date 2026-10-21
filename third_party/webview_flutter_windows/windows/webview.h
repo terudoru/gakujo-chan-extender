@@ -113,6 +113,7 @@ struct VirtualKeyState {
 struct EventRegistrations {
   EventRegistrationToken source_changed_token_{};
   EventRegistrationToken navigation_starting_token_{};
+  EventRegistrationToken process_failed_token_{};
   EventRegistrationToken content_loading_token_{};
   EventRegistrationToken navigation_completed_token_{};
   EventRegistrationToken history_changed_token_{};
@@ -137,6 +138,8 @@ class Webview {
 
   typedef std::function<void(const std::string&)> UrlChangedCallback;
   typedef std::function<void(const std::string&)> NavigationBlockedCallback;
+  typedef std::function<void(COREWEBVIEW2_PROCESS_FAILED_KIND)>
+      ProcessFailedCallback;
   typedef std::function<void(WebviewLoadingState)> LoadingStateChangedCallback;
   typedef std::function<void(COREWEBVIEW2_WEB_ERROR_STATUS)>
       OnLoadErrorCallback;
@@ -234,6 +237,12 @@ class Webview {
 
   void UpdateDownloadProgress(ICoreWebView2DownloadOperation* download);
 
+  // More Better Gakujo patch: reports WebView2 process failures so the app
+  // can reload a crashed page instead of leaving it blank.
+  void OnProcessFailed(ProcessFailedCallback callback) {
+    process_failed_callback_ = std::move(callback);
+  }
+
   void OnNavigationBlocked(NavigationBlockedCallback callback) {
     navigation_blocked_callback_ = std::move(callback);
   }
@@ -321,6 +330,7 @@ class Webview {
 
   UrlChangedCallback url_changed_callback_;
   NavigationBlockedCallback navigation_blocked_callback_;
+  ProcessFailedCallback process_failed_callback_;
   std::optional<util::NavigationAllowlist> navigation_allowlist_;
   LoadingStateChangedCallback loading_state_changed_callback_;
   DownloadEventCallback download_event_callback_;

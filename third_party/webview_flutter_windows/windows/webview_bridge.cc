@@ -279,6 +279,16 @@ WebviewBridge::~WebviewBridge() {
 }
 
 void WebviewBridge::RegisterEventHandlers() {
+  webview_->OnProcessFailed([this](COREWEBVIEW2_PROCESS_FAILED_KIND kind) {
+    const auto event = flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue(kEventType),
+         flutter::EncodableValue("processFailed")},
+        {flutter::EncodableValue(kEventValue),
+         flutter::EncodableValue(static_cast<int>(kind))},
+    });
+    EmitEvent(event);
+  });
+
   webview_->OnNavigationBlocked([this](const std::string& url) {
     const auto event = flutter::EncodableValue(flutter::EncodableMap{
         {flutter::EncodableValue(kEventType),

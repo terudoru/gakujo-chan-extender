@@ -165,4 +165,30 @@ void main() {
 
     expect(find.textContaining('WebView2 Runtime'), findsOneWidget);
   });
+
+  testWidgets('Windows service reloads after the renderer exits', (
+    tester,
+  ) async {
+    final native = windows.WebviewController();
+    await tester.runAsync(native.initialize);
+    final controller = WindowsGakujoWebViewController(native);
+    await tester.runAsync(controller.setJavaScriptModeUnrestricted);
+
+    await tester.runAsync(() async {
+      eventSink!.success({'type': 'processFailed', 'value': 2});
+      await Future<void>.delayed(Duration.zero);
+    });
+    expect(calls.where((call) => call.method == 'loadUrl'), isEmpty);
+
+    await tester.runAsync(() async {
+      eventSink!.success({'type': 'processFailed', 'value': 1});
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+    });
+    expect(
+      calls.lastWhere((call) => call.method == 'loadUrl').arguments,
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+    );
+    await tester.runAsync(controller.dispose);
+  });
 }

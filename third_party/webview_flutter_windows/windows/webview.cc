@@ -246,6 +246,21 @@ void Webview::RegisterEventHandlers() {
           .Get(),
       &event_registrations_.history_changed_token_);
 
+  // More Better Gakujo patch: forward renderer and browser process failures.
+  webview_->add_ProcessFailed(
+      Callback<ICoreWebView2ProcessFailedEventHandler>(
+          [this](ICoreWebView2* sender,
+                 ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT {
+            COREWEBVIEW2_PROCESS_FAILED_KIND kind;
+            if (process_failed_callback_ &&
+                SUCCEEDED(args->get_ProcessFailedKind(&kind))) {
+              process_failed_callback_(kind);
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.process_failed_token_);
+
   // More Better Gakujo patch: block disallowed navigations, including
   // redirects, before WebView2 sends the request.
   webview_->add_NavigationStarting(
