@@ -217,6 +217,8 @@ class Webview {
     navigation_allowlist_ = std::move(allowlist);
   }
   bool SetDefaultContextMenusEnabled(bool enabled);
+  // More Better Gakujo patch: F12, Ctrl+Shift+I and the Inspect menu item.
+  bool SetDevToolsEnabled(bool enabled);
   bool SetUserAgent(const std::string& user_agent);
   bool OpenDevTools();
   bool SetBackgroundColor(int32_t color);

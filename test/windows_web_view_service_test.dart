@@ -95,6 +95,10 @@ void main() {
       (call) => call.method == 'setDefaultContextMenusEnabled',
     );
     expect(call.arguments, isTrue);
+    final devTools = calls.lastWhere(
+      (call) => call.method == 'setDevToolsEnabled',
+    );
+    expect(devTools.arguments, isFalse);
     await tester.runAsync(controller.dispose);
   });
 

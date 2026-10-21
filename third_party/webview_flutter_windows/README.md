@@ -16,6 +16,8 @@ Local changes, all marked "More Better Gakujo patch":
   cancels disallowed main-frame navigations and redirects natively and reports
   them on `navigationBlocked` (`windows/util/navigation_allowlist.h`,
   `windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
+- `setDevToolsEnabled` so release builds can turn off WebView2 DevTools
+  (`windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
 
 When upgrading, re-apply these changes or drop the vendored copy if upstream
 covers them.

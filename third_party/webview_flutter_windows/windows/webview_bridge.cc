@@ -131,6 +131,7 @@ constexpr auto kMethodSetPopupWindowPolicy = "setPopupWindowPolicy";
 constexpr auto kMethodSetNavigationAllowlist = "setNavigationAllowlist";
 constexpr auto kMethodSetDefaultContextMenusEnabled =
     "setDefaultContextMenusEnabled";
+constexpr auto kMethodSetDevToolsEnabled = "setDevToolsEnabled";
 constexpr auto kMethodSetFpsLimit = "setFpsLimit";
 constexpr auto kMethodMoveFocus = "moveFocus";
 
@@ -923,6 +924,18 @@ void WebviewBridge::HandleMethodCall(
       }
       return result->Error(kMethodFailed,
                            "Updating the default context menu setting failed.");
+    }
+    return result->Error(kErrorInvalidArgs);
+  }
+
+  // setDevToolsEnabled: bool (More Better Gakujo patch)
+  if (method_name.compare(kMethodSetDevToolsEnabled) == 0) {
+    if (const auto enabled = std::get_if<bool>(method_call.arguments())) {
+      if (webview_->SetDevToolsEnabled(*enabled)) {
+        return result->Success();
+      }
+      return result->Error(kMethodFailed,
+                           "Updating the DevTools setting failed.");
     }
     return result->Error(kErrorInvalidArgs);
   }

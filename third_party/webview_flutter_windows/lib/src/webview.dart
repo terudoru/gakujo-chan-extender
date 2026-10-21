@@ -825,6 +825,15 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _channel.invokeMethod('setDefaultContextMenusEnabled', enabled);
   }
 
+  /// More Better Gakujo patch: enables or disables WebView2 DevTools (F12,
+  /// Ctrl+Shift+I and the context menu's Inspect item).
+  Future<void> setDevToolsEnabled(bool enabled) async {
+    if (_isDisposed) {
+      return;
+    }
+    return _channel.invokeMethod('setDevToolsEnabled', enabled);
+  }
+
   /// Suspends the webview to reduce its resource usage.
   ///
   /// See [the WebView2 documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_3#trysuspend).

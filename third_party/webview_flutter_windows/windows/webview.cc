@@ -701,6 +701,13 @@ bool Webview::SetDefaultContextMenusEnabled(bool enabled) {
       settings_->put_AreDefaultContextMenusEnabled(enabled ? TRUE : FALSE));
 }
 
+bool Webview::SetDevToolsEnabled(bool enabled) {
+  if (!settings_) {
+    return false;
+  }
+  return SUCCEEDED(settings_->put_AreDevToolsEnabled(enabled ? TRUE : FALSE));
+}
+
 bool Webview::SetUserAgent(const std::string& user_agent) {
   if (settings2_) {
     return settings2_->put_UserAgent(util::Utf16FromUtf8(user_agent).c_str()) ==

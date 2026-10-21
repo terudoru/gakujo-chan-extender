@@ -771,6 +771,8 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
     // The plugin turns WebView2's context menu off, which left Windows users
     // without right-click copy while other platforms keep their native menus.
     await windowsController._inner.setDefaultContextMenusEnabled(true);
+    // Match the other platforms, whose release WebViews cannot be inspected.
+    await windowsController._inner.setDevToolsEnabled(debugAllowed);
     // Block disallowed sites before the request is sent; the URL listener
     // below only sees a navigation after it has started.
     await windowsController._inner.setNavigationAllowlist(
