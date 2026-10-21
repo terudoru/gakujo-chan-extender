@@ -1508,7 +1508,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           officialExtraction,
           isOfficial: true,
         )) {
-      return officialExtraction;
+      return GakujoCalendarExtraction(
+        courses: GakujoCalendarExport.withPageLocations(
+          officialExtraction.courses,
+          fallbackExtraction.courses,
+        ),
+        termRange: officialExtraction.termRange,
+      );
     }
 
     final timetableExtraction = await _readCourseTimetableForCalendarImport(
@@ -1591,7 +1597,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
               officialExtraction,
               isOfficial: true,
             )) {
-          return officialExtraction;
+          return GakujoCalendarExtraction(
+            courses: GakujoCalendarExport.withPageLocations(
+              officialExtraction.courses,
+              extraction.courses,
+            ),
+            termRange: officialExtraction.termRange,
+          );
         }
         final timetableExtraction = await _readCourseTimetableForCalendarImport(
           preferredTermRange: extraction.termRange ?? termRange,

@@ -463,6 +463,44 @@ class GakujoCalendarExport {
     ];
   }
 
+  /// Gakujo's schedule export has no classrooms, while the schedule page
+  /// shows one per class; fill the gaps from the page.
+  static List<GakujoCalendarCourse> withPageLocations(
+    List<GakujoCalendarCourse> courses,
+    List<GakujoCalendarCourse> pageCourses,
+  ) {
+    String title(GakujoCalendarCourse course) =>
+        displayTitleForCourse(course).replaceAll(RegExp(r'\s+'), '');
+    final bySlot = <String, String>{};
+    final byPeriod = <String, String>{};
+    for (final course in pageCourses) {
+      final location = displayLocationForCourse(course);
+      if (location.isEmpty) {
+        continue;
+      }
+      bySlot.putIfAbsent(
+        '${title(course)}|${course.weekday}|${course.period}',
+        () => location,
+      );
+      byPeriod.putIfAbsent('${title(course)}|${course.period}', () => location);
+    }
+    if (byPeriod.isEmpty) {
+      return courses;
+    }
+    return [
+      for (final course in courses)
+        if (displayLocationForCourse(course).isEmpty)
+          switch (bySlot[
+                  '${title(course)}|${course.weekday}|${course.period}'] ??
+              byPeriod['${title(course)}|${course.period}']) {
+            final location? => course.copyWith(location: location),
+            null => course,
+          }
+        else
+          course,
+    ];
+  }
+
   static GakujoCalendarCourse _placeDatedMeeting(
     GakujoCalendarCourse course, {
     required int? swapWeekday,
@@ -605,17 +643,30 @@ class GakujoCalendarExport {
       return own.trim().isNotEmpty ? own : inherited?.first(name) ?? '';
     }
 
-    final title = _unescapeIcalendarText(inheritedValue('SUMMARY'));
+    var title = _unescapeIcalendarText(inheritedValue('SUMMARY'));
     final location = _unescapeIcalendarText(inheritedValue('LOCATION'));
     final description = _unescapeIcalendarText(
       inheritedValue('DESCRIPTION'),
     );
-    final start = _dateTimeFromIcalendarValue(event.first('DTSTART'));
-    if (start == null) {
-      return null;
+    final rawStart = event.first('DTSTART').trim();
+    var start = _dateTimeFromIcalendarValue(rawStart);
+    var period = start == null ? 0 : _periodFromStartTime(start);
+    // Gakujo's schedule export writes each class as an all-day event titled
+    // "1限：科目名", so the period comes from the title instead of the time.
+    final allDayMatch = RegExp(r'^([0-9]{4})([0-9]{2})([0-9]{2})$')
+        .firstMatch(rawStart);
+    final periodTitleMatch =
+        RegExp(r'^\s*([1-7])\s*限\s*[:：]\s*(.+)$').firstMatch(title);
+    if (start == null && allDayMatch != null && periodTitleMatch != null) {
+      start = _validatedLocalDate(
+        int.parse(allDayMatch.group(1)!),
+        int.parse(allDayMatch.group(2)!),
+        int.parse(allDayMatch.group(3)!),
+      );
+      period = int.parse(periodTitleMatch.group(1)!);
+      title = periodTitleMatch.group(2)!.trim();
     }
-    final period = _periodFromStartTime(start);
-    if (period == 0) {
+    if (start == null || period == 0) {
       return null;
     }
     return GakujoCalendarCourse(
@@ -1623,6 +1674,16 @@ class GakujoCalendarExport {
     if (!node) {
       return '';
     }
+    // A month-view day cell names its own date in addSchedule(YYYYMMDD); its
+    // text may carry a deadline on another day.
+    var addLink = node.querySelector &&
+      node.querySelector('[onclick*="addSchedule("]');
+    var addMatch = addLink &&
+      String(addLink.getAttribute('onclick') || '')
+        .match(/addSchedule\(\s*'?(20[0-9]{2})([0-9]{2})([0-9]{2})/);
+    if (addMatch) {
+      return addMatch[1] + '-' + addMatch[2] + '-' + addMatch[3];
+    }
     var direct = sourceDateFromLine(rawTextOf(node));
     if (direct) {
       return direct;
@@ -1881,12 +1942,25 @@ class GakujoCalendarExport {
       );
     }
   }
+  function weekdayFromHeaderCell(text) {
+    // Only a bare weekday label (optionally with a date such as "6/29(月)")
+    // makes a header cell; a day cell like "28 [休日]夏期休業" merely
+    // contains 日 and must not turn its row into a Sunday-only header.
+    var value = String(text || '')
+      .replace(/[0-9０-９\s\/\-.,:：()（）\[\]［］]/g, '')
+      .toLowerCase();
+    if (/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*$/.test(value) ||
+        /^[月火水木金土日](曜日?)?$/.test(value)) {
+      return weekdayFromLabel(value);
+    }
+    return 0;
+  }
   function columnWeekdayMapFromRow(row) {
     var cells = Array.prototype.slice.call(row.children || []);
     var map = {};
     var found = 0;
     for (var i = 0; i < cells.length; i += 1) {
-      var weekday = weekdayFromLabel(textOf(cells[i]));
+      var weekday = weekdayFromHeaderCell(textOf(cells[i]));
       if (weekday) {
         map[i] = weekday;
         found += 1;
@@ -1979,6 +2053,12 @@ class GakujoCalendarExport {
         if (maybeHeader) {
           headerMap = maybeHeader;
           continue;
+        }
+        // A month or week calendar is read per day by scanScheduleTables. Its
+        // rows mix many days, so a course code from a quiz deadline in one
+        // cell would otherwise turn a holiday label into a bogus course.
+        if (!headerMap && columnWeekdayMapFromRow(row)) {
+          break;
         }
         var cells = Array.prototype.slice.call(row.children || []);
         if (!cells.length) {
@@ -3018,6 +3098,28 @@ class GakujoCalendarExport {
       })
     };
   }
+  function exportFileAfter(xhr) {
+    // Gakujo answers the export with a progress page whose meta refresh
+    // downloads the iCalendar file, so follow it to read the file itself.
+    var page = new DOMParser().parseFromString(
+      xhr.responseText || '',
+      'text/html'
+    );
+    var metas = Array.prototype.slice.call(page.querySelectorAll('meta'));
+    for (var i = 0; i < metas.length; i += 1) {
+      var equiv = String(metas[i].getAttribute('http-equiv') || '');
+      var match = String(metas[i].getAttribute('content') || '')
+        .match(/url\\s*=\\s*(.+)\$/i);
+      if (equiv.toLowerCase() !== 'refresh' || !match) {
+        continue;
+      }
+      var next = new XMLHttpRequest();
+      next.open('GET', new URL(match[1].trim(), xhr.responseURL).href, false);
+      next.send(null);
+      return next;
+    }
+    return xhr;
+  }
   function requestForm(doc, form) {
     configureForm(form);
     var method = String(form.method || 'POST').toUpperCase();
@@ -3039,6 +3141,7 @@ class GakujoCalendarExport {
       );
     }
     xhr.send(body);
+    xhr = exportFileAfter(xhr);
     return {
       status: xhr.status >= 200 && xhr.status < 400 ? 'fetched' : 'http_error',
       httpStatus: xhr.status,
