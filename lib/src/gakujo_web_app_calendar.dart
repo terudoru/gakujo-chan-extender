@@ -464,23 +464,17 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           return;
         }
         final result = await _calendarService.syncEvents(
-          events: events,
+          events: [...events, ...deadlineEvents],
           rangeStart: termRange.start,
           rangeEnd: termRange.end,
           calendarTitle: settings.effectiveCalendarTitle,
         );
-        var deadlineText = '';
-        if (deadlineEvents.isNotEmpty) {
-          final deadlineResult = await _calendarService.syncEvents(
-            events: deadlineEvents,
-            rangeStart: termRange.start,
-            rangeEnd: termRange.end,
-            calendarTitle: settings.effectiveCalendarTitle,
-          );
-          deadlineText = '。課題の締切${deadlineResult.added}件も追加しました';
-        }
         _showSnackBar(
-          '${_calendarSyncMessage(result, resolvedTerm.termName)}$deadlineText',
+          _calendarSyncMessage(
+            result,
+            resolvedTerm.termName,
+            deadlines: deadlineEvents.length,
+          ),
         );
         return;
       }
@@ -1221,10 +1215,16 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     }
   }
 
-  String _calendarSyncMessage(GakujoCalendarSyncResult result, String? term) {
+  String _calendarSyncMessage(
+    GakujoCalendarSyncResult result,
+    String? term, {
+    int deadlines = 0,
+  }) {
     final termText = term == null ? '' : ' ($term)';
     final removedText = result.removed > 0 ? '、古い予定${result.removed}件を更新' : '';
-    return '${result.added}件の授業予定をカレンダーに追加$removedTextしました$termText';
+    final classes = result.added - deadlines;
+    final deadlineText = deadlines > 0 ? 'と課題の締切$deadlines件' : '';
+    return '$classes件の授業予定$deadlineTextをカレンダーに追加$removedTextしました$termText';
   }
 
   Future<void> _deleteAddedCalendarEvents({

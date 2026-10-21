@@ -145,7 +145,8 @@ void main() {
       '〆切 小テスト 第三回',
     ]);
     expect(events.last.end, japanMoment(2026, 10, 28, 16, 31));
-    expect(events.last.id, startsWith('niigata-2026-第3ターム-deadlines|'));
+    // Synced together with the classes, so the same namespace.
+    expect(events.last.id, startsWith('niigata-2026-第3ターム|deadline|'));
 
     final ics = GakujoCalendarExport.buildIcs(
       courses: _weekly,

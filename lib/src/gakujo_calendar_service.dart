@@ -339,8 +339,8 @@ class GakujoCalendarEventBuilder {
   }
 
   /// One event per assignment closing within the range, ending at its
-  /// closing time. They use their own namespace so syncing the classes and
-  /// syncing the deadlines never remove each other's events.
+  /// closing time. They share the classes' namespace and are synced with
+  /// them, so turning the option off removes them on the next sync.
   static List<GakujoCalendarEvent> buildAssignmentEvents({
     required Iterable<GakujoAssignment> assignments,
     required DateTime rangeStart,
@@ -360,7 +360,7 @@ class GakujoCalendarEventBuilder {
       final done = assignment.isSubmitted ? '（${assignment.status}）' : '';
       events.add(
         GakujoCalendarEvent(
-          id: '${assignmentDeadlineNamespace(uidNamespace)}|${assignment.id}',
+          id: '$uidNamespace|deadline|${assignment.id}',
           title: '〆切 ${assignment.kind} ${assignment.title}$done',
           start: assignment.dueAt.subtract(const Duration(minutes: 30)),
           end: assignment.dueAt,
@@ -378,9 +378,6 @@ class GakujoCalendarEventBuilder {
     events.sort((a, b) => a.start.compareTo(b.start));
     return events;
   }
-
-  static String assignmentDeadlineNamespace(String uidNamespace) =>
-      '$uidNamespace-deadlines';
 
   static String _eventInstanceId(
     GakujoCalendarCourse course,
