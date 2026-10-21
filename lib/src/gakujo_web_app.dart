@@ -3262,7 +3262,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (GakujoAssignment.fromReportRow(
             row,
             capturedAt: DateTime.now(),
-            url: durableGakujoLink(url, category),
+            // A reminder opens the list it can be submitted from, even when
+            // the assignment was found elsewhere.
+            url: category == 'レポート・小テスト'
+                ? durableGakujoLink(url, category)
+                : _reportListPortalUrl,
           )
               case final assignment?)
             assignment,
