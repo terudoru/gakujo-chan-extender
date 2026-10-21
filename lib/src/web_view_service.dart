@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
 
@@ -108,6 +109,9 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
   Widget buildWidget(GakujoWebViewController controller) {
     final inner = (controller as WebViewFlutterGakujoWebViewController)._inner;
     final webView = WebViewWidget(controller: inner);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return _AndroidUploadHost(controller: inner, child: webView);
+    }
     if (!needsFlutterJavaScriptDialogs(defaultTargetPlatform)) {
       return webView;
     }
@@ -170,10 +174,6 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       await (platformController as dynamic).setLoadWithOverviewMode(true);
       await (platformController as dynamic).setBuiltInZoomControls(true);
       await (platformController as dynamic).setDisplayZoomControls(false);
-      // Without this callback Android WebView ignores <input type="file">, so
-      // assignment attachments cannot be chosen.
-      await (platformController as dynamic)
-          .setOnShowFileSelector(_pickAndroidUploadFiles);
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to configure Android WebView platform controller',
@@ -188,12 +188,32 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
 /// Receives webview_flutter_android's `FileSelectorParams`. The parameter is
 /// dynamic, like the other Android-only calls above, so this file does not
 /// depend on the Android implementation package directly.
-Future<List<String>> _pickAndroidUploadFiles(dynamic params) async {
+Future<List<String>> _pickAndroidUploadFiles(
+  dynamic params, {
+  required Future<AndroidUploadSource?> Function() chooseSource,
+}) async {
   try {
     final acceptTypes = [
       for (final value in params.acceptTypes as List<Object?>)
         if (value != null) value.toString(),
     ];
+    // iOS offers the camera for file inputs; Android WebView does not, so
+    // photographed handwritten reports need an explicit camera option.
+    if (androidUploadAcceptsPhotos(acceptTypes)) {
+      final source = params.isCaptureEnabled == true
+          ? AndroidUploadSource.camera
+          : await chooseSource();
+      if (source == null) {
+        return const [];
+      }
+      if (source == AndroidUploadSource.camera) {
+        final photo = await ImagePicker().pickImage(source: ImageSource.camera);
+        return [
+          if (photo != null && photo.path.isNotEmpty)
+            Uri.file(photo.path).toString(),
+        ];
+      }
+    }
     final typeGroups = androidUploadTypeGroups(acceptTypes);
     final allowsMultiple = (params.mode as Enum).name == 'openMultiple';
     final files = allowsMultiple
@@ -217,6 +237,102 @@ Future<List<String>> _pickAndroidUploadFiles(dynamic params) async {
     // An empty result cancels the chooser so the page can be used again.
     return const [];
   }
+}
+
+enum AndroidUploadSource { camera, files }
+
+/// Whether an input with this `accept` list can take a camera photo (JPEG).
+@visibleForTesting
+bool androidUploadAcceptsPhotos(List<String> acceptTypes) {
+  final groups = androidUploadTypeGroups(acceptTypes);
+  if (groups.isEmpty) {
+    return true;
+  }
+  final group = groups.single;
+  return (group.mimeTypes ?? const <String>[])
+          .any((type) => type == 'image/*' || type == 'image/jpeg') ||
+      (group.extensions ?? const <String>[])
+          .any((extension) => extension == 'jpg' || extension == 'jpeg');
+}
+
+/// Registers the Android file chooser with a BuildContext so it can offer
+/// the camera alongside the file picker.
+class _AndroidUploadHost extends StatefulWidget {
+  const _AndroidUploadHost({
+    required this.controller,
+    required this.child,
+  });
+
+  final WebViewController controller;
+  final Widget child;
+
+  @override
+  State<_AndroidUploadHost> createState() => _AndroidUploadHostState();
+}
+
+class _AndroidUploadHostState extends State<_AndroidUploadHost> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_register(widget.controller));
+  }
+
+  @override
+  void didUpdateWidget(_AndroidUploadHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      unawaited(_register(widget.controller));
+    }
+  }
+
+  Future<void> _register(WebViewController controller) async {
+    try {
+      // Without this callback Android WebView ignores <input type="file">,
+      // so assignment attachments cannot be chosen.
+      await (controller.platform as dynamic).setOnShowFileSelector(
+        (dynamic params) =>
+            _pickAndroidUploadFiles(params, chooseSource: _chooseSource),
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to register the Android file chooser',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<AndroidUploadSource?> _chooseSource() async {
+    if (!mounted) {
+      return null;
+    }
+    return showModalBottomSheet<AndroidUploadSource>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('写真を撮る'),
+              onTap: () => Navigator.of(sheetContext)
+                  .pop(AndroidUploadSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('写真やファイルを選ぶ'),
+              onTap: () => Navigator.of(sheetContext)
+                  .pop(AndroidUploadSource.files),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// Converts an HTML `accept` list such as `.pdf,image/*` into file_selector

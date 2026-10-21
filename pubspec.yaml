@@ -21,6 +21,7 @@ dependencies:
   webview_flutter_windows:
     path: third_party/webview_flutter_windows
   package_info_plus: ^10.1.0
+  image_picker: ^1.2.4
 
 dev_dependencies:
   flutter_test:

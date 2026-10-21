@@ -73,4 +73,13 @@ void main() {
       isNull,
     );
   });
+
+  test('Android offers the camera only when the input accepts photos', () {
+    expect(androidUploadAcceptsPhotos(const []), isTrue);
+    expect(androidUploadAcceptsPhotos(['image/*']), isTrue);
+    expect(androidUploadAcceptsPhotos(['.pdf,.jpg']), isTrue);
+    expect(androidUploadAcceptsPhotos(['.pdf']), isFalse);
+    expect(androidUploadAcceptsPhotos(['.png']), isFalse);
+    expect(androidUploadAcceptsPhotos(['application/pdf']), isFalse);
+  });
 }
