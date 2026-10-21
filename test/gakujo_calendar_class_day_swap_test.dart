@@ -128,6 +128,44 @@ void main() {
     ]);
   });
 
+  test('an exam-day meeting is not doubled when no-class days are off', () {
+    final courses = GakujoCalendarExport.applyClassDaySwaps(
+      GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+        [
+          'BEGIN:VCALENDAR',
+          _event('w1', '20261118', '物理学'),
+          _event('w2', '20261125', '物理学'), // listed on an exam day
+          'END:VCALENDAR',
+        ].join('\r\n'),
+      ),
+      _term3.classDaySwaps,
+      noClassDates: _term3.noClassDates,
+    );
+    String day(DateTime d) => '${d.month}/${d.day}';
+
+    // The user chose not to apply holidays and exam days.
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: courses,
+      rangeStart: _term3.start,
+      rangeEnd: _term3.end,
+      uidNamespace: 'test',
+      termLabel: 'test',
+    );
+    expect(
+      [for (final e in events) day(e.start)].where((d) => d == '11/25'),
+      ['11/25'],
+    );
+
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses,
+      rangeStart: _term3.start,
+      rangeEnd: _term3.end,
+      uidNamespace: 'test',
+    );
+    expect(RegExp('BEGIN:VEVENT').allMatches(ics), hasLength(1));
+    expect(ics, contains('RRULE'));
+  });
+
   test('courses without a date or swap are left alone', () {
     const weekly = GakujoCalendarCourse(title: 'x', weekday: 3, period: 2);
     expect(

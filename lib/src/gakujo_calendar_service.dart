@@ -325,8 +325,16 @@ class GakujoCalendarEventBuilder {
         }
       }
     }
-    events.sort((a, b) => a.start.compareTo(b.start));
-    return events;
+    // Gakujo also lists the meetings of a weekly class one by one; when the
+    // weekly series is not cut on that date (no-class days not applied), the
+    // same meeting would otherwise appear twice.
+    final seen = <String>{};
+    final unique = [
+      for (final event in events)
+        if (seen.add('${event.start.toIso8601String()}|${event.title}')) event,
+    ];
+    unique.sort((a, b) => a.start.compareTo(b.start));
+    return unique;
   }
 
   static String _eventInstanceId(

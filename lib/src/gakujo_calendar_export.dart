@@ -1517,9 +1517,36 @@ class GakujoCalendarExport {
       }
     }
 
+    // Gakujo also lists the meetings of a weekly class one by one; skip such a
+    // meeting when the weekly series already holds it (no-class days not
+    // applied), so it is not exported twice.
+    final listedOneOffs = Set<GakujoCalendarCourse>.identity()
+      ..addAll(usefulCourses.where((course) => !course.recursWeekly));
+    final noClassDays = {for (final date in noClassDates) _dateOnly(date)};
+    bool weeklySeriesHolds(GakujoCalendarCourse meeting) {
+      final date = _dateOnly(meeting.sourceDate!);
+      if (noClassDays.contains(date)) {
+        return false;
+      }
+      final weekday = timetableWeekdayFor(date, classDaySwaps);
+      return usefulCourses.any(
+        (course) =>
+            course.recursWeekly &&
+            course.period == meeting.period &&
+            course.weekday == weekday &&
+            displayTitleForCourse(course) == displayTitleForCourse(meeting) &&
+            !course.excludedDates.any((d) => _dateOnly(d) == date),
+      );
+    }
+
     for (final course in exportCourses) {
       final time = periodTimes[course.period];
       if (time == null) {
+        continue;
+      }
+      if (listedOneOffs.contains(course) &&
+          course.sourceDate != null &&
+          weeklySeriesHolds(course)) {
         continue;
       }
       final DateTime firstDate;
