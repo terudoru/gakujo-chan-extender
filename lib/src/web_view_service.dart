@@ -212,6 +212,7 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
 Future<List<String>> _pickAndroidUploadFiles(
   dynamic params, {
   required Future<AndroidUploadSource?> Function() chooseSource,
+  String? Function()? takeRecoveredPhoto,
 }) async {
   try {
     final acceptTypes = [
@@ -226,6 +227,10 @@ Future<List<String>> _pickAndroidUploadFiles(
           : await chooseSource();
       if (source == null) {
         return const [];
+      }
+      if (source == AndroidUploadSource.recoveredPhoto) {
+        final path = takeRecoveredPhoto?.call();
+        return [if (path != null && path.isNotEmpty) Uri.file(path).toString()];
       }
       if (source == AndroidUploadSource.camera) {
         final photo = await ImagePicker().pickImage(source: ImageSource.camera);
@@ -260,7 +265,7 @@ Future<List<String>> _pickAndroidUploadFiles(
   }
 }
 
-enum AndroidUploadSource { camera, files }
+enum AndroidUploadSource { recoveredPhoto, camera, files }
 
 /// Whether an input with this `accept` list can take a camera photo (JPEG).
 @visibleForTesting
@@ -292,10 +297,47 @@ class _AndroidUploadHost extends StatefulWidget {
 }
 
 class _AndroidUploadHostState extends State<_AndroidUploadHost> {
+  /// A photo taken just before Android ended the app while the camera was
+  /// open. The page that asked for it is gone, so offer it on the next pick.
+  String? _recoveredPhotoPath;
+
   @override
   void initState() {
     super.initState();
     unawaited(_register(widget.controller));
+    unawaited(_recoverLostPhoto());
+  }
+
+  Future<void> _recoverLostPhoto() async {
+    try {
+      final response = await ImagePicker().retrieveLostData();
+      final path = response.file?.path;
+      if (response.isEmpty || path == null || path.isEmpty || !mounted) {
+        return;
+      }
+      _recoveredPhotoPath = path;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'カメラの使用中にアプリが再起動しました。'
+            '撮影した写真は、次にファイルを選ぶときに使えます。',
+          ),
+        ),
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to recover a photo taken before the app restarted',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  String? _takeRecoveredPhoto() {
+    final path = _recoveredPhotoPath;
+    _recoveredPhotoPath = null;
+    return path;
   }
 
   @override
@@ -311,8 +353,11 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
       // Without this callback Android WebView ignores <input type="file">,
       // so assignment attachments cannot be chosen.
       await (controller.platform as dynamic).setOnShowFileSelector(
-        (dynamic params) =>
-            _pickAndroidUploadFiles(params, chooseSource: _chooseSource),
+        (dynamic params) => _pickAndroidUploadFiles(
+          params,
+          chooseSource: _chooseSource,
+          takeRecoveredPhoto: _takeRecoveredPhoto,
+        ),
       );
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -334,6 +379,13 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_recoveredPhotoPath != null)
+              ListTile(
+                leading: const Icon(Icons.restore),
+                title: const Text('直前に撮った写真を使う'),
+                onTap: () => Navigator.of(sheetContext)
+                    .pop(AndroidUploadSource.recoveredPhoto),
+              ),
             ListTile(
               leading: const Icon(Icons.photo_camera),
               title: const Text('写真を撮る'),

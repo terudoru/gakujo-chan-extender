@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload QA</title>
+  <style>
+    body { font-family: sans-serif; padding: 24px; }
+    label { display: block; margin: 24px 0 8px; font-size: 20px; }
+    input { font-size: 20px; }
+    #result { margin-top: 32px; font-size: 20px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Upload QA</h1>
+  <!-- Debug-only fixture for checking the Android file chooser and camera. -->
+  <label for="photo">写真（image/*）</label>
+  <input id="photo" type="file" accept="image/*">
+  <label for="pdf">PDF のみ</label>
+  <input id="pdf" type="file" accept=".pdf">
+  <div id="result">未選択</div>
+  <script>
+    ['photo', 'pdf'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function (event) {
+        var file = event.target.files[0];
+        document.getElementById('result').textContent = file
+          ? id + ': ' + file.name + ' (' + file.size + ' bytes, ' + file.type + ')'
+          : id + ': キャンセル';
+      });
+    });
+  </script>
+</body>
+</html>
