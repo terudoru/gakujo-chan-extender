@@ -209,4 +209,11 @@ Android/iOS/macOS は `webview_flutter` を使っています。Windows の実�
 差し替え箇所は `lib/src/web_view_service.dart` と
 `lib/src/platform/platform_service.dart` に寄せています。
 
+Android の既知の制限: `webview_flutter_android`（4.14.1 時点）は
+`WebViewClient.onRenderProcessGone` を実装していません。メモリ不足で WebView の
+レンダラーが終了されると、Android の既定動作でアプリも終了します（カメラなど別アプリへ
+切り替えた後に起きやすい）。プラグイン管理下の WebView はアプリ側で作り直せないため、
+現状は再起動後に前回ページを復元し、レポート本文は下書き自動保存で守る方針です。
+上流が対応したら、レンダラー終了時に WebView を作り直して再読み込みしてください。
+
 学務情報システム固有のロジックは、基本的にSwift側へ移す必要はありません。
