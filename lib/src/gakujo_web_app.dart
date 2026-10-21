@@ -880,6 +880,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
+      _notificationService.forgetRefusal();
       unawaited(_refreshAssignmentsInBackground());
     }
     if (state == AppLifecycleState.inactive ||

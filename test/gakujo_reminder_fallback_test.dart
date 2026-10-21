@@ -74,4 +74,22 @@ void main() {
       containsPair('title', '【あと1時間】レポート 1'),
     );
   });
+
+  testWidgets('a refused permission is not asked again in the session',
+      (tester) async {
+    var asked = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'requestPermission') {
+        asked += 1;
+        return false;
+      }
+      return true;
+    });
+    final service = GakujoNotificationService();
+
+    expect(await service.requestPermission(), isFalse);
+    expect(await service.requestPermission(), isFalse);
+    expect(asked, 1);
+  });
 }

@@ -226,9 +226,24 @@ class GakujoNotificationService {
     }
   }
 
+  bool _permissionRefused = false;
+
+  /// The student may have allowed notifications in the system settings
+  /// meanwhile, as when returning to the app.
+  void forgetRefusal() {
+    _permissionRefused = false;
+  }
+
+  /// Asks for permission to notify. Once refused, it is not asked again
+  /// until [forgetRefusal]: reminders are rebooked by background refreshes,
+  /// and Android would otherwise raise the prompt at random moments.
   Future<bool> requestPermission() async {
+    if (_permissionRefused) {
+      return false;
+    }
     try {
       final result = await _channel.invokeMethod<bool>('requestPermission');
+      _permissionRefused = result != true;
       return result ?? false;
     } on PlatformException {
       return false;
