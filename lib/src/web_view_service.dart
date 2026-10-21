@@ -823,14 +823,24 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
     // buttons, so mouse back/forward buttons would otherwise do nothing.
     return Listener(
       onPointerDown: (event) {
-        switch (mouseHistoryNavigation(event)) {
-          case MouseHistoryNavigation.back:
-            unawaited(windowsController.goBack());
-          case MouseHistoryNavigation.forward:
-            unawaited(windowsController.goForward());
-          case null:
-            break;
+        final navigation = mouseHistoryNavigation(event);
+        if (navigation == null) {
+          return;
         }
+        unawaited(
+          (navigation == MouseHistoryNavigation.back
+                  ? windowsController.goBack()
+                  : windowsController.goForward())
+              .catchError((Object error, StackTrace stackTrace) {
+            // For example WebView2 failed to start; the page already says so.
+            developer.log(
+              'Windows WebView mouse history navigation failed',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }),
+        );
       },
       child: ListenableBuilder(
         listenable: Listenable.merge([
