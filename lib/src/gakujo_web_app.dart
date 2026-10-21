@@ -776,6 +776,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
   DateTime? _lastAssignmentRefresh;
+  Timer? _backgroundRefreshTimer;
   bool _isImportingSettings = false;
   final _backupOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
@@ -856,10 +857,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _handleDeadlineNotificationTapped,
     );
     unawaited(_initialPageLoaded);
+    // A desktop window can stay on one page all day; keep assignments and
+    // 連絡通知 current anyway. The refresh itself runs at most half-hourly.
+    _backgroundRefreshTimer = Timer.periodic(
+      const Duration(minutes: 30),
+      (_) => unawaited(_refreshAssignmentsInBackground()),
+    );
   }
 
   @override
   void dispose() {
+    _backgroundRefreshTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
@@ -871,6 +879,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
+      unawaited(_refreshAssignmentsInBackground());
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       unawaited(_saveCurrentPageUrl());
@@ -2181,7 +2192,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   : () async {
                       await _activityStore.clearReportLists();
                       // The assignments go with the lists, and so do their
-                      // booked reminders.
+                      // booked reminders; fetch the list again soon.
+                      _lastAssignmentRefresh = null;
                       unawaited(_syncReminders());
                       if (!dialogContext.mounted) {
                         return;
@@ -2450,7 +2462,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.replaceFavorites(const []),
       ]);
       await _refreshActivityCounts();
-      // Reminders booked with the OS were for the assignments just removed.
+      // Reminders booked with the OS were for the assignments just removed;
+      // fetch the list again at the next chance.
+      _lastAssignmentRefresh = null;
       unawaited(_syncReminders());
     }
 
@@ -3741,6 +3755,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   /// in, then tells about new deadlines and messages and rebooks reminders.
   Future<void> _refreshAssignmentsInBackground() async {
     if (!_canRunPageScripts ||
+        _calendarOperationGate.isRunning ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
       return;
     }
