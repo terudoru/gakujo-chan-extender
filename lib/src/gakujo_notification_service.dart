@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'allowed_web_origins.dart';
 import 'gakujo_activity_store.dart';
+import 'gakujo_app_settings.dart';
 
 typedef DeadlineNotificationTappedCallback = FutureOr<void> Function(
   String url,
@@ -23,6 +24,26 @@ String? deadlineNotificationTargetUrl(
     return null;
   }
   return normalized;
+}
+
+/// Which [GakujoNotificationTopic] a detected deadline is about. Gakujo
+/// writes some tab names in half-width katakana (ﾚﾎﾟｰﾄ・小ﾃｽﾄ・ｱﾝｹｰﾄ).
+GakujoNotificationTopic notificationTopicFor(GakujoDeadlineEntry entry) {
+  if (entry.source == '連絡通知') {
+    return GakujoNotificationTopic.message;
+  }
+  final text = '${entry.title} ${entry.dueText}';
+  bool mentions(List<String> words) => words.any(text.contains);
+  if (mentions(const ['アンケート', 'ｱﾝｹｰﾄ'])) {
+    return GakujoNotificationTopic.survey;
+  }
+  if (mentions(const ['小テスト', '小ﾃｽﾄ'])) {
+    return GakujoNotificationTopic.quiz;
+  }
+  if (mentions(const ['レポート', 'ﾚﾎﾟｰﾄ', '課題']) || entry.source == 'レポート・小テスト') {
+    return GakujoNotificationTopic.report;
+  }
+  return GakujoNotificationTopic.other;
 }
 
 class GakujoNotificationService {
@@ -119,26 +140,34 @@ class GakujoDeadlineNotificationCoordinator {
   final GakujoNotificationService _notificationService;
   Future<void> _pendingNotificationOperation = Future<void>.value();
 
+  /// Notifies new deadlines whose topic is one of [topics].
   Future<void> notifyPendingDeadlines({
     required bool notificationsEnabled,
+    Set<GakujoNotificationTopic> topics = const {
+      ...GakujoNotificationTopic.values,
+    },
   }) {
     return _enqueueNotificationOperation(
       () => _notifyPendingDeadlines(
         notificationsEnabled: notificationsEnabled,
+        topics: topics,
       ),
     );
   }
 
   Future<void> _notifyPendingDeadlines({
     required bool notificationsEnabled,
+    required Set<GakujoNotificationTopic> topics,
   }) async {
-    if (!notificationsEnabled) {
+    if (!notificationsEnabled || topics.isEmpty) {
       return;
     }
     final deadlines = await _activityStore.loadDeadlines();
     final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
     final pendingDeadlines = deadlines
         .where((entry) => entry.isDeadline)
+        .where((entry) => topics.contains(notificationTopicFor(entry)))
+        .where((entry) => !_activityStore.isDeadlinePassed(entry))
         .where((entry) => !notifiedKeys.contains(entry.key))
         .take(5)
         .toList();

@@ -345,6 +345,73 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   }
 }
 
+/// What an OS notification can be about. Students choose which of these
+/// reach the notification center instead of being told about every dated
+/// line the app finds.
+enum GakujoNotificationTopic {
+  report,
+  quiz,
+  survey,
+  message,
+  other,
+}
+
+extension GakujoNotificationTopicLabels on GakujoNotificationTopic {
+  String get label {
+    return switch (this) {
+      GakujoNotificationTopic.report => 'レポート・課題の提出期限',
+      GakujoNotificationTopic.quiz => '小テストの期限',
+      GakujoNotificationTopic.survey => 'アンケートの回答期限',
+      GakujoNotificationTopic.message => '連絡通知に書かれた期限',
+      GakujoNotificationTopic.other => 'その他の期限（学内の手続きなど）',
+    };
+  }
+
+  String get storageValue {
+    return switch (this) {
+      GakujoNotificationTopic.report => 'report',
+      GakujoNotificationTopic.quiz => 'quiz',
+      GakujoNotificationTopic.survey => 'survey',
+      GakujoNotificationTopic.message => 'message',
+      GakujoNotificationTopic.other => 'other',
+    };
+  }
+
+  static GakujoNotificationTopic? fromStorageValue(String? value) {
+    for (final topic in GakujoNotificationTopic.values) {
+      if (topic.storageValue == value) {
+        return topic;
+      }
+    }
+    return null;
+  }
+
+  /// Coursework only, until the student picks otherwise.
+  static const defaults = {
+    GakujoNotificationTopic.report,
+    GakujoNotificationTopic.quiz,
+    GakujoNotificationTopic.survey,
+  };
+
+  /// A missing value means the student never chose; an empty one means they
+  /// turned every topic off.
+  static Set<GakujoNotificationTopic> decode(Object? raw) {
+    final Iterable<Object?> values = switch (raw) {
+      null => defaults,
+      final String text => text.split(','),
+      final Iterable<Object?> list => list,
+      _ => defaults,
+    };
+    return {
+      for (final value in values)
+        if (value is GakujoNotificationTopic)
+          value
+        else if (fromStorageValue(value?.toString().trim()) case final topic?)
+          topic,
+    };
+  }
+}
+
 class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
@@ -354,6 +421,7 @@ class GakujoAppSettings {
     this.setupCompleted = false,
     this.calendarImportSettings = const GakujoCalendarImportSettings(),
     this.messageExcludeKeywords = const [],
+    this.notificationTopics = GakujoNotificationTopicLabels.defaults,
   });
 
   final DownloadSaveMode downloadSaveMode;
@@ -363,6 +431,7 @@ class GakujoAppSettings {
   final bool setupCompleted;
   final GakujoCalendarImportSettings calendarImportSettings;
   final List<String> messageExcludeKeywords;
+  final Set<GakujoNotificationTopic> notificationTopics;
 
   bool get hasLoginCredentials => loginCredentials?.isComplete ?? false;
 
@@ -378,6 +447,7 @@ class GakujoAppSettings {
     bool? setupCompleted,
     GakujoCalendarImportSettings? calendarImportSettings,
     List<String>? messageExcludeKeywords,
+    Set<GakujoNotificationTopic>? notificationTopics,
   }) {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
@@ -391,6 +461,7 @@ class GakujoAppSettings {
           calendarImportSettings ?? this.calendarImportSettings,
       messageExcludeKeywords:
           messageExcludeKeywords ?? this.messageExcludeKeywords,
+      notificationTopics: notificationTopics ?? this.notificationTopics,
     );
   }
 }
@@ -426,6 +497,8 @@ class GakujoAppSettingsStore {
       'more_better_gakujo_calendar_import_settings';
   static const _messageExcludeKeywordsKey =
       'more_better_gakujo_message_exclude_keywords';
+  static const _notificationTopicsKey =
+      'more_better_gakujo_notification_topics';
   static const _settingsKeys = [
     _downloadSaveModeKey,
     _pageModeKey,
@@ -436,6 +509,7 @@ class GakujoAppSettingsStore {
     _setupCompletedKey,
     _calendarImportSettingsKey,
     _messageExcludeKeywordsKey,
+    _notificationTopicsKey,
   ];
 
   final FlutterSecureStorage _secureStorage;
@@ -451,6 +525,7 @@ class GakujoAppSettingsStore {
           _setupCompletedKey,
           _calendarImportSettingsKey,
           _messageExcludeKeywordsKey,
+          _notificationTopicsKey,
         ],
       );
 
@@ -484,6 +559,9 @@ class GakujoAppSettingsStore {
       ),
       messageExcludeKeywords: _decodeMessageExcludeKeywords(
         values[_messageExcludeKeywordsKey],
+      ),
+      notificationTopics: GakujoNotificationTopicLabels.decode(
+        values[_notificationTopicsKey],
       ),
     );
   }
@@ -578,6 +656,15 @@ class GakujoAppSettingsStore {
       () => _secureStorage.write(
         key: _messageExcludeKeywordsKey,
         value: jsonEncode(normalizeMessageExcludeKeywords(keywords)),
+      ),
+    );
+  }
+
+  Future<void> saveNotificationTopics(Set<GakujoNotificationTopic> topics) {
+    return _enqueue(
+      () => _secureStorage.write(
+        key: _notificationTopicsKey,
+        value: encodeNotificationTopics(topics).join(','),
       ),
     );
   }
@@ -742,4 +829,14 @@ List<String> normalizeMessageExcludeKeywords(Iterable<String> keywords) {
     }
   }
   return List.unmodifiable(normalized);
+}
+
+/// Storage form of [GakujoNotificationTopic]s, in a stable order.
+List<String> encodeNotificationTopics(
+    Iterable<GakujoNotificationTopic> topics) {
+  final chosen = topics.toSet();
+  return [
+    for (final topic in GakujoNotificationTopic.values)
+      if (chosen.contains(topic)) topic.storageValue,
+  ];
 }

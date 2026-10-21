@@ -49,6 +49,8 @@ Map<String, Object?> buildGakujoBackupPayload({
     'setupCompleted': appSettings.setupCompleted,
     'calendarImportSettings': appSettings.calendarImportSettings.toJson(),
     'messageExcludeKeywords': appSettings.messageExcludeKeywords,
+    'notificationTopics':
+        encodeNotificationTopics(appSettings.notificationTopics),
     'disabledFeatureFlags': appSettings.disabledFeatureFlags
         .map((flag) => flag.storageValue)
         .toList(),

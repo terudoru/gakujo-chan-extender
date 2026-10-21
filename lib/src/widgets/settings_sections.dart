@@ -378,6 +378,48 @@ class FeatureFlagsSection extends StatelessWidget {
   }
 }
 
+class NotificationTopicsSection extends StatelessWidget {
+  const NotificationTopicsSection({
+    super.key,
+    required this.topics,
+    required this.notificationsEnabled,
+    required this.onChanged,
+  });
+
+  final Set<GakujoNotificationTopic> topics;
+  final bool notificationsEnabled;
+  final void Function(GakujoNotificationTopic topic, bool enabled) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'OSに通知する内容',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          notificationsEnabled
+              ? 'チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'
+              : '「機能設定」で「提出期限のOS通知」がオフのため、通知は出ません。',
+        ),
+        for (final topic in GakujoNotificationTopic.values)
+          CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(topic.label),
+            value: topics.contains(topic),
+            onChanged: notificationsEnabled
+                ? (value) => onChanged(topic, value ?? false)
+                : null,
+          ),
+      ],
+    );
+  }
+}
+
 class MessageExcludeKeywordsSection extends StatelessWidget {
   const MessageExcludeKeywordsSection({
     super.key,

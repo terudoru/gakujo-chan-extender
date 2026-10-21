@@ -40,6 +40,9 @@ Future<void> restoreGakujoBackup({
           backup.messageExcludeKeywords!,
         );
       }
+      if (backup.notificationTopics != null) {
+        await settingsStore.saveNotificationTopics(backup.notificationTopics!);
+      }
       final downloadHistory = backup.downloadHistory;
       if (downloadHistory != null) {
         await historyStore.replaceHistory(downloadHistory);

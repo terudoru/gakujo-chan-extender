@@ -59,6 +59,7 @@ class GakujoDeadlineEntry {
     required this.dueText,
     required this.detectedAt,
     this.kind = 'deadline',
+    this.source = '',
   });
 
   final String title;
@@ -66,6 +67,10 @@ class GakujoDeadlineEntry {
   final String dueText;
   final DateTime detectedAt;
   final String kind;
+
+  /// Category of the page the deadline was read from, such as 連絡通知.
+  /// Older entries have none.
+  final String source;
 
   bool get isDeadline => kind == 'deadline';
 
@@ -78,6 +83,7 @@ class GakujoDeadlineEntry {
       'dueText': dueText,
       'detectedAt': detectedAt.toIso8601String(),
       'kind': kind,
+      if (source.isNotEmpty) 'source': source,
     };
   }
 
@@ -89,6 +95,7 @@ class GakujoDeadlineEntry {
       detectedAt: DateTime.tryParse(json['detectedAt']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       kind: json['kind']?.toString() ?? 'deadline',
+      source: json['source']?.toString() ?? '',
     );
   }
 }
@@ -786,7 +793,8 @@ class GakujoActivityStore {
     const supportedKinds = {'deadline', 'notice', 'schedule'};
     return entry.url.trim().isNotEmpty &&
         entry.dueText.trim().isNotEmpty &&
-        supportedKinds.contains(entry.kind);
+        supportedKinds.contains(entry.kind) &&
+        !GakujoDatedActivity.isScheduleCalendarRow(entry.dueText);
   }
 
   bool _isUsefulFavorite(GakujoFavoritePage page) {
@@ -809,6 +817,14 @@ class GakujoActivityStore {
   bool _isRecentSnapshot(GakujoActivitySnapshot snapshot) {
     return snapshot.updatedAt
         .isAfter(DateTime.now().subtract(_snapshotRetention));
+  }
+
+  /// Whether the date in [entry] has already passed. Deadlines are kept for
+  /// a while afterwards, but telling about one then is no help.
+  bool isDeadlinePassed(GakujoDeadlineEntry entry, {DateTime? now}) {
+    final current = now ?? DateTime.now();
+    final dueAt = _deadlineDueAt(entry.dueText, now: current);
+    return dueAt != null && !dueAt.isAfter(current);
   }
 
   bool _isActiveDeadline(GakujoDeadlineEntry entry) {

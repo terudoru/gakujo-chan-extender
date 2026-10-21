@@ -33,6 +33,71 @@ class GakujoDatedActivity {
     return buffer.toString();
   }
 
+  /// Coursework deadlines on Gakujo's schedule page, one per assignment.
+  ///
+  /// The month view packs a whole week into one row, so reading it line by
+  /// line turned rows like "12 [休日]祝日 13 14 1限:…" into deadlines.
+  /// Assignments appear there as `[小テスト][開講番号 科目名]題名【日付まで】`,
+  /// and in the 提出物情報 list as `レポート "題名" 開始日 ～ 終了日`.
+  static List<({String title, String dueText})> scheduleCourseworkItems(
+    String text,
+  ) {
+    final items = <({String title, String dueText})>[];
+    final seen = <String>{};
+    String key(String name, String due) {
+      final date = RegExp(r'([0-9]{4})\D+([0-9]{1,2})\D+([0-9]{1,2})')
+          .firstMatch(normalizeDateText(due));
+      final day = date == null
+          ? due
+          : '${date.group(1)}-${int.parse(date.group(2)!)}-'
+              '${int.parse(date.group(3)!)}';
+      return '$name|$day';
+    }
+
+    final listed = RegExp(
+      r'\[(レポート|小テスト|アンケート)\]\[(?:[0-9]{3}[A-Z][0-9]{4}\s*)?([^\]]*)\]'
+      // A title may carry its own 【…〆切】 before the 【…まで】 date.
+      r'\s*([^\[\n\t]+?)\s*【([^】]*まで)】',
+    );
+    for (final match in listed.allMatches(text)) {
+      final name = match.group(3)!.trim();
+      if (!seen.add(key(name, match.group(4)!))) {
+        continue;
+      }
+      items.add((
+        title: compactText(
+          '${match.group(1)} ${match.group(2)!.trim()} $name',
+          maxLength: 80,
+        ),
+        dueText: match.group(4)!.trim(),
+      ));
+    }
+    final submissions = RegExp(
+      r'(レポート|小テスト|アンケート)\s*"([^"]+)"\s*'
+      r'([0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)\s*[～〜~]\s*'
+      r'([0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)',
+    );
+    for (final match in submissions.allMatches(text)) {
+      final name = match.group(2)!.trim();
+      // The month view already named this one together with its course.
+      if (!seen.add(key(name, match.group(4)!))) {
+        continue;
+      }
+      items.add((
+        title: compactText('${match.group(1)} $name', maxLength: 80),
+        dueText: '${match.group(4)}まで',
+      ));
+    }
+    return items;
+  }
+
+  /// A row of the schedule month view read as one line, as earlier versions
+  /// stored it: several periods or a holiday label, not one deadline.
+  static bool isScheduleCalendarRow(String text) {
+    return text.contains('[休日]') ||
+        RegExp(r'[1-7]\s*限\s*[:：]').allMatches(text).length >= 2;
+  }
+
   static bool isNoiseText(String text) {
     final compacted = normalizeDateText(compactText(text));
     if (compacted.isEmpty) {

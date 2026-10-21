@@ -177,7 +177,7 @@ class _NotificationRaceActivityStore extends GakujoActivityStore {
   final GakujoDeadlineEntry deadline = GakujoDeadlineEntry(
     title: '課題A',
     url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
-    dueText: '提出期限 2026/07/31 17:00',
+    dueText: '提出期限 2099/07/31 17:00',
     detectedAt: DateTime(2026, 7, 22),
   );
 

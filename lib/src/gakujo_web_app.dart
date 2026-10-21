@@ -1736,6 +1736,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                 ),
                 SettingsExpansionSection(
+                  title: '通知',
+                  icon: Icons.notifications_outlined,
+                  child: NotificationTopicsSection(
+                    topics: _appSettings.notificationTopics,
+                    notificationsEnabled: _appSettings.isFeatureEnabled(
+                      GakujoFeatureFlag.deadlineNotifications,
+                    ),
+                    onChanged: (topic, enabled) async {
+                      await _saveNotificationTopics({
+                        for (final value in _appSettings.notificationTopics)
+                          if (value != topic) value,
+                        if (enabled) topic,
+                      });
+                      if (dialogContext.mounted) {
+                        setDialogState(() {});
+                      }
+                    },
+                  ),
+                ),
+                SettingsExpansionSection(
                   title: '連絡通知フィルタ',
                   icon: Icons.filter_alt_outlined,
                   focusNodeOnExpand: messageExcludeKeywordFocusNode,
@@ -2738,6 +2758,36 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _saveNotificationTopics(
+    Set<GakujoNotificationTopic> topics,
+  ) async {
+    final nextSettings = _appSettings.copyWith(notificationTopics: topics);
+    if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+      try {
+        await _appSettingsStore.saveNotificationTopics(topics);
+      } on Object catch (error, stackTrace) {
+        if (!Platform.isMacOS) {
+          rethrow;
+        }
+        // macOS starts from the local mirror before Keychain access, as for
+        // the message filters; keep the choice there even if this fails.
+        developer.log(
+          'Failed to mirror notification topics to secure storage',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    await _syncLocalSettingsMirror(nextSettings);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _appSettings = nextSettings;
+    });
+  }
+
   Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {
     final normalized = normalizeMessageExcludeKeywords(keywords);
     final nextSettings = _appSettings.copyWith(
@@ -3384,6 +3434,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           dueText: normalizedText,
           detectedAt: now,
           kind: kind,
+          source: category,
         ),
       );
     }
@@ -3398,6 +3449,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     if (category == '連絡通知' && messageItems.isNotEmpty) {
+      return entries;
+    }
+
+    if (category == 'スケジュール') {
+      for (final item in GakujoDatedActivity.scheduleCourseworkItems(text)) {
+        addEntry(
+          entryTitle: item.title,
+          entryUrl: url,
+          entryText: item.dueText,
+          kind: 'deadline',
+        );
+      }
       return entries;
     }
 
@@ -3488,6 +3551,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       notificationsEnabled: _appSettings.isFeatureEnabled(
         GakujoFeatureFlag.deadlineNotifications,
       ),
+      topics: _appSettings.notificationTopics,
     );
   }
 
@@ -3672,6 +3736,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         setupCompleted: backup.setupCompleted,
         calendarImportSettings: backup.calendarImportSettings,
         messageExcludeKeywords: backup.messageExcludeKeywords,
+        notificationTopics: backup.notificationTopics,
       );
       await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
