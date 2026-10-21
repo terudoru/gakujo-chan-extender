@@ -129,6 +129,7 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
       debugAllowed: debugAllowed,
     );
     await _configureAppleHistoryNavigationGestures(inner);
+    await _disableAppleLinkPreview(inner);
 
     if (kDebugMode) {
       developer.log(
@@ -150,6 +151,26 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to enable native WebView history gestures',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Long-press (iOS) or force-click (macOS) previews fetch the link in the
+  /// background. That would send requests to sites the app blocks and could
+  /// advance Gakujo's server-side page flow behind the visible page.
+  Future<void> _disableAppleLinkPreview(WebViewController controller) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.macOS) {
+      return;
+    }
+    try {
+      await (controller.platform as dynamic).setAllowsLinkPreview(false);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to disable WebView link previews',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
