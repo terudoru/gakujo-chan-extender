@@ -41,6 +41,7 @@ import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
 import 'gakujo_local_prefs_store.dart';
 import 'gakujo_message_filter_script.dart';
+import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_report_draft_script.dart';
@@ -90,6 +91,8 @@ extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
 const _calendarValidationTitle =
     GakujoCalendarImportSettings.validationCalendarTitle;
 const _calendarValidationUidNamespace = 'calendar-validation';
+const _messageListPortalUrl =
+    'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=kj';
 const _reportListPortalUrl =
     'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=en';
 const _schedulePortalUrl =
@@ -3733,9 +3736,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  /// Keeps assignments current without opening the レポート・小テスト list:
-  /// fetches it in the background at most every half hour while signed in,
-  /// then tells about new deadlines and rebooks reminders.
+  /// Keeps assignments and 連絡通知 current without opening their pages:
+  /// fetches them in the background at most every half hour while signed
+  /// in, then tells about new deadlines and messages and rebooks reminders.
   Future<void> _refreshAssignmentsInBackground() async {
     if (!_canRunPageScripts ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
@@ -3769,17 +3772,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 case final assignment?)
               assignment,
       ];
-      if (assignments.isEmpty) {
-        return;
-      }
       await _activityStore.mergeAssignments(assignments);
-      await _activityStore.mergeDeadlines(
-        deadlineEntriesForAssignments(
+      await _activityStore.mergeDeadlines([
+        ...deadlineEntriesForAssignments(
           assignments,
           url: _reportListPortalUrl,
           detectedAt: now,
         ),
-      );
+        ...await _fetchMessageDeadlinesInBackground(),
+      ]);
       await _notifyPendingDeadlines();
       await _syncReminders();
     } on Object catch (error, stackTrace) {
@@ -3790,6 +3791,34 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         stackTrace: stackTrace,
       );
     }
+  }
+
+  /// The 連絡通知 未読一覧 as deadline entries, read the way a visit to the
+  /// list reads them. Skipped while 連絡通知 are not notified at all.
+  Future<List<GakujoDeadlineEntry>> _fetchMessageDeadlinesInBackground() async {
+    if (_appSettings.messageNotification.mode ==
+        GakujoMessageNotificationMode.off) {
+      return const [];
+    }
+    final result = await _controller.runJavaScriptReturningResult(
+      gakujoMessageListFetchScript,
+    );
+    final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+    final items =
+        decoded is Map && decoded['status'] == 'ok' ? decoded['items'] : null;
+    if (items is! List || items.isEmpty) {
+      return const [];
+    }
+    return _extractDeadlines(
+      category: '連絡通知',
+      title: '連絡通知',
+      url: _messageListPortalUrl,
+      text: '',
+      messageItems: [
+        for (final item in items.whereType<Map<dynamic, dynamic>>())
+          _MessageActivityCandidate.fromJson(item),
+      ],
+    );
   }
 
   Future<List<String>> _knownAssignmentCourses() async {
