@@ -2,6 +2,58 @@ import 'package:morebettergakujo_flutter/src/allowed_web_origins.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('session flow keys are transient regardless of parameter name casing',
+      () {
+    for (final query in [
+      '_flowExecutionKey=e1s2',
+      '_FLOWEXECUTIONKEY=e1s2&_eventId=confirm',
+      '_eventId=confirm&_FlowExecutionKey=',
+      '_flowExecutionKey',
+      '%5FflowExecutionKey=e1s2',
+    ]) {
+      final url =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?$query';
+      expect(AllowedWebOrigins.isTransientPage(url), isTrue, reason: query);
+      expect(AllowedWebOrigins.canRestoreLastPage(url, debugAllowed: false),
+          isFalse,
+          reason: query);
+      expect(AllowedWebOrigins.canLoad(url, debugAllowed: false), isTrue);
+      expect(AllowedWebOrigins.isLoginOrTimeoutPage(url), isFalse,
+          reason: 'a flow key does not imply an authentication challenge');
+    }
+  });
+
+  test('portal and flow-entry URLs remain restorable', () {
+    for (final page in [
+      'campusportal.do',
+      'campussmart.do',
+      'campusportal.do?page=main&tabId=kj',
+      'campusportal.do?page=main&tabId=en',
+      'campussquare.do?_flowId=KJW0001100-flow',
+      'campussquare.do?_eventId=reportList',
+      'campussquare.do?keyword=_flowExecutionKey',
+      'campusportal.do#_flowExecutionKey=e1s2',
+    ]) {
+      final url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$page';
+      expect(AllowedWebOrigins.isTransientPage(url), isFalse, reason: page);
+      expect(AllowedWebOrigins.canRestoreLastPage(url, debugAllowed: false),
+          isTrue,
+          reason: page);
+    }
+  });
+
+  test('login and timeout detection still applies to session flow URLs', () {
+    for (final page in [
+      'login.do?_flowExecutionKey=e1s2',
+      'campussquare.do?_flowExecutionKey=e1s2&_eventId=logout',
+      'campussquare.do?_eventId=timeout',
+    ]) {
+      final url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$page';
+      expect(AllowedWebOrigins.isLoginOrTimeoutPage(url), isTrue, reason: page);
+      expect(AllowedWebOrigins.isTransientPage(url), isTrue, reason: page);
+    }
+  });
+
   test('does not restore a URL whose query cannot be decoded', () {
     for (final query in ['action=%FF', '_eventId=%E3%81', '%FF=value']) {
       final url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/page?$query';

@@ -4186,7 +4186,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool _looksLikeLoginOrTimeoutUrl(String url) {
-    return AllowedWebOrigins.isTransientPage(url);
+    return AllowedWebOrigins.isLoginOrTimeoutPage(url);
   }
 
   Future<void> _exportSettingsToClipboard() async {

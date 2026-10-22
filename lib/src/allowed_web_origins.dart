@@ -72,6 +72,17 @@ class AllowedWebOrigins {
   }
 
   static bool isTransientPage(String? url) {
+    return _isTransientPage(url, includeSessionFlow: true);
+  }
+
+  /// A session-bound flow page can be authenticated even though it cannot be
+  /// restored after restarting the app.
+  static bool isLoginOrTimeoutPage(String? url) {
+    return _isTransientPage(url, includeSessionFlow: false);
+  }
+
+  static bool _isTransientPage(String? url,
+      {required bool includeSessionFlow}) {
     final uri = Uri.tryParse(url ?? '');
     if (uri == null) {
       return false;
@@ -98,7 +109,11 @@ class AllowedWebOrigins {
       return true;
     }
     return query.entries.any((entry) {
-      if (!transitionQueryKeys.contains(entry.key.toLowerCase())) {
+      final key = entry.key.toLowerCase();
+      if (includeSessionFlow && key == '_flowexecutionkey') {
+        return true;
+      }
+      if (!transitionQueryKeys.contains(key)) {
         return false;
       }
       return entry.value.any((value) {
