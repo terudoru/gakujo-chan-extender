@@ -123,12 +123,15 @@ class GakujoReminder {
 }
 
 /// Reminders for assignments still open, at the times the student chose.
+/// [lateReminders], when supplied, collects the latest elapsed reminder per
+/// assignment for platforms that cannot book ahead.
 List<GakujoReminder> planReminders({
   required Iterable<GakujoAssignment> assignments,
   required Set<GakujoNotificationTopic> topics,
   required GakujoNotificationPreferences preferences,
   required DateTime now,
   Duration horizon = const Duration(days: 30),
+  List<GakujoReminder>? lateReminders,
 }) {
   String two(int value) => value.toString().padLeft(2, '0');
   final reminders = <GakujoReminder>[];
@@ -142,31 +145,44 @@ List<GakujoReminder> planReminders({
       continue;
     }
     final due = assignment.dueAt;
+    if (!due.isAfter(now)) {
+      continue;
+    }
     final shown = assignment.dueInJapan;
+    GakujoReminder? late;
     for (final offset in GakujoReminderOffset.values) {
       if (!preferences.reminderOffsets.contains(offset)) {
         continue;
       }
       final at = due.subtract(offset.before);
-      if (!at.isAfter(now) || at.isAfter(now.add(horizon))) {
+      final isLate = !at.isAfter(now);
+      if ((isLate && lateReminders == null) || at.isAfter(now.add(horizon))) {
         continue;
       }
       final id = '${assignment.id}|${offset.storageValue}';
-      reminders.add(
-        GakujoReminder(
-          // Stable across runs so a reminder is replaced, not duplicated.
-          id: id.codeUnits.fold<int>(17, (hash, unit) {
-            return (hash * 31 + unit) & 0x3fffffff;
-          }),
-          title: '【あと${offset.label.replaceAll('前', '')}】'
-              '${assignment.kind} ${assignment.title}',
-          body: '${assignment.course}　'
-              '${shown.month}/${shown.day} '
-              '${two(shown.hour)}:${two(shown.minute)}まで',
-          url: assignment.url,
-          at: at,
-        ),
+      final reminder = GakujoReminder(
+        // Stable across runs so a reminder is replaced, not duplicated.
+        id: id.codeUnits.fold<int>(17, (hash, unit) {
+          return (hash * 31 + unit) & 0x3fffffff;
+        }),
+        title: '【あと${offset.label.replaceAll('前', '')}】'
+            '${assignment.kind} ${assignment.title}',
+        body: '${assignment.course}　'
+            '${shown.month}/${shown.day} '
+            '${two(shown.hour)}:${two(shown.minute)}まで',
+        url: assignment.url,
+        at: at,
       );
+      if (isLate) {
+        if (late == null || at.isAfter(late.at)) {
+          late = reminder;
+        }
+      } else {
+        reminders.add(reminder);
+      }
+    }
+    if (late != null) {
+      lateReminders?.add(late);
     }
   }
   reminders.sort((a, b) => a.at.compareTo(b.at));
@@ -259,6 +275,14 @@ class GakujoNotificationService {
     return _show(title: entry.title, body: entry.dueText, url: entry.url);
   }
 
+  Future<bool> notifyReminder(GakujoReminder reminder) {
+    return _show(
+      title: reminder.title,
+      body: reminder.body,
+      url: reminder.url,
+    );
+  }
+
   Future<bool> _show({
     required String title,
     required String body,
@@ -279,16 +303,23 @@ class GakujoNotificationService {
 
   final Map<int, ({GakujoReminder reminder, Timer timer})> _inAppReminders = {};
   Timer? _inAppReminderCheck;
+  Future<void> Function(GakujoReminder)? _onInAppReminder;
 
   /// Books [reminders] with the OS, replacing earlier ones. Where the OS
   /// cannot book ahead (Windows), they fire from the app while it is open.
-  Future<void> scheduleReminders(List<GakujoReminder> reminders) async {
+  /// Returns whether the OS booked them. [onInAppReminder] handles delivery
+  /// when an in-app timer fires, so the coordinator can also record it.
+  Future<bool> scheduleReminders(
+    List<GakujoReminder> reminders, {
+    Future<void> Function(GakujoReminder)? onInAppReminder,
+  }) async {
     for (final booked in _inAppReminders.values) {
       booked.timer.cancel();
     }
     _inAppReminders.clear();
     _inAppReminderCheck?.cancel();
     _inAppReminderCheck = null;
+    _onInAppReminder = onInAppReminder;
     try {
       final booked = await _channel.invokeMethod<bool>(
         'scheduleReminders',
@@ -297,7 +328,7 @@ class GakujoNotificationService {
         },
       );
       if (booked == true) {
-        return;
+        return true;
       }
     } on PlatformException {
       // Fall back to reminders from the running app.
@@ -323,6 +354,7 @@ class GakujoNotificationService {
         }
       });
     }
+    return false;
   }
 
   void _remind(int id) {
@@ -336,9 +368,12 @@ class GakujoNotificationService {
       _inAppReminderCheck = null;
     }
     final reminder = booked.reminder;
-    unawaited(
-      _show(title: reminder.title, body: reminder.body, url: reminder.url),
-    );
+    final onInAppReminder = _onInAppReminder;
+    if (onInAppReminder != null) {
+      unawaited(onInAppReminder(reminder));
+    } else {
+      unawaited(notifyReminder(reminder));
+    }
   }
 }
 
@@ -346,11 +381,14 @@ class GakujoDeadlineNotificationCoordinator {
   GakujoDeadlineNotificationCoordinator({
     required GakujoActivityStore activityStore,
     required GakujoNotificationService notificationService,
+    DateTime Function()? now,
   })  : _activityStore = activityStore,
-        _notificationService = notificationService;
+        _notificationService = notificationService,
+        _now = now ?? DateTime.now;
 
   final GakujoActivityStore _activityStore;
   final GakujoNotificationService _notificationService;
+  final DateTime Function() _now;
   Future<void> _pendingNotificationOperation = Future<void>.value();
 
   /// Notifies new deadlines the student chose through [topics] and
@@ -432,20 +470,48 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoNotificationPreferences preferences,
   }) {
     return _enqueueNotificationOperation(() async {
+      final lateReminders = <GakujoReminder>[];
       final reminders = notificationsEnabled
           ? planReminders(
               assignments: await _activityStore.loadAssignments(),
               topics: topics,
               preferences: preferences,
-              now: DateTime.now(),
+              now: _now(),
+              lateReminders: lateReminders,
             )
           : const <GakujoReminder>[];
       if (reminders.isNotEmpty &&
           !await _notificationService.requestPermission()) {
         return;
       }
-      await _notificationService.scheduleReminders(reminders);
+      final booksAhead = await _notificationService.scheduleReminders(
+        reminders,
+        onInAppReminder: (reminder) => _enqueueNotificationOperation(
+          () => _notifyReminderOnce(reminder),
+        ),
+      );
+      if (booksAhead || lateReminders.isEmpty) {
+        return;
+      }
+      if (reminders.isEmpty &&
+          !await _notificationService.requestPermission()) {
+        return;
+      }
+      for (final reminder in lateReminders) {
+        await _notifyReminderOnce(reminder);
+      }
     });
+  }
+
+  Future<void> _notifyReminderOnce(GakujoReminder reminder) async {
+    final key = 'reminder|${reminder.id}';
+    final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
+    if (notifiedKeys.contains(key)) {
+      return;
+    }
+    if (await _notificationService.notifyReminder(reminder)) {
+      await _activityStore.addNotifiedDeadlineKeys([key]);
+    }
   }
 
   Future<T> _enqueueNotificationOperation<T>(
