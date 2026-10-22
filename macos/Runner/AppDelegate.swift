@@ -1133,6 +1133,8 @@ private final class MacosDownloadsBridge: NSObject {
         result(self.downloadRootState())
       case "saveDownloadedFileToConfiguredFolder":
         self.saveDownloadedFileToConfiguredFolder(call: call, result: result)
+      case "openDownloadedFile":
+        self.openDownloadedFile(call: call, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -1342,6 +1344,30 @@ private final class MacosDownloadsBridge: NSObject {
       .trimmingCharacters(in: trimmingCharacters)
       ?? ""
     return cleaned == "." || cleaned == ".." ? "" : cleaned
+  }
+
+  private func openDownloadedFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    guard let location = args?["location"] as? String,
+          let url = URL(string: location),
+          url.isFileURL else {
+      result(false)
+      return
+    }
+    var scope: URL?
+    if let root = try? resolveDownloadRoot(), isDescendant(url, of: root),
+       root.startAccessingSecurityScopedResource() {
+      scope = root
+    }
+    defer {
+      scope?.stopAccessingSecurityScopedResource()
+    }
+    guard FileManager.default.fileExists(atPath: url.path),
+          FileManager.default.isReadableFile(atPath: url.path) else {
+      result(false)
+      return
+    }
+    result(NSWorkspace.shared.open(url))
   }
 
   private func isDescendant(_ url: URL, of root: URL) -> Bool {

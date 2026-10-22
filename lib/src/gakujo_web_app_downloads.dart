@@ -10,6 +10,8 @@ bool opensSavedDownloadNatively(Uri uri, TargetPlatform platform) {
     TargetPlatform.android => uri.scheme == 'content',
     // iOS opens no file URL from another app; the app previews it.
     TargetPlatform.iOS => uri.scheme == 'file',
+    // macOS must hold the chosen folder's security scope while opening.
+    TargetPlatform.macOS => uri.scheme == 'file',
     _ => false,
   };
 }

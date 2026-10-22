@@ -35,10 +35,14 @@ void main() {
     expect(opensSavedDownloadNatively(content, TargetPlatform.iOS), isFalse);
   });
 
-  test('previews saved iOS files in the app', () {
+  test('opens saved iOS and macOS files natively', () {
     final file = savedDownloadLocationUri('/private/var/mobile/x.pdf');
 
     expect(opensSavedDownloadNatively(file, TargetPlatform.iOS), isTrue);
-    expect(opensSavedDownloadNatively(file, TargetPlatform.macOS), isFalse);
+    expect(
+      opensSavedDownloadNatively(file, TargetPlatform.macOS),
+      isTrue,
+      reason: 'macOS needs the download folder security scope while opening.',
+    );
   });
 }
