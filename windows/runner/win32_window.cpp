@@ -25,6 +25,9 @@ constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
+constexpr const wchar_t kWindowPlacementRegKey[] =
+    L"Software\\Yoshida\\MoreBetterGakujo";
+constexpr const wchar_t kWindowPlacementRegValue[] = L"WindowPlacement";
 constexpr int kMinWindowWidth = 960;
 constexpr int kMinWindowHeight = 600;
 
@@ -61,6 +64,46 @@ void SetMinimumWindowSize(HWND hwnd, MINMAXINFO* min_max_info) {
   double scale_factor = dpi / 96.0;
   min_max_info->ptMinTrackSize.x = Scale(kMinWindowWidth, scale_factor);
   min_max_info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
+}
+
+int RestoreWindowPlacement(HWND hwnd) {
+  WINDOWPLACEMENT placement = {};
+  DWORD placement_size = sizeof(placement);
+  if (RegGetValueW(HKEY_CURRENT_USER, kWindowPlacementRegKey,
+                   kWindowPlacementRegValue, RRF_RT_REG_BINARY, nullptr,
+                   &placement, &placement_size) != ERROR_SUCCESS ||
+      placement_size != sizeof(placement) ||
+      placement.length != sizeof(placement) ||
+      MonitorFromRect(&placement.rcNormalPosition, MONITOR_DEFAULTTONULL) ==
+          nullptr) {
+    return SW_SHOWNORMAL;
+  }
+
+  if (placement.showCmd == SW_SHOWMINIMIZED || placement.showCmd == SW_MINIMIZE) {
+    placement.showCmd = SW_SHOWNORMAL;
+  }
+  const int show_command = static_cast<int>(placement.showCmd);
+  // Keep the window hidden until Flutter's first-frame callback calls Show().
+  placement.showCmd = SW_HIDE;
+  return SetWindowPlacement(hwnd, &placement) ? show_command : SW_SHOWNORMAL;
+}
+
+void SaveWindowPlacement(HWND hwnd) {
+  WINDOWPLACEMENT placement = {};
+  placement.length = sizeof(placement);
+  if (!GetWindowPlacement(hwnd, &placement)) {
+    return;
+  }
+
+  HKEY key = nullptr;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kWindowPlacementRegKey, 0, nullptr, 0,
+                      KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+    return;
+  }
+  RegSetValueExW(key, kWindowPlacementRegValue, 0, REG_BINARY,
+                 reinterpret_cast<const BYTE*>(&placement),
+                 static_cast<DWORD>(sizeof(placement)));
+  RegCloseKey(key);
 }
 
 }  // namespace
@@ -155,12 +198,13 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  show_command_ = RestoreWindowPlacement(window);
 
   return OnCreate();
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, show_command_);
 }
 
 // static
@@ -190,6 +234,7 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      SaveWindowPlacement(hwnd);
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
