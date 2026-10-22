@@ -108,11 +108,13 @@ class GakujoMessageStarScript {
   function addButton(target, data, doc, initialData) {
     if (buttonTargets.has(target)) return;
     ensureStyle(doc);
+    var message = initialData || data();
+    var label = 'スター: ' + message.title;
     var button = doc.createElement('button');
     button.type = 'button';
     button.setAttribute('data-mbg-message-star', 'true');
-    button.setAttribute('aria-label', 'スター');
-    button.title = 'スター';
+    button.setAttribute('aria-label', label);
+    button.title = label;
     button.style.cssText = 'font:inherit;font-size:18px;line-height:1.2;padding:2px 5px;margin-right:4px;cursor:pointer;';
     button.addEventListener('click', function(event) {
       event.preventDefault();
@@ -120,7 +122,7 @@ class GakujoMessageStarScript {
       send('toggle', data());
     });
     target.parentNode.insertBefore(button, target);
-    var entry = {button: button, target: target, id: id(initialData || data())};
+    var entry = {button: button, target: target, id: id(message)};
     buttons.push(entry);
     buttonTargets.add(target);
     paint(entry);

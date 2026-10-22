@@ -27,7 +27,8 @@ void main() {
       expect(result['beforeTitle'], isTrue);
       expect(result['prevented'], isTrue);
       expect(result['stopped'], isTrue);
-      expect(result['label'], 'スター');
+      expect(result['label'], 'スター: 授業のお知らせ');
+      expect(result['buttonTitle'], 'スター: 授業のお知らせ');
       expect(result['counts'], [1, 1, 1, 0, 1]);
       expect(result['buttonTexts'], ['', '', '', null, '']);
       expect(result['pressedStates'], ['false', 'true', 'true', null, 'false']);
@@ -116,6 +117,8 @@ void main() {
           ],
           scenario);
       expect(result['beforeTitle'], isTrue);
+      expect(result['label'], 'スター: 授業のお知らせ');
+      expect(result['buttonTitle'], 'スター: 授業のお知らせ');
       expect(result['buttonTexts'], ['', '']);
       expect(result['pressedStates'], ['true', 'true']);
       expect(result['styleCounts'], [1, 1]);
@@ -485,7 +488,7 @@ const styleCounts = [], styleTexts = [], outerStyleCounts = [], rowTexts = [];
 const headerQueryCounts = [], urlParseCounts = [], rowCellReadCounts = [];
 let timerReadsUnchanged = true, headersAfterClick;
 const originalRowText = inner.heading.closest('tr')?.innerText || null;
-let beforeTitle, label, prevented = false, stopped = false, oldButton;
+let beforeTitle, label, buttonTitle, prevented = false, stopped = false, oldButton;
 scripts.forEach((script, index) => {
   vm.runInContext(script, context);
   headerQueryCounts.push(headerQueryCount);
@@ -510,6 +513,7 @@ scripts.forEach((script, index) => {
   listenerCounts.push(inner.listeners.click ? 1 : 0);
   if (index === 0 && buttons[0] && !performanceScenario) {
     oldButton = buttons[0]; label = oldButton.getAttribute('aria-label');
+    buttonTitle = oldButton.title;
     beforeTitle = oldButton.nextElementSibling === inner.heading;
     oldButton.listeners.click({preventDefault() { prevented = true; }, stopPropagation() { stopped = true; }});
   }
@@ -560,7 +564,7 @@ if (scenario === 'navigate' || remembers) {
   }
 }
 process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCounts, styleTexts,
-  outerStyleCounts, originalRowText, rowTexts, intervalCounts, listenerCounts, beforeTitle, label,
+  outerStyleCounts, originalRowText, rowTexts, intervalCounts, listenerCounts, beforeTitle, label, buttonTitle,
   prevented, stopped, messages, navigatedTitle, navigatedButtonText, navigatedPressed,
   navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
   oldListListenerRemoved, oldListButtonCount, rememberedBeforeClick, remembered, rememberedAfterReload,
