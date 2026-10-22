@@ -92,6 +92,43 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
       url.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
     return false;
   }
+
+  // Scheme launches are untrusted: only durable links, never flow actions.
+  const size_t fragment = url.find('#');
+  const size_t query_end = fragment == std::string::npos ? url.size() : fragment;
+  const size_t query_start = url.find('?');
+  if (query_start < query_end) {
+    size_t parameter_start = query_start + 1;
+    while (parameter_start < query_end) {
+      const size_t ampersand = url.find('&', parameter_start);
+      const size_t parameter_end =
+          ampersand < query_end ? ampersand : query_end;
+      const size_t separator = url.find_first_of("=&", parameter_start);
+      const size_t name_end =
+          separator < parameter_end ? separator : parameter_end;
+      std::string name;
+      for (size_t i = parameter_start; i < name_end; ++i) {
+        char value = url[i];
+        if (value == '%' && i + 2 < name_end) {
+          const int high = HexDigit(url[i + 1]);
+          const int low = HexDigit(url[i + 2]);
+          if (high >= 0 && low >= 0) {
+            value = static_cast<char>((high << 4) | low);
+            i += 2;
+          }
+        }
+        if (value >= 'A' && value <= 'Z') {
+          value = static_cast<char>(value - 'A' + 'a');
+        }
+        name.push_back(value);
+      }
+      if (name == "_eventid" || name == "_flowexecutionkey" ||
+          name.compare(0, sizeof("_eventid_") - 1, "_eventid_") == 0) {
+        return false;
+      }
+      parameter_start = parameter_end + 1;
+    }
+  }
   return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(),
                              static_cast<int>(url.size()), nullptr, 0) > 0;
 }
