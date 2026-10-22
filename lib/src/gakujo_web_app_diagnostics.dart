@@ -1,5 +1,14 @@
 part of 'gakujo_web_app.dart';
 
+@visibleForTesting
+Map<String, Object?> redactGakujoDiagnosticBackup(Map<String, Object?> backup) {
+  final redacted = Map<String, Object?>.of(backup);
+  final starredMessages = redacted.remove('starredMessages');
+  redacted['starredMessageCount'] =
+      starredMessages is List ? starredMessages.length : 0;
+  return redacted;
+}
+
 extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
   Future<void> _createErrorReportPackage() async {
     final includeStoredData = await _confirmDetailedErrorReport();
@@ -112,7 +121,7 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
     if (includeStoredData) {
       payload['currentUrl'] = _displayUrl(_currentPageUrl);
       payload['lastAllowedUrl'] = _displayUrl(_lastAllowedPageUrl);
-      payload['backup'] = await _backupPayload();
+      payload['backup'] = redactGakujoDiagnosticBackup(await _backupPayload());
       payload['failedDownloads'] =
           (await _downloadHistoryStore.loadFailedDownloads())
               .map((entry) => entry.toExternalJson())
