@@ -145,6 +145,50 @@ void main() {
     expect(result['gpaAfterHeaderMutation'], 'GPA:4.0000');
     expect(result['gpaInNewFrame'], 'GPA:4.0000');
   });
+
+  test('frame navigation releases old documents and keeps observers aligned',
+      () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final navigation = result['frameNavigation'] as Map<String, dynamic>;
+    final updates = navigation['updates'] as List<dynamic>;
+
+    expect(updates, hasLength(30));
+    for (final update in updates.cast<Map<String, dynamic>>()) {
+      expect(update['observedDocumentCount'], 3);
+      expect(update['activeObserverCount'], 3);
+      expect(update['currentDocumentsOnly'], isTrue);
+      expect(update['observersAligned'], isTrue);
+      expect(update['replacedObserverDisconnectCount'], 1);
+      expect(update['gpaText'], 'GPA:4.0000');
+    }
+    final afterFrameRemoval =
+        navigation['afterFrameRemoval'] as Map<String, dynamic>;
+    expect(afterFrameRemoval['observedDocumentCount'], 2);
+    expect(afterFrameRemoval['activeObserverCount'], 2);
+    expect(afterFrameRemoval['removedObserversDisconnected'], isTrue);
+    final afterTeardown = navigation['afterTeardown'] as Map<String, dynamic>;
+    expect(afterTeardown['activeObserverCount'], 0);
+    expect(afterTeardown['globalMarkers'], isEmpty);
+    expect(navigation['allObserversDisconnected'], isTrue);
+  });
+
+  test('documents without a defaultView are disconnected and not reobserved',
+      () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final detached = result['detachedFrame'] as Map<String, dynamic>;
+
+    expect(detached['observedDocumentCount'], 1);
+    expect(detached['activeObserverCount'], 1);
+    expect(detached['detachedDocumentRetained'], isFalse);
+    expect(detached['disconnectCount'], 1);
+    expect(detached['afterTeardownActiveObserverCount'], 0);
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateGpaDisplayLifecycle({
@@ -322,7 +366,6 @@ function createPage({hasGradeTable = true} = {}) {
   document.documentElement = documentElement;
   document.createElement = (tag) => new FakeElement(tag, document);
   document.getElementById = (id) => {
-    if (id === 'main-frame-if') return null;
     for (const root of allRoots()) {
       const match = findById(root, id);
       if (match) return match;
@@ -353,14 +396,17 @@ function createPage({hasGradeTable = true} = {}) {
     constructor(callback) {
       this.callback = callback;
       this.active = false;
+      this.disconnectCount = 0;
     }
 
-    observe() {
+    observe(target) {
+      this.target = target;
       this.active = true;
       activeObservers.add(this);
     }
 
     disconnect() {
+      this.disconnectCount += 1;
       this.active = false;
       activeObservers.delete(this);
     }
@@ -383,6 +429,7 @@ function createPage({hasGradeTable = true} = {}) {
     }
   };
   window.window = window;
+  document.defaultView = window;
 
   const context = {
     window,
@@ -510,6 +557,89 @@ const newFrame = createPage();
 nonGradePage.context.window.frames.push(newFrame.context.window);
 nonGradePage.tickInterval();
 
+const portal = createPage({hasGradeTable: false});
+const portalWindow = portal.context.window;
+let currentFrame = createPage();
+const frameWindow = {document: currentFrame.context.document, frames: []};
+const frameElement = portal.context.document.createElement('iframe');
+frameElement.id = 'main-frame-if';
+frameElement.contentWindow = frameWindow;
+portal.context.document.body.appendChild(frameElement);
+const sibling = createPage({hasGradeTable: false});
+portalWindow.frames.push(frameWindow, sibling.context.window);
+run(buildScript, portal);
+const navigationObservers = [...portalWindow.__MBG_GPA_DISPLAY_OBSERVERS];
+const navigationUpdates = [];
+for (let i = 0; i < 30; i += 1) {
+  const previousDocument = currentFrame.context.document;
+  const previousIndex =
+    portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.indexOf(previousDocument);
+  const previousObserver = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS[previousIndex];
+  // Some discarded documents still have a defaultView; reachability must suffice.
+  if (i % 2 === 0) previousDocument.defaultView = null;
+  currentFrame = createPage();
+  frameWindow.document = currentFrame.context.document;
+  portal.tickInterval();
+  const documents = portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
+  const observers = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS;
+  const currentDocuments = [
+    portal.context.document, currentFrame.context.document, sibling.context.document
+  ];
+  navigationObservers.push(observers[documents.indexOf(currentFrame.context.document)]);
+  navigationUpdates.push({
+    observedDocumentCount: documents.length,
+    activeObserverCount: portal.snapshot().activeObserverCount,
+    currentDocumentsOnly: documents.length === currentDocuments.length &&
+      currentDocuments.every((document) => documents.includes(document)),
+    observersAligned: observers.length === documents.length &&
+      observers.every((observer, index) =>
+        observer.active && observer.target === documents[index].documentElement),
+    replacedObserverDisconnectCount: previousObserver.disconnectCount,
+    gpaText: currentFrame.gpaText()
+  });
+}
+const removedFrameObservers = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS.filter(
+  (_, index) => portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS[index] ===
+    currentFrame.context.document
+);
+portalWindow.frames = [sibling.context.window];
+frameElement.remove();
+portal.tickInterval();
+const afterFrameRemoval = {
+  observedDocumentCount: portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.length,
+  activeObserverCount: portal.snapshot().activeObserverCount,
+  removedObserversDisconnected: removedFrameObservers.every((observer) =>
+    !observer.active && observer.disconnectCount === 1)
+};
+run(teardownScript, portal);
+const frameNavigation = {
+  updates: navigationUpdates,
+  afterFrameRemoval,
+  afterTeardown: portal.snapshot(),
+  allObserversDisconnected: navigationObservers.every((observer) =>
+    !observer.active && observer.disconnectCount === 1)
+};
+
+const detachedPortal = createPage({hasGradeTable: false});
+const detachedChild = createPage({hasGradeTable: false});
+const detachedWindow = detachedPortal.context.window;
+detachedWindow.frames.push(detachedChild.context.window);
+run(buildScript, detachedPortal);
+const detachedObserver = detachedWindow.__MBG_GPA_DISPLAY_OBSERVERS[1];
+detachedChild.context.document.defaultView = null;
+detachedPortal.tickInterval();
+detachedPortal.tickInterval();
+const detachedFrame = {
+  observedDocumentCount: detachedWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.length,
+  activeObserverCount: detachedPortal.snapshot().activeObserverCount,
+  detachedDocumentRetained: detachedWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS
+    .includes(detachedChild.context.document),
+  disconnectCount: detachedObserver.disconnectCount
+};
+run(teardownScript, detachedPortal);
+detachedFrame.afterTeardownActiveObserverCount =
+  detachedPortal.snapshot().activeObserverCount;
+
 process.stdout.write(JSON.stringify({
   afterBuild,
   afterTeardown,
@@ -525,6 +655,8 @@ process.stdout.write(JSON.stringify({
     controlCount: gradePage.snapshot().controlIds.length
   },
   gpaAfterHeaderMutation: mutatedPage.gpaText(),
-  gpaInNewFrame: newFrame.gpaText()
+  gpaInNewFrame: newFrame.gpaText(),
+  frameNavigation,
+  detachedFrame
 }));
 ''';

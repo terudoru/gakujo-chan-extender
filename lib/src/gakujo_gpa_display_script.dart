@@ -4,7 +4,7 @@ class GakujoGpaDisplayScript {
   static String build() {
     return r'''
 (function() {
-  var version = 8;
+  var version = 9;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -422,6 +422,18 @@ class GakujoGpaDisplayScript {
 
   function updateAll() {
     var documents = collectDocuments();
+    var observedDocuments = window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
+    var observers = window.__MBG_GPA_DISPLAY_OBSERVERS;
+    for (var observerIndex = observedDocuments.length - 1;
+        observerIndex >= 0;
+        observerIndex -= 1) {
+      var documentRef = observedDocuments[observerIndex];
+      if (documents.indexOf(documentRef) < 0 || documentRef.defaultView === null) {
+        observers[observerIndex].disconnect();
+        observers.splice(observerIndex, 1);
+        observedDocuments.splice(observerIndex, 1);
+      }
+    }
     for (var i = 0; i < documents.length; i += 1) {
       observeDocument(documents[i]);
       updateDocument(documents[i]);
@@ -435,7 +447,8 @@ class GakujoGpaDisplayScript {
   }
 
   function observeDocument(documentRef) {
-    if (!documentRef || !documentRef.documentElement ||
+    if (!documentRef || documentRef.defaultView === null ||
+        !documentRef.documentElement ||
         window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.indexOf(documentRef) >= 0) {
       return;
     }
