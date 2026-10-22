@@ -39,7 +39,7 @@ object DeadlineReminders {
     /** Replaces every booked reminder with [reminders]. */
     fun replace(context: Context, reminders: List<Reminder>) {
         for (old in load(context)) {
-            alarmManager(context).cancel(pendingIntent(context, old))
+            cancel(context, old)
         }
         save(context, reminders)
         book(context, reminders)
@@ -66,16 +66,16 @@ object DeadlineReminders {
     }
 
     fun show(context: Context, intent: Intent) {
-        show(
-            context,
-            Reminder(
-                id = intent.getIntExtra(EXTRA_ID, 0),
-                title = intent.getStringExtra(EXTRA_TITLE).orEmpty(),
-                body = intent.getStringExtra(EXTRA_BODY).orEmpty(),
-                url = intent.getStringExtra(EXTRA_URL).orEmpty(),
-                atMillis = 0L
-            )
+        val reminder = Reminder(
+            id = intent.getIntExtra(EXTRA_ID, 0),
+            title = intent.getStringExtra(EXTRA_TITLE).orEmpty(),
+            body = intent.getStringExtra(EXTRA_BODY).orEmpty(),
+            url = intent.getStringExtra(EXTRA_URL).orEmpty(),
+            atMillis = 0L
         )
+        // The other alarm booked for this reminder must not show it again.
+        cancel(context, reminder)
+        show(context, reminder)
     }
 
     private fun show(context: Context, reminder: Reminder) {
@@ -109,6 +109,8 @@ object DeadlineReminders {
             .setStyle(Notification.BigTextStyle().bigText(reminder.body))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            // Both alarms of a reminder can go off together; sound once.
+            .setOnlyAlertOnce(true)
             .build()
         context.getSystemService(NotificationManager::class.java)
             .notify(reminder.id, notification)
@@ -130,7 +132,7 @@ object DeadlineReminders {
             if (reminder.atMillis <= now) {
                 continue
             }
-            val pending = pendingIntent(context, reminder)
+            val pending = pendingIntent(context, reminder, whileIdle = false)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms()) {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.atMillis, pending)
             } else {
@@ -143,13 +145,31 @@ object DeadlineReminders {
                     reminder.atMillis - start,
                     pending
                 )
+                // A window alarm waits while the phone dozes; this one does
+                // not. Whichever goes off first cancels the other.
+                alarms.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    start,
+                    pendingIntent(context, reminder, whileIdle = true)
+                )
             }
         }
     }
 
-    private fun pendingIntent(context: Context, reminder: Reminder): PendingIntent {
+    private fun cancel(context: Context, reminder: Reminder) {
+        val alarms = alarmManager(context)
+        alarms.cancel(pendingIntent(context, reminder, whileIdle = false))
+        alarms.cancel(pendingIntent(context, reminder, whileIdle = true))
+    }
+
+    private fun pendingIntent(
+        context: Context,
+        reminder: Reminder,
+        whileIdle: Boolean
+    ): PendingIntent {
+        val suffix = if (whileIdle) ".IDLE" else ""
         val intent = Intent(context, DeadlineReminderReceiver::class.java).apply {
-            action = "net.yoshida.morebettergakujo.REMINDER.${reminder.id}"
+            action = "net.yoshida.morebettergakujo.REMINDER.${reminder.id}$suffix"
             putExtra(EXTRA_ID, reminder.id)
             putExtra(EXTRA_TITLE, reminder.title)
             putExtra(EXTRA_BODY, reminder.body)
