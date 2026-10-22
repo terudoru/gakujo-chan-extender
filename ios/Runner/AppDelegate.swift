@@ -1,5 +1,6 @@
 import Flutter
 import EventKit
+import QuickLook
 import UIKit
 import UserNotifications
 import UniformTypeIdentifiers
@@ -907,6 +908,7 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
   private var pendingExportResult: FlutterResult?
   private var pendingExportFileName: String?
   private var pendingExportURL: URL?
+  private var openPreview: SavedFilePreview?
 
   func register(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
@@ -935,6 +937,8 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
         self.saveDownloadedFileToConfiguredFolder(call: call, result: result)
       case "exportDownloadedFile":
         self.exportDownloadedFile(call: call, result: result)
+      case "openDownloadedFile":
+        self.openDownloadedFile(call: call, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -1304,6 +1308,39 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
     return cleaned == "." || cleaned == ".." ? "" : cleaned
   }
 
+  /// Shows a saved file in Quick Look; iOS opens no file URL from another
+  /// app. A file in the chosen folder is read while the folder's access is
+  /// held, until the preview closes.
+  private func openDownloadedFile(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    guard let location = args?["location"] as? String,
+          let url = URL(string: location),
+          url.isFileURL,
+          let presenter = topViewController() else {
+      result(false)
+      return
+    }
+    var scope: URL?
+    if let root = try? resolveDownloadRoot(), isDescendant(url, of: root),
+       root.startAccessingSecurityScopedResource() {
+      scope = root
+    }
+    guard FileManager.default.isReadableFile(atPath: url.path) else {
+      scope?.stopAccessingSecurityScopedResource()
+      result(false)
+      return
+    }
+    let preview = SavedFilePreview(url: url, scope: scope) { [weak self] in
+      self?.openPreview = nil
+    }
+    openPreview = preview
+    let controller = QLPreviewController()
+    controller.dataSource = preview
+    controller.delegate = preview
+    presenter.present(controller, animated: true)
+    result(true)
+  }
+
   private func isDescendant(_ url: URL, of root: URL) -> Bool {
     let rootPath = root.standardizedFileURL.path
     let path = url.standardizedFileURL.path
@@ -1331,6 +1368,40 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
       return topViewController(from: presented)
     }
     return root
+  }
+}
+
+private final class SavedFilePreview: NSObject, QLPreviewControllerDataSource,
+  QLPreviewControllerDelegate {
+  private let url: URL
+  private var scope: URL?
+  private let onClose: () -> Void
+
+  init(url: URL, scope: URL?, onClose: @escaping () -> Void) {
+    self.url = url
+    self.scope = scope
+    self.onClose = onClose
+  }
+
+  deinit {
+    scope?.stopAccessingSecurityScopedResource()
+  }
+
+  func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+    1
+  }
+
+  func previewController(
+    _ controller: QLPreviewController,
+    previewItemAt index: Int
+  ) -> QLPreviewItem {
+    url as NSURL
+  }
+
+  func previewControllerDidDismiss(_ controller: QLPreviewController) {
+    scope?.stopAccessingSecurityScopedResource()
+    scope = nil
+    onClose()
   }
 }
 

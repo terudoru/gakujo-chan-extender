@@ -6,7 +6,12 @@ part of 'gakujo_web_app.dart';
 /// only through an intent that carries a read grant.
 @visibleForTesting
 bool opensSavedDownloadNatively(Uri uri, TargetPlatform platform) {
-  return platform == TargetPlatform.android && uri.scheme == 'content';
+  return switch (platform) {
+    TargetPlatform.android => uri.scheme == 'content',
+    // iOS opens no file URL from another app; the app previews it.
+    TargetPlatform.iOS => uri.scheme == 'file',
+    _ => false,
+  };
 }
 
 @visibleForTesting
