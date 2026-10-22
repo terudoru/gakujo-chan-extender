@@ -291,6 +291,11 @@ void main() {
     final titles = (await store.loadAssignments()).map((a) => a.title);
     expect(titles, contains('残る課題'));
     expect(titles, isNot(contains('取り下げ')));
+
+    // The last open assignment leaves too when the list is empty.
+    await store.mergeAssignments(const [], isWholeList: true);
+    expect((await store.loadAssignments()).map((a) => a.title),
+        ['終わった課題']);
   });
 
   group('the notification choices travel', () {

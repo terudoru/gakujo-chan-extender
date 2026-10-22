@@ -779,7 +779,8 @@ class GakujoActivityStore {
     bool isWholeList = false,
   }) {
     final next = assignments.toList();
-    if (next.isEmpty) {
+    // An empty whole list still drops the assignments no longer open.
+    if (next.isEmpty && !isWholeList) {
       return Future<void>.value();
     }
     return _enqueue(() async {
