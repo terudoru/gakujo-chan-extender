@@ -4,7 +4,7 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 5;
+  var version = 6;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -19,6 +19,7 @@ class GakujoMessageReaderScript {
   var reading = false;
   var reloadTimeout;
   var cancelPendingFrame;
+  var controlsDocument = document;
 
   window.__MBG_MESSAGE_READER_DISPOSE = function() {
     disposed = true;
@@ -40,6 +41,35 @@ class GakujoMessageReaderScript {
   function messageTable(doc) {
     doc = doc || mainFrameDocument();
     return doc.querySelector('table.normal:nth-child(9)');
+  }
+
+  function smartphoneUnreadList() {
+    var docs = [mainFrameDocument()];
+    if (docs[0] !== document) docs.push(document);
+    for (var i = 0; i < docs.length; i += 1) {
+      var doc = docs[i];
+      var text = doc.body && (doc.body.innerText || doc.body.textContent) || '';
+      if (text.indexOf('未読一覧') < 0) continue;
+      var items = doc.querySelectorAll('div.button[onclick*="seqNo="]');
+      var table = items.length && items[0].closest('table');
+      // Skip the message's own inner table, including for a single-item list.
+      table = table && table.parentNode && table.parentNode.closest('table');
+      while (table) {
+        var containsAll = true;
+        for (var j = 0; j < items.length; j += 1) {
+          if (!table.contains(items[j])) {
+            containsAll = false;
+            break;
+          }
+        }
+        if (containsAll) break;
+        table = table.parentNode && table.parentNode.closest('table');
+      }
+      if (table && table.parentNode) {
+        return {document: doc, table: table, items: items};
+      }
+    }
+    return null;
   }
 
   function absoluteCampusUrl(url, doc) {
@@ -80,7 +110,20 @@ class GakujoMessageReaderScript {
     var doc = mainFrameDocument();
     var table = messageTable(doc);
     if (!table) {
-      return [];
+      var list = smartphoneUnreadList();
+      var mobileUrls = [];
+      if (list) {
+        for (var m = 0; m < list.items.length && mobileUrls.length < limit; m += 1) {
+          var item = list.items[m];
+          var match = String(item.getAttribute('onclick') || '')
+            .match(/\blocation\.href\s*=\s*(['"])(.*?)\1/);
+          var mobileUrl = match && absoluteCampusUrl(
+            match[2].replace(/&amp;/g, '&'), item.ownerDocument || list.document
+          );
+          if (mobileUrl) mobileUrls.push(mobileUrl);
+        }
+      }
+      return mobileUrls;
     }
     var owningDocument = table.ownerDocument || doc;
     var urls = [];
@@ -97,7 +140,7 @@ class GakujoMessageReaderScript {
   }
 
   function inputValue() {
-    var input = document.getElementById('mbg-read-num-input');
+    var input = controlsDocument.getElementById('mbg-read-num-input');
     var value = input ? Number(input.value) : 0;
     return isFinite(value) && value > 0 ? Math.floor(value) : 0;
   }
@@ -156,16 +199,16 @@ class GakujoMessageReaderScript {
     }
   }
 
-  function statusElement() {
-    var status = document.getElementById('mbg-read-status');
+  function statusElement(target) {
+    var status = controlsDocument.getElementById('mbg-read-status');
     if (status) {
       return status;
     }
-    var target = document.getElementById('tabmenutable');
+    target = target || controlsDocument.getElementById('tabmenutable');
     if (!target) {
       return null;
     }
-    status = document.createElement('span');
+    status = controlsDocument.createElement('span');
     status.id = 'mbg-read-status';
     status.setAttribute('data-mbg-message-reader-owned', 'true');
     status.setAttribute('aria-live', 'polite');
@@ -190,7 +233,7 @@ class GakujoMessageReaderScript {
       return;
     }
     reading = true;
-    var button = document.getElementById('mbg-read-button');
+    var button = controlsDocument.getElementById('mbg-read-button');
     if (button) {
       button.disabled = true;
     }
@@ -229,15 +272,26 @@ class GakujoMessageReaderScript {
     if (disposed) {
       return false;
     }
-    if (!messageTable()) {
+    var table = messageTable();
+    var list = table ? null : smartphoneUnreadList();
+    if (!table && !list) {
       return false;
     }
-    var target = document.getElementById('tabmenutable');
+    controlsDocument = list ? list.document : document;
+    var target = controlsDocument.getElementById(
+      list ? 'mbg-read-controls' : 'tabmenutable'
+    );
+    if (list && !target) {
+      target = controlsDocument.createElement('div');
+      target.id = 'mbg-read-controls';
+      target.setAttribute('data-mbg-message-reader-owned', 'true');
+      list.table.parentNode.insertBefore(target, list.table);
+    }
     if (!target) {
       return false;
     }
-    if (!document.getElementById('mbg-read-button')) {
-      var button = document.createElement('button');
+    if (!controlsDocument.getElementById('mbg-read-button')) {
+      var button = controlsDocument.createElement('button');
       button.id = 'mbg-read-button';
       button.type = 'button';
       button.setAttribute('data-mbg-message-reader-owned', 'true');
@@ -245,8 +299,8 @@ class GakujoMessageReaderScript {
       button.addEventListener('click', readerCall);
       target.appendChild(button);
     }
-    if (!document.getElementById('mbg-read-num-input')) {
-      var input = document.createElement('input');
+    if (!controlsDocument.getElementById('mbg-read-num-input')) {
+      var input = controlsDocument.createElement('input');
       input.id = 'mbg-read-num-input';
       input.type = 'number';
       input.setAttribute('data-mbg-message-reader-owned', 'true');
@@ -255,7 +309,7 @@ class GakujoMessageReaderScript {
       input.placeholder = '既読にする数(半角数字)';
       target.appendChild(input);
     }
-    statusElement();
+    statusElement(target);
     return true;
   }
 
@@ -279,11 +333,19 @@ class GakujoMessageReaderScript {
   delete window.__MBG_MESSAGE_READER_VERSION;
   delete window.__MBG_MESSAGE_READER_UPDATE;
 
-  var controls = document.querySelectorAll(
-    '[data-mbg-message-reader-owned="true"]'
-  );
-  for (var i = 0; i < controls.length; i += 1) {
-    controls[i].remove();
+  var docs = [document];
+  try {
+    var frame = document.getElementById('main-frame-if');
+    var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
+    if (frameDoc && frameDoc !== document) docs.push(frameDoc);
+  } catch (e) {}
+  for (var d = 0; d < docs.length; d += 1) {
+    var controls = docs[d].querySelectorAll(
+      '[data-mbg-message-reader-owned="true"]'
+    );
+    for (var i = 0; i < controls.length; i += 1) {
+      controls[i].remove();
+    }
   }
 })();
 ''';
