@@ -108,6 +108,8 @@ void main() {
   });
 
   group('deadlineNotificationTargetUrl', () {
+    const baseUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+
     test('accepts an allowed Gakujo URL', () {
       expect(
         deadlineNotificationTargetUrl(
@@ -115,6 +117,114 @@ void main() {
           debugAllowed: false,
         ),
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+      );
+    });
+
+    test('accepts portal tabs and stable message notification links', () {
+      for (final target in [
+        'campusportal.do?page=main&tabId=kj',
+        'campusportal.do?page=main&tabId=en',
+        'campusportal.do?page=main&tabId=sch',
+        'campusportal.do?page=main&tabId=si',
+        'campussquare.do?_flowId=KJW0001100-flow'
+            '&keijitype=1&genrecd=40&seqNo=507795',
+        'reportList.do',
+      ]) {
+        final url = '$baseUrl$target';
+        expect(
+          deadlineNotificationTargetUrl(url, debugAllowed: false),
+          url,
+          reason: target,
+        );
+      }
+    });
+
+    test('rejects action and flow execution parameter names', () {
+      for (final query in [
+        '_eventId=delete',
+        '_eventId=',
+        '_eventId',
+        '_flowExecutionKey=e1s1',
+        '_flowExecutionKey=',
+        '_eventId_xxx=delete',
+        '_eventId_=delete',
+        '_EvEnTiD=delete',
+        '_FlOwExEcUtIoNkEy=e1s1',
+        '_EvEnTiD_XxX=delete',
+        '%5Fevent%49d=delete',
+        '%5FflowExecution%4Bey=e1s1',
+        '%5FeventId%5Fxxx=delete',
+        'page=main&_eventId=delete',
+        'page=main&page=other&_eventId=delete',
+      ]) {
+        expect(
+          deadlineNotificationTargetUrl(
+            '${baseUrl}campussquare.do?$query',
+            debugAllowed: false,
+          ),
+          isNull,
+          reason: query,
+        );
+      }
+    });
+
+    test('checks query names without treating values or fragments as names', () {
+      for (final target in [
+        'campusportal.do?keyword=_eventId',
+        'campusportal.do?keyword=%26_eventId%3Ddelete',
+        'campusportal.do?keyword=%E9%80%A3%E7%B5%A1',
+        'campusportal.do?keyword=連絡',
+        'campusportal.do?_eventIdentity=example',
+        'campusportal.do#?_eventId=delete',
+        'campusportal.do?page=main#?_eventId=delete',
+      ]) {
+        final url = '$baseUrl$target';
+        expect(
+          deadlineNotificationTargetUrl(url, debugAllowed: false),
+          url,
+          reason: target,
+        );
+      }
+    });
+
+    test('rejects malformed query encoding', () {
+      for (final query in [
+        '%FF=value',
+        'keyword=%FF',
+        'keyword=%E3%81',
+        'keyword=%',
+        'keyword=%2',
+        'keyword=%GG',
+        '%GG=value',
+        '=%FF',
+      ]) {
+        expect(
+          deadlineNotificationTargetUrl(
+            '${baseUrl}campusportal.do?$query',
+            debugAllowed: false,
+          ),
+          isNull,
+          reason: query,
+        );
+      }
+    });
+
+    test('keeps debug fixtures gated and rejects their action links', () {
+      const fixtureUrl = 'file:///android_asset/qa/two_factor.html';
+      expect(
+        deadlineNotificationTargetUrl(fixtureUrl, debugAllowed: true),
+        fixtureUrl,
+      );
+      expect(
+        deadlineNotificationTargetUrl(fixtureUrl, debugAllowed: false),
+        isNull,
+      );
+      expect(
+        deadlineNotificationTargetUrl(
+          '$fixtureUrl?_eventId=delete',
+          debugAllowed: true,
+        ),
+        isNull,
       );
     });
 

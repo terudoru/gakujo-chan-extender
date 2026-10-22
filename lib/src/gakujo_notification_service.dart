@@ -24,6 +24,27 @@ String? deadlineNotificationTargetUrl(
   )) {
     return null;
   }
+  // Inspect the original query: URI parsing can repair invalid percent escapes.
+  final beforeFragment = normalized!.split('#').first;
+  final queryStart = beforeFragment.indexOf('?');
+  if (queryStart >= 0) {
+    final query = beforeFragment.substring(queryStart + 1);
+    if (RegExp(r'%(?![0-9a-fA-F]{2})').hasMatch(query)) {
+      return null;
+    }
+    try {
+      for (final name in Uri.parse(normalized).queryParametersAll.keys) {
+        final lower = name.toLowerCase();
+        if (lower == '_eventid' ||
+            lower == '_flowexecutionkey' ||
+            lower.startsWith('_eventid_')) {
+          return null;
+        }
+      }
+    } on FormatException {
+      return null;
+    }
+  }
   return normalized;
 }
 
