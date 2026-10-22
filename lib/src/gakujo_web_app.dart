@@ -3808,6 +3808,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _notifyPendingDeadlines();
       await _syncReminders();
     } on Object catch (error, stackTrace) {
+      // The page may have navigated away mid-fetch; try again soon.
+      _lastAssignmentRefresh = null;
       developer.log(
         'Failed to refresh assignments in the background',
         name: 'MoreBetterGakujo',
@@ -4588,16 +4590,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               if (!stillCurrent()) {
                 return;
               }
-              await _refreshAssignmentsInBackground();
-              if (!stillCurrent()) {
-                return;
-              }
             }
             await _restoreLastPageAfterLoginIfNeeded(
               url,
               authState: authState,
               navigationRevision: navigationRevision,
             );
+            // After the restore, so returning to the last page after login
+            // does not wait for the fetch.
+            if (!isAuthenticationChallenge && stillCurrent()) {
+              unawaited(_refreshAssignmentsInBackground());
+            }
           } finally {
             if (!processing.isCompleted) {
               processing.complete();
