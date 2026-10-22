@@ -1231,12 +1231,12 @@ class GakujoActivityStore {
           }
           return '${2018 + reiwaYear}年';
         })
-        .replaceAll(RegExp(r'[（(][月火水木金土日][）)]'), '')
+        .replaceAll(RegExp(r'[（(][月火水木金土日][）)]'), ' ')
         .replaceAll('～', ' ')
         .replaceAll('〜', ' ')
         .replaceAll('年', '/')
         .replaceAll('月', '/')
-        .replaceAll('日', '')
+        .replaceAll('日', ' ')
         .replaceAll('時', ':')
         .replaceAll('分', '')
         .replaceAll('-', '/');
@@ -1319,13 +1319,14 @@ class GakujoActivityStore {
     }
     final hour = int.tryParse(monthAndDay.group(4) ?? '') ?? 23;
     final minute = int.tryParse(monthAndDay.group(5) ?? '') ?? 59;
-    var dueAt = deadlineDateTime(now.year, month, day, hour, minute);
+    final currentYear = japanWallClock(now).year;
+    var dueAt = deadlineDateTime(currentYear, month, day, hour, minute);
     if (dueAt == null) {
       return null;
     }
     if (dueAt.add(_deadlineGracePeriod).isBefore(now) &&
         now.difference(dueAt).inDays > 180) {
-      dueAt = deadlineDateTime(now.year + 1, month, day, hour, minute);
+      dueAt = deadlineDateTime(currentYear + 1, month, day, hour, minute);
     }
     return dueAt;
   }
@@ -1337,7 +1338,7 @@ class GakujoActivityStore {
     int hour,
     int minute,
   ) {
-    final parsed = DateTime(year, month, day, hour, minute);
+    final parsed = DateTime.utc(year, month, day, hour, minute);
     if (parsed.year != year ||
         parsed.month != month ||
         parsed.day != day ||
@@ -1345,7 +1346,8 @@ class GakujoActivityStore {
         parsed.minute != minute) {
       return null;
     }
-    return parsed;
+    // Gakujo's date text is always Japan time, regardless of the device zone.
+    return parsed.subtract(const Duration(hours: 9));
   }
 
   String _contentPreview(String content) {

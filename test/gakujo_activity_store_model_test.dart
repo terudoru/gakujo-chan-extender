@@ -1,4 +1,5 @@
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -510,6 +511,118 @@ void main() {
     expect(await store.loadDeadlines(), hasLength(1));
   });
 
+  group('isDeadlinePassed uses Japan time', () {
+    final store = GakujoActivityStore();
+
+    GakujoDeadlineEntry deadline(String dueText) => GakujoDeadlineEntry(
+          title: '課題',
+          url: 'https://gakujo.example/report',
+          dueText: dueText,
+          detectedAt: DateTime.utc(2026, 10, 22),
+        );
+
+    for (final dueText in [
+      '2026/10/30 23:59まで',
+      '提出期間 2026/10/01 10:00～2026/10/30 23:59',
+      '令和8年10月30日（金）23：59まで',
+      '2026年10月30日（金）23：59まで',
+      '10月30日23時59分まで',
+    ]) {
+      test('expires at 14:59 UTC: $dueText', () {
+        final entry = deadline(dueText);
+
+        expect(
+          store.isDeadlinePassed(entry,
+              now: DateTime.utc(2026, 10, 30, 14, 58)),
+          isFalse,
+        );
+        expect(
+          store.isDeadlinePassed(entry,
+              now: DateTime.utc(2026, 10, 30, 14, 59)),
+          isTrue,
+        );
+      });
+    }
+
+    test('a date without a time expires at 23:59 Japan time', () {
+      final entry = deadline('2026/10/30まで');
+
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 10, 30, 14, 58)),
+        isFalse,
+      );
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 10, 30, 14, 59)),
+        isTrue,
+      );
+    });
+
+    for (final dueText in [
+      '2026/10/30 24:00まで',
+      '10/30 24:00まで',
+    ]) {
+      test('24:00 expires at the next Japan midnight: $dueText', () {
+        final entry = deadline(dueText);
+
+        expect(
+          store.isDeadlinePassed(entry,
+              now: DateTime.utc(2026, 10, 30, 14, 59)),
+          isFalse,
+        );
+        expect(
+          store.isDeadlinePassed(entry, now: DateTime.utc(2026, 10, 30, 15)),
+          isTrue,
+        );
+      });
+    }
+
+    for (final dueText in [
+      '2026/12/31 24:00まで',
+      '提出期間 2026/12/31 10:00～01/01 00:00',
+    ]) {
+      test('preserves the year rollover: $dueText', () {
+        final entry = deadline(dueText);
+
+        expect(
+          store.isDeadlinePassed(entry,
+              now: DateTime.utc(2026, 12, 31, 14, 59)),
+          isFalse,
+        );
+        expect(
+          store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 15)),
+          isTrue,
+        );
+      });
+    }
+
+    test('infers a missing year from the current Japan date', () {
+      final entry = deadline('12/31 23:59まで');
+
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 14, 59)),
+        isTrue,
+      );
+      // Japan is already in 2027 while UTC is still in 2026.
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 15)),
+        isFalse,
+      );
+    });
+
+    test('still rolls an old month/day forward to the next year', () {
+      final entry = deadline('01/01 00:00まで');
+
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 14, 59)),
+        isFalse,
+      );
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 15)),
+        isTrue,
+      );
+    });
+  });
+
   test('loadDeadlines drops expired due dates after the grace period',
       () async {
     final store = GakujoActivityStore();
@@ -576,8 +689,9 @@ void main() {
   test('loadDeadlines keeps year-less ranges until their end date', () async {
     final store = GakujoActivityStore();
     final now = DateTime.now();
-    final rangeStart = DateTime(now.year, now.month);
-    final rangeEnd = now.add(const Duration(days: 10));
+    final japanNow = japanWallClock(now);
+    final rangeStart = DateTime.utc(japanNow.year, japanNow.month);
+    final rangeEnd = japanNow.add(const Duration(days: 10));
     final staleDetection = now.subtract(const Duration(days: 120));
     String twoDigits(int value) => value.toString().padLeft(2, '0');
     String monthDay(DateTime value) =>
@@ -609,8 +723,8 @@ void main() {
       GakujoDeadlineEntry(
         title: '年つき範囲',
         url: 'https://gakujo.example/report-full-year-range',
-        dueText:
-            '${fullDate(DateTime(now.year - 1))} 10:00～${fullDate(rangeEnd)} 17:00',
+        dueText: '${fullDate(DateTime.utc(japanNow.year - 1))} 10:00～'
+            '${fullDate(rangeEnd)} 17:00',
         detectedAt: staleDetection,
       ),
     ]);
@@ -632,8 +746,9 @@ void main() {
     () async {
       final store = GakujoActivityStore();
       final now = DateTime.now();
-      final rangeStart = now.subtract(const Duration(days: 20));
-      final rangeEnd = now.add(const Duration(days: 10));
+      final japanNow = japanWallClock(now);
+      final rangeStart = japanNow.subtract(const Duration(days: 20));
+      final rangeEnd = japanNow.add(const Duration(days: 10));
       final staleDetection = now.subtract(const Duration(days: 120));
       String twoDigits(int value) => value.toString().padLeft(2, '0');
       String slashDate(DateTime value) =>
@@ -686,8 +801,9 @@ void main() {
   test('loadDeadlines parses 24:00 and dot-separated due dates', () async {
     final store = GakujoActivityStore();
     final now = DateTime.now();
-    final futureDue = now.add(const Duration(days: 30));
-    final pastDue = now.subtract(const Duration(days: 30));
+    final japanNow = japanWallClock(now);
+    final futureDue = japanNow.add(const Duration(days: 30));
+    final pastDue = japanNow.subtract(const Duration(days: 30));
     final staleDetection = now.subtract(const Duration(days: 120));
     String twoDigits(int value) => value.toString().padLeft(2, '0');
     String slashDate(DateTime value) =>
@@ -838,6 +954,19 @@ void main() {
         dueText: '提出期限 2099/07/01 25:99',
         detectedAt: staleDetection,
       ),
+      for (final dueText in [
+        '2099/02/30 17:00',
+        '2099/02/30 24:00',
+        '2099/07/01 25:00',
+        '2099/07/01 24:30',
+        '2099/07/01 23:60',
+      ])
+        GakujoDeadlineEntry(
+          title: '存在しない日時 $dueText',
+          url: 'https://gakujo.example/report-invalid',
+          dueText: dueText,
+          detectedAt: staleDetection,
+        ),
       GakujoDeadlineEntry(
         title: '年なしの存在しない日付',
         url:
