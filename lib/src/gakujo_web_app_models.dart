@@ -27,6 +27,17 @@ enum _ScheduleIntegrationAction {
   validation,
 }
 
+class _PendingMessageOpen {
+  _PendingMessageOpen({required this.url, required this.message})
+      : startedAt = DateTime.now();
+
+  final String url;
+  final ({String keijitype, String genrecd, String seqNo}) message;
+  final DateTime startedAt;
+  int missingResults = 0;
+  int? attemptedNavigationRevision;
+}
+
 class _PageTextSnapshot {
   const _PageTextSnapshot({
     required this.title,

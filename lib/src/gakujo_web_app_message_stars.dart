@@ -182,10 +182,29 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   }
 
   Future<void> _openStarredMessage(GakujoStarredMessage entry) async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
+      return;
+    }
     if (!_canRunPageScripts) {
       _showSnackBar('学務へのログインが必要です');
       return;
     }
+    _setPendingMessageUrl(null);
+    final navigationRevision = ++_navigationRevision;
+    final url = _currentPageUrl;
+    final inFlight = _messageOpenProcessing;
+    if (inFlight != null) {
+      await inFlight.future;
+    }
+    if (url == null ||
+        !_isCurrentPageCallback(url, navigationRevision) ||
+        _calendarOperationGate.isRunning ||
+        _messageOpenProcessing != null) {
+      return;
+    }
+    final processing = Completer<void>();
+    _messageOpenProcessing = processing;
     try {
       final result = await _controller.runJavaScriptReturningResult(
         GakujoMessageStarScript.buildOpen(
@@ -195,7 +214,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         ),
       );
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
-      if (!mounted) return;
+      if (!_isCurrentPageCallback(url, navigationRevision)) return;
       if (decoded is! Map) throw const FormatException('Invalid open result');
       switch (decoded['status']) {
         case 'ok':
@@ -214,7 +233,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     } on Object catch (error, stackTrace) {
       developer.log('Failed to open starred message',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
-      if (mounted) _showSnackBar('学務で連絡通知を開けませんでした');
+      if (_isCurrentPageCallback(url, navigationRevision)) {
+        _showSnackBar('学務で連絡通知を開けませんでした');
+      }
+    } finally {
+      _messageOpenProcessing = null;
+      processing.complete();
     }
   }
 }

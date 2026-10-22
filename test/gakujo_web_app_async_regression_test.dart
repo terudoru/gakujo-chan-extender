@@ -10,6 +10,68 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
+  group('message notification links', () {
+    const messageUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+        '?_flowId=KJW0001100-flow&keijitype=4&genrecd=406&seqNo=174198';
+
+    test('extracts the message identity from a stable notification link', () {
+      expect(
+        gakujoMessageTargetFromUrl(messageUrl),
+        (keijitype: '4', genrecd: '406', seqNo: '174198'),
+      );
+    });
+
+    test('rejects a link without seqNo', () {
+      expect(
+        gakujoMessageTargetFromUrl(
+            messageUrl.replaceFirst('&seqNo=174198', '')),
+        isNull,
+      );
+    });
+
+    for (final parameter in ['keijitype=4', 'genrecd=406', 'seqNo=174198']) {
+      test('rejects non-numeric $parameter', () {
+        expect(
+          gakujoMessageTargetFromUrl(
+            messageUrl.replaceFirst(parameter, '${parameter}x'),
+          ),
+          isNull,
+        );
+      });
+    }
+
+    test('rejects another flow', () {
+      expect(
+        gakujoMessageTargetFromUrl(
+          messageUrl.replaceFirst('KJW0001100-flow', 'KJW0001200-flow'),
+        ),
+        isNull,
+      );
+    });
+
+    test('rejects another host', () {
+      expect(
+        gakujoMessageTargetFromUrl(
+          messageUrl.replaceFirst('gakujo.iess.niigata-u.ac.jp', 'example.com'),
+        ),
+        isNull,
+      );
+    });
+
+    test('rejects another path, insecure URLs and malformed query encoding',
+        () {
+      for (final url in [
+        messageUrl.replaceFirst('campussquare.do', 'campusportal.do'),
+        messageUrl.replaceFirst('https:', 'http:'),
+        messageUrl.replaceFirst('seqNo=174198', 'seqNo='),
+        messageUrl.replaceFirst('seqNo=174198', 'seqNo=%FF'),
+      ]) {
+        expect(gakujoMessageTargetFromUrl(url), isNull, reason: url);
+      }
+    });
+  });
+
   group('portal authentication state', () {
     test('detects login fields when name and id repeat the same userId',
         () async {

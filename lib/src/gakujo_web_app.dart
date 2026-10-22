@@ -585,6 +585,40 @@ String? gakujoNotificationRestoreTarget(
 }
 
 @visibleForTesting
+({String keijitype, String genrecd, String seqNo})? gakujoMessageTargetFromUrl(
+  String url,
+) {
+  if (!AllowedWebOrigins.canLoad(url, debugAllowed: false)) {
+    return null;
+  }
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.path != '/campusweb/campussquare.do') {
+    return null;
+  }
+  try {
+    final params = uri.queryParameters;
+    if (params['_flowId'] != 'KJW0001100-flow') {
+      return null;
+    }
+    final keijitype = params['keijitype'];
+    final genrecd = params['genrecd'];
+    final seqNo = params['seqNo'];
+    final numeric = RegExp(r'^[0-9]+$');
+    if (keijitype == null ||
+        genrecd == null ||
+        seqNo == null ||
+        !numeric.hasMatch(keijitype) ||
+        !numeric.hasMatch(genrecd) ||
+        !numeric.hasMatch(seqNo)) {
+      return null;
+    }
+    return (keijitype: keijitype, genrecd: genrecd, seqNo: seqNo);
+  } on FormatException {
+    return null;
+  }
+}
+
+@visibleForTesting
 class GakujoCalendarOperationGate {
   bool _isRunning = false;
 
@@ -778,6 +812,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _navigationRecoveryCandidateUrl;
   String? _deferredNavigationAfterPageOperationUrl;
   String? _deferredNotificationAfterPageOperationUrl;
+  _PendingMessageOpen? _pendingMessageOpen;
+  Timer? _pendingMessageOpenTimer;
+  Completer<void>? _messageOpenProcessing;
+  int? _messageOpenReadyNavigationRevision;
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
@@ -874,6 +912,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     _backgroundRefreshTimer?.cancel();
+    _pendingMessageOpenTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
@@ -2000,7 +2039,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
                 );
               }
-              await _controller.loadUrl(selectedPageMode.startUrl);
+              await _loadAllowedPageUrl(selectedPageMode.startUrl);
             }
 
             return AlertDialog(
@@ -2443,12 +2482,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _openDatedActivityEntry(GakujoDeadlineEntry entry) async {
-    await _loadAllowedPageUrl(entry.url);
-    if (entry.isDeadline) {
+    final loading = _loadAllowedPageUrl(entry.url);
+    final navigationRevision = _navigationRevision;
+    await loading;
+    if (entry.isDeadline || gakujoMessageTargetFromUrl(entry.url) != null) {
       return;
     }
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (entry.title.trim().isNotEmpty) {
+    if (mounted &&
+        navigationRevision == _navigationRevision &&
+        entry.title.trim().isNotEmpty) {
       await _quickJumpTo(entry.title);
     }
   }
@@ -3003,6 +3046,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
       if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+        _setPendingMessageUrl(null);
+        _deferredNotificationAfterPageOperationUrl = null;
         _deferredNavigationAfterPageOperationUrl = url;
         _showSnackBar('処理完了後にページを開きます');
       } else {
@@ -3010,7 +3055,132 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
       return;
     }
+    if (!ownsPageNavigationOperation) {
+      _setPendingMessageUrl(url);
+    }
+    _navigationRevision += 1;
     await _controller.loadUrl(url);
+  }
+
+  void _setPendingMessageUrl(String? url) {
+    final previous = _pendingMessageOpen;
+    if (previous != null) {
+      if (_pendingLoginRestoreUrl == previous.url) {
+        _pendingLoginRestoreUrl = null;
+      }
+      if (_navigationRecoveryCandidateUrl == previous.url) {
+        _navigationRecoveryCandidateUrl = null;
+      }
+    }
+    _pendingMessageOpenTimer?.cancel();
+    _pendingMessageOpen = null;
+    final message = url == null ? null : gakujoMessageTargetFromUrl(url);
+    if (message == null || url == null) {
+      return;
+    }
+    final pending = _PendingMessageOpen(url: url, message: message);
+    _pendingMessageOpen = pending;
+    _pendingLoginRestoreUrl = url;
+    _loginRestoreAttempted = false;
+    _navigationRecoveryCandidateUrl = url;
+    _pendingMessageOpenTimer = Timer(const Duration(minutes: 3), () {
+      if (identical(_pendingMessageOpen, pending)) {
+        _setPendingMessageUrl(null);
+        _showSnackBar('連絡通知を開けませんでした');
+      }
+    });
+  }
+
+  Future<bool> _openPendingMessageIfNeeded(
+    String url, {
+    required int navigationRevision,
+  }) async {
+    final pending = _pendingMessageOpen;
+    bool stillCurrent() =>
+        identical(_pendingMessageOpen, pending) &&
+        _isCurrentPageCallback(url, navigationRevision);
+    if (pending == null ||
+        !stillCurrent() ||
+        _calendarOperationGate.isRunning ||
+        !AllowedWebOrigins.canLoad(url, debugAllowed: false)) {
+      return false;
+    }
+    final inFlight = _messageOpenProcessing;
+    if (inFlight != null) {
+      await inFlight.future;
+    }
+    if (!stillCurrent() ||
+        _calendarOperationGate.isRunning ||
+        _messageOpenProcessing != null ||
+        pending.attemptedNavigationRevision == navigationRevision) {
+      return false;
+    }
+    if (DateTime.now().difference(pending.startedAt) >=
+        const Duration(minutes: 3)) {
+      _setPendingMessageUrl(null);
+      _showSnackBar('連絡通知を開けませんでした');
+      return false;
+    }
+    final processing = Completer<void>();
+    _messageOpenProcessing = processing;
+    pending.attemptedNavigationRevision = navigationRevision;
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        GakujoMessageStarScript.buildOpen(
+          keijitype: pending.message.keijitype,
+          genrecd: pending.message.genrecd,
+          seqNo: pending.message.seqNo,
+        ),
+      );
+      if (!stillCurrent()) {
+        return false;
+      }
+      if (DateTime.now().difference(pending.startedAt) >=
+          const Duration(minutes: 3)) {
+        _setPendingMessageUrl(null);
+        _showSnackBar('連絡通知を開けませんでした');
+        return false;
+      }
+      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+      if (decoded is! Map) throw const FormatException('Invalid open result');
+      switch (decoded['status']) {
+        case 'ok':
+          final targetUrl = decoded['url'];
+          if (targetUrl is! String ||
+              !AllowedWebOrigins.canLoad(targetUrl, debugAllowed: false)) {
+            throw const FormatException('Invalid message URL');
+          }
+          _setPendingMessageUrl(null);
+          _navigationRevision += 1;
+          await _controller.loadUrl(targetUrl);
+          return true;
+        case 'gone':
+          _setPendingMessageUrl(null);
+          _showSnackBar('連絡通知が見つかりませんでした。一覧を開きます');
+          _navigationRevision += 1;
+          await _controller.loadUrl(_messageListPortalUrl);
+          return true;
+        case 'missing':
+          pending.missingResults += 1;
+          if (pending.missingResults < 3) {
+            return false;
+          }
+          break;
+      }
+      _setPendingMessageUrl(null);
+      _showSnackBar('連絡通知を開けませんでした');
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to open pending message',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      if (stillCurrent()) {
+        _setPendingMessageUrl(null);
+        _showSnackBar('連絡通知を開けませんでした');
+      }
+    } finally {
+      _messageOpenProcessing = null;
+      processing.complete();
+    }
+    return false;
   }
 
   Future<String?> _waitForNextPageFinished({
@@ -3061,6 +3231,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return false;
+    }
+    if (!ownsPageNavigationOperation) {
+      _setPendingMessageUrl(null);
+      _navigationRevision += 1;
     }
     if (!_canRunPageScripts) {
       if (fallbackUrl != null) {
@@ -4409,6 +4583,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       pendingNotificationUrl: pendingNotificationUrl,
       savedUrl: savedUrl,
     );
+    _setPendingMessageUrl(pendingNotificationUrl);
     final startUrl = pendingNotificationUrl != null &&
             !_appSettings.hasLoginCredentials
         ? pendingNotificationUrl
@@ -4432,10 +4607,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // Do not publish this as the auth restore target yet. An authenticated
       // callback from the in-flight calendar navigation would consume it and
       // interrupt extraction before the operation releases the WebView.
+      _setPendingMessageUrl(null);
+      _deferredNavigationAfterPageOperationUrl = null;
       _deferredNotificationAfterPageOperationUrl = targetUrl;
       _showSnackBar('処理完了後に通知のページを開きます');
       return;
     }
+    _setPendingMessageUrl(targetUrl);
     final restoreTarget = gakujoNotificationRestoreTarget(
       targetUrl,
       debugAllowed: _debugAllowed,
@@ -4448,6 +4626,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginRestoreAttempted = false;
       _navigationRecoveryCandidateUrl = restoreTarget;
     }
+    _navigationRevision += 1;
     await _controller.loadUrl(targetUrl);
   }
 
@@ -4626,6 +4805,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               authState: authState,
               navigationRevision: navigationRevision,
             );
+            if (!stillCurrent()) {
+              return;
+            }
+            _messageOpenReadyNavigationRevision = navigationRevision;
+            if (await _openPendingMessageIfNeeded(
+              url,
+              navigationRevision: navigationRevision,
+            )) {
+              return;
+            }
             // After the restore, so returning to the last page after login
             // does not wait for the fetch.
             if (!isAuthenticationChallenge && stillCurrent()) {
@@ -4952,6 +5141,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _loginRestoreAttempted = true;
     _pendingLoginRestoreUrl = null;
     _setStatus('前回のページに戻ります: ${_displayUrl(restoreUrl)}');
+    _navigationRevision += 1;
     await _controller.loadUrl(restoreUrl);
   }
 
@@ -4989,6 +5179,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return false;
     }
 
+    _setPendingMessageUrl(null);
+    _navigationRevision += 1;
     await _controller.goBack();
     await _refreshNavigationState();
     return true;
@@ -5012,6 +5204,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return false;
     }
 
+    _setPendingMessageUrl(null);
+    _navigationRevision += 1;
     await _controller.goForward();
     await _refreshNavigationState();
     return true;
@@ -5110,7 +5304,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool _tryStartPageNavigationOperation() {
-    if (!_calendarOperationGate.tryStart()) {
+    if (_messageOpenProcessing != null || !_calendarOperationGate.tryStart()) {
       return false;
     }
     if (mounted) {
@@ -5134,6 +5328,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           )) {
         return;
       }
+      _setPendingMessageUrl(deferredUrl);
       if (deferredNotificationUrl != null) {
         final restoreTarget = gakujoNotificationRestoreTarget(
           deferredNotificationUrl,
@@ -5148,6 +5343,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final pageFinished = _waitForNextPageFinished(
         timeout: const Duration(seconds: 8),
       );
+      _navigationRevision += 1;
       await _controller.loadUrl(deferredUrl);
       await pageFinished;
     } on Object catch (error, stackTrace) {
@@ -5164,6 +5360,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _calendarOperationGate.finish();
       if (mounted) {
         setState(() {});
+        final url = _currentPageUrl;
+        if (url != null &&
+            _messageOpenReadyNavigationRevision == _navigationRevision) {
+          // The finished callback may have deferred opening under this gate.
+          await _openPendingMessageIfNeeded(
+            url,
+            navigationRevision: _navigationRevision,
+          );
+        }
       }
     }
   }
