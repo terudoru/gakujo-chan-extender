@@ -5,7 +5,96 @@
 #include <stdio.h>
 #include <windows.h>
 
+#include <cstring>
 #include <iostream>
+#include <limits>
+
+namespace {
+
+constexpr char kDeadlineNotificationPrefix[] =
+    "morebettergakujo://notification?url=";
+
+int HexDigit(char value) {
+  if (value >= '0' && value <= '9') {
+    return value - '0';
+  }
+  if (value >= 'a' && value <= 'f') {
+    return value - 'a' + 10;
+  }
+  if (value >= 'A' && value <= 'F') {
+    return value - 'A' + 10;
+  }
+  return -1;
+}
+
+}  // namespace
+
+std::string DeadlineNotificationActivationUrl(const std::string& url) {
+  constexpr char hex[] = "0123456789ABCDEF";
+  std::string argument = kDeadlineNotificationPrefix;
+  for (const unsigned char value : url) {
+    if ((value >= 'a' && value <= 'z') ||
+        (value >= 'A' && value <= 'Z') ||
+        (value >= '0' && value <= '9') || value == '-' || value == '.' ||
+        value == '_' || value == '~') {
+      argument.push_back(static_cast<char>(value));
+    } else {
+      argument.push_back('%');
+      argument.push_back(hex[value >> 4]);
+      argument.push_back(hex[value & 0x0F]);
+    }
+  }
+  return argument;
+}
+
+std::string DeadlineNotificationUrlFromArgument(const std::string& argument) {
+  constexpr char authority[] = "morebettergakujo://notification";
+  constexpr size_t authority_length = sizeof(authority) - 1;
+  if (argument.size() < authority_length ||
+      _strnicmp(argument.c_str(), authority, authority_length) != 0) {
+    return std::string();
+  }
+
+  size_t prefix_length = authority_length;
+  if (prefix_length < argument.size() && argument[prefix_length] == '/') {
+    ++prefix_length;
+  }
+  constexpr char query[] = "?url=";
+  if (argument.compare(prefix_length, sizeof(query) - 1, query) != 0) {
+    return std::string();
+  }
+  prefix_length += sizeof(query) - 1;
+
+  std::string url;
+  for (size_t i = prefix_length; i < argument.size(); ++i) {
+    if (argument[i] != '%') {
+      url.push_back(argument[i]);
+      continue;
+    }
+    if (i + 2 >= argument.size()) {
+      return std::string();
+    }
+    const int high = HexDigit(argument[i + 1]);
+    const int low = HexDigit(argument[i + 2]);
+    if (high < 0 || low < 0) {
+      return std::string();
+    }
+    url.push_back(static_cast<char>((high << 4) | low));
+    i += 2;
+  }
+  return IsDeadlineNotificationUrl(url) ? url : std::string();
+}
+
+bool IsDeadlineNotificationUrl(const std::string& url) {
+  constexpr char prefix[] = "https://gakujo.iess.niigata-u.ac.jp/";
+  if (url.compare(0, sizeof(prefix) - 1, prefix) != 0 ||
+      url.find('\0') != std::string::npos ||
+      url.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+    return false;
+  }
+  return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(),
+                             static_cast<int>(url.size()), nullptr, 0) > 0;
+}
 
 void CreateAndAttachConsole() {
   if (::AllocConsole()) {

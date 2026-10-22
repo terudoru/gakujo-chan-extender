@@ -7,6 +7,7 @@
 #include <flutter/standard_method_codec.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 
@@ -14,7 +15,8 @@
 class FlutterWindow : public Win32Window {
  public:
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
-  explicit FlutterWindow(const flutter::DartProject& project);
+  explicit FlutterWindow(const flutter::DartProject& project,
+                         std::string pending_notification_url);
   virtual ~FlutterWindow();
 
  protected:
@@ -33,6 +35,8 @@ class FlutterWindow : public Win32Window {
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       notification_channel_;
+  std::string pending_notification_url_;
+  bool pending_notification_url_taken_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

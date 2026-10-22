@@ -5,38 +5,28 @@
 #include <shellapi.h>
 #include <windows.h>
 #include <winrt/Windows.Data.Xml.Dom.h>
-#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Notifications.h>
 
 #include <exception>
 #include <limits>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
-#include <vector>
 
 #include "app_identity.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "resource.h"
+#include "utils.h"
 
 namespace {
 
 constexpr UINT kFirstDeadlineNotificationId = 2;
 constexpr UINT kDeadlineNotificationCallbackMessage = WM_APP + 1;
-constexpr UINT kDeadlineToastActivatedMessage = WM_APP + 2;
 UINT next_deadline_notification_id = kFirstDeadlineNotificationId;
 std::map<UINT, std::string> deadline_notification_urls;
-
-struct DeadlineToastState {
-  std::mutex mutex;
-  HWND hwnd = nullptr;
-};
-
-std::shared_ptr<DeadlineToastState> deadline_toast_state;
-std::vector<winrt::Windows::UI::Notifications::ToastNotification> deadline_toasts;
 
 constexpr bool IsDeadlineNotificationDismissed(UINT callback_message) {
   return callback_message == NIN_BALLOONTIMEOUT ||
@@ -103,8 +93,7 @@ void CopyWideString(wchar_t* destination,
   wcsncpy_s(destination, destination_count, value.c_str(), _TRUNCATE);
 }
 
-bool ShowDeadlineToast(HWND hwnd,
-                       const std::wstring& title,
+bool ShowDeadlineToast(const std::wstring& title,
                        const std::wstring& body,
                        const std::string& url) {
   try {
@@ -113,73 +102,24 @@ bool ShowDeadlineToast(HWND hwnd,
     using winrt::Windows::UI::Notifications::ToastNotificationManager;
 
     XmlDocument document;
-    document.LoadXml(L"<toast><visual><binding template='ToastGeneric'>"
+    document.LoadXml(L"<toast activationType='protocol'><visual>"
+                     L"<binding template='ToastGeneric'>"
                      L"<text/><text/></binding></visual></toast>");
-    document.DocumentElement().SetAttribute(L"launch", Utf8ToWide(url));
+    document.DocumentElement().SetAttribute(
+        L"launch", Utf8ToWide(DeadlineNotificationActivationUrl(url)));
     const auto text_nodes = document.GetElementsByTagName(L"text");
     text_nodes.Item(0).AppendChild(document.CreateTextNode(title));
     text_nodes.Item(1).AppendChild(document.CreateTextNode(body));
 
-    if (!deadline_toast_state) {
-      deadline_toast_state = std::make_shared<DeadlineToastState>();
-      deadline_toast_state->hwnd = hwnd;
-    }
     const auto notifier =
         ToastNotificationManager::CreateToastNotifier(kAppUserModelId);
     ToastNotification toast(document);
-    toast.Activated(
-        [state = deadline_toast_state, url](
-            const ToastNotification&,
-            const winrt::Windows::Foundation::IInspectable&) {
-          try {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            if (!state->hwnd) {
-              return;
-            }
-            auto pending_url = std::make_unique<std::string>(url);
-            if (PostMessageW(state->hwnd, kDeadlineToastActivatedMessage, 0,
-                             reinterpret_cast<LPARAM>(pending_url.get()))) {
-              pending_url.release();
-            }
-          } catch (const std::exception&) {
-            // Do not propagate allocation failures through the WinRT callback.
-          }
-        });
-
-    // Keep activation handlers alive even after the popup times out.
-    deadline_toasts.push_back(toast);
-    try {
-      notifier.Show(toast);
-    } catch (...) {
-      deadline_toasts.pop_back();
-      throw;
-    }
+    notifier.Show(toast);
     return true;
   } catch (const winrt::hresult_error&) {
     return false;
   } catch (const std::exception&) {
     return false;
-  }
-}
-
-void ClearDeadlineToasts() {
-  if (!deadline_toast_state) {
-    return;
-  }
-  HWND hwnd;
-  {
-    std::lock_guard<std::mutex> lock(deadline_toast_state->mutex);
-    hwnd = deadline_toast_state->hwnd;
-    deadline_toast_state->hwnd = nullptr;
-  }
-  deadline_toasts.clear();
-  deadline_toast_state.reset();
-
-  // Shutdown owns any URLs already posted by an activation callback.
-  MSG message;
-  while (PeekMessageW(&message, hwnd, kDeadlineToastActivatedMessage,
-                      kDeadlineToastActivatedMessage, PM_REMOVE)) {
-    delete reinterpret_cast<std::string*>(message.lParam);
   }
 }
 
@@ -237,8 +177,10 @@ void DeleteAllDeadlineNotifications(HWND hwnd) {
 
 }  // namespace
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             std::string pending_notification_url)
+    : project_(project),
+      pending_notification_url_(std::move(pending_notification_url)) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -264,7 +206,7 @@ bool FlutterWindow::OnCreate() {
           "net.yoshida.morebettergakujo/notifications",
           &flutter::StandardMethodCodec::GetInstance());
   notifications_channel->SetMethodCallHandler(
-      [hwnd = GetHandle()](
+      [this, hwnd = GetHandle()](
           const flutter::MethodCall<flutter::EncodableValue>& call,
           std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
               result) {
@@ -285,13 +227,19 @@ bool FlutterWindow::OnCreate() {
           const std::wstring wide_title = Utf8ToWide(title);
           const std::wstring wide_body = Utf8ToWide(body);
           const bool notification_shown =
-              ShowDeadlineToast(hwnd, wide_title, wide_body, url) ||
+              ShowDeadlineToast(wide_title, wide_body, url) ||
               ShowDeadlineNotification(hwnd, wide_title, wide_body, url);
           result->Success(flutter::EncodableValue(notification_shown));
           return;
         }
         if (call.method_name() == "takePendingNotificationUrl") {
-          result->Success(flutter::EncodableValue());
+          flutter::EncodableValue pending_url;
+          if (!pending_notification_url_.empty()) {
+            pending_url = flutter::EncodableValue(pending_notification_url_);
+            pending_notification_url_.clear();
+          }
+          pending_notification_url_taken_ = true;
+          result->Success(pending_url);
           return;
         }
         result->NotImplemented();
@@ -312,7 +260,6 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  ClearDeadlineToasts();
   DeleteAllDeadlineNotifications(GetHandle());
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -325,18 +272,28 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
-  if (message == kDeadlineToastActivatedMessage) {
-    const std::unique_ptr<std::string> url(
-        reinterpret_cast<std::string*>(lparam));
+  if (message == WM_COPYDATA) {
+    const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+    if (!data || data->dwData != kDeadlineNotificationCopyDataId ||
+        !data->lpData || data->cbData == 0 || data->cbData > 32768) {
+      return FALSE;
+    }
+    const std::string url(static_cast<const char*>(data->lpData), data->cbData);
+    if (!IsDeadlineNotificationUrl(url)) {
+      return FALSE;
+    }
     ShowWindow(hwnd, SW_RESTORE);
     SetForegroundWindow(hwnd);
-    if (notification_channel_ && url) {
+    if (!pending_notification_url_taken_) {
+      // A second launch can arrive before Dart takes the startup URL.
+      pending_notification_url_ = url;
+    } else if (notification_channel_) {
       notification_channel_->InvokeMethod(
           "deadlineNotificationTapped",
           std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
-              {flutter::EncodableValue("url"), flutter::EncodableValue(*url)}}));
+              {flutter::EncodableValue("url"), flutter::EncodableValue(url)}}));
     }
-    return 0;
+    return TRUE;
   }
 
   if (message == kDeadlineNotificationCallbackMessage) {
