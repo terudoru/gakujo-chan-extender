@@ -174,7 +174,10 @@ List<GakujoReminder> planReminders({
 }
 
 class GakujoNotificationService {
-  GakujoNotificationService();
+  GakujoNotificationService({DateTime Function()? now})
+      : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
 
   static const _channel = MethodChannel(
     'net.yoshida.morebettergakujo/notifications',
@@ -274,15 +277,18 @@ class GakujoNotificationService {
     }
   }
 
-  final Map<int, Timer> _inAppReminders = {};
+  final Map<int, ({GakujoReminder reminder, Timer timer})> _inAppReminders = {};
+  Timer? _inAppReminderCheck;
 
   /// Books [reminders] with the OS, replacing earlier ones. Where the OS
   /// cannot book ahead (Windows), they fire from the app while it is open.
   Future<void> scheduleReminders(List<GakujoReminder> reminders) async {
-    for (final timer in _inAppReminders.values) {
-      timer.cancel();
+    for (final booked in _inAppReminders.values) {
+      booked.timer.cancel();
     }
     _inAppReminders.clear();
+    _inAppReminderCheck?.cancel();
+    _inAppReminderCheck = null;
     try {
       final booked = await _channel.invokeMethod<bool>(
         'scheduleReminders',
@@ -298,15 +304,41 @@ class GakujoNotificationService {
     } on MissingPluginException {
       // Same.
     }
-    final now = DateTime.now();
+    final now = _now();
     for (final reminder in reminders) {
-      _inAppReminders[reminder.id] = Timer(reminder.at.difference(now), () {
-        _inAppReminders.remove(reminder.id);
-        unawaited(
-          _show(title: reminder.title, body: reminder.body, url: reminder.url),
-        );
+      _inAppReminders[reminder.id] = (
+        reminder: reminder,
+        timer: Timer(reminder.at.difference(now), () => _remind(reminder.id)),
+      );
+    }
+    if (_inAppReminders.isNotEmpty) {
+      // A timer does not count the time the computer sleeps, so it can go
+      // off long after its time. The clock catches those.
+      _inAppReminderCheck = Timer.periodic(const Duration(minutes: 1), (_) {
+        final now = _now();
+        for (final booked in _inAppReminders.values.toList()) {
+          if (!booked.reminder.at.isAfter(now)) {
+            _remind(booked.reminder.id);
+          }
+        }
       });
     }
+  }
+
+  void _remind(int id) {
+    final booked = _inAppReminders.remove(id);
+    if (booked == null) {
+      return;
+    }
+    booked.timer.cancel();
+    if (_inAppReminders.isEmpty) {
+      _inAppReminderCheck?.cancel();
+      _inAppReminderCheck = null;
+    }
+    final reminder = booked.reminder;
+    unawaited(
+      _show(title: reminder.title, body: reminder.body, url: reminder.url),
+    );
   }
 }
 

@@ -58,6 +58,38 @@ void main() {
         calls.where((call) => call.method == 'notifyDeadline'), hasLength(1));
   });
 
+  testWidgets('a reminder whose timer runs late still comes on the clock',
+      (tester) async {
+    answer(booksAhead: false);
+    var now = DateTime(2099, 10, 28, 12);
+    final service = GakujoNotificationService(now: () => now);
+
+    GakujoReminder at(int id, DateTime time) => GakujoReminder(
+          id: id,
+          title: 'レポート $id',
+          body: '',
+          url: '',
+          at: time,
+        );
+    await service.scheduleReminders([
+      at(1, DateTime(2099, 10, 28, 14)),
+      at(2, DateTime(2099, 10, 28, 20)),
+    ]);
+    // The computer sleeps three hours; its timers do not count them.
+    now = now.add(const Duration(hours: 3));
+    await tester.pump(const Duration(minutes: 1));
+
+    final shown = calls.where((call) => call.method == 'notifyDeadline');
+    expect(shown.map((call) => (call.arguments as Map)['title']), [
+      'レポート 1',
+    ]);
+    // The late timer does not remind again.
+    await tester.pump(const Duration(hours: 2));
+    expect(
+        calls.where((call) => call.method == 'notifyDeadline'), hasLength(1));
+    await service.scheduleReminders(const []);
+  });
+
   testWidgets('where the OS books ahead, the app does not remind as well',
       (tester) async {
     answer(booksAhead: true);
