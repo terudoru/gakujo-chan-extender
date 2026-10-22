@@ -1,10 +1,6 @@
 package net.yoshida.morebettergakujo
 
 import android.app.Activity
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Notification
-import android.app.PendingIntent
 import android.content.ContentProviderOperation
 import android.content.ContentUris
 import android.content.ContentValues
@@ -1391,7 +1387,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun showDeadlineNotification(call: MethodCall): Boolean {
-        ensureNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -1402,49 +1397,12 @@ class MainActivity : FlutterActivity() {
         val body = call.argument<String>("body")?.takeIf { it.isNotBlank() } ?: "提出期限を検出しました"
         val url = call.argument<String>("url").orEmpty()
         val notificationId = "$title\n$body\n$url".hashCode()
-        val intent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        intent.putExtra(EXTRA_NOTIFICATION_URL, url)
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, DEADLINE_CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        val notification = builder
-            .setSmallIcon(R.drawable.ic_stat_deadline)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(Notification.BigTextStyle().bigText(body))
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
-            .build()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(notificationId, notification)
+        DeadlineReminders.post(this, notificationId, title, body, url)
         return true
     }
 
     private fun notificationUrlFromIntent(intent: Intent?): String? {
         return intent?.getStringExtra(EXTRA_NOTIFICATION_URL)?.takeIf { it.isNotBlank() }
-    }
-
-    private fun ensureNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return
-        }
-        val manager = getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            DEADLINE_CHANNEL_ID,
-            "課題期限",
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
-        manager.createNotificationChannel(channel)
     }
 
     private fun syncCalendarEvents(call: MethodCall, result: MethodChannel.Result) {
@@ -2047,7 +2005,6 @@ class MainActivity : FlutterActivity() {
         const val DOWNLOADS_CHANNEL = "net.yoshida.morebettergakujo/downloads"
         const val NOTIFICATIONS_CHANNEL = "net.yoshida.morebettergakujo/notifications"
         const val CALENDAR_CHANNEL = "net.yoshida.morebettergakujo/calendar"
-        const val DEADLINE_CHANNEL_ID = "gakujo_deadlines"
         const val EXTRA_DEBUG_URL = "net.yoshida.morebettergakujo.DEBUG_URL"
         const val EXTRA_DEBUG_2FA_SECRET = "net.yoshida.morebettergakujo.DEBUG_2FA_SECRET"
         const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"

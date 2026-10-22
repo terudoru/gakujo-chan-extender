@@ -27,6 +27,8 @@ object DeadlineReminders {
     private const val EXTRA_BODY = "reminder_body"
     private const val EXTRA_URL = "reminder_url"
     private const val EARLY_WINDOW_MILLIS = 15 * 60 * 1000L
+    private const val GROUP_KEY = "net.yoshida.morebettergakujo.DEADLINES"
+    private const val SUMMARY_ID = 1
 
     data class Reminder(
         val id: Int,
@@ -85,35 +87,61 @@ object DeadlineReminders {
         ) {
             return
         }
+        post(context, reminder.id, reminder.title.ifBlank { "課題の締切" }, reminder.body, reminder.url)
+    }
+
+    /**
+     * Posts a deadline notification that opens [url] when tapped. With two or
+     * more, Android would otherwise group them under a summary of its own,
+     * which opens the app wherever it was and clears them all; this one opens
+     * the newest one's page.
+     */
+    fun post(context: Context, id: Int, title: String, body: String, url: String) {
         ensureChannel(context)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.notify(id, builder(context, id, title, body, url).build())
+        manager.notify(
+            SUMMARY_ID,
+            builder(context, SUMMARY_ID, title, body, url)
+                .setGroupSummary(true)
+                .build()
+        )
+    }
+
+    private fun builder(
+        context: Context,
+        id: Int,
+        title: String,
+        body: String,
+        url: String
+    ): Notification.Builder {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: Intent(context, MainActivity::class.java)
         launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        launch.putExtra(EXTRA_NOTIFICATION_URL, reminder.url)
+        launch.putExtra(EXTRA_NOTIFICATION_URL, url)
         val contentIntent = PendingIntent.getActivity(
             context,
-            reminder.id,
+            id,
             launch,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(context, CHANNEL_ID)
+                .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(context)
         }
-        val notification = builder
+        return builder
             .setSmallIcon(R.drawable.ic_stat_deadline)
-            .setContentTitle(reminder.title.ifBlank { "課題の締切" })
-            .setContentText(reminder.body)
-            .setStyle(Notification.BigTextStyle().bigText(reminder.body))
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            .setGroup(GROUP_KEY)
             // Both alarms of a reminder can go off together; sound once.
             .setOnlyAlertOnce(true)
-            .build()
-        context.getSystemService(NotificationManager::class.java)
-            .notify(reminder.id, notification)
     }
 
     fun ensureChannel(context: Context) {
