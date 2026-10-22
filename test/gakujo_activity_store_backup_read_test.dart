@@ -16,6 +16,11 @@ void main() {
       loadForBackup: (store) => store.loadDeadlinesForBackup(),
     ),
     (
+      key: 'more_better_gakujo_notified_deadline_keys',
+      loadBestEffort: (store) => store.loadNotifiedDeadlineKeys(),
+      loadForBackup: (store) => store.loadNotifiedDeadlineKeysForBackup(),
+    ),
+    (
       key: 'more_better_gakujo_favorites',
       loadBestEffort: (store) => store.loadFavorites(),
       loadForBackup: (store) => store.loadFavoritesForBackup(),
@@ -56,6 +61,8 @@ void main() {
       () async {
     final now = DateTime.now();
     final storage = _MemorySecureStorage(values: {
+      'more_better_gakujo_notified_deadline_keys':
+          jsonEncode(['deadline|report', 'reminder|42']),
       'more_better_gakujo_deadlines': jsonEncode([
         {
           'title': 'Report',
@@ -93,6 +100,7 @@ void main() {
     });
     final store = GakujoActivityStore(secureStorage: storage);
     final expectedDeadlines = await store.loadDeadlines();
+    final expectedNotifiedKeys = await store.loadNotifiedDeadlineKeys();
     final expectedFavorites = await store.loadFavorites();
     final expectedChanges = await store.loadChanges();
     final expectedReportLists = await store.loadReportLists();
@@ -100,6 +108,7 @@ void main() {
     final actual = await store.backupStorage.queue.runExclusive(() async {
       return (
         deadlines: await store.loadDeadlinesForBackup(),
+        notifiedKeys: await store.loadNotifiedDeadlineKeysForBackup(),
         favorites: await store.loadFavoritesForBackup(),
         changes: await store.loadChangesForBackup(),
         reportLists: await store.loadReportListsForBackup(),
@@ -110,6 +119,7 @@ void main() {
       actual.deadlines.map((entry) => entry.toJson()).toList(),
       expectedDeadlines.map((entry) => entry.toJson()).toList(),
     );
+    expect(actual.notifiedKeys, expectedNotifiedKeys);
     expect(
       actual.favorites.map((entry) => entry.toJson()).toList(),
       expectedFavorites.map((entry) => entry.toJson()).toList(),

@@ -87,6 +87,10 @@ Future<void> restoreGakujoBackup({
           deadlines.where((entry) => isAllowedUrl(entry.url)).toList(),
         );
       }
+      final notifiedDeadlineKeys = backup.notifiedDeadlineKeys;
+      if (notifiedDeadlineKeys != null) {
+        await activityStore.replaceNotifiedDeadlineKeys(notifiedDeadlineKeys);
+      }
       final changes = backup.changes;
       if (changes != null) {
         await activityStore.replaceChanges(

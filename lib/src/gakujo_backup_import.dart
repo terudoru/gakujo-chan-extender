@@ -39,6 +39,7 @@ class GakujoBackupImport {
     this.favorites,
     this.starredMessages,
     this.deadlines,
+    this.notifiedDeadlineKeys,
     this.changes,
     this.reportLists,
   });
@@ -58,6 +59,7 @@ class GakujoBackupImport {
   final List<GakujoFavoritePage>? favorites;
   final List<GakujoStarredMessage>? starredMessages;
   final List<GakujoDeadlineEntry>? deadlines;
+  final List<String>? notifiedDeadlineKeys;
   final List<GakujoActivityChangeEntry>? changes;
   final List<GakujoCachedReportList>? reportLists;
 }
@@ -188,6 +190,18 @@ GakujoBackupImport parseGakujoBackup(String text) {
       'deadlines',
       GakujoDeadlineEntry.fromJson,
     ),
+    notifiedDeadlineKeys: decoded.containsKey('notifiedDeadlineKeys')
+        ? List.unmodifiable(
+            _decodeList(decoded, 'notifiedDeadlineKeys', (value) {
+              if (value is! String) {
+                throw const GakujoBackupImportException(
+                  'バックアップの「notifiedDeadlineKeys」に不正な項目があります',
+                );
+              }
+              return value;
+            }),
+          )
+        : null,
     changes: _decodeMapList(
       decoded,
       'changes',

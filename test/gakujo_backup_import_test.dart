@@ -40,14 +40,18 @@ void main() {
       expect(backup.failedDownloads, isNull);
       expect(backup.favorites, isNull);
       expect(backup.deadlines, isNull);
+      expect(backup.notifiedDeadlineKeys, isNull);
       expect(backup.changes, isNull);
       expect(backup.reportLists, isNull);
     });
 
     test('preserves an explicit empty collection as a replacement', () {
-      final backup = parseGakujoBackup('{"version":2,"favorites":[]}');
+      final backup = parseGakujoBackup(
+        '{"version":2,"favorites":[],"notifiedDeadlineKeys":[]}',
+      );
 
       expect(backup.favorites, isEmpty);
+      expect(backup.notifiedDeadlineKeys, isEmpty);
       expect(backup.downloadHistory, isNull);
     });
 
@@ -58,6 +62,7 @@ void main() {
         'favorites',
         'downloadHistory',
         'deadlines',
+        'notifiedDeadlineKeys',
         'failedDownloads',
         'changes',
         'reportLists',
@@ -86,6 +91,24 @@ void main() {
               jsonEncode({'version': 2, entry.key: entry.value})),
           throwsA(isA<GakujoBackupImportException>()),
           reason: entry.key,
+        );
+      }
+    });
+
+    test('rejects invalid notified deadline key collections', () {
+      for (final value in [
+        null,
+        'deadline|report',
+        [42],
+        [true],
+        [{}],
+      ]) {
+        expect(
+          () => parseGakujoBackup(jsonEncode({
+            'version': 2,
+            'notifiedDeadlineKeys': value,
+          })),
+          throwsA(isA<GakujoBackupImportException>()),
         );
       }
     });

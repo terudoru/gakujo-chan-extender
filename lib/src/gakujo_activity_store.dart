@@ -417,6 +417,7 @@ class GakujoActivityStore {
         _secureStorage,
         const [
           _deadlinesKey,
+          _notifiedDeadlineKeysKey,
           _favoritesKey,
           _starredMessagesKey,
           _changesKey,
@@ -494,6 +495,12 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readNotifiedDeadlineKeys()).value);
   }
 
+  Future<Set<String>> loadNotifiedDeadlineKeysForBackup() {
+    return _enqueue(
+      () => _readForBackup(_notifiedDeadlineKeysKey, _readNotifiedDeadlineKeys),
+    );
+  }
+
   Future<_StorageReadResult<Set<String>>> _readNotifiedDeadlineKeys() async {
     final rawRead = await _readRawValue(_notifiedDeadlineKeysKey);
     if (!rawRead.isSuccessful) {
@@ -526,6 +533,15 @@ class GakujoActivityStore {
         .where((key) => key.isNotEmpty)
         .toSet();
     return _enqueue(() => _addNotifiedDeadlineKeys(keys));
+  }
+
+  Future<void> replaceNotifiedDeadlineKeys(Iterable<String> deadlineKeys) {
+    final keys = deadlineKeys
+        .map((key) => key.trim())
+        .where((key) => key.isNotEmpty)
+        .toSet()
+        .toList();
+    return _enqueue(() => _writeNotifiedDeadlineKeys(keys));
   }
 
   Future<void> _addNotifiedDeadlineKeys(Set<String> deadlineKeys) async {

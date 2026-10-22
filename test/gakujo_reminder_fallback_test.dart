@@ -1,9 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 
 const _channel = MethodChannel('net.yoshida.morebettergakujo/notifications');
@@ -249,6 +255,41 @@ void main() {
       expect(await restartedStore.loadNotifiedDeadlineKeys(), {
         'reminder|${expected.id}',
       });
+    });
+
+    test('backup round trip does not repeat a Windows catch-up reminder',
+        () async {
+      final source = GakujoActivityStore();
+      final open = assignment();
+      final key = 'reminder|${onTimeReminder(open).id}';
+      await source.mergeAssignments([open]);
+      await sync(coordinator(source));
+      expect(shown(), hasLength(1));
+      expect(await source.loadNotifiedDeadlineKeys(), {key});
+
+      final payload = await readGakujoBackupPayload(
+        currentSettings: () => const GakujoAppSettings(),
+        settingsStore: GakujoAppSettingsStore(),
+        historyStore: GakujoDownloadHistoryStore(),
+        activityStore: source,
+      );
+      FlutterSecureStorage.setMockInitialValues({});
+      final target = GakujoActivityStore();
+      await restoreGakujoBackup(
+        backup: parseGakujoBackup(jsonEncode(payload)),
+        settingsStore: GakujoAppSettingsStore(),
+        historyStore: GakujoDownloadHistoryStore(),
+        activityStore: target,
+        isAllowedUrl: (_) => true,
+        isAllowedNavigationUrl: (_) => true,
+      );
+      expect(await target.loadNotifiedDeadlineKeys(), {key});
+      // Assignments are rediscovered by the next scan, rather than backed up.
+      await target.mergeAssignments([open]);
+      final restoredCoordinator = coordinator(target);
+      await sync(restoredCoordinator);
+      await sync(restoredCoordinator);
+      expect(shown(), hasLength(1));
     });
 
     test('deadlines at or before now do not get catch-up reminders', () async {

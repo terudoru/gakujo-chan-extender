@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,17 +9,20 @@ import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 const _modeKey = 'more_better_gakujo_download_save_mode';
 const _historyKey = 'more_better_gakujo_download_history';
 const _favoritesKey = 'more_better_gakujo_favorites';
+const _notifiedKeysKey = 'more_better_gakujo_notified_deadline_keys';
 
 void main() {
   for (final key in [
     _historyKey,
     _favoritesKey,
     'more_better_gakujo_deadlines',
+    _notifiedKeysKey,
     'more_better_gakujo_activity_changes',
     'more_better_gakujo_cached_report_lists',
   ]) {
@@ -34,6 +38,124 @@ void main() {
       storage.failReadKey = null;
       await _restore(storage, settings: settings, history: history, activity: activity)
           .timeout(const Duration(seconds: 2));
+    });
+  }
+
+  test('backup round trip does not notify restored deadlines again', () async {
+    final source = _Storage({});
+    final sourceActivity = GakujoActivityStore(secureStorage: source);
+    final deadline = _deadline();
+    await sourceActivity.mergeDeadlines([deadline]);
+    final sourceNotifications = _NotificationService();
+    await GakujoDeadlineNotificationCoordinator(
+      activityStore: sourceActivity,
+      notificationService: sourceNotifications,
+    ).notifyPendingDeadlines(notificationsEnabled: true);
+    expect(sourceNotifications.notifiedKeys, [deadline.key]);
+    await sourceActivity.addNotifiedDeadlineKeys(['reminder|42']);
+
+    final payload = await readGakujoBackupPayload(
+      currentSettings: () => const GakujoAppSettings(),
+      settingsStore: GakujoAppSettingsStore(secureStorage: source),
+      historyStore: GakujoDownloadHistoryStore(secureStorage: source),
+      activityStore: sourceActivity,
+    );
+    expect(payload['notifiedDeadlineKeys'], [deadline.key, 'reminder|42']);
+    final target = _Storage({});
+    final targetActivity = GakujoActivityStore(secureStorage: target);
+    await _restoreActivityBackup(target, parseGakujoBackup(jsonEncode(payload)),
+        activity: targetActivity);
+    expect((await targetActivity.loadDeadlines()).single.key, deadline.key);
+    expect(await targetActivity.loadNotifiedDeadlineKeys(),
+        {deadline.key, 'reminder|42'});
+
+    final targetNotifications = _NotificationService();
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: targetActivity,
+      notificationService: targetNotifications,
+    );
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+    expect(targetNotifications.notifiedKeys, isEmpty);
+  });
+
+  for (final hasExistingKeys in [false, true]) {
+    test('old backup preserves notified keys (existing: $hasExistingKeys)',
+        () async {
+      final target = _Storage({
+        if (hasExistingKeys)
+          _notifiedKeysKey: jsonEncode(['existing', 'reminder|42']),
+      });
+      final activity = GakujoActivityStore(secureStorage: target);
+      final deadline = _deadline();
+      final backup = parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'deadlines': [deadline.toJson()],
+      }));
+      expect(backup.notifiedDeadlineKeys, isNull);
+      await _restoreActivityBackup(target, backup, activity: activity);
+      expect((await activity.loadDeadlines()).single.key, deadline.key);
+      expect(await activity.loadNotifiedDeadlineKeys(),
+          hasExistingKeys ? {'existing', 'reminder|42'} : <String>{});
+      expect(target.values.containsKey(_notifiedKeysKey), hasExistingKeys);
+
+      final notifications = _NotificationService();
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: activity,
+        notificationService: notifications,
+      );
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      expect(notifications.notifiedKeys, [deadline.key]);
+    });
+  }
+
+  test('restored notified keys replace existing keys and keep the newest 1000',
+      () async {
+    final target = _Storage({_notifiedKeysKey: '["target-only"]'});
+    final activity = GakujoActivityStore(secureStorage: target);
+    final keys = [for (var i = 0; i < 1005; i++) 'reminder|$i'];
+    await _restoreActivityBackup(
+      target,
+      parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'notifiedDeadlineKeys': keys,
+      })),
+      activity: activity,
+    );
+    expect((await activity.loadNotifiedDeadlineKeys()).toList(), keys.skip(5));
+    await activity.addNotifiedDeadlineKeys(['next']);
+    expect((await activity.loadNotifiedDeadlineKeys()).toList(),
+        [...keys.skip(6), 'next']);
+
+    await _restoreActivityBackup(
+      target,
+      parseGakujoBackup('{"version":2,"notifiedDeadlineKeys":[]}'),
+      activity: activity,
+    );
+    expect(await activity.loadNotifiedDeadlineKeys(), isEmpty);
+  });
+
+  for (final originalKeys in [null, '["existing","reminder|42"]']) {
+    test('late restore failure rolls back notified keys ($originalKeys)',
+        () async {
+      final storage = _Storage({
+        if (originalKeys != null) _notifiedKeysKey: originalKeys,
+      })
+        ..failWriteKey = 'more_better_gakujo_activity_changes';
+      final before = Map<String, String>.of(storage.values);
+      await expectLater(
+        _restoreActivityBackup(
+          storage,
+          const GakujoBackupImport(
+            version: 2,
+            notifiedDeadlineKeys: ['restored', 'reminder|99'],
+            changes: [],
+          ),
+        ),
+        throwsStateError,
+      );
+      expect(storage.values, before);
     });
   }
 
@@ -190,6 +312,40 @@ void main() {
     expect(storage.readKeys,
         isNot(contains('more_better_gakujo_login_credentials_v2')));
   });
+}
+
+GakujoDeadlineEntry _deadline() => GakujoDeadlineEntry(
+      title: 'Restored report',
+      url: 'https://example.com/report',
+      dueText: '2099/07/01 17:00',
+      detectedAt: DateTime.now(),
+    );
+
+Future<void> _restoreActivityBackup(
+  _Storage storage,
+  GakujoBackupImport backup, {
+  GakujoActivityStore? activity,
+}) =>
+    restoreGakujoBackup(
+      backup: backup,
+      settingsStore: GakujoAppSettingsStore(secureStorage: storage),
+      historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+      activityStore: activity ?? GakujoActivityStore(secureStorage: storage),
+      isAllowedUrl: (_) => true,
+      isAllowedNavigationUrl: (_) => true,
+    );
+
+class _NotificationService extends GakujoNotificationService {
+  final List<String> notifiedKeys = [];
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
+    notifiedKeys.add(entry.key);
+    return true;
+  }
 }
 
 Future<void> _restore(_Storage storage,
