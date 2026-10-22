@@ -30,7 +30,9 @@ class GakujoAssignment {
   bool get isSubmitted =>
       status.contains('提出済') ||
       status.contains('回答済') ||
-      status.contains('解答済');
+      status.contains('解答済') ||
+      (status.toLowerCase().contains('submitted') &&
+          !RegExp(r'not\s+submitted', caseSensitive: false).hasMatch(status));
 
   bool get isSurvey => kind.contains('アンケート');
 

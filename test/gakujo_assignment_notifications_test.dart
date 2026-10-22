@@ -72,6 +72,37 @@ void main() {
     );
   });
 
+  group('isSubmitted', () {
+    for (final entry in {
+      'Submitted': true,
+      'submitted': true,
+      'SUBMITTED': true,
+      ' Submitted ': true,
+      'Not submitted': false,
+      'Not Submitted': false,
+      'NOT   SUBMITTED': false,
+      'Not\tsubmitted': false,
+      'Temporarily saved': false,
+      '提出済': true,
+      '回答済': true,
+      '解答済': true,
+      '未提出': false,
+      '一時保存': false,
+    }.entries) {
+      test('recognizes ${entry.key}', () {
+        final assignment = GakujoAssignment(
+          kind: 'レポート',
+          title: 'レポート１',
+          status: entry.key,
+          course: '情報処理概論Ａ II',
+          dueAt: _jst(2026, 10, 23, 8, 45),
+          capturedAt: DateTime(2026, 10, 21),
+        );
+        expect(assignment.isSubmitted, entry.value);
+      });
+    }
+  });
+
   test('the schedule page and the list name the same assignment', () {
     final assignments = [
       _assignment(_row(
