@@ -168,7 +168,8 @@ void main() {
       }
     });
 
-    test('checks query names without treating values or fragments as names', () {
+    test('checks query names without treating values or fragments as names',
+        () {
       for (final target in [
         'campusportal.do?keyword=_eventId',
         'campusportal.do?keyword=%26_eventId%3Ddelete',
