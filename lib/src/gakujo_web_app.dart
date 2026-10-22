@@ -995,6 +995,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   _desktopZoomStep,
                 )),
               ),
+            if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
+              IconButton(
+                tooltip: 'スター付き連絡通知',
+                onPressed: _calendarOperationGate.isRunning
+                    ? null
+                    : () => unawaited(_showStarredMessagesDialog()),
+                icon: const Icon(Icons.star_outline),
+                iconSize: _toolbarIconSize,
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: _toolbarButtonExtent,
+                  height: _toolbarButtonExtent,
+                ),
+              ),
             IconButton(
               tooltip: '設定',
               onPressed: _isSettingsDialogOpen
