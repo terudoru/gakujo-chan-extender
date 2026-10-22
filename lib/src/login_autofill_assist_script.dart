@@ -207,7 +207,7 @@ class LoginAutofillAssistScript {
     var documents = allDocuments();
     for (var d = 0; d < documents.length; d += 1) {
       var controls = Array.prototype.slice.call(
-        documents[d].querySelectorAll('a, button, input, [role="button"], img')
+        documents[d].querySelectorAll('a, button, input, [role="button"], img, #logout')
       );
       for (var i = 0; i < controls.length; i += 1) {
         if (!visible(controls[i])) {
@@ -229,13 +229,17 @@ class LoginAutofillAssistScript {
     return false;
   }
 
-  function resetAttemptAfterAuthentication() {
+  function hasAttemptToReset() {
     var attempts = parseInt(
       sessionValue(sessionKey('SUBMIT_COUNT')) || '0',
       10
     );
-    if (!window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY &&
-        (!isFinite(attempts) || attempts < 1)) {
+    return !!window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY ||
+      (isFinite(attempts) && attempts >= 1);
+  }
+
+  function resetAttemptAfterAuthentication() {
+    if (!hasAttemptToReset()) {
       return;
     }
     delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
@@ -509,7 +513,7 @@ class LoginAutofillAssistScript {
     var target = findLoginTarget();
     if (!target) {
       window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
-      if (hasAuthenticatedMarker()) {
+      if (hasAttemptToReset() && hasAuthenticatedMarker()) {
         resetAttemptAfterAuthentication();
       }
       reportState('skip', 'not-login-form');

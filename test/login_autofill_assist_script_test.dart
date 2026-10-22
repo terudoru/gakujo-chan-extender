@@ -86,6 +86,52 @@ void main() {
     expect(_hasReport(result, 'fill', 'target-found'), isTrue);
   });
 
+  test('does not scan authenticated controls without a pending attempt',
+      () async {
+    final result = await _evaluateGeneratedLoginAssist(
+      LoginAutofillAssistScript.build(),
+      [
+        {'tag': 'ul', 'id': 'logout', 'text': 'ログアウト'},
+        {'tag': 'img'},
+      ],
+      monitorTicks: 3,
+    );
+
+    expect(result['authenticatedControlScanCount'], 0);
+    expect(_hasReport(result, 'skip', 'not-login-form'), isTrue);
+    expect(_hasReport(result, 'authenticated', 'attempt-reset'), isFalse);
+  });
+
+  for (final pendingAttempt in ['submitted key', 'session count']) {
+    test('resets a pending $pendingAttempt with a visible logout list',
+        () async {
+      const pageSuffix = ':https://gakujo.example/campussmart.do';
+      const sessionSuffix = '$pageSuffix:no-credentials';
+      final pendingAttemptScript = pendingAttempt == 'submitted key'
+          ? "window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY = 'no-credentials';"
+          : "window.sessionStorage.setItem("
+              "'MBG_LOGIN_AUTOFILL_SUBMIT_COUNT$sessionSuffix', '1');";
+      final result = await _evaluateGeneratedLoginAssist(
+        "$pendingAttemptScript\n"
+        "window.sessionStorage.setItem("
+        "'MBG_LOGIN_AUTOFILL_ERROR$sessionSuffix', '1');\n"
+        "window.sessionStorage.setItem("
+        "'MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL$pageSuffix', 'no-credentials');\n"
+        '${LoginAutofillAssistScript.build()}',
+        [
+          {'tag': 'ul', 'id': 'logout', 'text': 'ログアウト'},
+          {'tag': 'img'},
+        ],
+        monitorTicks: 3,
+      );
+
+      expect(result['authenticatedControlScanCount'], 1);
+      expect(result['submittedKey'], isNull);
+      expect(result['sessionValues'], isEmpty);
+      expect(_hasReport(result, 'authenticated', 'attempt-reset'), isTrue);
+    });
+  }
+
   test('does not fill or submit a password change form', () async {
     final result = await _evaluateLoginAssist([
       {'tag': 'input', 'type': 'text', 'name': 'userId'},
@@ -345,6 +391,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String? teardownScript,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
+  int monitorTicks = 0,
 }) async {
   final process = await Process.start('node', [
     '-e',
@@ -354,6 +401,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
       'teardownScript': teardownScript,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
+      'monitorTicks': monitorTicks,
     }),
   ]);
   final stdoutFuture = process.stdout.transform(utf8.decoder).join();
@@ -406,6 +454,7 @@ let formSubmitCount = 0;
 let nextTimerId = 1;
 const activeTimers = new Map();
 const activeIntervals = new Map();
+let authenticatedControlScanCount = 0;
 
 class FakeEvent {
   constructor(type, options) {
@@ -479,10 +528,12 @@ class FakeElement {
       return this.children.filter((element) => element.tagName === 'INPUT');
     }
     if (selector === 'button, input, a, [role="button"]' ||
-        selector === 'a, button, input, [role="button"], img') {
+        selector === 'a, button, input, [role="button"], img' ||
+        selector === 'a, button, input, [role="button"], img, #logout') {
       return this.children.filter((element) =>
         ['BUTTON', 'INPUT', 'A', 'IMG'].includes(element.tagName) ||
-        element.getAttribute('role') === 'button'
+        element.getAttribute('role') === 'button' ||
+        (selector.includes('#logout') && element.id === 'logout')
       );
     }
     return [];
@@ -500,6 +551,9 @@ const document = {
   defaultView: null,
   querySelector() { return null; },
   querySelectorAll(selector) {
+    if (selector.startsWith('a, button, input, [role="button"], img')) {
+      authenticatedControlScanCount += 1;
+    }
     if (selector === 'iframe, frame') {
       return [];
     }
@@ -567,6 +621,9 @@ const context = {
   console: {log() {}}
 };
 vm.runInNewContext(generatedScript, context);
+for (let tick = 0; tick < (spec.monitorTicks || 0); tick += 1) {
+  for (const callback of [...activeIntervals.values()]) callback();
+}
 if (spec.simulateAuthenticatedTimeout) {
   delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
   const logout = new FakeElement('button', {text: 'ログアウト'});
@@ -598,6 +655,9 @@ process.stdout.write(JSON.stringify({
   clickedNames,
   requestSubmitCount,
   formSubmitCount,
+  authenticatedControlScanCount,
+  submittedKey: window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY || null,
+  sessionValues: Object.fromEntries(sessionValues),
   reports
 }));
 ''';
