@@ -1059,6 +1059,65 @@ void main() {
     expect(await store.loadReportLists(), isEmpty);
   });
 
+  test('mergeDeadlines rejects entries from grades pages', () async {
+    final store = GakujoActivityStore();
+    final deadline = GakujoDeadlineEntry(
+      title: '課題',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+      dueText: '提出期限 2099/07/01',
+      detectedAt: DateTime.now(),
+      source: 'レポート・小テスト',
+    );
+
+    final added = await store.mergeDeadlines([
+      GakujoDeadlineEntry(
+        title: '単位修得状況照会',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/grades',
+        dueText: '成績確定日 2099/07/01',
+        detectedAt: DateTime.now(),
+        kind: 'notice',
+        source: '成績',
+      ),
+      deadline,
+    ]);
+    final deadlines = await store.loadDeadlines();
+
+    expect(added.map((entry) => entry.key), [deadline.key]);
+    expect(deadlines.map((entry) => entry.key), [deadline.key]);
+  });
+
+  test('loadDeadlines drops persisted entries from grades pages', () async {
+    const storage = FlutterSecureStorage();
+    await storage.write(
+      key: 'more_better_gakujo_deadlines',
+      value: jsonEncode([
+        {
+          'title': '単位修得状況照会',
+          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/grades',
+          'dueText': '成績確定日 2099/07/01',
+          'detectedAt': '2099-06-26T00:00:00.000Z',
+          'kind': 'notice',
+          'source': '成績',
+        },
+        {
+          'title': '課題',
+          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+          'dueText': '提出期限 2099/07/01',
+          'detectedAt': '2099-06-26T00:00:00.000Z',
+          'kind': 'deadline',
+          'source': 'レポート・小テスト',
+        },
+      ]),
+    );
+
+    final store = GakujoActivityStore();
+    final deadlines = await store.loadDeadlines();
+
+    expect(deadlines, hasLength(1));
+    expect(deadlines.single.title, '課題');
+    expect(deadlines.single.source, 'レポート・小テスト');
+  });
+
   test('mergeDeadlines updates duplicate keys and returns only new entries',
       () async {
     final store = GakujoActivityStore();

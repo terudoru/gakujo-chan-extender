@@ -3766,6 +3766,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required List<_MessageActivityCandidate> messageItems,
     List<GakujoAssignment> assignments = const [],
   }) {
+    // Grades pages contain personal records, not deadlines.
+    if (category == '成績') {
+      return const [];
+    }
+
     final now = DateTime.now();
     final entries = <GakujoDeadlineEntry>[];
     final seen = <String>{};
