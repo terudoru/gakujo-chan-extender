@@ -11,7 +11,7 @@ class GakujoMessageFilterScript {
     );
     return '''
 (function() {
-  var version = 2;
+  var version = 3;
   var keywords = $encodedKeywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -96,6 +96,21 @@ class GakujoMessageFilterScript {
 
   function applyFilter() {
     var doc = mainFrameDocument();
+    if (!keywords.length) {
+      var hiddenRows = doc.querySelectorAll('tr[data-mbg-message-filter-display]');
+      Array.prototype.forEach.call(hiddenRows, function(row) {
+        var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
+        if (row.style.display !== originalDisplay) {
+          row.style.display = originalDisplay;
+        }
+        row.removeAttribute('data-mbg-message-filter-display');
+        if (row.getAttribute('data-mbg-message-filtered') !== 'false') {
+          row.setAttribute('data-mbg-message-filtered', 'false');
+        }
+      });
+      updateStatus(doc, 0);
+      return true;
+    }
     var table = messageTable();
     if (!table) {
       updateStatus(doc, 0);
@@ -108,22 +123,29 @@ class GakujoMessageFilterScript {
         return;
       }
       var text = compactText(row);
-      var hide = keywords.length > 0 && shouldHide(text);
+      var hide = shouldHide(text);
       var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
       if (hide) {
         if (originalDisplay === null) {
           originalDisplay = row.style.display || '';
           row.setAttribute('data-mbg-message-filter-display', originalDisplay);
         }
-        row.style.display = 'none';
+        if (row.style.display !== 'none') {
+          row.style.display = 'none';
+        }
         if (originalDisplay !== 'none') {
           hiddenCount += 1;
         }
       } else if (originalDisplay !== null) {
-        row.style.display = originalDisplay;
+        if (row.style.display !== originalDisplay) {
+          row.style.display = originalDisplay;
+        }
         row.removeAttribute('data-mbg-message-filter-display');
       }
-      row.setAttribute('data-mbg-message-filtered', hide ? 'true' : 'false');
+      var filtered = hide ? 'true' : 'false';
+      if (row.getAttribute('data-mbg-message-filtered') !== filtered) {
+        row.setAttribute('data-mbg-message-filtered', filtered);
+      }
     });
     updateStatus(doc, hiddenCount);
     return true;

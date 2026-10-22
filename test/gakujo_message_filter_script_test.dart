@@ -65,12 +65,106 @@ void main() {
     );
     expect((result.single as Map)['statusText'], isNull);
     expect((result.single as Map)['rowDisplays'], ['', 'none']);
+    expect((result.single as Map)['displayWrites'], 0);
+  });
+
+  for (final directTable in [true, false]) {
+    test('empty keywords leave rows untouched (direct table: $directTable)',
+        () async {
+      final script = GakujoMessageFilterScript.build(keywords: const []);
+      final result = await _evaluateMessageFilterScripts(
+        [script, script],
+        initialDisplays: ['table-row', 'none'],
+        directTable: directTable,
+        intervalPasses: 3,
+      );
+
+      for (final snapshot in result.cast<Map<String, dynamic>>()) {
+        expect(snapshot['rowTextReads'], 0);
+        expect(snapshot['tableTextReads'], 0);
+        expect(snapshot['attributeWrites'], 0);
+        expect(snapshot['displayWrites'], 0);
+        expect(snapshot['rowAttributes'], [{}, {}]);
+        expect(snapshot['rowDisplays'], ['table-row', 'none']);
+        expect(snapshot['statusText'], isNull);
+        expect(snapshot['activeIntervalCount'], 1);
+      }
+    });
+  }
+
+  test('clearing keywords restores only owned rows without reading text',
+      () async {
+    final empty = GakujoMessageFilterScript.build(keywords: const []);
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['アンケート']),
+        empty,
+        empty,
+      ],
+      initialDisplays: ['table-row', 'none'],
+      directTable: false,
+      intervalPasses: 3,
+    );
+
+    final filtered = result[0] as Map<String, dynamic>;
+    expect(filtered['rowDisplays'], ['none', 'none']);
+    expect(filtered['statusText'], '除外中: 1件');
+
+    final cleared = result[1] as Map<String, dynamic>;
+    expect(cleared['rowDisplays'], ['table-row', 'none']);
+    expect(cleared['rowAttributes'], [
+      {'data-mbg-message-filtered': 'false'},
+      {'data-mbg-message-filtered': 'false'},
+    ]);
+    expect(cleared['rowTextReads'], 0);
+    expect(cleared['tableTextReads'], 0);
+    expect(cleared['attributeWrites'], 2);
+    expect(cleared['displayWrites'], 1);
+    expect(cleared['statusText'], isNull);
+
+    final repeated = result[2] as Map<String, dynamic>;
+    expect(repeated['rowTextReads'], 0);
+    expect(repeated['tableTextReads'], 0);
+    expect(repeated['attributeWrites'], 0);
+    expect(repeated['displayWrites'], 0);
+  });
+
+  test('keyword passes write only changed row attributes and display styles',
+      () async {
+    final survey = GakujoMessageFilterScript.build(keywords: const ['アンケート']);
+    final important = GakujoMessageFilterScript.build(keywords: const ['重要']);
+    final result = await _evaluateMessageFilterScripts(
+      [survey, survey, important, important],
+      intervalPasses: 3,
+    );
+
+    final first = result[0] as Map<String, dynamic>;
+    expect(first['rowDisplays'], ['none', '']);
+    expect(first['attributeWrites'], 3);
+    expect(first['displayWrites'], 1);
+    expect(first['statusText'], '除外中: 1件');
+
+    final changed = result[2] as Map<String, dynamic>;
+    expect(changed['rowDisplays'], ['', 'none']);
+    expect(changed['attributeWrites'], 4);
+    expect(changed['displayWrites'], 2);
+    expect(changed['statusText'], '除外中: 1件');
+
+    for (final index in [1, 3]) {
+      final repeated = result[index] as Map<String, dynamic>;
+      expect(repeated['attributeWrites'], 0);
+      expect(repeated['displayWrites'], 0);
+      expect(repeated['statusText'], '除外中: 1件');
+      expect(repeated['activeIntervalCount'], 1);
+    }
   });
 }
 
 Future<List<dynamic>> _evaluateMessageFilterScripts(
   List<String> scripts, {
   List<String> initialDisplays = const ['', ''],
+  bool directTable = true,
+  int intervalPasses = 0,
 }) async {
   final result = await Process.run(
     'node',
@@ -78,7 +172,11 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
       '-e',
       _messageFilterDomHarness,
       jsonEncode(scripts),
-      jsonEncode(initialDisplays)
+      jsonEncode(initialDisplays),
+      jsonEncode({
+        'directTable': directTable,
+        'intervalPasses': intervalPasses,
+      }),
     ],
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
@@ -95,21 +193,45 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
 const _messageFilterDomHarness = r'''
 const vm = require('node:vm');
 const scripts = JSON.parse(process.argv[1]);
+const options = JSON.parse(process.argv[3]);
 
 class FakeElement {
   constructor(tag, text = '') {
     this.tagName = tag.toUpperCase();
     this.id = '';
-    this.innerText = text;
-    this.textContent = text;
+    this.text = text;
+    this.textReads = 0;
+    this.attributeWrites = 0;
+    this.displayWrites = 0;
     this.value = '';
-    this.style = {};
+    this.style = new Proxy({}, {
+      set: (target, name, value) => {
+        if (name === 'display') this.displayWrites += 1;
+        target[name] = value;
+        return true;
+      }
+    });
     this.attributes = {};
     this.children = [];
     this.parentNode = null;
   }
 
+  get innerText() {
+    this.textReads += 1;
+    return this.text;
+  }
+
+  get textContent() {
+    this.textReads += 1;
+    return this.text;
+  }
+
+  set textContent(value) {
+    this.text = value;
+  }
+
   setAttribute(name, value) {
+    this.attributeWrites += 1;
     this.attributes[name] = String(value);
   }
 
@@ -118,6 +240,7 @@ class FakeElement {
   }
 
   removeAttribute(name) {
+    this.attributeWrites += 1;
     delete this.attributes[name];
   }
 
@@ -153,13 +276,13 @@ const important = new FakeElement('tr', '重要なお知らせ');
 const rows = [header, survey, important];
 const table = new FakeElement(
   'table',
-  rows.map((row) => row.innerText).join(' '),
+  '連絡通知 ' + rows.map((row) => row.text).join(' '),
 );
 table.querySelector = (selector) => selector === 'a[href]' ? {} : null;
 table.querySelectorAll = (selector) => selector === 'tr' ? rows : [];
 
 let nextIntervalId = 1;
-const activeIntervals = new Set();
+const activeIntervals = new Map();
 const document = {
   getElementById(id) {
     if (id === 'main-frame-if') return null;
@@ -167,10 +290,16 @@ const document = {
     return findById(target, id);
   },
   querySelector(selector) {
-    return selector === 'table.normal:nth-child(9)' ? table : null;
+    return options.directTable && selector === 'table.normal:nth-child(9)'
+      ? table : null;
   },
   querySelectorAll(selector) {
-    return selector === 'table' ? [table] : [];
+    if (selector === 'table') return [table];
+    if (selector === 'tr[data-mbg-message-filter-display]') {
+      return rows.filter((row) =>
+        row.getAttribute('data-mbg-message-filter-display') !== null);
+    }
+    return [];
   },
   createElement(tag) {
     return new FakeElement(tag);
@@ -179,9 +308,10 @@ const document = {
 const window = {
   document,
   clearInterval(id) { activeIntervals.delete(id); },
-  setInterval() {
+  setInterval(callback, delay) {
+    if (delay !== 500) throw new Error('Expected a 500 ms interval');
     const id = nextIntervalId++;
-    activeIntervals.add(id);
+    activeIntervals.set(id, callback);
     return id;
   }
 };
@@ -192,6 +322,11 @@ function snapshot() {
   const status = document.getElementById('mbg-message-filter-status');
   return {
     rowDisplays: [survey.style.display || '', important.style.display || ''],
+    rowAttributes: [survey, important].map((row) => ({...row.attributes})),
+    rowTextReads: rows.reduce((sum, row) => sum + row.textReads, 0),
+    tableTextReads: table.textReads,
+    attributeWrites: rows.reduce((sum, row) => sum + row.attributeWrites, 0),
+    displayWrites: rows.reduce((sum, row) => sum + row.displayWrites, 0),
     statusText: status ? status.textContent : null,
     activeIntervalCount: activeIntervals.size
   };
@@ -199,7 +334,15 @@ function snapshot() {
 
 const snapshots = [];
 for (const script of scripts) {
+  for (const element of [...rows, table]) {
+    element.textReads = 0;
+    element.attributeWrites = 0;
+    element.displayWrites = 0;
+  }
   vm.runInNewContext(script, context);
+  for (let pass = 0; pass < options.intervalPasses; pass += 1) {
+    for (const callback of activeIntervals.values()) callback();
+  }
   snapshots.push(snapshot());
 }
 process.stdout.write(JSON.stringify(snapshots));
