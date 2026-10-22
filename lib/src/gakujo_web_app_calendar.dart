@@ -983,7 +983,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('課題の締切も追加する'),
                         subtitle: const Text(
-                          'レポート・小テスト一覧で読み取った締切を、締切時刻の予定として追加します。一覧を開いたことがある課題が対象です。',
+                          'レポート・小テスト一覧の締切を、締切時刻の予定として追加します。',
                         ),
                         value: selectedSettings.includeAssignmentDeadlines,
                         onChanged: (value) {
@@ -1017,6 +1017,27 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
+                      // Rarely used; kept here so the buttons below stay on
+                      // one row instead of taking half the dialog.
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () =>
+                                popWith(_ScheduleIntegrationAction.validation),
+                            icon: const Icon(Icons.science_outlined),
+                            label: const Text('検証'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => popWith(
+                              _ScheduleIntegrationAction.deleteDeviceCalendar,
+                            ),
+                            icon: const Icon(Icons.event_busy_outlined),
+                            label: const Text('追加済みを削除'),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -1024,19 +1045,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                   TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     child: const Text('閉じる'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () =>
-                        popWith(_ScheduleIntegrationAction.validation),
-                    icon: const Icon(Icons.science_outlined),
-                    label: const Text('検証'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => popWith(
-                      _ScheduleIntegrationAction.deleteDeviceCalendar,
-                    ),
-                    icon: const Icon(Icons.event_busy_outlined),
-                    label: const Text('追加済みを削除'),
                   ),
                   FilledButton.icon(
                     onPressed: () =>
