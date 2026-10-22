@@ -3509,6 +3509,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       final result = await _controller.runJavaScriptReturningResult(r'''
 (function() {
+''' +
+          gakujoSmartphoneMessageRowsScript +
+          r'''
   var texts = [];
   var messageItems = [];
   var reportItems = [];
@@ -3671,6 +3674,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
   function collectMessageItems(doc) {
     try {
+      var mobile = doc.querySelectorAll('div.button[onclick*="seqNo="]');
+      if (mobile.length && compactText(doc.body).indexOf('連絡通知') >= 0) {
+        for (var m = 0; m < mobile.length; m += 1) {
+          var item = readSmartphoneMessageRow(mobile[m], doc.baseURI || doc.location.href);
+          if (item) addMessageData(doc, item.title, item.url, item.text);
+        }
+        return;
+      }
       if (collectNoticeDetail(doc)) {
         return;
       }

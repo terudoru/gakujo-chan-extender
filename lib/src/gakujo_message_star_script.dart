@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'gakujo_message_list_script.dart';
+
 class GakujoMessageStarScript {
   const GakujoMessageStarScript._();
 
@@ -34,8 +36,11 @@ class GakujoMessageStarScript {
 
   static const _script = r'''
 (function() {
+''' +
+      gakujoSmartphoneMessageRowsScript +
+      r'''
   var initialIds = __STARRED_IDS__;
-  var version = 3;
+  var version = 5;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
     window.__MBG_MESSAGE_STARS_REFRESH(initialIds);
     return;
@@ -47,16 +52,19 @@ class GakujoMessageStarScript {
   var buttons = [];
   var buttonTargets = new WeakSet();
   var styles = [];
-  var lastDetailDocument;
-  var lastDetailSignature;
-  var listDocument;
+  var lastDetailSignatures = new WeakMap();
+  var listDocuments = [];
   var openedMessageKey = '__MBG_MESSAGE_STARS_OPEN_MESSAGE';
 
-  function mainFrameDocument() {
+  function candidateDocuments() {
+    var docs = [];
     try {
       var frame = document.getElementById('main-frame-if');
-      return frame && frame.contentWindow && frame.contentWindow.document || document;
-    } catch (e) { return document; }
+      var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
+      if (frameDoc) docs.push(frameDoc);
+    } catch (e) {}
+    if (docs.indexOf(document) < 0) docs.push(document);
+    return docs;
   }
   function text(node) {
     return String(node && (node.innerText || node.textContent) || '')
@@ -105,7 +113,7 @@ class GakujoMessageStarScript {
     (doc.head || doc.documentElement).appendChild(style);
     styles.push(style);
   }
-  function addButton(target, data, doc, initialData) {
+  function addButton(target, data, doc, initialData, inside) {
     if (buttonTargets.has(target)) return;
     ensureStyle(doc);
     var message = initialData || data();
@@ -121,7 +129,8 @@ class GakujoMessageStarScript {
       event.stopPropagation();
       send('toggle', data());
     });
-    target.parentNode.insertBefore(button, target);
+    if (inside) target.insertBefore(button, target.firstChild);
+    else target.parentNode.insertBefore(button, target);
     var entry = {button: button, target: target, id: id(message)};
     buttons.push(entry);
     buttonTargets.add(target);
@@ -155,17 +164,43 @@ class GakujoMessageStarScript {
   }
   function rememberClickedMessage(event) {
     var link = event.target && event.target.closest && event.target.closest('a[href*="seqNo="]');
+    var mobile = !link && event.target && event.target.closest &&
+      event.target.closest('div.button[onclick*="seqNo="]');
+    if (mobile) link = mobile;
     if (!link) return;
     var doc = link.ownerDocument;
-    var params = new URL(link.getAttribute('href'), doc.baseURI).searchParams;
+    var href = mobile ? messageOnclickUrl(link) : link.getAttribute('href');
+    if (!href) return;
+    var params = new URL(href, doc.baseURI).searchParams;
     if (params.get('_eventId') !== 'displayMidoku' && params.get('_eventId') !== 'confirm') return;
-    var data = identity(link.getAttribute('href'), doc);
+    var data = identity(href, doc);
     if (data) {
-      data.title = title(link);
+      data.title = title(mobile ? link.querySelector('p') : link);
       remember(data);
     }
   }
-  function detailData(doc, heading) {
+  function smartphoneRowData(button, doc) {
+    var data = identity(messageOnclickUrl(button), doc);
+    if (!data) return null;
+    var row = readSmartphoneMessageRow(button, doc.baseURI);
+    if (!row) return null;
+    data.title = title(button.querySelector('p'));
+    data.genre = row.genre;
+    data.sender = row.sender;
+    data.period = row.period;
+    data.postedAt = row.postedAt;
+    data.body = '';
+    return data;
+  }
+  function smartphoneDetailFields(doc) {
+    var fields = {};
+    var headers = doc.querySelectorAll('#main-portlet-body ul.campussmart-list li.header');
+    for (var i = 0; i < headers.length; i += 1) {
+      fields[text(headers[i])] = headers[i].nextElementSibling;
+    }
+    return fields;
+  }
+  function detailData(doc, heading, mobileFields) {
     var data = identity(doc.location && doc.location.href || doc.URL || '', doc);
     if (!data) {
       var attachments = doc.querySelectorAll('a[href*="_eventId=download"]');
@@ -187,6 +222,15 @@ class GakujoMessageStarScript {
     }
     if (!data) return null;
     data.title = title(heading);
+    if (mobileFields) {
+      data.genre = '';
+      var body = mobileFields['内容'];
+      data.body = String(body && (body.innerText || body.textContent) || '').trim().slice(0, 4000);
+      data.sender = [text(mobileFields['所属']), text(mobileFields['氏名'])].filter(Boolean).join(' ／ ');
+      data.period = '';
+      data.postedAt = text(mobileFields['掲載日時']);
+      return data;
+    }
     var genre = text(doc.querySelector('span.keiji-t-genre')).replace(/^\[|\]$/g, '').trim();
     var genres = genre.split(/\s+/);
     data.genre = genres.length === 2 && genres[0] === genres[1] ? genres[0] : genre;
@@ -206,21 +250,7 @@ class GakujoMessageStarScript {
     }
     return data;
   }
-  function update() {
-    if (disposed) return;
-    var doc = mainFrameDocument();
-    if (doc !== listDocument) {
-      if (listDocument) listDocument.removeEventListener('click', rememberClickedMessage, true);
-      listDocument = doc;
-      listDocument.addEventListener('click', rememberClickedMessage, true);
-    }
-    // Release buttons belonging to a frame document that has navigated away.
-    buttons = buttons.filter(function(entry) {
-      if (entry.target.ownerDocument === doc && entry.target.isConnected !== false) return true;
-      entry.button.remove();
-      buttonTargets.delete(entry.target);
-      return false;
-    });
+  function updateDocument(doc) {
     var links = doc.querySelectorAll('a[href*="seqNo="]');
     var headersByTable = new Map();
     for (var i = 0; i < links.length; i += 1) {
@@ -232,18 +262,53 @@ class GakujoMessageStarScript {
         (function(link) { addButton(link, function() { return rowData(link, doc); }, doc, data); })(links[i]);
       }
     }
+    var mobile = doc.querySelectorAll('div.button[onclick*="seqNo="]');
+    for (var m = 0; m < mobile.length; m += 1) {
+      if (buttonTargets.has(mobile[m])) continue;
+      var href = messageOnclickUrl(mobile[m]);
+      if (!href) continue;
+      var event = new URL(href, doc.baseURI).searchParams.get('_eventId');
+      if (event !== 'displayMidoku' && event !== 'confirm') continue;
+      var data = smartphoneRowData(mobile[m], doc);
+      if (data) {
+        (function(button) {
+          addButton(button, function() { return smartphoneRowData(button, doc); }, doc, data, true);
+        })(mobile[m]);
+      }
+    }
     var heading = doc.querySelector('span.keiji-title');
-    var detail = heading && detailData(doc, heading);
+    var mobileFields = !heading && smartphoneDetailFields(doc);
+    if (mobileFields) heading = mobileFields['表題'];
+    var detail = heading && detailData(doc, heading, mobileFields);
     if (detail) {
-      addButton(heading, function() { return detailData(doc, heading); }, doc);
+      addButton(heading, function() {
+        return detailData(doc, heading, mobileFields && smartphoneDetailFields(doc));
+      }, doc, mobileFields ? detail : null, !!mobileFields);
       var signature = JSON.stringify(detail);
-      if (ids.has(id(detail)) &&
-          (doc !== lastDetailDocument || signature !== lastDetailSignature)) {
-        lastDetailDocument = doc;
-        lastDetailSignature = signature;
+      if (ids.has(id(detail)) && signature !== lastDetailSignatures.get(doc)) {
+        lastDetailSignatures.set(doc, signature);
         send('detail', detail);
       }
     }
+  }
+  function update() {
+    if (disposed) return;
+    var docs = candidateDocuments();
+    listDocuments.forEach(function(doc) {
+      if (docs.indexOf(doc) < 0) doc.removeEventListener('click', rememberClickedMessage, true);
+    });
+    docs.forEach(function(doc) {
+      if (listDocuments.indexOf(doc) < 0) doc.addEventListener('click', rememberClickedMessage, true);
+    });
+    listDocuments = docs;
+    // Release buttons belonging to a document that has navigated away.
+    buttons = buttons.filter(function(entry) {
+      if (docs.indexOf(entry.target.ownerDocument) >= 0 && entry.target.isConnected !== false) return true;
+      entry.button.remove();
+      buttonTargets.delete(entry.target);
+      return false;
+    });
+    docs.forEach(updateDocument);
     buttons.forEach(paint);
   }
   window.__MBG_MESSAGE_STARS_REFRESH = function(nextIds) {
@@ -254,8 +319,8 @@ class GakujoMessageStarScript {
   window.__MBG_MESSAGE_STARS_DISPOSE = function() {
     disposed = true;
     window.clearInterval(timer);
-    if (listDocument) listDocument.removeEventListener('click', rememberClickedMessage, true);
-    listDocument = null;
+    listDocuments.forEach(function(doc) { doc.removeEventListener('click', rememberClickedMessage, true); });
+    listDocuments = [];
     buttons.forEach(function(entry) { entry.button.remove(); });
     buttons = [];
     buttonTargets = new WeakSet();
@@ -273,6 +338,9 @@ class GakujoMessageStarScript {
   // WebView navigation because opening a detail marks that message as read.
   static const _openScript = r'''
 (function() {
+''' +
+      gakujoSmartphoneMessageRowsScript +
+      r'''
   var message = __MESSAGE__;
   var base = location.origin + '/campusweb/';
   function result(status, url) { return JSON.stringify({status: status, url: url}); }
@@ -283,7 +351,15 @@ class GakujoMessageStarScript {
       if (value) return value;
     }
     var input = doc.querySelector('input[name="_flowExecutionKey"]');
-    return input && input.value || '';
+    if (input && input.value) return input.value;
+    var actions = doc.querySelectorAll('[onclick*="_flowExecutionKey="]');
+    for (var i = 0; i < actions.length; i += 1) {
+      var href = messageOnclickUrl(actions[i]);
+      if (!href) continue;
+      var value = new URL(href, base).searchParams.get('_flowExecutionKey');
+      if (value) return value;
+    }
+    return '';
   }
   function get(url) {
     var xhr = new XMLHttpRequest();
@@ -294,7 +370,7 @@ class GakujoMessageStarScript {
     var body = String(doc.body && (doc.body.innerText || doc.body.textContent) || '');
     if (/実行権限エラー|SYSTEM ERROR/.test(String(doc.title)) ||
         /^\s*(実行権限エラー|SYSTEM ERROR)/.test(body)) throw new Error('system');
-    if (String(doc.title || '').indexOf('連絡通知') < 0) throw new Error('missing');
+    if (String(doc.title || '').indexOf('連絡通知') < 0 && body.indexOf('連絡通知') < 0) throw new Error('missing');
     return doc;
   }
   function url(flowKey, event) {
@@ -313,9 +389,13 @@ class GakujoMessageStarScript {
     doc = get(url(key(doc), 'dispKeijiListGenre') + genre);
     doc = get(url(key(doc), 'paging') + '&_displayCount=500');
     var links = doc.querySelectorAll('a[href*="seqNo="]');
+    var mobile = doc.querySelectorAll('[onclick*="seqNo="]');
+    links = Array.from(links).concat(Array.from(mobile));
     var found;
     for (var i = 0; i < links.length; i += 1) {
-      var params = new URL(links[i].getAttribute('href'), base).searchParams;
+      var href = links[i].getAttribute('href') || messageOnclickUrl(links[i]);
+      if (!href) continue;
+      var params = new URL(href, base).searchParams;
       if (params.get('seqNo') === message.seqNo &&
           params.get('keijitype') === message.keijitype &&
           params.get('genrecd') === message.genrecd) {
@@ -325,6 +405,7 @@ class GakujoMessageStarScript {
     }
     if (!found) return result('gone');
     var targetUrl = url(key(doc), 'confirm') + genre + '&seqNo=' + encodeURIComponent(message.seqNo);
+    if (found.getAttribute('onclick') && found.querySelector) found = found.querySelector('p') || found;
     message.title = String(found.innerText || found.textContent || '')
       .replace(/\s+/g, ' ').trim().replace(/\s*\[新着\]\s*$/, '');
     try {

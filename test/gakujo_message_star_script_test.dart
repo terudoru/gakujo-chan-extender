@@ -235,40 +235,42 @@ void main() {
     });
   }
 
-  test('reopen rotates keys, checks genre and 500-row list before navigation',
-      () async {
-    final result = await _open('ok');
-    expect(result['result']['status'], 'ok');
-    expect(result['beforeNavigationCount'], 3);
-    final requests = (result['requests'] as List).cast<String>();
-    expect(
-        Uri.parse(requests[0]).queryParameters['_flowId'], 'KJW0001100-flow');
-    expect(Uri.parse(requests[1]).queryParameters, {
-      '_flowExecutionKey': 'first key',
-      '_eventId': 'dispKeijiListGenre',
-      'keijitype': '1',
-      'genrecd': '40',
+  for (final scenario in ['ok', 'smartphone', 'smartphoneMixedKeys']) {
+    test('$scenario reopen rotates keys and checks the 500-row genre list',
+        () async {
+      final result = await _open(scenario);
+      expect(result['result']['status'], 'ok');
+      expect(result['beforeNavigationCount'], 3);
+      final requests = (result['requests'] as List).cast<String>();
+      expect(
+          Uri.parse(requests[0]).queryParameters['_flowId'], 'KJW0001100-flow');
+      expect(Uri.parse(requests[1]).queryParameters, {
+        '_flowExecutionKey': 'first key',
+        '_eventId': 'dispKeijiListGenre',
+        'keijitype': '1',
+        'genrecd': '40',
+      });
+      expect(Uri.parse(requests[2]).queryParameters, {
+        '_flowExecutionKey': 'second-key',
+        '_eventId': 'paging',
+        '_displayCount': '500',
+      });
+      expect(Uri.parse(requests[3]).queryParameters, {
+        '_flowExecutionKey': 'third-key',
+        '_eventId': 'confirm',
+        'keijitype': '1',
+        'genrecd': '40',
+        'seqNo': '507762',
+      });
+      expect(result['navigatedResponse'], 'detail response');
+      expect(result['remembered'], {
+        'keijitype': '1',
+        'genrecd': '40',
+        'seqNo': '507762',
+        'title': '授業のお知らせ',
+      });
     });
-    expect(Uri.parse(requests[2]).queryParameters, {
-      '_flowExecutionKey': 'second-key',
-      '_eventId': 'paging',
-      '_displayCount': '500',
-    });
-    expect(Uri.parse(requests[3]).queryParameters, {
-      '_flowExecutionKey': 'third-key',
-      '_eventId': 'confirm',
-      'keijitype': '1',
-      'genrecd': '40',
-      'seqNo': '507762',
-    });
-    expect(result['navigatedResponse'], 'detail response');
-    expect(result['remembered'], {
-      'keijitype': '1',
-      'genrecd': '40',
-      'seqNo': '507762',
-      'title': '授業のお知らせ',
-    });
-  });
+  }
 
   test('reopen still navigates when session storage is unavailable', () async {
     final result = await _open('storageDenied');
@@ -277,7 +279,12 @@ void main() {
     expect(result['remembered'], isNull);
   });
 
-  for (final scenario in ['gone', 'wrongGenre']) {
+  for (final scenario in [
+    'gone',
+    'wrongGenre',
+    'smartphoneGone',
+    'smartphoneWrongGenre'
+  ]) {
     test('reopen $scenario preserves saved text without opening a detail',
         () async {
       final result = await _open(scenario);
@@ -578,19 +585,34 @@ const script = scripts[0];
 const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
 const requests = [];
 const link = href => ({getAttribute: () => href, textContent: '  授業のお知らせ  [新着]  '});
+const mobile = scenario.startsWith('smartphone');
+const action = href => ({
+  getAttribute: name => name === 'onclick' ? 'location.href="' + href.replace(/&/g, '&amp;') + '"' : null,
+  textContent: 'スター 授業のお知らせ 掲示期間： 2026/10/01 ～ 2026/11/01',
+  querySelector: selector => selector === 'p' ? {textContent: '  授業のお知らせ [新着]  '} : null
+});
 function makeDoc(index) {
   const missing = scenario === 'missing' + index;
   const hasKey = scenario !== 'noKey';
   return {
-    title: missing ? 'ログイン' : scenario === 'systemError' ? 'SYSTEM ERROR' : '連絡通知一覧',
-    body: {textContent: ''},
+    title: missing ? 'ログイン' : scenario === 'systemError' ? 'SYSTEM ERROR'
+      : mobile ? 'CampusSquare for WEB' : '連絡通知一覧',
+    body: {textContent: mobile ? '連絡通知 未読一覧' : ''},
     querySelector(selector) {
+      if (mobile && (scenario !== 'smartphoneMixedKeys' || index === 0)) return null;
       if (selector.startsWith('a[')) return hasKey && index !== 1
         ? link('campussquare.do?_flowExecutionKey=' + (index === 0 ? 'first%20key' : 'third-key')) : null;
       return hasKey && index === 1 ? {value: 'second-key'} : null;
     },
-    querySelectorAll() {
-      if (index !== 2 || scenario === 'gone') return [];
+    querySelectorAll(selector) {
+      if (mobile) {
+        if (selector === '[onclick*="_flowExecutionKey="]') return [action(
+          'campussquare.do?_flowExecutionKey=' + ['first%20key', 'second-key', 'third-key'][index] + '&_eventId=paging')];
+        if (selector !== '[onclick*="seqNo="]' || index !== 2 || scenario === 'smartphoneGone') return [];
+        return [action('campussquare.do?_flowExecutionKey=third-key&_eventId=confirm&keijitype=1&genrecd=' +
+          (scenario === 'smartphoneWrongGenre' ? '41' : '40') + '&seqNo=507762')];
+      }
+      if (selector !== 'a[href*="seqNo="]' || index !== 2 || scenario === 'gone') return [];
       return [link('campussquare.do?_flowExecutionKey=third-key&_eventId=confirm&keijitype=1&genrecd=' +
         (scenario === 'wrongGenre' ? '41' : '40') + '&seqNo=507762')];
     }
