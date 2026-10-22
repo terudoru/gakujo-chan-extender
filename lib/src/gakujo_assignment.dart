@@ -215,10 +215,18 @@ const gakujoAssignmentListFetchScript = '''
     // The list states how many there are in all, as 「11件」 or 「1～11/11件」.
     var counts = String(form.textContent || '').match(/([0-9]+)件/g) || [];
     var total = counts.length ? parseInt(counts[0], 10) : -1;
+    var rows = readAssignmentRows(doc);
+    // Smartphone lists omit the count; only an unpaged list is complete.
+    if (!counts.length && form.querySelector('ul.campussmart-list') &&
+        !/次へ|前へ/.test(String(form.textContent || '')) &&
+        !form.querySelector('[onclick*="paging"], [href*="paging"], ' +
+          'select[name="_displayCount"], input[name="_displayCount"]')) {
+      total = rows.length;
+    }
     return JSON.stringify({
       status: 'ok',
       total: total,
-      rows: readAssignmentRows(doc)
+      rows: rows
     });
   } catch (e) {
     return JSON.stringify({status: 'error', rows: []});
