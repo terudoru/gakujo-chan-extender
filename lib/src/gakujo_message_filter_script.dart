@@ -5,13 +5,19 @@ import 'gakujo_app_settings.dart';
 class GakujoMessageFilterScript {
   const GakujoMessageFilterScript._();
 
+  static String buildTeardown() => r'''
+(function() {
+  if (window.__MBG_MESSAGE_FILTER_DISPOSE) window.__MBG_MESSAGE_FILTER_DISPOSE();
+})()
+''';
+
   static String build({required List<String> keywords}) {
     final encodedKeywords = jsonEncode(
       normalizeMessageExcludeKeywords(keywords),
     );
     return '''
 (function() {
-  var version = 3;
+  var version = 4;
   var keywords = $encodedKeywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -26,13 +32,15 @@ class GakujoMessageFilterScript {
   window.__MBG_MESSAGE_FILTER_VERSION = version;
   window.__MBG_MESSAGE_FILTER_SIGNATURE = signature;
 
-  function mainFrameDocument() {
+  function candidateDocuments() {
+    var docs = [];
     try {
       var frame = document.getElementById('main-frame-if');
-      return frame && frame.contentWindow && frame.contentWindow.document || document;
-    } catch (e) {
-      return document;
-    }
+      var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
+      if (frameDoc) docs.push(frameDoc);
+    } catch (e) {}
+    if (docs.indexOf(document) < 0) docs.push(document);
+    return docs;
   }
 
   function compactText(element) {
@@ -41,8 +49,7 @@ class GakujoMessageFilterScript {
       .trim();
   }
 
-  function messageTable() {
-    var doc = mainFrameDocument();
+  function messageTable(doc) {
     var direct = doc.querySelector('table.normal:nth-child(9)');
     if (direct) {
       return direct;
@@ -54,11 +61,25 @@ class GakujoMessageFilterScript {
       if ((text.indexOf('連絡通知') >= 0 ||
            text.indexOf('全学連絡通知') >= 0 ||
            text.indexOf('掲示') >= 0) &&
-          table.querySelector('a[href]')) {
+          table.querySelector('a[href*="seqNo="]')) {
         return table;
       }
     }
     return null;
+  }
+
+  function smartphoneMessageRows(doc) {
+    var rows = [];
+    var buttons = doc.querySelectorAll('div.button[onclick*="seqNo="]');
+    Array.prototype.forEach.call(buttons, function(button) {
+      for (var row = button.parentNode; row; row = row.parentNode) {
+        if (row.tagName === 'TR' && row.querySelector('td.category-frame')) {
+          if (rows.indexOf(row) < 0) rows.push(row);
+          break;
+        }
+      }
+    });
+    return rows;
   }
 
   function shouldHide(text) {
@@ -71,8 +92,8 @@ class GakujoMessageFilterScript {
     return false;
   }
 
-  function updateStatus(doc, hiddenCount) {
-    var target = doc.getElementById('tabmenutable');
+  function updateStatus(doc, hiddenCount, listTable) {
+    var target = listTable ? listTable.parentNode : doc.getElementById('tabmenutable');
     var status = doc.getElementById('mbg-message-filter-status');
     if (!keywords.length || hiddenCount <= 0) {
       if (status) {
@@ -89,39 +110,45 @@ class GakujoMessageFilterScript {
       status.style.marginLeft = '8px';
       status.style.fontSize = '12px';
       status.style.color = '#31543f';
-      target.appendChild(status);
+      if (listTable) target.insertBefore(status, listTable);
+      else target.appendChild(status);
     }
-    status.textContent = '除外中: ' + hiddenCount + '件';
+    var label = '除外中: ' + hiddenCount + '件';
+    if (status.textContent !== label) status.textContent = label;
   }
 
-  function applyFilter() {
-    var doc = mainFrameDocument();
+  function restoreRows(doc) {
+    var hiddenRows = doc.querySelectorAll('tr[data-mbg-message-filter-display]');
+    Array.prototype.forEach.call(hiddenRows, function(row) {
+      var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
+      if (row.style.display !== originalDisplay) {
+        row.style.display = originalDisplay;
+      }
+      row.removeAttribute('data-mbg-message-filter-display');
+      if (row.getAttribute('data-mbg-message-filtered') !== 'false') {
+        row.setAttribute('data-mbg-message-filtered', 'false');
+      }
+    });
+  }
+
+  function applyDocumentFilter(doc) {
     if (!keywords.length) {
-      var hiddenRows = doc.querySelectorAll('tr[data-mbg-message-filter-display]');
-      Array.prototype.forEach.call(hiddenRows, function(row) {
-        var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
-        if (row.style.display !== originalDisplay) {
-          row.style.display = originalDisplay;
-        }
-        row.removeAttribute('data-mbg-message-filter-display');
-        if (row.getAttribute('data-mbg-message-filtered') !== 'false') {
-          row.setAttribute('data-mbg-message-filtered', 'false');
-        }
-      });
+      restoreRows(doc);
       updateStatus(doc, 0);
       return true;
     }
-    var table = messageTable();
-    if (!table) {
+    var rows = smartphoneMessageRows(doc);
+    var table = rows.length ? null : messageTable(doc);
+    if (table) {
+      rows = Array.prototype.slice.call(table.querySelectorAll('tr'), 1);
+    }
+    if (!rows.length) {
       updateStatus(doc, 0);
       return false;
     }
-    var rows = Array.prototype.slice.call(table.querySelectorAll('tr'));
+    var listTable = table ? null : rows[0].closest('table');
     var hiddenCount = 0;
-    rows.forEach(function(row, index) {
-      if (index === 0) {
-        return;
-      }
+    rows.forEach(function(row) {
       var text = compactText(row);
       var hide = shouldHide(text);
       var originalDisplay = row.getAttribute('data-mbg-message-filter-display');
@@ -147,10 +174,30 @@ class GakujoMessageFilterScript {
         row.setAttribute('data-mbg-message-filtered', filtered);
       }
     });
-    updateStatus(doc, hiddenCount);
+    updateStatus(doc, hiddenCount, listTable);
     return true;
   }
 
+  function applyFilter() {
+    var applied = false;
+    candidateDocuments().forEach(function(doc) {
+      if (applyDocumentFilter(doc)) applied = true;
+    });
+    return applied;
+  }
+
+  window.__MBG_MESSAGE_FILTER_DISPOSE = function() {
+    window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
+    candidateDocuments().forEach(function(doc) {
+      restoreRows(doc);
+      updateStatus(doc, 0);
+    });
+    delete window.__MBG_MESSAGE_FILTER_VERSION;
+    delete window.__MBG_MESSAGE_FILTER_SIGNATURE;
+    delete window.__MBG_MESSAGE_FILTER_UPDATE;
+    delete window.__MBG_MESSAGE_FILTER_INTERVAL;
+    delete window.__MBG_MESSAGE_FILTER_DISPOSE;
+  };
   window.__MBG_MESSAGE_FILTER_UPDATE = applyFilter;
   applyFilter();
   window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);

@@ -158,6 +158,193 @@ void main() {
       expect(repeated['activeIntervalCount'], 1);
     }
   });
+
+  for (final frame in [
+    'none',
+    'empty',
+    'list',
+    'sameDocument',
+    'inaccessible',
+    'both',
+  ]) {
+    test('filters smartphone message units in every document (frame: $frame)',
+        () async {
+      final result = await _evaluateMessageFilterScripts(
+        [
+          GakujoMessageFilterScript.build(keywords: const ['セキュリティ'])
+        ],
+        smartphone: true,
+        smartphoneMessageCount: 159,
+        frame: frame,
+        intervalPasses: 3,
+      );
+
+      final snapshot = result.single as Map<String, dynamic>;
+      final documents = (snapshot['documents'] as List)
+          .cast<Map<String, dynamic>>()
+          .where((doc) => (doc['rowDisplays'] as List).isNotEmpty)
+          .toList();
+      expect(documents.length, frame == 'both' ? 2 : 1);
+      for (final doc in documents) {
+        expect(doc['rowDisplays'], ['none', 'none', ...List.filled(157, '')]);
+        expect(doc['statusText'], '除外中: 2件');
+        expect(doc['statusBeforeList'], isTrue);
+        expect(doc['onlyMessageUnitsTouched'], isTrue);
+      }
+      for (final doc in (snapshot['documents'] as List).cast<Map>()) {
+        expect(doc['navigationRowDisplays'], ['', '', '']);
+        expect(doc['navigationUntouched'], isTrue);
+      }
+      expect(snapshot['activeIntervalCount'], 1);
+    });
+  }
+
+  test('ignores smartphone navigation tables without message links', () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['授業'])
+      ],
+      smartphone: true,
+      smartphoneMessageCount: 0,
+      intervalPasses: 3,
+    );
+
+    final snapshot = result.single as Map;
+    expect(snapshot['rowDisplays'], isEmpty);
+    expect(snapshot['navigationRowDisplays'], ['', '', '']);
+    expect(snapshot['navigationUntouched'], isTrue);
+    expect(snapshot['statusText'], isNull);
+  });
+
+  test('prefers smartphone message units over a matching fallback table',
+      () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['セキュリティ'])
+      ],
+      smartphone: true,
+      fallbackTable: true,
+      intervalPasses: 3,
+    );
+
+    final snapshot = result.single as Map;
+    expect(snapshot['rowDisplays'], ['none', 'none', '']);
+    expect(snapshot['statusText'], '除外中: 2件');
+    expect(snapshot['statusBeforeList'], isTrue);
+    expect(snapshot['onlyMessageUnitsTouched'], isTrue);
+    expect(snapshot['navigationRowDisplays'], ['', '', '']);
+    expect(snapshot['navigationUntouched'], isTrue);
+  });
+
+  for (final frame in ['empty', 'list', 'both']) {
+    test('empty keywords leave smartphone lists untouched (frame: $frame)',
+        () async {
+      final empty = GakujoMessageFilterScript.build(keywords: const []);
+      final result = await _evaluateMessageFilterScripts(
+        [empty, empty],
+        smartphone: true,
+        frame: frame,
+        initialDisplays: ['table-row', 'none', ''],
+        intervalPasses: 3,
+      );
+
+      for (final snapshot in result.cast<Map<String, dynamic>>()) {
+        for (final doc in (snapshot['documents'] as List).cast<Map>()) {
+          expect(doc['rowTextReads'], 0);
+          expect(doc['tableTextReads'], 0);
+          expect(doc['attributeWrites'], 0);
+          expect(doc['displayWrites'], 0);
+          expect(doc['statusText'], isNull);
+          if ((doc['rowDisplays'] as List).isNotEmpty) {
+            expect(doc['rowAttributes'], [{}, {}, {}]);
+            expect(doc['rowDisplays'], ['table-row', 'none', '']);
+          }
+        }
+        expect(snapshot['activeIntervalCount'], 1);
+      }
+    });
+  }
+
+  test('smartphone keyword changes restore styles and avoid repeated writes',
+      () async {
+    final security = GakujoMessageFilterScript.build(
+      keywords: const ['セキュリティ'],
+    );
+    final survey = GakujoMessageFilterScript.build(keywords: const ['アンケート']);
+    final empty = GakujoMessageFilterScript.build(keywords: const []);
+    final result = await _evaluateMessageFilterScripts(
+      [security, security, survey, survey, empty, empty],
+      smartphone: true,
+      initialDisplays: ['table-row', 'none', ''],
+      intervalPasses: 3,
+    );
+
+    expect((result[0] as Map)['rowDisplays'], ['none', 'none', '']);
+    expect((result[0] as Map)['statusText'], '除外中: 1件');
+    expect((result[2] as Map)['rowDisplays'], ['table-row', 'none', 'none']);
+    expect((result[2] as Map)['statusText'], '除外中: 1件');
+    expect((result[4] as Map)['rowDisplays'], ['table-row', 'none', '']);
+    expect((result[4] as Map)['rowAttributes'], [
+      {'data-mbg-message-filtered': 'false'},
+      {'data-mbg-message-filtered': 'false'},
+      {'data-mbg-message-filtered': 'false'},
+    ]);
+    expect((result[4] as Map)['rowTextReads'], 0);
+    expect((result[4] as Map)['tableTextReads'], 0);
+    expect((result[4] as Map)['statusText'], isNull);
+    for (final index in [1, 3, 5]) {
+      final repeated = result[index] as Map;
+      expect(repeated['attributeWrites'], 0);
+      expect(repeated['displayWrites'], 0);
+      expect(repeated['statusWrites'], 0);
+      expect(repeated['activeIntervalCount'], 1);
+    }
+  });
+
+  test('smartphone page-owned hidden matches are excluded from the count',
+      () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const ['セキュリティ'])
+      ],
+      smartphone: true,
+      initialDisplays: ['none', 'none', ''],
+    );
+    expect((result.single as Map)['rowDisplays'], ['none', 'none', '']);
+    expect((result.single as Map)['statusText'], isNull);
+    expect((result.single as Map)['displayWrites'], 0);
+  });
+
+  test('smartphone teardown restores rows and removes both statuses', () async {
+    final security = GakujoMessageFilterScript.build(
+      keywords: const ['セキュリティ'],
+    );
+    final teardown = GakujoMessageFilterScript.buildTeardown();
+    final result = await _evaluateMessageFilterScripts(
+      [security, teardown, teardown, security],
+      smartphone: true,
+      frame: 'both',
+      initialDisplays: ['table-row', 'none', ''],
+      intervalPasses: 3,
+    );
+
+    for (final index in [1, 2]) {
+      final snapshot = result[index] as Map;
+      for (final doc in (snapshot['documents'] as List).cast<Map>()) {
+        expect(doc['rowDisplays'], ['table-row', 'none', '']);
+        expect(doc['statusText'], isNull);
+        expect(doc['rowTextReads'], 0);
+        expect(doc['tableTextReads'], 0);
+      }
+      expect(snapshot['activeIntervalCount'], 0);
+    }
+    for (final doc in ((result[3] as Map)['documents'] as List).cast<Map>()) {
+      expect(doc['rowDisplays'], ['none', 'none', '']);
+      expect(doc['statusText'], '除外中: 1件');
+      expect(doc['statusBeforeList'], isTrue);
+    }
+    expect((result[3] as Map)['activeIntervalCount'], 1);
+  });
 }
 
 Future<List<dynamic>> _evaluateMessageFilterScripts(
@@ -165,35 +352,48 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
   List<String> initialDisplays = const ['', ''],
   bool directTable = true,
   int intervalPasses = 0,
+  bool smartphone = false,
+  int smartphoneMessageCount = 3,
+  String frame = 'none',
+  bool fallbackTable = false,
 }) async {
-  final result = await Process.run(
-    'node',
-    [
-      '-e',
-      _messageFilterDomHarness,
-      jsonEncode(scripts),
-      jsonEncode(initialDisplays),
-      jsonEncode({
-        'directTable': directTable,
-        'intervalPasses': intervalPasses,
-      }),
-    ],
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
+  final directory =
+      Directory.systemTemp.createTempSync('gakujo_message_filter_');
+  try {
+    final harness = File.fromUri(directory.uri.resolve('harness.cjs'))
+      ..writeAsStringSync(_messageFilterDomHarness, encoding: utf8);
+    final input = File.fromUri(directory.uri.resolve('input.json'))
+      ..writeAsStringSync(
+        jsonEncode({
+          'scripts': scripts,
+          'initialDisplays': initialDisplays,
+          'directTable': directTable,
+          'intervalPasses': intervalPasses,
+          'smartphone': smartphone,
+          'smartphoneMessageCount': smartphoneMessageCount,
+          'frame': frame,
+          'fallbackTable': fallbackTable,
+        }),
+        encoding: utf8,
+      );
+    final result = await Process.run('node', [harness.path, input.path],
+        stdoutEncoding: utf8, stderrEncoding: utf8);
 
-  expect(
-    result.exitCode,
-    0,
-    reason: 'Node JavaScript evaluation failed: ${result.stderr}',
-  );
-  return jsonDecode(result.stdout as String) as List<dynamic>;
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    return jsonDecode(result.stdout as String) as List<dynamic>;
+  } finally {
+    directory.deleteSync(recursive: true);
+  }
 }
 
 const _messageFilterDomHarness = r'''
 const vm = require('node:vm');
-const scripts = JSON.parse(process.argv[1]);
-const options = JSON.parse(process.argv[3]);
+const options = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+const {scripts, initialDisplays} = options;
 
 class FakeElement {
   constructor(tag, text = '') {
@@ -201,6 +401,7 @@ class FakeElement {
     this.id = '';
     this.text = text;
     this.textReads = 0;
+    this.textWrites = 0;
     this.attributeWrites = 0;
     this.displayWrites = 0;
     this.value = '';
@@ -218,15 +419,15 @@ class FakeElement {
 
   get innerText() {
     this.textReads += 1;
-    return this.text;
+    return this.text + this.children.map(child => child.innerText).join(' ');
   }
 
   get textContent() {
-    this.textReads += 1;
-    return this.text;
+    return this.innerText;
   }
 
   set textContent(value) {
+    this.textWrites += 1;
     this.text = value;
   }
 
@@ -245,9 +446,50 @@ class FakeElement {
   }
 
   appendChild(child) {
+    return this.insertBefore(child, null);
+  }
+
+  insertBefore(child, before) {
+    if (child.parentNode) child.remove();
     child.parentNode = this;
-    this.children.push(child);
+    const index = before ? this.children.indexOf(before) : this.children.length;
+    if (index < 0) throw new Error('Reference node is not a child');
+    this.children.splice(index, 0, child);
     return child;
+  }
+
+  matches(selector) {
+    if (selector === '*') return true;
+    const attributes = [...selector.matchAll(/\[([\w-]+)(?:(\*?=)"([^"]*)")?\]/g)];
+    const simple = selector.replace(/\[[^\]]*\]/g, '');
+    if (!/^(?:\w+)?(?:\.[\w-]+)*$/.test(simple)) return false;
+    const tag = simple.match(/^\w+/)?.[0];
+    if (tag && this.tagName !== tag.toUpperCase()) return false;
+    for (const match of simple.matchAll(/\.([\w-]+)/g)) {
+      if (!(this.attributes.class || '').split(/\s+/).includes(match[1])) return false;
+    }
+    return attributes.every(([, key, operator, value]) => key in this.attributes &&
+      (!operator || (operator === '*=' ? this.attributes[key].includes(value) : this.attributes[key] === value)));
+  }
+
+  closest(selector) {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.matches(selector)) return node;
+    }
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    const result = [];
+    for (const child of this.children) {
+      if (child.matches(selector)) result.push(child);
+      result.push(...child.querySelectorAll(selector));
+    }
+    return result;
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
   }
 
   remove() {
@@ -267,44 +509,95 @@ function findById(root, id) {
   return null;
 }
 
-const target = new FakeElement('div');
-target.id = 'tabmenutable';
-const header = new FakeElement('tr', '件名');
-const survey = new FakeElement('tr', '授業アンケートのお願い');
-const important = new FakeElement('tr', '重要なお知らせ');
-[survey.style.display, important.style.display] = JSON.parse(process.argv[2]);
-const rows = [header, survey, important];
-const table = new FakeElement(
-  'table',
-  '連絡通知 ' + rows.map((row) => row.text).join(' '),
-);
-table.querySelector = (selector) => selector === 'a[href]' ? {} : null;
-table.querySelectorAll = (selector) => selector === 'tr' ? rows : [];
+function add(parent, tag, text = '', attributes = {}) {
+  const child = new FakeElement(tag, text);
+  Object.entries(attributes).forEach(([name, value]) => child.setAttribute(name, value));
+  return parent.appendChild(child);
+}
+
+function makeDocument(withList) {
+  const root = new FakeElement('body');
+  const doc = {
+    root,
+    rows: [],
+    getElementById(id) {
+      if (id === 'main-frame-if') return this.frame || null;
+      return findById(root, id);
+    },
+    querySelector(selector) {
+      if (selector === 'table.normal:nth-child(9)') {
+        return options.directTable && !options.smartphone ? this.listTable : null;
+      }
+      return root.querySelector(selector);
+    },
+    querySelectorAll(selector) { return root.querySelectorAll(selector); },
+    createElement(tag) { return new FakeElement(tag); }
+  };
+  if (options.smartphone) {
+    doc.navigationTable = add(root, 'table');
+    add(add(doc.navigationTable, 'tr'), 'td', '連絡通知');
+    add(add(add(doc.navigationTable, 'tr'), 'td'), 'a', '授業掲示板',
+      {href: 'campussquare.do?_flowId=掲示'});
+    add(add(add(doc.navigationTable, 'tr'), 'td'), 'a', '授業連絡',
+      {href: 'campussquare.do?_flowId=連絡'});
+    if (options.fallbackTable) {
+      const fallback = add(root, 'table', '連絡通知');
+      add(fallback, 'tr', '件名');
+      add(add(fallback, 'tr'), 'a', '重要なお知らせ',
+        {href: 'campussquare.do?seqNo=508181'});
+    }
+  }
+  if (!withList) return doc;
+  if (!options.smartphone) {
+    const target = add(root, 'div');
+    target.id = 'tabmenutable';
+    const table = add(root, 'table', '連絡通知 ');
+    add(add(table, 'tr', '件名'), 'a', '', {href: 'campussquare.do'});
+    doc.rows = [
+      add(table, 'tr', '授業アンケートのお願い'),
+      add(table, 'tr', '重要なお知らせ')
+    ];
+    add(doc.rows[0], 'a', '', {href: 'campussquare.do?seqNo=508182'});
+    doc.listTable = table;
+  } else {
+    // All messages share this layout row and list table. Only the outer row of
+    // each message contains both its category and its nested div.button row.
+    const container = add(add(add(root, 'table'), 'tr'), 'td');
+    doc.listTable = add(container, 'table');
+    const body = add(doc.listTable, 'tbody');
+    for (let index = 0; index < options.smartphoneMessageCount; index += 1) {
+      const row = add(body, 'tr');
+      doc.rows.push(row);
+      const itemBody = add(add(add(row, 'td'), 'table', '', {class: 'bgnone'}), 'tbody');
+      add(add(itemBody, 'tr'), 'td', index === 1 ? 'セキュリティ' : '授業連絡',
+        {class: 'center category-frame'});
+      const button = add(add(add(itemBody, 'tr'), 'td'), 'div', '', {
+        class: 'button',
+        onclick: "location.href='campussquare.do?seqNo=" + (508182 + index) + "'"
+      });
+      add(button, 'p', index === 0 ? '情報セキュリティ概論 第4回 授業資料'
+        : index === 1 ? '重要なお知らせ' : '授業アンケートのお願い');
+    }
+  }
+  doc.rows.forEach((row, index) => { row.style.display = initialDisplays[index] || ''; });
+  return doc;
+}
+
+const document = makeDocument(options.frame !== 'list');
+let frameDocument;
+if (['empty', 'list', 'both'].includes(options.frame)) {
+  frameDocument = makeDocument(options.frame !== 'empty');
+  document.frame = {contentWindow: {document: frameDocument}};
+} else if (options.frame === 'sameDocument') {
+  document.frame = {contentWindow: {document}};
+} else if (options.frame === 'inaccessible') {
+  document.frame = {get contentWindow() { throw new Error('Cross-origin frame'); }};
+}
+const documents = frameDocument ? [document, frameDocument] : [document];
+const listDocument = options.frame === 'list' ? frameDocument : document;
 
 let nextIntervalId = 1;
 const activeIntervals = new Map();
-const document = {
-  getElementById(id) {
-    if (id === 'main-frame-if') return null;
-    if (id === 'tabmenutable') return target;
-    return findById(target, id);
-  },
-  querySelector(selector) {
-    return options.directTable && selector === 'table.normal:nth-child(9)'
-      ? table : null;
-  },
-  querySelectorAll(selector) {
-    if (selector === 'table') return [table];
-    if (selector === 'tr[data-mbg-message-filter-display]') {
-      return rows.filter((row) =>
-        row.getAttribute('data-mbg-message-filter-display') !== null);
-    }
-    return [];
-  },
-  createElement(tag) {
-    return new FakeElement(tag);
-  }
-};
 const window = {
   document,
   clearInterval(id) { activeIntervals.delete(id); },
@@ -318,32 +611,48 @@ const window = {
 window.window = window;
 const context = {window, document};
 
-function snapshot() {
-  const status = document.getElementById('mbg-message-filter-status');
+function documentSnapshot(doc) {
+  const rows = doc.rows;
+  const elements = doc.querySelectorAll('*');
+  const status = doc.getElementById('mbg-message-filter-status');
+  const table = doc.listTable;
+  const navigation = doc.navigationTable;
+  const sum = (nodes, field) => nodes.reduce((total, node) => total + node[field], 0);
   return {
-    rowDisplays: [survey.style.display || '', important.style.display || ''],
-    rowAttributes: [survey, important].map((row) => ({...row.attributes})),
-    rowTextReads: rows.reduce((sum, row) => sum + row.textReads, 0),
-    tableTextReads: table.textReads,
-    attributeWrites: rows.reduce((sum, row) => sum + row.attributeWrites, 0),
-    displayWrites: rows.reduce((sum, row) => sum + row.displayWrites, 0),
+    rowDisplays: rows.map(row => row.style.display || ''),
+    rowAttributes: rows.map(row => ({...row.attributes})),
+    rowTextReads: sum(elements.filter(node => node.tagName === 'TR'), 'textReads'),
+    tableTextReads: sum(elements.filter(node => node.tagName === 'TABLE'), 'textReads'),
+    attributeWrites: sum(elements, 'attributeWrites'),
+    displayWrites: sum(elements, 'displayWrites'),
+    statusWrites: status ? status.textWrites : 0,
     statusText: status ? status.textContent : null,
-    activeIntervalCount: activeIntervals.size
+    navigationRowDisplays: navigation ? navigation.querySelectorAll('tr').map(row => row.style.display || '') : [],
+    navigationUntouched: !navigation || [navigation, ...navigation.querySelectorAll('*')].every(node =>
+      node.attributeWrites === 0 && node.displayWrites === 0 && node.textWrites === 0),
+    statusBeforeList: !!status && status.parentNode === table?.parentNode &&
+      status.parentNode.children.indexOf(status) + 1 === status.parentNode.children.indexOf(table),
+    onlyMessageUnitsTouched: elements.filter(node => !rows.includes(node)).every(node =>
+      node.displayWrites === 0 && !Object.keys(node.attributes).some(key => key.startsWith('data-mbg-message-filter')))
   };
 }
 
 const snapshots = [];
 for (const script of scripts) {
-  for (const element of [...rows, table]) {
-    element.textReads = 0;
-    element.attributeWrites = 0;
-    element.displayWrites = 0;
+  for (const doc of documents) {
+    for (const element of doc.querySelectorAll('*')) {
+      element.textReads = 0;
+      element.textWrites = 0;
+      element.attributeWrites = 0;
+      element.displayWrites = 0;
+    }
   }
   vm.runInNewContext(script, context);
   for (let pass = 0; pass < options.intervalPasses; pass += 1) {
     for (const callback of activeIntervals.values()) callback();
   }
-  snapshots.push(snapshot());
+  snapshots.push({...documentSnapshot(listDocument),
+    documents: documents.map(documentSnapshot), activeIntervalCount: activeIntervals.size});
 }
 process.stdout.write(JSON.stringify(snapshots));
 ''';
