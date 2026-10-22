@@ -58,6 +58,26 @@ void main() {
       );
     });
 
+    test('detects the PC portal logout list', () async {
+      // <ul id="logout"><li><img alt=""></li><li><span>ログアウト</span></li></ul>
+      final portal = await _evaluateAuthProbe([
+        {'tag': 'img', 'alt': ''},
+        {'tag': 'ul', 'id': 'logout', 'text': 'ログアウト'},
+      ]);
+      final strayText = await _evaluateAuthProbe([
+        {'tag': 'span', 'text': 'ログアウト'},
+      ]);
+
+      expect(
+        gakujoPortalAuthStateFromJavaScriptResult(portal),
+        GakujoPortalAuthState.authenticated,
+      );
+      expect(
+        gakujoPortalAuthStateFromJavaScriptResult(strayText),
+        GakujoPortalAuthState.unknown,
+      );
+    });
+
     test('ignores hidden authenticated controls', () async {
       final hiddenLogout = await _evaluateAuthProbe([
         {'tag': 'button', 'text': 'ログアウト', 'display': 'none'},
@@ -689,7 +709,15 @@ const document = {
   defaultView: null,
   querySelectorAll(selector) {
     if (selector === 'input') return inputs;
-    if (selector === 'a, button, input, [role="button"], img') return elements;
+    if (selector === 'a, button, input, [role="button"], img, #logout') {
+      return elements.filter((element) =>
+        ['a', 'button', 'input', 'img'].includes(
+          (element.getAttribute('tag') || '').toLowerCase()
+        ) ||
+        element.getAttribute('role') === 'button' ||
+        element.getAttribute('id') === 'logout'
+      );
+    }
     return [];
   }
 };

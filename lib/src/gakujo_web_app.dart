@@ -680,8 +680,10 @@ const gakujoPortalAuthStateProbeScript = r'''
       hasLoginFields = true;
     }
 
+    // The PC portal's ログアウト is a list (ul#logout) of an unlabeled image
+    // and a span, not a link or button.
     var controls = Array.prototype.slice.call(
-      doc.querySelectorAll('a, button, input, [role="button"], img')
+      doc.querySelectorAll('a, button, input, [role="button"], img, #logout')
     );
     for (var c = 0; c < controls.length; c += 1) {
       if (!visible(controls[c])) {
