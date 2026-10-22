@@ -71,6 +71,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\Yoshida.MoreBetterGakujo"; ValueType: string; ValueName: "DisplayName"; ValueData: "More Better Gakujo"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: ""; ValueData: "URL:More Better Gakujo"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\morebettergakujo\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
