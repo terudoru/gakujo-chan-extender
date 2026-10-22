@@ -17,7 +17,7 @@ class GakujoMessageFilterScript {
     );
     return '''
 (function() {
-  var version = 4;
+  var version = 5;
   var keywords = $encodedKeywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -93,28 +93,36 @@ class GakujoMessageFilterScript {
   }
 
   function updateStatus(doc, hiddenCount, listTable) {
-    var target = listTable ? listTable.parentNode : doc.getElementById('tabmenutable');
-    var status = doc.getElementById('mbg-message-filter-status');
     if (!keywords.length || hiddenCount <= 0) {
-      if (status) {
-        status.remove();
-      }
-      return;
+      return null;
     }
+    var statusDoc = listTable ? doc : document;
+    var target = listTable ? listTable.parentNode : statusDoc.getElementById('tabmenutable');
     if (!target) {
-      return;
+      return null;
     }
+    var status = statusDoc.getElementById('mbg-message-filter-status');
     if (!status) {
-      status = doc.createElement('span');
+      status = statusDoc.createElement('span');
       status.id = 'mbg-message-filter-status';
       status.style.marginLeft = '8px';
       status.style.fontSize = '12px';
       status.style.color = '#31543f';
+    }
+    if (status.parentNode !== target) {
       if (listTable) target.insertBefore(status, listTable);
       else target.appendChild(status);
     }
     var label = '除外中: ' + hiddenCount + '件';
     if (status.textContent !== label) status.textContent = label;
+    return status;
+  }
+
+  function removeStaleStatuses(doc, activeStatuses) {
+    var statuses = doc.querySelectorAll('[id="mbg-message-filter-status"]');
+    Array.prototype.forEach.call(statuses, function(status) {
+      if (activeStatuses.indexOf(status) < 0) status.remove();
+    });
   }
 
   function restoreRows(doc) {
@@ -131,10 +139,9 @@ class GakujoMessageFilterScript {
     });
   }
 
-  function applyDocumentFilter(doc) {
+  function applyDocumentFilter(doc, activeStatuses) {
     if (!keywords.length) {
       restoreRows(doc);
-      updateStatus(doc, 0);
       return true;
     }
     var rows = smartphoneMessageRows(doc);
@@ -143,7 +150,6 @@ class GakujoMessageFilterScript {
       rows = Array.prototype.slice.call(table.querySelectorAll('tr'), 1);
     }
     if (!rows.length) {
-      updateStatus(doc, 0);
       return false;
     }
     var listTable = table ? null : rows[0].closest('table');
@@ -174,14 +180,21 @@ class GakujoMessageFilterScript {
         row.setAttribute('data-mbg-message-filtered', filtered);
       }
     });
-    updateStatus(doc, hiddenCount, listTable);
+    var status = updateStatus(doc, hiddenCount, listTable);
+    if (status) activeStatuses.push(status);
     return true;
   }
 
   function applyFilter() {
     var applied = false;
-    candidateDocuments().forEach(function(doc) {
-      if (applyDocumentFilter(doc)) applied = true;
+    var docs = candidateDocuments();
+    var activeStatuses = [];
+    docs.forEach(function(doc) {
+      if (applyDocumentFilter(doc, activeStatuses)) applied = true;
+    });
+    // A frame's desktop list owns a status in the top document, which has no list.
+    docs.forEach(function(doc) {
+      removeStaleStatuses(doc, activeStatuses);
     });
     return applied;
   }
@@ -190,7 +203,7 @@ class GakujoMessageFilterScript {
     window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
     candidateDocuments().forEach(function(doc) {
       restoreRows(doc);
-      updateStatus(doc, 0);
+      removeStaleStatuses(doc, []);
     });
     delete window.__MBG_MESSAGE_FILTER_VERSION;
     delete window.__MBG_MESSAGE_FILTER_SIGNATURE;

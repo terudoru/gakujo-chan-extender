@@ -43,6 +43,124 @@ void main() {
     expect(cleared['activeIntervalCount'], 1);
   });
 
+  for (final directTable in [true, false]) {
+    test(
+        'desktop frame status stays in the top document '
+        '(direct table: $directTable)', () async {
+      final survey = GakujoMessageFilterScript.build(
+        keywords: const ['アンケート'],
+      );
+      final empty = GakujoMessageFilterScript.build(keywords: const []);
+      final result = await _evaluateMessageFilterScripts(
+        [
+          survey,
+          survey,
+          GakujoMessageFilterScript.build(keywords: const ['アンケート', '重要']),
+          GakujoMessageFilterScript.build(keywords: const ['該当なし']),
+          survey,
+          empty,
+          empty,
+        ],
+        frame: 'list',
+        directTable: directTable,
+        initialStatusCount: 2,
+        intervalPasses: 3,
+      );
+
+      final labels = [
+        '除外中: 1件',
+        '除外中: 1件',
+        '除外中: 2件',
+        null,
+        '除外中: 1件',
+        null,
+        null,
+      ];
+      for (var index = 0; index < result.length; index += 1) {
+        final snapshot = result[index] as Map;
+        final documents = (snapshot['documents'] as List).cast<Map>();
+        final top = documents[0];
+        final frame = documents[1];
+        expect(top['hasTabMenu'], isTrue);
+        expect(top['rowDisplays'], isEmpty);
+        expect(top['statusText'], labels[index]);
+        expect(top['statusCount'], labels[index] == null ? 0 : 1);
+        expect(top['statusInTabMenu'], labels[index] != null);
+        expect(frame['hasTabMenu'], isFalse);
+        expect(frame['statusCount'], 0);
+        expect(snapshot['activeIntervalCount'], 1);
+      }
+      expect((result[0] as Map)['rowDisplays'], ['none', '']);
+      expect((result[2] as Map)['rowDisplays'], ['none', 'none']);
+      for (final index in [3, 5, 6]) {
+        expect((result[index] as Map)['rowDisplays'], ['', '']);
+      }
+      for (final index in [1, 6]) {
+        final documents =
+            ((result[index] as Map)['documents'] as List).cast<Map>();
+        for (final doc in documents) {
+          expect(doc['statusWrites'], 0);
+        }
+      }
+    });
+  }
+
+  test('empty keywords remove stale statuses from the top and frame documents',
+      () async {
+    final empty = GakujoMessageFilterScript.build(keywords: const []);
+    final result = await _evaluateMessageFilterScripts(
+      [empty, empty],
+      frame: 'list',
+      initialStatusCount: 2,
+    );
+
+    for (final snapshot in result.cast<Map>()) {
+      for (final doc in (snapshot['documents'] as List).cast<Map>()) {
+        expect(doc['statusCount'], 0);
+        expect(doc['rowTextReads'], 0);
+        expect(doc['tableTextReads'], 0);
+        expect(doc['attributeWrites'], 0);
+        expect(doc['displayWrites'], 0);
+      }
+    }
+  });
+
+  test('desktop teardown restores frame rows and removes the top status',
+      () async {
+    final survey = GakujoMessageFilterScript.build(
+      keywords: const ['アンケート'],
+    );
+    final teardown = GakujoMessageFilterScript.buildTeardown();
+    final result = await _evaluateMessageFilterScripts(
+      [survey, teardown, teardown, survey],
+      frame: 'list',
+      initialDisplays: ['table-row', 'none'],
+      initialStatusCount: 2,
+      intervalPasses: 3,
+    );
+
+    for (final index in [1, 2]) {
+      final snapshot = result[index] as Map;
+      expect(snapshot['rowDisplays'], ['table-row', 'none']);
+      expect(snapshot['activeIntervalCount'], 0);
+      for (final doc in (snapshot['documents'] as List).cast<Map>()) {
+        expect(doc['statusCount'], 0);
+        expect(doc['rowTextReads'], 0);
+        expect(doc['tableTextReads'], 0);
+      }
+    }
+    for (final index in [0, 3]) {
+      final snapshot = result[index] as Map;
+      final documents = (snapshot['documents'] as List).cast<Map>();
+      expect(snapshot['rowDisplays'], ['none', 'none']);
+      expect(documents[0]['statusText'], '除外中: 1件');
+      expect(documents[0]['statusInTabMenu'], isTrue);
+      expect(documents[0]['statusCount'], 1);
+      expect(documents[1]['statusCount'], 0);
+      expect(snapshot['activeIntervalCount'], 1);
+    }
+  });
+
   test('preserves page-owned hidden rows and explicit display styles',
       () async {
     final result = await _evaluateMessageFilterScripts(
@@ -356,6 +474,7 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
   int smartphoneMessageCount = 3,
   String frame = 'none',
   bool fallbackTable = false,
+  int initialStatusCount = 0,
 }) async {
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_filter_');
@@ -373,6 +492,7 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
           'smartphoneMessageCount': smartphoneMessageCount,
           'frame': frame,
           'fallbackTable': fallbackTable,
+          'initialStatusCount': initialStatusCount,
         }),
         encoding: utf8,
       );
@@ -437,6 +557,7 @@ class FakeElement {
   }
 
   getAttribute(name) {
+    if (name === 'id') return this.id || null;
     return this.attributes[name] ?? null;
   }
 
@@ -468,8 +589,11 @@ class FakeElement {
     for (const match of simple.matchAll(/\.([\w-]+)/g)) {
       if (!(this.attributes.class || '').split(/\s+/).includes(match[1])) return false;
     }
-    return attributes.every(([, key, operator, value]) => key in this.attributes &&
-      (!operator || (operator === '*=' ? this.attributes[key].includes(value) : this.attributes[key] === value)));
+    return attributes.every(([, key, operator, value]) => {
+      const actual = this.getAttribute(key);
+      return actual !== null &&
+        (!operator || (operator === '*=' ? actual.includes(value) : actual === value));
+    });
   }
 
   closest(selector) {
@@ -549,8 +673,6 @@ function makeDocument(withList) {
   }
   if (!withList) return doc;
   if (!options.smartphone) {
-    const target = add(root, 'div');
-    target.id = 'tabmenutable';
     const table = add(root, 'table', '連絡通知 ');
     add(add(table, 'tr', '件名'), 'a', '', {href: 'campussquare.do'});
     doc.rows = [
@@ -584,6 +706,10 @@ function makeDocument(withList) {
 }
 
 const document = makeDocument(options.frame !== 'list');
+if (!options.smartphone) {
+  const target = add(document.root, 'div');
+  target.id = 'tabmenutable';
+}
 let frameDocument;
 if (['empty', 'list', 'both'].includes(options.frame)) {
   frameDocument = makeDocument(options.frame !== 'empty');
@@ -595,6 +721,12 @@ if (['empty', 'list', 'both'].includes(options.frame)) {
 }
 const documents = frameDocument ? [document, frameDocument] : [document];
 const listDocument = options.frame === 'list' ? frameDocument : document;
+for (const doc of documents) {
+  for (let index = 0; index < options.initialStatusCount; index += 1) {
+    const status = add(doc.root, 'span', 'stale status');
+    status.id = 'mbg-message-filter-status';
+  }
+}
 
 let nextIntervalId = 1;
 const activeIntervals = new Map();
@@ -627,6 +759,9 @@ function documentSnapshot(doc) {
     displayWrites: sum(elements, 'displayWrites'),
     statusWrites: status ? status.textWrites : 0,
     statusText: status ? status.textContent : null,
+    statusCount: doc.querySelectorAll('[id="mbg-message-filter-status"]').length,
+    hasTabMenu: !!doc.getElementById('tabmenutable'),
+    statusInTabMenu: !!status && status.parentNode === doc.getElementById('tabmenutable'),
     navigationRowDisplays: navigation ? navigation.querySelectorAll('tr').map(row => row.style.display || '') : [],
     navigationUntouched: !navigation || [navigation, ...navigation.querySelectorAll('*')].every(node =>
       node.attributeWrites === 0 && node.displayWrites === 0 && node.textWrites === 0),
