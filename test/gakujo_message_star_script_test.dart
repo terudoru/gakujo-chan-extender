@@ -68,6 +68,44 @@ void main() {
     });
   }
 
+  test('unchanged list updates skip URL, row and header reads', () async {
+    final result = await _evaluate(
+        _starDomHarness,
+        [
+          GakujoMessageStarScript.build(),
+          GakujoMessageStarScript.buildRefresh(['1|40|507762']),
+          GakujoMessageStarScript.build(starredIds: ['1|40|507762']),
+        ],
+        'largeList');
+    expect(result['counts'], [160, 160, 160]);
+    expect(result['pressedStates'], ['false', 'true', 'true']);
+    expect(result['headerQueryCounts'], [1, 1, 1]);
+    final urlReads = result['urlParseCounts'] as List;
+    final cellReads = result['rowCellReadCounts'] as List;
+    expect(urlReads.first, greaterThan(0));
+    expect(urlReads, everyElement(urlReads.first));
+    expect(cellReads.first, greaterThan(0));
+    expect(cellReads, everyElement(cellReads.first));
+    expect(result['timerReadsUnchanged'], isTrue);
+    expect(result['headersAfterClick'], 2);
+    expect((result['messages'] as List).single['title'], '更新された表題');
+  });
+
+  test('new rows use fresh table headers on the next update', () async {
+    final result = await _evaluate(
+        _starDomHarness,
+        [
+          GakujoMessageStarScript.build(),
+          GakujoMessageStarScript.buildRefresh([]),
+        ],
+        'growingList');
+    expect(result['counts'], [1, 2]);
+    expect(result['headerQueryCounts'], [1, 2]);
+    expect(result['timerReadsUnchanged'], isTrue);
+    expect((result['messages'] as List).single['seqNo'], '507763');
+    expect((result['messages'] as List).single['sender'], '工学部');
+  });
+
   for (final scenario in ['detail', 'detailAttachment']) {
     test('$scenario extracts saved text and stable identity', () async {
       final result = await _evaluate(
@@ -131,6 +169,7 @@ void main() {
     expect(result['navigatedButtonText'], '');
     expect(result['navigatedPressed'], 'true');
     expect(result['navigatedStyleCount'], 1);
+    expect(result['oldListButtonCount'], 0);
     expect((result['messages'] as List).last['action'], 'detail');
     expect((result['messages'] as List).last['title'], '授業のお知らせ');
   });
@@ -297,6 +336,8 @@ const _starDomHarness = r'''
 const vm = require('node:vm');
 const {scripts, scenario} = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
 const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+let headerQueryCount = 0, urlParseCount = 0, rowCellReadCount = 0;
+const performanceScenario = scenario === 'largeList' || scenario === 'growingList';
 class Element {
   constructor(tag, value = '') {
     this.tagName = tag.toUpperCase(); this._text = value; this.children = [];
@@ -327,7 +368,10 @@ class Element {
   get nextElementSibling() {
     return this.parentNode.children[this.parentNode.children.indexOf(this) + 1] || null;
   }
-  get cells() { return this.children.filter(e => e.tagName === 'TD' || e.tagName === 'TH'); }
+  get cells() {
+    rowCellReadCount += 1;
+    return this.children.filter(e => e.tagName === 'TD' || e.tagName === 'TH');
+  }
   closest(selector) {
     for (let e = this; e; e = e.parentNode) if (e.matches(selector)) return e;
     return null;
@@ -341,6 +385,7 @@ class Element {
     return true;
   }
   querySelectorAll(selector) {
+    if (this.tagName === 'TABLE' && selector === 'th') headerQueryCount += 1;
     const result = [];
     for (const child of this.children) {
       if (child.matches(selector)) result.push(child);
@@ -378,15 +423,21 @@ function list(genre, allGenre = false, missingHeaders = false) {
   // Split headers across rows so lookup must include every th.
   let lowerHeader;
   function secondHeader() { return lowerHeader || (lowerHeader = add(table, 'tr')); }
-  labels.forEach((label, index) => add(index < 5 ? header : secondHeader(), 'th', label));
-  const row = add(table, 'tr');
-  values.forEach(value => {
-    const cell = add(row, 'td', value || '');
-    if (value === null) d.heading = add(cell, 'a', '授業のお知らせ [新着]', {
-      href: 'campussquare.do?_flowExecutionKey=temporary&_eventId=' +
-        (genre || allGenre ? 'confirm' : 'displayMidoku') + '&keijitype=1&genrecd=40&seqNo=507762'
+  d.headers = labels.map((label, index) => add(index < 5 ? header : secondHeader(), 'th', label));
+  d.addRow = seqNo => {
+    const row = add(table, 'tr');
+    let link;
+    values.forEach(value => {
+      const cell = add(row, 'td', value || '');
+      if (value === null) link = add(cell, 'a', '授業のお知らせ [新着]', {
+        href: 'campussquare.do?_flowExecutionKey=temporary&_eventId=' +
+          (genre || allGenre ? 'confirm' : 'displayMidoku') + '&keijitype=1&genrecd=40&seqNo=' + seqNo
+      });
     });
-  });
+    if (!d.heading) d.heading = link;
+    return link;
+  };
+  for (let i = 0; i < (scenario === 'largeList' ? 160 : 1); i += 1) d.addRow(507762 + i);
   return d;
 }
 function detail(attachment, longBody, noIds = false) {
@@ -414,7 +465,9 @@ let inner = isDetail ? detail(scenario === 'detailAttachment', scenario === 'det
 const outer = scenario === 'iframe' || scenario === 'navigate' || remembers ? doc('campusportal.do') : inner;
 if (outer !== inner) outer.frame = {contentWindow: {document: inner}};
 const messages = []; const intervals = new Map(); let intervalId = 0;
-const context = {document: outer, URL, Set, window: null};
+const context = {document: outer, URL: class extends URL {
+  constructor(...args) { super(...args); urlParseCount += 1; }
+}, Set, window: null};
 context.window = context;
 const storage = new Map();
 const storageKey = '__MBG_MESSAGE_STARS_OPEN_MESSAGE';
@@ -429,10 +482,21 @@ context.clearInterval = id => intervals.delete(id);
 vm.createContext(context);
 const counts = [], buttonTexts = [], pressedStates = [], intervalCounts = [], listenerCounts = [];
 const styleCounts = [], styleTexts = [], outerStyleCounts = [], rowTexts = [];
+const headerQueryCounts = [], urlParseCounts = [], rowCellReadCounts = [];
+let timerReadsUnchanged = true, headersAfterClick;
 const originalRowText = inner.heading.closest('tr')?.innerText || null;
 let beforeTitle, label, prevented = false, stopped = false, oldButton;
 scripts.forEach((script, index) => {
   vm.runInContext(script, context);
+  headerQueryCounts.push(headerQueryCount);
+  urlParseCounts.push(urlParseCount);
+  rowCellReadCounts.push(rowCellReadCount);
+  if (performanceScenario) {
+    for (const callback of intervals.values()) callback();
+    timerReadsUnchanged = timerReadsUnchanged &&
+      headerQueryCount === headerQueryCounts[index] &&
+      urlParseCount === urlParseCounts[index] && rowCellReadCount === rowCellReadCounts[index];
+  }
   const buttons = inner.querySelectorAll('button');
   counts.push(buttons.length);
   buttonTexts.push(buttons[0] ? buttons[0].textContent : null);
@@ -444,16 +508,27 @@ scripts.forEach((script, index) => {
   rowTexts.push(inner.heading.closest('tr')?.innerText || null);
   intervalCounts.push(intervals.size);
   listenerCounts.push(inner.listeners.click ? 1 : 0);
-  if (index === 0 && buttons[0]) {
+  if (index === 0 && buttons[0] && !performanceScenario) {
     oldButton = buttons[0]; label = oldButton.getAttribute('aria-label');
     beforeTitle = oldButton.nextElementSibling === inner.heading;
     oldButton.listeners.click({preventDefault() { prevented = true; }, stopPropagation() { stopped = true; }});
   }
   if (index === 3) oldButton.listeners.click({preventDefault() {}, stopPropagation() {}});
+  if (scenario === 'growingList' && index === 0) {
+    inner.headers.find(th => th.textContent === '氏名').textContent = '非表示';
+    inner.addRow(507763);
+  }
 });
+if (performanceScenario) {
+  const link = scenario === 'growingList'
+    ? inner.querySelectorAll('a[href*="seqNo="]')[1] : inner.heading;
+  link.textContent = '更新された表題';
+  link.parentNode.querySelector('button').listeners.click({preventDefault() {}, stopPropagation() {}});
+  headersAfterClick = headerQueryCount;
+}
 let navigatedTitle, navigatedButtonText, navigatedPressed, navigatedStyleCount;
 let reloadedButtonText, reloadedPressed, reloadedStyleCount, capture, oldListListenerRemoved;
-let rememberedBeforeClick, remembered, rememberedAfterReload;
+let rememberedBeforeClick, remembered, rememberedAfterReload, oldListButtonCount;
 if (scenario === 'navigate' || remembers) {
   const oldList = inner;
   if (remembers) {
@@ -468,6 +543,7 @@ if (scenario === 'navigate' || remembers) {
   else if (remembers) inner.heading.textContent = '授業のお知らせ';
   for (const callback of intervals.values()) callback();
   oldListListenerRemoved = !oldList.listeners.click;
+  oldListButtonCount = oldList.querySelectorAll('button').length;
   navigatedTitle = inner.heading.textContent;
   navigatedButtonText = inner.querySelector('button')?.textContent ?? null;
   navigatedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
@@ -487,7 +563,8 @@ process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCo
   outerStyleCounts, originalRowText, rowTexts, intervalCounts, listenerCounts, beforeTitle, label,
   prevented, stopped, messages, navigatedTitle, navigatedButtonText, navigatedPressed,
   navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
-  oldListListenerRemoved, rememberedBeforeClick, remembered, rememberedAfterReload}));
+  oldListListenerRemoved, oldListButtonCount, rememberedBeforeClick, remembered, rememberedAfterReload,
+  headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick}));
 ''';
 
 const _openHarness = r'''

@@ -45,6 +45,7 @@ class GakujoMessageStarScript {
   var disposed = false;
   var ids = new Set(initialIds);
   var buttons = [];
+  var buttonTargets = new WeakSet();
   var styles = [];
   var lastDetailDocument;
   var lastDetailSignature;
@@ -104,8 +105,8 @@ class GakujoMessageStarScript {
     (doc.head || doc.documentElement).appendChild(style);
     styles.push(style);
   }
-  function addButton(target, data, doc) {
-    if (buttons.some(function(entry) { return entry.target === target; })) return;
+  function addButton(target, data, doc, initialData) {
+    if (buttonTargets.has(target)) return;
     ensureStyle(doc);
     var button = doc.createElement('button');
     button.type = 'button';
@@ -119,17 +120,25 @@ class GakujoMessageStarScript {
       send('toggle', data());
     });
     target.parentNode.insertBefore(button, target);
-    var entry = {button: button, target: target, id: id(data())};
+    var entry = {button: button, target: target, id: id(initialData || data())};
     buttons.push(entry);
+    buttonTargets.add(target);
     paint(entry);
   }
-  function rowData(link, doc) {
+  function rowData(link, doc, headersByTable) {
     var data = identity(link.getAttribute('href'), doc);
     var row = link.closest('tr');
     if (!data || !row || !row.cells) return null;
     var cells = row.cells;
     var table = row.closest('table');
-    var headers = table ? Array.from(table.querySelectorAll('th')).map(text) : [];
+    var headers = [];
+    if (table) {
+      headers = headersByTable && headersByTable.get(table);
+      if (!headers) {
+        headers = Array.from(table.querySelectorAll('th')).map(text);
+        if (headersByTable) headersByTable.set(table, headers);
+      }
+    }
     function field(label) {
       var index = headers.indexOf(label);
       return index >= 0 ? text(cells[index]) : '';
@@ -207,14 +216,18 @@ class GakujoMessageStarScript {
     buttons = buttons.filter(function(entry) {
       if (entry.target.ownerDocument === doc && entry.target.isConnected !== false) return true;
       entry.button.remove();
+      buttonTargets.delete(entry.target);
       return false;
     });
     var links = doc.querySelectorAll('a[href*="seqNo="]');
+    var headersByTable = new Map();
     for (var i = 0; i < links.length; i += 1) {
+      if (buttonTargets.has(links[i])) continue;
       var event = new URL(links[i].getAttribute('href'), doc.baseURI).searchParams.get('_eventId');
       if (event !== 'displayMidoku' && event !== 'confirm') continue;
-      if (rowData(links[i], doc)) {
-        (function(link) { addButton(link, function() { return rowData(link, doc); }, doc); })(links[i]);
+      var data = rowData(links[i], doc, headersByTable);
+      if (data) {
+        (function(link) { addButton(link, function() { return rowData(link, doc); }, doc, data); })(links[i]);
       }
     }
     var heading = doc.querySelector('span.keiji-title');
@@ -243,6 +256,7 @@ class GakujoMessageStarScript {
     listDocument = null;
     buttons.forEach(function(entry) { entry.button.remove(); });
     buttons = [];
+    buttonTargets = new WeakSet();
     styles.forEach(function(style) { style.remove(); });
     styles = [];
     delete window.__MBG_MESSAGE_STARS_VERSION;
