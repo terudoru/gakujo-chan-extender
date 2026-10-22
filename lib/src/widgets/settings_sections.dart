@@ -370,6 +370,9 @@ class FeatureFlagsSection extends StatelessWidget {
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
+            subtitle: flag == GakujoFeatureFlag.messageStars
+                ? const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。')
+                : null,
             value: settings.isFeatureEnabled(flag),
             onChanged: (value) => onChanged(flag, value ?? true),
           ),

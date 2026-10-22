@@ -17,6 +17,8 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
       final history = await historyStore.load();
       final failedDownloads = await historyStore.loadFailedDownloads();
       final favorites = await activityStore.loadFavoritesForBackup();
+      final starredMessages =
+          await activityStore.loadStarredMessagesForBackup();
       final deadlines = await activityStore.loadDeadlinesForBackup();
       final changes = await activityStore.loadChangesForBackup();
       final reportLists = await activityStore.loadReportListsForBackup();
@@ -25,6 +27,7 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
         downloadHistory: history,
         failedDownloads: failedDownloads,
         favorites: favorites,
+        starredMessages: starredMessages,
         deadlines: deadlines,
         changes: changes,
         reportLists: reportLists,
@@ -36,6 +39,7 @@ Map<String, Object?> buildGakujoBackupPayload({
   required Iterable<GakujoDownloadHistoryEntry> downloadHistory,
   required Iterable<GakujoFailedDownloadEntry> failedDownloads,
   required Iterable<GakujoFavoritePage> favorites,
+  Iterable<GakujoStarredMessage> starredMessages = const [],
   required Iterable<GakujoDeadlineEntry> deadlines,
   required Iterable<GakujoActivityChangeEntry> changes,
   required Iterable<GakujoCachedReportList> reportLists,
@@ -60,6 +64,7 @@ Map<String, Object?> buildGakujoBackupPayload({
     'failedDownloads':
         failedDownloads.map((entry) => entry.toExternalJson()).toList(),
     'favorites': favorites.map((entry) => entry.toJson()).toList(),
+    'starredMessages': starredMessages.map((entry) => entry.toJson()).toList(),
     'deadlines': deadlines.map((entry) => entry.toJson()).toList(),
     'changes': changes.map((entry) => entry.toJson()).toList(),
     'reportLists': reportLists.map((entry) => entry.toJson()).toList(),

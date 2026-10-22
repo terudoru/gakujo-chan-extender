@@ -77,6 +77,10 @@ Future<void> restoreGakujoBackup({
               .toList(),
         );
       }
+      final starredMessages = backup.starredMessages;
+      if (starredMessages != null) {
+        await activityStore.replaceStarredMessages(starredMessages);
+      }
       final deadlines = backup.deadlines;
       if (deadlines != null) {
         await activityStore.replaceDeadlines(

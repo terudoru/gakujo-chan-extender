@@ -308,6 +308,66 @@ class GakujoFavoritePage {
   }
 }
 
+class GakujoStarredMessage {
+  GakujoStarredMessage({
+    required this.keijitype,
+    required this.genrecd,
+    required this.seqNo,
+    required this.title,
+    this.genre = '',
+    this.sender = '',
+    this.period = '',
+    this.postedAt = '',
+    String body = '',
+    required this.starredAt,
+  }) : body = body.length > 4000 ? body.substring(0, 4000) : body;
+
+  final String keijitype;
+  final String genrecd;
+  final String seqNo;
+  final String title;
+  final String genre;
+  final String sender;
+  final String period;
+  final String postedAt;
+  final String body;
+  final DateTime starredAt;
+
+  String get id => '$keijitype|$genrecd|$seqNo';
+
+  bool get isValid => [keijitype, genrecd, seqNo]
+      .every((value) => RegExp(r'^[0-9]+$').hasMatch(value));
+
+  Map<String, Object?> toJson() => {
+        'keijitype': keijitype,
+        'genrecd': genrecd,
+        'seqNo': seqNo,
+        'title': title,
+        'genre': genre,
+        'sender': sender,
+        'period': period,
+        'postedAt': postedAt,
+        'body': body,
+        'starredAt': starredAt.toIso8601String(),
+      };
+
+  factory GakujoStarredMessage.fromJson(Map<dynamic, dynamic> json) {
+    return GakujoStarredMessage(
+      keijitype: json['keijitype']?.toString() ?? '',
+      genrecd: json['genrecd']?.toString() ?? '',
+      seqNo: json['seqNo']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      genre: json['genre']?.toString() ?? '',
+      sender: json['sender']?.toString() ?? '',
+      period: json['period']?.toString() ?? '',
+      postedAt: json['postedAt']?.toString() ?? '',
+      body: json['body']?.toString() ?? '',
+      starredAt: DateTime.tryParse(json['starredAt']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+}
+
 class _StorageReadResult<T> {
   const _StorageReadResult.success(this.value) : isSuccessful = true;
 
@@ -327,6 +387,7 @@ class GakujoActivityStore {
   static const _notifiedDeadlineKeysKey =
       'more_better_gakujo_notified_deadline_keys';
   static const _favoritesKey = 'more_better_gakujo_favorites';
+  static const _starredMessagesKey = 'more_better_gakujo_starred_messages';
   static const _changesKey = 'more_better_gakujo_activity_changes';
   static const _reportListsKey = 'more_better_gakujo_cached_report_lists';
   static const _assignmentsKey = 'more_better_gakujo_assignments';
@@ -339,6 +400,7 @@ class GakujoActivityStore {
   static const _maxMessageDeadlines = 80;
   static const _maxNotifiedDeadlineKeys = 1000;
   static const _maxFavorites = 30;
+  static const _maxStarredMessages = 300;
   static const _maxChanges = 120;
   static const _maxReportLists = 20;
   static const _snapshotRetention = Duration(days: 180);
@@ -356,6 +418,7 @@ class GakujoActivityStore {
         const [
           _deadlinesKey,
           _favoritesKey,
+          _starredMessagesKey,
           _changesKey,
           _reportListsKey,
         ],
@@ -496,6 +559,118 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readFavorites()).value);
   }
 
+  Future<List<GakujoStarredMessage>> loadStarredMessages() {
+    return _enqueue(() async => (await _readStarredMessages()).value);
+  }
+
+  Future<List<GakujoStarredMessage>> loadStarredMessagesForBackup() {
+    return _enqueue(
+      () => _readForBackup(_starredMessagesKey, _readStarredMessages),
+    );
+  }
+
+  Future<_StorageReadResult<List<GakujoStarredMessage>>>
+      _readStarredMessages() {
+    return _readList(
+      key: _starredMessagesKey,
+      fromJson: GakujoStarredMessage.fromJson,
+      retain: (entry) => entry.isValid,
+      compare: (a, b) => b.starredAt.compareTo(a.starredAt),
+      limit: _maxStarredMessages,
+    );
+  }
+
+  /// Returns whether the message is starred after this atomic toggle.
+  Future<bool> toggleStarredMessage(GakujoStarredMessage message) {
+    return _enqueue(() async {
+      if (!message.isValid) {
+        throw ArgumentError('Invalid message identity');
+      }
+      final entries = await _readForBackup(
+        _starredMessagesKey,
+        _readStarredMessages,
+      );
+      final exists = entries.any((entry) => entry.id == message.id);
+      await _replaceStarredMessages([
+        if (!exists) message,
+        ...entries.where((entry) => entry.id != message.id),
+      ]);
+      return !exists;
+    });
+  }
+
+  Future<void> upsertStarredMessage(GakujoStarredMessage message) {
+    return _enqueue(() async {
+      if (!message.isValid) return;
+      final entries = await _readForBackup(
+        _starredMessagesKey,
+        _readStarredMessages,
+      );
+      await _replaceStarredMessages([
+        message,
+        ...entries.where((entry) => entry.id != message.id),
+      ]);
+    });
+  }
+
+  /// A detail visit enriches an existing star without moving it to the top
+  /// or recreating one that the student has just removed.
+  Future<void> refreshStarredMessage(GakujoStarredMessage detail) {
+    return _enqueue(() async {
+      final entries = await _readForBackup(
+        _starredMessagesKey,
+        _readStarredMessages,
+      );
+      if (!entries.any((entry) => entry.id == detail.id)) return;
+      await _replaceStarredMessages([
+        for (final entry in entries)
+          if (entry.id == detail.id)
+            GakujoStarredMessage(
+              keijitype: entry.keijitype,
+              genrecd: entry.genrecd,
+              seqNo: entry.seqNo,
+              title: detail.title,
+              genre: detail.genre.isEmpty ? entry.genre : detail.genre,
+              sender: detail.sender,
+              period: detail.period,
+              postedAt:
+                  detail.postedAt.isEmpty ? entry.postedAt : detail.postedAt,
+              body: detail.body,
+              starredAt: entry.starredAt,
+            )
+          else
+            entry,
+      ]);
+    });
+  }
+
+  Future<void> removeStarredMessage(String id) {
+    return _enqueue(() async {
+      final entries = await _readForBackup(
+        _starredMessagesKey,
+        _readStarredMessages,
+      );
+      await _replaceStarredMessages(
+        entries.where((entry) => entry.id != id).toList(),
+      );
+    });
+  }
+
+  Future<void> replaceStarredMessages(List<GakujoStarredMessage> entries) {
+    return _enqueue(() => _replaceStarredMessages(entries));
+  }
+
+  Future<void> _replaceStarredMessages(List<GakujoStarredMessage> entries) {
+    final byId = <String, GakujoStarredMessage>{};
+    final sorted = entries.where((entry) => entry.isValid).toList()
+      ..sort((a, b) => b.starredAt.compareTo(a.starredAt));
+    for (final entry in sorted) {
+      byId.putIfAbsent(entry.id, () => entry);
+    }
+    return _writeList(
+        _starredMessagesKey, byId.values.take(_maxStarredMessages));
+  }
+
   Future<List<GakujoFavoritePage>> loadFavoritesForBackup() {
     return _enqueue(
       () => _readForBackup(_favoritesKey, _readFavorites),
@@ -562,6 +737,7 @@ class GakujoActivityStore {
     await _compactList(_deadlinesKey, _readDeadlines);
     await _compactNotifiedDeadlineKeys();
     await _compactList(_favoritesKey, _readFavorites);
+    await _compactList(_starredMessagesKey, _readStarredMessages);
     await _compactList(_changesKey, _readChanges);
     await _compactList(_reportListsKey, _readReportLists);
     await _compactList(_assignmentsKey, _readAssignments);

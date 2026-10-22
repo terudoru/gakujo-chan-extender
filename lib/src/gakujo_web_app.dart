@@ -43,6 +43,7 @@ import 'gakujo_local_prefs_store.dart';
 import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
+import 'gakujo_message_star_script.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
@@ -74,6 +75,7 @@ part 'gakujo_web_app_calendar.dart';
 part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_models.dart';
+part 'gakujo_web_app_message_stars.dart';
 
 extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
   String get label {
@@ -108,6 +110,7 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.build,
   GakujoFeatureFlag.reportTools: GakujoReportSorterScript.build,
   GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.build,
+  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.build,
   GakujoFeatureFlag.uploadCompression: GakujoUploadCompressionScript.build,
 };
 
@@ -116,6 +119,7 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.buildTeardown,
   GakujoFeatureFlag.reportTools: GakujoReportSorterScript.buildTeardown,
   GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.buildTeardown,
+  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.buildTeardown,
   GakujoFeatureFlag.gpaDisplay: GakujoGpaDisplayScript.buildTeardown,
   GakujoFeatureFlag.loginAutofill: LoginAutofillAssistScript.buildTeardown,
   GakujoFeatureFlag.twoFactorAutofill: TwoFactorAutofillScript.buildTeardown,
@@ -984,6 +988,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
                   ),
+                  if (_appSettings
+                      .isFeatureEnabled(GakujoFeatureFlag.messageStars))
+                    const PopupMenuItem<Object>(
+                      value: _ToolbarAction.messageStars,
+                      child: Text('スター付き連絡通知'),
+                    ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.copyUrl,
                     child: Text('URLをコピー'),
@@ -2447,6 +2457,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final history = await _downloadHistoryStore.load();
     final failedDownloads = await _downloadHistoryStore.loadFailedDownloads();
     final favorites = await _activityStore.loadFavorites();
+    final starredMessages = await _activityStore.loadStarredMessages();
     final deadlines = await _activityStore.loadDeadlines();
     final changes = await _activityStore.loadChanges();
     final reportLists = await _activityStore.loadReportLists();
@@ -2463,7 +2474,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.clearChanges(),
         _activityStore.clearReportLists(),
         _activityStore.replaceFavorites(const []),
+        _activityStore.replaceStarredMessages(const []),
       ]);
+      await _refreshMessageStars();
       await _refreshActivityCounts();
       // Reminders booked with the OS were for the assignments just removed;
       // fetch the list again at the next chance.
@@ -2485,6 +2498,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 _DataCountTile(
                     label: '失敗したダウンロード', count: failedDownloads.length),
                 _DataCountTile(label: 'お気に入り', count: favorites.length),
+                _DataCountTile(
+                    label: 'スター付き連絡通知', count: starredMessages.length),
                 _DataCountTile(label: '新着情報・期限・予定', count: deadlines.length),
                 _DataCountTile(label: '変更履歴', count: changes.length),
                 _DataCountTile(label: '保存済み課題一覧', count: reportLists.length),
@@ -2750,6 +2765,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
+      case _ToolbarAction.messageStars:
+        await _showStarredMessagesDialog();
+        return;
       case _ToolbarAction.reload:
         if (_calendarOperationGate.isRunning) {
           _showSnackBar('カレンダー連携または再検出の完了後に再読込してください');
@@ -2795,6 +2813,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         }
         return;
       case _ToolbarAction.reload:
+      case _ToolbarAction.messageStars:
         return;
     }
   }
@@ -4075,6 +4094,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
       await _injectMessageFilterIfAllowed();
       await _refreshActivityCounts();
+      await _refreshMessageStars();
       // The imported notification choices decide which reminders to book.
       unawaited(_syncReminders());
       _scheduleAutoBackup();
@@ -4177,6 +4197,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (enabled && flag == GakujoFeatureFlag.gpaDisplay) {
       await _injectGpaDisplayIfAllowed();
+      return;
+    }
+    if (enabled && flag == GakujoFeatureFlag.messageStars) {
+      await _injectMessageStars();
       return;
     }
 
@@ -4472,6 +4496,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.addJavaScriptChannel(
       GakujoUploadCompressionLibraries.channelName,
       onMessageReceived: _handleUploadCompressionLibraryRequest,
+    );
+    await _controller.addJavaScriptChannel(
+      GakujoMessageStarScript.channelName,
+      onMessageReceived: _handleMessageStarMessage,
     );
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(

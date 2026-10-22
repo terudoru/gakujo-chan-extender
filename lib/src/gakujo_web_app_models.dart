@@ -2,6 +2,7 @@ part of 'gakujo_web_app.dart';
 
 enum _ToolbarAction {
   addFavorite,
+  messageStars,
   copyUrl,
   openExternal,
   reload,

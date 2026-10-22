@@ -37,6 +37,7 @@ class GakujoBackupImport {
     this.downloadHistory,
     this.failedDownloads,
     this.favorites,
+    this.starredMessages,
     this.deadlines,
     this.changes,
     this.reportLists,
@@ -55,6 +56,7 @@ class GakujoBackupImport {
   final List<GakujoDownloadHistoryEntry>? downloadHistory;
   final List<GakujoFailedDownloadEntry>? failedDownloads;
   final List<GakujoFavoritePage>? favorites;
+  final List<GakujoStarredMessage>? starredMessages;
   final List<GakujoDeadlineEntry>? deadlines;
   final List<GakujoActivityChangeEntry>? changes;
   final List<GakujoCachedReportList>? reportLists;
@@ -175,6 +177,11 @@ GakujoBackupImport parseGakujoBackup(String text) {
       decoded,
       'favorites',
       GakujoFavoritePage.fromJson,
+    ),
+    starredMessages: _decodeMapList(
+      decoded,
+      'starredMessages',
+      GakujoStarredMessage.fromJson,
     ),
     deadlines: _decodeMapList(
       decoded,
