@@ -4,7 +4,7 @@ class GakujoGpaDisplayScript {
   static String build() {
     return r'''
 (function() {
-  var version = 7;
+  var version = 8;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -30,6 +30,7 @@ class GakujoGpaDisplayScript {
   }
   window.__MBG_GPA_DISPLAY_OBSERVERS = [];
   window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS = [];
+  var gradeTableSearchCache = new WeakMap();
 
   function textOf(element) {
     return (element && (element.innerText || element.textContent) || '')
@@ -111,6 +112,23 @@ class GakujoGpaDisplayScript {
   }
 
   function findGradeTable(documentRef) {
+    var tableCount = documentRef.getElementsByTagName('table').length;
+    var rowCount = documentRef.getElementsByTagName('tr').length;
+    var previous = gradeTableSearchCache.get(documentRef);
+    if (previous && !previous.found &&
+        previous.tableCount === tableCount && previous.rowCount === rowCount) {
+      return null;
+    }
+    var gradeTable = searchGradeTable(documentRef);
+    gradeTableSearchCache.set(documentRef, {
+      tableCount: tableCount,
+      rowCount: rowCount,
+      found: !!gradeTable
+    });
+    return gradeTable;
+  }
+
+  function searchGradeTable(documentRef) {
     var directTable = directGradeTable(documentRef);
     if (directTable) {
       return directTable;
@@ -422,7 +440,10 @@ class GakujoGpaDisplayScript {
       return;
     }
     try {
-      var observer = new MutationObserver(scheduleUpdate);
+      var observer = new MutationObserver(function() {
+        gradeTableSearchCache.delete(documentRef);
+        scheduleUpdate();
+      });
       observer.observe(documentRef.documentElement, {
         childList: true,
         subtree: true,

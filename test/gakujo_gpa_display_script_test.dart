@@ -100,6 +100,51 @@ void main() {
     expect(teardownWithoutBuild['ownedElementCount'], 0);
     expect(teardownWithoutBuild['globalMarkers'], isEmpty);
   });
+
+  test('unchanged non-grade pages do not rescan cells', () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final scans = result['nonGradeScans'] as Map<String, dynamic>;
+    final initial = scans['initial'] as Map<String, dynamic>;
+
+    expect(initial['cellCloneCount'], greaterThan(0));
+    expect(initial['tableSearchCount'], 1);
+    expect(scans['afterRepeatedUpdates'], initial);
+    final afterAddingRow = scans['afterAddingRow'] as Map<String, dynamic>;
+    expect(afterAddingRow['cellCloneCount'],
+        greaterThan(initial['cellCloneCount'] as int));
+    expect(afterAddingRow['tableSearchCount'], 2);
+    expect(scans['afterUnchangedRowUpdate'], afterAddingRow);
+    final afterAddingTable = scans['afterAddingTable'] as Map<String, dynamic>;
+    expect(afterAddingTable['tableSearchCount'], 3);
+  });
+
+  test('grade pages still display and recompute GPA on each update', () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final grades = result['gradeUpdates'] as Map<String, dynamic>;
+
+    expect(grades['initialText'], 'GPA:4.0000');
+    expect(grades['afterGpChange'], 'GPA:3.0000');
+    expect(grades['afterAddingRow'], 'GPA:2.0000');
+    expect(grades['gpaDisplayCount'], 1);
+    expect(grades['controlCount'], 3);
+  });
+
+  test('DOM mutations invalidate misses and the interval discovers frames',
+      () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+
+    expect(result['gpaAfterHeaderMutation'], 'GPA:4.0000');
+    expect(result['gpaInNewFrame'], 'GPA:4.0000');
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateGpaDisplayLifecycle({
@@ -191,6 +236,9 @@ class FakeElement {
   }
 
   cloneNode(deep) {
+    if (this.tagName === 'TD' || this.tagName === 'TH') {
+      this.ownerDocument.scanCounts.cellCloneCount += 1;
+    }
     const clone = new FakeElement(this.tagName, this.ownerDocument);
     clone.id = this.id;
     clone.type = this.type;
@@ -224,14 +272,14 @@ function findById(root, id) {
   return null;
 }
 
-function createPage() {
+function createPage({hasGradeTable = true} = {}) {
   let nextIntervalId = 1;
   let nextTimeoutId = 1;
-  const activeIntervals = new Set();
+  const activeIntervals = new Map();
   const activeTimeouts = new Map();
   const activeObservers = new Set();
 
-  const document = {};
+  const document = {scanCounts: {cellCloneCount: 0, tableSearchCount: 0}};
   const documentElement = new FakeElement('html', document);
   const body = new FakeElement('body', document);
   const target = new FakeElement('div', document);
@@ -246,14 +294,17 @@ function createPage() {
     return element;
   }
   const headerCells = Array.from({length: 13}, () => cell(''));
-  headerCells[12].innerText = 'GP';
-  headerCells[12].textContent = 'GP';
+  headerCells[12].innerText = hasGradeTable ? 'GP' : '通知';
+  headerCells[12].textContent = headerCells[12].innerText;
   const gradeCells = Array.from({length: 13}, () => cell(''));
   gradeCells[8].innerText = '2';
   gradeCells[8].textContent = '2';
   gradeCells[12].innerText = '4';
   gradeCells[12].textContent = '4';
-  const rows = [{cells: headerCells}, {cells: gradeCells}];
+  const rows = [
+    {cells: headerCells, children: headerCells},
+    {cells: gradeCells, children: gradeCells}
+  ];
   const table = {
     rows,
     tBodies: [{appendChild() {}}],
@@ -261,9 +312,10 @@ function createPage() {
       return selector === 'tr' ? rows : [];
     }
   };
+  const tables = [table];
 
   function allRoots() {
-    return [documentElement, ...headerCells, ...gradeCells];
+    return [documentElement, ...rows.flatMap((row) => row.cells)];
   }
 
   document.body = body;
@@ -278,9 +330,17 @@ function createPage() {
     return null;
   };
   document.querySelector = (selector) =>
-    selector === '#taniReferListForm+table' ? table : null;
+    hasGradeTable && selector === '#taniReferListForm+table' ? table : null;
+  document.getElementsByTagName = (tag) => {
+    if (tag === 'table') return tables;
+    if (tag === 'tr') return rows;
+    return [];
+  };
   document.querySelectorAll = (selector) => {
-    if (selector === 'table') return [table];
+    if (selector === 'table') {
+      document.scanCounts.tableSearchCount += 1;
+      return tables;
+    }
     const matches = [];
     for (const root of allRoots()) {
       if (matchesSelector(root, selector)) matches.push(root);
@@ -310,9 +370,9 @@ function createPage() {
     document,
     frames: [],
     clearInterval(id) { activeIntervals.delete(id); },
-    setInterval() {
+    setInterval(callback) {
       const id = nextIntervalId++;
-      activeIntervals.add(id);
+      activeIntervals.set(id, callback);
       return id;
     },
     clearTimeout(id) { activeTimeouts.delete(id); },
@@ -353,7 +413,46 @@ function createPage() {
     };
   }
 
-  return {context, snapshot, triggerMutation};
+  function tickInterval() {
+    for (const callback of [...activeIntervals.values()]) callback();
+  }
+
+  function flushTimeouts() {
+    const callbacks = [...activeTimeouts.values()];
+    activeTimeouts.clear();
+    for (const callback of callbacks) callback();
+  }
+
+  function addRow(credits = '2', gp = '1') {
+    const cells = Array.from({length: 13}, () => cell(''));
+    cells[8].innerText = cells[8].textContent = credits;
+    cells[12].innerText = cells[12].textContent = gp;
+    rows.push({cells, children: cells});
+  }
+
+  function addTable() {
+    tables.push({querySelectorAll() { return []; }});
+  }
+
+  function showGradeHeader() {
+    hasGradeTable = true;
+    headerCells[12].innerText = headerCells[12].textContent = 'GP';
+  }
+
+  function setGp(gp) {
+    gradeCells[12].innerText = gradeCells[12].textContent = gp;
+  }
+
+  function gpaText() {
+    const display = headerCells[12].querySelector('.mbg-gpa-display');
+    return display ? display.textContent : null;
+  }
+
+  return {
+    context, snapshot, triggerMutation, tickInterval, flushTimeouts,
+    addRow, addTable, showGradeHeader, setGp, gpaText,
+    scanCounts: () => ({...document.scanCounts})
+  };
 }
 
 function run(script, page) {
@@ -374,10 +473,58 @@ const freshPage = createPage();
 run(teardownScript, freshPage);
 const teardownWithoutBuild = freshPage.snapshot();
 
+const nonGradePage = createPage({hasGradeTable: false});
+run(buildScript, nonGradePage);
+const initial = nonGradePage.scanCounts();
+for (let i = 0; i < 5; i += 1) {
+  nonGradePage.tickInterval();
+  nonGradePage.context.window.__MBG_UPDATE_GPA_DISPLAY();
+}
+const afterRepeatedUpdates = nonGradePage.scanCounts();
+nonGradePage.addRow();
+nonGradePage.tickInterval();
+const afterAddingRow = nonGradePage.scanCounts();
+nonGradePage.tickInterval();
+const afterUnchangedRowUpdate = nonGradePage.scanCounts();
+nonGradePage.addTable();
+nonGradePage.tickInterval();
+const afterAddingTable = nonGradePage.scanCounts();
+
+const gradePage = createPage();
+run(buildScript, gradePage);
+const initialText = gradePage.gpaText();
+gradePage.setGp('3');
+gradePage.tickInterval();
+const afterGpChange = gradePage.gpaText();
+gradePage.addRow();
+gradePage.tickInterval();
+const afterGradeRowAdded = gradePage.gpaText();
+
+const mutatedPage = createPage({hasGradeTable: false});
+run(buildScript, mutatedPage);
+mutatedPage.showGradeHeader();
+mutatedPage.triggerMutation();
+mutatedPage.flushTimeouts();
+
+const newFrame = createPage();
+nonGradePage.context.window.frames.push(newFrame.context.window);
+nonGradePage.tickInterval();
+
 process.stdout.write(JSON.stringify({
   afterBuild,
   afterTeardown,
   afterRebuild,
-  teardownWithoutBuild
+  teardownWithoutBuild,
+  nonGradeScans: {
+    initial, afterRepeatedUpdates, afterAddingRow, afterUnchangedRowUpdate,
+    afterAddingTable
+  },
+  gradeUpdates: {
+    initialText, afterGpChange, afterAddingRow: afterGradeRowAdded,
+    gpaDisplayCount: gradePage.snapshot().gpaDisplayCount,
+    controlCount: gradePage.snapshot().controlIds.length
+  },
+  gpaAfterHeaderMutation: mutatedPage.gpaText(),
+  gpaInNewFrame: newFrame.gpaText()
 }));
 ''';
