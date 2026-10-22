@@ -476,7 +476,7 @@ class NotificationTopicsSection extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           remindersOnlyWhileOpen
-              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間だけ届きます。'
+              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間に届き、閉じている間に過ぎたものは次に開いたときに知らせます。'
               : '未提出の課題を締切の前にもう一度知らせます。アプリを閉じていても届きます。',
         ),
         Wrap(
