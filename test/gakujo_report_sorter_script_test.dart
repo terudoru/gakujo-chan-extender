@@ -20,7 +20,8 @@ void main() {
     expect(script, contains('sortByDate();'));
   });
 
-  test('sorts expired reports by Japan time when the UTC date differs', () async {
+  test('sorts expired reports by Japan time when the UTC date differs',
+      () async {
     await evaluatePageScriptLifecycle(
       feature: 'report',
       buildScript: '''
