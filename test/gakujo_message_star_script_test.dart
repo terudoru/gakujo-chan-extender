@@ -29,7 +29,21 @@ void main() {
       expect(result['stopped'], isTrue);
       expect(result['label'], 'スター');
       expect(result['counts'], [1, 1, 1, 0, 1]);
-      expect(result['glyphs'], ['☆', '★', '★', null, '☆']);
+      expect(result['buttonTexts'], ['', '', '', null, '']);
+      expect(result['pressedStates'], ['false', 'true', 'true', null, 'false']);
+      expect(result['styleCounts'], [1, 1, 1, 0, 1]);
+      expect(result['outerStyleCounts'],
+          scenario == 'iframe' ? [0, 0, 0, 0, 0] : [1, 1, 1, 0, 1]);
+      expect(
+        (result['styleTexts'] as List).whereType<String>(),
+        everyElement(allOf(
+          contains('button[data-mbg-message-star]::before { content: "☆"; }'),
+          contains(
+              'button[data-mbg-message-star][aria-pressed="true"]::before { content: "★"; }'),
+        )),
+      );
+      expect(result['rowTexts'], everyElement(result['originalRowText']));
+      expect(result['originalRowText'], isNot(contains(RegExp('[☆★]'))));
       expect(result['intervalCounts'], [1, 1, 1, 0, 1]);
       expect(result['listenerCounts'], [1, 1, 1, 0, 1]);
       final payload = (result['messages'] as List).first as Map;
@@ -64,7 +78,9 @@ void main() {
           ],
           scenario);
       expect(result['beforeTitle'], isTrue);
-      expect(result['glyphs'], ['★', '★']);
+      expect(result['buttonTexts'], ['', '']);
+      expect(result['pressedStates'], ['true', 'true']);
+      expect(result['styleCounts'], [1, 1]);
       final messages = result['messages'] as List;
       expect(messages.length, 2); // one silent refresh and one explicit toggle
       final detail = messages.first as Map;
@@ -112,7 +128,9 @@ void main() {
         ],
         'navigate');
     expect(result['navigatedTitle'], '授業のお知らせ [新着]');
-    expect(result['navigatedGlyph'], '★');
+    expect(result['navigatedButtonText'], '');
+    expect(result['navigatedPressed'], 'true');
+    expect(result['navigatedStyleCount'], 1);
     expect((result['messages'] as List).last['action'], 'detail');
     expect((result['messages'] as List).last['title'], '授業のお知らせ');
   });
@@ -135,8 +153,12 @@ void main() {
         'title': '授業のお知らせ',
       });
       expect(result['oldListListenerRemoved'], isTrue);
-      expect(result['navigatedGlyph'], '★');
-      expect(result['reloadedGlyph'], '★');
+      expect(result['navigatedButtonText'], '');
+      expect(result['navigatedPressed'], 'true');
+      expect(result['navigatedStyleCount'], 1);
+      expect(result['reloadedButtonText'], '');
+      expect(result['reloadedPressed'], 'true');
+      expect(result['reloadedStyleCount'], 1);
       expect(result['rememberedAfterReload'], result['remembered']);
       final details = (result['messages'] as List)
           .where((message) => message['action'] == 'detail')
@@ -160,8 +182,12 @@ void main() {
             GakujoMessageStarScript.build(starredIds: ['1|40|507762'])
           ],
           scenario);
-      expect(result['navigatedGlyph'], isNull);
-      expect(result['reloadedGlyph'], isNull);
+      expect(result['navigatedButtonText'], isNull);
+      expect(result['navigatedPressed'], isNull);
+      expect(result['navigatedStyleCount'], 0);
+      expect(result['reloadedButtonText'], isNull);
+      expect(result['reloadedPressed'], isNull);
+      expect(result['reloadedStyleCount'], 0);
       expect((result['messages'] as List).length, 1);
       expect((result['messages'] as List).single['action'], 'toggle');
     });
@@ -328,7 +354,9 @@ function doc(url) {
   const root = new Element('html'); root.ownerDocument = root;
   root.baseURI = base + url; root.URL = root.baseURI; root.location = {href: root.baseURI};
   root.createElement = tag => { const e = new Element(tag); e.ownerDocument = root; return e; };
-  root.getElementById = id => id === 'main-frame-if' ? root.frame || null : null;
+  root.getElementById = id => id === 'main-frame-if' ? root.frame || null
+    : root.querySelectorAll('style').find(e => e.id === id) || null;
+  root.head = root.appendChild(root.createElement('head'));
   root.body = root.appendChild(root.createElement('body'));
   return root;
 }
@@ -399,12 +427,21 @@ context.GakujoMessageStars = {postMessage: value => messages.push(JSON.parse(val
 context.setInterval = fn => { intervals.set(++intervalId, fn); return intervalId; };
 context.clearInterval = id => intervals.delete(id);
 vm.createContext(context);
-const counts = [], glyphs = [], intervalCounts = [], listenerCounts = [];
+const counts = [], buttonTexts = [], pressedStates = [], intervalCounts = [], listenerCounts = [];
+const styleCounts = [], styleTexts = [], outerStyleCounts = [], rowTexts = [];
+const originalRowText = inner.heading.closest('tr')?.innerText || null;
 let beforeTitle, label, prevented = false, stopped = false, oldButton;
 scripts.forEach((script, index) => {
   vm.runInContext(script, context);
   const buttons = inner.querySelectorAll('button');
-  counts.push(buttons.length); glyphs.push(buttons[0] ? buttons[0].textContent : null);
+  counts.push(buttons.length);
+  buttonTexts.push(buttons[0] ? buttons[0].textContent : null);
+  pressedStates.push(buttons[0] ? buttons[0].getAttribute('aria-pressed') : null);
+  const styles = inner.querySelectorAll('style');
+  styleCounts.push(styles.length);
+  styleTexts.push(inner.getElementById('mbg-message-star-style')?.textContent || null);
+  outerStyleCounts.push(outer.querySelectorAll('style').length);
+  rowTexts.push(inner.heading.closest('tr')?.innerText || null);
   intervalCounts.push(intervals.size);
   listenerCounts.push(inner.listeners.click ? 1 : 0);
   if (index === 0 && buttons[0]) {
@@ -414,7 +451,8 @@ scripts.forEach((script, index) => {
   }
   if (index === 3) oldButton.listeners.click({preventDefault() {}, stopPropagation() {}});
 });
-let navigatedTitle, navigatedGlyph, reloadedGlyph, capture, oldListListenerRemoved;
+let navigatedTitle, navigatedButtonText, navigatedPressed, navigatedStyleCount;
+let reloadedButtonText, reloadedPressed, reloadedStyleCount, capture, oldListListenerRemoved;
 let rememberedBeforeClick, remembered, rememberedAfterReload;
 if (scenario === 'navigate' || remembers) {
   const oldList = inner;
@@ -431,18 +469,24 @@ if (scenario === 'navigate' || remembers) {
   for (const callback of intervals.values()) callback();
   oldListListenerRemoved = !oldList.listeners.click;
   navigatedTitle = inner.heading.textContent;
-  navigatedGlyph = inner.querySelector('button')?.textContent || null;
+  navigatedButtonText = inner.querySelector('button')?.textContent ?? null;
+  navigatedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
+  navigatedStyleCount = inner.querySelectorAll('style').length;
   if (remembers) {
     const heading = inner.heading.textContent;
     inner = detail(false, false, true); inner.heading.textContent = heading;
     outer.frame.contentWindow.document = inner;
     for (const callback of intervals.values()) callback();
-    reloadedGlyph = inner.querySelector('button')?.textContent || null;
+    reloadedButtonText = inner.querySelector('button')?.textContent ?? null;
+    reloadedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
+    reloadedStyleCount = inner.querySelectorAll('style').length;
     rememberedAfterReload = JSON.parse(storage.get(storageKey) || 'null');
   }
 }
-process.stdout.write(JSON.stringify({counts, glyphs, intervalCounts, listenerCounts, beforeTitle, label,
-  prevented, stopped, messages, navigatedTitle, navigatedGlyph, reloadedGlyph, capture,
+process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCounts, styleTexts,
+  outerStyleCounts, originalRowText, rowTexts, intervalCounts, listenerCounts, beforeTitle, label,
+  prevented, stopped, messages, navigatedTitle, navigatedButtonText, navigatedPressed,
+  navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
   oldListListenerRemoved, rememberedBeforeClick, remembered, rememberedAfterReload}));
 ''';
 

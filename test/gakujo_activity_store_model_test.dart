@@ -1118,6 +1118,48 @@ void main() {
     expect(deadlines.single.source, 'レポート・小テスト');
   });
 
+  test('loadDeadlines drops persisted star-only titles', () async {
+    const storage = FlutterSecureStorage();
+    await storage.write(
+      key: 'more_better_gakujo_deadlines',
+      value: jsonEncode([
+        for (final title in ['☆', '★', ' \t☆\n ', ' \t★\n ', '☆ 授業のお知らせ ★'])
+          GakujoDeadlineEntry(
+            title: title,
+            url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/keiji',
+            dueText: '連絡通知期間 2099/07/01',
+            detectedAt: DateTime.now(),
+            kind: 'notice',
+            source: '連絡通知',
+          ).toJson(),
+      ]),
+    );
+
+    final store = GakujoActivityStore();
+    final deadlines = await store.loadDeadlines();
+
+    expect(deadlines.map((entry) => entry.title), ['☆ 授業のお知らせ ★']);
+  });
+
+  test('mergeDeadlines rejects star-only titles', () async {
+    final store = GakujoActivityStore();
+    final added = await store.mergeDeadlines([
+      for (final title in ['☆', '★', ' \t☆\n ', ' \t★\n ', '授業のお知らせ'])
+        GakujoDeadlineEntry(
+          title: title,
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/keiji',
+          dueText: '連絡通知期間 2099/07/01',
+          detectedAt: DateTime.now(),
+          kind: 'notice',
+          source: '連絡通知',
+        ),
+    ]);
+
+    expect(added.map((entry) => entry.title), ['授業のお知らせ']);
+    expect(
+        (await store.loadDeadlines()).map((entry) => entry.title), ['授業のお知らせ']);
+  });
+
   test('mergeDeadlines updates duplicate keys and returns only new entries',
       () async {
     final store = GakujoActivityStore();

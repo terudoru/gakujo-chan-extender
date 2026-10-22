@@ -35,7 +35,7 @@ class GakujoMessageStarScript {
   static const _script = r'''
 (function() {
   var initialIds = __STARRED_IDS__;
-  var version = 2;
+  var version = 3;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
     window.__MBG_MESSAGE_STARS_REFRESH(initialIds);
     return;
@@ -45,6 +45,7 @@ class GakujoMessageStarScript {
   var disposed = false;
   var ids = new Set(initialIds);
   var buttons = [];
+  var styles = [];
   var lastDetailDocument;
   var lastDetailSignature;
   var listDocument;
@@ -91,11 +92,21 @@ class GakujoMessageStarScript {
   }
   function paint(entry) {
     var starred = ids.has(entry.id);
-    entry.button.textContent = starred ? '★' : '☆';
     entry.button.setAttribute('aria-pressed', String(starred));
+  }
+  function ensureStyle(doc) {
+    if (doc.getElementById('mbg-message-star-style')) return;
+    var style = doc.createElement('style');
+    style.id = 'mbg-message-star-style';
+    // Generated content keeps stars out of scanned row text and dedupe keys.
+    style.textContent = 'button[data-mbg-message-star]::before { content: "☆"; }' +
+      'button[data-mbg-message-star][aria-pressed="true"]::before { content: "★"; }';
+    (doc.head || doc.documentElement).appendChild(style);
+    styles.push(style);
   }
   function addButton(target, data, doc) {
     if (buttons.some(function(entry) { return entry.target === target; })) return;
+    ensureStyle(doc);
     var button = doc.createElement('button');
     button.type = 'button';
     button.setAttribute('data-mbg-message-star', 'true');
@@ -232,6 +243,8 @@ class GakujoMessageStarScript {
     listDocument = null;
     buttons.forEach(function(entry) { entry.button.remove(); });
     buttons = [];
+    styles.forEach(function(style) { style.remove(); });
+    styles = [];
     delete window.__MBG_MESSAGE_STARS_VERSION;
     delete window.__MBG_MESSAGE_STARS_REFRESH;
     delete window.__MBG_MESSAGE_STARS_DISPOSE;

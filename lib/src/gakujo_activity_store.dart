@@ -1147,7 +1147,10 @@ class GakujoActivityStore {
 
   bool _isUsefulDeadline(GakujoDeadlineEntry entry) {
     const supportedKinds = {'deadline', 'notice', 'schedule'};
+    final title = entry.title.trim();
     return entry.source != '成績' &&
+        title != '☆' &&
+        title != '★' &&
         entry.url.trim().isNotEmpty &&
         entry.dueText.trim().isNotEmpty &&
         supportedKinds.contains(entry.kind) &&

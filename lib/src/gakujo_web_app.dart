@@ -3586,7 +3586,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
   function messageTitle(node, text) {
-    var link = node && node.querySelector && node.querySelector('a, button, input');
+    var link = node && node.querySelector && node.querySelector('a, button:not([data-mbg-message-star]), input');
     var label = compactText(link || node);
     if (!label || label.length > 120) {
       label = text.split(/(?:\s{2,}| \/ |\n)/)[0] || text;
@@ -3677,7 +3677,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       var table = messageTable(doc);
       var candidates = table ?
         table.querySelectorAll('tr') :
-        doc.querySelectorAll('tr, li, a, button');
+        doc.querySelectorAll('tr, li, a, button:not([data-mbg-message-star])');
       for (var i = 0; i < candidates.length; i += 1) {
         addMessageItem(doc, candidates[i]);
       }
