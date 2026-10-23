@@ -277,6 +277,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag_name || github.ref_name }}
           name: ${{ inputs.tag_name || github.ref_name }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           fail_on_unmatched_files: true
           files: |
             dist/*.apk
@@ -297,6 +298,7 @@ jobs:
             `v0.69.0`から正式なリリース署名鍵を使用します。`v0.68.0`以前のAPKからは上書き更新できないため、旧版をアンインストールしてからインストールしてください。アンインストールするとアプリ内データが削除されます。
 
       - name: Checkout main for AltStore source update
+        if: ${{ !contains(env.RELEASE_TAG, '-') }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: main
@@ -304,6 +306,7 @@ jobs:
           path: repository
 
       - name: Regenerate SideStore/AltStore source
+        if: ${{ !contains(env.RELEASE_TAG, '-') }}
         working-directory: repository
         run: |
           set -euo pipefail
@@ -332,6 +335,7 @@ jobs:
           bash "$generator_path" "$ipa_path"
 
       - name: Commit AltStore source update to main
+        if: ${{ !contains(env.RELEASE_TAG, '-') }}
         working-directory: repository
         run: |
           set -euo pipefail
