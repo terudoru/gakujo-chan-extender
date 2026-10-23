@@ -3558,12 +3558,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _notifyPendingDeadlines();
     }
     if (category == 'レポート・小テスト' && shouldCacheReports) {
+      final capturedAt = DateTime.now();
+      // Parsed rows read better than page lines, which include tab labels,
+      // sort buttons and table headers.
+      final rowItems = [
+        for (final row in result.reportItems)
+          if (GakujoAssignment.fromReportRow(
+            row,
+            capturedAt: capturedAt,
+            url: url,
+          )
+              case final assignment?)
+            '${assignment.kind} ${assignment.title}'
+                '${assignment.course.isEmpty ? '' : '（${assignment.course}）'}'
+                ' ${assignment.status} 締切 ${_formatDateTime(assignment.dueAt)}',
+      ];
       await _activityStore.saveReportList(
         GakujoCachedReportList(
           title: title,
           url: url,
-          capturedAt: DateTime.now(),
-          items: _extractReportListItems(result.text),
+          capturedAt: capturedAt,
+          items: rowItems.isEmpty
+              ? _extractReportListItems(result.text)
+              : rowItems,
         ),
       );
     }
