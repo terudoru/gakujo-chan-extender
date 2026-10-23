@@ -228,6 +228,27 @@ void main() {
     );
   });
 
+  test('toolbar quick jumps target their fixed desktop portal tabs', () {
+    const tabIds = {
+      GakujoQuickJumpDestination.grades: 'si',
+      GakujoQuickJumpDestination.reports: 'en',
+      GakujoQuickJumpDestination.messages: 'kj',
+      GakujoQuickJumpDestination.downloads: 'sd',
+      GakujoQuickJumpDestination.syllabus: 'sy',
+      GakujoQuickJumpDestination.schedule: 'sch',
+    };
+
+    expect(GakujoQuickJumpDestination.values, tabIds.keys);
+    for (final entry in tabIds.entries) {
+      expect(entry.key.portalTabId, entry.value);
+      expect(
+        entry.key.portalUrl,
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+        'campusportal.do?page=main&tabId=${entry.value}',
+      );
+    }
+  });
+
   test('downloadRootLabel hides local path for lightweight diagnostics', () {
     const root = DownloadDestinationSettings(
       isConfigured: true,

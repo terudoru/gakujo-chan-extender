@@ -27,6 +27,53 @@ void main() {
         ['syllabus']);
   });
 
+  test('clicks plain portal tab cells without inline handlers', () async {
+    for (final tab in {'si': '成績', 'rs': '履修'}.entries) {
+      expect(
+          await evaluate([
+            {'id': 'static', 'tag': 'div', 'text': tab.value},
+            {
+              'id': 'tab-${tab.key}',
+              'tag': 'div',
+              'class': 'tabcell',
+              'text': ' ${tab.value}\n',
+            },
+          ], label: tab.value),
+          {
+            'result': true,
+            'clicked': ['tab-${tab.key}']
+          });
+    }
+  });
+
+  test('matches the half-width report tab with a full-width label', () async {
+    expect(
+        (await evaluate([
+          {
+            'id': 'tab-en',
+            'tag': 'div',
+            'class': 'tabcell',
+            'text': 'ﾚﾎﾟｰﾄ・小ﾃｽﾄ・ｱﾝｹｰﾄ',
+          },
+        ], label: 'レポート'))['clicked'],
+        ['tab-en']);
+  });
+
+  test('prefers an exact portal tab cell over an earlier partial link',
+      () async {
+    expect(
+        (await evaluate([
+          {'id': 'notification', 'tag': 'a', 'text': '成績登録通知'},
+          {
+            'id': 'tab-si',
+            'tag': 'div',
+            'class': 'tabcell',
+            'text': '成績',
+          },
+        ], label: '成績'))['clicked'],
+        ['tab-si']);
+  });
+
   test('ignores hidden and disabled entries and text inputs', () async {
     expect(
         (await evaluate([
@@ -70,14 +117,15 @@ void main() {
 }
 
 Future<Map<String, dynamic>> evaluate(List<Map<String, dynamic>> nodes,
-    {List<List<Map<String, dynamic>>> frames = const []}) async {
+    {String label = 'シラバス',
+    List<List<Map<String, dynamic>>> frames = const []}) async {
   final result = await Process.run(
       'node',
       [
         '-e',
         harness,
         jsonEncode({'nodes': nodes, 'frames': frames}),
-        GakujoQuickJumpScript.build('シラバス'),
+        GakujoQuickJumpScript.build(label),
       ],
       stdoutEncoding: utf8,
       stderrEncoding: utf8);
@@ -102,6 +150,8 @@ function windowFor(specs) {
   const win = {frames: [], getComputedStyle: node => ({visibility: node.visibility || 'visible'})};
   win.document = {defaultView: win, querySelectorAll: selector => nodes.filter(node =>
     selector.includes('td, div, span') || ['a','button'].includes(node.tag) ||
+    selector.includes('div.tabcell') && node.tag === 'div' &&
+      (node.class || '').split(/\s+/).includes('tabcell') ||
     node.tag === 'input' && ['button','submit','image'].includes(node.type) ||
     ['tab','button','menuitem'].includes(node.role) || !!node.onclick
   )};

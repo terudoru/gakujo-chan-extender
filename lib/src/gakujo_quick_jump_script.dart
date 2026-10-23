@@ -14,7 +14,11 @@ class GakujoQuickJumpScript {
       for (var i = 0; i < win.frames.length; i += 1) collect(win.frames[i]);
     } catch (e) {}
   }
-  function normalized(value) { return String(value || '').replace(/\\s+/g, '').trim(); }
+  function normalized(value) {
+    var text = String(value || '');
+    if (typeof text.normalize === 'function') text = text.normalize('NFKC');
+    return text.replace(/\\s+/g, '').trim();
+  }
   label = normalized(label);
   if (!label) return false;
   collect(window);
@@ -23,7 +27,7 @@ class GakujoQuickJumpScript {
     var doc = documents[d];
     var candidates = doc.querySelectorAll(
       'a, button, input[type="button"], input[type="submit"], input[type="image"], ' +
-      '[role="tab"], [role="button"], [role="menuitem"], [onclick]'
+      '[role="tab"], [role="button"], [role="menuitem"], [onclick], div.tabcell'
     );
     for (var i = 0; i < candidates.length; i += 1) {
       var node = candidates[i];

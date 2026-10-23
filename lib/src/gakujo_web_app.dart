@@ -89,6 +89,20 @@ extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
       GakujoQuickJumpDestination.schedule => 'スケジュール',
     };
   }
+
+  String get portalTabId {
+    return switch (this) {
+      GakujoQuickJumpDestination.grades => 'si',
+      GakujoQuickJumpDestination.reports => 'en',
+      GakujoQuickJumpDestination.messages => 'kj',
+      GakujoQuickJumpDestination.downloads => 'sd',
+      GakujoQuickJumpDestination.syllabus => 'sy',
+      GakujoQuickJumpDestination.schedule => 'sch',
+    };
+  }
+
+  String get portalUrl =>
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=$portalTabId';
 }
 
 const _calendarValidationTitle =
@@ -2815,7 +2829,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleToolbarSelection(Object selection) async {
     if (selection is GakujoQuickJumpDestination) {
-      await _quickJumpTo(selection.label);
+      if (_calendarOperationGate.isRunning) {
+        _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
+        return;
+      }
+      _setPendingMessageUrl(null);
+      await _loadAllowedPageUrl(selection.portalUrl);
       return;
     }
     await _handleToolbarAction(selection as _ToolbarAction);
