@@ -2,6 +2,56 @@
 
 part of 'gakujo_web_app.dart';
 
+@visibleForTesting
+String gakujoDownloadLocationLabel(String location) {
+  // Keep the encoded path intact so malformed escapes survive the fallback.
+  final match = RegExp(
+    r'^(content|file)://([^/?#]*)([^?#]*)',
+    caseSensitive: false,
+  ).firstMatch(location);
+  if (match == null) {
+    return location;
+  }
+
+  String decodeComponent(String value) {
+    try {
+      return Uri.decodeComponent(value);
+    } on FormatException {
+      return value;
+    } on ArgumentError {
+      return value;
+    }
+  }
+
+  final path = match.group(3)!;
+  if (match.group(1)!.toLowerCase() == 'file') {
+    return decodeComponent(path);
+  }
+  if (match.group(2)!.toLowerCase() !=
+      'com.android.externalstorage.documents') {
+    return decodeComponent(path.split('/').last);
+  }
+
+  const documentMarker = '/document/';
+  const treeMarker = '/tree/';
+  final documentIndex = path.lastIndexOf(documentMarker);
+  final treeIndex = path.lastIndexOf(treeMarker);
+  final documentId = decodeComponent(
+    documentIndex >= 0
+        ? path.substring(documentIndex + documentMarker.length)
+        : treeIndex >= 0
+            ? path.substring(treeIndex + treeMarker.length)
+            : path.split('/').last,
+  );
+  final separator = documentId.indexOf(':');
+  if (separator < 0) {
+    return documentId;
+  }
+  final volume = documentId.substring(0, separator);
+  final root = volume == 'primary' ? '内部ストレージ' : volume;
+  return '$root/${documentId.substring(separator + 1)}';
+}
+
 /// Android saves downloads as SAF content URIs, which viewer apps can read
 /// only through an intent that carries a read grant.
 @visibleForTesting
@@ -112,7 +162,8 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
         throw const FormatException('Unexpected unchunked WebView download');
       }
       if (payload['ok'] == true ||
-          payload.containsKey('bodyByteLength') || nextChunkIndex > 0) {
+          payload.containsKey('bodyByteLength') ||
+          nextChunkIndex > 0) {
         if (payload['bodyByteLength'] is! int ||
             payload['chunkCount'] is! int ||
             payload['bodyByteLength'] != receivedBytes ||
@@ -336,25 +387,47 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                             dense: true,
                             title: Text(entry.fileName),
                             subtitle: Text(
-                              '${entry.displayCourseName}\n'
-                              '${_formatDateTime(entry.savedAt)}'
-                              '${entry.location == null ? '' : '\n${entry.location}'}',
+                              [
+                                entry.displayCourseName,
+                                _formatDateTime(entry.savedAt),
+                                if (entry.location != null)
+                                  gakujoDownloadLocationLabel(entry.location!),
+                              ].join('\n'),
                             ),
                             isThreeLine: entry.location != null,
                             trailing: entry.location == null
                                 ? null
-                                : IconButton(
-                                    tooltip: '保存場所をコピー',
-                                    icon: const Icon(Icons.copy),
-                                    onPressed: () {
-                                      unawaited(
-                                        Clipboard.setData(
-                                          ClipboardData(text: entry.location!),
-                                        ),
-                                      );
-                                      Navigator.of(dialogContext).pop();
-                                      _showSnackBar('保存場所をコピーしました');
-                                    },
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: '保存場所をコピー',
+                                        icon: const Icon(Icons.copy),
+                                        onPressed: () {
+                                          unawaited(
+                                            Clipboard.setData(
+                                              ClipboardData(
+                                                text:
+                                                    gakujoDownloadLocationLabel(
+                                                        entry.location!),
+                                              ),
+                                            ),
+                                          );
+                                          Navigator.of(dialogContext).pop();
+                                          _showSnackBar('保存場所をコピーしました');
+                                        },
+                                      ),
+                                      IconButton(
+                                        tooltip: '開く',
+                                        icon: const Icon(Icons.open_in_new),
+                                        onPressed: () {
+                                          Navigator.of(dialogContext).pop();
+                                          unawaited(
+                                            _openSavedDownload(entry.location!),
+                                          );
+                                        },
+                                      ),
+                                    ],
                                   ),
                           );
                         },
@@ -498,21 +571,47 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                             ListTile(
                               dense: true,
                               title: Text(file.fileName),
-                              subtitle: Text(_formatDateTime(file.savedAt)),
+                              subtitle: Text(
+                                [
+                                  _formatDateTime(file.savedAt),
+                                  if (file.location != null)
+                                    gakujoDownloadLocationLabel(file.location!),
+                                ].join('\n'),
+                              ),
                               trailing: file.location == null
                                   ? null
-                                  : IconButton(
-                                      tooltip: '保存場所をコピー',
-                                      icon: const Icon(Icons.copy),
-                                      onPressed: () {
-                                        unawaited(
-                                          Clipboard.setData(
-                                            ClipboardData(text: file.location!),
-                                          ),
-                                        );
-                                        Navigator.of(dialogContext).pop();
-                                        _showSnackBar('保存場所をコピーしました');
-                                      },
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: '保存場所をコピー',
+                                          icon: const Icon(Icons.copy),
+                                          onPressed: () {
+                                            unawaited(
+                                              Clipboard.setData(
+                                                ClipboardData(
+                                                  text:
+                                                      gakujoDownloadLocationLabel(
+                                                          file.location!),
+                                                ),
+                                              ),
+                                            );
+                                            Navigator.of(dialogContext).pop();
+                                            _showSnackBar('保存場所をコピーしました');
+                                          },
+                                        ),
+                                        IconButton(
+                                          tooltip: '開く',
+                                          icon: const Icon(Icons.open_in_new),
+                                          onPressed: () {
+                                            Navigator.of(dialogContext).pop();
+                                            unawaited(
+                                              _openSavedDownload(
+                                                  file.location!),
+                                            );
+                                          },
+                                        ),
+                                      ],
                                     ),
                             ),
                         ],
@@ -821,7 +920,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       request: request,
       start: () => _controller.runJavaScript(
         WindowsWebViewAuthenticatedDownloadScript.start(
-          requestId: requestId, request: request,
+          requestId: requestId,
+          request: request,
         ),
       ),
       readState: () async => _stringFromJavaScriptResult(
