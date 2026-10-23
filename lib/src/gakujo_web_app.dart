@@ -36,6 +36,7 @@ import 'gakujo_download_history_store.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
+import 'gakujo_expired_page_recovery_script.dart';
 import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
@@ -4353,6 +4354,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _injectExpiredPageRecoveryIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(GakujoExpiredPageRecoveryScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject expired page recovery script',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   Future<void> _injectGpaDisplayIfAllowed() async {
     if (!_canRunPageScripts ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)) {
@@ -4785,6 +4803,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               }
             }
             await _refreshNavigationState();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectExpiredPageRecoveryIfAllowed();
             if (!stillCurrent()) {
               return;
             }
