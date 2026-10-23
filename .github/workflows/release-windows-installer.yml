@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.tag_name }}
@@ -20,19 +20,22 @@ env:
 
 jobs:
   windows-installer:
+    permissions:
+      contents: write
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           ref: refs/tags/${{ inputs.tag_name }}
 
       - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          cache: true
+          cache: false
 
       - name: Install Flutter dependencies
         run: flutter pub get
@@ -83,7 +86,7 @@ jobs:
             "/DMyOutputBaseFilename=${env:APP_NAME}-$safeTagName"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ inputs.tag_name }}
           files: |
