@@ -1229,16 +1229,23 @@ private final class MacosDownloadsBridge: NSObject {
         withIntermediateDirectories: true
       )
 
-      let finalName = uniqueFileName(in: parent, desiredName: fileName.isEmpty ? "document" : fileName)
+      let desiredName = fileName.isEmpty ? "document" : fileName
+      let finalName = uniqueFileName(in: parent, desiredName: desiredName)
       let destination = parent.appendingPathComponent(finalName, isDirectory: false)
       guard isDescendant(destination, of: root) else {
         throw MacosDownloadError.invalidDestination
       }
-      try bytes.write(to: destination, options: .atomic)
+      try bytes.write(to: destination, options: .withoutOverwriting)
+      let existing = findIdenticalDownload(in: parent, desiredName: desiredName, newFile: destination)
+      if existing != nil {
+        try FileManager.default.removeItem(at: destination)
+      }
+      let savedFile = existing ?? destination
       result([
-        "fileName": finalName,
+        "fileName": savedFile.lastPathComponent,
         "courseName": autoSortByCourse ? parent.lastPathComponent : "",
-        "location": destination.path
+        "location": savedFile.path,
+        "alreadySaved": existing != nil
       ])
     } catch {
       result(FlutterError(
@@ -1305,9 +1312,9 @@ private final class MacosDownloadsBridge: NSObject {
       (try? FileManager.default.contentsOfDirectory(
         at: directory,
         includingPropertiesForKeys: nil
-      ).map(\.lastPathComponent)) ?? []
+      ).map { $0.lastPathComponent.lowercased() }) ?? []
     )
-    if !existing.contains(desiredName) {
+    if !existing.contains(desiredName.lowercased()) {
       return desiredName
     }
 
@@ -1317,10 +1324,65 @@ private final class MacosDownloadsBridge: NSObject {
     var index = 1
     while true {
       let candidate = ext.isEmpty ? "\(base) (\(index))" : "\(base) (\(index)).\(ext)"
-      if !existing.contains(candidate) {
+      if !existing.contains(candidate.lowercased()) {
         return candidate
       }
       index += 1
+    }
+  }
+
+  private func findIdenticalDownload(in directory: URL, desiredName: String, newFile: URL) -> URL? {
+    let name = desiredName as NSString
+    let ext = name.pathExtension
+    let base = ext.isEmpty ? desiredName : name.deletingPathExtension
+    var candidateNames: Set<String> = [desiredName.lowercased()]
+    for index in 1...999 {
+      let candidate = ext.isEmpty ? "\(base) (\(index))" : "\(base) (\(index)).\(ext)"
+      candidateNames.insert(candidate.lowercased())
+    }
+    let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+    guard let size = try? newFile.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+          let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: Array(keys)
+          ) else {
+      return nil
+    }
+    for candidate in entries {
+      guard candidate.standardizedFileURL != newFile.standardizedFileURL,
+            candidateNames.contains(candidate.lastPathComponent.lowercased()),
+            let values = try? candidate.resourceValues(forKeys: keys),
+            values.isRegularFile == true, values.isSymbolicLink != true,
+            values.fileSize == size else {
+        continue
+      }
+      // Unreadable candidates cannot prove a duplicate; keep the new file.
+      if (try? filesHaveSameContent(newFile, candidate)) == true {
+        return candidate
+      }
+    }
+    return nil
+  }
+
+  private func filesHaveSameContent(_ firstURL: URL, _ secondURL: URL) throws -> Bool {
+    let first = try FileHandle(forReadingFrom: firstURL)
+    defer { try? first.close() }
+    let second = try FileHandle(forReadingFrom: secondURL)
+    defer { try? second.close() }
+    while true {
+      guard let chunk = try first.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+        return (try second.read(upToCount: 1))?.isEmpty ?? true
+      }
+      var other = Data()
+      while other.count < chunk.count {
+        guard let part = try second.read(upToCount: chunk.count - other.count),
+              !part.isEmpty else {
+          return false
+        }
+        other.append(part)
+      }
+      if chunk != other {
+        return false
+      }
     }
   }
 

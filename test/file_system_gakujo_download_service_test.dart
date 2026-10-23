@@ -374,6 +374,188 @@ void main() {
       }
     }
   });
+
+  group('configured folder duplicate downloads', () {
+    late Directory directory;
+
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('mbg-download-dedupe-');
+    });
+
+    tearDown(() async {
+      await directory.delete(recursive: true);
+    });
+
+    for (final existingName in ['x.pdf', 'x (1).pdf', 'X.PDF', 'X (999).PDF']) {
+      test('reuses identical $existingName and removes only the new file',
+          () async {
+        final bytes = List<int>.generate(2 * 64 * 1024 + 17, (i) => i % 251);
+        final existing = File(
+          '${directory.path}${Platform.pathSeparator}$existingName',
+        );
+        await existing.writeAsBytes(bytes);
+        await existing.setLastModified(DateTime.utc(2020));
+        final modified = await existing.lastModified();
+
+        final result = await _dedupeService(directory, bytes).download(
+          _dedupeRequest,
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+
+        expect(result.alreadySaved, isTrue);
+        expect(result.fileName, existingName);
+        expect(result.location, existing.path);
+        expect(result.courseName, isEmpty);
+        expect(await directory.list().map((file) => file.path).toList(),
+            [existing.path]);
+        expect(await existing.readAsBytes(), bytes);
+        expect(await existing.lastModified(), modified);
+      });
+    }
+
+    for (final existingBytes in [
+      [1, 2],
+      [1, 2, 4],
+      List<int>.filled(2 * 64 * 1024 + 17, 1)..last = 2,
+    ]) {
+      test('keeps different content of size ${existingBytes.length}', () async {
+        final bytes = List<int>.filled(
+          existingBytes.length < 4 ? 3 : existingBytes.length,
+          1,
+        );
+        final existing =
+            File('${directory.path}${Platform.pathSeparator}x.pdf');
+        await existing.writeAsBytes(existingBytes);
+        await existing.setLastModified(DateTime.utc(2020));
+        final modified = await existing.lastModified();
+
+        final result = await _dedupeService(directory, bytes).download(
+          _dedupeRequest,
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+
+        expect(result.alreadySaved, isFalse);
+        expect(result.fileName, 'x (1).pdf');
+        expect(result.location,
+            '${directory.path}${Platform.pathSeparator}x (1).pdf');
+        expect(await File(result.location!).readAsBytes(), bytes);
+        expect(await directory.list().length, 2);
+        expect(await existing.readAsBytes(), existingBytes);
+        expect(await existing.lastModified(), modified);
+      });
+    }
+
+    test('ignores identical files with unrelated or out-of-range names',
+        () async {
+      final bytes = [1, 2, 3];
+      final existing = <File>[];
+      for (final name in [
+        'other.pdf',
+        'x (0).pdf',
+        'x (01).pdf',
+        'x (1000).pdf'
+      ]) {
+        final file = File('${directory.path}${Platform.pathSeparator}$name');
+        await file.writeAsBytes(bytes);
+        existing.add(file);
+      }
+
+      final result = await _dedupeService(directory, bytes).download(
+        _dedupeRequest,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(result.alreadySaved, isFalse);
+      expect(result.fileName, 'x.pdf');
+      expect(await File(result.location!).readAsBytes(), bytes);
+      expect(await directory.list().length, existing.length + 1);
+      for (final file in existing) {
+        expect(await file.readAsBytes(), bytes);
+      }
+    });
+
+    test('reuses an empty file after comparing both streams to EOF', () async {
+      final existing = File('${directory.path}${Platform.pathSeparator}x.pdf');
+      await existing.writeAsBytes([]);
+      final result = await _dedupeService(directory, []).download(
+        _dedupeRequest,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+
+      expect(result.alreadySaved, isTrue);
+      expect(result.location, existing.path);
+      expect(await existing.length(), 0);
+      expect(await directory.list().length, 1);
+    });
+
+    test('compares only files in the selected course folder', () async {
+      final bytes = [1, 2, 3];
+      final rootFile = File('${directory.path}${Platform.pathSeparator}x.pdf');
+      await rootFile.writeAsBytes(bytes);
+      final service = _dedupeService(directory, bytes);
+      final first = await service.download(
+        _dedupeRequest,
+        saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
+      );
+      final second = await service.download(
+        _dedupeRequest,
+        saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
+      );
+
+      expect(first.alreadySaved, isFalse);
+      expect(second.alreadySaved, isTrue);
+      expect(second.courseName, 'course');
+      expect(second.fileName, 'x.pdf');
+      expect(second.location, first.location);
+      expect(await File(first.location!).parent.list().length, 1);
+      expect(await rootFile.readAsBytes(), bytes);
+      expect(await File(first.location!).readAsBytes(), bytes);
+    });
+
+    test('concurrent identical downloads all return the one completed file',
+        () async {
+      final service = _dedupeService(directory, [1, 2, 3]);
+      final results = await Future.wait([
+        for (var index = 0; index < 4; index += 1)
+          service.download(
+            _dedupeRequest,
+            saveMode: DownloadSaveMode.flatToConfiguredFolder,
+          ),
+      ]);
+
+      expect(results.where((result) => !result.alreadySaved), hasLength(1));
+      expect(results.map((result) => result.location).toSet(), hasLength(1));
+      expect(results.map((result) => result.fileName).toSet(), {'x.pdf'});
+      expect(await directory.list().length, 1);
+      expect(await File(results.first.location!).readAsBytes(), [1, 2, 3]);
+    });
+  });
+}
+
+const _dedupeRequest = GakujoDownloadRequest(
+  url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+  method: 'GET',
+  courseName: 'course',
+  fileName: 'x.pdf',
+  formFields: {},
+);
+
+FileSystemGakujoDownloadService _dedupeService(
+  Directory directory,
+  List<int> bytes,
+) {
+  return FileSystemGakujoDownloadService(
+    secureStorage: _MemorySecureStorage({
+      'more_better_gakujo_download_root_path': directory.path,
+    }),
+    usesNativeDownloadRoot: false,
+    authenticatedBytesLoader: (request, {userAgent}) async =>
+        AuthenticatedDownloadedFile(
+      bytes: Uint8List.fromList(bytes),
+      finalUrl: request.url,
+      mimeType: 'application/pdf',
+    ),
+  );
 }
 
 class _MemorySecureStorage extends FlutterSecureStorage {

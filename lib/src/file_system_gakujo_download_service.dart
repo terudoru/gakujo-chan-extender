@@ -311,11 +311,21 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         }
         rethrow;
       }
-      final finalName = _baseName(reservedFile.path);
+      final existingFile = await _findIdenticalDownload(
+        parent,
+        fileName,
+        reservedFile,
+      );
+      if (existingFile != null) {
+        await reservedFile.delete();
+      }
+      final savedFile = existingFile ?? reservedFile;
+      final finalName = _baseName(savedFile.path);
       return GakujoDownloadResult(
         fileName: finalName,
         courseName: autoSortByCourse ? _baseName(parent.path) : '',
-        location: reservedFile.path,
+        location: savedFile.path,
+        alreadySaved: existingFile != null,
       );
     });
   }
@@ -539,6 +549,74 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       'Could not reserve a unique download file after 1000 attempts',
       directory.path,
     );
+  }
+
+  Future<File?> _findIdenticalDownload(
+    Directory directory,
+    String desiredName,
+    File newFile,
+  ) async {
+    final dot = desiredName.lastIndexOf('.');
+    final hasExtension = dot > 0 && dot < desiredName.length - 1;
+    final base = hasExtension ? desiredName.substring(0, dot) : desiredName;
+    final extension = hasExtension ? desiredName.substring(dot) : '';
+    final candidateNames = {
+      desiredName.toLowerCase(),
+      for (var index = 1; index <= 999; index += 1)
+        '$base ($index)$extension'.toLowerCase(),
+    };
+    final size = await newFile.length();
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File ||
+          entity.path == newFile.path ||
+          !candidateNames.contains(_baseName(entity.path).toLowerCase())) {
+        continue;
+      }
+      try {
+        if (await entity.length() == size &&
+            await _filesHaveSameContent(newFile, entity)) {
+          return entity;
+        }
+      } on FileSystemException catch (error, stackTrace) {
+        // An unreadable or disappearing candidate cannot prove a duplicate.
+        developer.log('Failed to compare a saved download',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _filesHaveSameContent(File firstFile, File secondFile) async {
+    final first = await firstFile.open();
+    try {
+      final second = await secondFile.open();
+      try {
+        final buffer = Uint8List(64 * 1024);
+        while (true) {
+          final chunk = await first.read(buffer.length);
+          if (chunk.isEmpty) {
+            return await second.readByte() == -1;
+          }
+          var offset = 0;
+          while (offset < chunk.length) {
+            final count = await second.readInto(buffer, offset, chunk.length);
+            if (count == 0) {
+              return false;
+            }
+            offset += count;
+          }
+          for (var index = 0; index < chunk.length; index += 1) {
+            if (chunk[index] != buffer[index]) {
+              return false;
+            }
+          }
+        }
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await first.close();
+    }
   }
 
   static String _encodeForm(Map<String, String> fields) {

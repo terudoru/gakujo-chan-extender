@@ -785,9 +785,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           ? result.fileName
           : '${result.courseName}/${result.fileName}';
       _setStatus(
-        historyRecorded
-            ? '保存しました: $savedPath'
-            : '保存しました（履歴は更新できませんでした）: $savedPath',
+        result.alreadySaved
+            ? '保存済みのファイルと同じ内容のため、新しく保存しませんでした: $savedPath'
+            : historyRecorded
+                ? '保存しました: $savedPath'
+                : '保存しました（履歴は更新できませんでした）: $savedPath',
       );
       _showDownloadSavedSnackBar(
         result,
@@ -962,10 +964,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
 
     final location = _nonEmptyOrNull(result.location);
+    final savedPath = result.courseName.isEmpty
+        ? result.fileName
+        : '${result.courseName}/${result.fileName}';
     _showSnackBar(
-      historyRecorded
-          ? '保存しました: ${result.fileName}'
-          : '保存しました: ${result.fileName}（履歴の更新のみ失敗しました）',
+      result.alreadySaved
+          ? '保存済みのファイルと同じ内容のため、新しく保存しませんでした: $savedPath'
+          : historyRecorded
+              ? '保存しました: ${result.fileName}'
+              : '保存しました: ${result.fileName}（履歴の更新のみ失敗しました）',
       action: location == null
           ? null
           : SnackBarAction(

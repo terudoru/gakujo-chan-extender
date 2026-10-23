@@ -9,11 +9,13 @@ class GakujoDownloadResult {
     required this.fileName,
     required this.courseName,
     this.location,
+    this.alreadySaved = false,
   });
 
   final String fileName;
   final String courseName;
   final String? location;
+  final bool alreadySaved;
 
   factory GakujoDownloadResult.fromMap(Map<dynamic, dynamic>? raw) {
     final fileName = raw?['fileName']?.toString().trim() ?? '';
@@ -27,6 +29,7 @@ class GakujoDownloadResult {
       fileName: fileName,
       courseName: raw['courseName']?.toString() ?? '',
       location: raw['location']?.toString(),
+      alreadySaved: raw['alreadySaved'] == true,
     );
   }
 }

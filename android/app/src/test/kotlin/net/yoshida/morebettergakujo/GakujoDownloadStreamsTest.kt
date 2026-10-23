@@ -3,6 +3,7 @@ package net.yoshida.morebettergakujo
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -11,6 +12,87 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GakujoDownloadStreamsTest {
+    @Test
+    fun differentSizesDoNotOpenEitherStream() {
+        assertFalse(GakujoDownloadStreams.haveSameContent(
+            3L, 4L,
+            { throw AssertionError("size mismatch must short-circuit") },
+            { throw AssertionError("size mismatch must short-circuit") }
+        ))
+    }
+
+    @Test
+    fun comparesMultipleChunksWithDifferentShortReadBoundariesAndClosesStreams() {
+        val bytes = ByteArray(2 * 64 * 1024 + 17) { (it % 251).toByte() }
+        var firstClosed = false
+        var secondClosed = false
+        val first = object : ByteArrayInputStream(bytes) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                return super.read(buffer, offset, minOf(length, 4093))
+            }
+            override fun close() { firstClosed = true; super.close() }
+        }
+        val second = object : ByteArrayInputStream(bytes) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                return super.read(buffer, offset, minOf(length, 1009))
+            }
+            override fun close() { secondClosed = true; super.close() }
+        }
+
+        assertTrue(GakujoDownloadStreams.haveSameContent(
+            bytes.size.toLong(), bytes.size.toLong(), { first }, { second }
+        ))
+        assertTrue(firstClosed)
+        assertTrue(secondClosed)
+    }
+
+    @Test
+    fun rejectsSameSizeContentThatDiffersAfterTheFirstChunk() {
+        val bytes = ByteArray(2 * 64 * 1024 + 17) { 1 }
+        val different = bytes.copyOf().also { it[it.lastIndex] = 2 }
+        assertFalse(GakujoDownloadStreams.haveSameContent(
+            bytes.size.toLong(), different.size.toLong(),
+            { ByteArrayInputStream(bytes) }, { ByteArrayInputStream(different) }
+        ))
+    }
+
+    @Test
+    fun checksActualEofEvenWhenProviderSizesMatch() {
+        assertFalse(GakujoDownloadStreams.haveSameContent(
+            0L, 0L,
+            { ByteArrayInputStream(byteArrayOf(1)) },
+            { ByteArrayInputStream(byteArrayOf(1, 2)) }
+        ))
+        assertFalse(GakujoDownloadStreams.haveSameContent(
+            0L, 0L,
+            { ByteArrayInputStream(byteArrayOf(1, 2)) },
+            { ByteArrayInputStream(byteArrayOf(1)) }
+        ))
+        assertTrue(GakujoDownloadStreams.haveSameContent(
+            0L, 0L,
+            { ByteArrayInputStream(byteArrayOf()) },
+            { ByteArrayInputStream(byteArrayOf()) }
+        ))
+    }
+
+    @Test
+    fun comparisonClosesBothStreamsOnReadFailure() {
+        var firstClosed = false
+        var secondClosed = false
+        val first = object : InputStream() {
+            override fun read(): Int { throw IOException("provider unavailable") }
+            override fun close() { firstClosed = true }
+        }
+        val second = object : ByteArrayInputStream(byteArrayOf(1)) {
+            override fun close() { secondClosed = true; super.close() }
+        }
+        assertThrows(IOException::class.java) {
+            GakujoDownloadStreams.haveSameContent(1L, 1L, { first }, { second })
+        }
+        assertTrue(firstClosed)
+        assertTrue(secondClosed)
+    }
+
     @Test
     fun doesNotOpenOrTruncateDestinationWhenInputCannotBeOpened() {
         val failure = IOException("connection closed")

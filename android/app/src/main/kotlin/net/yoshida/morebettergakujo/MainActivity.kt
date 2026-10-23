@@ -165,6 +165,15 @@ internal object GakujoDownloadFilePolicy {
     fun resolvedName(providerName: String?, allocatedName: String): String {
         return providerName ?: allocatedName
     }
+
+    fun duplicateCandidateNames(desiredName: String): Set<String> {
+        val dot = desiredName.lastIndexOf('.')
+        val hasExtension = dot > 0 && dot < desiredName.length - 1
+        val base = if (hasExtension) desiredName.substring(0, dot) else desiredName
+        val extension = if (hasExtension) desiredName.substring(dot) else ""
+        return (listOf(desiredName) + (1..999).map { "$base ($it)$extension" })
+            .map { it.lowercase(Locale.ROOT) }.toSet()
+    }
 }
 
 internal object GakujoCalendarEventPolicy {
@@ -803,7 +812,8 @@ class MainActivity : FlutterActivity() {
                         mapOf(
                             "fileName" to saved.fileName,
                             "courseName" to saved.courseName,
-                            "location" to saved.location
+                            "location" to saved.location,
+                            "alreadySaved" to saved.alreadySaved
                         )
                     )
                 }
@@ -916,37 +926,45 @@ class MainActivity : FlutterActivity() {
                 requestedCourseName
             }
             val parent = if (autoSortByCourse) ensureDirectory(root, courseName) else root
-            val (file, finalName) = synchronized(downloadFolderLock) {
+            // Keep in-progress downloads out of each other's duplicate checks.
+            return synchronized(downloadFolderLock) {
                 val allocatedName = uniqueName(
                     parent = parent,
                     desiredName = desiredName
                 )
-                val createdFile = parent.createFile(mimeType, allocatedName)
+                val file = parent.createFile(mimeType, allocatedName)
                     ?: throw IllegalStateException("ファイルを作成できませんでした")
-                createdFile to allocatedName
-            }
-            val savedFileName = GakujoDownloadFilePolicy.resolvedName(file.name, finalName)
-            GakujoDownloadStreams.copy(
-                openInput = { BufferedInputStream(connection.inputStream) },
-                openOutput = {
-                    contentResolver.openOutputStream(file.uri)
-                        ?: throw IllegalStateException("ファイルを書き込めませんでした")
-                },
-                cleanupFailedDestination = {
+                GakujoDownloadStreams.copy(
+                    openInput = { BufferedInputStream(connection.inputStream) },
+                    openOutput = {
+                        contentResolver.openOutputStream(file.uri)
+                            ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                    },
+                    cleanupFailedDestination = {
+                        if (!file.delete()) {
+                            throw IllegalStateException("未完了のファイルを削除できませんでした")
+                        }
+                    }
+                )
+                val existing = findIdenticalDownload(parent, desiredName, file)
+                if (existing != null) {
                     if (!file.delete()) {
-                        throw IllegalStateException("未完了のファイルを削除できませんでした")
+                        throw IllegalStateException("重複したファイルを削除できませんでした")
                     }
                 }
-            )
-            val savedCourseName = if (autoSortByCourse) courseName else ""
-            if (isDebuggable()) {
-                Log.i(TAG, "Download saved course=$savedCourseName file=$savedFileName")
+                val savedFile = existing ?: file
+                val savedFileName = GakujoDownloadFilePolicy.resolvedName(savedFile.name, allocatedName)
+                val savedCourseName = if (autoSortByCourse) courseName else ""
+                if (isDebuggable()) {
+                    Log.i(TAG, "Download saved course=$savedCourseName file=$savedFileName")
+                }
+                SavedDownload(
+                    fileName = savedFileName,
+                    courseName = savedCourseName,
+                    location = savedFile.uri.toString(),
+                    alreadySaved = existing != null
+                )
             }
-            return SavedDownload(
-                fileName = savedFileName,
-                courseName = savedCourseName,
-                location = file.uri.toString()
-            )
         } finally {
             connection.disconnect()
         }
@@ -1227,6 +1245,40 @@ class MainActivity : FlutterActivity() {
     private fun uniqueName(parent: DocumentFile, desiredName: String): String {
         val existing = parent.listFiles().mapNotNull { it.name }.toSet()
         return GakujoDownloadFilePolicy.uniqueName(existing, desiredName)
+    }
+
+    private fun findIdenticalDownload(
+        parent: DocumentFile,
+        desiredName: String,
+        newFile: DocumentFile
+    ): DocumentFile? {
+        val names = GakujoDownloadFilePolicy.duplicateCandidateNames(desiredName)
+        val size = newFile.length()
+        for (candidate in parent.listFiles()) {
+            if (candidate.uri == newFile.uri || !candidate.isFile ||
+                candidate.name?.lowercase(Locale.ROOT) !in names) {
+                continue
+            }
+            try {
+                if (GakujoDownloadStreams.haveSameContent(
+                        firstSize = size,
+                        secondSize = candidate.length(),
+                        openFirst = {
+                            contentResolver.openInputStream(newFile.uri)
+                                ?: throw IllegalStateException("保存したファイルを読み込めませんでした")
+                        },
+                        openSecond = {
+                            contentResolver.openInputStream(candidate.uri)
+                                ?: throw IllegalStateException("保存済みのファイルを読み込めませんでした")
+                        }
+                    )) {
+                    return candidate
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Failed to compare a saved download", error)
+            }
+        }
+        return null
     }
 
     private fun downloadRootState(): Map<String, Any?> {
@@ -1986,7 +2038,8 @@ class MainActivity : FlutterActivity() {
     private data class SavedDownload(
         val fileName: String,
         val courseName: String,
-        val location: String
+        val location: String,
+        val alreadySaved: Boolean = false
     )
 
     private data class CalendarSyncBatchResult(
