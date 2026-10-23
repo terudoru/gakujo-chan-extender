@@ -142,13 +142,26 @@ Future<GakujoDownloadResult> exportGakujoCalendarWithNativePicker({
   required String ics,
   required String fileName,
 }) async {
+  return exportGakujoFileWithNativePicker(
+    bytes: Uint8List.fromList(utf8.encode(ics)),
+    fileName: fileName,
+    mimeType: 'text/calendar',
+  );
+}
+
+@visibleForTesting
+Future<GakujoDownloadResult> exportGakujoFileWithNativePicker({
+  required Uint8List bytes,
+  required String fileName,
+  required String mimeType,
+}) async {
   final raw =
       await _gakujoNativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
     'exportDownloadedFile',
     {
-      'bytes': Uint8List.fromList(utf8.encode(ics)),
+      'bytes': bytes,
       'fileName': fileName,
-      'mimeType': 'text/calendar',
+      'mimeType': mimeType,
     },
   );
   return GakujoDownloadResult.fromMap(raw);

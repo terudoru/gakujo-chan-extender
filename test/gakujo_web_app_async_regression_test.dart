@@ -645,6 +645,87 @@ void main() {
     });
   });
 
+  group('native file export', () {
+    const channel = MethodChannel(
+      'net.yoshida.morebettergakujo/downloads',
+    );
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('sends JSON backup bytes and returns the picked name and location',
+        () async {
+      const json = '{"version":2,"favorites":[{"title":"情報リテラシー"}]}';
+      const fileName = 'morebettergakujo-backup-20261024-0905.json';
+      MethodCall? capturedCall;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return {
+          'fileName': 'my-backup.json',
+          'courseName': '',
+          'location': '/picked/my-backup.json',
+        };
+      });
+
+      final result = await exportGakujoFileWithNativePicker(
+        bytes: Uint8List.fromList(utf8.encode(json)),
+        fileName: fileName,
+        mimeType: 'application/json',
+      );
+
+      expect(capturedCall?.method, 'exportDownloadedFile');
+      final arguments = capturedCall?.arguments as Map<dynamic, dynamic>;
+      expect(arguments['fileName'], fileName);
+      expect(arguments['mimeType'], 'application/json');
+      expect(arguments['bytes'], isA<Uint8List>());
+      expect(arguments['bytes'], utf8.encode(json));
+      expect(result.fileName, 'my-backup.json');
+      expect(result.location, '/picked/my-backup.json');
+    });
+
+    test('preserves native picker cancellation for the download error helper',
+        () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'cancelled', message: '保存をキャンセルしました');
+      });
+
+      await expectLater(
+        exportGakujoFileWithNativePicker(
+          bytes: Uint8List.fromList(utf8.encode('{}')),
+          fileName: 'backup.json',
+          mimeType: 'application/json',
+        ),
+        throwsA(isA<PlatformException>().having(
+          isCancelledDownloadError,
+          'is cancelled',
+          isTrue,
+        )),
+      );
+    });
+
+    test('preserves native export error codes and messages', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'export_failed', message: '保存先を開けませんでした');
+      });
+
+      await expectLater(
+        exportGakujoFileWithNativePicker(
+          bytes: Uint8List.fromList(utf8.encode('{}')),
+          fileName: 'backup.json',
+          mimeType: 'application/json',
+        ),
+        throwsA(isA<PlatformException>()
+            .having((error) => error.code, 'code', 'export_failed')
+            .having((error) => error.message, 'message', '保存先を開けませんでした')),
+      );
+    });
+  });
+
   test('calendar operation gate rejects a concurrent operation', () {
     final gate = GakujoCalendarOperationGate();
 

@@ -2681,9 +2681,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _createManualBackup() async {
+    final File file;
     try {
-      final file = await _writeBackupFile(prefix: 'manual');
-      _showSnackBar('バックアップを作成しました: ${file.path}');
+      file = await _writeBackupFile(prefix: 'manual');
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to write manual backup',
@@ -2692,6 +2692,44 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         stackTrace: stackTrace,
       );
       _showSnackBar('バックアップを作成できませんでした: $error');
+      return;
+    }
+
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      _showSnackBar('バックアップを作成しました: ${file.path}');
+      return;
+    }
+
+    try {
+      final now = DateTime.now();
+      String twoDigits(int value) => value.toString().padLeft(2, '0');
+      final fileName = 'morebettergakujo-backup-'
+          '${now.year}${twoDigits(now.month)}${twoDigits(now.day)}-'
+          '${twoDigits(now.hour)}${twoDigits(now.minute)}.json';
+      final result = await exportGakujoFileWithNativePicker(
+        bytes: await file.readAsBytes(),
+        fileName: fileName,
+        mimeType: 'application/json',
+      );
+      final location = result.location?.trim();
+      final destination =
+          location == null || location.isEmpty ? result.fileName : location;
+      _showSnackBar('バックアップを保存しました: $destination');
+    } on Object catch (error, stackTrace) {
+      if (error is PlatformException && isCancelledDownloadError(error)) {
+        _showSnackBar('バックアップの保存をキャンセルしました（アプリ内には作成済みです）');
+        return;
+      }
+      developer.log(
+        'Failed to export manual backup',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      final message = error is PlatformException
+          ? error.message ?? error.code
+          : error.toString();
+      _showSnackBar('バックアップを書き出せませんでした: $message');
     }
   }
 
