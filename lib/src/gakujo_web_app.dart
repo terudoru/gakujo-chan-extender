@@ -4446,7 +4446,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _showSnackBar('バックアップファイルが大きすぎます');
       return;
     }
-    final text = await file.readAsString();
+    // XFile.readAsString() ignores its encoding for picked files held in
+    // memory (Android) and decodes bytes as Latin-1, garbling Japanese.
+    final decoded = utf8.decode(await file.readAsBytes(), allowMalformed: true);
+    final text = decoded.startsWith('﻿') ? decoded.substring(1) : decoded;
     await _restoreSettingsFromText(
       text,
       emptyMessage: 'ファイルに設定JSONがありません',
