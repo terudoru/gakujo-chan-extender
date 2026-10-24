@@ -14,6 +14,7 @@ Future<void> restoreGakujoBackup({
 }) async {
   // Validate every replacement before starting the transaction: even rollback
   // writes are unnecessary when the backup cannot be read.
+  // Store replacement writers apply retention after structural validation.
   final messageExcludeKeywords = validateGakujoBackupCollection(
     'messageExcludeKeywords',
     backup.messageExcludeKeywords,
@@ -21,32 +22,25 @@ Future<void> restoreGakujoBackup({
   final downloadHistory = validateGakujoBackupCollection(
     'downloadHistory',
     backup.downloadHistory,
-    retain: historyStore.retainsBackupEntry,
   );
   final failedDownloads = validateGakujoBackupCollection(
     'failedDownloads',
     backup.failedDownloads,
-    retain: (entry) =>
-        historyStore.retainsBackupEntry(entry) &&
-        isAllowedUrl(entry.request.url),
+    retain: (entry) => isAllowedUrl(entry.request.url),
   );
   final favorites = validateGakujoBackupCollection(
     'favorites',
     backup.favorites,
-    retain: (entry) =>
-        activityStore.retainsBackupEntry(entry) &&
-        isAllowedNavigationUrl(entry.url),
+    retain: (entry) => isAllowedNavigationUrl(entry.url),
   );
   final starredMessages = validateGakujoBackupCollection(
     'starredMessages',
     backup.starredMessages,
-    retain: activityStore.retainsBackupEntry,
   );
   final deadlines = validateGakujoBackupCollection(
     'deadlines',
     backup.deadlines,
-    retain: (entry) =>
-        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+    retain: (entry) => isAllowedUrl(entry.url),
   );
   final notifiedDeadlineKeys = validateGakujoBackupCollection(
     'notifiedDeadlineKeys',
@@ -55,14 +49,12 @@ Future<void> restoreGakujoBackup({
   final changes = validateGakujoBackupCollection(
     'changes',
     backup.changes,
-    retain: (entry) =>
-        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+    retain: (entry) => isAllowedUrl(entry.url),
   );
   final reportLists = validateGakujoBackupCollection(
     'reportLists',
     backup.reportLists,
-    retain: (entry) =>
-        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+    retain: (entry) => isAllowedUrl(entry.url),
   );
   await runBackupStorageTransaction([
     settingsStore.backupStorage,

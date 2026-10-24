@@ -5,6 +5,19 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
+  for (final isMainFrame in [false, true]) {
+    test('preserves navigation frame flag $isMainFrame from WKWebView', () {
+      final mapped = GakujoNavigationRequest.fromWebViewFlutter(
+        NavigationRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+          isMainFrame: isMainFrame,
+        ),
+      );
+      expect(mapped.isMainFrame, isMainFrame);
+      expect(mapped.url, endsWith('/campusportal.do'));
+    });
+  }
+
   group('mobile resource errors', () {
     const connectivityTypes = {
       WebResourceErrorType.hostLookup,

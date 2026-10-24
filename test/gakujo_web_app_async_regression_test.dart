@@ -24,7 +24,7 @@ void main() {
       final messages = <String>[];
       await handleGakujoNativeDownload(
         const GakujoWebViewDownload(
-          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do?fileId=42',
           resultFilePath: r'C:\Users\student\Downloads\講義資料.pdf',
           mimeType: 'application/pdf',
         ),
@@ -32,7 +32,8 @@ void main() {
         showSnackBar: messages.add,
       );
       final request = requests.single;
-      expect(request.url, 'https://gakujo.iess.niigata-u.ac.jp/download.do');
+      expect(request.url,
+          'https://gakujo.iess.niigata-u.ac.jp/download.do?fileId=42');
       expect(request.method, 'GET');
       expect(request.fileName, '講義資料.pdf');
       // An empty course takes the existing page/course estimation path.
@@ -46,7 +47,8 @@ void main() {
       final requests = <GakujoDownloadRequest>[];
       await handleGakujoNativeDownload(
         const GakujoWebViewDownload(
-          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do',
+          url:
+              'https://gakujo.iess.niigata-u.ac.jp/download.do?_eventId=download',
           resultFilePath: r'C:\Users\student\Downloads\02 (1).pdf',
           mimeType: 'application/pdf',
         ),
@@ -60,13 +62,46 @@ void main() {
       final requests = <GakujoDownloadRequest>[];
       await handleGakujoNativeDownload(
         const GakujoWebViewDownload(
-          url: 'https://gakujo.iess.niigata-u.ac.jp/campussquare.do',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campussquare.do?fileId=42',
           mimeType: 'application/pdf',
         ),
         onDownload: requests.add,
         showSnackBar: (_) => fail('A Gakujo download should be accepted'),
       );
       expect(requests.single.fileName, 'document.pdf');
+    });
+
+    for (final suffix in ['', '?', '#section?fileId=42']) {
+      test('leaves a queryless POST download ($suffix) to WebView2', () async {
+        await handleGakujoNativeDownload(
+          GakujoWebViewDownload(
+            url: 'https://gakujo.iess.niigata-u.ac.jp/download.do$suffix',
+          ),
+          onDownload: (_) =>
+              fail('A POST response must not be replayed as GET'),
+          showSnackBar: (_) => fail('WebView2 displays its download UI'),
+        );
+      });
+    }
+
+    test('native cancellation follows the replayability guard', () {
+      final source = File(
+        'third_party/webview_flutter_windows/windows/webview.cc',
+      ).readAsStringSync();
+      final handler = source.substring(
+        source.indexOf('webview24->add_DownloadStarting('),
+      );
+      final guard = handler.indexOf('!util::IsReplayableGakujoDownload(url)');
+      expect(guard, greaterThan(0));
+      final fallback = handler.indexOf('return S_OK;', guard);
+      expect(handler, contains('args->put_Cancel(FALSE)'));
+      expect(handler, contains('args->put_Handled(FALSE)'));
+      expect(handler.indexOf('args->put_Cancel(FALSE)'), lessThan(guard));
+      expect(handler.indexOf('args->put_Handled(FALSE)'), lessThan(guard));
+      expect(handler.indexOf('args->put_Cancel(TRUE)'), greaterThan(fallback));
+      expect(handler.indexOf('args->put_Handled(TRUE)'), greaterThan(fallback));
+      expect(
+          handler.indexOf('download_event_callback_('), greaterThan(fallback));
     });
 
     for (final url in [
@@ -152,6 +187,34 @@ void main() {
         );
         expect(handled, [payload]);
       });
+
+      test('$channel accepts an internal blank page only after Gakujo',
+          () async {
+        final handled = <String>[];
+        for (final lastAllowed in [
+          null,
+          'https://example.com/',
+          'http://gakujo.iess.niigata-u.ac.jp/',
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+        ]) {
+          await handleGakujoJavaScriptMessage(
+            currentUrl: 'about:blank',
+            lastAllowedUrl: lastAllowed,
+            channelName: channel,
+            message: 'download or zoom response',
+            onMessageReceived: handled.add,
+          );
+        }
+        expect(handled, ['download or zoom response']);
+        await handleGakujoJavaScriptMessage(
+          currentUrl: 'https://example.com/',
+          lastAllowedUrl: 'https://gakujo.iess.niigata-u.ac.jp/',
+          channelName: channel,
+          message: 'untrusted response',
+          onMessageReceived: handled.add,
+        );
+        expect(handled, ['download or zoom response']);
+      });
     }
   });
 
@@ -160,6 +223,24 @@ void main() {
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do';
     const other =
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list.do';
+
+    test('portal iframe navigation preserves the pending message open', () {
+      final navigation = GakujoMessageOpenNavigation()..record(target, 7);
+      const iframe = GakujoNavigationRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+        isMainFrame: false,
+      );
+      expect(navigation.shouldCancelFor(iframe, 7), isFalse);
+      expect(navigation.consume(target, 7), isTrue);
+      navigation.record(target, 8);
+      expect(
+        navigation.shouldCancelFor(
+          GakujoNavigationRequest(url: iframe.url, isMainFrame: true),
+          8,
+        ),
+        isTrue,
+      );
+    });
 
     test('only the recorded app navigation can consume its page start', () {
       final navigation = GakujoMessageOpenNavigation()..record(target, 7);

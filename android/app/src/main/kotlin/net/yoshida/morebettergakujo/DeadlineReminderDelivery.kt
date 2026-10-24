@@ -6,13 +6,15 @@ internal object DeadlineReminderDelivery {
     // 500-alarm limit for other work, including alarms from older versions.
     const val MAX_BOOKED_REMINDERS = 150
 
-    fun shouldBook(id: Int, atMillis: Long, now: Long, delivered: Set<Int>): Boolean =
-        atMillis > now && id !in delivered
+    fun key(id: Int, atMillis: Long): String = "$id|$atMillis"
+
+    fun shouldBook(id: Int, atMillis: Long, now: Long, delivered: Set<String>): Boolean =
+        atMillis > now && key(id, atMillis) !in delivered
 
     fun <T> upcoming(
         reminders: List<T>,
         now: Long,
-        delivered: Set<Int>,
+        delivered: Set<String>,
         id: (T) -> Int,
         atMillis: (T) -> Long
     ): List<T> = reminders
@@ -29,6 +31,8 @@ internal object DeadlineReminderDelivery {
         }
     }
 
-    fun record(delivered: List<Int>, id: Int): List<Int> =
-        (delivered.filter { it != id } + id).takeLast(500)
+    fun record(delivered: List<String>, id: Int, atMillis: Long): List<String> {
+        val key = key(id, atMillis)
+        return (delivered.filter { it != key } + key).takeLast(500)
+    }
 }

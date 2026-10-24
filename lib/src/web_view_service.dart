@@ -25,9 +25,19 @@ enum GakujoNavigationDecision {
 class GakujoNavigationRequest {
   const GakujoNavigationRequest({
     required this.url,
+    this.isMainFrame = true,
   });
 
+  factory GakujoNavigationRequest.fromWebViewFlutter(
+      NavigationRequest request) {
+    return GakujoNavigationRequest(
+      url: request.url,
+      isMainFrame: request.isMainFrame,
+    );
+  }
+
   final String url;
+  final bool isMainFrame;
 }
 
 class GakujoWebResourceError {
@@ -630,7 +640,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
       NavigationDelegate(
         onNavigationRequest: (request) async {
           final decision = await delegate.onNavigationRequest?.call(
-            GakujoNavigationRequest(url: request.url),
+            GakujoNavigationRequest.fromWebViewFlutter(request),
           );
           return decision == GakujoNavigationDecision.prevent
               ? NavigationDecision.prevent
@@ -1201,7 +1211,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   Future<void> _reportBlockedNavigation(String url) async {
     try {
       await _delegate?.onNavigationRequest?.call(
-        GakujoNavigationRequest(url: url),
+        GakujoNavigationRequest(url: url, isMainFrame: true),
       );
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -1366,7 +1376,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     }
 
     final decision = await _delegate?.onNavigationRequest?.call(
-      GakujoNavigationRequest(url: url),
+      GakujoNavigationRequest(url: url, isMainFrame: true),
     );
     if (!_isCurrentNavigation(generation)) {
       return;

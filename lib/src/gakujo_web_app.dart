@@ -650,13 +650,29 @@ String? usableGakujoNavigationCandidateForChallenge({
 }
 
 @visibleForTesting
+bool canRunGakujoPageScripts({
+  required String? currentUrl,
+  String? lastAllowedUrl,
+  bool debugAllowed = false,
+}) {
+  return AllowedWebOrigins.canLoad(currentUrl, debugAllowed: debugAllowed) ||
+      ((currentUrl ?? '').trim().toLowerCase() == 'about:blank' &&
+          AllowedWebOrigins.canLoad(lastAllowedUrl,
+              debugAllowed: debugAllowed));
+}
+
+@visibleForTesting
 Future<void> handleGakujoJavaScriptMessage({
   required String? currentUrl,
+  String? lastAllowedUrl,
   required String channelName,
   required String message,
   required FutureOr<void> Function(String) onMessageReceived,
 }) async {
-  if (!AllowedWebOrigins.canLoad(currentUrl, debugAllowed: false)) {
+  if (!canRunGakujoPageScripts(
+    currentUrl: currentUrl,
+    lastAllowedUrl: lastAllowedUrl,
+  )) {
     if (kDebugMode) {
       debugPrint('Ignored $channelName message outside the Gakujo origin');
     }
@@ -677,6 +693,11 @@ class GakujoMessageOpenNavigation {
 
   bool owns(String url, int navigationRevision) {
     return _revision == navigationRevision && (_url == null || _url == url);
+  }
+
+  bool shouldCancelFor(
+      GakujoNavigationRequest request, int navigationRevision) {
+    return request.isMainFrame && !owns(request.url, navigationRevision);
   }
 
   bool consume(String url, int navigationRevision) {
@@ -1578,7 +1599,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     final pending = _pendingMessageOpen;
     if (pending != null &&
-        !pending.navigation.owns(request.url, _navigationRevision)) {
+        pending.navigation.shouldCancelFor(request, _navigationRevision)) {
       _setPendingMessageUrl(null);
     }
 
@@ -5099,6 +5120,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       name,
       onMessageReceived: (message) => handleGakujoJavaScriptMessage(
         currentUrl: _currentPageUrl,
+        lastAllowedUrl: _lastAllowedPageUrl,
         channelName: name,
         message: message,
         onMessageReceived: onMessageReceived,
@@ -5856,21 +5878,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  bool get _canRunPageScripts {
-    if (AllowedWebOrigins.canLoad(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
-      return true;
-    }
-    if (!_isInternalBlankUrl(_currentPageUrl)) {
-      return false;
-    }
-    return AllowedWebOrigins.canLoad(
-      _lastAllowedPageUrl,
-      debugAllowed: _debugAllowed,
-    );
-  }
+  bool get _canRunPageScripts => canRunGakujoPageScripts(
+        currentUrl: _currentPageUrl,
+        lastAllowedUrl: _lastAllowedPageUrl,
+        debugAllowed: _debugAllowed,
+      );
 
   bool _isInternalBlankUrl(String? url) {
     return (url ?? '').trim().toLowerCase() == 'about:blank';

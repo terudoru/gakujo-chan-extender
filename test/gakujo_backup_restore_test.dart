@@ -118,32 +118,33 @@ void main() {
     expect(storage.values, {_favoritesKey: 'old'});
   });
 
-  for (final (key, dateKey) in [
-    ('downloadHistory', 'savedAt'),
-    ('failedDownloads', 'failedAt'),
-    ('changes', 'changedAt'),
-    ('reportLists', 'capturedAt'),
+  for (final (key, dateKey, storageKey) in [
+    ('downloadHistory', 'savedAt', _historyKey),
+    ('failedDownloads', 'failedAt', 'more_better_gakujo_failed_downloads'),
+    ('deadlines', 'dueText', 'more_better_gakujo_deadlines'),
+    ('changes', 'changedAt', 'more_better_gakujo_activity_changes'),
+    ('reportLists', 'capturedAt', 'more_better_gakujo_cached_report_lists'),
   ]) {
-    test('rejects $key if every record would be discarded by retention',
+    test('restores valid $key even when retention expires every record',
         () async {
       final records = (validCollections[key] as List)
           .map((value) => {
                 ...(value as Map),
-                dateKey: '1970-01-01T00:00:00.000Z',
+                dateKey: key == 'deadlines'
+                    ? '2000/01/01 17:00'
+                    : '1970-01-01T00:00:00.000Z',
               })
           .toList();
-      final storage = _Storage({_modeKey: 'old'});
-      await expectLater(
-        _restoreActivityBackup(
-            storage,
-            parseGakujoBackup(jsonEncode({
-              'version': 2,
-              'pageMode': 'mobile',
-              key: records,
-            }))),
-        throwsA(isA<GakujoBackupImportException>()),
-      );
-      expect(storage.writes, 0);
+      final storage = _Storage({storageKey: jsonEncode(validCollections[key])});
+      await _restoreActivityBackup(
+          storage,
+          parseGakujoBackup(jsonEncode({
+            'version': 2,
+            'pageMode': 'mobile',
+            key: records,
+          })));
+      expect(storage.values['more_better_gakujo_page_mode'], 'mobile');
+      expect(jsonDecode(storage.values[storageKey]!), isEmpty);
     });
   }
 

@@ -46,7 +46,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 8;'));
+    expect(script, contains('var version = 9;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));
@@ -152,8 +152,7 @@ void main() {
 
   for (final kind in ['textarea', 'text', 'checkbox', 'radio', 'select']) {
     for (final event in ['pagehide', 'beforeunload', 'visibilitychange']) {
-      test('does not treat $kind differing from defaults as input on $event',
-          () async {
+      test('saves $kind edited before binding on $event', () async {
         final result = await _evaluateDraft({
           'scenario': 'beforeBinding',
           'kind': kind,
@@ -161,10 +160,11 @@ void main() {
           'event': event,
         });
         expect(result['bound'], isTrue);
-        expect(result['touched'], isFalse);
-        expect(result['dirty'], isFalse);
+        expect(result['touched'], isTrue);
+        expect(result['dirty'], isTrue);
         expect(result['countBeforeHide'], 0);
-        expect(result['count'], 0);
+        expect(result['count'], 1);
+        expect(result['savedValue'], result['expectedValue']);
       });
     }
   }
@@ -229,6 +229,18 @@ void main() {
     expect(result['eventsAfterSecondUpdate'], result['eventsAfterRestore']);
     expect(result['pendingAfterRestore'], isFalse);
     expect(result['restoredSavedAt'], result['originalSavedAt']);
+    expect(result['touchedAfterRestore'], isFalse);
+    expect(result['dirtyAfterRestore'], isFalse);
+    expect(result['unchangedAfterHide'], isTrue);
+  });
+
+  test('restored text stays untouched through rebinding and pagehide',
+      () async {
+    final result = await _evaluateDraftScenario('restoredUntouched');
+    expect(result['restoredText'], '保存済みの本文');
+    expect(result['touched'], isFalse);
+    expect(result['dirty'], isFalse);
+    expect(result['unchangedAfterHide'], isTrue);
   });
 
   test('does not restore choices touched even if saved back at defaults',
@@ -771,6 +783,22 @@ function runExtendedScenario() {
       savedStatus, restoredStatus: statusFor(restored),
       fieldKey: JSON.parse(storage.getItem(storage.key(0))).fields[0].key};
   }
+  if (spec.scenario === 'restoredUntouched') {
+    const source = textPage(storage);
+    runPage(source);
+    source.field.value = '保存済みの本文';
+    source.field.dispatchEvent(new FakeEvent('input'));
+    const key = storage.key(0);
+    const before = storage.getItem(key);
+    const restored = textPage(storage);
+    runPage(restored);
+    restored.window.__MBG_REPORT_DRAFT_UPDATE();
+    hidePage(restored);
+    return {restoredText: restored.field.value,
+      touched: !!restored.field.__MBG_REPORT_DRAFT_TOUCHED,
+      dirty: !!restored.field.__MBG_REPORT_DRAFT_DIRTY,
+      unchangedAfterHide: storage.getItem(key) === before};
+  }
   if (spec.scenario === 'counterKeys') {
     function keys(anonymous, counterElement) {
       return [0, 21, '２１'].map(counter => {
@@ -852,12 +880,17 @@ function runExtendedScenario() {
     const eventCount = () => restoring.document.fields.reduce((sum, field) => sum + field.events.length, 0);
     const eventsAfterRestore = eventCount();
     restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    const beforeHide = storage.getItem(key);
+    hidePage(restoring);
     return {...choiceState(restoring), kinds: original.fields.map(item => item.kind),
       count: storage.length,
       eventsDispatched: restoring.document.fields.every(field =>
         field.events.includes('input') && field.events.includes('change')),
       eventsAfterRestore, eventsAfterSecondUpdate: eventCount(),
       pendingAfterRestore: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT,
+      touchedAfterRestore: restoring.document.fields.some(field => field.__MBG_REPORT_DRAFT_TOUCHED),
+      dirtyAfterRestore: restoring.document.fields.some(field => field.__MBG_REPORT_DRAFT_DIRTY),
+      unchangedAfterHide: storage.getItem(key) === beforeHide,
       originalSavedAt: original.savedAt,
       restoredSavedAt: JSON.parse(storage.getItem(key)).savedAt};
   }

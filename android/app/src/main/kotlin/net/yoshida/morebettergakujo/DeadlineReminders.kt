@@ -28,6 +28,7 @@ object DeadlineReminders {
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_DELIVERED = "delivered"
     private const val EXTRA_ID = "reminder_id"
+    private const val EXTRA_AT_MILLIS = "reminder_at_millis"
     private const val EXTRA_TITLE = "reminder_title"
     private const val EXTRA_BODY = "reminder_body"
     private const val EXTRA_URL = "reminder_url"
@@ -78,18 +79,22 @@ object DeadlineReminders {
             title = intent.getStringExtra(EXTRA_TITLE).orEmpty(),
             body = intent.getStringExtra(EXTRA_BODY).orEmpty(),
             url = intent.getStringExtra(EXTRA_URL).orEmpty(),
-            atMillis = 0L
+            atMillis = intent.getLongExtra(EXTRA_AT_MILLIS, 0L)
         )
         // The other alarm booked for this reminder must not show it again.
         cancel(context, reminder)
         val delivered = loadDelivered(context)
-        if (reminder.id !in delivered && show(context, reminder)) {
-            val history = DeadlineReminderDelivery.record(delivered, reminder.id)
+        if (DeadlineReminderDelivery.key(reminder.id, reminder.atMillis) !in delivered &&
+            show(context, reminder)
+        ) {
+            val history = DeadlineReminderDelivery.record(delivered, reminder.id, reminder.atMillis)
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_DELIVERED, JSONArray(history).toString())
                 .apply()
         }
+        // Advance the booking window even while the app is closed.
+        book(context, load(context))
     }
 
     private fun show(context: Context, reminder: Reminder): Boolean {
@@ -222,6 +227,7 @@ object DeadlineReminders {
         val intent = Intent(context, DeadlineReminderReceiver::class.java).apply {
             action = "net.yoshida.morebettergakujo.REMINDER.${reminder.id}$suffix"
             putExtra(EXTRA_ID, reminder.id)
+            putExtra(EXTRA_AT_MILLIS, reminder.atMillis)
             putExtra(EXTRA_TITLE, reminder.title)
             putExtra(EXTRA_BODY, reminder.body)
             putExtra(EXTRA_URL, reminder.url)
@@ -275,12 +281,13 @@ object DeadlineReminders {
         }
     }
 
-    private fun loadDelivered(context: Context): List<Int> {
+    private fun loadDelivered(context: Context): List<String> {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_DELIVERED, null) ?: return emptyList()
         return try {
             val array = JSONArray(raw)
-            (0 until array.length()).map { array.getInt(it) }
+            // Old id-only records cannot identify which trigger was delivered.
+            (0 until array.length()).mapNotNull { array.opt(it) as? String }
         } catch (_: Exception) {
             emptyList()
         }

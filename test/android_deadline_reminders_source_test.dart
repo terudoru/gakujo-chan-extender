@@ -50,6 +50,28 @@ void main() {
     expect(replace, contains('replace(context, load(context))'));
   });
 
+  test('delivery records the trigger time and refills from saved reminders',
+      () {
+    final show = source.substring(
+      source.indexOf('fun show(context: Context, intent: Intent)'),
+      source.indexOf('private fun show('),
+    );
+    expect(show, contains('intent.getLongExtra(EXTRA_AT_MILLIS, 0L)'));
+    expect(source, contains('putExtra(EXTRA_AT_MILLIS, reminder.atMillis)'));
+    expect(
+        show,
+        contains(
+            'DeadlineReminderDelivery.key(reminder.id, reminder.atMillis)'));
+    final record = show.indexOf(
+      'DeadlineReminderDelivery.record(delivered, reminder.id, reminder.atMillis)',
+    );
+    final persist = show.indexOf('.putString(KEY_DELIVERED,');
+    final refill = show.indexOf('book(context, load(context))');
+    expect(record, greaterThan(0));
+    expect(persist, greaterThan(record));
+    expect(refill, greaterThan(persist));
+  });
+
   test('successful per-file downloads retain offered document permissions', () {
     final activity = File(
       '$directory/kotlin/net/yoshida/morebettergakujo/MainActivity.kt',

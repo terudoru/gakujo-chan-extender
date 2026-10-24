@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 13'));
+    expect(script, contains('captureVersion = 14'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -150,6 +150,26 @@ void main() {
     expect(result['weakPrevented'], everyElement(isFalse));
     expect(result['explicitPrevented'], everyElement(isTrue));
     expect((result['captured'] as List).length, 4);
+  });
+
+  for (final scenario in [
+    'listenerConfirm',
+    'workflowSubmissions',
+    'nonExplicitSubmissions',
+  ]) {
+    test('$scenario submits natively without capturing form text', () async {
+      final result = await _evaluateBehavior(scenario);
+      expect(result['prevented'], everyElement(isFalse));
+      expect(result['nativeSubmissions'], result['expectedSubmissions']);
+      expect(result['captured'], isEmpty);
+    });
+  }
+
+  test('submission hooks capture only explicit download requests', () async {
+    final result = await _evaluateBehavior('explicitSubmissions');
+    expect(result['prevented'], everyElement(isTrue));
+    expect(result['nativeSubmissions'], 0);
+    expect((result['captured'] as List).length, 8);
   });
 
   test('does not capture app-owned stars or their nested targets', () async {
@@ -488,6 +508,62 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'listenerConfirm') {
+    const confirm = submitterWithForm('確認', 'campussquare.do', {_eventId: 'confirm'});
+    confirm.form.innerText = 'レポート提出 添付ファイル ダウンロード 確認';
+    // Gakujo registers this handler without an inline onclick or submitter.
+    const listeners = [];
+    confirm.addEventListener = (type, handler) => listeners.push(handler);
+    confirm.addEventListener('click', () => confirm.form.submit());
+    const prevented = [click(confirm)];
+    if (!prevented[0]) listeners.forEach(handler => handler());
+    return {prevented, nativeSubmissions, expectedSubmissions: 1, captured};
+  }
+  if (scenario === 'workflowSubmissions') {
+    const prevented = [];
+    const values = ['', 'confirm', 'entry', 'submit', 'save', 'regist', 'register',
+      'update', 'delete', 'back', 'clear', 'cancel', 'next', 'prev', 'complete', 'finish'];
+    for (const value of values) {
+      // Workflow fields win even over a download-looking action and parameter.
+      const action = value ? 'download.do?fileDownload=1' : 'campussquare.do';
+      const button = submitterWithForm('ダウンロード', action,
+        value ? {_eventId: value} : {});
+      button.form.innerText = '資料ダウンロード レポート提出 確認';
+      if (value) prevented.push(click(button));
+      button.form.submit();
+      prevented.push(submitEvent(button.form, button));
+    }
+    return {prevented, nativeSubmissions, expectedSubmissions: values.length * 2, captured};
+  }
+  if (scenario === 'nonExplicitSubmissions') {
+    const prevented = [];
+    const actions = ['campussquare.do', 'exports/form.pdf', 'campussquare.do?fileId=42'];
+    for (const action of actions) {
+      const button = submitterWithForm('ダウンロード', action);
+      button.form.innerText = '資料ダウンロード レポート提出 確認';
+      button.form.submit();
+      prevented.push(submitEvent(button.form, button));
+    }
+    const button = submitterWithForm('Download', 'campussquare.do');
+    button.name = '_eventId';
+    button.value = '';
+    prevented.push(submitEvent(button.form, button));
+    return {prevented, nativeSubmissions, expectedSubmissions: actions.length * 2 + 1, captured};
+  }
+  if (scenario === 'explicitSubmissions') {
+    const prevented = [];
+    for (const [action, fields] of [
+      ['campussquare.do', {_eventId: 'infoDownLoad'}],
+      ['DOWNLOAD.do', {}],
+      ['campussquare.do?fileDownload=1', {}],
+      ['campussquare.do', {downloadFile: '42'}]
+    ]) {
+      const button = submitterWithForm('確認', action, fields);
+      button.form.submit();
+      prevented.push(submitEvent(button.form, button));
+    }
+    return {prevented, nativeSubmissions, captured};
+  }
   if (scenario === 'inlineSubmit' || scenario === 'inlineSubmitEvent') {
     const button = submitterWithForm('ダウンロード', 'campussquare.do', {
       _eventId: 'confirm', selectedFileId: 'stale-file'

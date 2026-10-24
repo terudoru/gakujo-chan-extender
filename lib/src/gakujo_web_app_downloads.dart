@@ -17,6 +17,11 @@ Future<void> handleGakujoNativeDownload(
     showSnackBar('Gakujo以外のダウンロードをブロックしました');
     return;
   }
+  // Without a query this may be a POST response that cannot be replayed as GET.
+  // WebView2 keeps these downloads and displays its own download UI.
+  if (uri == null || uri.query.isEmpty) {
+    return;
+  }
 
   // WebView2 suggests a path in Windows' Downloads folder and appends " (n)"
   // when that folder already holds the name; the course folder does not.

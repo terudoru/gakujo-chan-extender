@@ -6,7 +6,7 @@ class GakujoReportDraftScript {
   static String build() {
     return r'''
 (function() {
-  var version = 8;
+  var version = 9;
   var prefix = 'mbg-report-draft:v2:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -267,9 +267,9 @@ class GakujoReportDraftScript {
         return !option.disabled && !(option.parentNode && option.parentNode.disabled);
       }).slice(0, field.size > 1 ? 0 : 1);
     }
-    return JSON.stringify(fieldValue(field)) === JSON.stringify(
-      defaults.map(function(option) { return option.value; })
-    );
+    return options.every(function(option) {
+      return option.selected === (defaults.indexOf(option) >= 0);
+    });
   }
 
   function setContentEditableText(field, value) {
@@ -716,6 +716,19 @@ class GakujoReportDraftScript {
     cleanup(store);
     var key = context.key;
     ensureStatus(doc, store, key);
+    // Inspect only before the first restore; restored values are not user edits.
+    fields.forEach(function(field) {
+      if (field.__MBG_REPORT_DRAFT_BOUND || field.matches('[contenteditable]')) return;
+      var kind = fieldKind(field);
+      var changed = kind === 'radio' || kind === 'checkbox'
+        ? field.checked !== field.defaultChecked
+        : kind === 'select' ? !isDefaultChoice(field)
+        : field.value !== field.defaultValue;
+      if (changed) {
+        field.__MBG_REPORT_DRAFT_DIRTY = true;
+        field.__MBG_REPORT_DRAFT_TOUCHED = true;
+      }
+    });
     restoreDraft(doc, store, key, fields);
 
     function scheduleSave(field) {

@@ -63,4 +63,13 @@ inline bool IsNavigationAllowed(const std::string& url,
   return false;
 }
 
+inline bool IsReplayableGakujoDownload(const std::string& url) {
+  const NavigationAllowlist gakujo{{"gakujo.iess.niigata-u.ac.jp"}, {}};
+  const size_t query = url.find('?');
+  const size_t fragment = url.find('#');
+  return IsNavigationAllowed(url, gakujo) && query != std::string::npos &&
+         (fragment == std::string::npos || query < fragment) &&
+         query + 1 < (fragment == std::string::npos ? url.size() : fragment);
+}
+
 }  // namespace util

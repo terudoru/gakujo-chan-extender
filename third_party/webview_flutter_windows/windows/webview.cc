@@ -473,8 +473,8 @@ void Webview::RegisterEventHandlers() {
                    ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
               // Everything below runs synchronously, so no deferral is taken;
               // taking one without completing it would leave the event pending.
-              args->put_Cancel(TRUE);
-              args->put_Handled(TRUE);
+              args->put_Cancel(FALSE);
+              args->put_Handled(FALSE);
 
               wil::com_ptr<ICoreWebView2DownloadOperation> download;
               if (FAILED(args->get_DownloadOperation(download.put())) ||
@@ -487,6 +487,13 @@ void Webview::RegisterEventHandlers() {
 
               wil::unique_cotaskmem_string uri;
               download->get_Uri(&uri);
+              const std::string url = uri ? util::Utf8FromUtf16(uri.get()) : "";
+              if (!download_event_callback_ ||
+                  !util::IsReplayableGakujoDownload(url)) {
+                return S_OK;
+              }
+              args->put_Cancel(TRUE);
+              args->put_Handled(TRUE);
 
               wil::unique_cotaskmem_string mimeType;
               download->get_MimeType(&mimeType);
@@ -497,7 +504,7 @@ void Webview::RegisterEventHandlers() {
               if (download_event_callback_) {
                 download_event_callback_(
                     {WebviewDownloadEventKind::DownloadStarted,
-                     uri ? util::Utf8FromUtf16(uri.get()) : "",
+                     url,
                      resultFilePath
                          ? util::Utf8FromUtf16(resultFilePath.get())
                          : "",

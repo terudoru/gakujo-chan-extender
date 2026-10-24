@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 13;
+  var captureVersion = 14;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -525,7 +525,7 @@ class GakujoDownloadCaptureScript {
     }
     var data = new FormData(form);
     if (submitter && submitter.name) {
-      data.set(submitter.name, submitter.value || textOf(submitter));
+      data.set(submitter.name, submitter.value || '');
     }
     data.forEach(function(value, key) {
       if (typeof value === 'string') {
@@ -564,12 +564,33 @@ class GakujoDownloadCaptureScript {
     return hasStrongDownloadSignal(url, fields) || isDownloadLike(element, url);
   }
 
-  function captureForm(form, submitter) {
+  function formDownloadSignals(url, fields) {
+    var params = new URL(url).searchParams;
+    var explicit = /download/i.test(url);
+    var workflow = false;
+    function check(value, key) {
+      if (/^_eventId$/i.test(key)) {
+        if (/download/i.test(value)) explicit = true;
+        else if (/(confirm|entry|submit|save|regist|update|delete|back|clear|cancel|next|prev|complete|finish)/i.test(value)) workflow = true;
+      }
+      if (/^(file.?download|download.?file)$/i.test(key)) explicit = true;
+    }
+    params.forEach(check);
+    Object.keys(fields).forEach(function(key) { check(fields[key], key); });
+    return {explicit: explicit, workflow: workflow};
+  }
+
+  function captureForm(form, submitter, explicitOnly) {
     if (!form || isAppOwned(form) || submitter && isAppOwned(submitter)) return false;
     var action = form.getAttribute('action') || baseUrlOf(form);
     var absoluteAction = absoluteUrlOf(form, action);
     var fields = formFields(form, submitter);
-    if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
+    var signals = formDownloadSignals(absoluteAction, fields);
+    if (signals.workflow) return false;
+    if (explicitOnly) {
+      if (new URL(absoluteAction).host !== 'gakujo.iess.niigata-u.ac.jp' ||
+          !signals.explicit) return false;
+    } else if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
     post({
       url: absoluteAction,
       method: (form.getAttribute('method') || 'GET').toUpperCase(),
@@ -584,7 +605,7 @@ class GakujoDownloadCaptureScript {
     var form = event.target;
     var submitter = event.submitter || formSubmitters.get(form);
     formSubmitters.delete(form);
-    if (captureForm(form, submitter)) {
+    if (captureForm(form, submitter, true)) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -666,7 +687,7 @@ class GakujoDownloadCaptureScript {
     var wrapper = function() {
       var submitter = formSubmitters.get(this);
       formSubmitters.delete(this);
-      if (!captureForm(this, submitter)) return original.apply(this, arguments);
+      if (!captureForm(this, submitter, true)) return original.apply(this, arguments);
     };
     prototype.submit = wrapper;
     window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.push({
