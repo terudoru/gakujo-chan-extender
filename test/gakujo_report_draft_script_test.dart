@@ -285,6 +285,13 @@ void main() {
     expect(result['count'], 1);
   });
 
+  test('the report list page-size select is not treated as an answer',
+      () async {
+    final result = await _evaluateDraftScenario('reportList');
+    expect(result['listBound'], isFalse);
+    expect(result['count'], 0);
+  });
+
   test('conflicting text requires the replacement button', () async {
     final result = await _evaluateDraftScenario('conflict');
     expect(result['beforeReplace'], 'サーバー側の一時保存');
@@ -963,6 +970,18 @@ function runExtendedScenario() {
     return {quizBound: !!quiz.document.insertedStatus,
       unrelatedBound: !!unrelated.document.insertedStatus,
       loginBound: !!login.document.insertedStatus, count: storage.length};
+  }
+  if (spec.scenario === 'reportList') {
+    const list = choicePage(storage, {
+      title: 'レポート・小テスト・アンケート提出',
+      pageText: 'レポート・小テスト・アンケート提出 一覧 提出期間 表示件数'
+    });
+    list.document.location = {href: 'https://gakujo.example/flow', pathname: '/flow'};
+    list.document.fields = [new FakeControl(list.document, 'select', {name: '_displayCount'}, {
+      options: ['5', '10', '20'].map(value => ({value, selected: value === '5', defaultSelected: value === '5'}))
+    })];
+    runPage(list);
+    return {listBound: !!list.document.insertedStatus, count: storage.length};
   }
   if (spec.scenario === 'conflictOtherField') {
     function form(value) {

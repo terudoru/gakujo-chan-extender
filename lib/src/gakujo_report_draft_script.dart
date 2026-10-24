@@ -90,6 +90,10 @@ class GakujoReportDraftScript {
       if (field.matches('[contenteditable]')) {
         return field.getAttribute('contenteditable') !== 'false';
       }
+      // Web Flow controls such as the list's _displayCount are not answers.
+      if (/^_/.test(field.getAttribute('name') || '')) {
+        return false;
+      }
       return !isIgnoredInput(field);
     });
     return fields;

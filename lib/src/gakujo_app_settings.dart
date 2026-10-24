@@ -675,7 +675,7 @@ class GakujoNotificationPreferences {
 
   factory GakujoNotificationPreferences.fromJson(
     Object? raw, {
-    Set<GakujoReminderOffset> fallbackReminderOffsets = defaultReminderOffsets,
+    Set<GakujoReminderOffset>? fallbackForUnrecognizedReminderOffsets,
   }) {
     var decoded = raw;
     if (raw is String) {
@@ -697,7 +697,7 @@ class GakujoNotificationPreferences {
                   case final offset?)
                 offset,
           }
-        : fallbackReminderOffsets;
+        : defaultReminderOffsets;
     return GakujoNotificationPreferences(
       skipSubmitted: decoded['skipSubmitted'] != false,
       mutedCourses: muted is List
@@ -708,7 +708,7 @@ class GakujoNotificationPreferences {
           : const {},
       reminderOffsets:
           offsets is List && offsets.isNotEmpty && recognizedOffsets.isEmpty
-              ? fallbackReminderOffsets
+              ? fallbackForUnrecognizedReminderOffsets ?? recognizedOffsets
               : recognizedOffsets,
     );
   }

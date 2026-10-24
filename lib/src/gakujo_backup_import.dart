@@ -173,7 +173,7 @@ GakujoBackupImport parseGakujoBackup(
     notificationPreferences: decoded['notificationPreferences'] is Map
         ? GakujoNotificationPreferences.fromJson(
             decoded['notificationPreferences'],
-            fallbackReminderOffsets: currentReminderOffsets,
+            fallbackForUnrecognizedReminderOffsets: currentReminderOffsets,
           )
         : null,
     disabledFeatureFlags: decoded.containsKey('disabledFeatureFlags')

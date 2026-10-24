@@ -40,7 +40,7 @@ class GakujoMessageStarScript {
       gakujoSmartphoneMessageRowsScript +
       r'''
   var initialIds = __STARRED_IDS__;
-  var version = 6;
+  var version = 7;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
     window.__MBG_MESSAGE_STARS_REFRESH(initialIds);
     return;
@@ -99,7 +99,18 @@ class GakujoMessageStarScript {
       channel.postMessage(JSON.stringify(Object.assign({action: action}, data)));
     }
   }
-  function paint(entry) {
+  function paint(entry, message) {
+    var source = entry.target.getAttribute('href') || entry.target.getAttribute('onclick') || '';
+    if (source) source += '\n' + title(entry.target);
+    if (message === undefined && (!source || source !== entry.source)) message = entry.data();
+    if (message !== undefined) {
+      entry.source = source;
+      entry.id = message ? id(message) : null;
+      entry.button.disabled = !message;
+      var label = 'スター: ' + (message ? message.title : title(entry.target));
+      entry.button.setAttribute('aria-label', label);
+      entry.button.title = label;
+    }
     var starred = ids.has(entry.id);
     entry.button.setAttribute('aria-pressed', String(starred));
   }
@@ -127,14 +138,17 @@ class GakujoMessageStarScript {
     button.addEventListener('click', function(event) {
       event.preventDefault();
       event.stopPropagation();
-      send('toggle', data());
+      if (disposed) return;
+      var message = data();
+      paint(entry, message);
+      if (message) send('toggle', message);
     });
     if (inside) target.insertBefore(button, target.firstChild);
     else target.parentNode.insertBefore(button, target);
-    var entry = {button: button, target: target, id: id(message)};
+    var entry = {button: button, target: target, data: data};
     buttons.push(entry);
     buttonTargets.add(target);
-    paint(entry);
+    paint(entry, message);
   }
   function rowData(link, doc, headersByTable) {
     var data = identity(link.getAttribute('href'), doc);
@@ -314,7 +328,7 @@ class GakujoMessageStarScript {
       return false;
     });
     docs.forEach(updateDocument);
-    buttons.forEach(paint);
+    buttons.forEach(function(entry) { paint(entry); });
   }
   window.__MBG_MESSAGE_STARS_REFRESH = function(nextIds) {
     ids = new Set(nextIds);

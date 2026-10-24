@@ -107,6 +107,30 @@ void main() {
     expect((result['messages'] as List).single['sender'], '工学部');
   });
 
+  test('reused message links refresh star identity, label and click payload',
+      () async {
+    final result = await _evaluate(
+      _starDomHarness,
+      [
+        GakujoMessageStarScript.build(starredIds: ['1|40|507762']),
+        GakujoMessageStarScript.buildRefresh(['1|40|507762']),
+        GakujoMessageStarScript.buildRefresh(['1|40|507763']),
+      ],
+      'reusedLink',
+    );
+    expect(result['counts'], [1, 1, 1]);
+    expect(result['pressedStates'], ['true', 'false', 'true']);
+    expect(result['reusedLabel'], 'スター: 別のお知らせ');
+    expect(result['reusedButtonTitle'], 'スター: 別のお知らせ');
+    expect(result['clickedPressed'], 'false');
+    final toggles = (result['messages'] as List)
+        .where((message) => message['action'] == 'toggle')
+        .toList();
+    expect(toggles.last['seqNo'], '507764');
+    expect(toggles.last['title'], 'クリック直前のお知らせ');
+    expect(result['clickedLabel'], 'スター: クリック直前のお知らせ');
+  });
+
   for (final scenario in ['detail', 'detailAttachment']) {
     test('$scenario extracts saved text and stable identity', () async {
       final result = await _evaluate(
@@ -548,6 +572,10 @@ let timerReadsUnchanged = true, headersAfterClick;
 const originalRowText = inner.heading.closest('tr')?.innerText || null;
 let beforeTitle, label, buttonTitle, prevented = false, stopped = false, oldButton;
 scripts.forEach((script, index) => {
+  if (scenario === 'reusedLink' && index === 1) {
+    inner.heading.setAttribute('href', inner.heading.getAttribute('href').replace('507762', '507763'));
+    inner.heading.textContent = '別のお知らせ';
+  }
   vm.runInContext(script, context);
   headerQueryCounts.push(headerQueryCount);
   urlParseCounts.push(urlParseCount);
@@ -587,6 +615,16 @@ if (performanceScenario) {
   link.textContent = '更新された表題';
   link.parentNode.querySelector('button').listeners.click({preventDefault() {}, stopPropagation() {}});
   headersAfterClick = headerQueryCount;
+}
+let reusedLabel, reusedButtonTitle, clickedPressed, clickedLabel;
+if (scenario === 'reusedLink') {
+  const button = inner.querySelector('button');
+  reusedLabel = button.getAttribute('aria-label'); reusedButtonTitle = button.title;
+  inner.heading.setAttribute('href', inner.heading.getAttribute('href').replace('507763', '507764'));
+  inner.heading.textContent = 'クリック直前のお知らせ';
+  button.listeners.click({preventDefault() {}, stopPropagation() {}});
+  clickedPressed = button.getAttribute('aria-pressed');
+  clickedLabel = button.getAttribute('aria-label');
 }
 let navigatedTitle, navigatedButtonText, navigatedPressed, navigatedStyleCount;
 let reloadedButtonText, reloadedPressed, reloadedStyleCount, capture, oldListListenerRemoved;
@@ -631,6 +669,7 @@ process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCo
   navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
   oldListListenerRemoved, oldListButtonCount, oldListStyleCount, oldDetailStyleCount,
   rememberedBeforeClick, remembered, rememberedAfterReload,
+  reusedLabel, reusedButtonTitle, clickedPressed, clickedLabel,
   headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick}));
 ''';
 

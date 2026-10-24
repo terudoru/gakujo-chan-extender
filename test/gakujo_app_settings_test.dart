@@ -79,6 +79,33 @@ void main() {
     expect(settings.toJson()['termTarget'], 'second');
   });
 
+  test(
+      'local unknown-only reminder offsets stay off while missing uses defaults',
+      () async {
+    final store = GakujoAppSettingsStore(
+      secureStorage: _TrackingSecureStorage({
+        'more_better_gakujo_notification_preferences':
+            '{"reminderOffsets":["future_offset"]}',
+      }),
+    );
+
+    expect(
+        (await store.load()).notificationPreferences.reminderOffsets, isEmpty);
+    expect(
+      GakujoNotificationPreferences.fromJson({}).reminderOffsets,
+      GakujoNotificationPreferences.defaultReminderOffsets,
+    );
+    expect(
+      GakujoNotificationPreferences.fromJson(
+        {},
+        fallbackForUnrecognizedReminderOffsets: {
+          GakujoReminderOffset.threeDays
+        },
+      ).reminderOffsets,
+      GakujoNotificationPreferences.defaultReminderOffsets,
+    );
+  });
+
   test('calendar import settings reserve the validation calendar title', () {
     const settings = GakujoCalendarImportSettings(
       calendarTitle: GakujoCalendarImportSettings.validationCalendarTitle,

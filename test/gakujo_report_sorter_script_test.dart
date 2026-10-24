@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:morebettergakujo_flutter/src/gakujo_report_sorter_script.dart';
 import 'package:test/test.dart';
 
@@ -96,6 +98,40 @@ void main() {
     expect(teardownWithoutBuild['ownedElementCount'], 0);
   });
 
+  test('yearless range ends inherit the start year and roll across New Year',
+      () async {
+    await _expectDeadlineOrder(
+      now: '2026-12-31T14:30:00Z', // 23:30 in Japan.
+      reports: [
+        ['newYear', 'Not submitted', '2026/12/31 10:00～01/01 00:00'],
+        ['later', 'Not submitted', '2027/01/01 01:00'],
+        ['expired', 'Not submitted', '2026/12/31 23:00'],
+        ['sameYear', 'Not submitted', '2026/12/30 10:00～12/31 23:45'],
+      ],
+      expected: ['sameYear', 'newYear', 'later', 'expired'],
+    );
+  });
+
+  test('24:00 shares expiry state and stable sort order with next-day midnight',
+      () async {
+    await _expectDeadlineOrder(
+      now: '2026-12-31T15:00:00Z', // Midnight in Japan.
+      reports: [
+        ['endOfDay', 'Not submitted', '2026/12/31 24:00'],
+        ['midnight', 'Submitted', '2027/01/01 00:00'],
+      ],
+      expected: ['endOfDay', 'midnight'],
+    );
+    await _expectDeadlineOrder(
+      now: '2026-12-31T14:59:00Z',
+      reports: [
+        ['midnight', 'Not submitted', '2027/01/01 00:00'],
+        ['endOfDay', 'Not submitted', '2026/12/31 24:00'],
+      ],
+      expected: ['midnight', 'endOfDay'],
+    );
+  });
+
   test('sorts the top report table when a readable iframe has none', () async {
     await evaluatePageScriptLifecycle(
       feature: 'report',
@@ -167,4 +203,41 @@ void main() {
       teardownScript: GakujoReportSorterScript.buildTeardown(),
     );
   });
+}
+
+Future<void> _expectDeadlineOrder({
+  required String now,
+  required List<List<String>> reports,
+  required List<String> expected,
+}) async {
+  await evaluatePageScriptLifecycle(
+    feature: 'report',
+    buildScript: '''
+(function() {
+  const NativeDate = Date;
+  const instant = NativeDate.parse(${jsonEncode(now)});
+  globalThis.Date = class extends NativeDate {
+    constructor(...args) { super(...(args.length ? args : [instant])); }
+    static now() { return instant; }
+  };
+  const table = document.querySelector('#enqListForm table:nth-of-type(2)');
+  table.rows = [table.rows[0], ...${jsonEncode(reports)}.map(([id, status, deadline]) => ({
+    id, cells: ['', '', status, '', '', '', '', deadline]
+      .map(text => ({innerText: text, style: {}}))
+  }))];
+  table.tBodies[0].appendChild = function(row) {
+    table.rows.splice(table.rows.indexOf(row), 1);
+    table.rows.push(row);
+  };
+
+  ${GakujoReportSorterScript.build()}
+
+  const actual = table.rows.slice(1).map(row => row.id);
+  if (JSON.stringify(actual) !== JSON.stringify(${jsonEncode(expected)})) {
+    throw new Error('Unexpected deadline order: ' + JSON.stringify(actual));
+  }
+})();
+''',
+    teardownScript: GakujoReportSorterScript.buildTeardown(),
+  );
 }

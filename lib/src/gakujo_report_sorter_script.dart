@@ -4,7 +4,7 @@ class GakujoReportSorterScript {
   static String build() {
     return r'''
 (function() {
-  var version = 2;
+  var version = 3;
   if (window.__MBG_REPORT_SORTER_VERSION === version) {
     if (window.__MBG_REPORT_SORTER_UPDATE) {
       window.__MBG_REPORT_SORTER_UPDATE();
@@ -36,20 +36,31 @@ class GakujoReportSorterScript {
   }
 
   function normalizeDateNumber(text) {
-    var end = (text || '').split('～').pop() || '';
+    var parts = (text || '').split('～');
+    var end = parts.pop() || '';
     // Parse Y/M/D and optional H:M explicitly so the comparable value is always
     // YYYYMMDDhhmm (12 digits), regardless of separators or trailing seconds.
-    var match = end.match(
-      /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/
-    );
-    if (match) {
+    var pattern = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/;
+    var match = end.match(pattern);
+    function dateNumber(value) {
+      // UTC arithmetic normalizes 24:00 across days, months and years.
+      var date = new Date(Date.UTC(+value[1], +value[2] - 1, +value[3],
+        +(value[4] || 0), +(value[5] || 0)));
       function pad(value) {
-        return ('0' + (value || '0')).slice(-2);
+        return ('0' + value).slice(-2);
       }
-      return Number(
-        match[1] + pad(match[2]) + pad(match[3]) + pad(match[4]) + pad(match[5])
-      );
+      return Number(String(date.getUTCFullYear()) + pad(date.getUTCMonth() + 1) +
+        pad(date.getUTCDate()) + pad(date.getUTCHours()) + pad(date.getUTCMinutes()));
     }
+    if (!match && parts.length) {
+      var start = parts[0].match(pattern);
+      var shortEnd = end.match(/^\s*(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/);
+      if (start && shortEnd) {
+        match = [shortEnd[0], start[1]].concat(shortEnd.slice(1));
+        if (dateNumber(match) < dateNumber(start)) match[1] = +start[1] + 1;
+      }
+    }
+    if (match) return dateNumber(match);
     var digits = end.replace(/[^\d]/g, '');
     return Number(digits || '0');
   }

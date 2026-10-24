@@ -74,6 +74,28 @@ void main() {
         ['tab-si']);
   });
 
+  test('portal tabs outrank exact content links even with partial tab labels',
+      () async {
+    for (final tab in {
+      'en': ('レポート', 'ﾚﾎﾟｰﾄ・小ﾃｽﾄ・ｱﾝｹｰﾄ'),
+      'kj': ('連絡通知', '連絡通知一覧'),
+    }.entries) {
+      expect(
+        (await evaluate([
+          {'id': 'content-link', 'tag': 'a', 'text': tab.value.$1},
+          {
+            'id': 'tab-${tab.key}',
+            'tag': 'div',
+            'class': 'tabcell',
+            'parent': {'id': 'tabmenutable'},
+            'text': tab.value.$2,
+          },
+        ], label: tab.value.$1))['clicked'],
+        ['tab-${tab.key}'],
+      );
+    }
+  });
+
   test('ignores hidden and disabled entries and text inputs', () async {
     expect(
         (await evaluate([

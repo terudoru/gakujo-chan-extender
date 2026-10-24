@@ -33,6 +33,14 @@ class GakujoQuickJumpScript {
     }
     return false;
   }
+  function isPortalTab(node) {
+    for (var current = node; current; current = current.parentElement) {
+      if (current.id === 'tabmenutable' ||
+          /^tab-[a-z]+\$/.test(current.id || '') &&
+          /(^|\\s)tabcell(\\s|\$)/.test(current.getAttribute('class') || '')) return true;
+    }
+    return false;
+  }
   label = normalized(label);
   if (!label) return false;
   collect(window);
@@ -62,10 +70,14 @@ class GakujoQuickJumpScript {
         if (text === label) { score = 0; break; }
         if (text.indexOf(label) !== -1) score = 1;
       }
-      if (score < 2) matches.push({node: node, score: score, order: matches.length});
+      if (score < 2) matches.push({
+        node: node, portal: isPortalTab(node) ? 0 : 1, score: score, order: matches.length
+      });
     }
   }
-  matches.sort(function(a, b) { return a.score - b.score || a.order - b.order; });
+  matches.sort(function(a, b) {
+    return a.portal - b.portal || a.score - b.score || a.order - b.order;
+  });
   for (var m = 0; m < matches.length; m += 1) {
     try { matches[m].node.click(); return true; } catch (e) {}
   }
