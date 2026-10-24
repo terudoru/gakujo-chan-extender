@@ -69,7 +69,8 @@ void main() {
     expect(script, contains('markAutoSubmitAttempted()'));
   });
 
-  test('same and changed secrets stay blocked while an error remains visible',
+  test(
+      'changed secret gets one fresh attempt while the same secret stays blocked',
       () async {
     String scriptFor(String secret) => TwoFactorAutofillScript.build(
           token: '654321',
@@ -85,7 +86,7 @@ void main() {
     );
 
     expect(sameSecret['clickCount'], 1, reason: jsonEncode(sameSecret));
-    expect(changedSecret['clickCount'], 1);
+    expect(changedSecret['clickCount'], 2, reason: jsonEncode(changedSecret));
   });
 
   test('two-factor attempt limit survives rotating URL matrix parameters',
@@ -109,32 +110,6 @@ void main() {
     expect(counts, hasLength(1));
     expect(counts.single.key, contains('/campusweb/campussmart.do:'));
     expect(counts.single.value, '3');
-  });
-
-  test('blocks the first automatic two-factor submit on an existing error',
-      () async {
-    final script = TwoFactorAutofillScript.build(token: '654321');
-    for (final message in [
-      '認証コードが正しくありません',
-      '認証コードが無効です',
-      'Invalid code',
-    ]) {
-      final encodedMessage = jsonEncode(message);
-      final result = await _evaluateTwoFactorAssist(
-        'document.body.innerText = $encodedMessage;\n'
-        '$script\n'
-        "document.body.innerText = '';\n"
-        '$script',
-      );
-
-      expect(result['clickCount'], 0);
-      expect(
-        (result['sessionValues'] as Map<String, dynamic>)
-            .keys
-            .any((key) => key.startsWith('MBG_2FA_AUTOFILL_ERROR:')),
-        isTrue,
-      );
-    }
   });
 
   test('clicks only submit controls and excludes help, settings and back',

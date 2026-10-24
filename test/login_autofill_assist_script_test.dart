@@ -158,12 +158,11 @@ window.setTimeout = function(callback) {
       () async {
     for (final message in [
       'ロックされています',
-      'ロック中',
-      '有効期限が切れました',
-      '期限切れ',
+      'アカウントはロック中です',
+      'パスワードの有効期限が切れました',
+      'パスワードが期限切れです',
       'パスワードを変更してください',
-      'パスワード変更が必要',
-      '一時的に利用できません',
+      'パスワードの変更が必要です',
     ]) {
       final encodedMessage = jsonEncode(message);
       final result = await _evaluateLoginAssist(
@@ -191,6 +190,26 @@ window.setTimeout = function(callback) {
             .any((key) => key.startsWith('MBG_LOGIN_AUTOFILL_ERROR:')),
         isTrue,
       );
+    }
+  });
+
+  test('unrelated expiry notices on the login page do not stop autofill',
+      () async {
+    for (final message in [
+      'お知らせ：証明書の期限切れについて',
+      '一時的に利用できません',
+    ]) {
+      final encodedMessage = jsonEncode(message);
+      final result = await _evaluateLoginAssist(
+        [
+          {'tag': 'input', 'type': 'text', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+          {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+        ],
+        setupScript: 'document.body.innerText = $encodedMessage;',
+        monitorTicks: 3,
+      );
+      expect(result['clickCount'], 1, reason: message);
     }
   });
 

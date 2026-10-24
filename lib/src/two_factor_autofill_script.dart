@@ -132,7 +132,9 @@ class TwoFactorAutofillScript {
       return true;
     }
     var count = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
-    if (hasTwoFactorError()) {
+    // Only an error after our own attempt counts: the page's instructions
+    // mention codes that are not correct.
+    if (isFinite(count) && count > 0 && hasTwoFactorError()) {
       return true;
     }
     return isFinite(count) && count >= maxAutoSubmitPerSession;
