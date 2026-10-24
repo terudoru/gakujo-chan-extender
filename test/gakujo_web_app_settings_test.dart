@@ -6,8 +6,175 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  test('credential save returns the values captured before storage completes',
+      () async {
+    final store = _PendingLoginSettingsStore();
+    var loginId = ' student-a ';
+    var password = 'password-a';
+    final saving = saveGakujoLoginCredentials(
+      store: store,
+      loginId: loginId,
+      password: password,
+    );
+    loginId = 'student-b';
+    password = 'password-b';
+    store.release.complete();
+    final runtimeCredentials = await saving;
+
+    expect(store.saved?.loginId, 'student-a');
+    expect(store.saved?.password, 'password-a');
+    expect(runtimeCredentials.loginId, store.saved?.loginId);
+    expect(runtimeCredentials.password, store.saved?.password);
+    expect(runtimeCredentials.loginId, isNot(loginId));
+    expect(runtimeCredentials.password, isNot(password));
+  });
+
+  testWidgets('rapid reminder toggles compose while the first save is pending',
+      (tester) async {
+    var preferences = const GakujoNotificationPreferences();
+    final firstSave = Completer<void>();
+    final saves = <GakujoNotificationPreferences>[];
+    final operations = StorageOperationQueue();
+    final pending = <Future<void>>[];
+    final keywords = TextEditingController();
+    addTearDown(keywords.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: NotificationTopicsSection(
+            topics: const {},
+            messages: const GakujoMessageNotificationSettings(),
+            notificationsEnabled: true,
+            onChanged: (_, __) {},
+            onMessagesChanged: (_) async {},
+            keywordController: keywords,
+            canAddKeyword: false,
+            onKeywordInputChanged: (_) {},
+            preferences: preferences,
+            onPreferencesChanged: (update) {
+              preferences = update(preferences);
+              final snapshot = preferences;
+              final saved = operations.run(() async {
+                saves.add(snapshot);
+                if (saves.length == 1) await firstSave.future;
+              });
+              pending.add(saved);
+              return saved;
+            },
+            knownCourses: const [],
+          ),
+        ),
+      ),
+    ));
+
+    // Both callbacks come from the same build, before the first save completes.
+    tester
+        .widget<FilterChip>(find.widgetWithText(FilterChip, '3日前'))
+        .onSelected!(true);
+    tester
+        .widget<FilterChip>(find.widgetWithText(FilterChip, '3時間前'))
+        .onSelected!(true);
+    await tester.pump();
+    expect(saves, hasLength(1));
+    expect(preferences.reminderOffsets, GakujoReminderOffset.values.toSet());
+    firstSave.complete();
+    await tester.pump();
+    await Future.wait(pending);
+    expect(saves, hasLength(2));
+    expect(saves.first.reminderOffsets,
+        isNot(contains(GakujoReminderOffset.threeHours)));
+    expect(saves.last.reminderOffsets, GakujoReminderOffset.values.toSet());
+  });
+
+  for (final secretOnly in [false, true]) {
+    testWidgets(
+        '${secretOnly ? '2FA' : 'login'} input survives lazy list disposal',
+        (tester) async {
+      final loginId = TextEditingController();
+      final password = TextEditingController();
+      final secret = TextEditingController();
+      final scroll = ScrollController();
+      addTearDown(() {
+        loginId.dispose();
+        password.dispose();
+        secret.dispose();
+        scroll.dispose();
+      });
+      var loginIdInput = '';
+      var passwordInput = '';
+      var secretInput = '';
+      List<String>? saved;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ListView.builder(
+            controller: scroll,
+            // A zero cache makes scrolling dispose off-screen fields, which
+            // this test needs; the replacement API is not on stable yet.
+            // ignore: deprecated_member_use
+            cacheExtent: 0,
+            itemCount: 30,
+            itemBuilder: (_, index) {
+              if (index != 0) return const SizedBox(height: 200);
+              if (secretOnly) {
+                return TwoFactorSecretSection(
+                  controller: secret,
+                  canSave: true,
+                  onChanged: (value) => secretInput = value,
+                  onClear: () async {},
+                  onSave: () async {
+                    saved = [secretInput];
+                  },
+                );
+              }
+              return LoginCredentialsSection(
+                loginIdController: loginId,
+                passwordController: password,
+                isConfigured: false,
+                canSave: true,
+                onLoginIdChanged: (value) => loginIdInput = value,
+                onPasswordChanged: (value) => passwordInput = value,
+                onClear: () async {},
+                onSave: () async {
+                  saved = [loginIdInput, passwordInput];
+                },
+              );
+            },
+          ),
+        ),
+      ));
+      final expected =
+          secretOnly ? ['JBSWY3DPEHPK3PXP'] : ['student-a', 'secret-a'];
+      for (var i = 0; i < expected.length; i += 1) {
+        await tester.enterText(find.byType(TextField).at(i), expected[i]);
+      }
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+      scroll.jumpTo(2500);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      scroll.jumpTo(0);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < expected.length; i += 1) {
+        expect(
+          tester
+              .widget<TextField>(find.byType(TextField).at(i))
+              .controller
+              ?.text,
+          expected[i],
+        );
+      }
+      await tester.tap(find.widgetWithText(
+          FilledButton, secretOnly ? '秘密鍵を保存' : 'ログイン情報を保存'));
+      await tester.pump();
+      expect(saved, expected);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   group('parseCalendarDate', () {
     test('accepts supported valid date formats', () {
       expect(parseCalendarDate('2026/01/02'), DateTime(2026, 1, 2));
@@ -1025,4 +1192,18 @@ void main() {
 
     expect(selected, GakujoPageMode.desktop);
   });
+}
+
+class _PendingLoginSettingsStore extends GakujoAppSettingsStore {
+  final release = Completer<void>();
+  GakujoLoginCredentials? saved;
+
+  @override
+  Future<void> saveLoginCredentials({
+    required String loginId,
+    required String password,
+  }) async {
+    await release.future;
+    saved = GakujoLoginCredentials(loginId: loginId, password: password);
+  }
 }

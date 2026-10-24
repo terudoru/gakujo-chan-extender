@@ -344,6 +344,23 @@ class GakujoWebApp extends StatefulWidget {
 }
 
 @visibleForTesting
+Future<GakujoLoginCredentials> saveGakujoLoginCredentials({
+  required GakujoAppSettingsStore store,
+  required String loginId,
+  required String password,
+}) async {
+  final credentials = GakujoLoginCredentials(
+    loginId: loginId.trim(),
+    password: password,
+  );
+  await store.saveLoginCredentials(
+    loginId: credentials.loginId,
+    password: credentials.password,
+  );
+  return credentials;
+}
+
+@visibleForTesting
 Uri savedDownloadLocationUri(String location) {
   final trimmed = location.trim();
   if (RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(trimmed) ||
@@ -934,6 +951,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Timer? _backgroundRefreshTimer;
   bool _isImportingSettings = false;
   final _backupOperations = StorageOperationQueue();
+  final _notificationPreferenceOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
   bool _loginAutofillStorageLoadAttempted = false;
@@ -1640,6 +1658,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var secretInput = '';
     var loginIdInput = '';
     var loginPasswordInput = '';
+    final secretController = TextEditingController();
+    final loginIdController = TextEditingController();
+    final loginPasswordController = TextEditingController();
     var messageExcludeKeywordInput = '';
     final messageExcludeKeywordController = TextEditingController();
     var messageNotificationKeywordInput = '';
@@ -1718,6 +1739,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       LoginCredentialsSection(
+                        loginIdController: loginIdController,
+                        passwordController: loginPasswordController,
                         isConfigured: _appSettings.hasLoginCredentials,
                         canSave: canSaveLoginCredentials,
                         onLoginIdChanged: (value) {
@@ -1762,7 +1785,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         },
                         onSave: () async {
                           try {
-                            await _appSettingsStore.saveLoginCredentials(
+                            final credentials =
+                                await saveGakujoLoginCredentials(
+                              store: _appSettingsStore,
                               loginId: loginIdInput,
                               password: loginPasswordInput,
                             );
@@ -1770,10 +1795,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             if (!mounted) {
                               return;
                             }
-                            final credentials = GakujoLoginCredentials(
-                              loginId: loginIdInput.trim(),
-                              password: loginPasswordInput,
-                            );
                             setState(() {
                               _appSettings = _appSettings.copyWith(
                                 loginCredentials: credentials,
@@ -1800,6 +1821,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       ),
                       const Divider(height: 32),
                       TwoFactorSecretSection(
+                        controller: secretController,
                         canSave: canSaveSecret,
                         onChanged: (value) {
                           secretInput = value;
@@ -1975,11 +1997,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     preferences: _appSettings.notificationPreferences,
                     knownCourses: knownCourses,
                     remindersOnlyWhileOpen: Platform.isWindows,
-                    onPreferencesChanged: (preferences) async {
-                      await _saveNotificationPreferences(preferences);
+                    onPreferencesChanged: (update) async {
+                      final saved = _saveNotificationPreferences(update);
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
+                      await saved;
                     },
                     keywordController: messageNotificationKeywordController,
                     canAddKeyword:
@@ -2132,6 +2155,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       messageExcludeKeywordController.dispose();
       messageExcludeKeywordFocusNode.dispose();
       messageNotificationKeywordController.dispose();
+      secretController.dispose();
+      loginIdController.dispose();
+      loginPasswordController.dispose();
     }
   }
 
@@ -3178,34 +3204,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _saveNotificationPreferences(
-    GakujoNotificationPreferences preferences,
-  ) async {
-    final nextSettings = _appSettings.copyWith(
-      notificationPreferences: preferences,
-    );
-    if (!Platform.isMacOS || _secureStorageAccessAllowed) {
-      try {
-        await _appSettingsStore.saveNotificationPreferences(preferences);
-      } on Object catch (error, stackTrace) {
-        if (!Platform.isMacOS) {
-          rethrow;
-        }
-        developer.log(
-          'Failed to mirror notification preferences to secure storage',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
-    }
-    await _syncLocalSettingsMirror(nextSettings);
-    if (!mounted) {
-      return;
-    }
+    NotificationPreferencesUpdate update,
+  ) {
+    final preferences = update(_appSettings.notificationPreferences);
     setState(() {
-      _appSettings = nextSettings;
+      _appSettings = _appSettings.copyWith(
+        notificationPreferences: preferences,
+      );
     });
-    unawaited(_syncReminders());
+    return _notificationPreferenceOperations.run(() async {
+      if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+        try {
+          await _appSettingsStore.saveNotificationPreferences(preferences);
+        } on Object catch (error, stackTrace) {
+          if (!Platform.isMacOS) {
+            rethrow;
+          }
+          developer.log(
+            'Failed to mirror notification preferences to secure storage',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
+      await _syncLocalSettingsMirror(_appSettings.copyWith(
+        notificationPreferences: preferences,
+      ));
+      if (mounted) {
+        unawaited(_syncReminders());
+      }
+    });
   }
 
   Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {

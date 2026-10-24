@@ -282,6 +282,54 @@ void main() {
     expect(result['remembered'], isNull);
   });
 
+  for (final scenario in ['laterPage', 'smartphoneLaterPage', 'offsetPage']) {
+    test('reopen $scenario finds a star beyond the first 500 rows', () async {
+      final result = await _open(scenario);
+      expect(result['result']['status'], 'ok');
+      expect(result['beforeNavigationCount'], 4);
+      final requests = (result['requests'] as List).cast<String>();
+      expect(Uri.parse(requests[3]).queryParameters, {
+        '_flowExecutionKey': 'third-key',
+        '_eventId': 'paging',
+        '_displayOffset': '500',
+        '_displayCount': '500',
+      });
+      expect(Uri.parse(requests[4]).queryParameters['_flowExecutionKey'],
+          'page-3-key');
+      expect(Uri.parse(requests[4]).queryParameters['_eventId'], 'confirm');
+      expect(result['navigatedResponse'], 'detail response');
+      expect(result['remembered']['seqNo'], '507762');
+      expect(result['remembered']['title'], '授業のお知らせ');
+    });
+  }
+
+  test('reopen reports gone only after exhausting the genre pages', () async {
+    final result = await _open('pagedGone');
+    expect(result['result']['status'], 'gone');
+    expect(result['beforeNavigationCount'], 4);
+    expect(result['remembered'], isNull);
+    expect(
+        (result['requests'] as List).any((request) =>
+            Uri.parse(request as String).queryParameters['_eventId'] ==
+            'confirm'),
+        isFalse);
+  });
+
+  for (final scenario in [
+    'pageLoop',
+    'pageCap',
+    'pageHttpError',
+    'pageMissing'
+  ]) {
+    test('reopen $scenario stops without declaring the star gone', () async {
+      final result = await _open(scenario);
+      expect(result['result']['status'],
+          scenario == 'pageMissing' ? 'missing' : 'error');
+      expect(result['beforeNavigationCount'], scenario == 'pageCap' ? 22 : 4);
+      expect(result['remembered'], isNull);
+    });
+  }
+
   for (final scenario in [
     'gone',
     'wrongGenre',
@@ -592,30 +640,54 @@ const {scripts, scenario} = JSON.parse(require('node:fs').readFileSync(process.a
 const script = scripts[0];
 const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
 const requests = [];
-const link = href => ({getAttribute: () => href, textContent: '  授業のお知らせ  [新着]  '});
+const link = href => ({getAttribute: name => name === 'href' ? href : null,
+  textContent: '  授業のお知らせ  [新着]  '});
 const mobile = scenario.startsWith('smartphone');
+const paged = ['laterPage', 'smartphoneLaterPage', 'offsetPage', 'pagedGone',
+  'pageLoop', 'pageCap', 'pageHttpError', 'pageMissing'].includes(scenario);
+const keyAt = index => ['first%20key', 'second-key', 'third-key'][index] || 'page-' + index + '-key';
 const action = href => ({
   getAttribute: name => name === 'onclick' ? 'location.href="' + href.replace(/&/g, '&amp;') + '"' : null,
   textContent: 'スター 授業のお知らせ 掲示期間： 2026/10/01 ～ 2026/11/01',
   querySelector: selector => selector === 'p' ? {textContent: '  授業のお知らせ [新着]  '} : null
 });
 function makeDoc(index) {
-  const missing = scenario === 'missing' + index;
+  const missing = scenario === 'missing' + index || (scenario === 'pageMissing' && index === 3);
   const hasKey = scenario !== 'noKey';
   return {
     title: missing ? 'ログイン' : scenario === 'systemError' ? 'SYSTEM ERROR'
       : mobile ? 'CampusSquare for WEB' : '連絡通知一覧',
-    body: {textContent: mobile ? '連絡通知 未読一覧' : ''},
+    body: {textContent: mobile && !missing ? '連絡通知 未読一覧' : ''},
     querySelector(selector) {
       if (mobile && (scenario !== 'smartphoneMixedKeys' || index === 0)) return null;
       if (selector.startsWith('a[')) return hasKey && index !== 1
-        ? link('campussquare.do?_flowExecutionKey=' + (index === 0 ? 'first%20key' : 'third-key')) : null;
+        ? link('campussquare.do?_flowExecutionKey=' + keyAt(index)) : null;
       return hasKey && index === 1 ? {value: 'second-key'} : null;
     },
     querySelectorAll(selector) {
+      if (paged && index >= 2) {
+        if (selector === 'a,button,input[type="button"],input[type="submit"]') {
+          if (index !== 2 && scenario !== 'pageCap' && scenario !== 'pageLoop') return [];
+          const href = (scenario === 'offsetPage' ? '?' : 'campussquare.do?') + (scenario === 'offsetPage' ? '' :
+            '_flowExecutionKey=' + keyAt(index) + '&_eventId=paging&') +
+            '_displayOffset=' + ((index - 1) * 500) + '&_displayCount=500';
+          const attributes = mobile ? {onclick: 'location.href="' + href + '"'} : {href};
+          return [{textContent: '次へ', getAttribute: name => attributes[name] || null}];
+        }
+        const rowSelector = mobile ? '[onclick*="seqNo="]' : 'a[href*="seqNo="]';
+        if (selector === rowSelector) {
+          const found = index === 3 && ['laterPage', 'smartphoneLaterPage', 'offsetPage'].includes(scenario);
+          return Array.from({length: index === 2 || scenario === 'pageLoop' ? 500 : 1}, (_, row) => {
+            const seq = found ? '507762' : String(scenario === 'pageLoop' ? row : index * 500 + row);
+            const href = 'campussquare.do?_flowExecutionKey=' + keyAt(index) +
+              '&_eventId=confirm&keijitype=1&genrecd=40&seqNo=' + seq;
+            return mobile ? action(href) : link(href);
+          });
+        }
+      }
       if (mobile) {
         if (selector === '[onclick*="_flowExecutionKey="]') return [action(
-          'campussquare.do?_flowExecutionKey=' + ['first%20key', 'second-key', 'third-key'][index] + '&_eventId=paging')];
+          'campussquare.do?_flowExecutionKey=' + keyAt(index) + '&_eventId=paging')];
         if (selector !== '[onclick*="seqNo="]' || index !== 2 || scenario === 'smartphoneGone') return [];
         return [action('campussquare.do?_flowExecutionKey=third-key&_eventId=confirm&keijitype=1&genrecd=' +
           (scenario === 'smartphoneWrongGenre' ? '41' : '40') + '&seqNo=507762')];
@@ -626,10 +698,11 @@ function makeDoc(index) {
     }
   };
 }
-// Three list responses followed by the detail response consumed by WebView.
-const responses = [0, 1, 2, 3].map(index => ({
-  status: scenario === 'httpError' ? 500 : 200,
-  text: index === 3 ? 'detail response' : String(index)
+// List responses followed by the detail response consumed by WebView.
+const listResponses = scenario === 'pageCap' ? 22 : paged ? 4 : 3;
+const responses = Array.from({length: listResponses + 1}, (_, index) => ({
+  status: scenario === 'httpError' || (scenario === 'pageHttpError' && index === 3) ? 500 : 200,
+  text: index === listResponses ? 'detail response' : String(index)
 }));
 class XHR {
   open(method, url, async) { this.url = url; this.async = async; }

@@ -46,7 +46,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 7;'));
+    expect(script, contains('var version = 8;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));
@@ -152,7 +152,8 @@ void main() {
 
   for (final kind in ['textarea', 'text', 'checkbox', 'radio', 'select']) {
     for (final event in ['pagehide', 'beforeunload', 'visibilitychange']) {
-      test('saves $kind edited before binding on $event', () async {
+      test('does not treat $kind differing from defaults as input on $event',
+          () async {
         final result = await _evaluateDraft({
           'scenario': 'beforeBinding',
           'kind': kind,
@@ -160,11 +161,10 @@ void main() {
           'event': event,
         });
         expect(result['bound'], isTrue);
-        expect(result['touched'], isTrue);
-        expect(result['dirty'], isTrue);
+        expect(result['touched'], isFalse);
+        expect(result['dirty'], isFalse);
         expect(result['countBeforeHide'], 0);
-        expect(result['count'], 1);
-        expect(result['savedValue'], result['expectedValue']);
+        expect(result['count'], 0);
       });
     }
   }
@@ -285,6 +285,37 @@ void main() {
     expect(result['replaceHidden'], isTrue);
     expect(result['events'], containsAll(['input', 'change']));
   });
+
+  for (final event in ['pagehide', 'beforeunload', 'visibilitychange']) {
+    test('restoring a checkbox preserves a conflicting draft on $event',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'conflictWithCheckbox',
+        'event': event,
+      });
+      expect(result['text'], 'サーバー側の一時保存');
+      expect(result['checkbox'], isTrue);
+      expect(result['touched'], isFalse);
+      expect(result['dirty'], isFalse);
+      expect(result['replaceVisible'], isTrue);
+      expect(result['unchangedAfterHide'], isTrue);
+      expect(result['storedAfterInput'], '実際の編集');
+    });
+  }
+
+  for (final multiple in [false, true]) {
+    test('skips a select with a missing saved option (multiple: $multiple)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'missingSelectOption',
+        'multiple': multiple,
+      });
+      expect(result['selection'], ['a']);
+      expect(result['events'], isEmpty);
+      expect(result['status'], isNot(contains('復元しました')));
+      expect(result['unchangedAfterHide'], isTrue);
+    });
+  }
 
   test('v2 heading joins course and assignment table values', () async {
     final result = await _evaluateDraftScenario('heading');
@@ -860,6 +891,56 @@ function runExtendedScenario() {
     return {beforeReplace, beforeStatus, storedAfterPageHide,
       afterReplace: restoring.field.value, afterStatus: statusFor(restoring),
       replaceHidden: button.style.display === 'none', events: restoring.field.events};
+  }
+  if (spec.scenario === 'conflictWithCheckbox') {
+    function form(value) {
+      const page = textPage(storage, {value});
+      page.document.fields = [page.field, new FakeControl(page.document, 'input',
+        {type: 'checkbox', name: 'agree'}, {value: 'yes'})];
+      return page;
+    }
+    const page = form('端末の下書き');
+    runPage(page);
+    page.document.fields[1].checked = true;
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const key = storage.key(0), original = storage.getItem(key);
+    const restoring = form('サーバー側の一時保存');
+    runPage(restoring);
+    restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    const fields = restoring.document.fields;
+    const touched = fields.some(field => field.__MBG_REPORT_DRAFT_TOUCHED);
+    const dirty = fields.some(field => field.__MBG_REPORT_DRAFT_DIRTY);
+    const replaceVisible = restoring.document.getElementById('mbg-report-draft-replace').style.display !== 'none';
+    const target = spec.event === 'visibilitychange' ? restoring.document : restoring.window;
+    restoring.document.visibilityState = 'hidden';
+    for (const callback of target.listeners[spec.event] || []) callback();
+    const unchangedAfterHide = storage.getItem(key) === original;
+    const text = restoring.field.value;
+    restoring.field.value = '実際の編集';
+    restoring.field.dispatchEvent(new FakeEvent('keyup'));
+    return {text, checkbox: fields[1].checked, touched, dirty, replaceVisible,
+      unchangedAfterHide, storedAfterInput: JSON.parse(storage.getItem(key)).fields[0].value};
+  }
+  if (spec.scenario === 'missingSelectOption') {
+    function form() {
+      const page = choicePage(storage);
+      page.document.fields = [page.document.fields[spec.multiple ? 5 : 4]];
+      return page;
+    }
+    const page = form();
+    runPage(page);
+    setSelection(page.document.fields[0], spec.multiple ? ['b', 'c'] : ['b']);
+    page.document.fields[0].dispatchEvent(new FakeEvent('change'));
+    const key = storage.key(0), original = storage.getItem(key);
+    const restoring = form();
+    const field = restoring.document.fields[0];
+    field.options = field.options.filter(option => option.value !== 'b');
+    runPage(restoring);
+    restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    const status = statusFor(restoring);
+    hidePage(restoring);
+    return {selection: field.options.filter(option => option.selected).map(option => option.value),
+      events: field.events, status, unchangedAfterHide: storage.getItem(key) === original};
   }
   if (spec.scenario === 'heading') {
     const page = textPage(storage, {value: '本文'});

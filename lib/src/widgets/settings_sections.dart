@@ -11,8 +11,10 @@ class TwoFactorSecretSection extends StatelessWidget {
     required this.onChanged,
     required this.onClear,
     required this.onSave,
+    this.controller,
   });
 
+  final TextEditingController? controller;
   final bool canSave;
   final ValueChanged<String> onChanged;
   final Future<void> Function() onClear;
@@ -33,6 +35,7 @@ class TwoFactorSecretSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         TextField(
+          controller: controller,
           decoration: const InputDecoration(
             labelText: '長いBase32 2FA秘密鍵',
             border: OutlineInputBorder(),
@@ -74,8 +77,12 @@ class LoginCredentialsSection extends StatelessWidget {
     required this.onPasswordChanged,
     required this.onClear,
     required this.onSave,
+    this.loginIdController,
+    this.passwordController,
   });
 
+  final TextEditingController? loginIdController;
+  final TextEditingController? passwordController;
   final bool isConfigured;
   final bool canSave;
   final ValueChanged<String> onLoginIdChanged;
@@ -101,6 +108,7 @@ class LoginCredentialsSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           TextField(
+            controller: loginIdController,
             decoration: const InputDecoration(
               labelText: 'ログインID',
               border: OutlineInputBorder(),
@@ -117,6 +125,7 @@ class LoginCredentialsSection extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           TextField(
+            controller: passwordController,
             decoration: const InputDecoration(
               labelText: 'パスワード',
               border: OutlineInputBorder(),
@@ -381,6 +390,10 @@ class FeatureFlagsSection extends StatelessWidget {
   }
 }
 
+typedef NotificationPreferencesUpdate = GakujoNotificationPreferences Function(
+  GakujoNotificationPreferences preferences,
+);
+
 class NotificationTopicsSection extends StatelessWidget {
   const NotificationTopicsSection({
     super.key,
@@ -399,7 +412,7 @@ class NotificationTopicsSection extends StatelessWidget {
   });
 
   final GakujoNotificationPreferences preferences;
-  final Future<void> Function(GakujoNotificationPreferences preferences)
+  final Future<void> Function(NotificationPreferencesUpdate update)
       onPreferencesChanged;
 
   /// Courses met on the レポート・小テスト list, for per-course choices.
@@ -463,7 +476,7 @@ class NotificationTopicsSection extends StatelessWidget {
           onChanged: notificationsEnabled
               ? (value) => unawaited(
                     onPreferencesChanged(
-                      preferences.copyWith(skipSubmitted: value),
+                      (current) => current.copyWith(skipSubmitted: value),
                     ),
                   )
               : null,
@@ -489,9 +502,9 @@ class NotificationTopicsSection extends StatelessWidget {
                 onSelected: notificationsEnabled
                     ? (selected) => unawaited(
                           onPreferencesChanged(
-                            preferences.copyWith(
+                            (current) => current.copyWith(
                               reminderOffsets: {
-                                for (final value in preferences.reminderOffsets)
+                                for (final value in current.reminderOffsets)
                                   if (value != offset) value,
                                 if (selected) offset,
                               },
@@ -520,9 +533,9 @@ class NotificationTopicsSection extends StatelessWidget {
               onChanged: notificationsEnabled
                   ? (notify) => unawaited(
                         onPreferencesChanged(
-                          preferences.copyWith(
+                          (current) => current.copyWith(
                             mutedCourses: {
-                              for (final value in preferences.mutedCourses)
+                              for (final value in current.mutedCourses)
                                 if (value != course) value,
                               if (!notify) course,
                             },

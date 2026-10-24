@@ -193,8 +193,8 @@ class GakujoDownloadHistoryStore {
 
   Future<void> _compact() async {
     await Future.wait([
-      _replaceHistory(await _load()),
-      _writeFailedDownloads(await _loadFailedDownloads()),
+      _load().then(_replaceHistory),
+      _loadFailedDownloads().then(_writeFailedDownloads),
     ]);
   }
 

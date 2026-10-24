@@ -383,6 +383,34 @@ class GakujoMessageStarScript {
     return base + 'campussquare.do?_flowExecutionKey=' + encodeURIComponent(flowKey) +
       '&_eventId=' + event;
   }
+  function nextPage(doc) {
+    var controls = doc.querySelectorAll('a,button,input[type="button"],input[type="submit"]');
+    for (var i = 0; i < controls.length; i += 1) {
+      var control = controls[i];
+      var label = String(control.textContent || control.value || '') + ' ' +
+        (control.getAttribute('aria-label') || control.getAttribute('title') || '');
+      if ((!/次へ|次のページ|次ページ|next/i.test(label) &&
+          control.getAttribute('rel') !== 'next') || control.disabled ||
+          control.getAttribute('aria-disabled') === 'true') continue;
+      var href = control.getAttribute('href') || '';
+      if (!href || /^(?:javascript:|#)/i.test(href)) {
+        href = messageOnclickUrl(control) ||
+          ((control.getAttribute('onclick') || href).match(
+            /['"]([^'"]*[?&](?:_eventId=paging|_displayOffset=)[^'"]*)['"]/)
+            || [])[1];
+      }
+      if (!href) continue;
+      var target = new URL(href.replace(/&amp;/g, '&'), base + 'campussquare.do');
+      if (target.origin !== location.origin ||
+          target.pathname !== '/campusweb/campussquare.do' ||
+          (target.searchParams.get('_eventId') !== 'paging' &&
+           !target.searchParams.has('_displayOffset'))) continue;
+      target.searchParams.set('_flowExecutionKey', key(doc));
+      target.searchParams.set('_eventId', 'paging');
+      return target.href;
+    }
+    return '';
+  }
   try {
     if (location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') return result('missing');
     for (var name of ['keijitype', 'genrecd', 'seqNo']) {
@@ -393,20 +421,31 @@ class GakujoMessageStarScript {
     var doc = get(base + 'campussquare.do?_flowId=KJW0001100-flow');
     doc = get(url(key(doc), 'dispKeijiListGenre') + genre);
     doc = get(url(key(doc), 'paging') + '&_displayCount=500');
-    var links = doc.querySelectorAll('a[href*="seqNo="]');
-    var mobile = doc.querySelectorAll('[onclick*="seqNo="]');
-    links = Array.from(links).concat(Array.from(mobile));
     var found;
-    for (var i = 0; i < links.length; i += 1) {
-      var href = links[i].getAttribute('href') || messageOnclickUrl(links[i]);
-      if (!href) continue;
-      var params = new URL(href, base).searchParams;
-      if (params.get('seqNo') === message.seqNo &&
-          params.get('keijitype') === message.keijitype &&
-          params.get('genrecd') === message.genrecd) {
-        found = links[i];
-        break;
+    var seenPages = new Set();
+    for (var page = 0; page < 20; page += 1) {
+      var links = Array.from(doc.querySelectorAll('a[href*="seqNo="]')).concat(
+        Array.from(doc.querySelectorAll('[onclick*="seqNo="]')));
+      var identities = [];
+      for (var i = 0; i < links.length; i += 1) {
+        var href = links[i].getAttribute('href') || messageOnclickUrl(links[i]);
+        if (!href) continue;
+        var params = new URL(href, base).searchParams;
+        identities.push([params.get('keijitype'), params.get('genrecd'), params.get('seqNo')]);
+        if (params.get('seqNo') === message.seqNo &&
+            params.get('keijitype') === message.keijitype &&
+            params.get('genrecd') === message.genrecd) {
+          found = links[i];
+          break;
+        }
       }
+      if (found) break;
+      var next = nextPage(doc);
+      if (!next) return result('gone');
+      var signature = JSON.stringify(identities);
+      if (seenPages.has(signature) || page === 19) return result('error');
+      seenPages.add(signature);
+      doc = get(next);
     }
     if (!found) return result('gone');
     var targetUrl = url(key(doc), 'confirm') + genre + '&seqNo=' + encodeURIComponent(message.seqNo);

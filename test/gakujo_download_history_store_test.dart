@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -149,6 +150,41 @@ void main() {
     expect(result.fileName, 'report.pdf');
     expect(result.courseName, '情報リテラシー');
     expect(result.location, 'content://downloads/report.pdf');
+  });
+
+  test('failed compaction holds the queue until its history write settles',
+      () async {
+    final storage = _FailingCompactionStorage();
+    final store = GakujoDownloadHistoryStore(secureStorage: storage);
+    final original = GakujoDownloadHistoryEntry(
+      fileName: 'original.pdf',
+      courseName: '',
+      savedAt: DateTime.now(),
+    );
+    storage.values['more_better_gakujo_download_history'] =
+        jsonEncode([original.toJson()]);
+    var compactSettled = false;
+    final compact = store.compact().whenComplete(() => compactSettled = true);
+    final failure = expectLater(compact, throwsStateError);
+    await storage.historyWriteStarted.future;
+    await Future<void>.delayed(Duration.zero);
+    var addSettled = false;
+    final addition = store
+        .add(GakujoDownloadHistoryEntry(
+          fileName: 'later.pdf',
+          courseName: '',
+          savedAt: DateTime.now(),
+        ))
+        .whenComplete(() => addSettled = true);
+    await Future<void>.delayed(Duration.zero);
+    final releasedEarly = compactSettled || addSettled;
+    storage.releaseHistoryWrite.complete();
+    await failure;
+    await addition;
+
+    expect(releasedEarly, isFalse);
+    expect((await store.load()).map((entry) => entry.fileName),
+        containsAll(['original.pdf', 'later.pdf']));
   });
 
   test('download result treats null native response as cancellation', () {
@@ -459,5 +495,48 @@ class _DelayedMemorySecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     values.remove(key);
+  }
+}
+
+class _FailingCompactionStorage extends _DelayedMemorySecureStorage {
+  _FailingCompactionStorage() : super(readDelay: Duration.zero);
+
+  final historyWriteStarted = Completer<void>();
+  final releaseHistoryWrite = Completer<void>();
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'more_better_gakujo_failed_downloads') {
+      await historyWriteStarted.future;
+      throw StateError('failed-download read failed');
+    }
+    return super.read(key: key);
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'more_better_gakujo_download_history' &&
+        !historyWriteStarted.isCompleted) {
+      historyWriteStarted.complete();
+      await releaseHistoryWrite.future;
+    }
+    await super.write(key: key, value: value);
   }
 }

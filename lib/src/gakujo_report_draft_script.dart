@@ -6,7 +6,7 @@ class GakujoReportDraftScript {
   static String build() {
     return r'''
 (function() {
-  var version = 7;
+  var version = 8;
   var prefix = 'mbg-report-draft:v2:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -649,7 +649,11 @@ class GakujoReportDraftScript {
           group.forEach(function(other) { setFieldValue(other, other.value === value); });
         } else {
           if (kind === 'checkbox' && typeof value !== 'boolean') return;
-          if (kind === 'select' && !Array.isArray(value)) return;
+          if (kind === 'select' && (!Array.isArray(value) || value.some(function(saved) {
+            return !Array.prototype.some.call(field.options, function(option) {
+              return option.value === saved;
+            });
+          }))) return;
           if (JSON.stringify(fieldValue(field)) === JSON.stringify(value)) return;
           setFieldValue(field, value);
         }
@@ -662,7 +666,7 @@ class GakujoReportDraftScript {
       ensureStatus(doc, store, key);
       updateStatus(doc, '保存済みの下書きがあります（' + savedTime(draft.savedAt, true) + '）',
         null, function() { restoreDraft(doc, store, key, saveableFields(doc), true); });
-    } else if (restored || force) {
+    } else if (restored) {
       ensureStatus(doc, store, key);
       updateStatus(doc, '保存済みの下書きを復元しました（' +
         savedTime(draft.savedAt, true) + ' 保存）');
@@ -749,20 +753,6 @@ class GakujoReportDraftScript {
         return;
       }
       field.__MBG_REPORT_DRAFT_BOUND = true;
-      if (!field.matches('[contenteditable]')) {
-        var kind = fieldKind(field);
-        var changed = kind === 'checkbox' || kind === 'radio'
-          ? field.checked !== field.defaultChecked
-          : kind === 'select'
-            ? Array.prototype.slice.call(field.options).some(function(option) {
-              return option.selected !== option.defaultSelected;
-            })
-            : field.value !== field.defaultValue;
-        if (changed) {
-          field.__MBG_REPORT_DRAFT_DIRTY = true;
-          field.__MBG_REPORT_DRAFT_TOUCHED = true;
-        }
-      }
       field.addEventListener('input', function() { scheduleSave(field); });
       field.addEventListener('change', function() { scheduleSave(field); });
       field.addEventListener('keyup', function() { scheduleSave(field); });
