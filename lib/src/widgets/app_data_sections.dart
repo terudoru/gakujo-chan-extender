@@ -11,6 +11,7 @@ class AppMaintenanceSection extends StatefulWidget {
     required this.onCreateErrorReport,
     required this.onExportSettings,
     required this.onImportSettings,
+    required this.onImportSettingsFromFile,
     required this.onCheckDownloadDestination,
     required this.onCopyDiagnostics,
   });
@@ -20,6 +21,7 @@ class AppMaintenanceSection extends StatefulWidget {
   final Future<void> Function() onCreateErrorReport;
   final Future<void> Function() onExportSettings;
   final Future<void> Function() onImportSettings;
+  final Future<void> Function() onImportSettingsFromFile;
   final Future<void> Function() onCheckDownloadDestination;
   final Future<void> Function() onCopyDiagnostics;
 
@@ -121,6 +123,12 @@ class _AppMaintenanceSectionState extends State<AppMaintenanceSection> {
               onPressed: _dataAction('設定を読み込み', widget.onImportSettings),
               icon: const Icon(Icons.download),
               label: const Text('設定を読み込み'),
+            ),
+            OutlinedButton.icon(
+              onPressed:
+                  _dataAction('ファイルから読み込み', widget.onImportSettingsFromFile),
+              icon: const Icon(Icons.file_open_outlined),
+              label: const Text('ファイルから読み込み'),
             ),
             OutlinedButton.icon(
               onPressed:

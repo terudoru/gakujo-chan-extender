@@ -726,6 +726,7 @@ void main() {
     var createdReport = false;
     var exported = false;
     var imported = false;
+    var importedFromFile = false;
     var checked = false;
     var diagnostics = false;
 
@@ -748,6 +749,9 @@ void main() {
             onImportSettings: () async {
               imported = true;
             },
+            onImportSettingsFromFile: () async {
+              importedFromFile = true;
+            },
             onCheckDownloadDestination: () async {
               checked = true;
             },
@@ -761,11 +765,13 @@ void main() {
 
     expect(find.text('バックアップと診断'), findsOneWidget);
     expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
+    expect(find.text('ファイルから読み込み'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, '設定をコピー'));
     await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
     await tester.tap(find.widgetWithText(TextButton, '診断情報をコピー'));
@@ -776,6 +782,7 @@ void main() {
     expect(createdReport, isTrue);
     expect(exported, isTrue);
     expect(imported, isTrue);
+    expect(importedFromFile, isTrue);
     expect(checked, isTrue);
     expect(diagnostics, isTrue);
   });
@@ -796,6 +803,7 @@ void main() {
             onCreateErrorReport: () async {},
             onExportSettings: () async {},
             onImportSettings: () async {},
+            onImportSettingsFromFile: () async {},
             onCheckDownloadDestination: () async {},
             onCopyDiagnostics: () async {},
           ),

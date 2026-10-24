@@ -1976,6 +1976,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       }
                       setDialogState(() {});
                     },
+                    onImportSettingsFromFile: () async {
+                      await _importSettingsFromFile();
+                      if (!dialogContext.mounted) {
+                        return;
+                      }
+                      setDialogState(() {});
+                    },
                     onCheckDownloadDestination: _checkDownloadDestinationHealth,
                     onCopyDiagnostics: _copyDiagnosticInfo,
                   ),
@@ -4362,7 +4369,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
       );
 
-  Future<void> _importSettingsFromClipboard() async {
+  Future<void> _importSettingsFromClipboard() =>
+      _importSettings(_restoreSettingsFromClipboard);
+
+  Future<void> _importSettingsFromFile() =>
+      _importSettings(_restoreSettingsFromFile);
+
+  Future<void> _importSettings(Future<void> Function() restore) async {
     // The settings dialog can be closed and reopened during a storage call.
     // Keep the import guard on the app, beyond the maintenance widget's life.
     if (_isImportingSettings) {
@@ -4371,7 +4384,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     _isImportingSettings = true;
     try {
-      await _backupOperations.run(_restoreSettingsFromClipboard);
+      await _backupOperations.run(restore);
     } finally {
       _isImportingSettings = false;
     }
@@ -4379,8 +4392,43 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _restoreSettingsFromClipboard() async {
     final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-    if (text == null || text.trim().isEmpty) {
-      _showSnackBar('クリップボードに設定JSONがありません');
+    await _restoreSettingsFromText(
+      text ?? '',
+      emptyMessage: 'クリップボードに設定JSONがありません',
+    );
+  }
+
+  Future<void> _restoreSettingsFromFile() async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'JSON',
+          extensions: ['json'],
+          mimeTypes: ['application/json', 'text/plain'],
+          uniformTypeIdentifiers: ['public.json'],
+        ),
+      ],
+    );
+    if (file == null) {
+      return;
+    }
+    if (await file.length() > 5 * 1024 * 1024) {
+      _showSnackBar('バックアップファイルが大きすぎます');
+      return;
+    }
+    final text = await file.readAsString();
+    await _restoreSettingsFromText(
+      text,
+      emptyMessage: 'ファイルに設定JSONがありません',
+    );
+  }
+
+  Future<void> _restoreSettingsFromText(
+    String text, {
+    required String emptyMessage,
+  }) async {
+    if (text.trim().isEmpty) {
+      _showSnackBar(emptyMessage);
       return;
     }
 
