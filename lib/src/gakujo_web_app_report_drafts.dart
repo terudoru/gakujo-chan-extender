@@ -64,9 +64,19 @@ extension _GakujoWebAppReportDrafts on _GakujoWebAppState {
                                   children: [
                                     TextButton.icon(
                                       onPressed: () async {
-                                        await Clipboard.setData(ClipboardData(
-                                          text: draft['text'] as String,
-                                        ));
+                                        final text = draft['text'] as String;
+                                        // Choice answers are stored as option
+                                        // values, which make no sense pasted.
+                                        if (text.trim().isEmpty) {
+                                          _showSnackBar(
+                                            'この下書きにはコピーできる文章がありません。'
+                                            '選択した回答はページを開くと復元されます',
+                                          );
+                                          return;
+                                        }
+                                        await Clipboard.setData(
+                                          ClipboardData(text: text),
+                                        );
                                         if (!dialogContext.mounted) return;
                                         _showSnackBar('下書きをコピーしました');
                                       },
