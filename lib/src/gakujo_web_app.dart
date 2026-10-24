@@ -50,6 +50,7 @@ import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
+import 'gakujo_timeout_popup_script.dart';
 import 'gakujo_upload_compression_libraries.dart';
 import 'gakujo_upload_compression_script.dart';
 import 'platform/platform_service.dart';
@@ -4447,6 +4448,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _injectTimeoutPopupIfAllowed() async {
+    if (!_canRunPageScripts) {
+      return;
+    }
+
+    try {
+      await _controller.runJavaScript(GakujoTimeoutPopupScript.build());
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to inject timeout popup script',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   Future<void> _injectGpaDisplayIfAllowed() async {
     if (!_canRunPageScripts ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)) {
@@ -4883,6 +4901,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             await _injectExpiredPageRecoveryIfAllowed();
+            if (!stillCurrent()) {
+              return;
+            }
+            await _injectTimeoutPopupIfAllowed();
             if (!stillCurrent()) {
               return;
             }
