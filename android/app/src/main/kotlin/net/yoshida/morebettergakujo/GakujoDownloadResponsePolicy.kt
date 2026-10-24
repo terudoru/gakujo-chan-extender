@@ -2,33 +2,39 @@ package net.yoshida.morebettergakujo
 
 import java.io.BufferedInputStream
 import java.io.InputStream
-import java.io.InputStreamReader
 
 internal object GakujoDownloadResponsePolicy {
     const val PAGE_RETURNED_MESSAGE =
         "ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください"
 
-    fun openValidated(input: InputStream, fileName: String, mimeType: String?): BufferedInputStream {
+    fun openValidated(
+        input: InputStream,
+        fileName: String,
+        mimeType: String?,
+        contentDispositionFileName: String? = null
+    ): BufferedInputStream {
         val buffered = BufferedInputStream(input)
         try {
-            if (!Regex("\\.html?$", RegexOption.IGNORE_CASE).containsMatchIn(fileName.trim())) {
-                if (mimeType?.substringBefore(';')?.trim()?.equals("text/html", ignoreCase = true) == true) {
-                    throw IllegalStateException(PAGE_RETURNED_MESSAGE)
-                }
-                buffered.mark(Int.MAX_VALUE)
-                val reader = InputStreamReader(buffered, Charsets.UTF_8)
-                val prefix = StringBuilder()
-                while (prefix.length < 14) {
-                    val read = reader.read()
+            val htmlName = Regex("\\.html?$", RegexOption.IGNORE_CASE)
+            val type = mimeType?.substringBefore(';')?.trim().orEmpty()
+            val canBePage = listOf("", "text/html", "application/xhtml+xml", "application/octet-stream")
+                .any { it.equals(type, ignoreCase = true) }
+            if (canBePage && !htmlName.containsMatchIn(fileName.trim()) &&
+                !htmlName.containsMatchIn(contentDispositionFileName?.trim().orEmpty())) {
+                val prefix = ByteArray(1024)
+                // Bound the mark so copying the rest cannot retain the entire file.
+                buffered.mark(prefix.size)
+                var count = 0
+                while (count < prefix.size) {
+                    val read = buffered.read(prefix, count, prefix.size - count)
                     if (read == -1) break
-                    val character = read.toChar()
-                    if (prefix.isNotEmpty() || (!character.isWhitespace() && character != '\uFEFF')) {
-                        prefix.append(character)
-                    }
+                    count += read
                 }
                 buffered.reset()
-                if (prefix.startsWith("<!doctype html", ignoreCase = true) ||
-                    prefix.startsWith("<html", ignoreCase = true)) {
+                if (Regex(
+                    """^\uFEFF?[\x09-\x0D\x20]*(?:<!doctype html|<html)[\x09-\x0D\x20/>]""",
+                    RegexOption.IGNORE_CASE
+                ).containsMatchIn(String(prefix, 0, count, Charsets.UTF_8))) {
                     throw IllegalStateException(PAGE_RETURNED_MESSAGE)
                 }
             }

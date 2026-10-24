@@ -14,13 +14,16 @@ void main() {
   });
 
   for (final fromFile in [false, true]) {
-    for (final mimeType in ['text/html; charset=UTF-8', 'application/pdf']) {
+    for (final mimeType in [
+      'text/html; charset=UTF-8',
+      'application/octet-stream',
+    ]) {
       test('rejects a page before saving (file: $fromFile, MIME: $mimeType)',
           () async {
         final directory = await Directory.systemTemp.createTemp('mbg-page-');
         var disposed = false;
         final bytes = Uint8List.fromList(utf8
-            .encode('\uFEFF${' ' * 2048}\n<!DoCtYpE hTmL><html>login</html>'));
+            .encode('\uFEFF${' ' * 512}\n<!DoCtYpE hTmL><html>login</html>'));
         final temporary = File('${directory.path}/temporary');
         if (fromFile) await temporary.writeAsBytes(bytes);
         final service = FileSystemGakujoDownloadService(
@@ -65,6 +68,63 @@ void main() {
           if (fromFile) expect(disposed, isTrue);
         } finally {
           await directory.delete(recursive: true);
+        }
+      });
+    }
+  }
+
+  for (final fromFile in [false, true]) {
+    for (final (name, mimeType, body, dispositionName, rejected) in [
+      ('attachment.pdf', 'text/html', '%PDF-1.7', null, false),
+      ('notes.txt', 'text/plain', '<html> is an HTML tag', null, false),
+      ('Download', 'text/html', '<html>attachment</html>', 'page.HtM', false),
+      ('', 'text/html', '<html>login</html>', null, true),
+    ]) {
+      test('save page policy: $name / $mimeType / file: $fromFile', () async {
+        final directory = await Directory.systemTemp.createTemp('mbg-policy-');
+        addTearDown(() => directory.delete(recursive: true));
+        final bytes = Uint8List.fromList(utf8.encode(body));
+        final temporary = File('${directory.path}/temporary');
+        if (fromFile) await temporary.writeAsBytes(bytes);
+        final service = FileSystemGakujoDownloadService(
+          secureStorage: _MemorySecureStorage({
+            'more_better_gakujo_download_root_path': directory.path,
+          }),
+          usesNativeDownloadRoot: false,
+          authenticatedBytesLoader: (request, {userAgent}) async => fromFile
+              ? AuthenticatedDownloadedFile.fromFile(
+                  file: temporary,
+                  cleanup: () async {
+                    await temporary.delete();
+                  },
+                  finalUrl: request.url,
+                  mimeType: mimeType,
+                  contentDispositionFileName: dispositionName,
+                )
+              : AuthenticatedDownloadedFile(
+                  bytes: bytes,
+                  finalUrl: request.url,
+                  mimeType: mimeType,
+                  contentDispositionFileName: dispositionName,
+                ),
+        );
+        final saving = service.download(
+          GakujoDownloadRequest(
+            url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+            method: 'GET',
+            fileName: name,
+            courseName: '',
+            formFields: const {},
+          ),
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+        if (rejected) {
+          await expectLater(saving, throwsA(isA<PlatformException>()));
+          expect(await directory.list().toList(), isEmpty);
+        } else {
+          await saving;
+          final saved = (await directory.list().toList()).single as File;
+          expect(await saved.readAsBytes(), bytes);
         }
       });
     }

@@ -50,17 +50,27 @@ void main() {
     }
   });
 
-  for (final (name, mimeType, body, rejected) in [
-    ('attachment.pdf', 'text/html; charset=UTF-8', 'login required', true),
+  for (final (name, mimeType, body, dispositionName, rejected) in [
     (
       'attachment.pdf',
-      'application/pdf',
-      '\uFEFF \n<!DoCtYpE hTmL><html>expired</html>',
+      'text/html; charset=UTF-8',
+      '<html>login</html>',
+      null,
       true,
     ),
-    ('attachment.pdf', '', '\t<HtMl>login</HtMl>', true),
-    ('attachment.HTML', 'text/html', '<html>attachment</html>', false),
-    ('', 'text/html', '<html>attachment</html>', false),
+    (
+      'attachment.pdf',
+      'application/xhtml+xml',
+      '\uFEFF \n<!DoCtYpE hTmL><html>expired</html>',
+      null,
+      true,
+    ),
+    ('attachment.pdf', '', '\t<HtMl>login</HtMl>', null, true),
+    ('attachment.pdf', 'text/html', '%PDF-1.7', null, false),
+    ('notes.txt', 'text/plain', '<html> is an HTML tag', null, false),
+    ('attachment.HTML', 'text/html', '<html>attachment</html>', null, false),
+    ('Download', 'text/html', '<html>attachment</html>', 'page.HTM', false),
+    ('', 'text/html', '<html>login</html>', null, true),
   ]) {
     test(
         'Windows validates pages and cleans temporary files: $name / $mimeType',
@@ -84,7 +94,9 @@ void main() {
             'status': 200,
             'ok': true,
             'mimeType': mimeType,
-            'contentDisposition': 'attachment; filename=page.HTM',
+            'contentDisposition': dispositionName == null
+                ? ''
+                : 'attachment; filename="$dispositionName"',
             'bodyByteLength': bytes.length,
             'chunkCount': 2,
           },

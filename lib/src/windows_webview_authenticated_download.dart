@@ -91,18 +91,35 @@ class WindowsWebViewAuthenticatedDownloadScript {
         return;
       }
       const requestedName = ${jsonEncode(request.fileName)};
-      if (/\\.[a-z0-9]{1,8}\$/i.test(requestedName.trim()) &&
-          !/\\.html?\$/i.test(requestedName.trim()) &&
-          metadata.mimeType.split(';')[0].trim().toLowerCase() === 'text/html') {
-        controller.abort();
-        setResult({ state: 'error', code: 'page_response',
-          message: ${jsonEncode(DownloadResponsePolicy.pageReturnedMessage)} });
-        return;
+      const parameters = Object.create(null);
+      const parameter = /(?:^|;)\\s*([^=;\\s]+)\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|([^;]*))/g;
+      for (const match of metadata.contentDisposition.matchAll(parameter)) {
+        const key = match[1].toLowerCase();
+        if (!(key in parameters)) {
+          parameters[key] = match[2] === undefined ? match[3].trim() :
+            match[2].replace(/\\\\(.)/g, '\$1');
+        }
       }
+      let dispositionName = parameters['filename'] || '';
+      const extended = /^([^']*)'[^']*'(.+)\$/.exec(parameters['filename*'] || '');
+      if (extended) {
+        dispositionName = extended[2].replace(/%([0-9a-f]{2})/gi,
+          (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+      }
+      const checkPage = !/\\.html?\$/i.test(requestedName.trim()) &&
+        !/\\.html?\$/i.test(dispositionName.trim()) &&
+        ['', 'text/html', 'application/xhtml+xml', 'application/octet-stream'].includes(
+          metadata.mimeType.split(';')[0].trim().toLowerCase());
       const chunkSize = 256 * 1024;
       let chunkIndex = 0;
       let totalBytes = 0;
       async function emitChunk(bytes) {
+        if (chunkIndex === 0 && checkPage &&
+            /^(?:\\xEF\\xBB\\xBF)?[\\x09-\\x0D\\x20]*(?:<!doctype html|<html)[\\x09-\\x0D\\x20/>]/i.test(
+              String.fromCharCode.apply(null, bytes.subarray(0, 1024)))) {
+          throw Object.assign(new Error(${jsonEncode(DownloadResponsePolicy.pageReturnedMessage)}),
+            { code: 'page_response' });
+        }
         while (pending.chunks.length >= 4 && !controller.signal.aborted) {
           await new Promise(resolve => { pending.resume = resolve; });
           pending.resume = null;
@@ -149,6 +166,7 @@ class WindowsWebViewAuthenticatedDownloadScript {
       controller.abort();
       setResult({
         state: 'error',
+        code: error && error.code || '',
         errorName: error && error.name || '',
         message: String(error && error.message || error || '')
       });

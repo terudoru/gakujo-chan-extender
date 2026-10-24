@@ -10,16 +10,26 @@ class DownloadResponsePolicy {
 
   static void validate({
     required String fileName,
+    String? contentDispositionFileName,
     String? mimeType,
     required List<int> prefix,
   }) {
-    if (RegExp(r'\.html?$', caseSensitive: false).hasMatch(fileName.trim())) {
+    final htmlName = RegExp(r'\.html?$', caseSensitive: false);
+    if (htmlName.hasMatch(fileName.trim()) ||
+        htmlName.hasMatch(contentDispositionFileName?.trim() ?? '')) {
       return;
     }
-    final isHtml = mimeType?.split(';').first.trim().toLowerCase() ==
-            'text/html' ||
-        RegExp(r'^[\s\uFEFF]*(?:<!doctype html|<html)', caseSensitive: false)
-            .hasMatch(utf8.decode(prefix, allowMalformed: true));
+    final type = mimeType?.split(';').first.trim().toLowerCase() ?? '';
+    final isHtml = const {
+          '',
+          'text/html',
+          'application/xhtml+xml',
+          'application/octet-stream',
+        }.contains(type) &&
+        RegExp(
+          r'^(?:\xEF\xBB\xBF)?[\x09-\x0D\x20]*(?:<!doctype html|<html)[\x09-\x0D\x20/>]',
+          caseSensitive: false,
+        ).hasMatch(latin1.decode(prefix));
     if (isHtml) {
       throw PlatformException(
         code: 'download_failed',

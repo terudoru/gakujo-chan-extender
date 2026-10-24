@@ -546,6 +546,15 @@ class GakujoDeadlineNotificationCoordinator {
     for (final MapEntry(:key, value: entry) in pending.entries) {
       if (await _notificationService.notifyDeadline(entry)) {
         notifiedNow.add(key);
+        final assignment = assignmentForDeadline(entry, assignments);
+        if (assignment != null) {
+          // Remember the kind before a same-title collision appears. Older
+          // builds saved only the unqualified key, so those may repeat once.
+          notifiedNow.addAll([
+            'assignment|${assignment.notificationId}',
+            'assignment|${assignment.id}',
+          ]);
+        }
       }
     }
     await _activityStore.addNotifiedDeadlineKeys(notifiedNow);

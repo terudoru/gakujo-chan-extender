@@ -6,10 +6,12 @@ import 'package:test/test.dart';
 
 void main() {
   for (final (mimeType, body) in [
-    (' Text/HTML ; charset=UTF-8', 'login required'),
-    ('application/pdf', '\uFEFF \r\n<!DoCtYpE hTmL><html>expired</html>'),
+    (' Text/HTML ; charset=UTF-8', '<html>login required</html>'),
+    ('application/xhtml+xml', '\uFEFF \r\n<!DoCtYpE hTmL><html>expired</html>'),
     ('application/octet-stream', '\t<HtMl>login</HtMl>'),
     (null, '<html>error</html>'),
+    ('', '<html lang="en">error</html>'),
+    ('text/html', '<html/>'),
   ]) {
     test('rejects a non-HTML attachment containing a page: $mimeType', () {
       expect(
@@ -25,6 +27,39 @@ void main() {
       );
     });
   }
+
+  for (final (mimeType, body) in [
+    ('text/html', '%PDF-1.7'),
+    ('application/xhtml+xml', '%PDF-1.7'),
+    ('text/html', 'login required'),
+    ('text/plain', '<html> is an HTML tag'),
+    ('application/pdf', '<html>literal bytes</html>'),
+    ('application/octet-stream', '<htmlish>literal bytes'),
+    ('text/html', '<!doctype htmlish>literal bytes'),
+    ('text/html', '<html'),
+    ('text/html', '\uFEFF\uFEFF<html>literal bytes</html>'),
+  ]) {
+    test(
+        'requires both a page MIME type and an HTML opening: $mimeType / $body',
+        () {
+      DownloadResponsePolicy.validate(
+        fileName: 'attachment.pdf',
+        mimeType: mimeType,
+        prefix: utf8.encode(body),
+      );
+    });
+  }
+
+  test('a generic label allows a Content-Disposition HTML attachment', () {
+    for (final name in ['page.HTML', 'page.HtM']) {
+      DownloadResponsePolicy.validate(
+        fileName: 'Download',
+        contentDispositionFileName: name,
+        mimeType: 'text/html',
+        prefix: utf8.encode('<html>attachment</html>'),
+      );
+    }
+  });
 
   test('allows explicit HTML attachments and ordinary file bytes', () {
     for (final name in ['page.HTML', 'page.HtM']) {

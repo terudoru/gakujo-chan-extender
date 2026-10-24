@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.CalendarContract
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.CookieManager
@@ -901,7 +902,9 @@ class MainActivity : FlutterActivity() {
                     ?: throw IllegalStateException("ファイルを作成できませんでした")
                 GakujoDownloadStreams.copy(
                     openInput = {
-                        GakujoDownloadResponsePolicy.openValidated(connection.inputStream, desiredName, mimeType)
+                        GakujoDownloadResponsePolicy.openValidated(
+                            connection.inputStream, requestedFileName, mimeType, dispositionName
+                        )
                     },
                     openOutput = {
                         contentResolver.openOutputStream(file.uri)
@@ -994,11 +997,22 @@ class MainActivity : FlutterActivity() {
             val finalName = displayName(destination) ?: desiredName
             GakujoDownloadStreams.copy(
                 openInput = {
-                    GakujoDownloadResponsePolicy.openValidated(connection.inputStream, desiredName, mimeType)
+                    GakujoDownloadResponsePolicy.openValidated(
+                        connection.inputStream, requestedFileName, mimeType, dispositionName
+                    )
                 },
                 openOutput = {
                     contentResolver.openOutputStream(destination)
                         ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                },
+                cleanupFailedDestination = {
+                    try {
+                        if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
+                            Log.w(TAG, "Could not delete incomplete picked download")
+                        }
+                    } catch (error: Exception) {
+                        Log.w(TAG, "Failed to delete incomplete picked download", error)
+                    }
                 }
             )
             if (isDebuggable()) {

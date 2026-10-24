@@ -55,11 +55,6 @@ class AuthenticatedDownloadedFile {
   Future<Uint8List> readBytes() async => _bytes ?? await _file!.readAsBytes();
 
   Future<void> validateResponse(String fileName) async {
-    DownloadResponsePolicy.validate(
-      fileName: fileName,
-      mimeType: mimeType,
-      prefix: const [],
-    );
     Stream<List<int>> chunks() async* {
       final bytes = _bytes;
       if (bytes == null) {
@@ -72,17 +67,18 @@ class AuthenticatedDownloadedFile {
       }
     }
 
-    // Keep only the document opening, even with a long whitespace prefix.
-    var prefix = '';
-    await for (final text
-        in chunks().transform(const Utf8Decoder(allowMalformed: true))) {
-      prefix = (prefix + text).trimLeft();
-      if (prefix.length >= 14) break;
+    final prefix = BytesBuilder(copy: false);
+    await for (final chunk in chunks()) {
+      final remaining = 1024 - prefix.length;
+      prefix
+          .add(chunk.length <= remaining ? chunk : chunk.sublist(0, remaining));
+      if (prefix.length == 1024) break;
     }
     DownloadResponsePolicy.validate(
       fileName: fileName,
+      contentDispositionFileName: contentDispositionFileName,
       mimeType: mimeType,
-      prefix: utf8.encode(prefix),
+      prefix: prefix.takeBytes(),
     );
   }
 
@@ -204,9 +200,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       );
       // Judge by the name the student asked for: the derived name can take
       // .html from the page's own Content-Type and slip past the check.
-      await downloaded.validateResponse(
-        request.fileName.trim().isNotEmpty ? request.fileName : fileName,
-      );
+      await downloaded.validateResponse(request.fileName);
       final courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,
         fileName: fileName,
