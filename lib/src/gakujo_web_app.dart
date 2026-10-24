@@ -1672,6 +1672,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return GakujoNavigationDecision.prevent;
     }
 
+    // Android and WebKit also report only the redirected URL to
+    // onPageStarted, so remember the student's original destination here.
+    if (request.isMainFrame) {
+      _captureNavigationRecoveryCandidate(request.url);
+    }
     return GakujoNavigationDecision.navigate;
   }
 
