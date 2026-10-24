@@ -33,11 +33,14 @@ class GakujoDownloadHistoryEntry {
 
   factory GakujoDownloadHistoryEntry.fromJson(Map<dynamic, dynamic> json) {
     final location = json['location']?.toString().trim();
+    final savedAt = DateTime.tryParse(json['savedAt']?.toString() ?? '');
+    if (savedAt == null) {
+      throw const FormatException('ダウンロード履歴の保存日時（savedAt）を読み取れませんでした');
+    }
     return GakujoDownloadHistoryEntry(
       fileName: json['fileName']?.toString() ?? '',
       courseName: json['courseName']?.toString() ?? '',
-      savedAt: DateTime.tryParse(json['savedAt']?.toString() ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
+      savedAt: savedAt,
       location: location == null || location.isEmpty ? null : location,
     );
   }

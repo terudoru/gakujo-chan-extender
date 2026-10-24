@@ -673,7 +673,10 @@ class GakujoNotificationPreferences {
     };
   }
 
-  factory GakujoNotificationPreferences.fromJson(Object? raw) {
+  factory GakujoNotificationPreferences.fromJson(
+    Object? raw, {
+    Set<GakujoReminderOffset> fallbackReminderOffsets = defaultReminderOffsets,
+  }) {
     var decoded = raw;
     if (raw is String) {
       try {
@@ -687,6 +690,14 @@ class GakujoNotificationPreferences {
     }
     final muted = decoded['mutedCourses'];
     final offsets = decoded['reminderOffsets'];
+    final recognizedOffsets = offsets is List
+        ? {
+            for (final value in offsets)
+              if (GakujoReminderOffsetLabels.fromStorageValue(value.toString())
+                  case final offset?)
+                offset,
+          }
+        : fallbackReminderOffsets;
     return GakujoNotificationPreferences(
       skipSubmitted: decoded['skipSubmitted'] != false,
       mutedCourses: muted is List
@@ -695,16 +706,10 @@ class GakujoNotificationPreferences {
                 if (value.toString().trim().isNotEmpty) value.toString().trim(),
             }
           : const {},
-      reminderOffsets: offsets is List
-          ? {
-              for (final value in offsets)
-                if (GakujoReminderOffsetLabels.fromStorageValue(
-                  value.toString(),
-                )
-                    case final offset?)
-                  offset,
-            }
-          : defaultReminderOffsets,
+      reminderOffsets:
+          offsets is List && offsets.isNotEmpty && recognizedOffsets.isEmpty
+              ? fallbackReminderOffsets
+              : recognizedOffsets,
     );
   }
 }

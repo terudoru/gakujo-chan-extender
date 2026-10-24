@@ -9,6 +9,42 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  testWidgets(
+      'backup restore requires confirmation and cancellation does nothing',
+      (tester) async {
+    for (final confirm in [false, true]) {
+      var restored = false;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                if (await showGakujoBackupRestoreConfirmation(context) ==
+                    true) {
+                  restored = true;
+                }
+              },
+              child: const Text('読み込み'),
+            ),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('読み込み'));
+      await tester.pumpAndSettle();
+      expect(find.text('バックアップから復元しますか？'), findsOneWidget);
+      expect(
+        find.text('現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。'),
+        findsOneWidget,
+      );
+      expect(restored, isFalse);
+      await tester.tap(find.text(confirm ? '復元する' : 'キャンセル'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(restored, confirm);
+    }
+  });
+
   test('credential save returns the values captured before storage completes',
       () async {
     final store = _PendingLoginSettingsStore();

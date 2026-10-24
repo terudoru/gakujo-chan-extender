@@ -15,7 +15,7 @@ void main() {
     expect(result['frameReplacements'], [_flowStart]);
     expect(result['topReplacements'], isEmpty);
     expect(result['stored'], {
-      'iframe': _recovery(_flowStart, [100000])
+      _recoveryKey('iframe', _flowStart): _recovery(_flowStart, [100000])
     });
   });
 
@@ -90,6 +90,29 @@ void main() {
     }
   });
 
+  test('a normal load resets the budget so repeated Back keeps recovering',
+      () async {
+    final result = await _evaluate('repeatedBack');
+    expect(result['repeatedBackCounts'], [2, 3, 4, 5, 6]);
+  });
+
+  test('different pages have independent budgets and old targets are pruned',
+      () async {
+    for (final storageMode in [
+      'available',
+      'readDenied',
+      'writeDenied',
+      'denied',
+      'deniedTop',
+    ]) {
+      final result =
+          await _evaluate('multipleTargets', storageMode: storageMode);
+      expect(result['multiTargetCounts'], [4, 4, 5, 6, 6], reason: storageMode);
+      expect(result['boundedTargetCount'], 20, reason: storageMode);
+      expect(result['prunedTargetCount'], 1, reason: storageMode);
+    }
+  });
+
   for (final scenario in [
     'iframeNormal',
     'executionKey',
@@ -121,7 +144,7 @@ void main() {
     expect(result['listenerCount'], 1);
     expect(result['frameReplacements'], [_flowStart]);
     expect(result['stored'], {
-      'iframe': _recovery(_flowStart, [100000])
+      _recoveryKey('iframe', _flowStart): _recovery(_flowStart, [100000])
     });
   });
 
@@ -130,7 +153,8 @@ void main() {
     expect(result['beforeLoad'], [_flowStart]);
     expect(result['frameReplacements'], [_flowStart, _flowStart]);
     expect(result['stored'], {
-      'iframe': _recovery(_flowStart, [100000, 110000])
+      _recoveryKey('iframe', _flowStart):
+          _recovery(_flowStart, [100000, 110000])
     });
   });
 
@@ -140,7 +164,8 @@ void main() {
         '$_origin/campusweb/campussquare.do?_flowId=KJW0001200-flow';
     expect(result['frameReplacements'], [_flowStart, otherFlow]);
     expect(result['stored'], {
-      'iframe': _recovery(otherFlow, [100000, 100000])
+      _recoveryKey('iframe', _flowStart): _recovery(_flowStart, [100000]),
+      _recoveryKey('iframe', otherFlow): _recovery(otherFlow, [100000]),
     });
   });
 
@@ -157,7 +182,7 @@ void main() {
     final result = await _evaluate('malformedStorage', injections: 2);
     expect(result['frameReplacements'], [_flowStart]);
     expect(result['stored'], {
-      'iframe': _recovery(_flowStart, [100000])
+      _recoveryKey('iframe', _flowStart): _recovery(_flowStart, [100000])
     });
   });
 
@@ -175,7 +200,7 @@ void main() {
       expect(result['topReplacements'], [_portal]);
       expect(result['frameReplacements'], isEmpty);
       expect(result['stored'], {
-        'top': _recovery(_portal, [100000])
+        _recoveryKey('top', _portal): _recovery(_portal, [100000])
       });
     });
   }
@@ -199,6 +224,8 @@ void main() {
     });
   }
 }
+
+String _recoveryKey(String scope, String target) => jsonEncode([scope, target]);
 
 Map<String, dynamic> _recovery(String target, List<int> attempts) => {
       'target': target,
@@ -328,6 +355,41 @@ if (['laterLoad', 'guardElapsed', 'differentTarget'].includes(scenario)) {
   for (const listener of listeners) listener();
 }
 let recoveryCounts = [], otherTargetRecoveries = 0;
+let multiTargetCounts = [], boundedTargetCount = null, prunedTargetCount = null;
+if (scenario === 'multipleTargets') {
+  const firstSrc = src;
+  for (let i = 1; i < 4; i++) {
+    src = firstSrc + '&page=' + i;
+    for (const listener of listeners) listener();
+  }
+  multiTargetCounts.push(frameReplacements.length);
+  src = firstSrc;
+  for (const offset of [9999, 10000, 20000, 30000]) {
+    now = 100000 + offset;
+    for (const listener of listeners) listener();
+    multiTargetCounts.push(frameReplacements.length);
+  }
+  for (let i = 0; i < 25; i++) {
+    src = firstSrc + '&page=' + (i + 4);
+    for (const listener of listeners) listener();
+  }
+  boundedTargetCount = Object.keys(context.__MBG_EXPIRED_RECOVERY).length;
+  now += 120000;
+  for (const listener of listeners) listener();
+  prunedTargetCount = Object.keys(context.__MBG_EXPIRED_RECOVERY).length;
+}
+let repeatedBackCounts = [];
+if (scenario === 'repeatedBack') {
+  // Each Back lands on an expired page; recovery then loads the tab normally.
+  for (let i = 1; i <= 5; i++) {
+    now = 100000 + i * 15000;
+    frameWindow.document = expiredDoc();
+    for (const listener of listeners) listener();
+    frameWindow.document = normalDoc();
+    for (const listener of listeners) listener();
+    repeatedBackCounts.push(frameReplacements.length);
+  }
+}
 if (scenario.endsWith('RecoveryLimit')) {
   const initialHasFrame = hasFrame;
   const replacements = hasFrame ? frameReplacements : topReplacements;
@@ -350,6 +412,8 @@ if (scenario.endsWith('RecoveryLimit')) {
 }
 process.stdout.write(JSON.stringify({
   frameReplacements, topReplacements, beforeLoad, recoveryCounts, otherTargetRecoveries,
+  repeatedBackCounts,
+  multiTargetCounts, boundedTargetCount, prunedTargetCount,
   listenerCount: listeners.length,
   stored: stored ? JSON.parse(stored) : null
 }));

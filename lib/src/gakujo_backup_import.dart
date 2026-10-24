@@ -64,7 +64,11 @@ class GakujoBackupImport {
   final List<GakujoCachedReportList>? reportLists;
 }
 
-GakujoBackupImport parseGakujoBackup(String text) {
+GakujoBackupImport parseGakujoBackup(
+  String text, {
+  Set<GakujoReminderOffset> currentReminderOffsets =
+      GakujoNotificationPreferences.defaultReminderOffsets,
+}) {
   final Object? decoded;
   try {
     decoded = jsonDecode(text);
@@ -169,6 +173,7 @@ GakujoBackupImport parseGakujoBackup(String text) {
     notificationPreferences: decoded['notificationPreferences'] is Map
         ? GakujoNotificationPreferences.fromJson(
             decoded['notificationPreferences'],
+            fallbackReminderOffsets: currentReminderOffsets,
           )
         : null,
     disabledFeatureFlags: decoded.containsKey('disabledFeatureFlags')
@@ -273,6 +278,8 @@ List<T>? _decodeMapList<T>(
       }
       try {
         return fromJson(value);
+      } on FormatException catch (error) {
+        throw GakujoBackupImportException('バックアップの「$key」: ${error.message}');
       } on Object {
         throw GakujoBackupImportException(
           'バックアップの「$key」に不正な項目があります',
@@ -298,7 +305,8 @@ List<T>? validateGakujoBackupCollection<T>(
         value.title.trim().isNotEmpty && value.url.trim().isNotEmpty,
       final GakujoStarredMessage value =>
         value.isValid && value.title.trim().isNotEmpty,
-      final GakujoDownloadHistoryEntry value => value.fileName.trim().isNotEmpty,
+      final GakujoDownloadHistoryEntry value =>
+        value.fileName.trim().isNotEmpty,
       final GakujoFailedDownloadEntry value =>
         value.id.trim().isNotEmpty && value.request.url.trim().isNotEmpty,
       final GakujoDeadlineEntry value => value.title.trim().isNotEmpty &&

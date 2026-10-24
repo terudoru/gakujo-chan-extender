@@ -58,6 +58,22 @@ void main() {
     }
   });
 
+  test(
+      'blank iframe bases use the top URL and failed resolution matches raw URLs',
+      () async {
+    for (final scenario in ['iframeBlank', 'iframeInvalidBase']) {
+      for (final page in ['TimeoutAlert', 'Timeout']) {
+        final url = scenario == 'iframeBlank'
+            ? './theme/default/$page.html'
+            : '/campusweb/theme/default/$page.html?timer=5';
+        final result = await _evaluate(scenario, url: url);
+        expect(result['openCalls'], isEmpty, reason: '$scenario $page');
+        expect(result['bannerCount'], 1);
+        expect(result['message'], page == 'TimeoutAlert' ? _warning : _expired);
+      }
+    }
+  });
+
   test('closing the fake popup removes its timeout banner', () async {
     for (final scenario in ['popupClose', 'iframePopupClose']) {
       final result = await _evaluate(scenario);
@@ -309,6 +325,10 @@ doc.getElementById = id => id === 'main-frame-if' && scenario !== 'noFrame'
 const originalAlert = function() {};
 const context = {document: doc, open: originalOpen('top'), alert: originalAlert,
   URL, location: {href: origin + '/campusweb/campusportal.do?page=main'}};
+if (scenario === 'iframeBlank' || scenario === 'iframeInvalidBase') {
+  frameWindow.location.href = 'about:blank';
+}
+if (scenario === 'iframeInvalidBase') context.location.href = 'about:blank';
 context.window = context;
 context.top = context.parent = context;
 vm.createContext(context);

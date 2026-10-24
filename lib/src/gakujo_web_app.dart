@@ -146,6 +146,31 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
 };
 
 @visibleForTesting
+Future<bool?> showGakujoBackupRestoreConfirmation(BuildContext context) {
+  return showDialog<bool>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('バックアップから復元しますか？'),
+        content: const Text(
+          '現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('復元する'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+@visibleForTesting
 String? gakujoRuntimeTeardownScriptForFeature(GakujoFeatureFlag flag) {
   return _originalExtensionFeatureTeardownBuilders[flag]?.call();
 }
@@ -4615,12 +4640,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     final GakujoBackupImport backup;
     try {
-      backup = parseGakujoBackup(text);
+      backup = parseGakujoBackup(
+        text,
+        currentReminderOffsets:
+            _appSettings.notificationPreferences.reminderOffsets,
+      );
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
       return;
     } on Object {
       _showSnackBar('設定JSONを読み取れませんでした');
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+    final confirmed = await showGakujoBackupRestoreConfirmation(context);
+    if (confirmed != true || !mounted) {
       return;
     }
 

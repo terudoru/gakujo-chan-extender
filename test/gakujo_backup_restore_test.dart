@@ -97,6 +97,37 @@ void main() {
     });
   }
 
+  test('unparseable download dates reject the whole backup without writes',
+      () async {
+    for (final invalidDate in [null, '', 'not-a-date', 42]) {
+      final storage = _Storage({
+        _modeKey: 'flat_configured',
+        _historyKey: jsonEncode(validCollections['downloadHistory']),
+      });
+      final before = Map<String, String>.of(storage.values);
+      await expectLater(
+        Future<void>.sync(() => _restoreActivityBackup(
+              storage,
+              parseGakujoBackup(jsonEncode({
+                'version': 2,
+                'downloadSaveMode': 'flat_picker_each_time',
+                'downloadHistory': [
+                  ...(validCollections['downloadHistory'] as List),
+                  {'fileName': 'invalid.pdf', 'savedAt': invalidDate},
+                ],
+              })),
+            )),
+        throwsA(isA<GakujoBackupImportException>().having(
+          (error) => error.message,
+          'message',
+          contains('ダウンロード履歴の保存日時（savedAt）を読み取れませんでした'),
+        )),
+      );
+      expect(storage.writes, 0);
+      expect(storage.values, before);
+    }
+  });
+
   test('validates direct import objects before any writes', () async {
     final storage = _Storage({_favoritesKey: 'old'});
     await expectLater(

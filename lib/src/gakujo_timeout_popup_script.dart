@@ -67,13 +67,15 @@ class GakujoTimeoutPopupScript {
       }
       var originalOpen = target.open;
       target.open = function(url) {
-        var match = null;
+        var candidate = String(url);
         try {
-          var resolved = new URL(url, target.location.href);
-          match = resolved.href.match(
-            /\/theme\/default\/(TimeoutAlert|Timeout)\.html(?:[?#]|$)/
-          );
+          var base = target.location.href;
+          if (!/^https?:\/\//i.test(base)) base = window.location.href;
+          candidate = new URL(url, base).href;
         } catch (e) {}
+        var match = candidate.match(
+          /\/theme\/default\/(TimeoutAlert|Timeout)\.html(?:[?#]|$)/
+        );
         if (!match) {
           return originalOpen.apply(this, arguments);
         }

@@ -125,6 +125,32 @@ void main() {
           GakujoMessageNotificationMode.deadlines);
     });
 
+    test(
+        'unknown reminder offsets preserve local choices unless explicitly empty',
+        () {
+      const local = {GakujoReminderOffset.threeDays};
+      for (final (offsets, expected) in [
+        (['future_offset'], local),
+        (['future_offset', 'one_hour'], {GakujoReminderOffset.oneHour}),
+        (<String>[], <GakujoReminderOffset>{}),
+      ]) {
+        final backup = parseGakujoBackup(
+          jsonEncode({
+            'version': 2,
+            'notificationPreferences': {
+              'skipSubmitted': false,
+              'mutedCourses': ['科目A'],
+              'reminderOffsets': offsets,
+            },
+          }),
+          currentReminderOffsets: local,
+        );
+        expect(backup.notificationPreferences!.reminderOffsets, expected);
+        expect(backup.notificationPreferences!.skipSubmitted, isFalse);
+        expect(backup.notificationPreferences!.mutedCourses, {'科目A'});
+      }
+    });
+
     test('migrates legacy message topics using the settings loader rule', () {
       for (final topics in [
         ['message', 'report'],

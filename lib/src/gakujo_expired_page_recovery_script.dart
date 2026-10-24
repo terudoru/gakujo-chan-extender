@@ -31,9 +31,9 @@ class GakujoExpiredPageRecoveryScript {
     return text.length < 300 && text.indexOf('ページの有効期限が過ぎています') >= 0;
   }
 
-  function shouldRecover(target, scope) {
-    var key = '__MBG_EXPIRED_RECOVERY';
-    var now = Date.now();
+  var key = '__MBG_EXPIRED_RECOVERY';
+
+  function readHistory() {
     var history = null;
     try {
       history = JSON.parse(sessionStorage.getItem(key) || 'null');
@@ -45,14 +45,10 @@ class GakujoExpiredPageRecoveryScript {
     if (!history || typeof history !== 'object' || Array.isArray(history)) {
       history = {};
     }
-    var previous = history[scope];
-    var attempts = previous && Array.isArray(previous.attempts)
-      ? previous.attempts.filter(function(at) { return now - at < 120000; }) : [];
-    if (attempts.length >= 3 ||
-        (previous && previous.target === target && now - previous.at < 10000)) {
-      return false;
-    }
-    history[scope] = {target: target, at: now, attempts: attempts.concat(now)};
+    return history;
+  }
+
+  function writeHistory(history) {
     window[key] = history;
     try {
       window.top[key] = history;
@@ -60,12 +56,61 @@ class GakujoExpiredPageRecoveryScript {
     try {
       sessionStorage.setItem(key, JSON.stringify(history));
     } catch (e) {}
+  }
+
+  // A page that loaded normally ends any recovery streak for its scope, so
+  // repeated Back presses during ordinary use are never capped.
+  function clearScope(scope) {
+    var history = readHistory();
+    var changed = false;
+    Object.keys(history).forEach(function(entry) {
+      if (entry.indexOf(JSON.stringify([scope]).slice(0, -1) + ',') === 0) {
+        delete history[entry];
+        changed = true;
+      }
+    });
+    if (changed) writeHistory(history);
+  }
+
+  function shouldRecover(target, scope) {
+    var now = Date.now();
+    var history = readHistory();
+    var entryKey = JSON.stringify([scope, target]);
+    var previous = history[entryKey];
+    var attempts = previous && Array.isArray(previous.attempts)
+      ? previous.attempts.filter(function(at) { return now - at < 120000; }) : [];
+    if (attempts.length >= 3 ||
+        (previous && now - previous.at < 10000)) {
+      return false;
+    }
+    history[entryKey] = {target: target, at: now, attempts: attempts.concat(now)};
+    Object.keys(history).forEach(function(entry) {
+      if (!history[entry] || typeof history[entry].at !== 'number' ||
+          now - history[entry].at >= 120000) {
+        delete history[entry];
+      }
+    });
+    var keys = Object.keys(history).sort(function(a, b) {
+      return history[a].at - history[b].at;
+    });
+    keys.slice(0, Math.max(0, keys.length - 20)).forEach(function(entry) {
+      delete history[entry];
+    });
+    writeHistory(history);
     return true;
   }
 
   function recoverFrame(frame) {
     try {
-      if (!isExpired(frame.contentDocument || frame.contentWindow.document)) {
+      var frameDocument = frame.contentDocument || frame.contentWindow.document;
+      if (!isExpired(frameDocument)) {
+        var href = '';
+        try {
+          href = frameDocument.location.href;
+        } catch (e) {}
+        if (frameDocument.readyState !== 'loading' && href !== 'about:blank') {
+          clearScope('iframe');
+        }
         return;
       }
       var src = frame.getAttribute('src');
@@ -86,6 +131,7 @@ class GakujoExpiredPageRecoveryScript {
   try {
     var frame = document.getElementById('main-frame-if');
     if (frame) {
+      clearScope('top');
       if (!frame.__MBG_EXPIRED_RECOVERY_ATTACHED) {
         frame.addEventListener('load', function() {
           recoverFrame(frame);
@@ -98,6 +144,8 @@ class GakujoExpiredPageRecoveryScript {
       if (shouldRecover(target, 'top')) {
         location.replace(target);
       }
+    } else {
+      clearScope('top');
     }
   } catch (e) {}
 })();
