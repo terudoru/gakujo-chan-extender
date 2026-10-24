@@ -218,6 +218,10 @@ void main() {
     test('checks query names without treating values or fragments as names',
         () {
       for (final target in [
+        'campusportal.do?title=Report%20A',
+        'campusportal.do?title=Report+A',
+        'campusportal.do?title=Report%2520A',
+        'campusportal.do?title=Report%09A',
         'campusportal.do?keyword=_eventId',
         'campusportal.do?keyword=%26_eventId%3Ddelete',
         'campusportal.do?keyword=%E9%80%A3%E7%B5%A1',

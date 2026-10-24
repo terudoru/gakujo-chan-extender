@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 14;
+  var captureVersion = 15;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -565,8 +565,10 @@ class GakujoDownloadCaptureScript {
   }
 
   function formDownloadSignals(url, fields) {
-    var params = new URL(url).searchParams;
-    var explicit = /download/i.test(url);
+    var parsed = new URL(url);
+    var params = parsed.searchParams;
+    var explicit = /download/i.test(url) ||
+      /\.(pdf|docx?|xlsx?|pptx?|zip|csv|txt|png|jpe?g)$/i.test(parsed.pathname);
     var workflow = false;
     function check(value, key) {
       if (/^_eventId$/i.test(key)) {

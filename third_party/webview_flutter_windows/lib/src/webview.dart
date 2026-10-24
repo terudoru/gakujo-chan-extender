@@ -851,6 +851,15 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _channel.invokeMethod('setDevToolsEnabled', enabled);
   }
 
+  /// Routes replayable Gakujo downloads to Dart when enabled. Disabled by
+  /// default so WebView2 keeps downloads and shows its own download UI.
+  Future<void> setDownloadInterceptionEnabled(bool enabled) async {
+    if (_isDisposed) {
+      return;
+    }
+    return _channel.invokeMethod('setDownloadInterceptionEnabled', enabled);
+  }
+
   /// Suspends the webview to reduce its resource usage.
   ///
   /// See [the WebView2 documentation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_3#trysuspend).

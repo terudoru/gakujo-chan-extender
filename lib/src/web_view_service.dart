@@ -176,6 +176,7 @@ abstract class GakujoWebViewService {
   Future<void> configureController(
     GakujoWebViewController controller, {
     required bool debugAllowed,
+    bool downloadInterceptionEnabled = true,
   });
 }
 
@@ -211,6 +212,7 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
   Future<void> configureController(
     GakujoWebViewController controller, {
     required bool debugAllowed,
+    bool downloadInterceptionEnabled = true,
   }) async {
     final inner = (controller as WebViewFlutterGakujoWebViewController)._inner;
     await _configureAndroidController(
@@ -1038,9 +1040,13 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
   Future<void> configureController(
     GakujoWebViewController controller, {
     required bool debugAllowed,
+    bool downloadInterceptionEnabled = true,
   }) async {
     final windowsController = controller as WindowsGakujoWebViewController;
     await windowsController._ready;
+    await windowsController.setDownloadInterceptionEnabled(
+      downloadInterceptionEnabled,
+    );
     await windowsController._inner.setPopupWindowPolicy(
       windows.WebviewPopupWindowPolicy.sameWindow,
     );
@@ -1271,6 +1277,11 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   @override
   Future<void> setNavigationDelegate(GakujoNavigationDelegate delegate) async {
     _delegate = delegate;
+  }
+
+  Future<void> setDownloadInterceptionEnabled(bool enabled) async {
+    await _ready;
+    await _inner.setDownloadInterceptionEnabled(enabled);
   }
 
   @override

@@ -223,6 +223,9 @@ class Webview {
   bool SetDefaultContextMenusEnabled(bool enabled);
   // More Better Gakujo patch: F12, Ctrl+Shift+I and the Inspect menu item.
   bool SetDevToolsEnabled(bool enabled);
+  void SetDownloadInterceptionEnabled(bool enabled) {
+    download_interception_enabled_ = enabled;
+  }
   bool SetUserAgent(const std::string& user_agent);
   bool OpenDevTools();
   bool SetBackgroundColor(int32_t color);
@@ -335,6 +338,7 @@ class Webview {
   std::optional<util::NavigationAllowlist> navigation_allowlist_;
   LoadingStateChangedCallback loading_state_changed_callback_;
   DownloadEventCallback download_event_callback_;
+  bool download_interception_enabled_ = false;
   OnLoadErrorCallback on_load_error_callback_;
   HistoryChangedCallback history_changed_callback_;
   DocumentTitleChangedCallback document_title_changed_callback_;

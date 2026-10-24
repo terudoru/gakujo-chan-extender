@@ -8,8 +8,18 @@ internal object DeadlineReminderDelivery {
 
     fun key(id: Int, atMillis: Long): String = "$id|$atMillis"
 
+    fun readHistory(values: List<*>): List<String> = values.mapNotNull {
+        when (it) {
+            is String -> it
+            is Number -> it.toInt().toString()
+            else -> null
+        }
+    }.takeLast(500)
+
     fun shouldBook(id: Int, atMillis: Long, now: Long, delivered: Set<String>): Boolean =
-        atMillis > now && key(id, atMillis) !in delivered
+        atMillis > now && key(id, atMillis) !in delivered &&
+            // Legacy id-only history covers early delivery, not a later extension.
+            (id.toString() !in delivered || atMillis - now > 2 * 60 * 60 * 1000L)
 
     fun <T> upcoming(
         reminders: List<T>,

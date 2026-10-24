@@ -24,7 +24,8 @@ void main() {
       final messages = <String>[];
       await handleGakujoNativeDownload(
         const GakujoWebViewDownload(
-          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do?fileId=42',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do'
+              '?fileId=42&_eventId=download',
           resultFilePath: r'C:\Users\student\Downloads\講義資料.pdf',
           mimeType: 'application/pdf',
         ),
@@ -32,8 +33,11 @@ void main() {
         showSnackBar: messages.add,
       );
       final request = requests.single;
-      expect(request.url,
-          'https://gakujo.iess.niigata-u.ac.jp/download.do?fileId=42');
+      expect(
+        request.url,
+        'https://gakujo.iess.niigata-u.ac.jp/download.do'
+        '?fileId=42&_eventId=download',
+      );
       expect(request.method, 'GET');
       expect(request.fileName, '講義資料.pdf');
       // An empty course takes the existing page/course estimation path.
@@ -62,7 +66,8 @@ void main() {
       final requests = <GakujoDownloadRequest>[];
       await handleGakujoNativeDownload(
         const GakujoWebViewDownload(
-          url: 'https://gakujo.iess.niigata-u.ac.jp/campussquare.do?fileId=42',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campussquare.do'
+              '?_EVENTID=DOWNLOAD&fileId=42',
           mimeType: 'application/pdf',
         ),
         onDownload: requests.add,
@@ -71,8 +76,21 @@ void main() {
       expect(requests.single.fileName, 'document.pdf');
     });
 
-    for (final suffix in ['', '?', '#section?fileId=42']) {
-      test('leaves a queryless POST download ($suffix) to WebView2', () async {
+    for (final suffix in [
+      '',
+      '?',
+      '?fileId=42',
+      '?title=Report%20A',
+      '?_eventId=confirm',
+      '?_eventId=infoDownload',
+      '?x_eventId=download',
+      '?next=_eventId=download',
+      '?_eventId=downloadLater',
+      '#section?_eventId=download',
+      '?fileId=42#?_eventId=download',
+    ]) {
+      test('leaves a non-attachment POST download ($suffix) to WebView2',
+          () async {
         await handleGakujoNativeDownload(
           GakujoWebViewDownload(
             url: 'https://gakujo.iess.niigata-u.ac.jp/download.do$suffix',
@@ -102,6 +120,48 @@ void main() {
       expect(handler.indexOf('args->put_Handled(TRUE)'), greaterThan(fallback));
       expect(
           handler.indexOf('download_event_callback_('), greaterThan(fallback));
+      expect(
+        handler.indexOf('!download_interception_enabled_'),
+        inExclusiveRange(0, guard),
+      );
+      expect(
+        File('third_party/webview_flutter_windows/windows/webview.h')
+            .readAsStringSync(),
+        contains('bool download_interception_enabled_ = false;'),
+      );
+    });
+
+    test('native feature updates run even when page scripts cannot run', () {
+      final source = File('lib/src/gakujo_web_app.dart').readAsStringSync();
+      final runtime = source.substring(
+        source.indexOf('Future<void> _applyFeatureFlagRuntimeState('),
+        source.indexOf('Future<void> _applyChangedRuntimeFeatureFlags('),
+      );
+      expect(
+        runtime.indexOf('.setDownloadInterceptionEnabled(enabled)'),
+        inExclusiveRange(0, runtime.indexOf('if (!_canRunPageScripts)')),
+      );
+      final startup = source.substring(
+        source.indexOf('Future<void> _loadInitialPage()'),
+        source.indexOf('Future<void> _handleDeadlineNotificationTapped('),
+      );
+      expect(startup, contains('downloadInterceptionEnabled: false'));
+      expect(
+        startup.indexOf('GakujoFeatureFlag.downloadCapture'),
+        inExclusiveRange(startup.indexOf('await _loadAppSettings()'),
+            startup.indexOf('await _controller.loadUrl(')),
+      );
+      final downloads =
+          File('lib/src/gakujo_web_app_downloads.dart').readAsStringSync();
+      final handler = downloads.substring(
+        downloads.indexOf('Future<void> _handleNativeDownload('),
+        downloads.indexOf('Future<void> _handleDownloadMessage('),
+      );
+      expect(
+        handler.indexOf('GakujoFeatureFlag.downloadCapture'),
+        inExclusiveRange(
+            0, handler.indexOf('await handleGakujoNativeDownload(')),
+      );
     });
 
     for (final url in [

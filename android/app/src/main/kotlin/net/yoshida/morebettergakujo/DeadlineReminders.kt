@@ -286,8 +286,7 @@ object DeadlineReminders {
             .getString(KEY_DELIVERED, null) ?: return emptyList()
         return try {
             val array = JSONArray(raw)
-            // Old id-only records cannot identify which trigger was delivered.
-            (0 until array.length()).mapNotNull { array.opt(it) as? String }
+            DeadlineReminderDelivery.readHistory((0 until array.length()).map { array.opt(it) })
         } catch (_: Exception) {
             emptyList()
         }

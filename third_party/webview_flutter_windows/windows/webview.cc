@@ -488,7 +488,7 @@ void Webview::RegisterEventHandlers() {
               wil::unique_cotaskmem_string uri;
               download->get_Uri(&uri);
               const std::string url = uri ? util::Utf8FromUtf16(uri.get()) : "";
-              if (!download_event_callback_ ||
+              if (!download_interception_enabled_ || !download_event_callback_ ||
                   !util::IsReplayableGakujoDownload(url)) {
                 return S_OK;
               }

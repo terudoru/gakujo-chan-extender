@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 14'));
+    expect(script, contains('captureVersion = 15'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -170,6 +170,21 @@ void main() {
     expect(result['prevented'], everyElement(isTrue));
     expect(result['nativeSubmissions'], 0);
     expect((result['captured'] as List).length, 8);
+  });
+
+  test('file actions capture programmatic POST bodies and veto workflow events',
+      () async {
+    final result = await _evaluateBehavior('fileActionSubmissions');
+    expect(result['prevented'], everyElement(isTrue));
+    expect(result['workflowPrevented'], everyElement(isFalse));
+    expect(result['nativeSubmissions'], result['workflowSubmissions']);
+    final payloads = result['captured'] as List;
+    expect(payloads, hasLength(28));
+    for (final payload in payloads.cast<Map>()) {
+      expect(payload['method'], 'POST');
+      expect(payload['url'], contains('/child/exports/form.'));
+      expect(payload['formFields'], {'selectedFileId': 'current-file'});
+    }
   });
 
   test('does not capture app-owned stars or their nested targets', () async {
@@ -537,7 +552,9 @@ function behavior() {
   }
   if (scenario === 'nonExplicitSubmissions') {
     const prevented = [];
-    const actions = ['campussquare.do', 'exports/form.pdf', 'campussquare.do?fileId=42'];
+    const actions = ['campussquare.do', 'exports/form.pdf/preview',
+      'campussquare.do?fileId=42', 'campussquare.do?name=form.pdf',
+      'campussquare.do#form.pdf'];
     for (const action of actions) {
       const button = submitterWithForm('ダウンロード', action);
       button.form.innerText = '資料ダウンロード レポート提出 確認';
@@ -563,6 +580,34 @@ function behavior() {
       prevented.push(submitEvent(button.form, button));
     }
     return {prevented, nativeSubmissions, captured};
+  }
+  if (scenario === 'fileActionSubmissions') {
+    const prevented = [], workflowPrevented = [];
+    for (const extension of ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+      'zip', 'csv', 'txt', 'png', 'jpg', 'jpeg']) {
+      // Exercise both submission hooks with no remembered click/submitter.
+      const form = submitterWithForm('', `exports/form.${extension}?id=42#file`,
+        {selectedFileId: 'current-file'}).form;
+      form.submit();
+      prevented.push(submitEvent(form));
+    }
+    const upper = submitterWithForm('', 'exports/form.PDF',
+      {selectedFileId: 'current-file'}).form;
+    upper.submit();
+    prevented.push(submitEvent(upper));
+    for (const event of ['confirm', 'entry', 'submit', 'save', 'regist', 'register',
+      'update', 'delete', 'back', 'clear', 'cancel', 'next', 'prev', 'complete', 'finish']) {
+      for (const [action, fields] of [
+        ['exports/form.pdf', {_eventId: event}],
+        [`exports/form.pdf?_EVENTID=${event.toUpperCase()}`, {}]
+      ]) {
+        const form = submitterWithForm('確認', action, fields).form;
+        form.submit();
+        workflowPrevented.push(submitEvent(form));
+      }
+    }
+    return {prevented, workflowPrevented, captured, nativeSubmissions,
+      workflowSubmissions: 60};
   }
   if (scenario === 'inlineSubmit' || scenario === 'inlineSubmitEvent') {
     const button = submitterWithForm('ダウンロード', 'campussquare.do', {

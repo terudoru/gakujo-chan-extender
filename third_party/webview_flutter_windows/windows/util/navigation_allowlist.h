@@ -67,9 +67,27 @@ inline bool IsReplayableGakujoDownload(const std::string& url) {
   const NavigationAllowlist gakujo{{"gakujo.iess.niigata-u.ac.jp"}, {}};
   const size_t query = url.find('?');
   const size_t fragment = url.find('#');
-  return IsNavigationAllowed(url, gakujo) && query != std::string::npos &&
-         (fragment == std::string::npos || query < fragment) &&
-         query + 1 < (fragment == std::string::npos ? url.size() : fragment);
+  if (!IsNavigationAllowed(url, gakujo) || query == std::string::npos ||
+      (fragment != std::string::npos && query > fragment)) {
+    return false;
+  }
+  const size_t end = fragment == std::string::npos ? url.size() : fragment;
+  const std::string parameters =
+      AsciiLower(url.substr(query + 1, end - query - 1));
+  size_t start = 0;
+  while (start < parameters.size()) {
+    const size_t separator = parameters.find('&', start);
+    if (parameters.substr(start, separator == std::string::npos
+                                    ? std::string::npos : separator - start) ==
+        "_eventid=download") {
+      return true;
+    }
+    if (separator == std::string::npos) {
+      break;
+    }
+    start = separator + 1;
+  }
+  return false;
 }
 
 }  // namespace util

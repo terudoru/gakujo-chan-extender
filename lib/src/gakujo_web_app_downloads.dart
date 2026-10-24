@@ -17,9 +17,11 @@ Future<void> handleGakujoNativeDownload(
     showSnackBar('Gakujo以外のダウンロードをブロックしました');
     return;
   }
-  // Without a query this may be a POST response that cannot be replayed as GET.
-  // WebView2 keeps these downloads and displays its own download UI.
-  if (uri == null || uri.query.isEmpty) {
+  // Only Gakujo's GET attachment links can be replayed without a POST body.
+  // WebView2 keeps all other downloads and displays its own download UI.
+  if (uri == null ||
+      !RegExp(r'(^|&)_eventId=download(&|$)', caseSensitive: false)
+          .hasMatch(uri.query)) {
     return;
   }
 
@@ -698,7 +700,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   Future<void> _handleNativeDownload(GakujoWebViewDownload download) async {
-    if (!mounted) {
+    if (!mounted ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture)) {
       return;
     }
     await handleGakujoNativeDownload(

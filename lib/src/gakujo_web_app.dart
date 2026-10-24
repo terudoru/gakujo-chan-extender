@@ -4787,6 +4787,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
+    final controller = _controller;
+    if (flag == GakujoFeatureFlag.downloadCapture &&
+        controller is WindowsGakujoWebViewController) {
+      await controller.setDownloadInterceptionEnabled(enabled);
+    }
     if (!_canRunPageScripts) {
       return;
     }
@@ -5007,9 +5012,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _webViewService.configureController(
       _controller,
       debugAllowed: _debugAllowed,
+      // Keep native downloads until the saved feature choice has loaded.
+      downloadInterceptionEnabled: false,
     );
     unawaited(_saveInitialTwoFactorSecretIfAllowed());
     final appSettingsLoaded = await _loadAppSettings();
+    await _applyFeatureFlagRuntimeState(
+      GakujoFeatureFlag.downloadCapture,
+      enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
+    );
     if (appSettingsLoaded) {
       unawaited(_syncReminders());
     }
@@ -5456,6 +5467,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     SecureStorageFactory.resetMacosCache();
     _secureStorageAccessAllowed = true;
     await _loadAppSettings(allowMacosKeychainPrompt: true);
+    await _applyFeatureFlagRuntimeState(
+      GakujoFeatureFlag.downloadCapture,
+      enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
+    );
     await _injectLoginAutofillAssistIfAllowed();
     await _injectTwoFactorAutofillIfAllowed();
   }
@@ -5566,6 +5581,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _appSettingsLoaded = true;
         _deadlineCount = 0;
       });
+      await _applyFeatureFlagRuntimeState(
+        GakujoFeatureFlag.downloadCapture,
+        enabled:
+            _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
+      );
       _setStatus('保存データをリセットしました');
       _showSnackBar('保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
     } on Object catch (error, stackTrace) {

@@ -8,6 +8,15 @@ void main() {
   final end = source.indexOf('\nbool ShowDeadlineToast(', start);
   final copy = source.substring(start, end);
 
+  test('native URL policies preserve encoded values and require GET markers',
+      () async {
+    final result = await Process.run(
+      'node',
+      ['test/support/windows_url_policy_harness.cjs'],
+    );
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+  });
+
   test('balloon strings preserve code points at the 64 and 256 unit limits',
       () async {
     final result = await Process.run('node', ['-e', _copyHarness, copy]);

@@ -132,6 +132,8 @@ constexpr auto kMethodSetNavigationAllowlist = "setNavigationAllowlist";
 constexpr auto kMethodSetDefaultContextMenusEnabled =
     "setDefaultContextMenusEnabled";
 constexpr auto kMethodSetDevToolsEnabled = "setDevToolsEnabled";
+constexpr auto kMethodSetDownloadInterceptionEnabled =
+    "setDownloadInterceptionEnabled";
 constexpr auto kMethodSetFpsLimit = "setFpsLimit";
 constexpr auto kMethodMoveFocus = "moveFocus";
 
@@ -948,6 +950,14 @@ void WebviewBridge::HandleMethodCall(
       }
       return result->Error(kMethodFailed,
                            "Updating the DevTools setting failed.");
+    }
+    return result->Error(kErrorInvalidArgs);
+  }
+
+  if (method_name.compare(kMethodSetDownloadInterceptionEnabled) == 0) {
+    if (const auto enabled = std::get_if<bool>(method_call.arguments())) {
+      webview_->SetDownloadInterceptionEnabled(*enabled);
+      return result->Success();
     }
     return result->Error(kErrorInvalidArgs);
   }

@@ -431,6 +431,32 @@ void main() {
     await tester.runAsync(controller.dispose);
   });
 
+  for (final initiallyEnabled in [false, true]) {
+    testWidgets('native download interception follows flag $initiallyEnabled',
+        (tester) async {
+      await tester.runAsync(() async {
+        final native = windows.WebviewController();
+        await native.initialize();
+        final controller = WindowsGakujoWebViewController(native);
+        const service = WindowsGakujoWebViewService();
+        await service.configureController(
+          controller,
+          debugAllowed: false,
+          downloadInterceptionEnabled: initiallyEnabled,
+        );
+        await controller.setDownloadInterceptionEnabled(!initiallyEnabled);
+        await controller.setDownloadInterceptionEnabled(initiallyEnabled);
+        expect(
+          calls
+              .where((call) => call.method == 'setDownloadInterceptionEnabled')
+              .map((call) => call.arguments),
+          [initiallyEnabled, !initiallyEnabled, initiallyEnabled],
+        );
+        await controller.dispose();
+      });
+    });
+  }
+
   testWidgets('Windows service enables the right-click context menu', (
     tester,
   ) async {

@@ -60,6 +60,24 @@ class DeadlineReminderDeliveryTest {
     }
 
     @Test
+    fun legacyNumericHistoryPreventsEarlyRebookingButAllowsExtendedDeadlines() {
+        val now = 10 * 60 * 60 * 1000L
+        val window = 2 * 60 * 60 * 1000L
+        val delivered = DeadlineReminderDelivery.readHistory(listOf(42)).toSet()
+        assertEquals(setOf("42"), delivered)
+        for (offset in listOf(1L, 10 * 60 * 1000L, window)) {
+            assertFalse(DeadlineReminderDelivery.shouldBook(42, now + offset, now, delivered))
+            assertTrue(DeadlineReminderDelivery.shouldBook(43, now + offset, now, delivered))
+        }
+        assertTrue(DeadlineReminderDelivery.shouldBook(42, now + window + 1L, now, delivered))
+        assertTrue(DeadlineReminderDelivery.shouldBook(42, now + 24 * 60 * 60 * 1000L, now, delivered))
+        val mixed = DeadlineReminderDelivery.readHistory(listOf(42, "43|1000", null, true))
+        assertEquals(listOf("42", "43|1000"), mixed)
+        assertEquals((2..501).map { it.toString() }, DeadlineReminderDelivery.readHistory((1..501).toList()))
+        assertEquals(500, DeadlineReminderDelivery.record(mixed + (1..500).map { "$it|1" }, 42, 2L).size)
+    }
+
+    @Test
     fun extendedDeadlineWithTheSameIdCanBeBookedAndDelivered() {
         val originalAt = 1000L
         val extendedAt = 2000L

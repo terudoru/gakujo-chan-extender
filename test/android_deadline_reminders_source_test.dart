@@ -72,6 +72,14 @@ void main() {
     expect(refill, greaterThan(persist));
   });
 
+  test('delivered history loads legacy numeric ids through the bounded parser',
+      () {
+    final loader =
+        source.substring(source.indexOf('private fun loadDelivered('));
+    expect(loader, contains('DeadlineReminderDelivery.readHistory('));
+    expect(loader, contains('array.opt(it)'));
+  });
+
   test('successful per-file downloads retain offered document permissions', () {
     final activity = File(
       '$directory/kotlin/net/yoshida/morebettergakujo/MainActivity.kt',

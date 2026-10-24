@@ -93,38 +93,10 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
     return false;
   }
 
-  std::string decoded_url;
-  for (size_t i = 0; i < url.size(); ++i) {
-    unsigned char value = static_cast<unsigned char>(url[i]);
-    if (value == '%') {
-      if (i + 2 >= url.size()) {
-        return false;
-      }
-      const int high = HexDigit(url[i + 1]);
-      const int low = HexDigit(url[i + 2]);
-      if (high < 0 || low < 0) {
-        return false;
-      }
-      value = static_cast<unsigned char>((high << 4) | low);
-      i += 2;
-    }
+  // The protocol argument has already had its one outer decode. Escapes in
+  // target values (such as title=Report%20A) must remain encoded.
+  for (const unsigned char value : url) {
     if (value <= 0x20 || value == 0x7F) {
-      return false;
-    }
-    decoded_url.push_back(static_cast<char>(value));
-  }
-  std::wstring decoded_wide(decoded_url.size(), L'\0');
-  const int decoded_length = MultiByteToWideChar(
-      CP_UTF8, MB_ERR_INVALID_CHARS, decoded_url.data(),
-      static_cast<int>(decoded_url.size()), decoded_wide.data(),
-      static_cast<int>(decoded_wide.size()));
-  if (decoded_length == 0) {
-    return false;
-  }
-  for (int i = 0; i < decoded_length; ++i) {
-    WORD type = 0;
-    if (!GetStringTypeW(CT_CTYPE1, &decoded_wide[i], 1, &type) ||
-        (type & C1_SPACE) != 0 || decoded_wide[i] == L'\uFEFF') {
       return false;
     }
   }
@@ -134,6 +106,13 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
   const size_t query_end = fragment == std::string::npos ? url.size() : fragment;
   const size_t query_start = url.find('?');
   if (query_start < query_end) {
+    for (size_t i = query_start + 1; i < query_end; ++i) {
+      if (url[i] == '%' &&
+          (i + 2 >= query_end || HexDigit(url[i + 1]) < 0 ||
+           HexDigit(url[i + 2]) < 0)) {
+        return false;
+      }
+    }
     size_t parameter_start = query_start + 1;
     while (parameter_start < query_end) {
       const size_t ampersand = url.find('&', parameter_start);
@@ -144,7 +123,7 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
           separator < parameter_end ? separator : parameter_end;
       std::string name;
       for (size_t i = parameter_start; i < name_end; ++i) {
-        char value = url[i];
+        char value = url[i] == '+' ? ' ' : url[i];
         if (value == '%' && i + 2 < name_end) {
           const int high = HexDigit(url[i + 1]);
           const int low = HexDigit(url[i + 2]);
@@ -152,6 +131,9 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
             value = static_cast<char>((high << 4) | low);
             i += 2;
           }
+        }
+        if (static_cast<unsigned char>(value) <= 0x20 || value == 0x7F) {
+          return false;
         }
         if (value >= 'A' && value <= 'Z') {
           value = static_cast<char>(value - 'A' + 'a');
