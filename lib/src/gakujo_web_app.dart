@@ -5131,6 +5131,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
+        onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
           if (_isInternalBlankUrl(url)) {
             _beginNavigation();

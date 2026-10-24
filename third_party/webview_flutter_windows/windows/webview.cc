@@ -432,10 +432,19 @@ void Webview::RegisterEventHandlers() {
               case WebviewPopupWindowPolicy::Deny:
                 args->put_Handled(TRUE);
                 break;
-              case WebviewPopupWindowPolicy::ShowInSameWindow:
-                args->put_NewWindow(webview_.get());
+              case WebviewPopupWindowPolicy::ShowInSameWindow: {
                 args->put_Handled(TRUE);
+                wil::unique_cotaskmem_string wuri;
+                if (FAILED(args->get_Uri(&wuri)) || !wuri) {
+                  break;
+                }
+                const std::string uri = util::Utf8FromUtf16(wuri.get());
+                if (!navigation_allowlist_ ||
+                    util::IsNavigationAllowed(uri, *navigation_allowlist_)) {
+                  webview_->Navigate(wuri.get());
+                }
                 break;
+              }
             }
 
             return S_OK;
@@ -464,6 +473,7 @@ void Webview::RegisterEventHandlers() {
                    ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
               // Everything below runs synchronously, so no deferral is taken;
               // taking one without completing it would leave the event pending.
+              args->put_Cancel(TRUE);
               args->put_Handled(TRUE);
 
               wil::com_ptr<ICoreWebView2DownloadOperation> download;
@@ -481,21 +491,18 @@ void Webview::RegisterEventHandlers() {
               wil::unique_cotaskmem_string mimeType;
               download->get_MimeType(&mimeType);
 
-              wil::unique_cotaskmem_string contentDisposition;
-              download->get_ContentDisposition(&contentDisposition);
-
               wil::unique_cotaskmem_string resultFilePath;
               args->get_ResultFilePath(&resultFilePath);
-
-              args->put_ResultFilePath(resultFilePath.get());
-              UpdateDownloadProgress(download.get());
 
               if (download_event_callback_) {
                 download_event_callback_(
                     {WebviewDownloadEventKind::DownloadStarted,
-                     util::Utf8FromUtf16(uri.get()),
-                     util::Utf8FromUtf16(resultFilePath.get()), 0,
-                     totalBytesToReceive});
+                     uri ? util::Utf8FromUtf16(uri.get()) : "",
+                     resultFilePath
+                         ? util::Utf8FromUtf16(resultFilePath.get())
+                         : "",
+                     0, totalBytesToReceive,
+                     mimeType ? util::Utf8FromUtf16(mimeType.get()) : ""});
               }
 
               return S_OK;

@@ -29,8 +29,11 @@ class WebviewDownloadEvent {
   /// The URL the download originates from.
   final String url;
 
-  /// The target file path of the download.
+  /// The suggested file path. Native downloads are cancelled before saving.
   final String resultFilePath;
+
+  /// The response MIME type, or an empty string if unavailable.
+  final String mimeType;
 
   /// The number of bytes received so far.
   final int bytesReceived;
@@ -44,8 +47,9 @@ class WebviewDownloadEvent {
     this.url,
     this.resultFilePath,
     this.bytesReceived,
-    this.totalBytesToReceive,
-  );
+    this.totalBytesToReceive, {
+    this.mimeType = '',
+  });
 }
 
 /// An HTTP cookie, as managed by the WebView2 cookie store.
@@ -463,6 +467,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
           map['value']['resultFilePath'],
           map['value']['bytesReceived'],
           map['value']['totalBytesToReceive'],
+          mimeType: map['value']['mimeType'] as String? ?? '',
         );
         _downloadEventStreamController.add(value);
         break;

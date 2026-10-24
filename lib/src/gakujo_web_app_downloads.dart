@@ -3,6 +3,45 @@
 part of 'gakujo_web_app.dart';
 
 @visibleForTesting
+Future<void> handleGakujoNativeDownload(
+  GakujoWebViewDownload download, {
+  required FutureOr<void> Function(GakujoDownloadRequest request) onDownload,
+  required ValueChanged<String> showSnackBar,
+}) async {
+  final uri = Uri.tryParse(download.url);
+  if (uri?.scheme == 'blob' || uri?.scheme == 'data') {
+    showSnackBar('このファイルは保存できませんでした');
+    return;
+  }
+  if (!AllowedWebOrigins.canLoad(download.url, debugAllowed: false)) {
+    showSnackBar('Gakujo以外のダウンロードをブロックしました');
+    return;
+  }
+
+  // WebView2 suggests a path in Windows' Downloads folder and appends " (n)"
+  // when that folder already holds the name; the course folder does not.
+  final suggestedName = download.resultFilePath
+      .replaceAll('\\', '/')
+      .split('/')
+      .last
+      .replaceFirst(RegExp(r' \(\d+\)(?=\.[^.]*$|$)'), '');
+  await onDownload(
+    GakujoDownloadRequest(
+      url: download.url,
+      method: 'GET',
+      // The existing download handler estimates the course from the page.
+      courseName: '',
+      fileName: DownloadFileNamePolicy.safeFileName(
+        preferredName: suggestedName,
+        url: download.url,
+        mimeType: download.mimeType,
+      ),
+      formFields: const {},
+    ),
+  );
+}
+
+@visibleForTesting
 String gakujoDownloadLocationLabel(String location) {
   // Keep the encoded path intact so malformed escapes survive the fallback.
   final match = RegExp(
@@ -651,6 +690,17 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  Future<void> _handleNativeDownload(GakujoWebViewDownload download) async {
+    if (!mounted) {
+      return;
+    }
+    await handleGakujoNativeDownload(
+      download,
+      onDownload: _handleDownloadRequest,
+      showSnackBar: _showSnackBar,
+    );
   }
 
   Future<void> _handleDownloadMessage(String message) async {

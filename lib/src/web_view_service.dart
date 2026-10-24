@@ -88,12 +88,25 @@ class GakujoWebResourceError {
   final bool isConnectivityError;
 }
 
+class GakujoWebViewDownload {
+  const GakujoWebViewDownload({
+    required this.url,
+    this.resultFilePath = '',
+    this.mimeType = '',
+  });
+
+  final String url;
+  final String resultFilePath;
+  final String mimeType;
+}
+
 class GakujoNavigationDelegate {
   const GakujoNavigationDelegate({
     this.onNavigationRequest,
     this.onPageStarted,
     this.onPageFinished,
     this.onWebResourceError,
+    this.onDownloadStarting,
   });
 
   final FutureOr<GakujoNavigationDecision> Function(GakujoNavigationRequest)?
@@ -101,6 +114,8 @@ class GakujoNavigationDelegate {
   final void Function(String url)? onPageStarted;
   final FutureOr<void> Function(String url)? onPageFinished;
   final void Function(GakujoWebResourceError error)? onWebResourceError;
+  final FutureOr<void> Function(GakujoWebViewDownload download)?
+      onDownloadStarting;
 }
 
 abstract class GakujoWebViewController {
@@ -1034,12 +1049,18 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
 }
 
 class WindowsGakujoWebViewController implements GakujoWebViewController {
-  WindowsGakujoWebViewController(this._inner) {
+  WindowsGakujoWebViewController(
+    this._inner, {
+    Duration Function()? recoveryElapsed,
+  }) : _recoveryElapsed = recoveryElapsed {
     _ready = _inner.initialize();
     // Without this the page would show "preparing" forever when WebView2 is
     // missing or fails to start.
     unawaited(
       _ready.then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
+        if (_disposed) {
+          return;
+        }
         _unavailableMessage.value = 'WebViewを起動できませんでした。\n'
             'Microsoft Edge WebView2 Runtime をインストールしてから、'
             'アプリを再起動してください。';
@@ -1052,8 +1073,9 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       }),
     );
     _subscriptions.add(_inner.url.listen((url) {
+      final generation = ++_navigationGeneration;
       unawaited(
-        _handleUrlChanged(url).catchError(
+        _handleUrlChanged(url, generation).catchError(
           (Object error, StackTrace stackTrace) {
             developer.log(
               'Windows WebView URL handler failed',
@@ -1076,7 +1098,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       if (state == windows.LoadingState.loading) {
         _mainFrameConnectivityFailed = false;
       } else if (state == windows.LoadingState.navigationCompleted &&
-          !_mainFrameConnectivityFailed) {
+          !_mainFrameConnectivityFailed &&
+          !_rendererRecoveryStopped) {
         unawaited(_notifyPageFinished());
       }
     }));
@@ -1090,6 +1113,12 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     }));
     _subscriptions.add(_inner.webMessage.listen(_handleWebMessage));
     _subscriptions.add(_inner.processFailed.listen(_handleProcessFailed));
+    _subscriptions.add(_inner.onDownloadEvent.listen((event) {
+      if (!_disposed &&
+          event.kind == windows.WebviewDownloadEventKind.downloadStarted) {
+        unawaited(_handleDownloadStarting(event));
+      }
+    }));
     _subscriptions.add(_inner.navigationBlocked.listen((url) {
       unawaited(_reportBlockedNavigation(url));
     }));
@@ -1100,12 +1129,31 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   static const _renderProcessExited = 1;
 
   void _handleProcessFailed(int kind) {
+    if (_disposed) {
+      return;
+    }
     if (kind == _browserProcessExited) {
       // The WebView2 instance cannot be used again in this run.
       _unavailableMessage.value = 'WebViewが停止しました。アプリを再起動してください。';
       return;
     }
     if (kind == _renderProcessExited) {
+      final now = _recoveryElapsed?.call() ?? _recoveryClock.elapsed;
+      _rendererRecoveries.removeWhere(
+        (recovery) => now - recovery >= const Duration(seconds: 60),
+      );
+      if (_rendererRecoveries.length >= 3) {
+        if (!_rendererRecoveryStopped) {
+          _rendererRecoveryStopped = true;
+          _delegate?.onWebResourceError?.call(
+            const GakujoWebResourceError(
+              description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+            ),
+          );
+        }
+        return;
+      }
+      _rendererRecoveries.add(now);
       // The page is blank until it is loaded again. A briefly unresponsive
       // renderer (for example while compressing a PDF) is left alone.
       unawaited(_reloadAfterRendererExit());
@@ -1114,10 +1162,33 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
 
   Future<void> _reloadAfterRendererExit() async {
     try {
+      // The WebView is already initialized when its renderer can exit, so
+      // skip loadUrl's readiness wait but still supersede older decisions.
+      _beginExplicitNavigation();
       await _inner.loadUrl(contentProcessRecoveryUrl(_currentUrl));
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to reload after the WebView2 renderer exited',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _handleDownloadStarting(
+      windows.WebviewDownloadEvent event) async {
+    try {
+      await _delegate?.onDownloadStarting?.call(
+        GakujoWebViewDownload(
+          url: event.url,
+          resultFilePath: event.resultFilePath,
+          mimeType: event.mimeType,
+        ),
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Windows WebView download handler failed',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
@@ -1154,8 +1225,21 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   String? _title;
   bool _canGoBack = false;
   bool _canGoForward = false;
-  bool _handlingPreventedNavigation = false;
+  int _navigationGeneration = 0;
+  bool _disposed = false;
   bool _mainFrameConnectivityFailed = false;
+  bool _rendererRecoveryStopped = false;
+  final Stopwatch _recoveryClock = Stopwatch()..start();
+  final Duration Function()? _recoveryElapsed;
+  final List<Duration> _rendererRecoveries = [];
+
+  int _beginExplicitNavigation() {
+    _rendererRecoveryStopped = false;
+    return ++_navigationGeneration;
+  }
+
+  bool _isCurrentNavigation(int generation) =>
+      !_disposed && generation == _navigationGeneration;
 
   @override
   Future<void> setJavaScriptModeUnrestricted() async {
@@ -1181,13 +1265,21 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> reload() async {
+    final generation = _beginExplicitNavigation();
     await _ready;
+    if (!_isCurrentNavigation(generation)) {
+      return;
+    }
     await _inner.reload();
   }
 
   @override
   Future<void> loadUrl(String url) async {
+    final generation = _beginExplicitNavigation();
     await _ready;
+    if (!_isCurrentNavigation(generation)) {
+      return;
+    }
     await _inner.loadUrl(url);
   }
 
@@ -1227,16 +1319,18 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> goBack() async {
+    final generation = _beginExplicitNavigation();
     await _ready;
-    if (_canGoBack) {
+    if (_isCurrentNavigation(generation) && _canGoBack) {
       await _inner.goBack();
     }
   }
 
   @override
   Future<void> goForward() async {
+    final generation = _beginExplicitNavigation();
     await _ready;
-    if (_canGoForward) {
+    if (_isCurrentNavigation(generation) && _canGoForward) {
       await _inner.goForward();
     }
   }
@@ -1254,6 +1348,11 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> dispose() async {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    ++_navigationGeneration;
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
@@ -1261,32 +1360,33 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     _unavailableMessage.dispose();
   }
 
-  Future<void> _handleUrlChanged(String url) async {
-    if (_handlingPreventedNavigation) {
+  Future<void> _handleUrlChanged(String url, int generation) async {
+    if (!_isCurrentNavigation(generation)) {
       return;
     }
 
     final decision = await _delegate?.onNavigationRequest?.call(
       GakujoNavigationRequest(url: url),
     );
+    if (!_isCurrentNavigation(generation)) {
+      return;
+    }
     if (decision != GakujoNavigationDecision.prevent) {
       _currentUrl = url;
       _delegate?.onPageStarted?.call(url);
       return;
     }
 
-    _handlingPreventedNavigation = true;
-    try {
-      await _inner.stop();
-      if (_canGoBack) {
-        await _inner.goBack();
-      } else if (_currentUrl != null && _currentUrl != url) {
-        await _inner.loadUrl(_currentUrl!);
-      } else {
-        await _inner.loadUrl(AllowedWebOrigins.gakujoUrl);
-      }
-    } finally {
-      _handlingPreventedNavigation = false;
+    await _inner.stop();
+    if (!_isCurrentNavigation(generation)) {
+      return;
+    }
+    if (_canGoBack) {
+      await _inner.goBack();
+    } else if (_currentUrl != null && _currentUrl != url) {
+      await _inner.loadUrl(_currentUrl!);
+    } else {
+      await _inner.loadUrl(AllowedWebOrigins.gakujoUrl);
     }
   }
 

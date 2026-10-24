@@ -8,6 +8,7 @@ import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_libraries.dart';
@@ -16,6 +17,97 @@ import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  group('native download routing', () {
+    test('uses the captured GET path with a suggested name and course estimate',
+        () async {
+      final requests = <GakujoDownloadRequest>[];
+      final messages = <String>[];
+      await handleGakujoNativeDownload(
+        const GakujoWebViewDownload(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do',
+          resultFilePath: r'C:\Users\student\Downloads\講義資料.pdf',
+          mimeType: 'application/pdf',
+        ),
+        onDownload: requests.add,
+        showSnackBar: messages.add,
+      );
+      final request = requests.single;
+      expect(request.url, 'https://gakujo.iess.niigata-u.ac.jp/download.do');
+      expect(request.method, 'GET');
+      expect(request.fileName, '講義資料.pdf');
+      // An empty course takes the existing page/course estimation path.
+      expect(request.courseName, isEmpty);
+      expect(request.formFields, isEmpty);
+      expect(messages, isEmpty);
+    });
+
+    test('drops the Downloads-folder " (n)" WebView2 adds to the name',
+        () async {
+      final requests = <GakujoDownloadRequest>[];
+      await handleGakujoNativeDownload(
+        const GakujoWebViewDownload(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/download.do',
+          resultFilePath: r'C:\Users\student\Downloads\02 (1).pdf',
+          mimeType: 'application/pdf',
+        ),
+        onDownload: requests.add,
+        showSnackBar: (_) {},
+      );
+      expect(requests.single.fileName, '02.pdf');
+    });
+
+    test('uses MIME metadata when the suggested path is unavailable', () async {
+      final requests = <GakujoDownloadRequest>[];
+      await handleGakujoNativeDownload(
+        const GakujoWebViewDownload(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campussquare.do',
+          mimeType: 'application/pdf',
+        ),
+        onDownload: requests.add,
+        showSnackBar: (_) => fail('A Gakujo download should be accepted'),
+      );
+      expect(requests.single.fileName, 'document.pdf');
+    });
+
+    for (final url in [
+      'https://example.com/file.pdf',
+      'https://www.niigata-u.ac.jp/file.pdf',
+      'http://gakujo.iess.niigata-u.ac.jp/file.pdf',
+      'https://gakujo.iess.niigata-u.ac.jp.example.com/file.pdf',
+      'https://user@gakujo.iess.niigata-u.ac.jp/file.pdf',
+      'https://gakujo.iess.niigata-u.ac.jp:8443/file.pdf',
+      'file:///android_asset/qa/file.pdf',
+      '',
+      'https://[invalid',
+    ]) {
+      test('blocks a native download from $url', () async {
+        final messages = <String>[];
+        await handleGakujoNativeDownload(
+          GakujoWebViewDownload(url: url),
+          onDownload: (_) => fail('Blocked downloads must not be fetched'),
+          showSnackBar: messages.add,
+        );
+        expect(messages, ['Gakujo以外のダウンロードをブロックしました']);
+      });
+    }
+
+    for (final url in [
+      'blob:https://gakujo.iess.niigata-u.ac.jp/id',
+      'blob:https://example.com/id',
+      'data:application/pdf;base64,JVBERg==',
+    ]) {
+      test('explains why $url cannot be refetched', () async {
+        final messages = <String>[];
+        await handleGakujoNativeDownload(
+          GakujoWebViewDownload(url: url),
+          onDownload: (_) => fail('Blob/data downloads cannot be refetched'),
+          showSnackBar: messages.add,
+        );
+        expect(messages, ['このファイルは保存できませんでした']);
+      });
+    }
+  });
+
   group('JavaScript channel origin guard', () {
     for (final channel in [
       GakujoDownloadCaptureScript.channelName,
@@ -168,6 +260,18 @@ void main() {
       checkError(
         const GakujoWebResourceError(description: 'certificate failure'),
         expectedStatuses: ['読込エラー: certificate failure'],
+      );
+    });
+
+    test('the renderer recovery limit appears in status without offline retry',
+        () {
+      checkError(
+        const GakujoWebResourceError(
+          description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+        ),
+        expectedStatuses: [
+          '読込エラー: 表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+        ],
       );
     });
   });

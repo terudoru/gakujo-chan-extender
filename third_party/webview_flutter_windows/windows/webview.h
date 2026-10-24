@@ -72,6 +72,7 @@ struct WebviewDownloadEvent {
   std::string resultFilePath;
   INT64 bytesReceived;
   INT64 totalBytesToReceive;
+  std::string mimeType = "";
 };
 
 struct VirtualKeyState {
