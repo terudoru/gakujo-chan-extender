@@ -1284,20 +1284,21 @@ private final class MacosDownloadsBridge: NSObject {
       bookmarkDataIsStale: &isStale
     )
 
-    if isStale {
-      let refreshed = try url.bookmarkData(
-        options: .withSecurityScope,
-        includingResourceValuesForKeys: nil,
-        relativeTo: nil
-      )
-      UserDefaults.standard.set(refreshed, forKey: Self.bookmarkKey)
-    }
-
     let accessed = url.startAccessingSecurityScopedResource()
     defer {
       if accessed {
         url.stopAccessingSecurityScopedResource()
       }
+    }
+
+    // A stale bookmark can only be recreated while its resource is accessed.
+    if isStale, accessed,
+       let refreshed = try? url.bookmarkData(
+         options: .withSecurityScope,
+         includingResourceValuesForKeys: nil,
+         relativeTo: nil
+       ) {
+      UserDefaults.standard.set(refreshed, forKey: Self.bookmarkKey)
     }
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),

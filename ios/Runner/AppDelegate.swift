@@ -1060,7 +1060,9 @@ private final class IosDownloadsBridge: NSObject, UIDocumentPickerDelegate {
     didPickDocumentsAt urls: [URL]
   ) {
     if let result = pendingExportResult {
-      let fileName = pendingExportFileName ?? pendingExportURL?.lastPathComponent ?? "document"
+      // The picker lets the student rename the file; report the saved name.
+      let fileName = urls.first?.lastPathComponent ?? pendingExportFileName ??
+        pendingExportURL?.lastPathComponent ?? "document"
       let pickedLocation = urls.first?.path
       clearPendingExport()
       result([
