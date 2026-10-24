@@ -5033,6 +5033,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _offlineRetry.start();
             return;
           }
+          // A failed image or script must not replace the offline notice.
+          if (!error.isForMainFrame && _offlineRetry.isActive) {
+            return;
+          }
           _setStatus('読込エラー: ${error.description}');
         },
       ),
