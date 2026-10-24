@@ -5802,33 +5802,46 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     ];
   }
 
-  bool _isUsefulCourseName(String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty ||
-        normalized.length > DownloadFileNamePolicy.maxCourseFolderNameLength ||
-        normalized == '未分類') {
-      return false;
-    }
+  bool _isUsefulCourseName(String value) => isUsefulGakujoCourseName(value);
+}
 
-    const genericPageLabels = {
-      '開設一覧',
-      '連絡通知',
-      '掲示一覧',
-      '授業ポートフォリオ',
-      'レポート・小テスト・アンケート提出',
-      'レポート提出',
-      '小テスト',
-      'アンケート',
-      '年度 開講所属 開講番号 科目名',
-      'タイトル',
-    };
-    if (genericPageLabels.contains(normalized)) {
-      return false;
-    }
-
-    final lower = normalized.toLowerCase();
-    return !lower.contains('campussquare') &&
-        !lower.contains('more better gakujo') &&
-        !normalized.contains('学務情報システム');
+/// Whether [value] can name a course folder. Page labels and the titles of
+/// error or notice pages (expired flow, timeout, offline) are not courses;
+/// caching one would file the next download under that name.
+@visibleForTesting
+bool isUsefulGakujoCourseName(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty ||
+      normalized.length > DownloadFileNamePolicy.maxCourseFolderNameLength ||
+      normalized == '未分類') {
+    return false;
   }
+
+  const genericPageLabels = {
+    '開設一覧',
+    '連絡通知',
+    '掲示一覧',
+    '授業ポートフォリオ',
+    'レポート・小テスト・アンケート提出',
+    'レポート提出',
+    '小テスト',
+    'アンケート',
+    '年度 開講所属 開講番号 科目名',
+    'タイトル',
+  };
+  if (genericPageLabels.contains(normalized)) {
+    return false;
+  }
+
+  final lower = normalized.toLowerCase();
+  if (RegExp(
+    r'有効期限|タイムアウト|インターネットに接続|接続できません|'
+    r'ページを表示できません|webpage not available|ログイン|ログアウト|'
+    r'^(?:エラー|error)',
+  ).hasMatch(lower)) {
+    return false;
+  }
+  return !lower.contains('campussquare') &&
+      !lower.contains('more better gakujo') &&
+      !normalized.contains('学務情報システム');
 }
