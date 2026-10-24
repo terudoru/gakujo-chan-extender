@@ -54,7 +54,7 @@ class AuthenticatedDownloadedFile {
 
   Future<Uint8List> readBytes() async => _bytes ?? await _file!.readAsBytes();
 
-  Future<void> validateResponse(String fileName) async {
+  Future<void> validateResponse(String fileName, {String? requestUrl}) async {
     Stream<List<int>> chunks() async* {
       final bytes = _bytes;
       if (bytes == null) {
@@ -78,6 +78,7 @@ class AuthenticatedDownloadedFile {
       fileName: fileName,
       contentDispositionFileName: contentDispositionFileName,
       mimeType: mimeType,
+      finalUrl: finalUrl.isEmpty ? requestUrl : finalUrl,
       prefix: prefix.takeBytes(),
     );
   }
@@ -200,7 +201,8 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       );
       // Judge by the name the student asked for: the derived name can take
       // .html from the page's own Content-Type and slip past the check.
-      await downloaded.validateResponse(request.fileName);
+      await downloaded.validateResponse(request.fileName,
+          requestUrl: request.url);
       final courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,
         fileName: fileName,

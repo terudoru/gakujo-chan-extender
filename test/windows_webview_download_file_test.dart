@@ -50,12 +50,13 @@ void main() {
     }
   });
 
-  for (final (name, mimeType, body, dispositionName, rejected) in [
+  for (final (name, mimeType, body, dispositionName, urlPath, rejected) in [
     (
       'attachment.pdf',
       'text/html; charset=UTF-8',
       '<html>login</html>',
       null,
+      'file',
       true,
     ),
     (
@@ -63,17 +64,56 @@ void main() {
       'application/xhtml+xml',
       '\uFEFF \n<!DoCtYpE hTmL><html>expired</html>',
       null,
+      'file',
       true,
     ),
-    ('attachment.pdf', '', '\t<HtMl>login</HtMl>', null, true),
-    ('attachment.pdf', 'text/html', '%PDF-1.7', null, false),
-    ('notes.txt', 'text/plain', '<html> is an HTML tag', null, false),
-    ('attachment.HTML', 'text/html', '<html>attachment</html>', null, false),
-    ('Download', 'text/html', '<html>attachment</html>', 'page.HTM', false),
-    ('', 'text/html', '<html>login</html>', null, true),
+    ('attachment.pdf', '', '\t<HtMl>login</HtMl>', null, 'file', true),
+    (
+      'attachment.pdf',
+      'application/pdf',
+      '<html>login</html>',
+      null,
+      'file',
+      true
+    ),
+    ('attachment.pdf', 'text/html', '%PDF-1.7', null, 'file', false),
+    ('notes.txt', 'text/plain', '<html> is an HTML tag', null, 'file', false),
+    (
+      'attachment.HTML',
+      'text/html',
+      '<html>attachment</html>',
+      null,
+      'file',
+      false
+    ),
+    (
+      'Download',
+      'text/html',
+      '<html>attachment</html>',
+      'page.HTM',
+      'file',
+      false
+    ),
+    (
+      'Download',
+      'text/html',
+      '<html>attachment</html>',
+      null,
+      'page.HTML?download=1',
+      false
+    ),
+    (
+      'Download',
+      'text/html',
+      '<html>login</html>',
+      null,
+      'file?name=page.html',
+      true
+    ),
+    ('', 'text/html', '<html>login</html>', null, 'file', true),
   ]) {
     test(
-        'Windows validates pages and cleans temporary files: $name / $mimeType',
+        'Windows validates pages and cleans temporary files: $name / $mimeType / $urlPath',
         () async {
       final root = await Directory.systemTemp.createTemp('mbg-page-webview-');
       final bytes = utf8.encode(body);
@@ -93,6 +133,7 @@ void main() {
           'payload': {
             'status': 200,
             'ok': true,
+            'finalUrl': 'https://gakujo.iess.niigata-u.ac.jp/$urlPath',
             'mimeType': mimeType,
             'contentDisposition': dispositionName == null
                 ? ''

@@ -44,7 +44,14 @@ void main() {
   for (final (name, mimeType, body, disposition, rejected) in [
     ('attachment.pdf', 'text/html', '%PDF-1.7', '', false),
     ('notes.txt', 'text/plain', '<html> is an HTML tag', '', false),
-    ('attachment.pdf', 'application/pdf', '<html>literal</html>', '', false),
+    (
+      'attachment.pdf',
+      'application/pdf',
+      '<html>session expired</html>',
+      '',
+      true
+    ),
+    ('notes.csv', 'Text/CSV; charset=UTF-8', '<html>,is a tag', '', false),
     (
       'Download',
       'text/html',
@@ -131,6 +138,50 @@ void main() {
       expect(behavior['afterCleanup'], isNull);
     });
   }
+
+  test('Windows exempts the response URL HTML path, excluding its query',
+      () async {
+    const id = 'html-url';
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/request.html',
+      method: 'GET',
+      fileName: 'Download',
+      courseName: '',
+      formFields: {},
+    );
+    const body = '<html>attachment</html>';
+    for (final (path, rejected) in [
+      ('page.HTML?download=1', false),
+      ('page.HtM', false),
+      ('file?name=page.html', true),
+    ]) {
+      final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _webViewDownloadHarness,
+          WindowsWebViewAuthenticatedDownloadScript.start(
+              requestId: id, request: request),
+          WindowsWebViewAuthenticatedDownloadScript.poll(id),
+          WindowsWebViewAuthenticatedDownloadScript.cleanup(id),
+          'application/pdf',
+          body,
+          '',
+          'https://gakujo.iess.niigata-u.ac.jp/$path',
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final behavior =
+          jsonDecode(result.stdout as String) as Map<String, dynamic>;
+      expect(behavior['state'], rejected ? 'error' : 'done', reason: path);
+      expect(behavior['bodyBase64'],
+          rejected ? '' : base64Encode(utf8.encode(body)));
+      if (rejected) expect(behavior['code'], 'page_response');
+      expect(behavior['afterCleanup'], isNull);
+    }
+  });
 
   test('large responses use bounded messages and pause for the receiver',
       () async {
@@ -267,7 +318,7 @@ const cleanupScript = process.argv[3];
       return {
         status: 200,
         ok: true,
-        url,
+        url: process.argv[7] ?? url,
         headers: {
           get(name) {
             if (name === 'content-type') {

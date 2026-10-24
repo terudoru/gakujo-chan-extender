@@ -307,7 +307,8 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
           DownloadFileNamePolicy.fileNameFromContentDisposition(
               decoded['contentDisposition']?.toString()),
     );
-    await downloaded.validateResponse(request.fileName);
+    await downloaded.validateResponse(request.fileName,
+        requestUrl: request.url);
     transferred = true;
     return downloaded;
   } finally {

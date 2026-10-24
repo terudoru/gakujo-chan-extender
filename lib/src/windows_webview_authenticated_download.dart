@@ -106,10 +106,11 @@ class WindowsWebViewAuthenticatedDownloadScript {
         dispositionName = extended[2].replace(/%([0-9a-f]{2})/gi,
           (_, hex) => String.fromCharCode(parseInt(hex, 16)));
       }
+      const type = metadata.mimeType.split(';')[0].trim().toLowerCase();
       const checkPage = !/\\.html?\$/i.test(requestedName.trim()) &&
         !/\\.html?\$/i.test(dispositionName.trim()) &&
-        ['', 'text/html', 'application/xhtml+xml', 'application/octet-stream'].includes(
-          metadata.mimeType.split(';')[0].trim().toLowerCase());
+        !/\\.html?\$/i.test(finalUrl.pathname) &&
+        !(type.startsWith('text/') && type !== 'text/html');
       const chunkSize = 256 * 1024;
       let chunkIndex = 0;
       let totalBytes = 0;

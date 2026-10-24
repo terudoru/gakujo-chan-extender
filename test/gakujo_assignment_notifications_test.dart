@@ -331,7 +331,7 @@ void main() {
               fromList(report).title,
             ]));
         expect(await store.loadNotifiedDeadlineKeys(), {
-          'assignment|${open.notificationId}',
+          if (hasLegacyKey) 'assignment|${open.notificationId}',
           'assignment|${open.id}',
           'assignment|${report.id}',
         });
@@ -341,6 +341,39 @@ void main() {
         expect(service.titles, hasLength(2));
       });
     }
+
+    test('a skipped same-title quiz notifies after the report is withdrawn',
+        () async {
+      final report = _assignment(
+        _row('レポート', open.title, '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+      );
+      final submittedQuiz = _assignment(
+        _row('小テスト', open.title, '提出済', '2099/10/21 17:01 ～2099/10/28 16:31'),
+      );
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService();
+      Future<void> notify() => GakujoDeadlineNotificationCoordinator(
+            activityStore: GakujoActivityStore(),
+            notificationService: service,
+          ).notifyPendingDeadlines(notificationsEnabled: true);
+      await store.mergeAssignments([report, submittedQuiz], isWholeList: true);
+      await store.mergeDeadlines([fromList(report), fromList(submittedQuiz)]);
+      await notify();
+      expect(service.titles, [fromList(report).title]);
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        'assignment|${report.id}',
+      });
+
+      await store.mergeAssignments([open], isWholeList: true);
+      await notify();
+      await notify();
+      expect(service.titles, [fromList(report).title, fromList(open).title]);
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        'assignment|${report.id}',
+        'assignment|${open.notificationId}',
+        'assignment|${open.id}',
+      });
+    });
 
     test('a later same-title quiz does not repeat the delivered report',
         () async {

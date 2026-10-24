@@ -17,6 +17,7 @@ void main() {
     for (final mimeType in [
       'text/html; charset=UTF-8',
       'application/octet-stream',
+      'application/pdf',
     ]) {
       test('rejects a page before saving (file: $fromFile, MIME: $mimeType)',
           () async {
@@ -74,13 +75,37 @@ void main() {
   }
 
   for (final fromFile in [false, true]) {
-    for (final (name, mimeType, body, dispositionName, rejected) in [
-      ('attachment.pdf', 'text/html', '%PDF-1.7', null, false),
-      ('notes.txt', 'text/plain', '<html> is an HTML tag', null, false),
-      ('Download', 'text/html', '<html>attachment</html>', 'page.HtM', false),
-      ('', 'text/html', '<html>login</html>', null, true),
+    for (final (name, mimeType, body, dispositionName, urlPath, rejected) in [
+      ('attachment.pdf', 'text/html', '%PDF-1.7', null, 'file', false),
+      ('notes.txt', 'text/plain', '<html> is an HTML tag', null, 'file', false),
+      (
+        'Download',
+        'text/html',
+        '<html>attachment</html>',
+        'page.HtM',
+        'file',
+        false
+      ),
+      (
+        'Download',
+        'text/html',
+        '<html>attachment</html>',
+        null,
+        'page.HtM?download=1',
+        false
+      ),
+      (
+        'Download',
+        'text/html',
+        '<html>login</html>',
+        null,
+        'file?name=page.html',
+        true
+      ),
+      ('', 'text/html', '<html>login</html>', null, 'file', true),
     ]) {
-      test('save page policy: $name / $mimeType / file: $fromFile', () async {
+      test('save page policy: $name / $mimeType / $urlPath / file: $fromFile',
+          () async {
         final directory = await Directory.systemTemp.createTemp('mbg-policy-');
         addTearDown(() => directory.delete(recursive: true));
         final bytes = Uint8List.fromList(utf8.encode(body));
@@ -97,13 +122,13 @@ void main() {
                   cleanup: () async {
                     await temporary.delete();
                   },
-                  finalUrl: request.url,
+                  finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/$urlPath',
                   mimeType: mimeType,
                   contentDispositionFileName: dispositionName,
                 )
               : AuthenticatedDownloadedFile(
                   bytes: bytes,
-                  finalUrl: request.url,
+                  finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/$urlPath',
                   mimeType: mimeType,
                   contentDispositionFileName: dispositionName,
                 ),

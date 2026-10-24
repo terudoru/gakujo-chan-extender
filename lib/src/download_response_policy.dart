@@ -12,24 +12,21 @@ class DownloadResponsePolicy {
     required String fileName,
     String? contentDispositionFileName,
     String? mimeType,
+    String? finalUrl,
     required List<int> prefix,
   }) {
     final htmlName = RegExp(r'\.html?$', caseSensitive: false);
     if (htmlName.hasMatch(fileName.trim()) ||
-        htmlName.hasMatch(contentDispositionFileName?.trim() ?? '')) {
+        htmlName.hasMatch(contentDispositionFileName?.trim() ?? '') ||
+        htmlName.hasMatch(Uri.tryParse(finalUrl ?? '')?.path ?? '')) {
       return;
     }
     final type = mimeType?.split(';').first.trim().toLowerCase() ?? '';
-    final isHtml = const {
-          '',
-          'text/html',
-          'application/xhtml+xml',
-          'application/octet-stream',
-        }.contains(type) &&
-        RegExp(
-          r'^(?:\xEF\xBB\xBF)?[\x09-\x0D\x20]*(?:<!doctype html|<html)[\x09-\x0D\x20/>]',
-          caseSensitive: false,
-        ).hasMatch(latin1.decode(prefix));
+    if (type.startsWith('text/') && type != 'text/html') return;
+    final isHtml = RegExp(
+      r'^(?:\xEF\xBB\xBF)?[\x09-\x0D\x20]*(?:<!doctype html|<html)[\x09-\x0D\x20/>]',
+      caseSensitive: false,
+    ).hasMatch(latin1.decode(prefix));
     if (isHtml) {
       throw PlatformException(
         code: 'download_failed',

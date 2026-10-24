@@ -550,10 +550,7 @@ class GakujoDeadlineNotificationCoordinator {
         if (assignment != null) {
           // Remember the kind before a same-title collision appears. Older
           // builds saved only the unqualified key, so those may repeat once.
-          notifiedNow.addAll([
-            'assignment|${assignment.notificationId}',
-            'assignment|${assignment.id}',
-          ]);
+          notifiedNow.add('assignment|${assignment.id}');
         }
       }
     }

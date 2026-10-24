@@ -14,11 +14,12 @@ import org.junit.Test
 
 class GakujoDownloadResponsePolicyTest {
     @Test
-    fun rejectsHtmlDocumentsWithPageMimeTypesBeforeOpeningDestination() {
+    fun rejectsHtmlDocumentsRegardlessOfBinaryMimeTypeBeforeOpeningDestination() {
         for ((mimeType, body) in listOf(
             " Text/HTML ; charset=UTF-8" to "<html>login required</html>",
             "application/octet-stream" to "\uFEFF \r\n<!DoCtYpE hTmL><html>expired</html>",
             "application/xhtml+xml" to " \n<HtMl>login</HtMl>",
+            "application/pdf" to "<html>session expired</html>",
             "application/octet-stream" to "\uFEFF${" ".repeat(512)}<html>expired</html>",
             null to "<html lang=\"en\">login</html>",
             "" to "<html/>",
@@ -52,7 +53,7 @@ class GakujoDownloadResponsePolicyTest {
             Triple("attachment.pdf", "application/xhtml+xml", "%PDF-1.7".toByteArray()),
             Triple("notes.txt", "text/html", "login required".toByteArray()),
             Triple("notes.txt", "text/plain", "<html> is an HTML tag".toByteArray()),
-            Triple("attachment.pdf", "application/pdf", "<html>literal bytes</html>".toByteArray()),
+            Triple("notes.csv", " Text/CSV ; charset=UTF-8", "<html>,is a tag".toByteArray()),
             Triple("data.bin", "application/octet-stream", "<htmlish>literal bytes".toByteArray()),
             Triple("data.bin", "text/html", "<!doctype htmlish>literal bytes".toByteArray()),
             Triple("data.bin", "text/html", "<html".toByteArray()),
@@ -73,6 +74,26 @@ class GakujoDownloadResponsePolicyTest {
             GakujoDownloadResponsePolicy.openValidated(
                 ByteArrayInputStream(bytes), "Download", "text/html", name
             ).use { assertArrayEquals(bytes, it.readBytes()) }
+        }
+    }
+
+    @Test
+    fun permitsHtmlUrlPathsButNotHtmlNamesInQueries() {
+        val bytes = "<html>attachment</html>".toByteArray()
+        for (url in listOf(
+            "https://gakujo.iess.niigata-u.ac.jp/page.HTML?download=1",
+            "https://gakujo.iess.niigata-u.ac.jp/page.HtM#content"
+        )) {
+            GakujoDownloadResponsePolicy.openValidated(
+                ByteArrayInputStream(bytes), "Download", "application/pdf",
+                urlPath = java.net.URL(url).path
+            ).use { assertArrayEquals(bytes, it.readBytes()) }
+        }
+        assertThrows(IllegalStateException::class.java) {
+            GakujoDownloadResponsePolicy.openValidated(
+                ByteArrayInputStream(bytes), "Download", "text/html",
+                urlPath = java.net.URL("https://gakujo.iess.niigata-u.ac.jp/file?name=page.html").path
+            )
         }
     }
 
@@ -113,25 +134,29 @@ class GakujoDownloadResponsePolicyTest {
     }
 
     @Test
-    fun rejectedPickedDocumentIsCleanedEvenBeforeOutputIsOpened() {
-        var documentExists = true
-        var outputOpened = false
-        var inputClosed = false
-        val input = object : ByteArrayInputStream("<html>login</html>".toByteArray()) {
-            override fun close() { inputClosed = true; super.close() }
+    fun rejectedPickedDocumentIsDeletedOnlyWhenItWasKnownToBeEmpty() {
+        for (initialSize in listOf(0L, 42L, null)) {
+            var documentExists = true
+            var outputOpened = false
+            var inputClosed = false
+            val input = object : ByteArrayInputStream("<html>login</html>".toByteArray()) {
+                override fun close() { inputClosed = true; super.close() }
+            }
+            val error = assertThrows(IllegalStateException::class.java) {
+                GakujoDownloadStreams.copy(
+                    openInput = { GakujoDownloadResponsePolicy.openValidated(input, "file.pdf", "text/html") },
+                    openOutput = { outputOpened = true; ByteArrayOutputStream() },
+                    cleanupFailedDestination = {
+                        assertTrue(inputClosed)
+                        if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
+                            documentExists = false
+                        }
+                    }
+                )
+            }
+            assertEquals(GakujoDownloadResponsePolicy.PAGE_RETURNED_MESSAGE, error.message)
+            assertFalse(outputOpened)
+            assertEquals(initialSize != 0L, documentExists)
         }
-        val error = assertThrows(IllegalStateException::class.java) {
-            GakujoDownloadStreams.copy(
-                openInput = { GakujoDownloadResponsePolicy.openValidated(input, "file.pdf", "text/html") },
-                openOutput = { outputOpened = true; ByteArrayOutputStream() },
-                cleanupFailedDestination = {
-                    assertTrue(inputClosed)
-                    documentExists = false
-                }
-            )
-        }
-        assertEquals(GakujoDownloadResponsePolicy.PAGE_RETURNED_MESSAGE, error.message)
-        assertFalse(outputOpened)
-        assertFalse(documentExists)
     }
 }

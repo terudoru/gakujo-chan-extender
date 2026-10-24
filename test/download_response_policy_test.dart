@@ -9,6 +9,7 @@ void main() {
     (' Text/HTML ; charset=UTF-8', '<html>login required</html>'),
     ('application/xhtml+xml', '\uFEFF \r\n<!DoCtYpE hTmL><html>expired</html>'),
     ('application/octet-stream', '\t<HtMl>login</HtMl>'),
+    ('application/pdf', '<html>session expired</html>'),
     (null, '<html>error</html>'),
     ('', '<html lang="en">error</html>'),
     ('text/html', '<html/>'),
@@ -33,15 +34,13 @@ void main() {
     ('application/xhtml+xml', '%PDF-1.7'),
     ('text/html', 'login required'),
     ('text/plain', '<html> is an HTML tag'),
-    ('application/pdf', '<html>literal bytes</html>'),
+    (' Text/CSV ; charset=UTF-8', '<html>,is an HTML tag'),
     ('application/octet-stream', '<htmlish>literal bytes'),
     ('text/html', '<!doctype htmlish>literal bytes'),
     ('text/html', '<html'),
     ('text/html', '\uFEFF\uFEFF<html>literal bytes</html>'),
   ]) {
-    test(
-        'requires both a page MIME type and an HTML opening: $mimeType / $body',
-        () {
+    test('preserves non-HTML text and non-page bytes: $mimeType / $body', () {
       DownloadResponsePolicy.validate(
         fileName: 'attachment.pdf',
         mimeType: mimeType,
@@ -59,6 +58,26 @@ void main() {
         prefix: utf8.encode('<html>attachment</html>'),
       );
     }
+  });
+
+  test('HTML URL paths are exempt but HTML names in queries are not', () {
+    for (final path in ['page.HTML?download=1', 'page.HtM#content']) {
+      DownloadResponsePolicy.validate(
+        fileName: 'Download',
+        finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/$path',
+        mimeType: 'application/pdf',
+        prefix: utf8.encode('<html>attachment</html>'),
+      );
+    }
+    expect(
+      () => DownloadResponsePolicy.validate(
+        fileName: 'Download',
+        finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/file?name=page.html',
+        mimeType: 'text/html',
+        prefix: utf8.encode('<html>session expired</html>'),
+      ),
+      throwsA(isA<PlatformException>()),
+    );
   });
 
   test('allows explicit HTML attachments and ordinary file bytes', () {

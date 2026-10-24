@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 void main() {
-  test('failed per-file downloads delete the document created by the picker',
+  test('failed per-file downloads delete only a known empty picked document',
       () {
     final source = File(
       'android/app/src/main/kotlin/net/yoshida/morebettergakujo/MainActivity.kt',
@@ -15,8 +15,12 @@ void main() {
     expect(
       download,
       matches(RegExp(
-        r'GakujoDownloadStreams\.copy\([\s\S]*?'
-        r'cleanupFailedDestination = \{\s*try \{\s*if \(!'
+        r'contentResolver\.query\(destination, arrayOf\(OpenableColumns.SIZE\)'
+        r'[\s\S]*?!cursor\.isNull\(index\)[\s\S]*?cursor\.getLong\(index\)'
+        r'[\s\S]*?GakujoDownloadStreams\.copy\([\s\S]*?'
+        r'cleanupFailedDestination = \{\s*'
+        r'if \(GakujoDownloadStreams\.shouldDeleteFailedPickedDestination\(initialSize\)\)'
+        r'\s*\{\s*try \{\s*if \(!'
         r'DocumentsContract\.deleteDocument\(contentResolver, destination\)'
         r'[\s\S]*?catch \(error: Exception\)',
       )),

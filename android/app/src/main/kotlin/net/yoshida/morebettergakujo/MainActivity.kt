@@ -903,7 +903,8 @@ class MainActivity : FlutterActivity() {
                 GakujoDownloadStreams.copy(
                     openInput = {
                         GakujoDownloadResponsePolicy.openValidated(
-                            connection.inputStream, requestedFileName, mimeType, dispositionName
+                            connection.inputStream, requestedFileName, mimeType, dispositionName,
+                            urlPath = connection.url.path
                         )
                     },
                     openOutput = {
@@ -995,10 +996,26 @@ class MainActivity : FlutterActivity() {
                 mimeType = mimeType
             )
             val finalName = displayName(destination) ?: desiredName
+            // The picker can return an existing document selected for overwrite.
+            val initialSize = try {
+                contentResolver.query(destination, arrayOf(OpenableColumns.SIZE), null, null, null)
+                    ?.use { cursor ->
+                        val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                        if (cursor.moveToFirst() && index >= 0 && !cursor.isNull(index)) {
+                            cursor.getLong(index)
+                        } else {
+                            null
+                        }
+                    }
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not determine picked download size", error)
+                null
+            }
             GakujoDownloadStreams.copy(
                 openInput = {
                     GakujoDownloadResponsePolicy.openValidated(
-                        connection.inputStream, requestedFileName, mimeType, dispositionName
+                        connection.inputStream, requestedFileName, mimeType, dispositionName,
+                        urlPath = connection.url.path
                     )
                 },
                 openOutput = {
@@ -1006,12 +1023,14 @@ class MainActivity : FlutterActivity() {
                         ?: throw IllegalStateException("ファイルを書き込めませんでした")
                 },
                 cleanupFailedDestination = {
-                    try {
-                        if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
-                            Log.w(TAG, "Could not delete incomplete picked download")
+                    if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
+                        try {
+                            if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
+                                Log.w(TAG, "Could not delete incomplete picked download")
+                            }
+                        } catch (error: Exception) {
+                            Log.w(TAG, "Failed to delete incomplete picked download", error)
                         }
-                    } catch (error: Exception) {
-                        Log.w(TAG, "Failed to delete incomplete picked download", error)
                     }
                 }
             )

@@ -11,16 +11,18 @@ internal object GakujoDownloadResponsePolicy {
         input: InputStream,
         fileName: String,
         mimeType: String?,
-        contentDispositionFileName: String? = null
+        contentDispositionFileName: String? = null,
+        urlPath: String? = null
     ): BufferedInputStream {
         val buffered = BufferedInputStream(input)
         try {
             val htmlName = Regex("\\.html?$", RegexOption.IGNORE_CASE)
             val type = mimeType?.substringBefore(';')?.trim().orEmpty()
-            val canBePage = listOf("", "text/html", "application/xhtml+xml", "application/octet-stream")
-                .any { it.equals(type, ignoreCase = true) }
+            val canBePage = !(type.startsWith("text/", ignoreCase = true) &&
+                !type.equals("text/html", ignoreCase = true))
             if (canBePage && !htmlName.containsMatchIn(fileName.trim()) &&
-                !htmlName.containsMatchIn(contentDispositionFileName?.trim().orEmpty())) {
+                !htmlName.containsMatchIn(contentDispositionFileName?.trim().orEmpty()) &&
+                !htmlName.containsMatchIn(urlPath.orEmpty())) {
                 val prefix = ByteArray(1024)
                 // Bound the mark so copying the rest cannot retain the entire file.
                 buffered.mark(prefix.size)

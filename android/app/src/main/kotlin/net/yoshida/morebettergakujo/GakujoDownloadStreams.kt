@@ -4,6 +4,8 @@ import java.io.InputStream
 import java.io.OutputStream
 
 internal object GakujoDownloadStreams {
+    fun shouldDeleteFailedPickedDestination(initialSize: Long?): Boolean = initialSize == 0L
+
     fun haveSameContent(
         firstSize: Long,
         secondSize: Long,
