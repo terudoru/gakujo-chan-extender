@@ -28,6 +28,8 @@ object DeadlineReminders {
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_DELIVERED = "delivered"
     private const val EXTRA_ID = "reminder_id"
+    private const val EXTRA_STABLE_KEY = "reminder_stable_key"
+    private const val EXTRA_LEGACY_IDS = "reminder_legacy_ids"
     private const val EXTRA_AT_MILLIS = "reminder_at_millis"
     private const val EXTRA_TITLE = "reminder_title"
     private const val EXTRA_BODY = "reminder_body"
@@ -41,7 +43,9 @@ object DeadlineReminders {
         val title: String,
         val body: String,
         val url: String,
-        val atMillis: Long
+        val atMillis: Long,
+        val stableKey: String = id.toString(),
+        val legacyIds: List<Int> = emptyList()
     )
 
     /** Replaces every booked reminder with [reminders]. */
@@ -68,7 +72,9 @@ object DeadlineReminders {
                 title = map["title"] as? String ?: "",
                 body = map["body"] as? String ?: "",
                 url = map["url"] as? String ?: "",
-                atMillis = at
+                atMillis = at,
+                stableKey = (map["stableKey"] as? String)?.takeIf { it.isNotBlank() } ?: id.toString(),
+                legacyIds = (map["legacyIds"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty()
             )
         }
     }
@@ -79,15 +85,23 @@ object DeadlineReminders {
             title = intent.getStringExtra(EXTRA_TITLE).orEmpty(),
             body = intent.getStringExtra(EXTRA_BODY).orEmpty(),
             url = intent.getStringExtra(EXTRA_URL).orEmpty(),
-            atMillis = intent.getLongExtra(EXTRA_AT_MILLIS, 0L)
+            atMillis = intent.getLongExtra(EXTRA_AT_MILLIS, 0L),
+            stableKey = intent.getStringExtra(EXTRA_STABLE_KEY)
+                ?: intent.getIntExtra(EXTRA_ID, 0).toString(),
+            legacyIds = intent.getIntArrayExtra(EXTRA_LEGACY_IDS)?.toList().orEmpty()
         )
         // The other alarm booked for this reminder must not show it again.
         cancel(context, reminder)
         val delivered = loadDelivered(context)
-        if (DeadlineReminderDelivery.key(reminder.id, reminder.atMillis) !in delivered &&
+        if (!DeadlineReminderDelivery.wasDelivered(
+                reminder.id, reminder.atMillis, System.currentTimeMillis(), delivered.toSet(),
+                reminder.stableKey, reminder.legacyIds
+            ) &&
             show(context, reminder)
         ) {
-            val history = DeadlineReminderDelivery.record(delivered, reminder.id, reminder.atMillis)
+            val history = DeadlineReminderDelivery.record(
+                delivered, reminder.id, reminder.atMillis, stableKey = reminder.stableKey
+            )
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_DELIVERED, JSONArray(history).toString())
@@ -176,7 +190,7 @@ object DeadlineReminders {
         val alarms = alarmManager(context)
         val delivered = loadDelivered(context).toSet()
         val upcoming = DeadlineReminderDelivery.upcoming(
-            reminders, now, delivered, { it.id }, { it.atMillis }
+            reminders, now, delivered, { it.id }, { it.atMillis }, { it.stableKey }, { it.legacyIds }
         )
         for (reminder in upcoming) {
             DeadlineReminderDelivery.attempt(
@@ -227,6 +241,8 @@ object DeadlineReminders {
         val intent = Intent(context, DeadlineReminderReceiver::class.java).apply {
             action = "net.yoshida.morebettergakujo.REMINDER.${reminder.id}$suffix"
             putExtra(EXTRA_ID, reminder.id)
+            putExtra(EXTRA_STABLE_KEY, reminder.stableKey)
+            putExtra(EXTRA_LEGACY_IDS, reminder.legacyIds.toIntArray())
             putExtra(EXTRA_AT_MILLIS, reminder.atMillis)
             putExtra(EXTRA_TITLE, reminder.title)
             putExtra(EXTRA_BODY, reminder.body)
@@ -249,6 +265,8 @@ object DeadlineReminders {
             array.put(
                 JSONObject()
                     .put("id", reminder.id)
+                    .put("stableKey", reminder.stableKey)
+                    .put("legacyIds", JSONArray(reminder.legacyIds))
                     .put("title", reminder.title)
                     .put("body", reminder.body)
                     .put("url", reminder.url)
@@ -273,7 +291,11 @@ object DeadlineReminders {
                     title = item.optString("title"),
                     body = item.optString("body"),
                     url = item.optString("url"),
-                    atMillis = item.getLong("atMillis")
+                    atMillis = item.getLong("atMillis"),
+                    stableKey = item.optString("stableKey").ifBlank { item.getInt("id").toString() },
+                    legacyIds = item.optJSONArray("legacyIds")?.let { ids ->
+                        (0 until ids.length()).map { ids.getInt(it) }
+                    }.orEmpty()
                 )
             }
         } catch (_: Exception) {

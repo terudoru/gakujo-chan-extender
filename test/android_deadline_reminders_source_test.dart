@@ -50,21 +50,25 @@ void main() {
     expect(replace, contains('replace(context, load(context))'));
   });
 
-  test('delivery records the trigger time and refills from saved reminders',
-      () {
+  test('delivery records stable keys and trigger times before refilling', () {
     final show = source.substring(
       source.indexOf('fun show(context: Context, intent: Intent)'),
       source.indexOf('private fun show('),
     );
     expect(show, contains('intent.getLongExtra(EXTRA_AT_MILLIS, 0L)'));
     expect(source, contains('putExtra(EXTRA_AT_MILLIS, reminder.atMillis)'));
+    expect(show, contains('intent.getStringExtra(EXTRA_STABLE_KEY)'));
+    expect(source, contains('putExtra(EXTRA_STABLE_KEY, reminder.stableKey)'));
     expect(
-        show,
+        source,
         contains(
-            'DeadlineReminderDelivery.key(reminder.id, reminder.atMillis)'));
-    final record = show.indexOf(
-      'DeadlineReminderDelivery.record(delivered, reminder.id, reminder.atMillis)',
-    );
+            'putExtra(EXTRA_LEGACY_IDS, reminder.legacyIds.toIntArray())'));
+    expect(source, contains('.put("stableKey", reminder.stableKey)'));
+    expect(source, contains('item.optString("stableKey")'));
+    expect(show, contains('DeadlineReminderDelivery.wasDelivered('));
+    expect(show, contains('reminder.stableKey, reminder.legacyIds'));
+    expect(show, contains('stableKey = reminder.stableKey'));
+    final record = show.indexOf('DeadlineReminderDelivery.record(');
     final persist = show.indexOf('.putString(KEY_DELIVERED,');
     final refill = show.indexOf('book(context, load(context))');
     expect(record, greaterThan(0));

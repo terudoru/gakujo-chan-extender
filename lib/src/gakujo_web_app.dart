@@ -627,7 +627,7 @@ bool isGakujoNavigationRecoveryCandidateUrl(
   if (uri == null) {
     return false;
   }
-  final path = uri.path.toLowerCase();
+  final path = uri.path.toLowerCase().replaceAll(RegExp(r';[^/]*'), '');
   // These shared shell URLs can reveal login controls without changing URL.
   // They cannot identify the protected page that triggered authentication.
   if (path.endsWith('/campussmart.do')) {

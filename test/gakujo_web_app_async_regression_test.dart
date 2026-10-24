@@ -850,6 +850,49 @@ void main() {
       }
     });
 
+    test('failed retries retain their target across matrix-parameter shells',
+        () {
+      const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+      const messages = '${base}campusportal.do?page=main&tabId=kj';
+      const reports = '${base}campusportal.do?page=main&tabId=en';
+      final failed = gakujoNavigationRecoveryCandidateAfterError(
+        const GakujoWebResourceError(
+          description: 'offline',
+          isConnectivityError: true,
+        ),
+        navigationCandidateUrl: reports,
+        navigationUrl: reports,
+      );
+      expect(failed, isTrue);
+      for (final shell in [
+        '${base}campusportal.do;jsessionid=X',
+        '${base}campusportal.do;jsessionid=X?page=main',
+        '${base}campussmart.do;jsessionid=X',
+      ]) {
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: shell,
+            currentUrl: reports,
+            authenticatedUrl: messages,
+            navigationCandidateUrl: reports,
+            navigationCandidateFailed: failed,
+          ),
+          reports,
+          reason: shell,
+        );
+      }
+      expect(
+        captureGakujoNavigationRecoveryCandidate(
+          url: '${base}campusportal.do;jsessionid=X?page=main&tabId=sch',
+          currentUrl: reports,
+          authenticatedUrl: messages,
+          navigationCandidateUrl: reports,
+          navigationCandidateFailed: failed,
+        ),
+        '${base}campusportal.do;jsessionid=X?page=main&tabId=sch',
+      );
+    });
+
     test('retains the requested tab across a 302 login redirect and 2FA', () {
       const portal =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';

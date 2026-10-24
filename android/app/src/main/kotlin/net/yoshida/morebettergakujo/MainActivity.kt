@@ -16,6 +16,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -819,7 +820,9 @@ class MainActivity : FlutterActivity() {
         pendingPickFileArgs = args
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/octet-stream"
+            type = GakujoDownloadMimeType.forFileName(suggestedName) {
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(it)
+            }
             putExtra(Intent.EXTRA_TITLE, suggestedName)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }

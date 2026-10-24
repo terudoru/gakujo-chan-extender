@@ -963,6 +963,14 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readAssignments()).value);
   }
 
+  /// Null means the store could not be read, rather than a confirmed empty list.
+  Future<List<GakujoAssignment>?> loadAssignmentsIfAvailable() {
+    return _enqueue(() async {
+      final result = await _readAssignments();
+      return result.isSuccessful ? result.value : null;
+    });
+  }
+
   Future<bool> assignmentsAreWholeList() {
     return _enqueue(() async =>
         (await _readRawValue(_wholeAssignmentListKey)).value == 'true');

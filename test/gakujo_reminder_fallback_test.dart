@@ -676,6 +676,37 @@ void main() {
       });
     });
 
+    testWidgets('armed reminders fail open only when the assignment read fails',
+        (tester) async {
+      for (final failRead in [true, false]) {
+        final storage = _AssignmentReadFailureStorage();
+        final store = GakujoActivityStore(secureStorage: storage);
+        final open = assignment(
+          title: failRead ? 'read failed' : 'empty list',
+          dueIn: const Duration(hours: 1, seconds: 1),
+        );
+        await store.mergeAssignments([open], isWholeList: true);
+        await sync(
+          coordinator(store),
+          preferences: const GakujoNotificationPreferences(
+            reminderOffsets: {GakujoReminderOffset.oneHour},
+          ),
+        );
+        if (failRead) {
+          storage.failAssignmentReads = true;
+        } else {
+          await store.mergeAssignments([], isWholeList: true);
+        }
+
+        now = now.add(const Duration(seconds: 2));
+        await tester.pump(const Duration(seconds: 2));
+
+        expect(shown().map((call) => (call.arguments as Map)['title']),
+            ['【あと1時間】レポート read failed']);
+        expect(storage.failedReads, failRead ? 1 : 0);
+      }
+    });
+
     testWidgets('an on-time in-app reminder is not shown again as late',
         (tester) async {
       final store = GakujoActivityStore();
@@ -706,4 +737,26 @@ void main() {
       expect(shown(), hasLength(1));
     });
   });
+}
+
+class _AssignmentReadFailureStorage extends FlutterSecureStorage {
+  bool failAssignmentReads = false;
+  int failedReads = 0;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (failAssignmentReads && key == 'more_better_gakujo_assignments') {
+      failedReads += 1;
+      throw StateError('assignment read failed');
+    }
+    return super.read(key: key);
+  }
 }

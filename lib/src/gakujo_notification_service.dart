@@ -168,6 +168,8 @@ class GakujoReminder {
   Map<String, Object?> toJson() {
     return {
       'id': id,
+      'stableKey': assignmentId ?? id.toString(),
+      'legacyIds': legacyIds,
       'title': title,
       'body': body,
       'url': url,
@@ -619,8 +621,10 @@ class GakujoDeadlineNotificationCoordinator {
     required Set<GakujoNotificationTopic> topics,
     required GakujoNotificationPreferences preferences,
   }) async {
-    if (reminder.assignmentId != null) {
-      final assignments = await _activityStore.loadAssignments();
+    final assignments = reminder.assignmentId != null
+        ? await _activityStore.loadAssignmentsIfAvailable()
+        : null;
+    if (assignments != null) {
       GakujoAssignment? current;
       for (final assignment in assignments) {
         if (assignment.id == reminder.assignmentId) {

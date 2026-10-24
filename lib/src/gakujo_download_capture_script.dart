@@ -647,9 +647,12 @@ class GakujoDownloadCaptureScript {
       var href = (anchor.getAttribute('href') || '').trim();
       if (href.charAt(0) === '#' || /^javascript:/i.test(href)) return;
       var absoluteUrl = absoluteUrlOf(anchor, href);
+      var params = new URL(absoluteUrl).searchParams;
       if (anchor.hasAttribute('onclick') &&
           !hasStrongDownloadSignal(absoluteUrl, {}) &&
-          !/filerefer/i.test(new URL(absoluteUrl).searchParams.get('_flowId') || '')) {
+          !(/filerefer/i.test(params.get('_flowId') || '') &&
+            (params.get('fileId') || '').trim() &&
+            (!params.has('_eventId') || /download/i.test(params.get('_eventId'))))) {
         return;
       }
       if (!shouldCapture(anchor, absoluteUrl, {})) {

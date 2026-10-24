@@ -7,6 +7,39 @@ import org.junit.Test
 
 class DeadlineReminderDeliveryTest {
     @Test
+    fun stableAssignmentKeysSurviveBookingIdChangesAndAcceptNumericHistory() {
+        val now = 1000L
+        val at = 60000L
+        val report = "科目|課題|レポート"
+        val quiz = "科目|課題|小テスト"
+        val delivered = DeadlineReminderDelivery.record(emptyList(), 42, at, now, report)
+        assertEquals(listOf("$report|$at"), delivered)
+        // Adding a same-title quiz changes the report's OS booking id.
+        for (id in listOf(42, 84)) {
+            assertFalse(DeadlineReminderDelivery.shouldBook(id, at, now, delivered.toSet(), report))
+            assertTrue(DeadlineReminderDelivery.wasDelivered(id, at, now, delivered.toSet(), report))
+        }
+        val reminders = listOf(84 to report, 85 to quiz)
+        assertEquals(
+            listOf(85 to quiz),
+            DeadlineReminderDelivery.upcoming(
+                reminders, now, delivered.toSet(), { it.first }, { at }, { it.second }
+            )
+        )
+        assertTrue(DeadlineReminderDelivery.shouldBook(84, at + 1L, now, delivered.toSet(), report))
+
+        // Both historical hashes must suppress delivery after upgrading, even
+        // when the collision was added or removed since the original booking.
+        for (oldId in listOf(42, 84)) {
+            for (history in listOf(listOf("$oldId|$at"), listOf(oldId))) {
+                val old = DeadlineReminderDelivery.readHistory(history, now).toSet()
+                assertFalse(DeadlineReminderDelivery.shouldBook(84, at, now, old, report, listOf(42, 84)))
+                assertTrue(DeadlineReminderDelivery.wasDelivered(84, at, now, old, report, listOf(42, 84)))
+            }
+        }
+    }
+
+    @Test
     fun booksOnlyThe150SoonestEligibleReminders() {
         val reminders = (400 downTo 1).map { it to it * 1000L }
         val upcoming = DeadlineReminderDelivery.upcoming(

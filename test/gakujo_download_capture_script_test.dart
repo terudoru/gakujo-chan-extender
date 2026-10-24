@@ -164,6 +164,20 @@ void main() {
     expect(result['nativeSubmissions'], 0);
   });
 
+  test('onclick filerefer details stay navigable and attachments capture once',
+      () async {
+    final result = await _evaluateBehavior('onclickFilereferDetails');
+    expect(result['prevented'], [false, false, false, false, true, true]);
+    expect(result['handlersRun'], 4);
+    final urls = (result['captured'] as List)
+        .cast<Map>()
+        .map((payload) => payload['url']);
+    expect(urls, hasLength(2));
+    expect(urls.toSet(), hasLength(2));
+    expect(urls.first, endsWith('SDW-filerefer-flow&fileId=41881'));
+    expect(urls.last, endsWith('fileId=41882&_eventId=download'));
+  });
+
   test('submitter overrides govern capture and native fallback', () async {
     final result = await _evaluateBehavior('submitterOverrides');
     expect(
@@ -596,6 +610,26 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'onclickFilereferDetails') {
+    vm.runInContext(buildScript, context);
+    const flow = '../campussquare.do?_flowId=SDW-filerefer-flow';
+    const prevented = [];
+    let handlersRun = 0;
+    for (const query of [
+      '&_eventId=confirm',
+      '&fileId=41881&_eventId=confirm',
+      '',
+      '&fileId=',
+      '&fileId=41881',
+      '&fileId=41882&_eventId=download'
+    ]) {
+      clickStopped = false;
+      const intercepted = click(anchor(flow + query, '詳細', null, {onclick: 'return true'}));
+      prevented.push(intercepted);
+      if (!intercepted && !clickStopped) handlersRun += 1;
+    }
+    return {prevented, handlersRun, captured};
+  }
   if (scenario === 'onclickAttachments') {
     vm.runInContext(buildScript, context);
     const prevented = [];
