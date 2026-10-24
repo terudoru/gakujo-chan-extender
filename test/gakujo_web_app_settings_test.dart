@@ -835,6 +835,7 @@ void main() {
             onShowFailedDownloads: () async => calls.add('failed'),
             onShowCourseMaterials: () async => calls.add('materials'),
             onShowCachedReports: () async => calls.add('reports'),
+            onShowDrafts: () async => calls.add('drafts'),
             onShowChangeHistory: () async => calls.add('changes'),
             onShowFavorites: () async => calls.add('favorites'),
             onShowDataManagement: () async => calls.add('data'),
@@ -847,6 +848,7 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, '失敗したダウンロード'));
     await tester.tap(find.widgetWithText(OutlinedButton, '授業ごとの資料'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存済み課題一覧'));
+    await tester.tap(find.widgetWithText(OutlinedButton, '下書き'));
     await tester.tap(find.widgetWithText(OutlinedButton, '変更履歴'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'お気に入り'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'データ管理'));
@@ -859,6 +861,7 @@ void main() {
         'failed',
         'materials',
         'reports',
+        'drafts',
         'changes',
         'favorites',
         'data'

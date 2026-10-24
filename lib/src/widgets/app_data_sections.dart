@@ -165,6 +165,7 @@ class AppDataShortcutsSection extends StatelessWidget {
     required this.onShowFailedDownloads,
     required this.onShowCourseMaterials,
     required this.onShowCachedReports,
+    required this.onShowDrafts,
     required this.onShowChangeHistory,
     required this.onShowFavorites,
     required this.onShowDataManagement,
@@ -174,6 +175,7 @@ class AppDataShortcutsSection extends StatelessWidget {
   final Future<void> Function() onShowFailedDownloads;
   final Future<void> Function() onShowCourseMaterials;
   final Future<void> Function() onShowCachedReports;
+  final Future<void> Function() onShowDrafts;
   final Future<void> Function() onShowChangeHistory;
   final Future<void> Function() onShowFavorites;
   final Future<void> Function() onShowDataManagement;
@@ -213,6 +215,11 @@ class AppDataShortcutsSection extends StatelessWidget {
               onPressed: () => unawaited(onShowCachedReports()),
               icon: const Icon(Icons.assignment_outlined),
               label: const Text('保存済み課題一覧'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => unawaited(onShowDrafts()),
+              icon: const Icon(Icons.edit_note_outlined),
+              label: const Text('下書き'),
             ),
             OutlinedButton.icon(
               onPressed: () => unawaited(onShowChangeHistory()),

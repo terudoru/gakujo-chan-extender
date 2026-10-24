@@ -46,12 +46,14 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 6;'));
+    expect(script, contains('var version = 7;'));
     expect(script, contains("document.querySelectorAll('iframe,frame')"));
-    expect(script, contains('mbg-report-draft:v1:'));
+    expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));
-    expect(script,
-        contains("doc.querySelectorAll('textarea,input,[contenteditable]')"));
+    expect(
+        script,
+        contains(
+            "doc.querySelectorAll('textarea,input,select,[contenteditable]')"));
     expect(script, contains('hasDraftWorthyField'));
     expect(script, contains('function stablePageTextForKey'));
     expect(script, contains('残り約'));
@@ -147,6 +149,137 @@ void main() {
 
     expect(result['storedValue'], 'フォーム消失直前の入力');
   });
+
+  test('counter changes save one draft and restore the latest text', () async {
+    final result = await _evaluateDraftScenario('counterLatest');
+    expect(result['count'], 1);
+    expect(result['restoredText'], '文字数が変わった後の最新の本文');
+    expect(result['fieldKey'], 'textarea||gakuComment|0');
+    expect(result['savedStatus'], matches(r'下書きを保存しました（\d{2}:\d{2}）'));
+    expect(result['restoredStatus'],
+        matches(r'保存済みの下書きを復元しました（\d+/\d+ \d{2}:\d{2} 保存）'));
+  });
+
+  test('fresh and nonzero counter pages have identical v2 keys', () async {
+    final result = await _evaluateDraftScenario('counterKeys');
+    expect(result['keys'], everyElement(result['keys'][0]));
+    expect(result['elementKeys'], everyElement(result['elementKeys'][0]));
+    expect(result['keys'][0], startsWith('mbg-report-draft:v2:'));
+    expect(result['anonymousKeys'], everyElement(result['anonymousKeys'][0]));
+    expect(result['differentAssignmentKey'], isNot(result['keys'][0]));
+  });
+
+  test('document key is cached until fields are replaced', () async {
+    final result = await _evaluateDraftScenario('keyCache');
+    expect(result['cachedKey'], result['initialKey']);
+    expect(result['replacementKey'], isNot(result['initialKey']));
+  });
+
+  test('restores choices at defaults and dispatches input and change',
+      () async {
+    final result = await _evaluateDraftScenario('choicesDefault');
+    expect(result['radio'], [false, true]);
+    expect(result['checkbox'], [false, true]);
+    expect(result['select'], ['b']);
+    expect(result['multiple'], ['b', 'c']);
+    expect(
+        result['kinds'], ['radio', 'checkbox', 'checkbox', 'select', 'select']);
+    expect(result['eventsDispatched'], isTrue);
+    expect(result['eventsAfterSecondUpdate'], result['eventsAfterRestore']);
+    expect(result['pendingAfterRestore'], isFalse);
+    expect(result['restoredSavedAt'], result['originalSavedAt']);
+  });
+
+  test('does not restore choices touched even if saved back at defaults',
+      () async {
+    final result = await _evaluateDraftScenario('choicesTouched');
+    expect(result['radio'], [true, false]);
+    expect(result['checkbox'], [true, false]);
+    expect(result['select'], ['a']);
+    expect(result['multiple'], ['a']);
+  });
+
+  test('does not restore choices changed from defaults without events',
+      () async {
+    final result = await _evaluateDraftScenario('choicesNonDefault');
+    expect(result['radio'], [false, true]);
+    expect(result['checkbox'], [false, true]);
+    expect(result['select'], ['c']);
+    expect(result['multiple'], ['c']);
+    expect(result['eventsAfterRestore'], 0);
+  });
+
+  test('preserves unchecked and empty choice answers', () async {
+    final result = await _evaluateDraftScenario('choicesEmpty');
+    expect(result['radio'], [false, false]);
+    expect(result['checkbox'], [false, false]);
+    expect(result['select'], isEmpty);
+    expect(result['multiple'], isEmpty);
+    expect(result['count'], 1);
+  });
+
+  test('checkboxes match by name and value after reordering', () async {
+    final result = await _evaluateDraftScenario('choicesReordered');
+    expect(result['sameKey'], isTrue);
+    expect(result['checksByValue'], {'a': false, 'b': true});
+  });
+
+  test('choice-only quizzes are draft-worthy and login forms are ignored',
+      () async {
+    final result = await _evaluateDraftScenario('choiceOnly');
+    expect(result['quizBound'], isTrue);
+    expect(result['unrelatedBound'], isFalse);
+    expect(result['loginBound'], isFalse);
+    expect(result['count'], 1);
+  });
+
+  test('conflicting text requires the replacement button', () async {
+    final result = await _evaluateDraftScenario('conflict');
+    expect(result['beforeReplace'], 'サーバー側の一時保存');
+    expect(
+        result['beforeStatus'], matches(r'保存済みの下書きがあります（\d+/\d+ \d{2}:\d{2}）'));
+    expect(result['storedAfterPageHide'], '端末の下書き');
+    expect(result['afterReplace'], '端末の下書き');
+    expect(result['afterStatus'], contains('保存済みの下書きを復元しました'));
+    expect(result['replaceHidden'], isTrue);
+    expect(result['events'], containsAll(['input', 'change']));
+  });
+
+  test('v2 heading joins course and assignment table values', () async {
+    final result = await _evaluateDraftScenario('heading');
+    expect(result['heading'], '263T0506 プログラミング基礎Ⅰ / レポート２');
+    expect(result['fallback'], 'レポート提出');
+  });
+
+  test('lists v1 and v2 drafts from top and main frame newest first', () async {
+    final result = await _evaluateDraftScenario('list');
+    final entries = result['entries'] as List;
+    expect(entries.map((entry) => entry['version']), [2, 1]);
+    expect(entries[0]['heading'], '科目 / レポート２');
+    expect(entries[0]['preview'], 'あ' * 120);
+    expect(entries[0]['text'], '${'あ' * 130}\n\n次の回答');
+    expect(entries[1]['heading'], '旧タイトル');
+    expect(entries[1]['text'], '<b>旧本文</b>');
+    expect(result['expiredAndInvalidRemoved'], isTrue);
+    expect(result['unrelatedRetained'], isTrue);
+    expect(result['crossOriginCount'], 2);
+  });
+
+  test('deletes only the given key and cancels its pending save', () async {
+    final result = await _evaluateDraftScenario('delete');
+    expect(result['deleted'], isTrue);
+    expect(result['targetRemovedEverywhere'], isTrue);
+    expect(result['otherKeysRetained'], isTrue);
+    expect(result['pendingCancelled'], isTrue);
+    expect(result['remainingAfterPageHide'], isFalse);
+    expect(result['failedDelete'], isFalse);
+    expect(result['retainedAfterFailure'], isTrue);
+  });
+
+  test('binding cleans expired and malformed v1 and v2 drafts', () async {
+    final result = await _evaluateDraftScenario('cleanup');
+    expect(result['remainingKeys'], ['mbg-report-draft:v1:valid', 'other-key']);
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateContentEditableDraft({
@@ -159,38 +292,54 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
   bool dropFieldBeforePageHide = false,
   String? scenario,
 }) async {
-  final result = await Process.run(
-      'node',
-      [
-        '-e',
-        _nodeDomHarness,
-        GakujoReportDraftScript.build(),
-        jsonEncode({
-          'initialHtml': initialHtml,
-          'initialText': initialText,
-          if (legacyValue != null) 'legacyValue': legacyValue,
-          'replaceFieldInSameDocument': replaceFieldInSameDocument,
-          'deferSaveTimer': deferSaveTimer,
-          'firePageHide': firePageHide,
-          'dropFieldBeforePageHide': dropFieldBeforePageHide,
-          'scenario': scenario,
-        }),
-      ],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8);
+  return _evaluateDraft({
+    'initialHtml': initialHtml,
+    'initialText': initialText,
+    if (legacyValue != null) 'legacyValue': legacyValue,
+    'replaceFieldInSameDocument': replaceFieldInSameDocument,
+    'deferSaveTimer': deferSaveTimer,
+    'firePageHide': firePageHide,
+    'dropFieldBeforePageHide': dropFieldBeforePageHide,
+    'scenario': scenario,
+  });
+}
 
-  expect(
-    result.exitCode,
-    0,
-    reason: 'Node JavaScript evaluation failed: ${result.stderr}',
-  );
-  return jsonDecode(result.stdout as String) as Map<String, dynamic>;
+Future<Map<String, dynamic>> _evaluateDraftScenario(String scenario) {
+  return _evaluateDraft({'scenario': scenario});
+}
+
+Future<Map<String, dynamic>> _evaluateDraft(Map<String, dynamic> spec) async {
+  final directory =
+      await Directory.systemTemp.createTemp('gakujo-report-draft-');
+  try {
+    final harness = File('${directory.path}/harness.cjs');
+    final input = File('${directory.path}/input.json');
+    await harness.writeAsString(_nodeDomHarness);
+    await input.writeAsString(jsonEncode({
+      'generatedScript': GakujoReportDraftScript.build(),
+      'spec': spec,
+      'listScript': GakujoReportDraftScript.buildList(),
+      'deleteScript': GakujoReportDraftScript.buildDelete(
+          'mbg-report-draft:v2:delete"\\key'),
+    }));
+    final result = await Process.run('node', [harness.path, input.path],
+        stdoutEncoding: utf8, stderrEncoding: utf8);
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    return jsonDecode(result.stdout as String) as Map<String, dynamic>;
+  } finally {
+    await directory.delete(recursive: true);
+  }
 }
 
 const _nodeDomHarness = r'''
 const vm = require('node:vm');
-const generatedScript = process.argv[1];
-const spec = JSON.parse(process.argv[2]);
+const {generatedScript, spec, listScript, deleteScript} = JSON.parse(
+  require('node:fs').readFileSync(process.argv[2], 'utf8')
+);
 const storageValues = new Map();
 let xssExecutionCount = 0;
 let nextTimerId = 1;
@@ -204,17 +353,18 @@ class FakeEvent {
 }
 
 class FakeStorage {
-  get length() { return storageValues.size; }
-  getItem(key) { return storageValues.get(key) || null; }
+  constructor(values = storageValues) { this.values = values; }
+  get length() { return this.values.size; }
+  getItem(key) { return this.values.get(key) || null; }
   setItem(key, value) {
     if (this.failWrite) throw new Error('QuotaExceededError');
-    storageValues.set(key, String(value));
+    this.values.set(key, String(value));
   }
   removeItem(key) {
     if (this.failRemove) throw new Error('SecurityError');
-    storageValues.delete(key);
+    this.values.delete(key);
   }
-  key(index) { return Array.from(storageValues.keys())[index] || null; }
+  key(index) { return Array.from(this.values.keys())[index] || null; }
 }
 
 class FakeStatusElement {
@@ -252,6 +402,7 @@ class FakeContentEditable {
     this.style = {};
     this.listeners = {};
     this.attributes = {contenteditable: 'true', name: 'answer'};
+    this.events = [];
     this._innerHTML = html;
     this._text = text;
     this.parentNode = {
@@ -308,19 +459,69 @@ class FakeContentEditable {
     (this.listeners[type] ||= []).push(callback);
   }
   dispatchEvent(event) {
+    this.events.push(event.type);
     for (const callback of this.listeners[event.type] || []) callback(event);
     return true;
   }
 }
 
-function createPage(html, text, storage) {
-  const bodyClone = {
-    innerText: 'レポート提出 本文 入力',
-    textContent: 'レポート提出 本文 入力',
-    querySelectorAll() { return []; }
+class FakeControl extends FakeContentEditable {
+  constructor(doc, tag, attributes = {}, options = {}) {
+    super(doc, '', '');
+    this.tagName = tag.toUpperCase();
+    this.attributes = attributes;
+    this.value = options.value || '';
+    this.defaultChecked = !!options.defaultChecked;
+    this._checked = this.defaultChecked;
+    this.options = options.options || [];
+    this.multiple = !!options.multiple;
+  }
+  get id() { return this.attributes.id || ''; }
+  get value() { return this._value; }
+  set value(value) { this._value = String(value); }
+  get checked() { return this._checked; }
+  set checked(value) {
+    if (value && this.attributes.type === 'radio' && this.attributes.name) {
+      for (const field of this.ownerDocument.fields || []) {
+        if (field !== this && field.attributes.type === 'radio' &&
+            field.attributes.name === this.attributes.name) field._checked = false;
+      }
+    }
+    this._checked = value;
+  }
+  matches() { return false; }
+  closest(selector) {
+    return selector === 'form' ? null : {cloneNode: () => textClone(this.ownerDocument, true)};
+  }
+}
+
+function textClone(doc, rowOnly = false) {
+  let removed = false;
+  const counter = {
+    getAttribute(name) {
+      return name === 'id' ? 'gakuCommentCOUNT' : 'countField';
+    },
+    remove() { removed = true; }
   };
+  return {
+    get innerText() {
+      const base = rowOnly ? '' : doc.pageText;
+      return base + (doc.counter == null ? '' :
+        ' 入力文字数：' + (removed ? '' : doc.counter) + '/200文字');
+    },
+    get textContent() { return this.innerText; },
+    querySelectorAll(selector) {
+      return selector === '[id],[class]' && doc.counterElement ? [counter] : [];
+    }
+  };
+}
+
+function createPage(html, text, storage, options = {}) {
   const document = {
-    title: 'レポート提出',
+    title: options.title || 'レポート提出',
+    pageText: options.pageText || 'レポート提出 本文 入力',
+    counter: options.counter,
+    counterElement: options.counterElement,
     location: {
       href: 'https://gakujo.example/report/input',
       pathname: '/report/input'
@@ -328,7 +529,7 @@ function createPage(html, text, storage) {
     defaultView: null,
     insertedStatus: null,
     listeners: {},
-    body: { cloneNode() { return bodyClone; } },
+    body: { cloneNode() { return textClone(document); } },
     createElement(tag) { return new FakeStatusElement(tag); },
     createTextNode(text) { return {nodeType: 3, textContent: String(text)}; },
     getElementById(id) { return findById(this.insertedStatus, id); },
@@ -336,8 +537,15 @@ function createPage(html, text, storage) {
       (this.listeners[type] ||= []).push(callback);
     },
     querySelectorAll(selector) {
-      if (selector === 'textarea,input,[contenteditable]') return [this.field];
+      if (selector === 'textarea,input,select,[contenteditable]') {
+        return this.fields || (this.field ? [this.field] : []);
+      }
+      if (selector === 'iframe,frame') return this.frame ? [this.frame] : [];
+      if (selector === 'tr') return this.rows || [];
       return [];
+    },
+    querySelector(selector) {
+      return selector === 'iframe#main-frame-if' ? this.frame || null : null;
     }
   };
   const window = {
@@ -347,11 +555,13 @@ function createPage(html, text, storage) {
     listeners: {},
     Event: FakeEvent,
     InputEvent: FakeEvent,
+    HTMLTextAreaElement: FakeControl,
+    HTMLInputElement: FakeControl,
     getComputedStyle() { return {display: 'block', visibility: 'visible'}; },
     clearTimeout(id) { pendingTimers.delete(id); },
     setTimeout(callback) {
       const id = nextTimerId++;
-      if (spec.deferSaveTimer) {
+      if (spec.deferSaveTimer || this.deferSaveTimer) {
         pendingTimers.set(id, callback);
       } else {
         callback();
@@ -370,15 +580,284 @@ function createPage(html, text, storage) {
   return {window, document, field: document.field};
 }
 
-function runPage(page) {
-  vm.runInNewContext(generatedScript, {
+function runPage(page, script = generatedScript) {
+  return vm.runInNewContext(script, {
     window: page.window,
     document: page.document,
     console: {log() {}}
   });
 }
 
+function statusFor(page) {
+  return page.document.getElementById('mbg-report-draft-status-label').textContent;
+}
+
+function textPage(storage, options = {}) {
+  const page = createPage('', '', storage, options);
+  page.field = new FakeControl(page.document, 'textarea',
+    options.anonymous ? {} : {name: 'gakuComment', id: 'gakuComment'},
+    {value: options.value});
+  page.document.field = page.field;
+  return page;
+}
+
+function choicePage(storage, options = {}) {
+  const page = createPage('', '', storage, options);
+  const doc = page.document;
+  function input(type, name, value, defaultChecked = false) {
+    return new FakeControl(doc, 'input', {type, name}, {value, defaultChecked});
+  }
+  function select(name, multiple) {
+    return new FakeControl(doc, 'select', {name}, {
+      multiple,
+      options: ['a', 'b', 'c'].map(value => ({
+        value, selected: value === 'a', defaultSelected: multiple && value === 'a'
+      }))
+    });
+  }
+  doc.fields = [
+    input('radio', 'answer', 'a', true), input('radio', 'answer', 'b'),
+    input('checkbox', 'checks', 'a', true), input('checkbox', 'checks', 'b'),
+    select('single', false), select('multiple', true)
+  ];
+  return page;
+}
+
+function setSelection(field, values) {
+  for (const option of field.options) option.selected = values.includes(option.value);
+}
+
+function choiceState(page) {
+  const fields = page.document.fields;
+  const selected = field => field.options.filter(option => option.selected).map(option => option.value);
+  return {
+    radio: fields.slice(0, 2).map(field => field.checked),
+    checkbox: fields.slice(2, 4).map(field => field.checked),
+    select: selected(fields[4]), multiple: selected(fields[5])
+  };
+}
+
+function hidePage(page) {
+  for (const callback of page.window.listeners.pagehide || []) callback();
+}
+
+function runExtendedScenario() {
+  const storage = new FakeStorage();
+  if (spec.scenario === 'counterLatest') {
+    const page = textPage(storage, {counter: 0, counterElement: true});
+    runPage(page);
+    page.document.counter = 21;
+    page.field.value = '最初の本文';
+    page.field.dispatchEvent(new FakeEvent('input'));
+    page.document.counter = 30;
+    page.field.value = '文字数が変わった後の最新の本文';
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const savedStatus = statusFor(page);
+    const restored = textPage(storage, {counter: 0, counterElement: true});
+    runPage(restored);
+    return {count: storage.length, restoredText: restored.field.value,
+      savedStatus, restoredStatus: statusFor(restored),
+      fieldKey: JSON.parse(storage.getItem(storage.key(0))).fields[0].key};
+  }
+  if (spec.scenario === 'counterKeys') {
+    function keys(anonymous, counterElement) {
+      return [0, 21, '２１'].map(counter => {
+        const page = textPage(storage, {counter, counterElement, anonymous});
+        runPage(page);
+        return page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+      });
+    }
+    const different = textPage(storage, {counter: 0,
+      pageText: 'レポート提出 本文 入力 科目名 263T0506 タイトル レポート３'});
+    runPage(different);
+    return {keys: keys(false, false), elementKeys: keys(false, true),
+      anonymousKeys: keys(true, false),
+      differentAssignmentKey: different.document.__MBG_REPORT_DRAFT_IDENTITY.key};
+  }
+  if (spec.scenario === 'keyCache') {
+    const page = textPage(storage);
+    runPage(page);
+    const initialKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    page.document.pageText += ' ページ内の動的な表示';
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    const cachedKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    page.document.field = new FakeControl(page.document, 'textarea',
+      {name: 'gakuComment', id: 'gakuComment'});
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    return {initialKey, cachedKey, replacementKey: page.document.__MBG_REPORT_DRAFT_IDENTITY.key};
+  }
+  if (['choicesDefault', 'choicesTouched', 'choicesNonDefault', 'choicesEmpty',
+      'choicesReordered'].includes(spec.scenario)) {
+    const page = choicePage(storage);
+    runPage(page);
+    const fields = page.document.fields;
+    fields[1].checked = true;
+    fields[2].checked = false;
+    fields[3].checked = true;
+    setSelection(fields[4], ['b']);
+    setSelection(fields[5], ['b', 'c']);
+    fields[1].dispatchEvent(new FakeEvent('change'));
+    const key = storage.key(0);
+    const original = JSON.parse(storage.getItem(key));
+    if (spec.scenario === 'choicesNonDefault') {
+      for (const item of original.fields) {
+        if (item.kind === 'radio') item.value = 'a';
+        if (item.kind === 'checkbox') item.value = item.key.includes('checks=a');
+      }
+      storage.setItem(key, JSON.stringify(original));
+    }
+    if (spec.scenario === 'choicesEmpty') {
+      for (const item of original.fields) {
+        item.value = item.kind === 'radio' ? null : item.kind === 'checkbox' ? false : [];
+      }
+      storage.setItem(key, JSON.stringify(original));
+    }
+    const restoring = choicePage(storage);
+    if (spec.scenario === 'choicesReordered') {
+      const current = restoring.document.fields;
+      [current[2], current[3]] = [current[3], current[2]];
+      runPage(restoring);
+      return {sameKey: restoring.document.__MBG_REPORT_DRAFT_IDENTITY.key === key,
+        checksByValue: Object.fromEntries(current.slice(2, 4).map(field => [field.value, field.checked]))};
+    }
+    if (spec.scenario === 'choicesTouched') {
+      storage.removeItem(key);
+      runPage(restoring);
+      for (const field of restoring.document.fields) field.dispatchEvent(new FakeEvent('change'));
+      storage.setItem(key, JSON.stringify(original));
+      restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    } else {
+      if (spec.scenario === 'choicesNonDefault') {
+        const current = restoring.document.fields;
+        current[1].checked = true;
+        current[2].checked = false;
+        current[3].checked = true;
+        setSelection(current[4], ['c']);
+        setSelection(current[5], ['c']);
+      }
+      runPage(restoring);
+    }
+    const eventCount = () => restoring.document.fields.reduce((sum, field) => sum + field.events.length, 0);
+    const eventsAfterRestore = eventCount();
+    restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    return {...choiceState(restoring), kinds: original.fields.map(item => item.kind),
+      count: storage.length,
+      eventsDispatched: restoring.document.fields.every(field =>
+        field.events.includes('input') && field.events.includes('change')),
+      eventsAfterRestore, eventsAfterSecondUpdate: eventCount(),
+      pendingAfterRestore: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT,
+      originalSavedAt: original.savedAt,
+      restoredSavedAt: JSON.parse(storage.getItem(key)).savedAt};
+  }
+  if (spec.scenario === 'choiceOnly') {
+    const quiz = choicePage(storage, {title: '小テスト回答', pageText: '小テスト回答 解答'});
+    quiz.document.location = {href: 'https://gakujo.example/flow', pathname: '/flow'};
+    runPage(quiz);
+    quiz.document.fields[1].checked = true;
+    quiz.document.fields[1].dispatchEvent(new FakeEvent('change'));
+    const unrelated = choicePage(storage, {title: '検索', pageText: '検索 条件'});
+    unrelated.document.location = {href: 'https://gakujo.example/search', pathname: '/search'};
+    runPage(unrelated);
+    const login = textPage(storage);
+    login.document.field = new FakeControl(login.document, 'input', {type: 'text', name: 'username'});
+    runPage(login);
+    return {quizBound: !!quiz.document.insertedStatus,
+      unrelatedBound: !!unrelated.document.insertedStatus,
+      loginBound: !!login.document.insertedStatus, count: storage.length};
+  }
+  if (spec.scenario === 'conflict') {
+    const page = textPage(storage, {value: '端末の下書き'});
+    runPage(page);
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const restoring = textPage(storage, {value: 'サーバー側の一時保存'});
+    runPage(restoring);
+    const beforeReplace = restoring.field.value, beforeStatus = statusFor(restoring);
+    hidePage(restoring);
+    const storedAfterPageHide = JSON.parse(storage.getItem(storage.key(0))).fields[0].value;
+    const button = restoring.document.getElementById('mbg-report-draft-replace');
+    button.listeners.click();
+    return {beforeReplace, beforeStatus, storedAfterPageHide,
+      afterReplace: restoring.field.value, afterStatus: statusFor(restoring),
+      replaceHidden: button.style.display === 'none', events: restoring.field.events};
+  }
+  if (spec.scenario === 'heading') {
+    const page = textPage(storage, {value: '本文'});
+    const cell = (tagName, textContent) => ({tagName, textContent});
+    page.document.rows = [
+      {children: [cell('TH', '科目名'), cell('TD', '263T0506'), cell('TD', 'プログラミング基礎Ⅰ')]},
+      {children: [cell('TD', 'タイトル'), cell('TD', 'レポート２')]}
+    ];
+    runPage(page);
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const heading = JSON.parse(storage.getItem(storage.key(0))).heading;
+    page.document.rows = [];
+    page.field.dispatchEvent(new FakeEvent('input'));
+    return {heading, fallback: JSON.parse(storage.getItem(storage.key(0))).heading};
+  }
+  if (spec.scenario === 'list' || spec.scenario === 'cleanup') {
+    const now = Date.now();
+    for (const version of [1, 2]) {
+      storage.setItem('mbg-report-draft:v' + version + ':expired', JSON.stringify({
+        savedAt: now - 15 * 24 * 60 * 60 * 1000, fields: []}));
+      storage.setItem('mbg-report-draft:v' + version + ':invalid', 'not json');
+      storage.setItem('mbg-report-draft:v' + version + ':invalidTime', JSON.stringify({savedAt: 'bad', fields: []}));
+    }
+    storage.setItem('other-key', 'unrelated');
+    const old = {savedAt: now - 2000, title: '旧タイトル', fields: [{key: 'old', value: '<b>旧本文</b>'}]};
+    storage.setItem('mbg-report-draft:v1:valid', JSON.stringify(old));
+    const top = textPage(storage);
+    if (spec.scenario === 'cleanup') {
+      runPage(top);
+      return {remainingKeys: Array.from(storage.values.keys()).sort()};
+    }
+    const draft = {savedAt: now - 1000, title: 'タイトル', heading: '科目 / レポート２', fields: [
+      {kind: 'text', value: 'あ'.repeat(130)}, {kind: 'checkbox', value: true},
+      {kind: 'text', value: '次の回答'}]};
+    storage.setItem('mbg-report-draft:v2:valid', JSON.stringify(draft));
+    const frameStorage = new FakeStorage(new Map());
+    frameStorage.setItem('mbg-report-draft:v2:valid', JSON.stringify({...draft, savedAt: now}));
+    const frame = textPage(frameStorage);
+    top.document.frame = {contentWindow: frame.window};
+    const entries = JSON.parse(runPage(top, listScript));
+    const expiredAndInvalidRemoved = !Array.from(storage.values.keys()).some(key => /expired|invalid/.test(key));
+    top.document.frame = {get contentWindow() { throw new Error('Cross origin'); }};
+    return {entries, expiredAndInvalidRemoved, unrelatedRetained: storage.getItem('other-key') === 'unrelated',
+      crossOriginCount: JSON.parse(runPage(top, listScript)).length};
+  }
+  if (spec.scenario === 'delete') {
+    const target = 'mbg-report-draft:v2:delete"\\key';
+    const payload = JSON.stringify({savedAt: Date.now(), fields: []});
+    const top = textPage(storage);
+    runPage(top);
+    top.document.__MBG_REPORT_DRAFT_IDENTITY.key = target;
+    top.window.deferSaveTimer = true;
+    top.field.value = '保留中の本文';
+    top.field.dispatchEvent(new FakeEvent('input'));
+    storage.setItem(target, payload);
+    storage.setItem('mbg-report-draft:v1:other', payload);
+    storage.setItem('other-key', 'unrelated');
+    const frameStorage = new FakeStorage(new Map([[target, payload], ['other-key', 'unrelated']]));
+    const frame = textPage(frameStorage);
+    top.document.frame = {contentWindow: frame.window};
+    const deleted = runPage(top, deleteScript);
+    const pendingCancelled = !top.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT && pendingTimers.size === 0;
+    hidePage(top);
+    const remainingAfterPageHide = storage.getItem(target) !== null;
+    const targetRemovedEverywhere = storage.getItem(target) === null && frameStorage.getItem(target) === null;
+    storage.setItem(target, payload);
+    storage.failRemove = true;
+    const failedDelete = runPage(top, deleteScript);
+    return {deleted, targetRemovedEverywhere, pendingCancelled, remainingAfterPageHide, failedDelete,
+      retainedAfterFailure: storage.getItem(target) === payload,
+      otherKeysRetained: storage.getItem('mbg-report-draft:v1:other') === payload &&
+        storage.getItem('other-key') === 'unrelated' && frameStorage.getItem('other-key') === 'unrelated'};
+  }
+  return null;
+}
+
 (function runScenario() {
+const extended = runExtendedScenario();
+if (extended) return process.stdout.write(JSON.stringify(extended));
 const storage = new FakeStorage();
 const savingPage = createPage(spec.initialHtml, spec.initialText, storage);
 runPage(savingPage);

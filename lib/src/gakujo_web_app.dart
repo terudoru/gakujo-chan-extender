@@ -77,6 +77,7 @@ part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_models.dart';
 part 'gakujo_web_app_message_stars.dart';
+part 'gakujo_web_app_report_drafts.dart';
 
 extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
   String get label {
@@ -1931,6 +1932,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     onShowFailedDownloads: _showFailedDownloadsDialog,
                     onShowCourseMaterials: _showCourseMaterialsDialog,
                     onShowCachedReports: _showCachedReportsDialog,
+                    onShowDrafts: _showReportDraftsDialog,
                     onShowChangeHistory: _showChangeHistoryDialog,
                     onShowFavorites: _showFavoritesDialog,
                     onShowDataManagement: _showDataManagementDialog,
