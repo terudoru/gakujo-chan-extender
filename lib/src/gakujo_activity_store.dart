@@ -905,6 +905,11 @@ class GakujoActivityStore {
     return _enqueue(() => _mergeDeadlines(nextEntries, unreadMessageUrls));
   }
 
+  static String? _messageSeqNo(String url) {
+    final seqNo = Uri.tryParse(url)?.queryParameters['seqNo']?.trim();
+    return seqNo == null || seqNo.isEmpty ? null : seqNo;
+  }
+
   Future<List<GakujoDeadlineEntry>> _mergeDeadlines(
     List<GakujoDeadlineEntry> nextEntries,
     List<String>? unreadMessageUrls,
@@ -914,22 +919,33 @@ class GakujoActivityStore {
       return const [];
     }
     // Null means the unread fetch was skipped or failed. A fetch at the
-    // 60-row cap cannot prove that an absent cached message has been read.
-    final unread = unreadMessageUrls != null && unreadMessageUrls.length < 60
-        ? unreadMessageUrls.map(stableGakujoUrl).toSet()
+    // 60-row cap cannot prove that an absent cached message has been read,
+    // and an empty one may be an error page parsed as an empty list.
+    final unread = unreadMessageUrls != null &&
+            unreadMessageUrls.isNotEmpty &&
+            unreadMessageUrls.length < 60
+        ? {
+            for (final url in unreadMessageUrls)
+              if (_messageSeqNo(url) case final seqNo?) seqNo,
+          }
         : null;
     final entries = <String, GakujoDeadlineEntry>{
       for (final entry in deadlineRead.value)
         if (_isUsefulDeadline(entry)) entry.key: entry,
     };
-    if (unread != null) {
+    if (unread != null && unread.isNotEmpty) {
       // A message read on the web keeps its dates but is not announced later.
-      await _addNotifiedDeadlineKeys({
-        for (final entry in entries.values)
-          if (entry.source == '連絡通知' &&
-              !unread.contains(stableGakujoUrl(entry.url)))
-            entry.key,
-      });
+      // Only entries that name their message can be proven read.
+      final notifiedRead = await _readNotifiedDeadlineKeys();
+      if (notifiedRead.isSuccessful) {
+        final alreadyNotified = notifiedRead.value.toSet();
+        await _addNotifiedDeadlineKeys({
+          for (final entry in entries.values)
+            if (entry.source == '連絡通知' && !alreadyNotified.contains(entry.key))
+              if (_messageSeqNo(entry.url) case final seqNo?)
+                if (!unread.contains(seqNo)) entry.key,
+        });
+      }
     }
     final newEntries = <GakujoDeadlineEntry>[];
     for (final entry

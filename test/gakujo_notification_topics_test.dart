@@ -13,10 +13,13 @@ GakujoDeadlineEntry _entry(
   String title, {
   String dueText = '2099/07/01まで',
   String source = '',
+  String? url,
 }) {
   return GakujoDeadlineEntry(
     title: title,
-    url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$title',
+    url: url ??
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+            '?seqNo=${title.hashCode.abs()}',
     dueText: dueText,
     detectedAt: DateTime.utc(2026, 10, 21),
     source: source,
@@ -31,14 +34,22 @@ void main() {
   test('complete unread fetches silence read messages but keep their dates',
       () async {
     for (final rowCount in [0, 1, 59, 60]) {
+      // An empty fetch may be an error page; a full one may hide rows.
+      final proves = rowCount > 0 && rowCount < 60;
       FlutterSecureStorage.setMockInitialValues({});
       final store = GakujoActivityStore();
       final readMessage = _entry('既読の授業連絡', source: '連絡通知');
+      // Without its message number this entry can never be proven read.
+      final tabLinked = _entry('既読タブの授業連絡',
+          source: '連絡通知',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+              'campusportal.do?page=main&tabId=kj');
       final assignment = _entry('レポート課題');
       final unread = [
         for (var i = 0; i < rowCount; i++) _entry('未読の授業連絡$i', source: '連絡通知'),
       ];
-      await store.mergeDeadlines([readMessage, assignment, ...unread]);
+      await store
+          .mergeDeadlines([readMessage, tabLinked, assignment, ...unread]);
       await store.mergeDeadlines(
         unread,
         unreadMessageUrls: unread.map((entry) => entry.url).toList(),
@@ -48,7 +59,7 @@ void main() {
       // A read message still carries its dates for the deadline list.
       expect(cached.map((entry) => entry.key), contains(readMessage.key));
       expect(cached.where((entry) => entry.source == '連絡通知'),
-          hasLength(rowCount + 1));
+          hasLength(rowCount + 2));
       final notifications = _FakeNotificationService();
       await GakujoDeadlineNotificationCoordinator(
         activityStore: store,
@@ -61,9 +72,8 @@ void main() {
           keywords: ['既読'],
         ),
       );
-      expect(notifications.notified.contains(readMessage.key), rowCount == 60);
-      expect(
-          notifications.notified, rowCount == 60 ? [readMessage.key] : isEmpty);
+      expect(notifications.notified.contains(readMessage.key), !proves);
+      expect(notifications.notified, contains(tabLinked.key));
     }
   });
 
