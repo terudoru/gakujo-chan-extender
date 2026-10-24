@@ -47,6 +47,20 @@ class GakujoCalendarEventPolicyTest {
     }
 
     @Test
+    fun generatedMarkerRoundTripsButMultilineIdsAreRejected() {
+        val event = requireNotNull(
+            GakujoCalendarEventPolicy.parse(validRawEvent("term-1|course|1", 100L))
+        )
+        assertEquals(
+            event.id,
+            GakujoCalendarEventPolicy.eventIdFromDescription(event.description + "\r\n")
+        )
+        assertNull(
+            GakujoCalendarEventPolicy.parse(validRawEvent("term-1|course|1\nextra", 100L))
+        )
+    }
+
+    @Test
     fun rejectsEventMissingRequiredValues() {
         assertNull(
             GakujoCalendarEventPolicy.parse(
@@ -149,12 +163,146 @@ class GakujoCalendarEventPolicyTest {
     }
 
     @Test
-    fun emptySyncIsRejectedBeforeExistingEventsCanBeDeleted() {
+    fun emptySyncWithoutNamespaceIsRejectedBeforeExistingEventsCanBeDeleted() {
         val error = assertThrows(IllegalArgumentException::class.java) {
             GakujoCalendarEventPolicy.parseEventsForSync(emptyList<Any>())
         }
 
-        assertEquals("追加可能なカレンダー予定がありません", error.message)
+        assertEquals("空の同期には同期範囲の識別子が必要です", error.message)
+    }
+
+    @Test
+    fun emptySyncReplacesOnlyExactNamespaceWithinRequestedRange() {
+        val events = GakujoCalendarEventPolicy.parseEventsForSync(emptyList<Any>(), "term-1")
+        val existing = listOf(
+            ExistingGakujoCalendarEvent(1L, 100L, "Notes\n\nMBG_UID:term-1|course|1"),
+            ExistingGakujoCalendarEvent(2L, 299L, "MBG_UID:term-1|course|2"),
+            ExistingGakujoCalendarEvent(3L, 300L, "MBG_UID:term-1|course|3"),
+            ExistingGakujoCalendarEvent(4L, 99L, "MBG_UID:term-1|course|4"),
+            ExistingGakujoCalendarEvent(5L, 200L, "MBG_UID:term-10|course|5"),
+            ExistingGakujoCalendarEvent(6L, 200L, "MBG_UID:legacy"),
+            ExistingGakujoCalendarEvent(7L, 200L, "MBG UID:term-1|course|7")
+        )
+
+        assertTrue(events.isEmpty())
+        assertEquals(
+            listOf(1L, 2L),
+            GakujoCalendarEventPolicy.eventIdsToReplace(
+                existingEvents = existing,
+                namespaces = GakujoCalendarEventPolicy.replacementNamespaces(events, "term-1"),
+                replacementRange = CalendarEventReplacementRange(100L, 300L),
+                restrictToRange = true
+            )
+        )
+    }
+
+    @Test
+    fun invalidOrMismatchedRequestedNamespaceIsRejected() {
+        for (namespace in listOf("", " ", "term-1|course", "term-1\n", " term-1")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                GakujoCalendarEventPolicy.parseEventsForSync(emptyList<Any>(), namespace)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GakujoCalendarEventPolicy.parseEventsForSync(
+                listOf(validRawEvent("term-1|course|1", 100L)),
+                "term-2"
+            )
+        }
+        assertEquals(
+            GakujoCalendarIdentity.VALIDATION,
+            GakujoCalendarIdentityPolicy.forSync(
+                "Renamed validation calendar", emptyList(), "calendar-validation"
+            )
+        )
+    }
+
+    @Test
+    fun markerLookalikesAreSkippedByEveryDeletionPolicy() {
+        val descriptions = listOf(
+            "MBG UID:term-1|course|1",
+            "mbg_uid:term-1|course|1",
+            "A note about MBG_UID:term-1|course|1",
+            " MBG_UID:term-1|course|1",
+            "MBG_UID: term-1|course|1",
+            "MBG_UID:term-1|course|1 ",
+            "MBG_UID:term-1|course|1\nPersonal note",
+            "MBG_UID:|course|1",
+            "MBG_UID:term-1|",
+            "MBG_UID:term-1 |course|1",
+            "MBG_UID:"
+        )
+        val existing = descriptions.mapIndexed { index, description ->
+            ExistingGakujoCalendarEvent(index.toLong(), 100L, description, 10L)
+        }
+        for (namespaces in listOf(emptySet(), setOf("term-1"))) {
+            assertTrue(
+                GakujoCalendarEventPolicy.eventIdsToReplace(
+                    existing, namespaces, CalendarEventReplacementRange(0L, 200L)
+                ).isEmpty()
+            )
+        }
+        assertTrue(
+            GakujoCalendarEventPolicy.eventIdsForNamespaceCleanup(
+                existing, setOf(10L), setOf("term-1"), 10L, true
+            ).isEmpty()
+        )
+        for (calendarId in listOf(null, 10L)) {
+            assertTrue(
+                GakujoCalendarEventPolicy.eventIdsForExplicitDelete(
+                    existing, setOf(10L), CalendarEventReplacementRange(0L, 200L), calendarId
+                ).isEmpty()
+            )
+        }
+        assertEquals("%MBG\\_UID:%", GakujoCalendarEventPolicy.EVENT_MARKER_LIKE)
+    }
+
+    @Test
+    fun legacyReplacementKeepsNamedNamespacesAndUnmarkedUserEvents() {
+        assertEquals(
+            listOf(1L),
+            GakujoCalendarEventPolicy.eventIdsToReplace(
+                listOf(
+                    ExistingGakujoCalendarEvent(1L, 100L, "MBG_UID:course-1"),
+                    ExistingGakujoCalendarEvent(2L, 100L, "MBG_UID:term-1|course|2"),
+                    ExistingGakujoCalendarEvent(3L, 100L, "MBG UID:course-3"),
+                    ExistingGakujoCalendarEvent(4L, 100L, "Personal event")
+                ),
+                emptySet(),
+                CalendarEventReplacementRange(0L, 200L)
+            )
+        )
+    }
+
+    @Test
+    fun validationDeletionRequiresItsCalendarAndExactNamespace() {
+        val existing = listOf(
+            ExistingGakujoCalendarEvent(1L, 100L, "MBG_UID:calendar-validation|course|1", 10L),
+            ExistingGakujoCalendarEvent(2L, 100L, "MBG_UID:term-1|course|2", 10L),
+            ExistingGakujoCalendarEvent(3L, 100L, "MBG_UID:calendar-validation|course|3", 20L),
+            ExistingGakujoCalendarEvent(4L, 200L, "MBG_UID:calendar-validation|course|4", 10L),
+            ExistingGakujoCalendarEvent(5L, 100L, "MBG_UID:calendar-validation-other|course|5", 10L),
+            ExistingGakujoCalendarEvent(6L, 100L, "MBG UID:calendar-validation|course|6", 10L)
+        )
+
+        for (calendarId in listOf(null, 10L)) {
+            assertEquals(
+                if (calendarId == null) emptyList<Long>() else listOf(1L),
+                GakujoCalendarEventPolicy.eventIdsForExplicitDelete(
+                    existingEvents = existing,
+                    writableCalendarIds = setOf(10L, 20L),
+                    replacementRange = CalendarEventReplacementRange(100L, 200L),
+                    calendarId = calendarId,
+                    identity = GakujoCalendarIdentity.VALIDATION
+                )
+            )
+        }
+        assertEquals(
+            listOf(1L, 4L),
+            GakujoCalendarEventPolicy.eventIdsForNamespaceCleanup(
+                existing, setOf(10L, 20L), setOf("calendar-validation"), 10L, true
+            )
+        )
     }
 
     @Test
@@ -457,7 +605,7 @@ class GakujoCalendarEventPolicyTest {
     }
 
     @Test
-    fun foreignCleanupRequiresFinalMarkerButDedicatedCalendarAllowsAppendedNotes() {
+    fun cleanupRequiresFinalMarkerEvenInDedicatedCalendar() {
         val eventIds = GakujoCalendarEventPolicy.eventIdsForNamespaceCleanup(
             existingEvents = listOf(
                 ExistingGakujoCalendarEvent(
@@ -479,11 +627,11 @@ class GakujoCalendarEventPolicyTest {
             includeForeignCalendars = true
         )
 
-        assertEquals(listOf(1L), eventIds)
+        assertTrue(eventIds.isEmpty())
     }
 
     @Test
-    fun unifiedNiigataNamespaceReplacesOfficialAndMatchingLegacyManualRangeOnly() {
+    fun cleanupRequiresExactNamespaceEvenForMatchingLegacyManualRange() {
         val events = listOf(
             ExistingGakujoCalendarEvent(
                 id = 1L,
@@ -525,7 +673,7 @@ class GakujoCalendarEventPolicyTest {
             includeForeignCalendars = true
         )
 
-        assertEquals(listOf(1L, 2L), eventIds)
+        assertEquals(listOf(2L), eventIds)
     }
 
     @Test
@@ -591,29 +739,13 @@ class GakujoCalendarEventPolicyTest {
             )
         )
 
-        val eventIds = GakujoCalendarEventPolicy.eventIdsForExplicitLegacyDelete(
+        val eventIds = GakujoCalendarEventPolicy.eventIdsForExplicitDelete(
             existingEvents = events,
             writableCalendarIds = setOf(20L),
             replacementRange = CalendarEventReplacementRange(100L, 300L)
         )
 
         assertEquals(listOf(1L), eventIds)
-    }
-
-    @Test
-    fun invalidLegacyManualRangeIsNotTreatedAsAlias() {
-        assertFalse(
-            GakujoCalendarEventPolicy.namespacesMatchForCleanup(
-                existingNamespace = "manual-20260230-20260808",
-                incomingNamespace = "niigata-2026-第2ターム"
-            )
-        )
-        assertFalse(
-            GakujoCalendarEventPolicy.namespacesMatchForCleanup(
-                existingNamespace = "manual-20260808-20260611",
-                incomingNamespace = "niigata-2026-第2ターム"
-            )
-        )
     }
 
     @Test

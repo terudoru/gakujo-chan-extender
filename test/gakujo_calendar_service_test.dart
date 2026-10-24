@@ -56,7 +56,7 @@ void main() {
     final result = await const MethodChannelGakujoCalendarService().syncEvents(
       events: [
         GakujoCalendarEvent(
-          id: 'validation|validation-1',
+          id: 'calendar-validation|validation-1',
           title: '検証予定',
           start: DateTime(2026, 6, 11, 8, 45),
           end: DateTime(2026, 6, 11, 10, 15),
@@ -78,7 +78,7 @@ void main() {
     );
     expect(
       (capturedCall?.arguments as Map<dynamic, dynamic>)['uidNamespace'],
-      'validation',
+      'calendar-validation',
     );
     final payload =
         (capturedCall?.arguments as Map<dynamic, dynamic>)['events'] as List;
@@ -106,8 +106,7 @@ void main() {
     );
   });
 
-  test('syncEvents rejects an empty replacement before calling native',
-      () async {
+  test('syncEvents rejects an empty replacement without a namespace', () async {
     var nativeCalls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -120,6 +119,98 @@ void main() {
         events: const [],
         rangeStart: DateTime(2026, 6, 11),
         rangeEnd: DateTime(2026, 8, 5),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(nativeCalls, 0);
+  });
+
+  test('syncEvents sends a cancelled last meeting as an empty JST replacement',
+      () async {
+    MethodCall? capturedCall;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return {'added': 0, 'removed': 1, 'openedFallback': false};
+    });
+    final courses = GakujoCalendarExport.applyClassChanges(
+      [
+        GakujoCalendarCourse(
+          title: 'A',
+          weekday: DateTime.friday,
+          period: 3,
+          sourceDate: DateTime(2026, 10, 23),
+          recursWeekly: false,
+        ),
+      ],
+      [
+        GakujoClassChange.fromJson({
+          'kind': 'kyuko-kyuko',
+          'date': '2026-10-23',
+          'period': '3',
+          'course': 'A',
+        })!,
+      ],
+    );
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: courses,
+      rangeStart: DateTime(2026, 10, 23),
+      rangeEnd: DateTime(2026, 10, 23),
+      uidNamespace: 'term-3',
+    );
+    expect(events, isEmpty);
+
+    final result = await const MethodChannelGakujoCalendarService().syncEvents(
+      events: events,
+      rangeStart: DateTime(2026, 10, 23),
+      rangeEnd: DateTime(2026, 10, 23),
+      uidNamespace: 'term-3',
+    );
+
+    expect(result.added, 0);
+    expect(result.removed, 1);
+    expect(capturedCall?.method, 'syncEvents');
+    final args = capturedCall!.arguments as Map;
+    expect(args['uidNamespace'], 'term-3');
+    expect(args['events'], isEmpty);
+    expect(args['rangeStartMillis'],
+        DateTime.utc(2026, 10, 22, 15).millisecondsSinceEpoch);
+    expect(args['rangeEndMillis'],
+        DateTime.utc(2026, 10, 23, 15).millisecondsSinceEpoch);
+  });
+
+  test('syncEvents rejects invalid explicit namespaces before calling native',
+      () async {
+    var nativeCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      nativeCalls += 1;
+      return {'added': 0, 'removed': 0};
+    });
+    for (final namespace in ['', ' ', 'term-3|course', 'term-3\n']) {
+      await expectLater(
+        const MethodChannelGakujoCalendarService().syncEvents(
+          events: const [],
+          rangeStart: DateTime(2026, 10, 23),
+          rangeEnd: DateTime(2026, 10, 23),
+          uidNamespace: namespace,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    }
+    await expectLater(
+      const MethodChannelGakujoCalendarService().syncEvents(
+        events: [
+          GakujoCalendarEvent(
+            id: 'term-3|course',
+            title: 'A',
+            start: DateTime(2026, 10, 23, 13),
+            end: DateTime(2026, 10, 23, 14, 30),
+          ),
+        ],
+        rangeStart: DateTime(2026, 10, 23),
+        rangeEnd: DateTime(2026, 10, 23),
+        uidNamespace: 'term-4',
       ),
       throwsA(isA<ArgumentError>()),
     );

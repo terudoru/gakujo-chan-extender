@@ -138,6 +138,7 @@ abstract class GakujoCalendarService {
     required DateTime rangeStart,
     required DateTime rangeEnd,
     String? calendarTitle,
+    String? uidNamespace,
   });
 
   Future<GakujoCalendarDeleteResult> deleteAddedEvents({
@@ -163,16 +164,35 @@ class MethodChannelGakujoCalendarService extends GakujoCalendarService {
     required DateTime rangeStart,
     required DateTime rangeEnd,
     String? calendarTitle,
+    String? uidNamespace,
   }) async {
-    if (events.isEmpty) {
-      throw ArgumentError.value(events, 'events', '同期対象のカレンダー予定がありません');
+    if (uidNamespace != null &&
+        (uidNamespace.trim().isEmpty ||
+            uidNamespace != uidNamespace.trim() ||
+            uidNamespace.contains(RegExp(r'[|\r\n]')))) {
+      throw ArgumentError.value(uidNamespace, 'uidNamespace', '同期範囲の識別子が不正です');
     }
-    final uidNamespace = _calendarEventNamespace(events);
+    if (events.isEmpty && uidNamespace == null) {
+      throw ArgumentError.value(
+        uidNamespace,
+        'uidNamespace',
+        '空の同期には同期範囲の識別子が必要です',
+      );
+    }
+    final eventNamespace =
+        events.isEmpty ? uidNamespace! : _calendarEventNamespace(events);
+    if (uidNamespace != null && uidNamespace != eventNamespace) {
+      throw ArgumentError.value(
+        uidNamespace,
+        'uidNamespace',
+        '同期範囲の識別子がカレンダー予定と一致しません',
+      );
+    }
     final result = await _channel.invokeMapMethod<String, Object?>(
       'syncEvents',
       {
         'calendarTitle': calendarTitle ?? 'More Better Gakujo 授業',
-        'uidNamespace': uidNamespace,
+        'uidNamespace': eventNamespace,
         'rangeStartMillis': _tokyoDateBoundaryMillis(rangeStart),
         'rangeEndMillis': _tokyoDateBoundaryMillis(
           _calendarDateAfterDays(rangeEnd, 1),
@@ -215,6 +235,7 @@ class UnsupportedGakujoCalendarService extends GakujoCalendarService {
     required DateTime rangeStart,
     required DateTime rangeEnd,
     String? calendarTitle,
+    String? uidNamespace,
   }) {
     throw MissingPluginException(
       'OSカレンダー直接連携はこのプラットフォームでは未対応です',

@@ -24,8 +24,6 @@ import java.io.BufferedInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.Calendar
-import java.util.GregorianCalendar
 import java.util.Locale
 import java.util.TimeZone
 
@@ -62,9 +60,10 @@ internal object GakujoCalendarIdentityPolicy {
 
     fun forSync(
         calendarTitle: String,
-        events: List<GakujoCalendarEventData>
+        events: List<GakujoCalendarEventData>,
+        uidNamespace: String? = null
     ): GakujoCalendarIdentity {
-        val namespace = events.firstOrNull()?.uidNamespace
+        val namespace = uidNamespace ?: events.firstOrNull()?.uidNamespace
         if (namespace != null) {
             if (namespace == VALIDATION_UID_NAMESPACE) {
                 return GakujoCalendarIdentity.VALIDATION
@@ -178,6 +177,8 @@ internal object GakujoDownloadFilePolicy {
 
 internal object GakujoCalendarEventPolicy {
     const val EVENT_MARKER = "MBG_UID:"
+    const val EVENT_MARKER_LIKE = "%MBG\\_UID:%"
+    const val VALIDATION_UID_NAMESPACE = "calendar-validation"
 
     fun parse(event: Map<*, *>): GakujoCalendarEventData? {
         val title = event["title"]?.toString()?.takeIf { it.isNotBlank() } ?: return null
@@ -187,6 +188,9 @@ internal object GakujoCalendarEventPolicy {
             return null
         }
         val id = event["id"]?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (!isValidEventId(id)) {
+            return null
+        }
         val teacher = event["teacher"]?.toString()?.takeIf { it.isNotBlank() }
         val notes = event["notes"]?.toString()?.takeIf { it.isNotBlank() }
         val description = buildString {
@@ -213,17 +217,32 @@ internal object GakujoCalendarEventPolicy {
         )
     }
 
-    fun replacementNamespaces(events: List<GakujoCalendarEventData>): Set<String> {
-        if (events.isEmpty() || events.any { it.uidNamespace == null }) {
+    fun replacementNamespaces(
+        events: List<GakujoCalendarEventData>,
+        uidNamespace: String? = null
+    ): Set<String> {
+        if (uidNamespace != null) {
+            return setOf(uidNamespace)
+        }
+        if (events.any { it.uidNamespace == null }) {
             return emptySet()
         }
         return events.mapNotNull { it.uidNamespace }.toSet()
     }
 
-    fun parseEventsForSync(rawEvents: Any?): List<GakujoCalendarEventData> {
+    fun parseEventsForSync(
+        rawEvents: Any?,
+        uidNamespace: String? = null
+    ): List<GakujoCalendarEventData> {
         val events = rawEvents as? List<*>
             ?: throw IllegalArgumentException("カレンダー予定を取得できませんでした")
-        require(events.isNotEmpty()) { "追加可能なカレンダー予定がありません" }
+        require(uidNamespace == null ||
+            (uidNamespace.isNotBlank() && uidNamespace == uidNamespace.trim() &&
+                !uidNamespace.contains('|') && !uidNamespace.contains('\r') &&
+                !uidNamespace.contains('\n'))) { "同期範囲の識別子が不正です" }
+        require(events.isNotEmpty() || uidNamespace != null) {
+            "空の同期には同期範囲の識別子が必要です"
+        }
         val parsedEvents = events.mapIndexed { index, rawEvent ->
             val event = rawEvent as? Map<*, *>
                 ?: throw IllegalArgumentException("カレンダー予定${index + 1}件目が不正です")
@@ -239,23 +258,31 @@ internal object GakujoCalendarEventPolicy {
         require(namedNamespaces.size <= 1) {
             "異なるnamespaceのカレンダー予定を同時に同期できません"
         }
+        require(events.isEmpty() || uidNamespace == null || namedNamespaces == setOf(uidNamespace)) {
+            "同期範囲の識別子がカレンダー予定と一致しません"
+        }
         return parsedEvents
     }
 
     fun eventIdsToReplace(
         existingEvents: List<ExistingGakujoCalendarEvent>,
         namespaces: Set<String>,
-        replacementRange: CalendarEventReplacementRange
+        replacementRange: CalendarEventReplacementRange,
+        restrictToRange: Boolean = false
     ): List<Long> {
-        if (namespaces.isNotEmpty()) {
-            return existingEvents
-                .filter { uidNamespaceFromDescription(it.description) in namespaces }
-                .map { it.id }
-        }
         return existingEvents
-            .filter {
-                it.startMillis >= replacementRange.startMillis &&
-                    it.startMillis < replacementRange.endMillis
+            .filter { event ->
+                val eventId = eventIdFromDescription(event.description) ?: return@filter false
+                val namespace = uidNamespaceFromId(eventId)
+                val matchesNamespace = if (namespaces.isEmpty()) {
+                    namespace == null
+                } else {
+                    namespace in namespaces
+                }
+                matchesNamespace &&
+                    (!restrictToRange && namespaces.isNotEmpty() ||
+                        (event.startMillis >= replacementRange.startMillis &&
+                            event.startMillis < replacementRange.endMillis))
             }
             .map { it.id }
     }
@@ -273,112 +300,48 @@ internal object GakujoCalendarEventPolicy {
         return existingEvents
             .filter {
                 it.calendarId == targetCalendarId ||
-                    (includeForeignCalendars && it.calendarId in writableCalendarIds)
+                    (includeForeignCalendars && VALIDATION_UID_NAMESPACE !in namespaces &&
+                        it.calendarId in writableCalendarIds)
             }
             .filter { event ->
-                val eventId = if (event.calendarId == targetCalendarId) {
-                    eventIdFromDescription(event.description)
-                } else {
-                    eventIdFromFinalMarkerDescription(event.description)
-                }
+                val eventId = eventIdFromDescription(event.description)
                 val existingNamespace = eventId?.let(::uidNamespaceFromId)
                     ?: return@filter false
-                namespaces.any { incomingNamespace ->
-                    namespacesMatchForCleanup(existingNamespace, incomingNamespace)
-                }
+                existingNamespace in namespaces
             }
             .map { it.id }
     }
 
-    fun eventIdsForExplicitLegacyDelete(
+    fun eventIdsForExplicitDelete(
         existingEvents: List<ExistingGakujoCalendarEvent>,
         writableCalendarIds: Set<Long>,
-        replacementRange: CalendarEventReplacementRange
+        replacementRange: CalendarEventReplacementRange,
+        calendarId: Long? = null,
+        identity: GakujoCalendarIdentity = GakujoCalendarIdentity.NORMAL
     ): List<Long> {
+        if (identity == GakujoCalendarIdentity.VALIDATION && calendarId == null) {
+            return emptyList()
+        }
         return existingEvents
-            .filter { it.calendarId in writableCalendarIds }
+            .filter {
+                if (calendarId != null) it.calendarId == calendarId
+                else it.calendarId in writableCalendarIds
+            }
             .filter {
                 it.startMillis >= replacementRange.startMillis &&
                     it.startMillis < replacementRange.endMillis
             }
-            .filter { eventIdFromFinalMarkerDescription(it.description) != null }
+            .filter { event ->
+                val eventId = eventIdFromDescription(event.description) ?: return@filter false
+                val namespace = uidNamespaceFromId(eventId)
+                if (identity == GakujoCalendarIdentity.VALIDATION) {
+                    namespace == VALIDATION_UID_NAMESPACE
+                } else {
+                    namespace != VALIDATION_UID_NAMESPACE
+                }
+            }
             .map { it.id }
     }
-
-    internal fun namespacesMatchForCleanup(
-        existingNamespace: String,
-        incomingNamespace: String
-    ): Boolean {
-        if (existingNamespace == incomingNamespace) {
-            return true
-        }
-        val incomingBucket = niigataTermBucket(incomingNamespace) ?: return false
-        val existingBucket = legacyManualBucket(existingNamespace) ?: return false
-        return existingBucket == incomingBucket
-    }
-
-    private fun niigataTermBucket(namespace: String): ManualCalendarBucket? {
-        val match = Regex("^niigata-([0-9]{4})-第([1-4])ターム$")
-            .matchEntire(namespace)
-            ?: return null
-        val academicYear = match.groupValues[1].toIntOrNull() ?: return null
-        val termIdentity = when (match.groupValues[2]) {
-            "1" -> "first"
-            "2" -> "second"
-            "3" -> "third"
-            else -> "fourth"
-        }
-        return ManualCalendarBucket(academicYear, termIdentity)
-    }
-
-    private fun legacyManualBucket(namespace: String): ManualCalendarBucket? {
-        val match = Regex("^manual-([0-9]{8})-([0-9]{8})$")
-            .matchEntire(namespace)
-            ?: return null
-        val start = utcDateMillis(match.groupValues[1]) ?: return null
-        val end = utcDateMillis(match.groupValues[2]) ?: return null
-        if (end < start) {
-            return null
-        }
-        val startCalendar = GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
-            timeInMillis = start
-        }
-        val midpointCalendar = GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
-            timeInMillis = start + ((end - start) / 2L)
-        }
-        val startYear = startCalendar.get(Calendar.YEAR)
-        val startMonth = startCalendar.get(Calendar.MONTH) + 1
-        val midpointMonth = midpointCalendar.get(Calendar.MONTH) + 1
-        val academicYear = if (startMonth >= 4) startYear else startYear - 1
-        val termIdentity = when (midpointMonth) {
-            4, 5 -> "first"
-            6, 7, 8, 9 -> "second"
-            10, 11 -> "third"
-            else -> "fourth"
-        }
-        return ManualCalendarBucket(academicYear, termIdentity)
-    }
-
-    private fun utcDateMillis(compactDate: String): Long? {
-        if (!Regex("^[0-9]{8}$").matches(compactDate)) {
-            return null
-        }
-        val year = compactDate.substring(0, 4).toIntOrNull() ?: return null
-        val month = compactDate.substring(4, 6).toIntOrNull() ?: return null
-        val day = compactDate.substring(6, 8).toIntOrNull() ?: return null
-        return runCatching {
-            GregorianCalendar(TimeZone.getTimeZone("UTC")).apply {
-                isLenient = false
-                clear()
-                set(year, month - 1, day, 0, 0, 0)
-            }.timeInMillis
-        }.getOrNull()
-    }
-
-    private data class ManualCalendarBucket(
-        val academicYear: Int,
-        val termIdentity: String
-    )
 
     fun unionRange(
         current: CalendarEventReplacementRange,
@@ -402,13 +365,7 @@ internal object GakujoCalendarEventPolicy {
     }
 
     internal fun eventIdFromDescription(description: String): String? {
-        return description.lineSequence()
-            .mapNotNull(::eventIdFromMarkerLine)
-            .firstOrNull()
-    }
-
-    internal fun eventIdFromFinalMarkerDescription(description: String): String? {
-        val finalLine = description.trimEnd()
+        val finalLine = description.trimEnd('\r', '\n')
             .lineSequence()
             .lastOrNull()
             ?: return null
@@ -416,18 +373,22 @@ internal object GakujoCalendarEventPolicy {
     }
 
     private fun eventIdFromMarkerLine(line: String): String? {
-        val trimmedLine = line.trim()
-        if (!trimmedLine.startsWith(EVENT_MARKER)) {
+        if (!line.startsWith(EVENT_MARKER)) {
             return null
         }
-        return trimmedLine
+        return line
             .substring(EVENT_MARKER.length)
-            .trim()
-            .takeIf { it.isNotEmpty() }
+            .takeIf(::isValidEventId)
     }
 
-    private fun uidNamespaceFromDescription(description: String): String? {
-        return eventIdFromDescription(description)?.let(::uidNamespaceFromId)
+    private fun isValidEventId(id: String): Boolean {
+        if (id.isBlank() || id != id.trim() || id.contains('\r') || id.contains('\n')) {
+            return false
+        }
+        val separator = id.indexOf('|')
+        return separator < 0 ||
+            (separator > 0 && id.substring(0, separator) == id.substring(0, separator).trim() &&
+                id.substring(separator + 1).isNotBlank())
     }
 
     private fun longValue(value: Any?): Long? {
@@ -1514,8 +1475,12 @@ class MainActivity : FlutterActivity() {
                     ?: "More Better Gakujo 授業"
                 val rangeStart = (args["rangeStartMillis"] as? Number)?.toLong() ?: 0L
                 val rangeEnd = (args["rangeEndMillis"] as? Number)?.toLong() ?: Long.MAX_VALUE
-                val events = GakujoCalendarEventPolicy.parseEventsForSync(args["events"])
-                val calendarIdentity = GakujoCalendarIdentityPolicy.forSync(calendarTitle, events)
+                val uidNamespace = args["uidNamespace"]?.toString()
+                val events = GakujoCalendarEventPolicy.parseEventsForSync(args["events"], uidNamespace)
+                require(events.isNotEmpty() ||
+                    (args["rangeStartMillis"] is Number && args["rangeEndMillis"] is Number &&
+                        rangeStart < rangeEnd)) { "空の同期には有効な期間が必要です" }
+                val calendarIdentity = GakujoCalendarIdentityPolicy.forSync(calendarTitle, events, uidNamespace)
                 val syncResult = synchronized(calendarOperationLock) {
                     val calendarId = writableCalendarId(calendarTitle, calendarIdentity)
                         ?: throw IllegalStateException(
@@ -1525,7 +1490,8 @@ class MainActivity : FlutterActivity() {
                         calendarId = calendarId,
                         rangeStart = rangeStart,
                         rangeEnd = rangeEnd,
-                        events = events
+                        events = events,
+                        uidNamespace = uidNamespace
                     )
                 }
                 runOnUiThread {
@@ -1558,16 +1524,25 @@ class MainActivity : FlutterActivity() {
                 val rangeStart = (args["rangeStartMillis"] as? Number)?.toLong() ?: 0L
                 val rangeEnd = (args["rangeEndMillis"] as? Number)?.toLong() ?: Long.MAX_VALUE
                 val removed = synchronized(calendarOperationLock) {
+                    val identity = calendarTitle?.let(GakujoCalendarIdentityPolicy::forTitle)
+                        ?: GakujoCalendarIdentity.NORMAL
                     val calendarId = calendarTitle?.let {
                         existingCalendarId(
                             calendarTitle = it,
-                            identity = GakujoCalendarIdentityPolicy.forTitle(it)
+                            identity = identity
                         )
                     }
-                    if (calendarTitle != null && calendarId == null) {
-                        deleteLegacyGakujoEventsFromWritableCalendars(rangeStart, rangeEnd)
+                    if (identity == GakujoCalendarIdentity.VALIDATION && calendarId == null) {
+                        0
                     } else {
-                        deleteExistingGakujoEvents(rangeStart, rangeEnd, calendarId)
+                        val eventIds = GakujoCalendarEventPolicy.eventIdsForExplicitDelete(
+                            existingEvents = existingGakujoEvents(calendarId),
+                            writableCalendarIds = if (calendarId == null) writableCalendarIds() else emptySet(),
+                            replacementRange = CalendarEventReplacementRange(rangeStart, rangeEnd),
+                            calendarId = calendarId,
+                            identity = identity
+                        )
+                        deleteCalendarEventIds(eventIds)
                     }
                 }
                 runOnUiThread {
@@ -1704,10 +1679,10 @@ class MainActivity : FlutterActivity() {
             CalendarContract.Events.CONTENT_URI,
             arrayOf(CalendarContract.Events.DESCRIPTION),
             "${CalendarContract.Events.CALENDAR_ID}=? AND " +
-                "${CalendarContract.Events.DESCRIPTION} LIKE ?",
+                "${CalendarContract.Events.DESCRIPTION} LIKE ? ESCAPE '\\'",
             arrayOf(
                 calendarId.toString(),
-                "%${GakujoCalendarEventPolicy.EVENT_MARKER}%"
+                GakujoCalendarEventPolicy.EVENT_MARKER_LIKE
             ),
             null
         )?.use { cursor ->
@@ -1821,28 +1796,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun deleteExistingGakujoEvents(rangeStart: Long, rangeEnd: Long, calendarId: Long? = null): Int {
-        val existingEvents = existingGakujoEvents(calendarId)
-        val eventIds = GakujoCalendarEventPolicy.eventIdsToReplace(
-            existingEvents = existingEvents,
-            namespaces = emptySet(),
-            replacementRange = CalendarEventReplacementRange(rangeStart, rangeEnd)
-        )
-        return deleteCalendarEventIds(eventIds)
-    }
-
-    private fun deleteLegacyGakujoEventsFromWritableCalendars(
-        rangeStart: Long,
-        rangeEnd: Long
-    ): Int {
-        val eventIds = GakujoCalendarEventPolicy.eventIdsForExplicitLegacyDelete(
-            existingEvents = existingGakujoEvents(),
-            writableCalendarIds = writableCalendarIds(),
-            replacementRange = CalendarEventReplacementRange(rangeStart, rangeEnd)
-        )
-        return deleteCalendarEventIds(eventIds)
-    }
-
     private fun deleteCalendarEventIds(eventIds: List<Long>): Int {
         if (eventIds.isEmpty()) {
             return 0
@@ -1863,9 +1816,10 @@ class MainActivity : FlutterActivity() {
         calendarId: Long,
         rangeStart: Long,
         rangeEnd: Long,
-        events: List<GakujoCalendarEventData>
+        events: List<GakujoCalendarEventData>,
+        uidNamespace: String?
     ): CalendarSyncBatchResult {
-        val namespaces = GakujoCalendarEventPolicy.replacementNamespaces(events)
+        val namespaces = GakujoCalendarEventPolicy.replacementNamespaces(events, uidNamespace)
         val currentRange = CalendarEventReplacementRange(rangeStart, rangeEnd)
         val replacementRange = if (namespaces.isEmpty()) {
             GakujoCalendarEventPolicy.unionRange(
@@ -1875,9 +1829,17 @@ class MainActivity : FlutterActivity() {
         } else {
             currentRange
         }
-        val eventIds = if (namespaces.isNotEmpty()) {
+        val eventIds = if (events.isEmpty()) {
+            GakujoCalendarEventPolicy.eventIdsToReplace(
+                existingEvents = existingGakujoEvents(calendarId),
+                namespaces = namespaces,
+                replacementRange = currentRange,
+                restrictToRange = true
+            )
+        } else if (namespaces.isNotEmpty()) {
             val namespace = namespaces.single()
-            val includeForeignCalendars = needsNamespaceCleanup(namespace)
+            val includeForeignCalendars = namespace != GakujoCalendarEventPolicy.VALIDATION_UID_NAMESPACE &&
+                needsNamespaceCleanup(namespace)
             GakujoCalendarEventPolicy.eventIdsForNamespaceCleanup(
                 existingEvents = if (includeForeignCalendars) {
                     existingGakujoEvents()
@@ -1917,7 +1879,6 @@ class MainActivity : FlutterActivity() {
         }
         if (operations.isEmpty()) {
             rememberCalendarSyncRange(calendarId, currentRange)
-            namespaces.singleOrNull()?.let(::rememberNamespaceCleanup)
             return CalendarSyncBatchResult(added = 0, removed = 0)
         }
         val batchResults = contentResolver.applyBatch(CalendarContract.AUTHORITY, operations)
@@ -1925,7 +1886,9 @@ class MainActivity : FlutterActivity() {
             .take(eventIds.size)
             .sumOf { it.count ?: 0 }
         rememberCalendarSyncRange(calendarId, currentRange)
-        namespaces.singleOrNull()?.let(::rememberNamespaceCleanup)
+        if (events.isNotEmpty()) {
+            namespaces.singleOrNull()?.let(::rememberNamespaceCleanup)
+        }
         return CalendarSyncBatchResult(added = events.size, removed = removed)
     }
 
@@ -1937,9 +1900,9 @@ class MainActivity : FlutterActivity() {
             CalendarContract.Events.CALENDAR_ID
         )
         val selectionParts = mutableListOf(
-            "${CalendarContract.Events.DESCRIPTION} LIKE ?"
+            "${CalendarContract.Events.DESCRIPTION} LIKE ? ESCAPE '\\'"
         )
-        val selectionArgs = mutableListOf("%${GakujoCalendarEventPolicy.EVENT_MARKER}%")
+        val selectionArgs = mutableListOf(GakujoCalendarEventPolicy.EVENT_MARKER_LIKE)
         if (calendarId != null) {
             selectionParts.add("${CalendarContract.Events.CALENDAR_ID}=?")
             selectionArgs.add(calendarId.toString())

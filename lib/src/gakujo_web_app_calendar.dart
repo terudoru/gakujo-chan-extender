@@ -470,7 +470,11 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           uidNamespace: uidNamespace,
           termLabel: termLabel,
         );
-        if (events.isEmpty) {
+        // The iOS and macOS bridges still refuse an empty replacement, so
+        // only Android clears a range whose last class was cancelled.
+        if (events.isEmpty &&
+            deadlineEvents.isEmpty &&
+            (Platform.isIOS || Platform.isMacOS)) {
           _showSnackBar(
             '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業日がありませんでした',
           );
@@ -481,6 +485,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           rangeStart: termRange.start,
           rangeEnd: termRange.end,
           calendarTitle: settings.effectiveCalendarTitle,
+          uidNamespace: uidNamespace,
         );
         _showSnackBar(
           _calendarSyncMessage(
@@ -1414,6 +1419,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           rangeStart: termRange.start,
           rangeEnd: termRange.end,
           calendarTitle: _calendarValidationTitle,
+          uidNamespace: _calendarValidationUidNamespace,
         );
         _showSnackBar(
           '検証用カレンダーに${result.added}件の予定を追加しました'

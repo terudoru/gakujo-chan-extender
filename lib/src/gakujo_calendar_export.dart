@@ -651,7 +651,7 @@ class GakujoCalendarExport {
 """;
   }
 
-  /// Applies 休講・補講・教室変更 to weekly courses: a cancelled meeting is
+  /// Applies 休講・補講・教室変更 to courses: a cancelled meeting is
   /// left out, a make-up class is added once, and a room change moves that
   /// one meeting to the new room.
   static List<GakujoCalendarCourse> applyClassChanges(
@@ -672,7 +672,10 @@ class GakujoCalendarExport {
     for (final change in changes) {
       final matches = [
         for (var i = 0; i < courses.length; i += 1)
-          if (courses[i].recursWeekly &&
+          if ((courses[i].recursWeekly ||
+                  (courses[i].sourceDate != null &&
+                      _dateOnly(courses[i].sourceDate!) ==
+                          _dateOnly(change.date))) &&
               courses[i].period == change.period &&
               sameCourse(courses[i], change))
             i,
@@ -895,7 +898,8 @@ class GakujoCalendarExport {
       }
     }
 
-    final rawCourses = <Map<String, Object?>>[];
+    final datedCourses = <GakujoCalendarCourse>[];
+    final explicitlyWeekly = <GakujoCalendarCourse>{};
     for (final event in events) {
       final recurrenceId = event.first('RECURRENCE-ID').trim();
       final isException = recurrenceId.isNotEmpty;
@@ -912,10 +916,40 @@ class GakujoCalendarExport {
             isException ? const [] : excludedDatesByMaster[event] ?? const [],
       );
       if (course != null) {
-        rawCourses.add(course.toJson());
+        datedCourses.add(course);
+        if (!isException &&
+            RegExp(r'(?:^|;)FREQ=WEEKLY(?:;|$)')
+                .hasMatch(event.first('RRULE').trim().toUpperCase())) {
+          explicitlyWeekly.add(course);
+        }
       }
     }
-    return _coursesFromDecoded(rawCourses);
+    String slot(GakujoCalendarCourse course) => [
+          course.courseCode.isEmpty
+              ? displayTitleForCourse(course)
+              : course.courseCode,
+          course.weekday,
+          course.period,
+        ].join('|');
+    final weeksBySlot = <String, Set<DateTime>>{};
+    for (final course in datedCourses.where((course) => course.recursWeekly)) {
+      final date = course.sourceDate!;
+      weeksBySlot.putIfAbsent(slot(course), () => {}).add(
+            DateTime.utc(date.year, date.month, date.day - date.weekday + 1),
+          );
+    }
+    // A single dated meeting can be a make-up class, even on an ordinary day.
+    // Infer a weekly series only from observations in different weeks.
+    return _coursesFromDecoded([
+      for (final course in datedCourses)
+        course
+            .copyWith(
+              recursWeekly: course.recursWeekly &&
+                  (explicitlyWeekly.contains(course) ||
+                      (weeksBySlot[slot(course)]?.length ?? 0) >= 2),
+            )
+            .toJson(),
+    ]);
   }
 
   static GakujoCalendarCourse? _courseFromIcalendarEvent(
@@ -4107,7 +4141,7 @@ class GakujoCalendarExport {
         course.recursWeekly ? noClassDates : const <DateTime>[];
     for (final date in [...globalNoClassDates, ...course.excludedDates]) {
       final day = DateTime(date.year, date.month, date.day);
-      if (day.weekday != course.weekday ||
+      if ((course.recursWeekly && day.weekday != course.weekday) ||
           day.isBefore(rangeStart) ||
           day.isAfter(rangeEnd)) {
         continue;

@@ -77,6 +77,51 @@ void main() {
       expect(meetings, contains('10/28 10:30 知的財産概論 @ B-200'));
     });
 
+    test('a one-off cancellation matches only its date, course and period', () {
+      GakujoCalendarCourse meeting(int day, String title, int period) =>
+          GakujoCalendarCourse(
+            title: title,
+            weekday: DateTime.friday,
+            period: period,
+            sourceDate: DateTime(2026, 10, day),
+            recursWeekly: false,
+          );
+      final courses = GakujoCalendarExport.applyClassChanges(
+        [
+          meeting(23, 'A', 3),
+          meeting(30, 'A', 3),
+          meeting(23, 'A', 4),
+          meeting(23, 'B', 3),
+        ],
+        [change('kyuko-kyuko', '2026-10-23', '3', 'A', '')],
+      );
+      final events = GakujoCalendarEventBuilder.buildEvents(
+        courses: courses,
+        rangeStart: _term.start,
+        rangeEnd: _term.end,
+      );
+      expect(
+        events.map(
+          (event) => '${event.title}:${event.start.day}:${event.start.hour}',
+        ),
+        ['B:23:13', 'A:23:14', 'A:30:13'],
+      );
+      final ics = GakujoCalendarExport.buildIcs(
+        courses: courses,
+        rangeStart: _term.start,
+        rangeEnd: _term.end,
+      );
+      final blocks = ics.split('BEGIN:VEVENT').skip(1).toList();
+      expect(blocks, hasLength(3));
+      expect(
+        blocks.where((block) => block.contains('SUMMARY:A\r\n')).any(
+              (block) =>
+                  block.contains('DTSTART;TZID=Asia/Tokyo:20261023T130000'),
+            ),
+        isFalse,
+      );
+    });
+
     test('the page rows are read week by week', () async {
       final result = await Process.run(
         'node',

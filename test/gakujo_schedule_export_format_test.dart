@@ -3,9 +3,72 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_calendar_service.dart';
 
 /// Shapes observed on Gakujo's live schedule pages (2026-10).
 void main() {
+  String allDay(String date, String summary) => [
+        'BEGIN:VEVENT',
+        'DTSTART;VALUE=DATE:$date',
+        'SUMMARY:$summary',
+        'END:VEVENT',
+      ].join('\r\n');
+  List<GakujoCalendarCourse> coursesFrom(List<String> events) =>
+      GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+        ['BEGIN:VCALENDAR', ...events, 'END:VCALENDAR'].join('\r\n'),
+      );
+
+  test('a single ordinary-day make-up meeting stays a one-off', () {
+    final courses = coursesFrom([
+      allDay('20261023', '3限:A'),
+      allDay('20261002', '1限:B'),
+      allDay('20261030', '1限:B'),
+    ]);
+    final makeUp = courses.where((course) => course.title == 'A').toList();
+    expect(makeUp.single.recursWeekly, isFalse);
+    expect(
+      courses
+          .where((course) => course.title == 'B')
+          .every((course) => course.recursWeekly),
+      isTrue,
+    );
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: makeUp,
+      rangeStart: DateTime(2026, 10, 2),
+      rangeEnd: DateTime(2026, 11, 30),
+    );
+    expect(events.map((event) => event.start), [DateTime(2026, 10, 23, 13)]);
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: makeUp,
+      rangeStart: DateTime(2026, 10, 2),
+      rangeEnd: DateTime(2026, 11, 30),
+    );
+    expect(RegExp('BEGIN:VEVENT').allMatches(ics), hasLength(1));
+    expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20261023T130000'));
+    expect(ics, isNot(contains('RRULE:')));
+  });
+
+  test('duplicate dates and other weekdays or periods do not prove a series',
+      () {
+    final courses = coursesFrom([
+      allDay('20261023', '3限:A'),
+      allDay('20261023', '3限:A'),
+      allDay('20261030', '4限:A'),
+      allDay('20261026', '3限:A'),
+    ]);
+    expect(courses, hasLength(3));
+    expect(courses.every((course) => !course.recursWeekly), isTrue);
+  });
+
+  test('the same slot in different weeks proves a weekly series', () {
+    final courses = coursesFrom([
+      allDay('20261228', '3限:A'),
+      allDay('20270104', '3限:A'),
+    ]);
+    expect(courses, hasLength(2));
+    expect(courses.every((course) => course.recursWeekly), isTrue);
+  });
+
   test('the schedule export lists classes as all-day "N限：" events', () {
     String event(String date, String summary) => [
           'BEGIN:VEVENT',
@@ -110,8 +173,7 @@ void main() {
         '</div>';
     final html = [
       '<table><tr><td>',
-      cell('264T0507', '3', '1',
-          'プログラミング基礎Ⅱ&nbsp;工学部 計算機演習室&nbsp;2.0単位'),
+      cell('264T0507', '3', '1', 'プログラミング基礎Ⅱ&nbsp;工学部 計算機演習室&nbsp;2.0単位'),
       cell('264T0004', '3', '3', '技術者の心がまえ◆&nbsp;備考欄参照&nbsp;2.0単位'),
       cell('264G3531', '1', '6', '生成AI活用基礎&nbsp;　&nbsp;1.0単位'),
       '</td></tr></table>',
@@ -173,7 +235,8 @@ void main() {
 
     final courses = GakujoCalendarExport.withPageLocations(exported, page);
 
-    expect(courses.map((course) => course.location), ['A-101', 'A-101', 'Zoom']);
+    expect(
+        courses.map((course) => course.location), ['A-101', 'A-101', 'Zoom']);
   });
 }
 

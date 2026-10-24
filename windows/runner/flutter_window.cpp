@@ -90,7 +90,15 @@ void CopyWideString(wchar_t* destination,
   if (destination_count == 0) {
     return;
   }
-  wcsncpy_s(destination, destination_count, value.c_str(), _TRUNCATE);
+  size_t length = value.size();
+  if (length >= destination_count) {
+    length = destination_count - 1;
+  }
+  if (length > 0 && value[length - 1] >= 0xD800 &&
+      value[length - 1] <= 0xDBFF) {
+    --length;
+  }
+  wcsncpy_s(destination, destination_count, value.c_str(), length);
 }
 
 bool ShowDeadlineToast(const std::wstring& title,

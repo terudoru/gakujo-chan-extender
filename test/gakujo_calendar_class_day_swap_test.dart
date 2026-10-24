@@ -42,8 +42,10 @@ void main() {
     _event('a2', '20261013', '線形代数'), // Monday class on the swap day
     _event('a3', '20261019', '線形代数'),
     _event('b1', '20261006', '英語'),
+    _event('b3', '20261020', '英語'),
     _event('b2', '20261106', '英語'), // Tuesday class on the swap day
     _event('c1', '20261007', '物理学'),
+    _event('c3', '20261014', '物理学'),
     // An exam listed on an exam day, at a different period's start time.
     [
       'BEGIN:VEVENT',
@@ -172,6 +174,42 @@ void main() {
       GakujoCalendarExport.applyClassDaySwaps([weekly], _term3.classDaySwaps),
       [weekly],
     );
+  });
+
+  test('a cancelled swap-day meeting is absent from direct sync and ICS', () {
+    final courses = GakujoCalendarExport.applyClassChanges(
+      importedCourses(),
+      [
+        GakujoClassChange.fromJson({
+          'kind': 'kyuko-kyuko',
+          'date': '2026-10-13',
+          'period': '1',
+          'course': '線形代数',
+        })!,
+      ],
+    );
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: courses,
+      rangeStart: _term3.start,
+      rangeEnd: _term3.end,
+      noClassDates: _term3.noClassDates,
+      classDaySwaps: _term3.classDaySwaps,
+    );
+    final mondayDates = events
+        .where((event) => event.title == '線形代数')
+        .map((event) => '${event.start.month}/${event.start.day}');
+    expect(mondayDates, isNot(contains('10/13')));
+    expect(mondayDates, contains('10/19'));
+
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses,
+      rangeStart: _term3.start,
+      rangeEnd: _term3.end,
+      noClassDates: _term3.noClassDates,
+      classDaySwaps: _term3.classDaySwaps,
+    );
+    expect(ics, isNot(contains('DTSTART;TZID=Asia/Tokyo:20261013T084500')));
+    expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20261106T084500'));
   });
 
   test('the iCalendar export matches the device calendar events', () {
