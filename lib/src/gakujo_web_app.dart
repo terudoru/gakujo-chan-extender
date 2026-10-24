@@ -5042,8 +5042,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _offlineRetry.start();
             return;
           }
-          // A failed image or script must not replace the offline notice.
-          if (!error.isForMainFrame && _offlineRetry.isActive) {
+          // A failed image, script or blocked sub-request does not mean the
+          // page failed; showing it would replace 表示中 or the offline
+          // notice with an alarming 読込エラー.
+          if (!error.isForMainFrame) {
+            developer.log(
+              'Sub-resource load error: ${error.description}',
+              name: 'MoreBetterGakujo',
+            );
             return;
           }
           _setStatus('読込エラー: ${error.description}');
