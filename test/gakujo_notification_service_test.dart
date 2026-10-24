@@ -48,6 +48,41 @@ void main() {
     expect(notified, isFalse);
   });
 
+  test('execution-key deadlines notify with a durable portal or category URL',
+      () async {
+    const expiring = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+        'campussquare.do?_flowExecutionKey=e1s2';
+    const portal = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+        'campusportal.do?page=main';
+    final targets = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'notifyDeadline');
+      targets.add((call.arguments as Map)['url'] as String);
+      return true;
+    });
+    for (final category in ['Gakujo', 'レポート・小テスト']) {
+      final expected = category == 'Gakujo' ? portal : '$portal&tabId=en';
+      expect(durableGakujoLink(expiring, category), expected);
+      expect(
+        await GakujoNotificationService().notifyDeadline(
+          GakujoDeadlineEntry(
+            title: '課題A',
+            url: expiring,
+            dueText: '提出期限 2026/07/01 17:00',
+            detectedAt: DateTime.utc(2026, 6, 26),
+            source: category,
+          ),
+        ),
+        isTrue,
+      );
+      expect(targets.last, expected);
+      expect(
+        deadlineNotificationTargetUrl(targets.last, debugAllowed: false),
+        expected,
+      );
+    }
+  });
+
   test('notification calls fail closed when the platform channel is missing',
       () async {
     final service = GakujoNotificationService();

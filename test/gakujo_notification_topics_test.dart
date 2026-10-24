@@ -304,7 +304,11 @@ void main() {
       const portal = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
           'campusportal.do?page=main&tabId=sch';
       expect(durableGakujoLink(portal, 'スケジュール'), portal);
-      expect(durableGakujoLink(expiring, 'Gakujo'), expiring);
+      expect(
+        durableGakujoLink(expiring, 'Gakujo'),
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+        'campusportal.do?page=main',
+      );
     });
 
     test('keep one identity across visits', () {

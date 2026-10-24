@@ -159,7 +159,7 @@ List<GakujoDeadlineEntry> deadlineEntriesForAssignments(
 /// A link that still opens later. One carrying a per-visit
 /// `_flowExecutionKey` expires, so a tapped notification would land on
 /// 「ページの有効期限ぎれ」; such a link is replaced by the portal tab of its
-/// page [category].
+/// page [category], or the portal main page when the category is unknown.
 String durableGakujoLink(String url, String category) {
   if (!url.contains('_flowExecutionKey=')) {
     return url;
@@ -171,11 +171,8 @@ String durableGakujoLink(String url, String category) {
     '成績' => 'si',
     _ => null,
   };
-  if (tab == null) {
-    return url;
-  }
   return 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
-      'campusportal.do?page=main&tabId=$tab';
+      'campusportal.do?page=main${tab == null ? '' : '&tabId=$tab'}';
 }
 
 /// A link that opens a 連絡通知 again later. The list row's link only works

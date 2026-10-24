@@ -605,6 +605,8 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   WebViewFlutterGakujoWebViewController(this._inner);
 
   final WebViewController _inner;
+  final Stopwatch _contentProcessRecoveryClock = Stopwatch()..start();
+  final List<Duration> _contentProcessRecoveries = [];
 
   @override
   Future<void> setJavaScriptModeUnrestricted() async {
@@ -661,7 +663,20 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
         onWebResourceError: (error) {
           if (error.errorType ==
               WebResourceErrorType.webContentProcessTerminated) {
-            unawaited(_recoverFromTerminatedContentProcess());
+            if (consumeContentProcessRecoveryAttempt(
+              _contentProcessRecoveries,
+              _contentProcessRecoveryClock.elapsed,
+            )) {
+              unawaited(_recoverFromTerminatedContentProcess());
+            } else {
+              mainFrameConnectivityFailed = true;
+              delegate.onWebResourceError?.call(
+                const GakujoWebResourceError(
+                  description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+                ),
+              );
+              return;
+            }
           }
           final mapped = GakujoWebResourceError.fromWebViewFlutter(error);
           if (mapped.isForMainFrame && mapped.isConnectivityError) {
@@ -758,6 +773,22 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// Reserves one of at most three automatic recoveries in a rolling minute.
+@visibleForTesting
+bool consumeContentProcessRecoveryAttempt(
+  List<Duration> recoveries,
+  Duration now,
+) {
+  recoveries.removeWhere(
+    (recovery) => now - recovery >= const Duration(seconds: 60),
+  );
+  if (recoveries.length >= 3) {
+    return false;
+  }
+  recoveries.add(now);
+  return true;
 }
 
 /// The page to load after the WebView content process ended: the current

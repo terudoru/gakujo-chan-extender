@@ -119,6 +119,7 @@ class GakujoExpiredPageRecoveryScript {
       }
       var target = new URL(src, location.href);
       if (target.origin !== location.origin ||
+          target.searchParams.has('_flowExecutionKey') ||
           target.href.indexOf('_flowExecutionKey=') >= 0) {
         return;
       }

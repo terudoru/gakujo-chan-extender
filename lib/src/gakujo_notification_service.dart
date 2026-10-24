@@ -332,7 +332,11 @@ class GakujoNotificationService {
   }
 
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) {
-    return _show(title: entry.title, body: entry.dueText, url: entry.url);
+    return _show(
+      title: entry.title,
+      body: entry.dueText,
+      url: durableGakujoLink(entry.url, entry.source),
+    );
   }
 
   Future<bool> notifyReminder(GakujoReminder reminder) {

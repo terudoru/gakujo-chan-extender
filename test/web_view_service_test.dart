@@ -232,6 +232,38 @@ void main() {
     expect(androidUploadAcceptsPhotos(['application/pdf']), isFalse);
   });
 
+  test('content process recovery allows only three attempts per rolling minute',
+      () {
+    final recoveries = <Duration>[];
+    for (final seconds in [0, 10, 20]) {
+      expect(
+        consumeContentProcessRecoveryAttempt(
+            recoveries, Duration(seconds: seconds)),
+        isTrue,
+      );
+    }
+    for (final milliseconds in [30000, 59999]) {
+      expect(
+        consumeContentProcessRecoveryAttempt(
+            recoveries, Duration(milliseconds: milliseconds)),
+        isFalse,
+      );
+    }
+    expect(recoveries, hasLength(3));
+    for (final milliseconds in [60000, 60001, 70000, 80000]) {
+      expect(
+        consumeContentProcessRecoveryAttempt(
+            recoveries, Duration(milliseconds: milliseconds)),
+        milliseconds != 60001,
+      );
+    }
+    expect(recoveries, const [
+      Duration(seconds: 60),
+      Duration(seconds: 70),
+      Duration(seconds: 80),
+    ]);
+  });
+
   test('reloads the current allowed page after a content process ends', () {
     const report =
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=e1s2';

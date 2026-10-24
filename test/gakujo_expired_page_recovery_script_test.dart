@@ -116,6 +116,7 @@ void main() {
   for (final scenario in [
     'iframeNormal',
     'executionKey',
+    'encodedExecutionKey',
     'otherOrigin',
     'missingSrc',
     'invalidSrc',
@@ -295,6 +296,7 @@ let doc = normalDoc();
 if (scenario === 'iframeNormal' || scenario === 'laterLoad' ||
     scenario === 'topExpiredWithFrame') frameWindow.document = normalDoc();
 if (scenario === 'executionKey') src = '/campusweb/campussquare.do?_flowExecutionKey=stale-key';
+if (scenario === 'encodedExecutionKey') src = '/campusweb/campussquare.do?%5FflowExecutionKey=stale-key';
 if (scenario === 'otherOrigin') src = 'https://example.com/campusweb/campussquare.do?_flowId=flow';
 if (scenario === 'missingSrc') src = null;
 if (scenario === 'invalidSrc') src = 'https://[';

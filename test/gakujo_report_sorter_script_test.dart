@@ -132,6 +132,29 @@ void main() {
     );
   });
 
+  test('sorts full-width deadlines and range ends alongside ASCII dates',
+      () async {
+    await _expectDeadlineOrder(
+      now: '2026-12-31T14:30:00Z', // 23:30 in Japan.
+      reports: [
+        ['later', 'Not submitted', '2027/01/01 01:00'],
+        ['newYear', 'Not submitted', '２０２６／１２／３１　１０：００～０１／０１　００：００'],
+        ['endOfDay', 'Not submitted', '２０２６／１２／３１　２４：００'],
+        ['expired', 'Not submitted', '２０２６／１２／３１　２３：００'],
+        ['mixed', 'Not submitted', '2026/１２/31 ２３:５０'],
+        ['sameYear', 'Not submitted', '２０２６／１２／３０　１０：００～１２／３１　２３：４５'],
+      ],
+      expected: [
+        'sameYear',
+        'mixed',
+        'newYear',
+        'endOfDay',
+        'later',
+        'expired'
+      ],
+    );
+  });
+
   test('sorts the top report table when a readable iframe has none', () async {
     await evaluatePageScriptLifecycle(
       feature: 'report',
