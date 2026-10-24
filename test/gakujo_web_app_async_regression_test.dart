@@ -739,7 +739,7 @@ void main() {
       );
     });
 
-    test('failed destinations release recovery while login failures retain it',
+    test('failed destinations are marked while login failures retain recovery',
         () {
       const portal =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
@@ -762,14 +762,15 @@ void main() {
         navigationCandidateUrl: candidate,
         navigationUrl: reports,
       );
-      expect(afterFailure, isNull);
-      // Windows can fail before SourceChanged/onPageStarted updates the URL.
+      expect(afterFailure, isTrue);
+      // The failed page may already be visible when a new link is followed.
       expect(
         captureGakujoNavigationRecoveryCandidate(
           url: schedule,
-          currentUrl: messages,
+          currentUrl: reports,
           authenticatedUrl: messages,
-          navigationCandidateUrl: afterFailure,
+          navigationCandidateUrl: candidate,
+          navigationCandidateFailed: afterFailure,
         ),
         schedule,
       );
@@ -780,7 +781,7 @@ void main() {
             navigationCandidateUrl: candidate,
             navigationUrl: url,
           ),
-          reports,
+          isFalse,
         );
       }
       for (final error in [
@@ -797,7 +798,54 @@ void main() {
             navigationCandidateUrl: candidate,
             navigationUrl: reports,
           ),
-          reports,
+          isFalse,
+        );
+      }
+    });
+
+    test('offline recovery selects a new destination or retains its retry', () {
+      const portal =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      const authenticatedA = '$portal?page=main&tabId=kj';
+      const failedB = '$portal?page=main&tabId=en';
+      const requestedC = '$portal?page=main&tabId=sch';
+      for (final next in [requestedC, failedB]) {
+        final candidate = captureGakujoNavigationRecoveryCandidate(
+          url: failedB,
+          currentUrl: authenticatedA,
+          authenticatedUrl: authenticatedA,
+          navigationCandidateUrl: null,
+        );
+        final failed = gakujoNavigationRecoveryCandidateAfterError(
+          const GakujoWebResourceError(
+            description: 'offline',
+            isConnectivityError: true,
+          ),
+          navigationCandidateUrl: candidate,
+          navigationUrl: failedB,
+        );
+        expect(failed, isTrue);
+        final nextCandidate = captureGakujoNavigationRecoveryCandidate(
+          url: next,
+          currentUrl: failedB,
+          authenticatedUrl: authenticatedA,
+          navigationCandidateUrl: candidate,
+          navigationCandidateFailed: failed,
+        );
+        final loginCandidate = captureGakujoNavigationRecoveryCandidate(
+          url: '$portal?_eventId=login',
+          currentUrl: next,
+          authenticatedUrl: authenticatedA,
+          navigationCandidateUrl: nextCandidate,
+          navigationCandidateFailed: nextCandidate == candidate && failed,
+        );
+        expect(
+          selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: loginCandidate,
+            authenticatedUrl: authenticatedA,
+            pendingRestoreUrl: null,
+          ),
+          next,
         );
       }
     });

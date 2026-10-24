@@ -244,7 +244,7 @@ void main() {
       expect((shown().single.arguments as Map)['title'], expected.title);
       expect((shown().single.arguments as Map)['body'], expected.body);
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
+        'reminder|${expected.assignmentId}|${expected.at.millisecondsSinceEpoch}',
       });
 
       // A new coordinator, service and store read the persisted key.
@@ -253,8 +253,63 @@ void main() {
 
       expect(shown(), hasLength(1));
       expect(await restartedStore.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
+        'reminder|${expected.assignmentId}|${expected.at.millisecondsSinceEpoch}',
       });
+    });
+
+    test(
+        'delivery history survives a same-title kind appearing or disappearing',
+        () async {
+      for (final history in [
+        'new',
+        'legacy',
+        'collision',
+        'bareLegacy',
+        'bareCollision',
+      ]) {
+        FlutterSecureStorage.setMockInitialValues({});
+        calls.clear();
+        final store = GakujoActivityStore();
+        final open = assignment();
+        // A submitted quiz still changes the report's OS booking id.
+        final quiz = assignment(kind: '小テスト', status: '提出済');
+        final original = onTimeReminder(open);
+        final colliding = <GakujoReminder>[];
+        planReminders(
+          assignments: [open, quiz],
+          topics: {GakujoNotificationTopic.coursework},
+          preferences: const GakujoNotificationPreferences(
+            reminderOffsets: {GakujoReminderOffset.oneHour},
+          ),
+          now: now,
+          lateReminders: colliding,
+        );
+        expect(colliding.single.id, isNot(original.id));
+        if (history != 'new') {
+          final id = history.toLowerCase().contains('collision')
+              ? colliding.single.id
+              : original.id;
+          await store.addNotifiedDeadlineKeys([
+            history.startsWith('bare')
+                ? 'reminder|$id'
+                : 'reminder|$id|${original.at.millisecondsSinceEpoch}',
+          ]);
+        }
+        for (final assignments in [
+          [open],
+          [open, quiz],
+          [open],
+        ]) {
+          await store.mergeAssignments(assignments, isWholeList: true);
+          await sync(coordinator(GakujoActivityStore()));
+          expect(shown(), hasLength(history == 'new' ? 1 : 0), reason: history);
+        }
+        if (history == 'new') {
+          expect(await store.loadNotifiedDeadlineKeys(), {
+            'reminder|${open.id}|${original.at.millisecondsSinceEpoch}',
+          });
+        }
+      }
     });
 
     test('a pre-upgrade reminder key prevents catch-up replay', () async {
@@ -297,8 +352,8 @@ void main() {
 
       expect(shown(), hasLength(2));
       expect(await restartedStore.loadNotifiedDeadlineKeys(), {
-        'reminder|${firstReminder.id}|${firstReminder.at.millisecondsSinceEpoch}',
-        'reminder|${secondReminder.id}|${secondReminder.at.millisecondsSinceEpoch}',
+        'reminder|${firstReminder.assignmentId}|${firstReminder.at.millisecondsSinceEpoch}',
+        'reminder|${secondReminder.assignmentId}|${secondReminder.at.millisecondsSinceEpoch}',
       });
     });
 
@@ -336,7 +391,7 @@ void main() {
       expect(await restartedStore.loadNotifiedDeadlineKeys(), {
         'reminder|$id',
         'reminder|$id|legacySeen|${firstSeen.millisecondsSinceEpoch}',
-        'reminder|$id|${onTimeReminder(beyondBoundary).at.millisecondsSinceEpoch}',
+        'reminder|${beyondBoundary.id}|${onTimeReminder(beyondBoundary).at.millisecondsSinceEpoch}',
       });
     });
 
@@ -360,7 +415,7 @@ void main() {
 
       expect(shown(), isEmpty);
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
+        'reminder|${expected.assignmentId}|${expected.at.millisecondsSinceEpoch}',
       });
       // Moving the clock back into the catch-up window must not replay it.
       now = open.dueAt.subtract(const Duration(minutes: 30));
@@ -374,7 +429,7 @@ void main() {
       final open = assignment();
       final expected = onTimeReminder(open);
       final key =
-          'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}';
+          'reminder|${expected.assignmentId}|${expected.at.millisecondsSinceEpoch}';
       await source.mergeAssignments([open]);
       await sync(coordinator(source));
       expect(shown(), hasLength(1));
@@ -586,6 +641,41 @@ void main() {
       expect(await store.loadNotifiedDeadlineKeys(), hasLength(1));
     });
 
+    testWidgets(
+        'armed timers recheck submitted, withdrawn and changed deadlines',
+        (tester) async {
+      final store = GakujoActivityStore();
+      const dueIn = Duration(hours: 1, seconds: 1);
+      final submitted = assignment(title: 'submitted', dueIn: dueIn);
+      final withdrawn = assignment(title: 'withdrawn', dueIn: dueIn);
+      final extended = assignment(title: 'extended', dueIn: dueIn);
+      final unchanged = assignment(title: 'unchanged', dueIn: dueIn);
+      await store.mergeAssignments([submitted, withdrawn, extended, unchanged],
+          isWholeList: true);
+      await sync(
+        coordinator(store),
+        preferences: const GakujoNotificationPreferences(
+          reminderOffsets: {GakujoReminderOffset.oneHour},
+        ),
+      );
+      expect(shown(), isEmpty);
+
+      // Update the store without rebooking: the already armed timers must check.
+      await store.mergeAssignments([
+        assignment(title: submitted.title, status: '提出済', dueIn: dueIn),
+        assignment(title: extended.title, dueIn: const Duration(hours: 2)),
+        unchanged,
+      ], isWholeList: true);
+      now = now.add(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(shown().map((call) => (call.arguments as Map)['title']),
+          ['【あと1時間】レポート unchanged']);
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        'reminder|${unchanged.id}|${onTimeReminder(unchanged).at.millisecondsSinceEpoch}',
+      });
+    });
+
     testWidgets('an on-time in-app reminder is not shown again as late',
         (tester) async {
       final store = GakujoActivityStore();
@@ -608,7 +698,7 @@ void main() {
       // The timer must show and persist it before any catch-up sync runs.
       expect(shown(), hasLength(1));
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
+        'reminder|${expected.assignmentId}|${expected.at.millisecondsSinceEpoch}',
       });
 
       await sync(first);

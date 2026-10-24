@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 16'));
+    expect(script, contains('captureVersion = 17'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -148,6 +148,19 @@ void main() {
         .map((payload) => payload['url']);
     expect(urls, everyElement(contains('fileId=')));
     expect(urls.toSet(), hasLength(8));
+    expect(result['nativeSubmissions'], 0);
+  });
+
+  test('onclick anchors capture real download URLs exactly once', () async {
+    final result = await _evaluateBehavior('onclickAttachments');
+    expect(result['prevented'], [false, false, false, false, true, true, true]);
+    expect(result['handlersRun'], 4);
+    final urls = (result['captured'] as List)
+        .cast<Map>()
+        .map((payload) => payload['url']);
+    expect(urls, hasLength(3));
+    expect(urls.toSet(), hasLength(3));
+    expect(urls.first, endsWith('SDW-filerefer-flow&fileId=41881'));
     expect(result['nativeSubmissions'], 0);
   });
 
@@ -583,6 +596,26 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'onclickAttachments') {
+    vm.runInContext(buildScript, context);
+    const prevented = [];
+    let handlersRun = 0;
+    for (const href of [
+      '#attachment.pdf',
+      'javascript:download()',
+      'prepare.do',
+      'files.do?fileId=42',
+      '/campusweb/campussquare.do?_flowId=SDW-filerefer-flow&fileId=41881',
+      'exports/form.pdf',
+      '../campussquare.do?_eventId=download&fileId=42'
+    ]) {
+      clickStopped = false;
+      const intercepted = click(anchor(href, 'Download x.pdf', null, {onclick: 'return true'}));
+      prevented.push(intercepted);
+      if (!intercepted && !clickStopped) handlersRun += 1;
+    }
+    return {prevented, handlersRun, captured, nativeSubmissions};
+  }
   if (scenario === 'navigationLabels') {
     const navigationPrevented = [];
     for (const text of ['Download', 'ダウンロード']) {

@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 16;
+  var captureVersion = 17;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -645,9 +645,13 @@ class GakujoDownloadCaptureScript {
     var anchor = target.closest('a[href]');
     if (anchor) {
       var href = (anchor.getAttribute('href') || '').trim();
-      if (anchor.hasAttribute('onclick') || href.charAt(0) === '#' ||
-          /^javascript:/i.test(href)) return;
+      if (href.charAt(0) === '#' || /^javascript:/i.test(href)) return;
       var absoluteUrl = absoluteUrlOf(anchor, href);
+      if (anchor.hasAttribute('onclick') &&
+          !hasStrongDownloadSignal(absoluteUrl, {}) &&
+          !/filerefer/i.test(new URL(absoluteUrl).searchParams.get('_flowId') || '')) {
+        return;
+      }
       if (!shouldCapture(anchor, absoluteUrl, {})) {
         return;
       }

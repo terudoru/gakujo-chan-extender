@@ -151,6 +151,8 @@ class GakujoReminder {
     required this.url,
     required this.at,
     this.dueAt,
+    this.assignmentId,
+    this.legacyIds = const [],
   });
 
   final int id;
@@ -159,6 +161,9 @@ class GakujoReminder {
   final String url;
   final DateTime at;
   final DateTime? dueAt;
+  final String? assignmentId;
+  // Both historical OS ids, regardless of whether a same-title kind is present.
+  final List<int> legacyIds;
 
   Map<String, Object?> toJson() {
     return {
@@ -218,12 +223,12 @@ List<GakujoReminder> planReminders({
       final assignmentId = ids[assignment.notificationId]! > 1
           ? assignment.id
           : assignment.notificationId;
-      final id = '$assignmentId|${offset.storageValue}';
+      int idFor(String assignmentId) => '$assignmentId|${offset.storageValue}'
+          .codeUnits
+          .fold<int>(17, (hash, unit) => (hash * 31 + unit) & 0x3fffffff);
       final reminder = GakujoReminder(
         // Stable across runs so a reminder is replaced, not duplicated.
-        id: id.codeUnits.fold<int>(17, (hash, unit) {
-          return (hash * 31 + unit) & 0x3fffffff;
-        }),
+        id: idFor(assignmentId),
         title: '【あと${offset.label.replaceAll('前', '')}】'
             '${assignment.kind} ${assignment.title}',
         body: '${assignment.course}　'
@@ -232,6 +237,8 @@ List<GakujoReminder> planReminders({
         url: assignment.url,
         at: at,
         dueAt: due,
+        assignmentId: assignment.id,
+        legacyIds: [idFor(assignment.notificationId), idFor(assignment.id)],
       );
       if (isLate) {
         if (late == null || at.isAfter(late.at)) {
@@ -589,7 +596,8 @@ class GakujoDeadlineNotificationCoordinator {
       final booksAhead = await _notificationService.scheduleReminders(
         reminders,
         onInAppReminder: (reminder) => _enqueueNotificationOperation(
-          () => _notifyReminderOnce(reminder),
+          () => _notifyReminderOnce(reminder,
+              topics: topics, preferences: preferences),
         ),
       );
       if (booksAhead || lateReminders.isEmpty) {
@@ -600,27 +608,60 @@ class GakujoDeadlineNotificationCoordinator {
         return;
       }
       for (final reminder in lateReminders) {
-        await _notifyReminderOnce(reminder);
+        await _notifyReminderOnce(reminder,
+            topics: topics, preferences: preferences);
       }
     });
   }
 
-  Future<void> _notifyReminderOnce(GakujoReminder reminder) async {
-    final legacyKey = 'reminder|${reminder.id}';
-    final key = '$legacyKey|${reminder.at.millisecondsSinceEpoch}';
+  Future<void> _notifyReminderOnce(
+    GakujoReminder reminder, {
+    required Set<GakujoNotificationTopic> topics,
+    required GakujoNotificationPreferences preferences,
+  }) async {
+    if (reminder.assignmentId != null) {
+      final assignments = await _activityStore.loadAssignments();
+      GakujoAssignment? current;
+      for (final assignment in assignments) {
+        if (assignment.id == reminder.assignmentId) {
+          current = assignment;
+          break;
+        }
+      }
+      final assignment = current;
+      if (assignment == null ||
+          (preferences.skipSubmitted && assignment.isSubmitted) ||
+          preferences.isMuted(assignment.course) ||
+          !topics.contains(assignment.isSurvey
+              ? GakujoNotificationTopic.survey
+              : GakujoNotificationTopic.coursework) ||
+          assignment.dueAt != reminder.dueAt ||
+          !preferences.reminderOffsets.any((offset) =>
+              assignment.dueAt.subtract(offset.before) == reminder.at)) {
+        return;
+      }
+    }
+    final trigger = reminder.at.millisecondsSinceEpoch;
+    final key = 'reminder|${reminder.assignmentId ?? reminder.id}|$trigger';
+    final legacyKeys = {
+      for (final id in {reminder.id, ...reminder.legacyIds}) 'reminder|$id',
+    };
     final notifiedKeys = await _loadNotifiedKeys();
-    if (notifiedKeys.contains(key)) {
+    if (notifiedKeys.contains(key) ||
+        legacyKeys
+            .any((legacyKey) => notifiedKeys.contains('$legacyKey|$trigger'))) {
       return;
     }
-    final legacySeen = notifiedKeys
-        .where((key) => key.startsWith('$legacyKey|legacySeen|'))
-        .map((key) => int.tryParse(key.split('|').last))
-        .whereType<int>();
-    if (notifiedKeys.contains(legacyKey) &&
-        legacySeen.any((seen) =>
-            reminder.at.millisecondsSinceEpoch <=
-            seen + const Duration(hours: 2).inMilliseconds)) {
-      return;
+    for (final legacyKey in legacyKeys) {
+      final legacySeen = notifiedKeys
+          .where((key) => key.startsWith('$legacyKey|legacySeen|'))
+          .map((key) => int.tryParse(key.split('|').last))
+          .whereType<int>();
+      if (notifiedKeys.contains(legacyKey) &&
+          legacySeen.any((seen) =>
+              trigger <= seen + const Duration(hours: 2).inMilliseconds)) {
+        return;
+      }
     }
     final dueAt = reminder.dueAt;
     if ((dueAt != null && !dueAt.isAfter(_now())) ||

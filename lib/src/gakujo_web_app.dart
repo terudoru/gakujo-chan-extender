@@ -646,11 +646,17 @@ String? captureGakujoNavigationRecoveryCandidate({
   required String? currentUrl,
   required String? authenticatedUrl,
   required String? navigationCandidateUrl,
+  bool navigationCandidateFailed = false,
   bool debugAllowed = false,
 }) {
   // Keep the original protected request through redirects and login POSTs.
-  // A completed authenticated page or a failed destination releases it.
+  // A failed destination survives retries but yields to a new protected request.
   if (navigationCandidateUrl != null) {
+    if (navigationCandidateFailed &&
+        isGakujoNavigationRecoveryCandidateUrl(url,
+            debugAllowed: debugAllowed)) {
+      return url;
+    }
     return navigationCandidateUrl;
   }
   if (authenticatedUrl != null &&
@@ -663,18 +669,18 @@ String? captureGakujoNavigationRecoveryCandidate({
 }
 
 @visibleForTesting
-String? gakujoNavigationRecoveryCandidateAfterError(
+bool gakujoNavigationRecoveryCandidateAfterError(
   GakujoWebResourceError error, {
   required String? navigationCandidateUrl,
   required String? navigationUrl,
+  bool navigationCandidateFailed = false,
 }) {
   // A login redirect can fail too; retain its original protected destination.
-  if (error.isForMainFrame &&
-      error.isConnectivityError &&
-      navigationCandidateUrl == navigationUrl) {
-    return null;
-  }
-  return navigationCandidateUrl;
+  return navigationCandidateUrl != null &&
+      (navigationCandidateFailed ||
+          (error.isForMainFrame &&
+              error.isConnectivityError &&
+              navigationCandidateUrl == navigationUrl));
 }
 
 @visibleForTesting
@@ -1023,6 +1029,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
   String? _navigationRecoveryCandidateUrl;
+  bool _navigationRecoveryCandidateFailed = false;
   String? _mainFrameNavigationUrl;
   String? _deferredNavigationAfterPageOperationUrl;
   String? _deferredNotificationAfterPageOperationUrl;
@@ -3444,6 +3451,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
       if (_navigationRecoveryCandidateUrl == previous.url) {
         _navigationRecoveryCandidateUrl = null;
+        _navigationRecoveryCandidateFailed = false;
       }
     }
     _pendingMessageOpenTimer?.cancel();
@@ -3457,6 +3465,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _pendingLoginRestoreUrl = url;
     _loginRestoreAttempted = false;
     _navigationRecoveryCandidateUrl = url;
+    _navigationRecoveryCandidateFailed = false;
     _pendingMessageOpenTimer = Timer(const Duration(minutes: 3), () {
       if (identical(_pendingMessageOpen, pending)) {
         _setPendingMessageUrl(null);
@@ -4535,13 +4544,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _captureNavigationRecoveryCandidate(String url) {
     _mainFrameNavigationUrl = url;
-    _navigationRecoveryCandidateUrl = captureGakujoNavigationRecoveryCandidate(
+    final candidate = captureGakujoNavigationRecoveryCandidate(
       url: url,
       currentUrl: _currentPageUrl,
       authenticatedUrl: _sessionRecoveryUrl,
       navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+      navigationCandidateFailed: _navigationRecoveryCandidateFailed,
       debugAllowed: _debugAllowed,
     );
+    if (candidate != _navigationRecoveryCandidateUrl || candidate == null) {
+      _navigationRecoveryCandidateFailed = false;
+    }
+    _navigationRecoveryCandidateUrl = candidate;
   }
 
   Future<void> _handleSessionExpiredIfNeeded(
@@ -4566,6 +4580,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (navigationCandidateUrl == null &&
         _navigationRecoveryCandidateUrl == url) {
       _navigationRecoveryCandidateUrl = null;
+      _navigationRecoveryCandidateFailed = false;
     }
     final recoveryUrl = selectGakujoSessionRecoveryUrl(
       navigationCandidateUrl: navigationCandidateUrl,
@@ -5179,6 +5194,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _pendingLoginRestoreUrl = restoreTarget;
       _loginRestoreAttempted = false;
       _navigationRecoveryCandidateUrl = restoreTarget;
+      _navigationRecoveryCandidateFailed = false;
     }
     _beginPendingMessageNavigation(targetUrl);
     await _controller.loadUrl(targetUrl);
@@ -5326,6 +5342,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 debugAllowed: _debugAllowed,
               );
               _navigationRecoveryCandidateUrl = null;
+              _navigationRecoveryCandidateFailed = false;
               _lastSessionRecoveryNoticeUrl = null;
               await _resetAutofillSessionStateAfterAuthentication();
               if (!stillCurrent()) {
@@ -5420,11 +5437,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (!mounted) {
             return;
           }
-          _navigationRecoveryCandidateUrl =
+          _navigationRecoveryCandidateFailed =
               gakujoNavigationRecoveryCandidateAfterError(
             error,
             navigationCandidateUrl: _navigationRecoveryCandidateUrl,
             navigationUrl: _mainFrameNavigationUrl,
+            navigationCandidateFailed: _navigationRecoveryCandidateFailed,
           );
           handleGakujoWebResourceError(
             error,
@@ -5955,6 +5973,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _pendingLoginRestoreUrl = restoreTarget;
           _loginRestoreAttempted = false;
           _navigationRecoveryCandidateUrl = restoreTarget;
+          _navigationRecoveryCandidateFailed = false;
         }
       }
       final pageFinished = _waitForNextPageFinished(
