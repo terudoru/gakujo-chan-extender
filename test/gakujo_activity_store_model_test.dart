@@ -595,7 +595,7 @@ void main() {
       });
     }
 
-    test('infers a missing year from the current Japan date', () {
+    test('a yearless deadline stays expired across Japan New Year', () {
       final entry = deadline('12/31 23:59まで');
 
       expect(
@@ -605,11 +605,15 @@ void main() {
       // Japan is already in 2027 while UTC is still in 2026.
       expect(
         store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 15)),
-        isFalse,
+        isTrue,
+      );
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2027, 10, 1)),
+        isTrue,
       );
     });
 
-    test('still rolls an old month/day forward to the next year', () {
+    test('chooses the year closest to detection for a future January date', () {
       final entry = deadline('01/01 00:00まで');
 
       expect(
@@ -621,6 +625,36 @@ void main() {
         isTrue,
       );
     });
+
+    test('detection just after Japan New Year anchors December to last year',
+        () {
+      final entry = GakujoDeadlineEntry(
+        title: '課題',
+        url: 'https://gakujo.example/report',
+        dueText: '12/31 23:59まで',
+        detectedAt: DateTime.utc(2026, 12, 31, 15, 1),
+      );
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 12, 31, 15, 2)),
+        isTrue,
+      );
+    });
+  });
+
+  test('loadDeadlines does not revive an old yearless deadline', () async {
+    final store = GakujoActivityStore();
+    final detectedAt = DateTime.now().subtract(const Duration(days: 200));
+    final date = japanWallClock(detectedAt);
+    await store.replaceDeadlines([
+      GakujoDeadlineEntry(
+        title: '期限切れ課題',
+        url: 'https://gakujo.example/report',
+        dueText: '${date.month}/${date.day} 23:59まで',
+        detectedAt: detectedAt,
+      ),
+    ]);
+
+    expect(await store.loadDeadlines(), isEmpty);
   });
 
   test('loadDeadlines drops expired due dates after the grace period',

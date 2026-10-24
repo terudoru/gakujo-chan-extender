@@ -102,6 +102,7 @@ GakujoAssignment? assignmentForDeadline(
     title: entry.assignment,
     course: entry.course,
     courseCode: entry.courseCode,
+    kind: entry.assignmentKind,
   );
 }
 
@@ -112,7 +113,7 @@ String deadlineNotificationKey(
   GakujoAssignment? assignment,
 ) {
   if (assignment != null) {
-    return 'assignment|${assignment.id}';
+    return 'assignment|${assignment.notificationId}';
   }
   if (entry.assignment.isNotEmpty &&
       (entry.course.isNotEmpty || entry.courseCode.isNotEmpty)) {
@@ -133,6 +134,7 @@ class GakujoReminder {
     required this.body,
     required this.url,
     required this.at,
+    this.dueAt,
   });
 
   final int id;
@@ -140,6 +142,7 @@ class GakujoReminder {
   final String body;
   final String url;
   final DateTime at;
+  final DateTime? dueAt;
 
   Map<String, Object?> toJson() {
     return {
@@ -189,7 +192,7 @@ List<GakujoReminder> planReminders({
       if ((isLate && lateReminders == null) || at.isAfter(now.add(horizon))) {
         continue;
       }
-      final id = '${assignment.id}|${offset.storageValue}';
+      final id = '${assignment.notificationId}|${offset.storageValue}';
       final reminder = GakujoReminder(
         // Stable across runs so a reminder is replaced, not duplicated.
         id: id.codeUnits.fold<int>(17, (hash, unit) {
@@ -202,6 +205,7 @@ List<GakujoReminder> planReminders({
             '${two(shown.hour)}:${two(shown.minute)}まで',
         url: assignment.url,
         at: at,
+        dueAt: due,
       );
       if (isLate) {
         if (late == null || at.isAfter(late.at)) {
@@ -401,7 +405,7 @@ class GakujoNotificationService {
     final onInAppReminder = _onInAppReminder;
     if (onInAppReminder != null) {
       unawaited(onInAppReminder(reminder));
-    } else {
+    } else if (reminder.dueAt?.isAfter(_now()) ?? true) {
       unawaited(notifyReminder(reminder));
     }
   }
@@ -460,21 +464,31 @@ class GakujoDeadlineNotificationCoordinator {
     final deadlines = await _activityStore.loadDeadlines();
     final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
     final assignments = await _activityStore.loadAssignments();
+    final isWholeList = await _activityStore.assignmentsAreWholeList();
     final pending = <String, GakujoDeadlineEntry>{};
     for (final entry in deadlines) {
       if (pending.length >= 5) {
         break;
       }
       if (!isNotifiableDeadline(
-            entry,
-            topics: topics,
-            messages: messages,
-            excludeKeywords: messageExcludeKeywords,
-          ) ||
-          _activityStore.isDeadlinePassed(entry)) {
+        entry,
+        topics: topics,
+        messages: messages,
+        excludeKeywords: messageExcludeKeywords,
+      )) {
         continue;
       }
       final assignment = assignmentForDeadline(entry, assignments);
+      // A whole list proves an unmatched list entry was withdrawn. Messages
+      // and schedule-only entries do not make that promise.
+      if (isWholeList && entry.source == 'レポート・小テスト' && assignment == null) {
+        continue;
+      }
+      if (assignment != null
+          ? !assignment.dueAt.isAfter(_now())
+          : _activityStore.isDeadlinePassed(entry, now: _now())) {
+        continue;
+      }
       if (preferences.isMuted(assignment?.course ?? entry.course) ||
           (preferences.skipSubmitted && (assignment?.isSubmitted ?? false))) {
         continue;
@@ -547,7 +561,9 @@ class GakujoDeadlineNotificationCoordinator {
     if (notifiedKeys.contains(key)) {
       return;
     }
-    if (await _notificationService.notifyReminder(reminder)) {
+    final dueAt = reminder.dueAt;
+    if ((dueAt != null && !dueAt.isAfter(_now())) ||
+        await _notificationService.notifyReminder(reminder)) {
       await _activityStore.addNotifiedDeadlineKeys([key]);
     }
   }

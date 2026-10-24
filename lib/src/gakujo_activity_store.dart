@@ -82,6 +82,9 @@ class GakujoDeadlineEntry {
   final String courseCode;
   final String assignment;
 
+  String get assignmentKind =>
+      RegExp(r'^(\S*(?:レポート|小テスト|アンケート))\s').firstMatch(title)?.group(1) ?? '';
+
   bool get isDeadline => kind == 'deadline';
 
   /// Gakujo puts a per-visit `_flowExecutionKey` in its links; leaving it
@@ -391,6 +394,8 @@ class GakujoActivityStore {
   static const _changesKey = 'more_better_gakujo_activity_changes';
   static const _reportListsKey = 'more_better_gakujo_cached_report_lists';
   static const _assignmentsKey = 'more_better_gakujo_assignments';
+  static const _wholeAssignmentListKey =
+      'more_better_gakujo_whole_assignment_list';
   static const _maxAssignments = 200;
   static const _assignmentRetention = Duration(days: 30);
   static const _maxSnapshots = 120;
@@ -948,6 +953,11 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readAssignments()).value);
   }
 
+  Future<bool> assignmentsAreWholeList() {
+    return _enqueue(() async =>
+        (await _readRawValue(_wholeAssignmentListKey)).value == 'true');
+  }
+
   Future<_StorageReadResult<List<GakujoAssignment>>> _readAssignments() {
     return _readList(
       key: _assignmentsKey,
@@ -992,7 +1002,37 @@ class GakujoActivityStore {
       };
       final sorted = byId.values.toList()
         ..sort((a, b) => b.dueAt.compareTo(a.dueAt));
+      if (isWholeList) {
+        final deadlines = await _readDeadlines();
+        if (!deadlines.isSuccessful) {
+          return;
+        }
+        GakujoAssignment? match(
+          GakujoDeadlineEntry entry,
+          Iterable<GakujoAssignment> assignments,
+        ) =>
+            findAssignment(
+              assignments,
+              title: entry.assignment,
+              course: entry.course,
+              courseCode: entry.courseCode,
+              kind: entry.assignmentKind,
+            );
+        // Only a whole list proves a removal. Unrelated schedule entries
+        // and messages must survive, even if they name no assignment.
+        bool keepDeadline(GakujoDeadlineEntry entry) {
+          final tiedToList = entry.source == 'レポート・小テスト' ||
+              (entry.source == 'スケジュール' && match(entry, read.value) != null);
+          return !tiedToList || match(entry, sorted) != null;
+        }
+
+        await _writeList(_deadlinesKey, deadlines.value.where(keepDeadline));
+      }
       await _writeList(_assignmentsKey, sorted.take(_maxAssignments));
+      await _secureStorage.write(
+        key: _wholeAssignmentListKey,
+        value: isWholeList.toString(),
+      );
     });
   }
 
@@ -1103,6 +1143,7 @@ class GakujoActivityStore {
       await _secureStorage.delete(key: _reportListsKey);
       // Assignments are read from the same list.
       await _secureStorage.delete(key: _assignmentsKey);
+      await _secureStorage.delete(key: _wholeAssignmentListKey);
     });
   }
 
@@ -1199,13 +1240,13 @@ class GakujoActivityStore {
   /// a while afterwards, but telling about one then is no help.
   bool isDeadlinePassed(GakujoDeadlineEntry entry, {DateTime? now}) {
     final current = now ?? DateTime.now();
-    final dueAt = _deadlineDueAt(entry.dueText, now: current);
+    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: entry.detectedAt);
     return dueAt != null && !dueAt.isAfter(current);
   }
 
   bool _isActiveDeadline(GakujoDeadlineEntry entry) {
     final now = DateTime.now();
-    final dueAt = _deadlineDueAt(entry.dueText, now: now);
+    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: entry.detectedAt);
     if (dueAt == null) {
       return entry.detectedAt.isAfter(now.subtract(_undatedDeadlineRetention));
     }
@@ -1221,7 +1262,7 @@ class GakujoActivityStore {
     return change.changedAt.isAfter(DateTime.now().subtract(_changeRetention));
   }
 
-  DateTime? _deadlineDueAt(String text, {required DateTime now}) {
+  DateTime? _deadlineDueAt(String text, {required DateTime detectedAt}) {
     DateTime? deadlineDateTime(
       int year,
       int month,
@@ -1335,14 +1376,16 @@ class GakujoActivityStore {
     }
     final hour = int.tryParse(monthAndDay.group(4) ?? '') ?? 23;
     final minute = int.tryParse(monthAndDay.group(5) ?? '') ?? 59;
-    final currentYear = japanWallClock(now).year;
-    var dueAt = deadlineDateTime(currentYear, month, day, hour, minute);
-    if (dueAt == null) {
-      return null;
-    }
-    if (dueAt.add(_deadlineGracePeriod).isBefore(now) &&
-        now.difference(dueAt).inDays > 180) {
-      dueAt = deadlineDateTime(currentYear + 1, month, day, hour, minute);
+    final detectedYear = japanWallClock(detectedAt).year;
+    DateTime? dueAt;
+    for (final year in [detectedYear - 1, detectedYear, detectedYear + 1]) {
+      final candidate = deadlineDateTime(year, month, day, hour, minute);
+      if (candidate != null &&
+          (dueAt == null ||
+              candidate.difference(detectedAt).abs() <
+                  dueAt.difference(detectedAt).abs())) {
+        dueAt = candidate;
+      }
     }
     return dueAt;
   }

@@ -49,7 +49,7 @@ void main() {
     );
     expect(open.dueAt, _jst(2026, 10, 28, 16, 31));
     expect(open.isSubmitted, isFalse);
-    expect(open.id, '260G3529|第三回（通信とネットワーク）');
+    expect(open.id, '260G3529|第三回（通信とネットワーク）|小テスト');
 
     // The smartphone list, also served when the list is fetched on its own.
     expect(
@@ -70,6 +70,67 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('same-title reports and quizzes survive a merge with stored rows',
+      () async {
+    final report = _assignment(
+      _row('レポート', '第1回', '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+    );
+    final quiz = _assignment(
+      _row('小テスト', '第1回', '提出済', '2099/10/21 17:01 ～2099/10/28 16:31'),
+    );
+    // Stored rows have no ID field; old data must be rekeyed on reading.
+    FlutterSecureStorage.setMockInitialValues({
+      'more_better_gakujo_assignments': jsonEncode([report.toJson()]),
+    });
+    final store = GakujoActivityStore();
+    await store.mergeAssignments([quiz]);
+    expect((await store.loadAssignments()).map((a) => a.id).toSet(),
+        {report.id, quiz.id});
+    await store.mergeAssignments([report, quiz], isWholeList: true);
+    final restored = await GakujoActivityStore().loadAssignments();
+    expect(restored, hasLength(2));
+    for (final assignment in restored) {
+      final entry = deadlineEntriesForAssignments(
+        [assignment],
+        url: 'https://gakujo.example/report',
+        detectedAt: DateTime(2026, 10, 21),
+      ).single;
+      expect(assignmentForDeadline(entry, restored)?.kind, assignment.kind);
+    }
+    expect(findAssignment(restored, title: report.title), isNull);
+  });
+
+  for (final (closing, expected) in [
+    ('2026/10/31 24:00', _jst(2026, 11, 1)),
+    ('2026/12/31 24:00', _jst(2027, 1, 1)),
+    ('2028/02/29 24:00', _jst(2028, 3, 1)),
+  ]) {
+    test('a list row accepts midnight rollover: $closing', () {
+      expect(
+        _assignment(_row('レポート', '課題', '未提出', closing)).dueAt,
+        expected,
+      );
+    });
+  }
+
+  test('a list row rejects invalid dates and times around midnight', () {
+    for (final closing in [
+      '2026/02/30 24:00',
+      '2026/12/31 24:01',
+      '2026/12/31 25:00',
+      '2026/12/31 23:60',
+    ]) {
+      expect(
+        GakujoAssignment.fromReportRow(
+          _row('レポート', '課題', '未提出', closing),
+          capturedAt: DateTime(2026),
+        ),
+        isNull,
+        reason: closing,
+      );
+    }
   });
 
   group('isSubmitted', () {
@@ -183,6 +244,100 @@ void main() {
           ['小テスト 情報処理概論Ａ II 第三回']);
     });
 
+    test('an existing assignment notification key prevents upgrade replay',
+        () async {
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService();
+      await store.mergeAssignments([open]);
+      await store.mergeDeadlines([fromSchedule(open), fromList(open)]);
+      await store.addNotifiedDeadlineKeys(['assignment|260G3529|第三回']);
+
+      await GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+      ).notifyPendingDeadlines(notificationsEnabled: true);
+
+      expect(deadlineNotificationKey(fromList(open), open),
+          'assignment|260G3529|第三回');
+      expect(service.titles, isEmpty);
+    });
+
+    test('a matched exact closing time overrides a date-only deadline',
+        () async {
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService();
+      final expired = _assignment(
+        _row('小テスト', '第三回', '未提出', '2099/10/21 17:01 ～2099/10/28 10:00'),
+      );
+      await store.mergeAssignments([expired]);
+      await store.mergeDeadlines([fromSchedule(expired)]);
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => _jst(2099, 10, 28, 12),
+      );
+
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.titles, isEmpty);
+      // An unmatched schedule deadline still uses its date-only text.
+      await store.mergeAssignments(const [], isWholeList: true);
+      await store.mergeDeadlines([fromSchedule(submitted)]);
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.titles, [fromSchedule(submitted).title]);
+    });
+
+    test('a whole list removes only withdrawn coursework deadline entries',
+        () async {
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService();
+      final unrelated = GakujoDeadlineEntry(
+        title: '学内イベント',
+        url: 'https://gakujo.example/schedule',
+        dueText: '2099/10/28まで',
+        detectedAt: DateTime(2026, 10, 21),
+        source: 'スケジュール',
+        assignment: '授業外の予定',
+      );
+      final message = GakujoDeadlineEntry(
+        title: '課題の連絡',
+        url: 'https://gakujo.example/message',
+        dueText: '2099/10/28まで',
+        detectedAt: DateTime(2026, 10, 21),
+        source: '連絡通知',
+      );
+      final orphan = fromList(_assignment(
+        _row('レポート', '一覧にない課題', '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+      ));
+      await store.mergeAssignments([open]);
+      await store.mergeDeadlines([
+        fromList(open),
+        fromSchedule(open),
+        orphan,
+        unrelated,
+        message,
+      ]);
+      await store.mergeAssignments([submitted]);
+      expect(await store.loadDeadlines(), hasLength(5));
+
+      await store.mergeAssignments(const [], isWholeList: true);
+      // Pruning is persisted, so a restarted store also cannot notify them.
+      final restarted = GakujoActivityStore();
+      expect((await restarted.loadDeadlines()).map((e) => e.key).toSet(),
+          {unrelated.key, message.key});
+      // Even a stale list entry reintroduced by another scan stays silent.
+      await restarted.mergeDeadlines([orphan]);
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: restarted,
+        notificationService: service,
+      );
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.titles, unorderedEquals([unrelated.title, message.title]));
+      // A paged refresh no longer proves absence from the whole list.
+      await restarted.mergeAssignments([submitted]);
+      await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.titles.last, orphan.title);
+    });
+
     test('submitted assignments can still be told about', () async {
       expect(
         await notify(const GakujoNotificationPreferences(skipSubmitted: false)),
@@ -278,6 +433,8 @@ void main() {
       final again = plan(const GakujoNotificationPreferences());
       expect(again.map((r) => r.id), first.map((r) => r.id));
       expect(first.map((r) => r.id).toSet(), hasLength(first.length));
+      // These are the pre-upgrade course/title/offset booking IDs.
+      expect(first.map((r) => r.id), [812177153, 481562399]);
     });
   });
 
@@ -325,8 +482,7 @@ void main() {
 
     // The last open assignment leaves too when the list is empty.
     await store.mergeAssignments(const [], isWholeList: true);
-    expect((await store.loadAssignments()).map((a) => a.title),
-        ['終わった課題']);
+    expect((await store.loadAssignments()).map((a) => a.title), ['終わった課題']);
   });
 
   group('the notification choices travel', () {

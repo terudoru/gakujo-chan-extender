@@ -257,6 +257,49 @@ void main() {
       });
     });
 
+    test('a pre-upgrade reminder key prevents catch-up replay', () async {
+      final store = GakujoActivityStore();
+      final open = assignment();
+      // The pre-upgrade hash of 科目|課題|one_hour.
+      const oldId = 127832593;
+      await store.mergeAssignments([open]);
+      await store.addNotifiedDeadlineKeys(['reminder|$oldId']);
+
+      await sync(coordinator(store));
+
+      expect(onTimeReminder(open).id, oldId);
+      expect(shown(), isEmpty);
+      expect(await store.loadNotifiedDeadlineKeys(), {'reminder|$oldId'});
+    });
+
+    testWidgets('a reminder delayed past closing is skipped and marked done',
+        (tester) async {
+      final store = GakujoActivityStore();
+      final open = assignment(dueIn: const Duration(hours: 1, seconds: 1));
+      final expected = onTimeReminder(open);
+      await store.mergeAssignments([open]);
+      final first = coordinator(store);
+      await sync(
+        first,
+        preferences: const GakujoNotificationPreferences(
+          reminderOffsets: {GakujoReminderOffset.oneHour},
+        ),
+      );
+
+      // Sleep takes the wall clock past closing before either timer runs.
+      now = open.dueAt;
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(shown(), isEmpty);
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        'reminder|${expected.id}',
+      });
+      // Moving the clock back into the catch-up window must not replay it.
+      now = open.dueAt.subtract(const Duration(minutes: 30));
+      await sync(first);
+      expect(shown(), isEmpty);
+    });
+
     test('backup round trip does not repeat a Windows catch-up reminder',
         () async {
       final source = GakujoActivityStore();

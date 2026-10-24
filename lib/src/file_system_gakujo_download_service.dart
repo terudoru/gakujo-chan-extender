@@ -556,14 +556,10 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     String desiredName,
     File newFile,
   ) async {
-    final dot = desiredName.lastIndexOf('.');
-    final hasExtension = dot > 0 && dot < desiredName.length - 1;
-    final base = hasExtension ? desiredName.substring(0, dot) : desiredName;
-    final extension = hasExtension ? desiredName.substring(dot) : '';
     final candidateNames = {
       desiredName.toLowerCase(),
       for (var index = 1; index <= 999; index += 1)
-        '$base ($index)$extension'.toLowerCase(),
+        DownloadFileNamePolicy.numberedName(desiredName, index).toLowerCase(),
     };
     final size = await newFile.length();
     await for (final entity in directory.list(followLinks: false)) {

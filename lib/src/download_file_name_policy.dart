@@ -62,21 +62,36 @@ class DownloadFileNamePolicy {
       return desiredName;
     }
 
-    final extensionIndex = desiredName.lastIndexOf('.');
-    final hasExtension =
-        extensionIndex > 0 && extensionIndex < desiredName.length - 1;
-    final base =
-        hasExtension ? desiredName.substring(0, extensionIndex) : desiredName;
-    final extension = hasExtension ? desiredName.substring(extensionIndex) : '';
-
     var index = 1;
     while (true) {
-      final candidate = '$base ($index)$extension';
+      final candidate = numberedName(desiredName, index);
       if (!lowercaseExistingNames.contains(candidate.toLowerCase())) {
         return candidate;
       }
       index += 1;
     }
+  }
+
+  static String numberedName(String desiredName, int index) {
+    final dot = desiredName.lastIndexOf('.');
+    final hasExtension = dot > 0 && dot < desiredName.length - 1;
+    final base = hasExtension ? desiredName.substring(0, dot) : desiredName;
+    final extension = hasExtension ? desiredName.substring(dot) : '';
+    final suffix = ' ($index)';
+    final limit = 255 - suffix.length - extension.length;
+    if (base.length <= limit) {
+      return '$base$suffix$extension';
+    }
+    final shortened = StringBuffer();
+    // Dart lengths count UTF-16 units; never cut between a surrogate pair.
+    for (final rune in base.runes) {
+      final character = String.fromCharCode(rune);
+      if (shortened.length + character.length > limit) {
+        break;
+      }
+      shortened.write(character);
+    }
+    return '$shortened$suffix$extension';
   }
 
   static String? fileNameFromContentDisposition(String? header) {

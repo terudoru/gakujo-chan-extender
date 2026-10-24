@@ -330,6 +330,43 @@ void main() {
     }
   });
 
+  test('a 255-character collision saves and reuses the shortened suffix name',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final base = List.filled(251, 'a').join();
+      final desired = '$base.pdf';
+      final existing =
+          File('${directory.path}${Platform.pathSeparator}$desired');
+      await existing.writeAsBytes([9]);
+      final service = _dedupeService(directory, [1, 2, 3]);
+      final request = GakujoDownloadRequest(
+        url: _dedupeRequest.url,
+        method: 'GET',
+        courseName: 'course',
+        fileName: desired,
+        formFields: const {},
+      );
+      final first = await service.download(
+        request,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+      expect(first.fileName, '${base.substring(0, 247)} (1).pdf');
+      expect(first.fileName.length, 255);
+      expect(await File(first.location!).readAsBytes(), [1, 2, 3]);
+      final second = await service.download(
+        request,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+      expect(second.alreadySaved, isTrue);
+      expect(second.location, first.location);
+      expect(await existing.readAsBytes(), [9]);
+      expect(await directory.list().length, 2);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
   test('a deleted download can be saved again with its original name',
       () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');

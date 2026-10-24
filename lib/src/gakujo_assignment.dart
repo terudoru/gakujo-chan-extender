@@ -40,8 +40,11 @@ class GakujoAssignment {
   /// time zone the device is in.
   DateTime get dueInJapan => japanWallClock(dueAt);
 
-  /// The same assignment as found on other pages, such as the schedule.
-  String get id => assignmentId(
+  /// Reports and quizzes can share a title in the same course.
+  String get id => '$notificationId|${kind.replaceAll(RegExp(r'\s+'), '')}';
+
+  /// Keep the existing notification and reminder keys across upgrades.
+  String get notificationId => assignmentId(
         course: course,
         courseCode: courseCode,
         title: title,
@@ -114,17 +117,20 @@ class GakujoAssignment {
     }
     final last = times.last;
     final values = [for (var i = 1; i <= 5; i += 1) int.parse(last.group(i)!)];
-    final wallClock = DateTime.utc(
-      values[0],
-      values[1],
-      values[2],
-      values[3],
-      values[4],
-    );
-    if (wallClock.month != values[1] || wallClock.day != values[2]) {
+    final date = DateTime.utc(values[0], values[1], values[2]);
+    final hour = values[3];
+    final minute = values[4];
+    if (date.year != values[0] ||
+        date.month != values[1] ||
+        date.day != values[2] ||
+        hour > 24 ||
+        minute > 59 ||
+        (hour == 24 && minute != 0)) {
       return null;
     }
-    return wallClock.subtract(_japanOffset);
+    return date
+        .add(Duration(hours: hour, minutes: minute))
+        .subtract(_japanOffset);
   }
 }
 
@@ -234,8 +240,8 @@ const gakujoAssignmentListFetchScript = '''
 })()
 ''';
 
-/// Identity of an assignment across Gakujo's pages. The course code is the
-/// stable part when a page has it; the schedule page and the list both do.
+/// Legacy course/title key for notifications, reminders and cross-page
+/// matching. Stored assignment identities also include their kind.
 String assignmentId({
   required String course,
   required String courseCode,
@@ -253,18 +259,24 @@ GakujoAssignment? findAssignment(
   required String title,
   String course = '',
   String courseCode = '',
+  String kind = '',
 }) {
   if (title.trim().isEmpty) {
     return null;
   }
+  final candidates = assignments.where((assignment) =>
+      kind.isEmpty ||
+      assignment.kind == kind ||
+      (kind == 'アンケート' && assignment.isSurvey));
   if (course.isNotEmpty || courseCode.isNotEmpty) {
     final id = assignmentId(
       course: course,
       courseCode: courseCode,
       title: title,
     );
-    for (final assignment in assignments) {
-      if (assignment.id == id ||
+    final matches = <GakujoAssignment>[];
+    for (final assignment in candidates) {
+      if (assignment.notificationId == id ||
           (courseCode.isEmpty &&
               assignmentId(
                     course: assignment.course,
@@ -272,14 +284,14 @@ GakujoAssignment? findAssignment(
                     title: assignment.title,
                   ) ==
                   id)) {
-        return assignment;
+        matches.add(assignment);
       }
     }
-    return null;
+    return matches.length == 1 ? matches.single : null;
   }
   final compact = title.replaceAll(RegExp(r'\s+'), '');
   final matches = [
-    for (final assignment in assignments)
+    for (final assignment in candidates)
       if (assignment.title.replaceAll(RegExp(r'\s+'), '') == compact)
         assignment,
   ];

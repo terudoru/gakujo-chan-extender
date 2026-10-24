@@ -102,6 +102,39 @@ void main() {
     expect(name, 'lecture (1).pdf');
   });
 
+  test('collision suffixes fit within 255 units and keep the extension', () {
+    final base = List.filled(251, 'a').join();
+    final desired = '$base.pdf';
+    final existing = {desired};
+    for (var index = 1; index <= 12; index += 1) {
+      final suffix = ' ($index)';
+      final expected = '${base.substring(0, 251 - suffix.length)}$suffix.pdf';
+      final allocated = DownloadFileNamePolicy.uniqueName(desired, existing);
+      expect(allocated, expected);
+      expect(allocated.length, 255);
+      existing.add(allocated);
+    }
+  });
+
+  test('truncation does not split a surrogate pair at the suffix boundary', () {
+    final prefix = List.filled(246, 'a').join();
+    final desired = '$prefix😀xyz.pdf';
+    expect(desired.length, 255);
+    final allocated = DownloadFileNamePolicy.uniqueName(desired, {desired});
+    expect(allocated, '$prefix (1).pdf');
+    expect(allocated.codeUnits.any((unit) => unit >= 0xd800 && unit <= 0xdfff),
+        isFalse);
+    final intact = '${List.filled(245, 'a').join()}😀wxyz.pdf';
+    expect(DownloadFileNamePolicy.uniqueName(intact, {intact}),
+        '${List.filled(245, 'a').join()}😀 (1).pdf');
+  });
+
+  test('a full-length name without an extension also leaves suffix space', () {
+    final desired = List.filled(255, 'a').join();
+    expect(DownloadFileNamePolicy.uniqueName(desired, {desired}),
+        '${desired.substring(0, 251)} (1)');
+  });
+
   test('skips generated suffixes that differ only by case', () {
     final name = DownloadFileNamePolicy.uniqueName(
       'a.pdf',

@@ -22,6 +22,7 @@ object DeadlineReminders {
     const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"
     private const val PREFS = "deadline_reminders"
     private const val KEY_REMINDERS = "reminders"
+    private const val KEY_DELIVERED = "delivered"
     private const val EXTRA_ID = "reminder_id"
     private const val EXTRA_TITLE = "reminder_title"
     private const val EXTRA_BODY = "reminder_body"
@@ -77,17 +78,25 @@ object DeadlineReminders {
         )
         // The other alarm booked for this reminder must not show it again.
         cancel(context, reminder)
-        show(context, reminder)
+        val delivered = loadDelivered(context)
+        if (reminder.id !in delivered && show(context, reminder)) {
+            val history = DeadlineReminderDelivery.record(delivered, reminder.id)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_DELIVERED, JSONArray(history).toString())
+                .apply()
+        }
     }
 
-    private fun show(context: Context, reminder: Reminder) {
+    private fun show(context: Context, reminder: Reminder): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            return
+            return false
         }
         post(context, reminder.id, reminder.title.ifBlank { "課題の締切" }, reminder.body, reminder.url)
+        return true
     }
 
     /**
@@ -156,8 +165,9 @@ object DeadlineReminders {
     private fun book(context: Context, reminders: List<Reminder>) {
         val now = System.currentTimeMillis()
         val alarms = alarmManager(context)
+        val delivered = loadDelivered(context).toSet()
         for (reminder in reminders) {
-            if (reminder.atMillis <= now) {
+            if (!DeadlineReminderDelivery.shouldBook(reminder.id, reminder.atMillis, now, delivered)) {
                 continue
             }
             val pending = pendingIntent(context, reminder, whileIdle = false)
@@ -247,6 +257,17 @@ object DeadlineReminders {
                     atMillis = item.getLong("atMillis")
                 )
             }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun loadDelivered(context: Context): List<Int> {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_DELIVERED, null) ?: return emptyList()
+        return try {
+            val array = JSONArray(raw)
+            (0 until array.length()).map { array.getInt(it) }
         } catch (_: Exception) {
             emptyList()
         }
