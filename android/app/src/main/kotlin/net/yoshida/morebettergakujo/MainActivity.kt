@@ -852,6 +852,7 @@ class MainActivity : FlutterActivity() {
             )
         }
 
+        val requestUrlPath = URL(url).path
         val connection = openAllowedDownloadConnection(
             initialUrl = url,
             initialMethod = method,
@@ -904,7 +905,7 @@ class MainActivity : FlutterActivity() {
                     openInput = {
                         GakujoDownloadResponsePolicy.openValidated(
                             connection.inputStream, requestedFileName, mimeType, dispositionName,
-                            urlPath = connection.url.path
+                            urlPath = requestUrlPath
                         )
                     },
                     openOutput = {
@@ -961,6 +962,7 @@ class MainActivity : FlutterActivity() {
             )
         }
 
+        val requestUrlPath = URL(url).path
         val connection = openAllowedDownloadConnection(
             initialUrl = url,
             initialMethod = method,
@@ -1015,7 +1017,7 @@ class MainActivity : FlutterActivity() {
                 openInput = {
                     GakujoDownloadResponsePolicy.openValidated(
                         connection.inputStream, requestedFileName, mimeType, dispositionName,
-                        urlPath = connection.url.path
+                        urlPath = requestUrlPath
                     )
                 },
                 openOutput = {

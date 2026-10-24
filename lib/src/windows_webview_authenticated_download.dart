@@ -109,7 +109,7 @@ class WindowsWebViewAuthenticatedDownloadScript {
       const type = metadata.mimeType.split(';')[0].trim().toLowerCase();
       const checkPage = !/\\.html?\$/i.test(requestedName.trim()) &&
         !/\\.html?\$/i.test(dispositionName.trim()) &&
-        !/\\.html?\$/i.test(finalUrl.pathname) &&
+        !/\\.html?\$/i.test(url.pathname) &&
         !(type.startsWith('text/') && type !== 'text/html');
       const chunkSize = 256 * 1024;
       let chunkIndex = 0;

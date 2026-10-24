@@ -479,6 +479,7 @@ class GakujoReportDraftScript {
       }
       saveableFields(doc).forEach(function(field) {
         field.__MBG_REPORT_DRAFT_DIRTY = false;
+        delete field.__MBG_REPORT_DRAFT_CONFLICT;
       });
       updateStatus(doc, '下書きを削除しました');
     }
@@ -564,9 +565,14 @@ class GakujoReportDraftScript {
     return fields.map(function(field, index) {
       var kind = fieldKind(field);
       var value = fieldValue(field);
+      var group = kind === 'radio' ? radioGroup(field, fields) : [field];
+      if (kind === 'radio' && group[0] !== field) return null;
+      // An edit elsewhere must not replace an unresolved local answer.
+      if (field.__MBG_REPORT_DRAFT_CONFLICT && !group.some(function(other) {
+        return other.__MBG_REPORT_DRAFT_TOUCHED;
+      })) return field.__MBG_REPORT_DRAFT_CONFLICT;
+      delete field.__MBG_REPORT_DRAFT_CONFLICT;
       if (kind === 'radio') {
-        var group = radioGroup(field, fields);
-        if (group[0] !== field) return null;
         var checked = group.filter(function(other) { return other.checked; })[0];
         value = checked ? checked.value : null;
       }
@@ -606,6 +612,9 @@ class GakujoReportDraftScript {
     });
     updateStatus(doc, hasContent
       ? '下書きを保存しました（' + savedTime(savedAt, false) + '）' : '下書きは空です');
+    if (fields.some(function(field) { return field.__MBG_REPORT_DRAFT_CONFLICT; })) {
+      restoreDraft(doc, store, key, fields);
+    }
     return true;
   }
 
@@ -628,6 +637,7 @@ class GakujoReportDraftScript {
         if (!item || item.kind !== kind) return;
         var group = kind === 'radio' ? radioGroup(field, fields) : [field];
         if (kind === 'radio' && group[0] !== field) return;
+        delete field.__MBG_REPORT_DRAFT_CONFLICT;
         if (!force && group.some(function(other) {
           return other.__MBG_REPORT_DRAFT_DIRTY || other.__MBG_REPORT_DRAFT_TOUCHED;
         })) return;
@@ -636,6 +646,7 @@ class GakujoReportDraftScript {
           if (typeof value !== 'string' || value === fieldValue(field)) return;
           if (!force && compactText(fieldValue(field)).length > 0) {
             conflict = true;
+            field.__MBG_REPORT_DRAFT_CONFLICT = item;
             return;
           }
           if (!force && !value) return;
@@ -652,6 +663,11 @@ class GakujoReportDraftScript {
           })) return;
           var checked = group.filter(function(other) { return other.checked; })[0];
           if ((checked ? checked.value : null) === value) return;
+          if (!force && group.some(function(other) { return other.defaultChecked; })) {
+            conflict = true;
+            field.__MBG_REPORT_DRAFT_CONFLICT = item;
+            return;
+          }
           group.forEach(function(other) { setFieldValue(other, other.value === value); });
         } else {
           if (kind === 'checkbox' && typeof value !== 'boolean') return;
@@ -661,6 +677,14 @@ class GakujoReportDraftScript {
             });
           }))) return;
           if (JSON.stringify(fieldValue(field)) === JSON.stringify(value)) return;
+          if (!force && (kind === 'checkbox' && field.defaultChecked ||
+              kind === 'select' && Array.prototype.some.call(field.options, function(option) {
+                return option.defaultSelected;
+              }))) {
+            conflict = true;
+            field.__MBG_REPORT_DRAFT_CONFLICT = item;
+            return;
+          }
           setFieldValue(field, value);
         }
         restored = true;
@@ -899,6 +923,10 @@ class GakujoReportDraftScript {
       }
       var status = doc.getElementById('mbg-report-draft-status');
       if (status && status.__MBG_REPORT_DRAFT_KEY === key) {
+        Array.prototype.forEach.call(
+          doc.querySelectorAll('textarea,input,select,[contenteditable]'),
+          function(field) { delete field.__MBG_REPORT_DRAFT_CONFLICT; }
+        );
         var label = doc.getElementById('mbg-report-draft-status-label');
         if (label) label.textContent = '下書きを削除しました';
         ['mbg-report-draft-retry', 'mbg-report-draft-replace'].forEach(function(id) {

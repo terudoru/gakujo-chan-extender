@@ -147,7 +147,7 @@ void main() {
       try {
         final downloading = receiveWindowsWebViewDownload(
           request: GakujoDownloadRequest(
-            url: _request.url,
+            url: 'https://gakujo.iess.niigata-u.ac.jp/$urlPath',
             method: 'GET',
             fileName: name,
             courseName: '',

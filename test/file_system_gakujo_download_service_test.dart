@@ -135,7 +135,7 @@ void main() {
         );
         final saving = service.download(
           GakujoDownloadRequest(
-            url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+            url: 'https://gakujo.iess.niigata-u.ac.jp/$urlPath',
             method: 'GET',
             fileName: name,
             courseName: '',

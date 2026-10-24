@@ -12,13 +12,13 @@ class DownloadResponsePolicy {
     required String fileName,
     String? contentDispositionFileName,
     String? mimeType,
-    String? finalUrl,
+    String? requestUrl,
     required List<int> prefix,
   }) {
     final htmlName = RegExp(r'\.html?$', caseSensitive: false);
     if (htmlName.hasMatch(fileName.trim()) ||
         htmlName.hasMatch(contentDispositionFileName?.trim() ?? '') ||
-        htmlName.hasMatch(Uri.tryParse(finalUrl ?? '')?.path ?? '')) {
+        htmlName.hasMatch(Uri.tryParse(requestUrl ?? '')?.path ?? '')) {
       return;
     }
     final type = mimeType?.split(';').first.trim().toLowerCase() ?? '';

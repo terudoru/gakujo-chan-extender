@@ -64,7 +64,7 @@ void main() {
     for (final path in ['page.HTML?download=1', 'page.HtM#content']) {
       DownloadResponsePolicy.validate(
         fileName: 'Download',
-        finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/$path',
+        requestUrl: 'https://gakujo.iess.niigata-u.ac.jp/$path',
         mimeType: 'application/pdf',
         prefix: utf8.encode('<html>attachment</html>'),
       );
@@ -72,7 +72,7 @@ void main() {
     expect(
       () => DownloadResponsePolicy.validate(
         fileName: 'Download',
-        finalUrl: 'https://gakujo.iess.niigata-u.ac.jp/file?name=page.html',
+        requestUrl: 'https://gakujo.iess.niigata-u.ac.jp/file?name=page.html',
         mimeType: 'text/html',
         prefix: utf8.encode('<html>session expired</html>'),
       ),

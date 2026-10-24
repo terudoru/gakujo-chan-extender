@@ -45,6 +45,21 @@ class GakujoDownloadResponsePolicyTest {
     }
 
     @Test
+    fun rejectsPdfRequestsRedirectedToHtmlTimeoutPages() {
+        val requestedUrl = java.net.URL("https://gakujo.iess.niigata-u.ac.jp/file")
+        val requestUrlPath = requestedUrl.path
+        val finalUrl = java.net.URL(requestedUrl, "/campusweb/theme/default/Timeout.html")
+        assertTrue(finalUrl.path.endsWith(".html"))
+        val error = assertThrows(IllegalStateException::class.java) {
+            GakujoDownloadResponsePolicy.openValidated(
+                ByteArrayInputStream("<html>".toByteArray()), "attachment.pdf", "text/html",
+                urlPath = requestUrlPath
+            )
+        }
+        assertEquals(GakujoDownloadResponsePolicy.PAGE_RETURNED_MESSAGE, error.message)
+    }
+
+    @Test
     fun permitsExplicitHtmlFilesAndPreservesEveryByteOfRealAttachments() {
         for ((name, mimeType, bytes) in listOf(
             Triple("page.HTML", "text/html", "<html>attachment</html>".toByteArray()),

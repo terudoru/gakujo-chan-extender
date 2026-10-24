@@ -216,8 +216,7 @@ void main() {
     expect(result['replacementKey'], isNot(result['initialKey']));
   });
 
-  test('restores choices at defaults and dispatches input and change',
-      () async {
+  test('replaces server choices and dispatches input and change', () async {
     final result = await _evaluateDraftScenario('choicesDefault');
     expect(result['radio'], [false, true]);
     expect(result['checkbox'], [false, true]);
@@ -296,6 +295,37 @@ void main() {
     expect(result['afterStatus'], contains('保存済みの下書きを復元しました'));
     expect(result['replaceHidden'], isTrue);
     expect(result['events'], containsAll(['input', 'change']));
+  });
+
+  test('editing another field preserves an unresolved draft and replacement',
+      () async {
+    final result = await _evaluateDraftScenario('conflictOtherField');
+    expect(result['beforeEdit'], 'server old');
+    expect(result['storedQ1'], 'local newer');
+    expect(result['storedQ2'], 'another answer');
+    expect(result['replaceVisible'], isTrue);
+    expect(result['afterReplace'], 'local newer');
+    expect(result['afterOwnEdit'], 'student edit');
+  });
+
+  test('server choices conflict while implicit defaults restore automatically',
+      () async {
+    final result = await _evaluateDraftScenario('choiceServerAnswers');
+    final server = result['server'] as Map<String, dynamic>;
+    expect(server['before']['radio'], [true, false]);
+    expect(server['before']['checkbox'], [true, true]);
+    expect(server['before']['select'], ['a']);
+    expect(server['before']['multiple'], ['a']);
+    expect(server['replaceVisible'], isTrue);
+    expect(server['unchangedAfterHide'], isTrue);
+    for (final state in [server['after'], result['implicit']['before']]) {
+      expect(state['radio'], [false, true]);
+      expect(state['checkbox'], [false, true]);
+      expect(state['select'], ['b']);
+      expect(state['multiple'], ['b', 'c']);
+    }
+    expect(result['implicit']['replaceVisible'], isFalse);
+    expect(result['implicit']['unchangedAfterHide'], isTrue);
   });
 
   for (final event in ['ArrowLeft', 'Ctrl+C', 'change']) {
@@ -877,6 +907,7 @@ function runExtendedScenario() {
       const current = restoring.document.fields;
       [current[2], current[3]] = [current[3], current[2]];
       runPage(restoring);
+      restoring.document.getElementById('mbg-report-draft-replace').listeners.click();
       return {sameKey: restoring.document.__MBG_REPORT_DRAFT_IDENTITY.key === key,
         checksByValue: Object.fromEntries(current.slice(2, 4).map(field => [field.value, field.checked]))};
     }
@@ -896,6 +927,9 @@ function runExtendedScenario() {
         setSelection(current[5], ['c']);
       }
       runPage(restoring);
+      if (['choicesDefault', 'choicesEmpty'].includes(spec.scenario)) {
+        restoring.document.getElementById('mbg-report-draft-replace').listeners.click();
+      }
     }
     const eventCount = () => restoring.document.fields.reduce((sum, field) => sum + field.events.length, 0);
     const eventsAfterRestore = eventCount();
@@ -929,6 +963,71 @@ function runExtendedScenario() {
     return {quizBound: !!quiz.document.insertedStatus,
       unrelatedBound: !!unrelated.document.insertedStatus,
       loginBound: !!login.document.insertedStatus, count: storage.length};
+  }
+  if (spec.scenario === 'conflictOtherField') {
+    function form(value) {
+      const page = textPage(storage, {value});
+      page.document.fields = [page.field,
+        new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+      return page;
+    }
+    const page = form('local newer');
+    runPage(page);
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const key = storage.key(0);
+    const restoring = form('server old');
+    runPage(restoring);
+    const beforeEdit = restoring.field.value;
+    restoring.document.fields[1].value = 'another answer';
+    restoring.document.fields[1].dispatchEvent(new FakeEvent('input'));
+    const saved = JSON.parse(storage.getItem(key));
+    const button = restoring.document.getElementById('mbg-report-draft-replace');
+    const replaceVisible = button.style.display !== 'none';
+    button.listeners.click();
+    const afterReplace = restoring.field.value;
+    restoring.field.value = 'student edit';
+    restoring.field.dispatchEvent(new FakeEvent('input'));
+    return {beforeEdit, storedQ1: saved.fields[0].value,
+      storedQ2: saved.fields[1].value, replaceVisible, afterReplace,
+      afterOwnEdit: JSON.parse(storage.getItem(key)).fields[0].value};
+  }
+  if (spec.scenario === 'choiceServerAnswers') {
+    const source = choicePage(storage);
+    runPage(source);
+    const fields = source.document.fields;
+    fields[1].checked = true;
+    fields[2].checked = false;
+    fields[3].checked = true;
+    setSelection(fields[4], ['b']);
+    setSelection(fields[5], ['b', 'c']);
+    fields[1].dispatchEvent(new FakeEvent('change'));
+    const key = storage.key(0), original = storage.getItem(key);
+    function restore(serverAnswers) {
+      const page = choicePage(storage);
+      if (serverAnswers) {
+        for (const field of page.document.fields) {
+          for (const option of field.options) option.defaultSelected = option.selected;
+        }
+      } else {
+        for (const field of page.document.fields) {
+          field.defaultChecked = false;
+          field.checked = false;
+          for (const option of field.options) {
+            option.defaultSelected = false;
+            if (field.multiple) option.selected = false;
+          }
+        }
+      }
+      runPage(page);
+      const before = choiceState(page);
+      const button = page.document.getElementById('mbg-report-draft-replace');
+      const replaceVisible = button.style.display !== 'none';
+      hidePage(page);
+      const unchangedAfterHide = storage.getItem(key) === original;
+      if (replaceVisible) button.listeners.click();
+      return {before, replaceVisible, unchangedAfterHide, after: choiceState(page)};
+    }
+    return {server: restore(true), implicit: restore(false)};
   }
   if (spec.scenario === 'conflictNavigation') {
     const page = textPage(storage, {value: '端末の新しい下書き'});

@@ -54,7 +54,8 @@ class AuthenticatedDownloadedFile {
 
   Future<Uint8List> readBytes() async => _bytes ?? await _file!.readAsBytes();
 
-  Future<void> validateResponse(String fileName, {String? requestUrl}) async {
+  Future<void> validateResponse(String fileName,
+      {required String requestUrl}) async {
     Stream<List<int>> chunks() async* {
       final bytes = _bytes;
       if (bytes == null) {
@@ -78,7 +79,7 @@ class AuthenticatedDownloadedFile {
       fileName: fileName,
       contentDispositionFileName: contentDispositionFileName,
       mimeType: mimeType,
-      finalUrl: finalUrl.isEmpty ? requestUrl : finalUrl,
+      requestUrl: requestUrl,
       prefix: prefix.takeBytes(),
     );
   }

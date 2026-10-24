@@ -1,20 +1,34 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_download.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('an HTTP 200 HTML page fails an attachment fetch with the login message',
+  test('an HTML timeout redirect is rejected by Dart and Windows JavaScript',
       () async {
     const id = 'expired-session';
+    const finalUrl = 'https://gakujo.iess.niigata-u.ac.jp/'
+        'campusweb/theme/default/Timeout.html';
     const request = GakujoDownloadRequest(
       url: 'https://gakujo.iess.niigata-u.ac.jp/file',
       method: 'GET',
       fileName: 'attachment.pdf',
       courseName: '',
       formFields: {},
+    );
+    final downloaded = AuthenticatedDownloadedFile(
+      bytes: Uint8List.fromList(utf8.encode('<html>')),
+      finalUrl: finalUrl,
+      mimeType: 'text/html',
+    );
+    await expectLater(
+      downloaded.validateResponse(request.fileName, requestUrl: request.url),
+      throwsA(isA<PlatformException>()
+          .having((error) => error.code, 'code', 'download_failed')),
     );
     final result = await Process.run(
         'node',
@@ -26,7 +40,9 @@ void main() {
           WindowsWebViewAuthenticatedDownloadScript.poll(id),
           WindowsWebViewAuthenticatedDownloadScript.cleanup(id),
           'Text/HTML; charset=UTF-8',
-          '<html>login required</html>',
+          '<html>',
+          '',
+          finalUrl,
         ],
         stdoutEncoding: utf8,
         stderrEncoding: utf8);
@@ -139,22 +155,22 @@ void main() {
     });
   }
 
-  test('Windows exempts the response URL HTML path, excluding its query',
+  test('Windows exempts the request URL HTML path, excluding its query',
       () async {
     const id = 'html-url';
-    const request = GakujoDownloadRequest(
-      url: 'https://gakujo.iess.niigata-u.ac.jp/request.html',
-      method: 'GET',
-      fileName: 'Download',
-      courseName: '',
-      formFields: {},
-    );
     const body = '<html>attachment</html>';
     for (final (path, rejected) in [
       ('page.HTML?download=1', false),
       ('page.HtM', false),
       ('file?name=page.html', true),
     ]) {
+      final request = GakujoDownloadRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/$path',
+        method: 'GET',
+        fileName: 'Download',
+        courseName: '',
+        formFields: const {},
+      );
       final result = await Process.run(
         'node',
         [
@@ -167,7 +183,7 @@ void main() {
           'application/pdf',
           body,
           '',
-          'https://gakujo.iess.niigata-u.ac.jp/$path',
+          'https://gakujo.iess.niigata-u.ac.jp/redirected-file',
         ],
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
