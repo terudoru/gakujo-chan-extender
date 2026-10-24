@@ -151,17 +151,25 @@ class GakujoUploadCompressionScript {
         return;
       }
       var timer = window.setTimeout(function() {
+        var index = waiters.indexOf(waiter);
+        if (index >= 0) {
+          waiters.splice(index, 1);
+        }
+        if (!waiters.length && libraryWaiters[kind] === waiters) {
+          delete libraryWaiters[kind];
+        }
         reject(new Error('圧縮に必要な機能の読み込みがタイムアウトしました'));
       }, libraryTimeoutMs);
       var waiters = libraryWaiters[kind] = libraryWaiters[kind] || [];
-      waiters.push(function() {
+      var waiter = function() {
         window.clearTimeout(timer);
         if (libraryReady(kind)) {
           resolve();
         } else {
           reject(new Error('圧縮に必要な機能を読み込めませんでした'));
         }
-      });
+      };
+      waiters.push(waiter);
       if (waiters.length === 1) {
         channel.postMessage(kind);
       }
@@ -303,44 +311,151 @@ class GakujoUploadCompressionScript {
     { dpi: 56, quality: 0.45 }
   ];
 
+  var pdfTextMessage = 'PDFの文字が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
+  var pdfContentMessage = 'PDFの添付ファイル・フォーム・リンクを保持できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
+  var pdfFontChecks = [];
+
+  function keepOriginalPdf(message) {
+    var error = new Error(message);
+    error.keepOriginal = true;
+    return error;
+  }
+
+  // The bundled pdf.js worker runs on the page thread. Its warn() uses
+  // console.log, so listen there too, and restore the hooks after all jobs.
+  function watchPdfFonts() {
+    var check = { failed: false };
+    var console = window.console;
+    var hooks = [];
+    if (!pdfFontChecks.length && console) {
+      ['log', 'warn', 'error'].forEach(function(level) {
+        var original = console[level];
+        if (typeof original !== 'function') {
+          return;
+        }
+        var hook = function() {
+          var message = Array.prototype.join.call(arguments, ' ');
+          if ((level !== 'log' || /warning:/i.test(message)) &&
+              /font|cmap|glyph|character/i.test(message)) {
+            pdfFontChecks.forEach(function(active) { active.failed = true; });
+          }
+          return original.apply(console, arguments);
+        };
+        hooks.push(function() {
+          if (console[level] === hook) {
+            console[level] = original;
+          }
+        });
+        console[level] = hook;
+      });
+      pdfFontChecks.restore = function() {
+        hooks.forEach(function(restore) { restore(); });
+      };
+    }
+    pdfFontChecks.push(check);
+    check.stop = function() {
+      pdfFontChecks.splice(pdfFontChecks.indexOf(check), 1);
+      if (!pdfFontChecks.length && pdfFontChecks.restore) {
+        pdfFontChecks.restore();
+      }
+    };
+    check.verify = function() {
+      if (check.failed) {
+        throw keepOriginalPdf(pdfTextMessage);
+      }
+    };
+    return check;
+  }
+
   function compressPdf(input, file, progress) {
+    var fontCheck;
+    var loadingTask;
     return requestLibrary('pdf').then(function() {
       return readBytes(file);
     }).then(function(buffer) {
-      return window.pdfjsLib.getDocument({
+      fontCheck = watchPdfFonts();
+      // CMaps and standard font data are not bundled. Fail closed when the
+      // source needs them instead of submitting a PDF with missing glyphs.
+      loadingTask = window.pdfjsLib.getDocument({
         data: new Uint8Array(buffer),
         isEvalSupported: false,
-        useSystemFonts: true
-      }).promise;
+        useSystemFonts: true,
+        stopAtErrors: true,
+        verbosity: window.pdfjsLib.VerbosityLevel.WARNINGS
+      });
+      return loadingTask.promise;
     }).then(function(pdf) {
       var step = 0;
       function tryStep() {
+        fontCheck.verify();
         if (step >= pdfSteps.length) {
-          pdf.destroy();
           throw new Error('5MB以下まで小さくできませんでした');
         }
         var settings = pdfSteps[step];
-        return rasterizePdf(pdf, settings, progress).then(function(bytes) {
+        return rasterizePdf(pdf, settings, progress, fontCheck).then(function(bytes) {
+          fontCheck.verify();
           if (bytes && bytes.length <= targetBytes) {
-            pdf.destroy();
             return makeFile(input, [bytes], file, 'application/pdf');
           }
           step += 1;
           return tryStep();
         });
       }
-      return tryStep();
-    }, function(error) {
+      return Promise.all([pdf.getAttachments(), pdf.getFieldObjects()])
+        .then(function(content) {
+          fontCheck.verify();
+          if (content.some(function(items) {
+            return items && Object.keys(items).length;
+          })) {
+            throw keepOriginalPdf(pdfContentMessage);
+          }
+          return tryStep();
+        });
+    }).catch(function(error) {
+      if ((fontCheck && fontCheck.failed) ||
+          /font|cmap|glyph/i.test(String(error && error.message || error))) {
+        throw keepOriginalPdf(pdfTextMessage);
+      }
       if (error && error.name === 'PasswordException') {
         throw new Error('パスワード付きのPDFは圧縮できません');
       }
       throw error;
+    }).finally(function() {
+      // Keep observing warnings until pdf.js has finished destroying the job.
+      return Promise.resolve(loadingTask && loadingTask.destroy())
+        .then(function() { if (fontCheck) { fontCheck.verify(); } })
+        .finally(function() { if (fontCheck) { fontCheck.stop(); } });
+    });
+  }
+
+  function checkPdfPage(page, fontCheck) {
+    return Promise.all([
+      page.getTextContent(), page.getOperatorList(), page.getAnnotations()
+    ]).then(function(content) {
+      fontCheck.verify();
+      var hasText = content[0].items.some(function(item) {
+        return /\S/.test(item.str || '');
+      });
+      var ops = window.pdfjsLib.OPS;
+      var hasTextDrawing = content[1].fnArray.some(function(op) {
+        return op === ops.showText || op === ops.showSpacedText ||
+          op === ops.nextLineShowText || op === ops.nextLineSetSpacingShowText;
+      });
+      if (hasText && !hasTextDrawing) {
+        throw keepOriginalPdf(pdfTextMessage);
+      }
+      if (content[2].some(function(annotation) {
+        return /^(Link|Widget|FileAttachment)$/.test(annotation.subtype);
+      })) {
+        throw keepOriginalPdf(pdfContentMessage);
+      }
+      return page;
     });
   }
 
   // Returns the rebuilt PDF bytes, or null as soon as the pages alone already
   // exceed the target so the next, smaller step can start.
-  function rasterizePdf(pdf, settings, progress) {
+  function rasterizePdf(pdf, settings, progress, fontCheck) {
     var PDFDocument = window.PDFLib.PDFDocument;
     return PDFDocument.create().then(function(output) {
       var pageNumber = 0;
@@ -352,6 +467,8 @@ class GakujoUploadCompressionScript {
         }
         progress('PDFを圧縮しています… ' + pageNumber + '/' + pdf.numPages + 'ページ');
         return pdf.getPage(pageNumber).then(function(page) {
+          return checkPdfPage(page, fontCheck);
+        }).then(function(page) {
           var size = page.getViewport({ scale: 1 });
           var scale = settings.dpi / 72;
           var pixels = size.width * scale * size.height * scale;
@@ -365,12 +482,15 @@ class GakujoUploadCompressionScript {
           context.fillRect(0, 0, canvas.width, canvas.height);
           return page.render({ canvasContext: context, viewport: viewport }).promise
             .then(function() {
+              fontCheck.verify();
               return canvasToBlob(canvas, 'image/jpeg', settings.quality);
             })
             .then(function(blob) {
+              return readBytes(blob);
+            })
+            .finally(function() {
               releaseCanvas(canvas);
               page.cleanup();
-              return readBytes(blob);
             })
             .then(function(jpeg) {
               imageBytes += jpeg.byteLength;
@@ -545,11 +665,23 @@ class GakujoUploadCompressionScript {
 
   function handleChange(event) {
     var input = event.target;
-    if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED || !isFileInput(input) ||
-        isReplaying(input)) {
+    if (!isFileInput(input) || isReplaying(input)) {
+      return;
+    }
+    var token = input.__mbgUploadCompressionSelection =
+      (input.__mbgUploadCompressionSelection || 0) + 1;
+    if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
       return;
     }
     var files = Array.prototype.slice.call(input.files || []);
+    function isCurrentSelection() {
+      return input.__mbgUploadCompressionSelection === token &&
+        input.files && input.files.length === files.length &&
+        files.every(function(file, index) { return input.files[index] === file; });
+    }
+    if (input.__mbgUploadCompressionStatus) {
+      input.__mbgUploadCompressionStatus.textContent = '';
+    }
     var oversized = files.filter(function(file) {
       return file.size > limitBytes;
     });
@@ -579,7 +711,9 @@ class GakujoUploadCompressionScript {
       return sum + file.size;
     }, 0);
     function progress(message) {
-      showStatus(input, message, false);
+      if (isCurrentSelection()) {
+        showStatus(input, message, false);
+      }
     }
 
     // One file at a time keeps memory use bounded on phones.
@@ -597,6 +731,9 @@ class GakujoUploadCompressionScript {
     });
 
     chain.then(function() {
+      if (!isCurrentSelection()) {
+        return;
+      }
       var transfer = new DataTransferCtor();
       var compressedTotal = 0;
       for (var i = 0; i < results.length; i += 1) {
@@ -611,7 +748,10 @@ class GakujoUploadCompressionScript {
         formatSize(compressedTotal), false);
       replayChange(input);
     }, function(error) {
-      showStatus(input,
+      if (!isCurrentSelection()) {
+        return;
+      }
+      showStatus(input, error && error.keepOriginal ? error.message :
         '圧縮できませんでした: ' + (error && error.message || error) +
         '。元のファイルのままです。', true);
       replayChange(input);

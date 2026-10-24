@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
@@ -140,7 +143,10 @@ abstract class GakujoWebViewService {
 
   GakujoWebViewController createController();
 
-  Widget buildWidget(GakujoWebViewController controller);
+  Widget buildWidget(
+    GakujoWebViewController controller, {
+    ValueChanged<String>? onError,
+  });
 
   Future<void> configureController(
     GakujoWebViewController controller, {
@@ -157,11 +163,18 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
   }
 
   @override
-  Widget buildWidget(GakujoWebViewController controller) {
+  Widget buildWidget(
+    GakujoWebViewController controller, {
+    ValueChanged<String>? onError,
+  }) {
     final inner = (controller as WebViewFlutterGakujoWebViewController)._inner;
     final webView = WebViewWidget(controller: inner);
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return _AndroidUploadHost(controller: inner, child: webView);
+      return _AndroidUploadHost(
+        controller: inner,
+        onError: onError,
+        child: webView,
+      );
     }
     if (!needsFlutterJavaScriptDialogs(defaultTargetPlatform)) {
       return webView;
@@ -260,10 +273,13 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
 /// Receives webview_flutter_android's `FileSelectorParams`. The parameter is
 /// dynamic, like the other Android-only calls above, so this file does not
 /// depend on the Android implementation package directly.
-Future<List<String>> _pickAndroidUploadFiles(
+@visibleForTesting
+Future<List<String>> pickAndroidUploadFiles(
   dynamic params, {
   required Future<AndroidUploadSource?> Function() chooseSource,
   String? Function()? takeRecoveredPhoto,
+  ValueChanged<String>? onError,
+  ImagePicker? imagePicker,
 }) async {
   try {
     final acceptTypes = [
@@ -281,13 +297,17 @@ Future<List<String>> _pickAndroidUploadFiles(
       }
       if (source == AndroidUploadSource.recoveredPhoto) {
         final path = takeRecoveredPhoto?.call();
-        return [if (path != null && path.isNotEmpty) Uri.file(path).toString()];
+        if (path == null || path.isEmpty) {
+          throw StateError('撮影した写真が見つかりません');
+        }
+        return [await androidUploadFileUri(XFile(path))];
       }
       if (source == AndroidUploadSource.camera) {
-        final photo = await ImagePicker().pickImage(source: ImageSource.camera);
+        final photo = await (imagePicker ?? ImagePicker())
+            .pickImage(source: ImageSource.camera);
         return [
           if (photo != null && photo.path.isNotEmpty)
-            Uri.file(photo.path).toString(),
+            await androidUploadFileUri(photo),
         ];
       }
     }
@@ -301,7 +321,7 @@ Future<List<String>> _pickAndroidUploadFiles(
           ];
     return [
       for (final file in files)
-        if (file.path.isNotEmpty) Uri.file(file.path).toString(),
+        if (file.path.isNotEmpty) await androidUploadFileUri(file),
     ];
   } on Object catch (error, stackTrace) {
     developer.log(
@@ -310,8 +330,71 @@ Future<List<String>> _pickAndroidUploadFiles(
       error: error,
       stackTrace: stackTrace,
     );
+    onError?.call(_androidUploadErrorMessage(error));
     // An empty result cancels the chooser so the page can be used again.
     return const [];
+  }
+}
+
+String _androidUploadErrorMessage(Object error) {
+  if (error is PlatformException) {
+    final message = error.message?.trim();
+    return message == null || message.isEmpty ? error.code : message;
+  }
+  return '$error';
+}
+
+/// Preserve the provider's display name when its cached path has a different
+/// extension. Use a fresh directory so two selections cannot overwrite a file
+/// that the WebView is still uploading.
+@visibleForTesting
+Future<String> androidUploadFileUri(
+  XFile file, {
+  Future<Directory> Function()? temporaryDirectory,
+}) async {
+  final cached = File(file.path);
+  // Check provider/camera files even when no copy is needed.
+  final reader = await cached.open();
+  await reader.close();
+  final name = file.name.replaceAll(RegExp(r'[\x00-\x1f\x7f<>:"/\\|?*]'), '_');
+  if (name.isEmpty || name == '.' || name == '..') {
+    throw const FormatException('ファイル名を確認できませんでした');
+  }
+  if (name == cached.uri.pathSegments.last) {
+    return cached.uri.toString();
+  }
+  final root = await (temporaryDirectory ?? getTemporaryDirectory)();
+  final directory = await root.createTemp('mbg-upload-');
+  final destination = File('${directory.path}${Platform.pathSeparator}$name');
+  await file.saveTo(destination.path);
+  return destination.uri.toString();
+}
+
+@visibleForTesting
+Future<String?> recoverAndroidUploadPhoto({
+  ImagePicker? imagePicker,
+  ValueChanged<String>? onError,
+}) async {
+  try {
+    final response = await (imagePicker ?? ImagePicker()).retrieveLostData();
+    if (response.exception case final error?) {
+      throw error;
+    }
+    final path = response.file?.path;
+    if (response.isEmpty || path == null || path.isEmpty) {
+      return null;
+    }
+    await androidUploadFileUri(XFile(path));
+    return path;
+  } on Object catch (error, stackTrace) {
+    developer.log(
+      'Failed to recover a photo taken before the app restarted',
+      name: 'MoreBetterGakujo',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    onError?.call(_androidUploadErrorMessage(error));
+    return null;
   }
 }
 
@@ -337,10 +420,12 @@ class _AndroidUploadHost extends StatefulWidget {
   const _AndroidUploadHost({
     required this.controller,
     required this.child,
+    this.onError,
   });
 
   final WebViewController controller;
   final Widget child;
+  final ValueChanged<String>? onError;
 
   @override
   State<_AndroidUploadHost> createState() => _AndroidUploadHostState();
@@ -361,28 +446,24 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
   }
 
   Future<void> _recoverLostPhoto() async {
-    try {
-      final response = await ImagePicker().retrieveLostData();
-      final path = response.file?.path;
-      if (response.isEmpty || path == null || path.isEmpty || !mounted) {
-        return;
-      }
-      _recoveredPhotoPath = path;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'カメラの使用中にアプリが再起動しました。'
-            '撮影した写真は、次にファイルを選ぶときに使えます。',
-          ),
+    final path = await recoverAndroidUploadPhoto(onError: _onError);
+    if (path == null || !mounted) {
+      return;
+    }
+    _recoveredPhotoPath = path;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text(
+          'カメラの使用中にアプリが再起動しました。'
+          '撮影した写真は、次にファイルを選ぶときに使えます。',
         ),
-      );
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to recover a photo taken before the app restarted',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      ),
+    );
+  }
+
+  void _onError(String message) {
+    if (mounted) {
+      widget.onError?.call(message);
     }
   }
 
@@ -405,10 +486,11 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
       // Without this callback Android WebView ignores <input type="file">,
       // so assignment attachments cannot be chosen.
       await (controller.platform as dynamic).setOnShowFileSelector(
-        (dynamic params) => _pickAndroidUploadFiles(
+        (dynamic params) => pickAndroidUploadFiles(
           params,
           chooseSource: _chooseSource,
           takeRecoveredPhoto: _takeRecoveredPhoto,
+          onError: _onError,
         ),
       );
     } on Object catch (error, stackTrace) {
@@ -875,7 +957,10 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
   }
 
   @override
-  Widget buildWidget(GakujoWebViewController controller) {
+  Widget buildWidget(
+    GakujoWebViewController controller, {
+    ValueChanged<String>? onError,
+  }) {
     final windowsController = controller as WindowsGakujoWebViewController;
     // The WebView2 texture only forwards primary, secondary and middle
     // buttons, so mouse back/forward buttons would otherwise do nothing.

@@ -1249,7 +1249,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       onPointerMove: _handleTouchHistorySwipeMove,
       onPointerUp: _handleTouchHistorySwipeEnd,
       onPointerCancel: _handleTouchHistorySwipeEnd,
-      child: _webViewService.buildWidget(_controller),
+      child: _webViewService.buildWidget(
+        _controller,
+        onError: (message) => _showSnackBar('ファイルを選べませんでした: $message'),
+      ),
     );
 
     if (!_supportsDesktopZoom) {
