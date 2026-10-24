@@ -43,8 +43,9 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
+  var allowedLoginOrigins = ['https://gakujo.iess.niigata-u.ac.jp'];
   if (location.protocol !== 'https:' ||
-      location.hostname !== 'gakujo.iess.niigata-u.ac.jp') {
+      allowedLoginOrigins.indexOf(location.origin) === -1) {
     return;
   }
   var assistVersion = 9;
@@ -92,7 +93,7 @@ class LoginAutofillAssistScript {
   report('start', 'version=' + assistVersion);
 
   function pageSessionKey(suffix) {
-    var normalizedUrl = location.origin + location.pathname;
+    var normalizedUrl = location.origin + location.pathname.replace(/;[^/]*/g, '');
     return 'MBG_LOGIN_AUTOFILL_' + suffix + ':' + normalizedUrl;
   }
 
@@ -127,16 +128,31 @@ class LoginAutofillAssistScript {
     }
   }
 
-  function hasLoginError() {
-    var text = '';
-    try {
-      text = (document.body && (document.body.innerText || document.body.textContent) || '')
-        .replace(/\\s+/g, ' ')
-        .toLowerCase();
-    } catch (_) {
-      return false;
+  function hasLoginMessage(pattern) {
+    var documents = allDocuments();
+    for (var i = 0; i < documents.length; i += 1) {
+      var text = '';
+      try {
+        text = (documents[i].body &&
+          (documents[i].body.innerText || documents[i].body.textContent) || '')
+          .replace(/\\s+/g, ' ')
+          .toLowerCase();
+      } catch (_) {
+        continue;
+      }
+      if (pattern.test(text)) {
+        return true;
+      }
     }
-    return /認証失敗|認証に失敗|ログイン失敗|ログインに失敗|ユーザーidまたはパスワード|ユーザidまたはパスワード|idまたはパスワード|パスワード.*違|invalid.*password|authentication.*failed|login.*failed/.test(text);
+    return false;
+  }
+
+  function hasLoginError() {
+    return hasLoginMessage(/認証失敗|認証に失敗|ログイン失敗|ログインに失敗|ユーザーidまたはパスワード|ユーザidまたはパスワード|idまたはパスワード|パスワード.*違|invalid.*password|authentication.*failed|login.*failed/);
+  }
+
+  function hasLoginLockout() {
+    return hasLoginMessage(/ロックされています|ロック中|有効期限が切れ|期限切れ|パスワードを変更してください|パスワード変更が必要|一時的に利用できません/);
   }
 
   function shouldBlockAutoSubmit() {
@@ -158,7 +174,7 @@ class LoginAutofillAssistScript {
     var previousCredentialKey = sessionValue(pageSessionKey('LAST_CREDENTIAL'));
     var credentialsChanged = previousCredentialKey &&
       previousCredentialKey !== currentCredentialKey;
-    if (hasLoginError() && !credentialsChanged) {
+    if (hasLoginLockout() || (hasLoginError() && !credentialsChanged)) {
       setSessionValue(sessionKey('ERROR'), '1');
       return true;
     }
@@ -437,34 +453,12 @@ class LoginAutofillAssistScript {
     setIfMissing(target.password, 'aria-label', 'パスワード');
   }
 
-  function submitForm(target) {
-    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
-      return;
-    }
-    if (shouldBlockAutoSubmit()) {
-      report('submit-blocked', 'session-limit-or-error');
-      return;
-    }
-    markAutoSubmitAttempted();
-
-    var form = target.form;
-    var doc = target.doc;
-    var pageWindow = doc.defaultView || window;
-    var password = target.password;
-    var scope = form || doc;
-
-    if (form &&
-        form.id === 'wf_PTW0000011_20120827233559-form' &&
-        typeof pageWindow.send === 'function') {
-      report('submit', 'campus-square-send');
-      pageWindow.send();
-      return;
-    }
-
+  function findSubmitControl(target) {
+    var scope = target.form || target.doc;
     var candidates = Array.prototype.slice.call(
       scope.querySelectorAll('button, input, a, [role="button"]')
     );
-    var submitter = firstVisible(candidates, function(element) {
+    return firstVisible(candidates, function(element) {
       var type = (element.getAttribute('type') || '').toLowerCase();
       if (element === target.username || element === target.password ||
           type === 'hidden' || type === 'password' || type === 'text') {
@@ -487,6 +481,59 @@ class LoginAutofillAssistScript {
         /login|log in|sign in|submit|ログイン|サインイン|送信|認証|次へ/.test(text) ||
         /login|submit|auth/.test(idText);
     });
+  }
+
+  function hasAllowedAction(target, submitter) {
+    if (!target.form) {
+      return false;
+    }
+    try {
+      var actions = [target.form.getAttribute('action') || target.doc.URL];
+      if (submitter && submitter.getAttribute('formaction') !== null) {
+        actions.push(submitter.getAttribute('formaction') || target.doc.URL);
+      }
+      for (var i = 0; i < actions.length; i += 1) {
+        var action = new URL(actions[i], target.doc.URL);
+        var effectiveAction = new URL(actions[i], target.doc.baseURI || target.doc.URL);
+        if (action.protocol !== 'https:' || action.origin !== location.origin ||
+            effectiveAction.origin !== location.origin ||
+            allowedLoginOrigins.indexOf(action.origin) === -1) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function submitForm(target) {
+    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+      return;
+    }
+    var submitter = findSubmitControl(target);
+    if (!hasAllowedAction(target, submitter)) {
+      reportState('skip', 'foreign-action');
+      return;
+    }
+    if (shouldBlockAutoSubmit()) {
+      report('submit-blocked', 'session-limit-or-error');
+      return;
+    }
+    markAutoSubmitAttempted();
+
+    var form = target.form;
+    var doc = target.doc;
+    var pageWindow = doc.defaultView || window;
+    var password = target.password;
+
+    if (form &&
+        form.id === 'wf_PTW0000011_20120827233559-form' &&
+        typeof pageWindow.send === 'function') {
+      report('submit', 'campus-square-send');
+      pageWindow.send();
+      return;
+    }
 
     if (submitter) {
       report('submit', 'click');
@@ -528,6 +575,10 @@ class LoginAutofillAssistScript {
       return;
     }
 
+    if (!hasAllowedAction(target, findSubmitControl(target))) {
+      reportState('skip', 'foreign-action');
+      return;
+    }
     if (!window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE) {
       window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = true;
       report('challenge', 'target-found');

@@ -69,8 +69,7 @@ void main() {
     expect(script, contains('markAutoSubmitAttempted()'));
   });
 
-  test(
-      'changed secret gets one fresh attempt while the same secret stays blocked',
+  test('same and changed secrets stay blocked while an error remains visible',
       () async {
     String scriptFor(String secret) => TwoFactorAutofillScript.build(
           token: '654321',
@@ -86,7 +85,87 @@ void main() {
     );
 
     expect(sameSecret['clickCount'], 1, reason: jsonEncode(sameSecret));
-    expect(changedSecret['clickCount'], 2, reason: jsonEncode(changedSecret));
+    expect(changedSecret['clickCount'], 1);
+  });
+
+  test('two-factor attempt limit survives rotating URL matrix parameters',
+      () async {
+    final script = TwoFactorAutofillScript.build(token: '654321');
+    final result = await _evaluateTwoFactorAssist(
+      'for (var i = 0; i < 4; i += 1) {\n'
+      "  location = new URL('https://gakujo.iess.niigata-u.ac.jp/' +\n"
+      "    'campusweb;route=' + i + '/campussmart.do;JSESSIONID=' + i +\n"
+      "    ';view=' + i + '?step=' + i + '#' + i);\n"
+      '  delete window.__MBG_2FA_AUTO_SUBMITTED_KEY;\n'
+      '$script\n'
+      '}',
+    );
+
+    expect(result['clickCount'], 3);
+    final counts = (result['sessionValues'] as Map<String, dynamic>)
+        .entries
+        .where(
+            (entry) => entry.key.startsWith('MBG_2FA_AUTOFILL_SUBMIT_COUNT:'));
+    expect(counts, hasLength(1));
+    expect(counts.single.key, contains('/campusweb/campussmart.do:'));
+    expect(counts.single.value, '3');
+  });
+
+  test('blocks the first automatic two-factor submit on an existing error',
+      () async {
+    final script = TwoFactorAutofillScript.build(token: '654321');
+    for (final message in [
+      '認証コードが正しくありません',
+      '認証コードが無効です',
+      'Invalid code',
+    ]) {
+      final encodedMessage = jsonEncode(message);
+      final result = await _evaluateTwoFactorAssist(
+        'document.body.innerText = $encodedMessage;\n'
+        '$script\n'
+        "document.body.innerText = '';\n"
+        '$script',
+      );
+
+      expect(result['clickCount'], 0);
+      expect(
+        (result['sessionValues'] as Map<String, dynamic>)
+            .keys
+            .any((key) => key.startsWith('MBG_2FA_AUTOFILL_ERROR:')),
+        isTrue,
+      );
+    }
+  });
+
+  test('clicks only submit controls and excludes help, settings and back',
+      () async {
+    for (final submitter in [
+      {'tag': 'button', 'type': 'submit'},
+      {'tag': 'input', 'type': 'submit'},
+      {'tag': 'button'},
+    ]) {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(token: '654321'),
+        controls: [
+          {'tag': 'a', 'name': 'link', 'text': '認証'},
+          {'tag': 'div', 'role': 'button', 'name': 'role', 'text': '認証'},
+          {'tag': 'button', 'type': 'button', 'name': 'other', 'text': '認証'},
+          for (final text in [
+            '認証 設定方法',
+            '認証 ヘルプ',
+            'Verify Help',
+            '認証 設定',
+            '認証 戻る',
+            '認証 キャンセル',
+          ])
+            {'tag': 'button', 'type': 'submit', 'name': 'help', 'text': text},
+          {...submitter, 'name': 'verify'},
+        ],
+      );
+
+      expect(result['clickedNames'], ['verify']);
+      expect(result['clickCount'], 1);
+    }
   });
 
   test('fills the visible code field instead of a hidden template', () async {
@@ -178,6 +257,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   String script, {
   String? url,
   String? teardownScript,
+  List<Map<String, String>>? controls,
 }) async {
   final result = await Process.run(
       'node',
@@ -187,6 +267,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
         script,
         teardownScript ?? '',
         url ?? 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
+        jsonEncode({'controls': controls}),
       ],
       stdoutEncoding: utf8,
       stderrEncoding: utf8);
@@ -202,9 +283,11 @@ const _nodeDomHarness = r'''
 const vm = require('node:vm');
 const generatedScript = process.argv[1];
 const generatedTeardown = process.argv[2];
+const spec = JSON.parse(process.argv[4] || '{}');
 const reports = [];
 const consoleLogs = [];
 let clickCount = 0;
+const clickedNames = [];
 const sessionValues = new Map();
 const activeTimers = new Map();
 let nextTimerId = 1;
@@ -230,7 +313,10 @@ class FakeElement {
   closest(selector) { return selector === 'form' ? this.form : null; }
   dispatchEvent() { return true; }
   focus() {}
-  click() { clickCount += 1; }
+  click() {
+    clickCount += 1;
+    clickedNames.push(this.getAttribute('name') || '');
+  }
 }
 
 const hidden = new FakeElement('input', {
@@ -239,12 +325,17 @@ const hidden = new FakeElement('input', {
 const visible = new FakeElement('input', {
   name: 'ninshoCode', type: 'password'
 });
-const submit = new FakeElement('button', {type: 'submit', text: '認証'});
+const controls = (spec.controls || [
+  {tag: 'button', type: 'submit', text: '認証'}
+]).map((attributes) => new FakeElement(attributes.tag, attributes));
 const form = {
   querySelectorAll(selector) {
-    return selector === 'button, input, a, [role="button"]'
-      ? [hidden, visible, submit]
-      : [];
+    const elements = [hidden, visible, ...controls];
+    if (selector === 'button, input, a, [role="button"]') return elements;
+    if (selector === 'button, input') {
+      return elements.filter((element) => ['BUTTON', 'INPUT'].includes(element.tagName));
+    }
+    return [];
   }
 };
 const document = {
@@ -288,7 +379,7 @@ const window = {
 };
 window.window = window;
 document.defaultView = window;
-for (const element of [hidden, visible, submit]) {
+for (const element of [hidden, visible, ...controls]) {
   element.ownerDocument = document;
   element.form = form;
 }
@@ -296,6 +387,7 @@ for (const element of [hidden, visible, submit]) {
 const context = {
   window,
   document,
+  URL,
   location: new URL(process.argv[3]),
   Event: FakeEvent,
   console: {log(message) { consoleLogs.push(message); }}
@@ -311,6 +403,8 @@ process.stdout.write(JSON.stringify({
   hiddenValue: hidden.value,
   visibleValue: visible.value,
   clickCount,
+  clickedNames,
+  sessionValues: Object.fromEntries(sessionValues),
   reports,
   consoleLogs
 }));

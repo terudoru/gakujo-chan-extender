@@ -87,6 +87,167 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  test('checks form and submitter actions before filling and submitting',
+      () async {
+    final elements = [
+      {'tag': 'input', 'type': 'text', 'name': 'userId'},
+      {'tag': 'input', 'type': 'password', 'name': 'password'},
+      {'tag': 'button', 'type': 'submit', 'name': 'login', 'text': 'ログイン'},
+    ];
+    for (final attribute in ['action', 'formaction']) {
+      for (final action in [
+        '',
+        'submit.do',
+        'https://gakujo.iess.niigata-u.ac.jp/submit.do',
+        'https://foreign.example/submit.do',
+        '//foreign.example/submit.do',
+        'http://gakujo.iess.niigata-u.ac.jp/submit.do',
+        'https://gakujo.iess.niigata-u.ac.jp:8443/submit.do',
+        'javascript:void(0)',
+        'https://[',
+      ]) {
+        final allowed = action.isEmpty ||
+            action == 'submit.do' ||
+            action == 'https://gakujo.iess.niigata-u.ac.jp/submit.do';
+        final control = attribute == 'action'
+            ? "document.querySelectorAll('input')[0].form"
+            : "document.querySelectorAll('button, input, a, [role=\"button\"]')[2]";
+        final encodedAction = jsonEncode(action);
+        final result = await _evaluateLoginAssist(
+          elements,
+          setupScript: "$control.setAttribute('$attribute', $encodedAction);",
+          monitorTicks: 2,
+        );
+
+        expect(_valueOf(result, 'userId').isNotEmpty, allowed);
+        expect(_valueOf(result, 'password').isNotEmpty, allowed);
+        expect(result['clickCount'], allowed ? 1 : 0);
+        expect(result['requestSubmitCount'], 0);
+        expect(result['formSubmitCount'], 0);
+        expect(_hasReport(result, 'skip', 'foreign-action'), !allowed);
+      }
+    }
+    final foreignBase = await _evaluateLoginAssist(
+      elements,
+      setupScript: """
+document.baseURI = 'https://foreign.example/';
+document.querySelectorAll('input')[0].form.setAttribute('action', 'submit.do');
+""",
+    );
+    expect(_valueOf(foreignBase, 'password'), isEmpty);
+    expect(foreignBase['clickCount'], 0);
+    expect(_hasReport(foreignBase, 'skip', 'foreign-action'), isTrue);
+
+    final changedAction = await _evaluateLoginAssist(
+      elements,
+      setupScript: """
+window.setTimeout = function(callback) {
+  document.querySelectorAll('input')[0].form.setAttribute(
+    'action', 'https://foreign.example/submit.do');
+  callback();
+};
+""",
+    );
+    expect(changedAction['clickCount'], 0);
+    expect(changedAction['requestSubmitCount'], 0);
+    expect(changedAction['formSubmitCount'], 0);
+    expect(_hasReport(changedAction, 'skip', 'foreign-action'), isTrue);
+  });
+
+  test('stops automatic login on lockout and password expiry messages',
+      () async {
+    for (final message in [
+      'ロックされています',
+      'ロック中',
+      '有効期限が切れました',
+      '期限切れ',
+      'パスワードを変更してください',
+      'パスワード変更が必要',
+      '一時的に利用できません',
+    ]) {
+      final encodedMessage = jsonEncode(message);
+      final result = await _evaluateLoginAssist(
+        [
+          {'tag': 'input', 'type': 'text', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+          {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+        ],
+        setupScript: 'document.body.innerText = $encodedMessage;\n'
+            "window.sessionStorage.setItem('MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL:' + "
+            "location.origin + location.pathname, 'previous');\n"
+            'window.setInterval = function(callback) {\n'
+            "  document.body.innerText = '';\n"
+            '  callback();\n'
+            '  return 1;\n'
+            '};',
+        monitorTicks: 3,
+      );
+
+      expect(result['clickCount'], 0);
+      expect(_valueOf(result, 'password'), isEmpty);
+      expect(
+        (result['sessionValues'] as Map<String, dynamic>)
+            .keys
+            .any((key) => key.startsWith('MBG_LOGIN_AUTOFILL_ERROR:')),
+        isTrue,
+      );
+    }
+  });
+
+  test('login attempt limit survives rotating URL matrix parameters', () async {
+    final script = LoginAutofillAssistScript.build(
+      credentials: const GakujoLoginAutofillCredentials(
+        loginId: 'saved-user',
+        password: 'saved-password',
+      ),
+    );
+    final result = await _evaluateGeneratedLoginAssist(
+      '$script\n'
+      'delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;\n'
+      "location = new URL('https://gakujo.iess.niigata-u.ac.jp/"
+      "campusweb;route=second/campussmart.do;JSESSIONID=second;view=login"
+      "?step=second#second');\n"
+      'document.URL = location.href;\n'
+      '$script',
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+      ],
+      url: 'https://gakujo.iess.niigata-u.ac.jp/'
+          'campusweb;route=first/campussmart.do;jsessionid=first;view=login'
+          '?step=first#first',
+      monitorTicks: 2,
+    );
+
+    expect(result['clickCount'], 1);
+    final counts = (result['sessionValues'] as Map<String, dynamic>)
+        .entries
+        .where((entry) =>
+            entry.key.startsWith('MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:'));
+    expect(counts, hasLength(1));
+    expect(counts.single.key, contains('/campusweb/campussmart.do:'));
+    expect(counts.single.value, '1');
+  });
+
+  test('reads login failures and lockouts inside the login frame', () async {
+    for (final message in ['ログインに失敗しました', 'ロックされています']) {
+      final result = await _evaluateLoginAssist(
+        [
+          {'tag': 'input', 'type': 'text', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+          {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+        ],
+        frameBodyText: message,
+        monitorTicks: 3,
+      );
+
+      expect(_valueOf(result, 'password'), isEmpty);
+      expect(result['clickCount'], 0);
+      expect(_hasReport(result, 'ready-no-submit', 'target-found'), isTrue);
+    }
+  });
+
   for (final url in [
     'https://www.niigata-u.ac.jp/campussmart.do',
     'http://gakujo.iess.niigata-u.ac.jp/campussmart.do',
@@ -446,15 +607,23 @@ void main() {
 }
 
 Future<Map<String, dynamic>> _evaluateLoginAssist(
-  List<Map<String, String>> elements,
-) async {
+  List<Map<String, String>> elements, {
+  String setupScript = '',
+  String? frameBodyText,
+  int monitorTicks = 0,
+}) async {
   final script = LoginAutofillAssistScript.build(
     credentials: const GakujoLoginAutofillCredentials(
       loginId: 'saved-user',
       password: 'saved-password',
     ),
   );
-  return _evaluateGeneratedLoginAssist(script, elements);
+  return _evaluateGeneratedLoginAssist(
+    '$setupScript\n$script',
+    elements,
+    frameBodyText: frameBodyText,
+    monitorTicks: monitorTicks,
+  );
 }
 
 Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
@@ -462,6 +631,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   List<Map<String, String>> elements, {
   String? url,
   String? teardownScript,
+  String? frameBodyText,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
   int monitorTicks = 0,
@@ -473,6 +643,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
       'elements': elements,
       'url': url,
       'teardownScript': teardownScript,
+      'frameBodyText': frameBodyText,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
       'monitorTicks': monitorTicks,
@@ -622,6 +793,7 @@ const elements = spec.elements.map((attributes) =>
 form.children = elements;
 
 const document = {
+  URL: spec.url || 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
   body: {innerText: '', textContent: ''},
   defaultView: null,
   querySelector() { return null; },
@@ -684,10 +856,27 @@ for (const element of elements) {
   element.ownerDocument = document;
   element.form = form;
 }
+if (spec.frameBodyText != null) {
+  const frameDocument = {
+    ...document,
+    body: {innerText: spec.frameBodyText, textContent: spec.frameBodyText},
+    querySelectorAll(selector) {
+      return selector === 'iframe, frame' ? [] : form.querySelectorAll(selector);
+    }
+  };
+  const frameWindow = {...window, document: frameDocument};
+  frameDocument.defaultView = frameWindow;
+  document.querySelectorAll = (selector) => selector === 'iframe, frame'
+    ? [{contentWindow: frameWindow}]
+    : [];
+  form.ownerDocument = frameDocument;
+  for (const element of elements) element.ownerDocument = frameDocument;
+}
 
 const context = {
   window,
   document,
+  URL,
   location: new URL(spec.url ||
     'https://gakujo.iess.niigata-u.ac.jp/campussmart.do'),
   console: {log(message) { consoleLogs.push(message); }}

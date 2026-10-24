@@ -63,7 +63,7 @@ class TwoFactorAutofillScript {
   window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
 
   function sessionKey(suffix) {
-    var normalizedUrl = location.origin + location.pathname;
+    var normalizedUrl = location.origin + location.pathname.replace(/;[^/]*/g, '');
     return 'MBG_2FA_AUTOFILL_' + suffix + ':' + normalizedUrl + ':' +
       secretKey;
   }
@@ -132,7 +132,7 @@ class TwoFactorAutofillScript {
       return true;
     }
     var count = parseInt(sessionValue(sessionKey('SUBMIT_COUNT')) || '0', 10);
-    if (isFinite(count) && count > 0 && hasTwoFactorError()) {
+    if (hasTwoFactorError()) {
       return true;
     }
     return isFinite(count) && count >= maxAutoSubmitPerSession;
@@ -201,7 +201,7 @@ class TwoFactorAutofillScript {
       element.getAttribute && element.getAttribute('name'),
       element.getAttribute && element.getAttribute('class')
     ].filter(Boolean).join(' ').toLowerCase();
-    return /戻る|もどる|リセット|キャンセル|再送|reset|back|cancel|resend/.test(text) ||
+    return /設定方法|ヘルプ|help|設定|戻る|もどる|リセット|キャンセル|再送|reset|back|cancel|resend/.test(text) ||
       /reset|cancel|back/.test(idText);
   }
 
@@ -213,7 +213,7 @@ class TwoFactorAutofillScript {
     var form = input.form || input.closest('form');
     var scope = form || input.ownerDocument || document;
     var candidates = Array.prototype.slice.call(
-      scope.querySelectorAll('button, input, a, [role="button"]')
+      scope.querySelectorAll('button, input')
     );
     var explicit = null;
     var labeled = null;
@@ -224,7 +224,8 @@ class TwoFactorAutofillScript {
       }
       var tagName = (element.tagName || '').toLowerCase();
       var type = (element.getAttribute('type') || '').toLowerCase();
-      if (type === 'hidden' || type === 'password' || type === 'text') {
+      if (!((tagName === 'button' && (type === '' || type === 'submit')) ||
+            (tagName === 'input' && type === 'submit'))) {
         continue;
       }
       if (!isVisible(element) || isBackOrResetControl(element)) {
