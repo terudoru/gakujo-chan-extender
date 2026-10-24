@@ -338,7 +338,7 @@ class GakujoUploadCompressionScript {
         var hook = function() {
           var message = Array.prototype.join.call(arguments, ' ');
           var textWarning = /font|cmap|glyph|character/i.test(message);
-          var renderWarning = /image|jpx|jbig|jpeg|decode|unable to|failed|corrupt|invalid|bad /i.test(message);
+          var renderWarning = /image|jpx|jbig|jpeg|decode|unable to|failed|corrupt|invalid|bad |unsupported|mask|colorspace|smask/i.test(message);
           if ((level !== 'log' || /warning:|error:/i.test(message)) &&
               !/setting up fake worker|deprecated|deprecation|^info:/i.test(message) &&
               (textWarning || renderWarning)) {
@@ -715,9 +715,11 @@ class GakujoUploadCompressionScript {
       return;
     }
     var files = Array.prototype.slice.call(input.files || []);
+    var generation = window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0;
     var finished = false;
     function isCurrentSelection() {
       return !finished && window.__MBG_UPLOAD_COMPRESSION_ENABLED &&
+        (window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0) === generation &&
         input.__mbgUploadCompressionSelection === token &&
         input.files && input.files.length === files.length &&
         files.every(function(file, index) { return input.files[index] === file; });
@@ -841,6 +843,8 @@ class GakujoUploadCompressionScript {
     return r'''
 (function() {
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
+  window.__MBG_UPLOAD_COMPRESSION_GENERATION =
+    (window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0) + 1;
   var docs = [document];
   var frames = document.querySelectorAll('iframe,frame');
   for (var i = 0; i < frames.length; i += 1) {
@@ -853,6 +857,10 @@ class GakujoUploadCompressionScript {
     }
   }
   for (var d = 0; d < docs.length; d += 1) {
+    var inputs = docs[d].querySelectorAll('input[type="file"]');
+    for (var k = 0; k < inputs.length; k += 1) {
+      delete inputs[k].__mbgUploadCompressionPending;
+    }
     var owned = docs[d].querySelectorAll('[data-mbg-upload-compression-owned="true"]');
     for (var j = 0; j < owned.length; j += 1) {
       owned[j].remove();

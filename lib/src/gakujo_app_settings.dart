@@ -482,13 +482,17 @@ class GakujoMessageNotificationSettings {
   /// hundreds of announcements already in the list.
   final DateTime? since;
 
-  /// Whether a 連絡通知 whose list row reads [text] should be notified. The
-  /// row starts with its 掲載日時.
-  bool allows({required String text, required bool isDeadline}) {
+  /// Whether a 連絡通知 should be notified. Older cached entries may only
+  /// have combined text, so use its first date only when [postedAt] is absent.
+  bool allows({
+    required String text,
+    required bool isDeadline,
+    String? postedAt,
+  }) {
     final since = this.since;
     final posted = RegExp(
       r'([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})\s+([0-9]{1,2}):([0-9]{2})',
-    ).firstMatch(text);
+    ).firstMatch(postedAt == null || postedAt.trim().isEmpty ? text : postedAt);
     if (since != null && posted != null) {
       // 掲載日時 is Japan time whatever the device's time zone is.
       final postedAt = DateTime.utc(

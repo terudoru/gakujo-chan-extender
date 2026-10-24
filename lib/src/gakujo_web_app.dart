@@ -375,12 +375,17 @@ Future<void> saveGakujoSettingsChange({
   required GakujoAppSettings Function(GakujoAppSettings) update,
   required ValueChanged<GakujoAppSettings> apply,
   required Future<void> Function(GakujoAppSettings) mirror,
-}) async {
-  await save();
-  final settings = update(currentSettings());
-  // Apply before awaiting the mirror so overlapping changes see this value.
-  apply(settings);
-  await mirror(settings);
+  StorageOperationQueue? operations,
+}) {
+  Future<void> change() async {
+    await save();
+    final settings = update(currentSettings());
+    // Apply before awaiting the mirror so overlapping changes see this value.
+    apply(settings);
+    await mirror(settings);
+  }
+
+  return operations == null ? change() : operations.run(change);
 }
 
 @visibleForTesting
@@ -3289,32 +3294,32 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _saveNotificationTopics(
     Set<GakujoNotificationTopic> topics,
   ) async {
-    final nextSettings = _appSettings.copyWith(notificationTopics: topics);
-    if (!Platform.isMacOS || _secureStorageAccessAllowed) {
-      try {
-        await _appSettingsStore.saveNotificationTopics(topics);
-      } on Object catch (error, stackTrace) {
-        if (!Platform.isMacOS) {
-          rethrow;
+    await saveGakujoSettingsChange(
+      operations: _notificationPreferenceOperations,
+      save: () async {
+        if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+          try {
+            await _appSettingsStore.saveNotificationTopics(topics);
+          } on Object catch (error, stackTrace) {
+            if (!Platform.isMacOS) rethrow;
+            // macOS starts from the local mirror before Keychain access.
+            developer.log(
+              'Failed to mirror notification topics to secure storage',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
         }
-        // macOS starts from the local mirror before Keychain access, as for
-        // the message filters; keep the choice there even if this fails.
-        developer.log(
-          'Failed to mirror notification topics to secure storage',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
-    }
-    await _syncLocalSettingsMirror(nextSettings);
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _appSettings = nextSettings;
-    });
-    unawaited(_syncReminders());
+      },
+      currentSettings: () => _appSettings,
+      update: (settings) => settings.copyWith(notificationTopics: topics),
+      apply: (settings) {
+        if (mounted) setState(() => _appSettings = settings);
+      },
+      mirror: _syncLocalSettingsMirror,
+    );
+    if (mounted) unawaited(_syncReminders());
   }
 
   Future<void> _saveNotificationPreferences(
@@ -4225,6 +4230,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       String course = '',
       String courseCode = '',
       String assignment = '',
+      String messageText = '',
     }) {
       final normalizedText = _datedActivityText(entryText);
       if (GakujoDatedActivity.isNoiseText(normalizedText) ||
@@ -4253,6 +4259,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           course: course,
           courseCode: courseCode,
           assignment: assignment,
+          messageText: messageText.isEmpty || messageText.contains(entryTitle)
+              ? messageText
+              : '$messageText $entryTitle',
         ),
       );
     }
@@ -4277,6 +4286,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             ? GakujoDatedActivity.messageContentForDates(text)
             : text,
         kind: kind,
+        messageText: category == '連絡通知' ? text : '',
       );
     }
 
@@ -4331,6 +4341,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             ? GakujoDatedActivity.messageContentForDates(line)
             : line,
         kind: kind,
+        messageText: category == '連絡通知' ? line : '',
       );
     }
     return entries;
@@ -4447,14 +4458,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         assignments,
         isWholeList: rows is List && total is num && rows.length == total,
       );
+      final messages = await _fetchMessageDeadlinesInBackground();
       await _activityStore.mergeDeadlines([
         ...deadlineEntriesForAssignments(
           assignments,
           url: _reportListPortalUrl,
           detectedAt: now,
         ),
-        ...await _fetchMessageDeadlinesInBackground(),
-      ]);
+        ...messages.entries,
+      ], unreadMessageUrls: messages.unreadMessageUrls);
       await _notifyPendingDeadlines();
       await _syncReminders();
     } on Object catch (error, stackTrace) {
@@ -4471,13 +4483,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   /// The 連絡通知 未読一覧 as deadline entries, read the way a visit to the
   /// list reads them. Skipped while 連絡通知 are not notified at all.
-  Future<List<GakujoDeadlineEntry>> _fetchMessageDeadlinesInBackground() async {
+  Future<({List<GakujoDeadlineEntry> entries, List<String>? unreadMessageUrls})>
+      _fetchMessageDeadlinesInBackground() async {
     if (_appSettings.messageNotification.mode ==
             GakujoMessageNotificationMode.off ||
         !_appSettings.isFeatureEnabled(
           GakujoFeatureFlag.deadlineNotifications,
         )) {
-      return const [];
+      return (entries: const <GakujoDeadlineEntry>[], unreadMessageUrls: null);
     }
     final result = await _controller.runJavaScriptReturningResult(
       gakujoMessageListFetchScript,
@@ -4485,10 +4498,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final decoded = jsonDecode(_stringFromJavaScriptResult(result));
     final items =
         decoded is Map && decoded['status'] == 'ok' ? decoded['items'] : null;
-    if (items is! List || items.isEmpty) {
-      return const [];
+    if (items is! List) {
+      return (entries: const <GakujoDeadlineEntry>[], unreadMessageUrls: null);
     }
-    return _extractDeadlines(
+    final entries = _extractDeadlines(
       category: '連絡通知',
       title: '連絡通知',
       url: _messageListPortalUrl,
@@ -4496,6 +4509,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       messageItems: [
         for (final item in items.whereType<Map<dynamic, dynamic>>())
           _MessageActivityCandidate.fromJson(item),
+      ],
+    );
+    return (
+      entries: entries,
+      unreadMessageUrls: [
+        for (final item in items)
+          gakujoMessageLinkFor(
+              item is Map ? item['url']?.toString() ?? '' : ''),
       ],
     );
   }

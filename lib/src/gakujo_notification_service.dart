@@ -7,6 +7,7 @@ import 'allowed_web_origins.dart';
 import 'gakujo_activity_store.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_assignment.dart';
+import 'gakujo_dated_activity.dart';
 
 typedef DeadlineNotificationTappedCallback = FutureOr<void> Function(
   String url,
@@ -85,7 +86,9 @@ bool isNotifiableDeadline(
   List<String> excludeKeywords = const [],
 }) {
   if (entry.source == '連絡通知') {
-    final text = '${entry.title} ${entry.dueText}';
+    final messageText =
+        entry.messageText.isEmpty ? entry.dueText : entry.messageText;
+    final text = '${entry.title} $messageText';
     final lowerText = text.toLowerCase();
     if (excludeKeywords.any(
       (keyword) =>
@@ -96,6 +99,7 @@ bool isNotifiableDeadline(
     return messages.allows(
       text: text,
       isDeadline: entry.isDeadline,
+      postedAt: GakujoDatedActivity.messagePostedAt(messageText),
     );
   }
   return entry.isDeadline && topics.contains(notificationTopicFor(entry));

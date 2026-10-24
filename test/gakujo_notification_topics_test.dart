@@ -28,6 +28,121 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('complete unread fetches silence read messages but keep their dates',
+      () async {
+    for (final rowCount in [0, 1, 59, 60]) {
+      FlutterSecureStorage.setMockInitialValues({});
+      final store = GakujoActivityStore();
+      final readMessage = _entry('既読の授業連絡', source: '連絡通知');
+      final assignment = _entry('レポート課題');
+      final unread = [
+        for (var i = 0; i < rowCount; i++) _entry('未読の授業連絡$i', source: '連絡通知'),
+      ];
+      await store.mergeDeadlines([readMessage, assignment, ...unread]);
+      await store.mergeDeadlines(
+        unread,
+        unreadMessageUrls: unread.map((entry) => entry.url).toList(),
+      );
+      final cached = await store.loadDeadlines();
+      expect(cached.map((entry) => entry.key), contains(assignment.key));
+      // A read message still carries its dates for the deadline list.
+      expect(cached.map((entry) => entry.key), contains(readMessage.key));
+      expect(cached.where((entry) => entry.source == '連絡通知'),
+          hasLength(rowCount + 1));
+      final notifications = _FakeNotificationService();
+      await GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: notifications,
+      ).notifyPendingDeadlines(
+        notificationsEnabled: true,
+        topics: const {},
+        messages: const GakujoMessageNotificationSettings(
+          mode: GakujoMessageNotificationMode.keywords,
+          keywords: ['既読'],
+        ),
+      );
+      expect(notifications.notified.contains(readMessage.key), rowCount == 60);
+      expect(
+          notifications.notified, rowCount == 60 ? [readMessage.key] : isEmpty);
+    }
+  });
+
+  test('message since rule uses posting metadata before dates in the title',
+      () {
+    final rule = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: const ['授業連絡'],
+      since: DateTime.utc(2026, 10, 20, 3),
+    );
+    for (final labeled in [false, true]) {
+      for (final postedAfterRule in [false, true]) {
+        final title =
+            postedAfterRule ? '2026/10/19 09:00 授業連絡' : '2026/10/21 09:00 授業連絡';
+        final posted =
+            postedAfterRule ? '2026/10/21 09:00' : '2026/10/19 09:00';
+        final row = labeled ? '$title 掲載日時：$posted' : '$posted $title';
+        final entry = GakujoDeadlineEntry.fromJson(GakujoDeadlineEntry(
+          title: title,
+          url: 'https://gakujo.example/message',
+          dueText: GakujoDatedActivity.datedTextPreview(
+              GakujoDatedActivity.messageContentForDates(row)),
+          messageText: row,
+          detectedAt: DateTime.utc(2026, 10, 22),
+          source: '連絡通知',
+        ).toJson());
+        expect(
+          isNotifiableDeadline(entry, topics: const {}, messages: rule),
+          postedAfterRule,
+          reason: row,
+        );
+      }
+    }
+    // Old cached rows still carry their posting column in dueText.
+    expect(
+      isNotifiableDeadline(
+        _entry('2026/10/21 09:00 授業連絡',
+            source: '連絡通知', dueText: '2026/10/19 09:00 授業連絡'),
+        topics: const {},
+        messages: rule,
+      ),
+      isFalse,
+    );
+    // Without posting metadata the legacy first-date fallback remains.
+    expect(
+        rule.allows(text: '2026/10/19 09:00 授業連絡', isDeadline: false), isFalse);
+    expect(
+        rule.allows(text: '2026/10/21 09:00 授業連絡', isDeadline: false), isTrue);
+  });
+
+  test('message keywords beyond the preview survive caching and filtering', () {
+    const rule = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['対象講義'],
+    );
+    final prefix = '2026/10/24 08:45 お知らせ ${'説明文。' * 60}';
+    for (final tail in ['表題 対象講義のお知らせ', '差出人 対象講義担当', '本文 対象講義の案内']) {
+      final text = '$prefix $tail 除外語';
+      final preview = GakujoDatedActivity.datedTextPreview(text);
+      expect(preview, isNot(contains('対象講義')));
+      expect(preview, isNot(contains('除外語')));
+      final entry = GakujoDeadlineEntry.fromJson(GakujoDeadlineEntry(
+        title: 'お知らせ',
+        url: 'https://gakujo.example/message',
+        dueText: preview,
+        messageText: text,
+        detectedAt: DateTime.utc(2026, 10, 24),
+        source: '連絡通知',
+      ).toJson());
+      expect(isNotifiableDeadline(entry, topics: const {}, messages: rule),
+          isTrue);
+      expect(
+        isNotifiableDeadline(entry,
+            topics: const {}, messages: rule, excludeKeywords: ['除外語']),
+        isFalse,
+      );
+    }
+  });
+
   group('schedule page coursework', () {
     // Shapes from Gakujo's schedule page: a month-view row read as one line
     // and the 提出物情報 list below the calendar.

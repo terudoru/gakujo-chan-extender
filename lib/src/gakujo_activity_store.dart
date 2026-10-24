@@ -64,6 +64,7 @@ class GakujoDeadlineEntry {
     this.course = '',
     this.courseCode = '',
     this.assignment = '',
+    this.messageText = '',
   });
 
   final String title;
@@ -81,6 +82,9 @@ class GakujoDeadlineEntry {
   final String course;
   final String courseCode;
   final String assignment;
+
+  /// Full message row/body, before the dated preview drops non-date text.
+  final String messageText;
 
   String get assignmentKind =>
       RegExp(r'^(\S*(?:レポート|小テスト|アンケート))\s').firstMatch(title)?.group(1) ?? '';
@@ -102,6 +106,7 @@ class GakujoDeadlineEntry {
       if (course.isNotEmpty) 'course': course,
       if (courseCode.isNotEmpty) 'courseCode': courseCode,
       if (assignment.isNotEmpty) 'assignment': assignment,
+      if (messageText.isNotEmpty) 'messageText': messageText,
     };
   }
 
@@ -117,6 +122,7 @@ class GakujoDeadlineEntry {
       course: json['course']?.toString() ?? '',
       courseCode: json['courseCode']?.toString() ?? '',
       assignment: json['assignment']?.toString() ?? '',
+      messageText: json['messageText']?.toString() ?? '',
     );
   }
 }
@@ -893,22 +899,38 @@ class GakujoActivityStore {
   }
 
   Future<List<GakujoDeadlineEntry>> mergeDeadlines(
-    List<GakujoDeadlineEntry> nextEntries,
-  ) {
-    return _enqueue(() => _mergeDeadlines(nextEntries));
+    List<GakujoDeadlineEntry> nextEntries, {
+    List<String>? unreadMessageUrls,
+  }) {
+    return _enqueue(() => _mergeDeadlines(nextEntries, unreadMessageUrls));
   }
 
   Future<List<GakujoDeadlineEntry>> _mergeDeadlines(
     List<GakujoDeadlineEntry> nextEntries,
+    List<String>? unreadMessageUrls,
   ) async {
     final deadlineRead = await _readDeadlines();
     if (!deadlineRead.isSuccessful) {
       return const [];
     }
+    // Null means the unread fetch was skipped or failed. A fetch at the
+    // 60-row cap cannot prove that an absent cached message has been read.
+    final unread = unreadMessageUrls != null && unreadMessageUrls.length < 60
+        ? unreadMessageUrls.map(stableGakujoUrl).toSet()
+        : null;
     final entries = <String, GakujoDeadlineEntry>{
       for (final entry in deadlineRead.value)
         if (_isUsefulDeadline(entry)) entry.key: entry,
     };
+    if (unread != null) {
+      // A message read on the web keeps its dates but is not announced later.
+      await _addNotifiedDeadlineKeys({
+        for (final entry in entries.values)
+          if (entry.source == '連絡通知' &&
+              !unread.contains(stableGakujoUrl(entry.url)))
+            entry.key,
+      });
+    }
     final newEntries = <GakujoDeadlineEntry>[];
     for (final entry
         in nextEntries.where(_isUsefulDeadline).where(_isActiveDeadline)) {

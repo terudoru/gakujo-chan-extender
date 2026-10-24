@@ -1,14 +1,79 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  test('queued topic and preference saves preserve the latest local settings',
+      () async {
+    final directory =
+        Directory.systemTemp.createTempSync('notification_prefs_');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final local = GakujoLocalPrefsStore(directory: directory);
+    final operations = StorageOperationQueue();
+    var settings = const GakujoAppSettings();
+    final savingTopics = Completer<void>();
+    final topicsStarted = Completer<void>();
+    var preferencesStarted = false;
+    final topicSave = saveGakujoSettingsChange(
+      operations: operations,
+      save: () async {
+        topicsStarted.complete();
+        await savingTopics.future;
+      },
+      currentSettings: () => settings,
+      update: (latest) => latest.copyWith(
+        notificationTopics: {GakujoNotificationTopic.other},
+      ),
+      apply: (latest) => settings = latest,
+      mirror: local.saveAppSettings,
+    );
+    await topicsStarted.future;
+    // Another kind of setting completes while the topic save is awaiting I/O.
+    settings = settings.copyWith(
+      disabledFeatureFlags: {GakujoFeatureFlag.uploadCompression},
+    );
+    await local.saveAppSettings(settings);
+    final preferenceSave = operations.run(() => saveGakujoSettingsChange(
+          save: () async {
+            preferencesStarted = true;
+            await local.saveAppSettings(settings.copyWith(
+              notificationPreferences: const GakujoNotificationPreferences(
+                reminderOffsets: {GakujoReminderOffset.threeHours},
+              ),
+            ));
+          },
+          currentSettings: () => settings,
+          update: (latest) => latest.copyWith(
+            notificationPreferences: const GakujoNotificationPreferences(
+              reminderOffsets: {GakujoReminderOffset.threeHours},
+            ),
+          ),
+          apply: (latest) => settings = latest,
+          mirror: (_) async {},
+        ));
+    await Future<void>.delayed(Duration.zero);
+    expect(preferencesStarted, isFalse);
+    savingTopics.complete();
+    await Future.wait([topicSave, preferenceSave]);
+
+    final persisted = (await local.load())!.appSettings!;
+    for (final actual in [settings, persisted]) {
+      expect(actual.notificationTopics, {GakujoNotificationTopic.other});
+      expect(
+          actual.disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
+      expect(actual.notificationPreferences.reminderOffsets,
+          {GakujoReminderOffset.threeHours});
+    }
+  });
+
   test('overlapping feature toggles merge before a pending mirror completes',
       () async {
     var settings = const GakujoAppSettings();

@@ -218,6 +218,16 @@ class GakujoDatedActivity {
     return content;
   }
 
+  /// Prefer the labeled posting time, or the first column of a message row.
+  static String? messagePostedAt(String text) {
+    final normalized = normalizeDateText(text);
+    final labeled = RegExp(
+      r'掲載日時\s*[:：]?\s*([0-9]{4}/[0-9]{1,2}/[0-9]{1,2}\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)',
+    ).firstMatch(normalized);
+    return labeled?.group(1) ??
+        _postingDatePattern.firstMatch(normalized)?.group(0)?.trim();
+  }
+
   /// Keep dates found past the preview boundary for downstream parsing.
   static String datedTextPreview(String text) {
     final compacted = text.replaceAll(RegExp(r'\s+'), ' ').trim();

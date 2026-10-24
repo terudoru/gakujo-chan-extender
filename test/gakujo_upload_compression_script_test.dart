@@ -132,6 +132,26 @@ void main() {
     }
   });
 
+  test('re-enabling compression never revives a job cancelled by teardown',
+      () async {
+    for (final failure in [false, true]) {
+      final result = await _run({
+        'files': [_photo],
+        'holdImage': true,
+        'imageError': failure,
+        'disableDuringPending': true,
+        'useTeardown': true,
+        'reenableDuringPending': true,
+        'checkSubmission': true,
+      });
+      expect(result['originalsKept'], isTrue);
+      expect(result['replayed'], isEmpty);
+      expect(result['status'], isNull);
+      expect(result['blockedAfterReenable'], [false, false, false, false]);
+      expect(result['pending'], isFalse);
+    }
+  });
+
   for (final failure in [false, true]) {
     test('discards stale image ${failure ? 'failure' : 'result'}', () async {
       final result = await _run({
@@ -232,6 +252,37 @@ void main() {
         expect(result['pdfRenderCount'], 1);
         expect(result['status'], contains('5MB以下に圧縮しました'));
       }
+    }
+  });
+
+  test('keeps PDFs with unsupported masks using the bundled libraries',
+      () async {
+    for (final mask in ['SMask', 'Mask']) {
+      final result = await _run({
+        'files': [_pdf],
+        'realPdf': true,
+        'unsupportedMask': mask,
+      });
+      expect(result['pdfWarnings'],
+          contains('Warning: Unsupported /$mask format.'));
+      expect(result['originalsKept'], isTrue);
+      expect(result['status'], _pdfRenderMessage);
+      expect(result['replayed'], ['input', 'change']);
+      expect(result['consoleRestored'], isTrue);
+    }
+    for (final warning in [
+      'Unsupported rendering feature.',
+      'Unknown ColorSpace.'
+    ]) {
+      final result = await _run({
+        'files': [_pdf],
+        'pdf': {
+          'warningStage': 'render',
+          'warningMessage': 'Warning: $warning'
+        },
+      });
+      expect(result['originalsKept'], isTrue);
+      expect(result['status'], _pdfRenderMessage);
     }
   });
 
@@ -391,6 +442,8 @@ const _photo = {'name': 'scan.jpg', 'type': 'image/jpeg', 'size': 12000000};
 const _pdf = {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000};
 const _pdfTextMessage =
     'PDFの文字が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
+const _pdfRenderMessage =
+    'PDFの内容が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
 
 Future<Map<String, dynamic>> _run(Map<String, Object?> scenario) async {
   final result = await _runNode(
@@ -480,6 +533,7 @@ function attemptSubmission(type, target) {
 }
 const document = {
   querySelectorAll: (selector) =>
+    selector === 'input[type="file"]' ? [input] :
     selector.indexOf('upload-compression-owned') >= 0 && statusNode
       ? [statusNode]
       : [],
@@ -494,9 +548,17 @@ const document = {
         height: 0,
         getContext: () => ({
           canvas, fillRect() {}, drawImage() {}, save() {}, restore() {},
+          scale() {},
           transform() {}, setTransform() {}, beginPath() {}, rect() {},
           clip() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
-          getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+          createImageData: (width, height) => ({
+            width, height, data: new Uint8ClampedArray(width * height * 4),
+          }),
+          putImageData() {},
+          getTransform: () => ({
+            a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
+            invertSelf() { return this; },
+          }),
         }),
         toBlob: (callback, type, quality) => {
           if (scenario.realPdf) return callback(new Blob([jpeg], { type }));
@@ -664,8 +726,18 @@ async function settle() {
     const bytes = await vm.runInContext(`(async () => {
       const pdf = await PDFLib.PDFDocument.create();
       const page = pdf.addPage([72, 72]);
+      let image = '';
+      if (${JSON.stringify(scenario.unsupportedMask || '')}) {
+        const imageStream = pdf.context.stream(new Uint8Array([255, 255, 255]), {
+          Type: 'XObject', Subtype: 'Image', Width: 1, Height: 1,
+          ColorSpace: 'DeviceRGB', BitsPerComponent: 8,
+          [${JSON.stringify(scenario.unsupportedMask || '')}]: PDFLib.PDFName.of('Unsupported'),
+        });
+        const name = page.node.newXObject('Image', pdf.context.register(imageStream));
+        image = 'q 72 0 0 72 0 0 cm ' + name.toString() + ' Do Q\\n';
+      }
       // Keep the page stream uncompressed and >5MB without a binary fixture.
-      const content = '0 0 1 rg 0 0 72 72 re f\\n%' + 'padding'.repeat(900000) + '\\n';
+      const content = image + '0 0 1 rg 0 0 72 72 re f\\n%' + 'padding'.repeat(900000) + '\\n';
       page.node.addContentStream(pdf.context.register(pdf.context.stream(content)));
       return pdf.save({ useObjectStreams: false });
     })()`, context);
@@ -720,11 +792,16 @@ async function settle() {
   }
   let statusAfterDisable;
   let blockedWhenDisabled;
+  let blockedAfterReenable;
   if (scenario.disableDuringPending) {
     if (scenario.useTeardown) vm.runInContext(teardown, context);
     else context.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
     statusAfterDisable = statusNode ? statusNode.textContent : null;
     blockedWhenDisabled = submissionTargets.map(args => attemptSubmission(...args));
+  }
+  if (scenario.reenableDuringPending) {
+    vm.runInContext(build, context);
+    blockedAfterReenable = submissionTargets.map(args => attemptSubmission(...args));
   }
   if (scenario.nextFiles || scenario.reselectSameFiles) {
     if (scenario.teardownBeforeReselect) vm.runInContext(teardown, context);
@@ -752,7 +829,7 @@ async function settle() {
   process.stdout.write(JSON.stringify({
     stopped,
     pending: !!input.__mbgUploadCompressionPending,
-    statusAfterDisable, blockedWhenDisabled,
+    statusAfterDisable, blockedWhenDisabled, blockedAfterReenable,
     originalSize: originalFiles[0] && originalFiles[0].size,
     pdfWarnings, outputPages,
     replayed: replayed.filter((type) => type),
