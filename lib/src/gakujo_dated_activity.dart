@@ -4,6 +4,9 @@ class GakujoDatedActivity {
   static final RegExp _datePattern = RegExp(
     r'((?:令和[0-9]{1,2}年|(?:20)?[0-9]{2}(?:[\/.\-]|年))[0-9]{1,2}(?:[\/.\-]|月)[0-9]{1,2}日?(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}[\/.][0-9]{1,2}(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}月[0-9]{1,2}日(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?)',
   );
+  static final RegExp _postingDatePattern = RegExp(
+    r'^\s*[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?',
+  );
 
   static bool containsDate(String text) {
     return _datePattern.hasMatch(normalizeDateText(text));
@@ -57,14 +60,21 @@ class GakujoDatedActivity {
       String name,
     })>[];
     final seen = <String>{};
-    String key(String name, String due) {
+    final listedSummaries = <String>{};
+    String key(
+      String kind,
+      String name,
+      String due, [
+      String course = '',
+      String courseCode = '',
+    ]) {
       final date = RegExp(r'([0-9]{4})\D+([0-9]{1,2})\D+([0-9]{1,2})')
           .firstMatch(normalizeDateText(due));
       final day = date == null
           ? due
           : '${date.group(1)}-${int.parse(date.group(2)!)}-'
               '${int.parse(date.group(3)!)}';
-      return '$name|$day';
+      return '$kind|$courseCode|$course|$name|$day';
     }
 
     final listed = RegExp(
@@ -74,9 +84,16 @@ class GakujoDatedActivity {
     );
     for (final match in listed.allMatches(text)) {
       final name = match.group(4)!.trim();
-      if (!seen.add(key(name, match.group(5)!))) {
+      if (!seen.add(key(
+        match.group(1)!,
+        name,
+        match.group(5)!,
+        match.group(3)!.trim(),
+        match.group(2) ?? '',
+      ))) {
         continue;
       }
+      listedSummaries.add(key(match.group(1)!, name, match.group(5)!));
       items.add((
         title: compactText(
           '${match.group(1)} ${match.group(3)!.trim()} $name',
@@ -96,7 +113,8 @@ class GakujoDatedActivity {
     for (final match in submissions.allMatches(text)) {
       final name = match.group(2)!.trim();
       // The month view already named this one together with its course.
-      if (!seen.add(key(name, match.group(4)!))) {
+      final summaryKey = key(match.group(1)!, name, match.group(4)!);
+      if (listedSummaries.contains(summaryKey) || !seen.add(summaryKey)) {
         continue;
       }
       items.add((
@@ -153,6 +171,15 @@ class GakujoDatedActivity {
     required String text,
     required String category,
   }) {
+    if (category == '連絡通知') {
+      text = messageContentForDates(text).replaceFirst(
+        _postingDatePattern,
+        '',
+      );
+      if (!containsDate(text)) {
+        return 'notice';
+      }
+    }
     if (text.contains('期限') ||
         text.contains('締切') ||
         text.contains('締め切') ||
@@ -170,6 +197,35 @@ class GakujoDatedActivity {
       return 'schedule';
     }
     return 'notice';
+  }
+
+  /// Posting dates and the display period are message metadata.
+  static String messageContentForDates(String text) {
+    final date = '${_datePattern.pattern}(?::[0-9]{2})?';
+    final normalized = normalizeDateText(text);
+    var content = normalized.replaceAll(
+      RegExp('(?:掲示期間|掲載日時|送信日時)\\s*[:：]?\\s*$date'
+          '(?:\\s*(?:[～〜~]|から)\\s*$date\\s*(?:まで)?)?'),
+      ' ',
+    );
+    // List scans start with the posting date and omit the period's label.
+    if (_postingDatePattern.hasMatch(normalized)) {
+      content = content.replaceAll(
+        RegExp('$date\\s*(?:[～〜~]|から)\\s*$date\\s*(?:まで)?\\s*\$'),
+        ' ',
+      );
+    }
+    return content;
+  }
+
+  /// Keep dates found past the preview boundary for downstream parsing.
+  static String datedTextPreview(String text) {
+    final compacted = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final dates = _datePattern
+        .allMatches(normalizeDateText(compacted))
+        .where((match) => match.end > 180)
+        .map((match) => match.group(0)!);
+    return [compactText(compacted), ...dates].join(' ');
   }
 
   static String compactText(String text, {int maxLength = 180}) {

@@ -72,6 +72,37 @@ void main() {
     );
   });
 
+  for (final (period, expected) in [
+    ('2026/10/24 8:45 ～10/30 17:00', _jst(2026, 10, 30, 17)),
+    ('2026/10/24 8:45 ~10/30 17:00', _jst(2026, 10, 30, 17)),
+    ('２０２６／１０／２４ ８：４５ ～１０／３０ １７：００', _jst(2026, 10, 30, 17)),
+    ('2026/10/24 8:45 ～10/30', _jst(2026, 10, 30, 23, 59)),
+    ('2026/12/24 8:45 ～1/5 17:00', _jst(2027, 1, 5, 17)),
+    ('2026/12/24 8:45 ～1/5', _jst(2027, 1, 5, 23, 59)),
+    ('2026/10/24 8:45 ～2026/10/30', _jst(2026, 10, 30, 23, 59)),
+  ]) {
+    test('a list row takes the closing part in JST: $period', () {
+      expect(_assignment(_row('レポート', '第1回', '未提出', period)).dueAt, expected);
+    });
+  }
+
+  test('an absent or invalid closing date never falls back to opening', () {
+    for (final period in [
+      '2026/10/24 8:45 ～',
+      '2026/10/24 8:45 ～期限未定',
+      '2026/10/24 8:45 ～2/30 17:00',
+    ]) {
+      expect(
+        GakujoAssignment.fromReportRow(
+          _row('レポート', '第1回', '未提出', period),
+          capturedAt: DateTime.utc(2026, 10, 24),
+        ),
+        isNull,
+        reason: period,
+      );
+    }
+  });
+
   test('same-title reports and quizzes survive a merge with stored rows',
       () async {
     final report = _assignment(

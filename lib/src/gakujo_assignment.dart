@@ -1,3 +1,5 @@
+import 'gakujo_dated_activity.dart';
+
 /// One row of Gakujo's レポート・小テスト・アンケート提出 list: the single
 /// place that tells a submission's exact closing time and whether it has
 /// been handed in.
@@ -109,20 +111,35 @@ class GakujoAssignment {
   }
 
   static DateTime? _closingTime(String period) {
+    final normalized = GakujoDatedActivity.normalizeDateText(period);
+    final parts = normalized.split(RegExp(r'[～〜~]'));
     final times = RegExp(
-      r'([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})\s+([0-9]{1,2}):([0-9]{2})',
-    ).allMatches(period).toList();
+      r'(?:([0-9]{4})/)?([0-9]{1,2})/([0-9]{1,2})(?:\s+([0-9]{1,2}):([0-9]{2}))?',
+    ).allMatches(parts.last).toList();
     if (times.isEmpty) {
       return null;
     }
     final last = times.last;
-    final values = [for (var i = 1; i <= 5; i += 1) int.parse(last.group(i)!)];
-    final date = DateTime.utc(values[0], values[1], values[2]);
-    final hour = values[3];
-    final minute = values[4];
-    if (date.year != values[0] ||
-        date.month != values[1] ||
-        date.day != values[2] ||
+    final opening =
+        RegExp(r'([0-9]{4})/([0-9]{1,2})/[0-9]{1,2}').firstMatch(normalized);
+    var year = int.tryParse(last.group(1) ?? '');
+    final month = int.parse(last.group(2)!);
+    final day = int.parse(last.group(3)!);
+    if (year == null) {
+      if (opening == null) {
+        return null;
+      }
+      year = int.parse(opening.group(1)!);
+      if (month < int.parse(opening.group(2)!)) {
+        year += 1;
+      }
+    }
+    final date = DateTime.utc(year, month, day);
+    final hour = int.tryParse(last.group(4) ?? '') ?? 23;
+    final minute = int.tryParse(last.group(5) ?? '') ?? 59;
+    if (date.year != year ||
+        date.month != month ||
+        date.day != day ||
         hour > 24 ||
         minute > 59 ||
         (hour == 24 && minute != 0)) {
@@ -176,7 +193,10 @@ function readAssignmentRows(doc) {
     for (var t = 0; t < titles.length; t += 1) {
       var block = titles[t].closest('td') || titles[t].parentElement;
       var all = text(block);
-      var course = (all.match(/\(\s*(.+?)\s*\)\s*実施期間/) || [])[1] || '';
+      var beforePeriod = all.split('実施期間')[0];
+      var courses = beforePeriod.match(/\([^()]* \/ [^()]*\)/g) || [];
+      var course = courses.length ? courses[courses.length - 1].slice(1, -1) :
+        (beforePeriod.match(/\(([^()]*)\)\s*$/) || [])[1] || '';
       var period = (all.match(/実施期間[：:]\s*(.+?)\s*(?:状態|$)/) || [])[1] || '';
       var row = titles[t].closest('tr') || block;
       var action = row.querySelector('[onclick*="callEnqInfoSearch"]');
@@ -207,31 +227,99 @@ const gakujoAssignmentListFetchScript = '''
 (function() {
   $gakujoAssignmentRowsScript
   try {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/campusweb/campussquare.do?_flowId=ENW3411100-flow', false);
-    xhr.send(null);
-    if (xhr.status < 200 || xhr.status >= 400) {
-      return JSON.stringify({status: 'error', rows: []});
-    }
-    var doc = new DOMParser().parseFromString(xhr.responseText, 'text/html');
-    var form = doc.querySelector('#enqListForm');
-    if (!form) {
-      return JSON.stringify({status: 'missing', rows: []});
-    }
-    // The list states how many there are in all, as 「11件」 or 「1～11/11件」.
-    var counts = String(form.textContent || '').match(/([0-9]+)件/g) || [];
-    var total = counts.length ? parseInt(counts[0], 10) : -1;
-    var rows = readAssignmentRows(doc);
-    // Smartphone lists omit the count; only an unpaged list is complete.
-    if (!counts.length && form.querySelector('ul.campussmart-list') &&
-        !/次へ|前へ/.test(String(form.textContent || '')) &&
-        !form.querySelector('[onclick*="paging"], [href*="paging"], ' +
-          'select[name="_displayCount"], input[name="_displayCount"]')) {
-      total = rows.length;
+    var base = location.origin + '/campusweb/campussquare.do';
+    var url = '/campusweb/campussquare.do?_flowId=ENW3411100-flow';
+    var rows = [];
+    var seenRows = new Set();
+    var visited = new Set();
+    var total = -1;
+    var complete = false;
+    var expanded = false;
+    for (var page = 0; page < 10 && url && !visited.has(url); page += 1) {
+      visited.add(url);
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, false);
+      xhr.send(null);
+      if (xhr.status < 200 || xhr.status >= 400) {
+        if (!page) return JSON.stringify({status: 'error', rows: []});
+        break;
+      }
+      var doc = new DOMParser().parseFromString(xhr.responseText, 'text/html');
+      var form = doc.querySelector('#enqListForm');
+      if (!form) {
+        if (!page) return JSON.stringify({status: 'missing', rows: []});
+        break;
+      }
+      // The list states its total as 「11件」 or 「1～11/11件」.
+      var content = String(form.textContent || '');
+      var counts = content.match(/([0-9]+)件/g) || [];
+      total = counts.length ? parseInt(counts[0], 10) : -1;
+      var pageRows = readAssignmentRows(doc);
+      var previousLength = rows.length;
+      pageRows.forEach(function(row) {
+        var key = JSON.stringify(row);
+        if (!seenRows.has(key)) {
+          seenRows.add(key);
+          rows.push(row);
+        }
+      });
+      if (total >= 0 && rows.length === total) {
+        complete = true;
+        break;
+      }
+      if (page && rows.length === previousLength) break;
+      var next = '';
+      var controls = form.querySelectorAll('a, button, input[type="submit"]');
+      for (var c = 0; c < controls.length; c += 1) {
+        var control = controls[c];
+        var label = String(control.textContent || control.value || '');
+        if (!/次へ/.test(label) || control.disabled ||
+            control.getAttribute('aria-disabled') === 'true') continue;
+        var href = control.getAttribute('href') || '';
+        var onclick = control.getAttribute('onclick') || '';
+        var target = ((onclick || href).match(/['"]([^'"]*[?&]_eventId=[^'"]+)['"]/) || [])[1];
+        if (!target && href && !/^(?:javascript:|#)/i.test(href)) target = href;
+        if (target) {
+          var candidate = new URL(target.replace(/&amp;/g, '&'), base);
+          if (candidate.origin === location.origin &&
+              candidate.pathname === '/campusweb/campussquare.do') {
+            next = candidate.href;
+            break;
+          }
+        }
+      }
+      var displayCount = form.querySelector('select[name="_displayCount"], input[name="_displayCount"]');
+      var paging = /次へ|前へ/.test(content) ||
+        form.querySelector('[onclick*="paging"], [href*="paging"]') || displayCount;
+      if (!next && !expanded && displayCount) {
+        var target = new URL(form.getAttribute('action') || url, base);
+        var hidden = form.querySelectorAll('input[type="hidden"]');
+        for (var h = 0; h < hidden.length; h += 1) {
+          if (hidden[h].name) target.searchParams.set(hidden[h].name, hidden[h].value);
+        }
+        var sizes = Array.from(displayCount.options || [])
+          .map(function(option) { return parseInt(option.value, 10); })
+          .filter(function(size) { return size > pageRows.length && size <= 500; });
+        var size = displayCount.options ? Math.max.apply(null, sizes) : 500;
+        if (target.searchParams.has('_flowExecutionKey') && size > pageRows.length &&
+            target.origin === location.origin &&
+            target.pathname === '/campusweb/campussquare.do') {
+          target.searchParams.set('_eventId', 'paging');
+          target.searchParams.set('_displayCount', String(size));
+          next = target.href;
+          expanded = true;
+        }
+      }
+      // Without a count, only a smartphone list without paging is complete.
+      if (total < 0 && !next && !paging && form.querySelector('ul.campussmart-list')) {
+        total = rows.length;
+        complete = true;
+      }
+      url = next;
     }
     return JSON.stringify({
       status: 'ok',
-      total: total,
+      total: complete ? total : -1,
       rows: rows
     });
   } catch (e) {

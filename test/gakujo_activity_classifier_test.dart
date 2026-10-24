@@ -2,6 +2,29 @@ import 'package:morebettergakujo_flutter/src/gakujo_activity_classifier.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final (url, title) in [
+    (
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+          'campusportal.do?page=main&tabId=sch',
+      'CampusSquare for WEB [CampusSquare]',
+    ),
+    (
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      '週間スケジュール [CampusSquare]',
+    ),
+  ]) {
+    test('schedule URL or title wins over assignment keywords: $title', () {
+      expect(
+        GakujoActivityClassifier.categoryFor(
+          url: url,
+          title: title,
+          text: '[小テスト][263T0506 物理学]第1回【2026/10/30まで】',
+        ),
+        'スケジュール',
+      );
+    });
+  }
+
   test('uses the page title before global desktop navigation text', () {
     final category = GakujoActivityClassifier.categoryFor(
       url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',

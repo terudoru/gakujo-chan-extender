@@ -17,6 +17,9 @@ class GakujoActivityClassifier {
     final normalizedTitle = _compact(title);
     final normalizedText = _compact(text);
 
+    if (_looksLikeSchedule(normalizedUrl, normalizedTitle)) {
+      return 'スケジュール';
+    }
     if (_looksLikeGrades(normalizedUrl, normalizedTitle)) {
       return '成績';
     }
@@ -25,9 +28,6 @@ class GakujoActivityClassifier {
     }
     if (_looksLikeMessages(normalizedUrl, normalizedTitle)) {
       return '連絡通知';
-    }
-    if (_looksLikeSchedule(normalizedUrl, normalizedTitle)) {
-      return 'スケジュール';
     }
 
     final firstContent = normalizedText.length > 400
@@ -188,7 +188,8 @@ class GakujoActivityClassifier {
   }
 
   static bool _looksLikeSchedule(String url, String title) {
-    return url.contains('schedule') ||
+    return RegExp(r'[?&]tabid=sch(?:[&#]|$)').hasMatch(url) ||
+        url.contains('schedule') ||
         title.contains('スケジュール') ||
         title.contains('時間割');
   }

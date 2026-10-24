@@ -4105,11 +4105,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         : messageItems) {
       // 「[新着]」 disappears once read and would make it a new entry.
       final text = item.text.replaceAll('[新着]', ' ');
+      final kind = GakujoDatedActivity.kindFor(text: text, category: category);
       addEntry(
         entryTitle: item.title.replaceAll('[新着]', '').trim(),
         entryUrl: gakujoMessageLinkFor(item.url),
-        entryText: text,
-        kind: GakujoDatedActivity.kindFor(text: text, category: category),
+        entryText: category == '連絡通知' && kind != 'notice'
+            ? GakujoDatedActivity.messageContentForDates(text)
+            : text,
+        kind: kind,
       );
     }
 
@@ -4155,12 +4158,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (!_containsDate(line)) {
         continue;
       }
+      final kind = GakujoDatedActivity.kindFor(text: line, category: category);
       addEntry(
         entryTitle: _datedActivityLineTitle(
             category: category, title: title, line: line),
         entryUrl: url,
-        entryText: line,
-        kind: GakujoDatedActivity.kindFor(text: line, category: category),
+        entryText: category == '連絡通知' && kind != 'notice'
+            ? GakujoDatedActivity.messageContentForDates(line)
+            : line,
+        kind: kind,
       );
     }
     return entries;
@@ -4171,7 +4177,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   String _datedActivityText(String text) {
-    return GakujoDatedActivity.compactText(text);
+    return GakujoDatedActivity.datedTextPreview(text);
   }
 
   String _datedActivityTitle(String text) {

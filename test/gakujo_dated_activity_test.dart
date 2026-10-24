@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_dated_activity.dart';
 
 void main() {
@@ -44,6 +45,68 @@ void main() {
     expect(
       GakujoDatedActivity.kindFor(text: '停電作業を7/1に行います', category: '連絡通知'),
       'notice',
+    );
+  });
+
+  test('a deadline beyond 180 characters survives the stored preview', () {
+    final text = '2026/10/24 8:45 課題のお知らせ ${'説明文。' * 60} '
+        '提出期限：2026/10/30 17:00';
+    final preview = GakujoDatedActivity.datedTextPreview(text);
+    expect(text.indexOf('2026/10/30'), greaterThan(180));
+    expect(preview.length, lessThan(text.length));
+    expect(preview, contains('2026/10/30 17:00'));
+    final entry = GakujoDeadlineEntry(
+      title: '課題のお知らせ',
+      url: 'https://gakujo.example/message',
+      dueText: preview,
+      detectedAt: DateTime.utc(2026, 10, 24),
+      source: '連絡通知',
+    );
+    final store = GakujoActivityStore();
+    expect(
+      store.isDeadlinePassed(entry, now: DateTime.utc(2026, 10, 30, 7, 59)),
+      isFalse,
+    );
+    expect(
+      store.isDeadlinePassed(entry, now: DateTime.utc(2026, 10, 30, 8)),
+      isTrue,
+    );
+  });
+
+  test('message display and posting dates do not become deadlines', () {
+    for (final text in [
+      '課題の提出方法について 掲示期間：2026/10/24 8:45 ～2026/10/30 17:00',
+      '課題の提出方法について 掲載日時：2026/10/24 8:45',
+      '課題の提出方法について 送信日時：2026/10/24 8:45',
+      '2026/10/24 8:45 課題の提出方法について 授業連絡 '
+          '2026/10/24 8:45から 2026/10/30 17:00まで',
+    ]) {
+      expect(
+        GakujoDatedActivity.kindFor(
+          text: text,
+          category: '連絡通知',
+        ),
+        'notice',
+        reason: text,
+      );
+    }
+  });
+
+  test('stripping message metadata preserves an explicit body deadline', () {
+    const text = '掲載日時：2026/10/24 8:45 課題の提出方法について '
+        '掲示期間：2026/10/24 8:45 ～2026/11/30 17:00 '
+        '送信日時：2026/10/24 8:45 提出期限：2026/10/30 17:00';
+    final content = GakujoDatedActivity.messageContentForDates(text);
+    // Full-width colons are normalized while stripping.
+    expect(content, matches(RegExp(r'提出期限[:：]2026/10/30 17:00')));
+    expect(content, isNot(contains('2026/11/30')));
+    expect(content, isNot(contains('2026/10/24')));
+    expect(
+        GakujoDatedActivity.kindFor(text: text, category: '連絡通知'), 'deadline');
+    const range = '課題の提出期間：2026/10/24 8:45 ～2026/10/30 17:00';
+    expect(
+      GakujoDatedActivity.messageContentForDates(range),
+      range.replaceAll('：', ':'),
     );
   });
 }

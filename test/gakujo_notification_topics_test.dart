@@ -85,6 +85,33 @@ void main() {
         isFalse,
       );
     });
+
+    test('same-title coursework keeps each course and activity type', () {
+      const physics = '[レポート][263T0506 物理学]第1回【2026年10月30日まで】';
+      const chemistry = '[レポート][263T0507 化学]第1回【2026年10月30日まで】';
+      const quiz = '[小テスト][263T0506 物理学]第1回【2026年10月30日まで】';
+      final items = GakujoDatedActivity.scheduleCourseworkItems(
+        '$physics\n$chemistry\n$quiz\n$physics\n'
+        'レポート "第1回" 2026年10月24日 ～ 2026年10月30日',
+      );
+      expect(items.map((item) => item.courseCode), [
+        '263T0506',
+        '263T0507',
+        '263T0506',
+      ]);
+      expect(items.map((item) => item.title), [
+        'レポート 物理学 第1回',
+        'レポート 化学 第1回',
+        '小テスト 物理学 第1回',
+      ]);
+      expect(
+        GakujoDatedActivity.scheduleCourseworkItems(
+          '[レポート][物理学]第1回【2026年10月30日まで】\n'
+          '[レポート][化学]第1回【2026年10月30日まで】',
+        ),
+        hasLength(2),
+      );
+    });
   });
 
   test('deadlines are sorted into the topics a student can choose', () {
@@ -195,7 +222,11 @@ void main() {
     }
 
     final course = message('第3回目授業の資料です', '授業連絡');
-    final campus = message('奨学生募集の締切について', '全学連絡通知', '2026/10/19 15:15:58');
+    final campus = message(
+      '奨学生募集の締切は2099/07/01まで',
+      '全学連絡通知',
+      '2026/10/19 15:15:58',
+    );
 
     Future<List<String>> notify(GakujoMessageNotificationSettings rule) async {
       final store = GakujoActivityStore();
