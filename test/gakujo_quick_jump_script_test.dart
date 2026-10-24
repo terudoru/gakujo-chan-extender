@@ -85,6 +85,54 @@ void main() {
         ['syllabus']);
   });
 
+  test('never opens a message whose title exactly matches the quick jump',
+      () async {
+    for (final attribute in ['href', 'onclick']) {
+      for (final action in [
+        'campussquare.do?seqNo=507762',
+        'campussquare.do?_eventId=confirm',
+        'campussquare.do?_eventId=displayMidoku',
+      ]) {
+        final message = {
+          'id': 'message',
+          'tag': attribute == 'onclick' ? 'div' : 'a',
+          'text': 'レポート',
+          attribute: action,
+        };
+        expect(await evaluate([message], label: 'レポート'),
+            {'result': false, 'clicked': []});
+        expect(
+            (await evaluate([
+              message,
+              {'id': 'reports', 'tag': 'a', 'text': 'レポート・小テスト'},
+            ], label: 'レポート'))['clicked'],
+            ['reports']);
+      }
+    }
+  });
+
+  test('ignores app controls and actions inside app-owned containers',
+      () async {
+    for (final ownership in [
+      {'id': 'mbg-shortcut'},
+      {'class': 'other mbg-shortcut'},
+      {'data-mbg-shortcut': 'true'},
+    ]) {
+      for (final nested in [false, true]) {
+        expect(
+            await evaluate([
+              {
+                'id': 'control',
+                'tag': 'button',
+                'text': 'シラバス',
+                if (nested) 'parent': ownership else ...ownership,
+              },
+            ]),
+            {'result': false, 'clicked': []});
+      }
+    }
+  });
+
   test('uses image labels and searches child frames', () async {
     expect(
         (await evaluate([], frames: [
@@ -138,15 +186,18 @@ const vm = require('node:vm');
 const spec = JSON.parse(process.argv[1]);
 const clicked = [];
 function windowFor(specs) {
-  const nodes = specs.map(spec => ({
+  const element = spec => ({
     ...spec, innerText: spec.text || '', textContent: spec.text || '',
+    attributes: Object.keys(spec).map(name => ({name})),
+    parentElement: spec.parent ? element(spec.parent) : null,
     getAttribute: name => spec[name] || null,
     matches: selector => selector === ':disabled' && !!spec.disabled,
     closest: () => spec.inert || spec.ariaDisabled ? {} : null,
     getClientRects: () => spec.hidden ? [] : [{}],
     querySelectorAll: () => spec.imageAlt ? [{getAttribute: () => spec.imageAlt}] : [],
     click: () => clicked.push(spec.id),
-  }));
+  });
+  const nodes = specs.map(element);
   const win = {frames: [], getComputedStyle: node => ({visibility: node.visibility || 'visible'})};
   win.document = {defaultView: win, querySelectorAll: selector => nodes.filter(node =>
     selector.includes('td, div, span') || ['a','button'].includes(node.tag) ||

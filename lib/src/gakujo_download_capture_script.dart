@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 12;
+  var captureVersion = 13;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -24,6 +24,11 @@ class GakujoDownloadCaptureScript {
         window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
           'click',
           window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
+          true
+        );
+        window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+          'submit',
+          window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
           true
         );
       } catch (e) {}
@@ -47,6 +52,8 @@ class GakujoDownloadCaptureScript {
     }
   }
   window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
+  restoreFormSubmits();
+  var formSubmitters = new WeakMap();
 
   function textOf(element) {
     if (!element) {
@@ -453,10 +460,6 @@ class GakujoDownloadCaptureScript {
   }
 
   function isDownloadLike(element, url) {
-    return hasStrongDownloadSignal(element, url);
-  }
-
-  function hasStrongDownloadSignal(element, url) {
     var text = textOf(element).toLowerCase();
     var href = (url || '').toLowerCase();
     return (
@@ -467,6 +470,32 @@ class GakujoDownloadCaptureScript {
       href.indexOf('file') >= 0 ||
       /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|csv|txt)(?:[?#].*)?$/.test(href)
     );
+  }
+
+  function hasStrongDownloadSignal(url, fields) {
+    if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|csv|txt|odt|ods|odp|jpg|jpeg|png|gif|mp4|mov|7z|rar)(?:[?#].*)?$/i.test(url)) {
+      return true;
+    }
+    var found = false;
+    function check(value, key) {
+      if (/^_eventId$/i.test(key) && /download/i.test(value) ||
+          /^(file.?download|download.?file)$/i.test(key)) found = true;
+    }
+    new URL(url).searchParams.forEach(check);
+    Object.keys(fields || {}).forEach(function(key) { check(fields[key], key); });
+    return found;
+  }
+
+  function isAppOwned(element) {
+    for (var node = element; node; node = node.parentElement) {
+      if (/(^|\s)mbg-/.test((node.id || '') + ' ' +
+          (node.getAttribute('class') || ''))) return true;
+      var attributes = node.attributes || [];
+      for (var i = 0; i < attributes.length; i += 1) {
+        if (attributes[i].name.indexOf('data-mbg-') === 0) return true;
+      }
+    }
+    return false;
   }
 
   function normalizedActionText(element) {
@@ -482,6 +511,8 @@ class GakujoDownloadCaptureScript {
       /^(提出|提出する|送信|送信する)$/.test(text) ||
       /^(取消|取消し|取り消し|取り消す|キャンセル|中止)$/.test(text) ||
       /^(戻る|前へ|次へ|進む|確認|確認する)$/.test(text) ||
+      /^(確定保存|一時保存|保存|クリア|削除|登録|確定)(する)?$/.test(text) ||
+      /^(save|submit|confirm|back|clear|delete|register|cancel)$/.test(text) ||
       /^(レポート|小テスト)?提出(確認)?$/.test(text) ||
       /^(レポート|小テスト)?提出(用)?(画面|ページ)(へ|に進む|へ進む)?$/.test(text)
     );
@@ -524,16 +555,51 @@ class GakujoDownloadCaptureScript {
     return new URL(rawUrl || '', baseUrlOf(element)).href;
   }
 
+  function shouldCapture(element, url, fields) {
+    if (isAppOwned(element) ||
+        new URL(url).host !== 'gakujo.iess.niigata-u.ac.jp') return false;
+    if (isSubmissionWorkflowAction(element) && !hasStrongDownloadSignal(url, fields)) {
+      return false;
+    }
+    return hasStrongDownloadSignal(url, fields) || isDownloadLike(element, url);
+  }
+
+  function captureForm(form, submitter) {
+    if (!form || isAppOwned(form) || submitter && isAppOwned(submitter)) return false;
+    var action = form.getAttribute('action') || baseUrlOf(form);
+    var absoluteAction = absoluteUrlOf(form, action);
+    var fields = formFields(form, submitter);
+    if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
+    post({
+      url: absoluteAction,
+      method: (form.getAttribute('method') || 'GET').toUpperCase(),
+      fileName: downloadFileName(submitter, form),
+      courseName: estimateCourseName(),
+      formFields: fields
+    });
+    return true;
+  }
+
+  window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER = function(event) {
+    var form = event.target;
+    var submitter = event.submitter || formSubmitters.get(form);
+    formSubmitters.delete(form);
+    if (captureForm(form, submitter)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
   window.__MBG_DOWNLOAD_CAPTURE_HANDLER = function(event) {
     var target = event.target;
-    if (!target || !target.closest) {
+    if (!target || !target.closest || isAppOwned(target)) {
       return;
     }
 
     var anchor = target.closest('a[href]');
     if (anchor) {
       var absoluteUrl = absoluteUrlOf(anchor, anchor.getAttribute('href'));
-      if (!isDownloadLike(anchor, absoluteUrl)) {
+      if (!shouldCapture(anchor, absoluteUrl, {})) {
         return;
       }
       event.preventDefault();
@@ -554,31 +620,59 @@ class GakujoDownloadCaptureScript {
     }
 
     var form = submitter.form || submitter.closest('form');
+    // The page's onclick may select the file and event before submitting.
+    if (submitter.hasAttribute('onclick')) {
+      if (form) formSubmitters.set(form, submitter);
+      return;
+    }
+    if (form) {
+      if (captureForm(form, submitter)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
     var submitterPageUrl = baseUrlOf(submitter);
-    if (!form && !isDownloadLike(submitter, submitterPageUrl)) {
-      return;
-    }
-
-    var action = form ? (form.getAttribute('action') || baseUrlOf(form)) : submitterPageUrl;
-    var absoluteAction = absoluteUrlOf(form || submitter, action);
-    if (isSubmissionWorkflowAction(submitter) && !hasStrongDownloadSignal(submitter, absoluteAction)) {
-      return;
-    }
-
-    if (!isDownloadLike(submitter, absoluteAction)) {
+    if (!shouldCapture(submitter, submitterPageUrl, {})) {
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
     post({
-      url: absoluteAction,
-      method: form ? (form.getAttribute('method') || 'GET').toUpperCase() : 'GET',
-      fileName: downloadFileName(submitter, form),
+      url: submitterPageUrl,
+      method: 'GET',
+      fileName: downloadFileName(submitter, null),
       courseName: estimateCourseName(),
-      formFields: formFields(form, submitter)
+      formFields: {}
     });
   };
+
+  function restoreFormSubmits() {
+    var prototypes = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES || [];
+    prototypes.forEach(function(entry) {
+      if (entry.prototype.submit === entry.wrapper) {
+        entry.prototype.submit = entry.original;
+      }
+    });
+    window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES = [];
+  }
+
+  function wrapFormSubmit(doc) {
+    var view = doc.defaultView;
+    var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
+    if (!prototype) return;
+    var original = prototype.submit;
+    var wrapper = function() {
+      var submitter = formSubmitters.get(this);
+      formSubmitters.delete(this);
+      if (!captureForm(this, submitter)) return original.apply(this, arguments);
+    };
+    prototype.submit = wrapper;
+    window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.push({
+      prototype: prototype, original: original, wrapper: wrapper
+    });
+  }
 
   window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER = function(event) {
     var target = event && event.target;
@@ -603,6 +697,11 @@ class GakujoDownloadCaptureScript {
             window.__MBG_DOWNLOAD_CAPTURE_HANDLER,
             true
           );
+          window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS[oldDocIndex].removeEventListener(
+            'submit',
+            window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
+            true
+          );
         } catch (e) {}
       }
     }
@@ -623,6 +722,7 @@ class GakujoDownloadCaptureScript {
       }
     }
     window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
+    restoreFormSubmits();
     var documents = collectDocuments();
     for (var i = 0; i < documents.length; i += 1) {
       try {
@@ -632,6 +732,12 @@ class GakujoDownloadCaptureScript {
           true
         );
         window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS.push(documents[i]);
+        documents[i].addEventListener(
+          'submit',
+          window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER,
+          true
+        );
+        wrapFormSubmit(documents[i]);
         documents[i].addEventListener(
           'load',
           window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER,
@@ -657,9 +763,19 @@ class GakujoDownloadCaptureScript {
     for (var index = 0; index < documents.length; index += 1) {
       try {
         documents[index].removeEventListener('click', handler, true);
+        documents[index].removeEventListener(
+          'submit', window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER, true
+        );
       } catch (e) {}
     }
   }
+  var prototypes = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES || [];
+  prototypes.forEach(function(entry) {
+    if (entry.prototype.submit === entry.wrapper) {
+      entry.prototype.submit = entry.original;
+    }
+  });
+  window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES = [];
   var loadHandler = window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER;
   var loadDocuments = window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS || [];
   if (loadHandler) {
@@ -676,6 +792,7 @@ class GakujoDownloadCaptureScript {
   window.__MBG_DOWNLOAD_CAPTURE_DOCUMENTS = [];
   window.__MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS = [];
   window.__MBG_DOWNLOAD_CAPTURE_HANDLER = null;
+  window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER = null;
   window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER = null;
   window.__MBG_DOWNLOAD_CAPTURE_ATTACH = null;
   window.__MBG_ESTIMATE_COURSE_NAME = null;

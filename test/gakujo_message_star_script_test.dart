@@ -161,7 +161,8 @@ void main() {
     expect(((long['messages'] as List).first['body'] as String).length, 4000);
   });
 
-  test('iframe navigation discovers detail without reinjection', () async {
+  test('iframe navigation discovers detail and releases old document styles',
+      () async {
     final result = await _evaluate(
         _starDomHarness,
         [
@@ -173,6 +174,7 @@ void main() {
     expect(result['navigatedPressed'], 'true');
     expect(result['navigatedStyleCount'], 1);
     expect(result['oldListButtonCount'], 0);
+    expect(result['oldListStyleCount'], 0);
     expect((result['messages'] as List).last['action'], 'detail');
     expect((result['messages'] as List).last['title'], '授業のお知らせ');
   });
@@ -201,6 +203,7 @@ void main() {
       expect(result['reloadedButtonText'], '');
       expect(result['reloadedPressed'], 'true');
       expect(result['reloadedStyleCount'], 1);
+      expect(result['oldDetailStyleCount'], 0);
       expect(result['rememberedAfterReload'], result['remembered']);
       final details = (result['messages'] as List)
           .where((message) => message['action'] == 'detail')
@@ -540,6 +543,7 @@ if (performanceScenario) {
 let navigatedTitle, navigatedButtonText, navigatedPressed, navigatedStyleCount;
 let reloadedButtonText, reloadedPressed, reloadedStyleCount, capture, oldListListenerRemoved;
 let rememberedBeforeClick, remembered, rememberedAfterReload, oldListButtonCount;
+let oldListStyleCount, oldDetailStyleCount;
 if (scenario === 'navigate' || remembers) {
   const oldList = inner;
   if (remembers) {
@@ -555,15 +559,18 @@ if (scenario === 'navigate' || remembers) {
   for (const callback of intervals.values()) callback();
   oldListListenerRemoved = !oldList.listeners.click;
   oldListButtonCount = oldList.querySelectorAll('button').length;
+  oldListStyleCount = oldList.querySelectorAll('style').length;
   navigatedTitle = inner.heading.textContent;
   navigatedButtonText = inner.querySelector('button')?.textContent ?? null;
   navigatedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
   navigatedStyleCount = inner.querySelectorAll('style').length;
   if (remembers) {
+    const oldDetail = inner;
     const heading = inner.heading.textContent;
     inner = detail(false, false, true); inner.heading.textContent = heading;
     outer.frame.contentWindow.document = inner;
     for (const callback of intervals.values()) callback();
+    oldDetailStyleCount = oldDetail.querySelectorAll('style').length;
     reloadedButtonText = inner.querySelector('button')?.textContent ?? null;
     reloadedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
     reloadedStyleCount = inner.querySelectorAll('style').length;
@@ -574,7 +581,8 @@ process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCo
   outerStyleCounts, originalRowText, rowTexts, intervalCounts, listenerCounts, beforeTitle, label, buttonTitle,
   prevented, stopped, messages, navigatedTitle, navigatedButtonText, navigatedPressed,
   navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
-  oldListListenerRemoved, oldListButtonCount, rememberedBeforeClick, remembered, rememberedAfterReload,
+  oldListListenerRemoved, oldListButtonCount, oldListStyleCount, oldDetailStyleCount,
+  rememberedBeforeClick, remembered, rememberedAfterReload,
   headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick}));
 ''';
 

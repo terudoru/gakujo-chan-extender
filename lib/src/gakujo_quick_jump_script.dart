@@ -19,6 +19,20 @@ class GakujoQuickJumpScript {
     if (typeof text.normalize === 'function') text = text.normalize('NFKC');
     return text.replace(/\\s+/g, '').trim();
   }
+  function isExcluded(node) {
+    for (var current = node; current; current = current.parentElement) {
+      var action = (current.getAttribute('href') || '') + ' ' +
+        (current.getAttribute('onclick') || '');
+      if (/seqNo=|_eventId=confirm|displayMidoku/i.test(action) ||
+          /(^|\\s)mbg-/.test((current.id || '') + ' ' +
+            (current.getAttribute('class') || ''))) return true;
+      var attributes = current.attributes || [];
+      for (var i = 0; i < attributes.length; i += 1) {
+        if (attributes[i].name.indexOf('data-mbg-') === 0) return true;
+      }
+    }
+    return false;
+  }
   label = normalized(label);
   if (!label) return false;
   collect(window);
@@ -31,7 +45,7 @@ class GakujoQuickJumpScript {
     );
     for (var i = 0; i < candidates.length; i += 1) {
       var node = candidates[i];
-      if (node.disabled || node.matches(':disabled') ||
+      if (isExcluded(node) || node.disabled || node.matches(':disabled') ||
           node.closest('[aria-disabled="true"], [inert]') ||
           !node.getClientRects().length) continue;
       var style = doc.defaultView.getComputedStyle(node);

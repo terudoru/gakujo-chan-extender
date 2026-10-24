@@ -40,7 +40,7 @@ class GakujoMessageStarScript {
       gakujoSmartphoneMessageRowsScript +
       r'''
   var initialIds = __STARRED_IDS__;
-  var version = 5;
+  var version = 6;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
     window.__MBG_MESSAGE_STARS_REFRESH(initialIds);
     return;
@@ -301,6 +301,11 @@ class GakujoMessageStarScript {
       if (listDocuments.indexOf(doc) < 0) doc.addEventListener('click', rememberClickedMessage, true);
     });
     listDocuments = docs;
+    styles = styles.filter(function(style) {
+      if (docs.indexOf(style.ownerDocument) >= 0) return true;
+      style.remove();
+      return false;
+    });
     // Release buttons belonging to a document that has navigated away.
     buttons = buttons.filter(function(entry) {
       if (docs.indexOf(entry.target.ownerDocument) >= 0 && entry.target.isConnected !== false) return true;

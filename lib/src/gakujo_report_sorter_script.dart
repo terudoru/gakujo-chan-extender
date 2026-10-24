@@ -4,7 +4,7 @@ class GakujoReportSorterScript {
   static String build() {
     return r'''
 (function() {
-  var version = 1;
+  var version = 2;
   if (window.__MBG_REPORT_SORTER_VERSION === version) {
     if (window.__MBG_REPORT_SORTER_UPDATE) {
       window.__MBG_REPORT_SORTER_UPDATE();
@@ -12,6 +12,7 @@ class GakujoReportSorterScript {
     return;
   }
   window.__MBG_REPORT_SORTER_VERSION = version;
+  var sortedTables = new WeakSet();
 
   function mainFrameDocument() {
     try {
@@ -24,7 +25,8 @@ class GakujoReportSorterScript {
 
   function reportTable() {
     var doc = mainFrameDocument();
-    return doc.querySelector('#enqListForm table:nth-of-type(2)');
+    return doc.querySelector('#enqListForm table:nth-of-type(2)') ||
+      document.querySelector('#enqListForm table:nth-of-type(2)');
   }
 
   function textOf(element) {
@@ -172,8 +174,8 @@ class GakujoReportSorterScript {
     addButton('mbg-report-number-button', '開講番号でソート', sortByNumber);
     addButton('mbg-report-date-button', '提出期間でソート', sortByDate);
     colorTemporarySaved(table);
-    if (!window.__MBG_REPORT_SORTER_DID_INITIAL_SORT) {
-      window.__MBG_REPORT_SORTER_DID_INITIAL_SORT = true;
+    if (!sortedTables.has(table)) {
+      sortedTables.add(table);
       sortByDate();
     }
     return true;

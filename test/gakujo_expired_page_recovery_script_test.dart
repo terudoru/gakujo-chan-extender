@@ -86,6 +86,7 @@ void main() {
     'topTitleOnly',
     'topInnerTextExpired',
     'topTextContentExpired',
+    'topShortExpiryBody',
   ]) {
     test('$scenario without an iframe replaces the location with the portal',
         () async {
@@ -101,7 +102,12 @@ void main() {
     expect(result['topReplacements'], [_portal]);
   });
 
-  for (final scenario in ['topNormal', 'topBodyBeyondLimit']) {
+  for (final scenario in [
+    'topNormal',
+    'topBodyBeyondLimit',
+    'topExpiryNotice',
+    'topLongExpiryBody',
+  ]) {
     test('$scenario does not navigate', () async {
       final result = await _evaluate(scenario);
       expect(result['topReplacements'], isEmpty);
@@ -180,9 +186,13 @@ if (scenario === 'topTitleOnly') {
   doc.title = expiredTitle;
   Object.defineProperty(doc, 'body', {get() { throw new Error('Body must not be read'); }});
 }
-if (scenario === 'topInnerTextExpired') doc.body.innerText = 'ページの有効期限切れ';
-if (scenario === 'topTextContentExpired') doc.body = {textContent: expiredTitle};
+const expiredMessage = 'ページの有効期限が過ぎています';
+if (scenario === 'topInnerTextExpired') doc.body.innerText = expiredMessage;
+if (scenario === 'topTextContentExpired') doc.body = {textContent: expiredMessage};
 if (scenario === 'topBodyBeyondLimit') doc.body.innerText = 'x'.repeat(200) + expiredTitle;
+if (scenario === 'topExpiryNotice') doc.body.innerText = 'ページの有効期限切れについてのお知らせ。通常の連絡通知です。';
+if (scenario === 'topShortExpiryBody') doc.body.innerText = expiredMessage.padEnd(299, 'x');
+if (scenario === 'topLongExpiryBody') doc.body.innerText = expiredMessage.padEnd(300, 'x');
 doc.getElementById = id => id === 'main-frame-if' && hasFrame ? frame : null;
 const location = {
   origin,

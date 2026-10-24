@@ -13,9 +13,8 @@ class GakujoExpiredPageRecoveryScript {
       return true;
     }
     var body = doc.body;
-    return !!body && pattern.test(
-      (body.innerText || body.textContent || '').slice(0, 200)
-    );
+    var text = body && (body.innerText || body.textContent || '') || '';
+    return text.length < 300 && text.indexOf('ページの有効期限が過ぎています') >= 0;
   }
 
   function shouldRecover(target) {
