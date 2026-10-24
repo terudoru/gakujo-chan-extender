@@ -931,9 +931,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     unawaited(_initialPageLoaded);
     // A desktop window can stay on one page all day; keep assignments and
-    // 連絡通知 current anyway. The refresh itself runs at most half-hourly.
+    // 連絡通知 current anyway. The refresh itself runs at most half-hourly;
+    // checking more often keeps a tick that lands just short of 30 minutes
+    // after a page-load refresh from stretching the gap to an hour.
     _backgroundRefreshTimer = Timer.periodic(
-      const Duration(minutes: 30),
+      const Duration(minutes: 5),
       (_) => unawaited(_refreshAssignmentsInBackground()),
     );
   }
