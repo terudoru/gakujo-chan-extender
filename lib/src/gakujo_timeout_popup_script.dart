@@ -15,7 +15,7 @@ class GakujoTimeoutPopupScript {
     banner.appendChild(button);
   }
 
-  function showBanner(isWarning) {
+  function showBanner(isWarning, sourceWindow) {
     var banner = document.getElementById('mbg-timeout-banner');
     if (!banner) {
       banner = document.createElement('div');
@@ -37,6 +37,17 @@ class GakujoTimeoutPopupScript {
     banner.appendChild(message);
     if (isWarning) {
       addButton(banner, '延長する', function() {
+        function extend(target) {
+          if (target && typeof target.extendSession === 'function') {
+            target.extendSession();
+            banner.remove();
+            return true;
+          }
+          return false;
+        }
+        try { if (extend(sourceWindow)) return; } catch (e) {}
+        try { if (extend(window.top)) return; } catch (e) {}
+        try { if (extend(window.parent)) return; } catch (e) {}
         if (typeof window.extendSession === 'function') {
           window.extendSession();
           banner.remove();
@@ -46,6 +57,7 @@ class GakujoTimeoutPopupScript {
     addButton(banner, '閉じる', function() {
       banner.remove();
     });
+    return banner;
   }
 
   function wrapWindow(target) {
@@ -55,18 +67,28 @@ class GakujoTimeoutPopupScript {
       }
       var originalOpen = target.open;
       target.open = function(url) {
-        var match = String(url || '').match(
-          /\/theme\/default\/(TimeoutAlert|Timeout)\.html(?:[?#]|$)/
-        );
+        var match = null;
+        try {
+          var resolved = new URL(url, target.location.href);
+          match = resolved.href.match(
+            /\/theme\/default\/(TimeoutAlert|Timeout)\.html(?:[?#]|$)/
+          );
+        } catch (e) {}
         if (!match) {
           return originalOpen.apply(this, arguments);
         }
-        showBanner(match[1] === 'TimeoutAlert');
+        var banner = showBanner(match[1] === 'TimeoutAlert', target);
+        // The banner element is reused; only close the message this call showed.
+        var token = {};
+        banner.__MBG_TIMEOUT_TOKEN = token;
         return {
           closed: false,
           focus: function() {},
           blur: function() {},
-          close: function() { this.closed = true; },
+          close: function() {
+            this.closed = true;
+            if (banner.__MBG_TIMEOUT_TOKEN === token) banner.remove();
+          },
           document: null,
           location: null
         };

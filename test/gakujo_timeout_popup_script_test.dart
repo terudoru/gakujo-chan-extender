@@ -22,7 +22,7 @@ void main() {
         expect(result['openCalls'], isEmpty);
         expect(result['stub'], {
           'closedBefore': false,
-          'closedAfter': true,
+          'closedAfter': false,
           'focusResult': null,
           'blurResult': null,
           'document': null,
@@ -36,6 +36,44 @@ void main() {
       });
     }
   }
+
+  test('relative timeout URLs are resolved before interception', () async {
+    for (final page in ['TimeoutAlert', 'Timeout']) {
+      for (final prefix in ['theme/default/', './theme/default/']) {
+        final result = await _evaluate('popup', url: '$prefix$page.html');
+        expect(result['openCalls'], isEmpty);
+        expect(result['bannerCount'], 1);
+        expect(result['message'], page == 'TimeoutAlert' ? _warning : _expired);
+      }
+    }
+  });
+
+  test('extend uses the intercepted iframe before the top window', () async {
+    for (final scenario in ['iframeOwnExtend', 'iframeOwnExtendWithTop']) {
+      final result = await _evaluate(scenario);
+      expect(result['extendCalls'], 1);
+      expect(result['extendThisIsFrame'], isTrue);
+      expect(result['bannerCount'], 0);
+      expect(result['openCalls'], isEmpty);
+    }
+  });
+
+  test('closing the fake popup removes its timeout banner', () async {
+    for (final scenario in ['popupClose', 'iframePopupClose']) {
+      final result = await _evaluate(scenario);
+      expect(result['bannerBeforeClose'], isTrue);
+      expect(result['stub']['closedBefore'], isFalse);
+      expect(result['stub']['closedAfter'], isTrue);
+      expect(result['bannerCount'], 0);
+      expect(result['extendCalls'], 0);
+    }
+  });
+
+  test('closing an older popup keeps a newer timeout message', () async {
+    final result = await _evaluate('staleClose');
+    expect(result['bannerCount'], 1);
+    expect(result['message'], _expired);
+  });
 
   test('extend button calls the portal function and removes the banner',
       () async {
@@ -183,6 +221,7 @@ Future<Map<String, dynamic>> _evaluate(String scenario,
 const _domHarness = r'''
 const vm = require('node:vm');
 const {scripts, scenario, url} = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+const origin = 'https://gakujo.iess.niigata-u.ac.jp';
 class Element {
   constructor(tagName) {
     this.tagName = tagName;
@@ -244,7 +283,8 @@ function originalOpen(name) {
   };
 }
 function createFrameWindow() {
-  return {document: createDocument(), open: originalOpen('frame')};
+  return {document: createDocument(), open: originalOpen('frame'),
+    location: {href: origin + '/campusweb/campussquare.do?_flowId=flow'}};
 }
 const frameDocument = createDocument();
 let frameWindow = createFrameWindow();
@@ -267,18 +307,24 @@ const getElementById = doc.getElementById;
 doc.getElementById = id => id === 'main-frame-if' && scenario !== 'noFrame'
   ? frame : getElementById(id);
 const originalAlert = function() {};
-const context = {document: doc, open: originalOpen('top'), alert: originalAlert};
+const context = {document: doc, open: originalOpen('top'), alert: originalAlert,
+  URL, location: {href: origin + '/campusweb/campusportal.do?page=main'}};
 context.window = context;
+context.top = context.parent = context;
 vm.createContext(context);
-let extendCalls = 0, extendThisIsWindow = false;
+let extendCalls = 0, extendThisIsWindow = false, extendThisIsFrame = false;
 context.recordExtend = function(receiver) {
   extendCalls += 1;
   extendThisIsWindow = receiver === vm.runInContext('window', context);
+  extendThisIsFrame = receiver === frameWindow;
 };
-if (scenario !== 'extendMissing') {
+if (scenario !== 'extendMissing' && scenario !== 'iframeOwnExtend') {
   vm.runInContext(scenario === 'extendNotFunction'
     ? 'window.extendSession = true;'
     : 'window.extendSession = function() { recordExtend(this); };', context);
+}
+if (scenario.startsWith('iframeOwnExtend')) {
+  frameWindow.extendSession = function() { context.recordExtend(this); };
 }
 let topWrapper, frameWrapper;
 for (const script of scripts) {
@@ -306,20 +352,29 @@ const args = [url ?? (passthrough ? '/campusweb/report.do'
   : scenario === 'closeExpired' || scenario === 'expiredThenWarning' ? expiredUrl : warningUrl),
   'report-window', 'width=750,height=240', true];
 const result = target.open(...args);
+const bannerBeforeClose = !!doc.getElementById('mbg-timeout-banner');
 let stub = null;
-if (!passthrough) {
+if (!passthrough && result !== originalResult) {
   const closedBefore = result.closed;
   const focusResult = result.focus();
   const blurResult = result.blur();
-  result.close();
+  if (scenario === 'popupClose' || scenario === 'iframePopupClose') {
+    result.close();
+    result.close();
+  }
   stub = {closedBefore, closedAfter: result.closed,
     focusResult: focusResult ?? null, blurResult: blurResult ?? null,
     document: result.document, location: result.location};
 }
 const firstBanner = doc.getElementById('mbg-timeout-banner');
 if (scenario === 'warningThenExpired') context.open(expiredUrl);
+if (scenario === 'staleClose') {
+  context.open(expiredUrl);
+  result.close();
+}
 if (scenario === 'expiredThenWarning') context.open(warningUrl);
-if (['extend', 'extendMissing', 'extendNotFunction', 'iframeExtend'].includes(scenario)) {
+if (['extend', 'extendMissing', 'extendNotFunction', 'iframeExtend'].includes(scenario) ||
+    scenario.startsWith('iframeOwnExtend')) {
   firstBanner.children.find(child => child.textContent === '延長する').click();
 }
 if (scenario === 'closeWarning' || scenario === 'closeExpired') {
@@ -327,7 +382,7 @@ if (scenario === 'closeWarning' || scenario === 'closeExpired') {
 }
 const banner = doc.getElementById('mbg-timeout-banner');
 process.stdout.write(JSON.stringify({
-  openCalls, stub, extendCalls, extendThisIsWindow,
+  openCalls, stub, extendCalls, extendThisIsWindow, extendThisIsFrame, bannerBeforeClose,
   bannerCount: descendants(doc.body).filter(element => element.id === 'mbg-timeout-banner').length,
   frameBannerCount: scenario === 'frameDenied' || scenario === 'frameDeniedOnLoad' ? null
     : descendants(frameWindow.document.body).filter(element => element.id === 'mbg-timeout-banner').length,

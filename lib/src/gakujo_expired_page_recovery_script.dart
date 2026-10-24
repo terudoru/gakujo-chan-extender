@@ -8,6 +8,20 @@ class GakujoExpiredPageRecoveryScript {
     if (!doc) {
       return false;
     }
+    var fields = doc.querySelectorAll('textarea, input, [contenteditable]');
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i];
+      var tag = field.tagName.toLowerCase();
+      if (tag === 'input' &&
+          !/^(text|search|email|url|tel|password|number)$/.test(field.type || 'text')) {
+        continue;
+      }
+      var value = tag === 'input' || tag === 'textarea'
+        ? field.value : (field.innerText || field.textContent || '');
+      if (value && (tag !== 'input' || value !== field.defaultValue)) {
+        return false;
+      }
+    }
     var pattern = /ページの有効期限(ぎれ|切れ)/;
     if (pattern.test(doc.title || '')) {
       return true;
@@ -17,18 +31,34 @@ class GakujoExpiredPageRecoveryScript {
     return text.length < 300 && text.indexOf('ページの有効期限が過ぎています') >= 0;
   }
 
-  function shouldRecover(target) {
+  function shouldRecover(target, scope) {
     var key = '__MBG_EXPIRED_RECOVERY';
     var now = Date.now();
-    var previous = null;
+    var history = null;
     try {
-      previous = JSON.parse(sessionStorage.getItem(key) || 'null');
+      history = JSON.parse(sessionStorage.getItem(key) || 'null');
     } catch (e) {}
-    if (previous && previous.target === target && now - previous.at < 10000) {
+    history = window[key] || history;
+    try {
+      history = window.top[key] || history;
+    } catch (e) {}
+    if (!history || typeof history !== 'object' || Array.isArray(history)) {
+      history = {};
+    }
+    var previous = history[scope];
+    var attempts = previous && Array.isArray(previous.attempts)
+      ? previous.attempts.filter(function(at) { return now - at < 120000; }) : [];
+    if (attempts.length >= 3 ||
+        (previous && previous.target === target && now - previous.at < 10000)) {
       return false;
     }
+    history[scope] = {target: target, at: now, attempts: attempts.concat(now)};
+    window[key] = history;
     try {
-      sessionStorage.setItem(key, JSON.stringify({target: target, at: now}));
+      window.top[key] = history;
+    } catch (e) {}
+    try {
+      sessionStorage.setItem(key, JSON.stringify(history));
     } catch (e) {}
     return true;
   }
@@ -47,7 +77,7 @@ class GakujoExpiredPageRecoveryScript {
           target.href.indexOf('_flowExecutionKey=') >= 0) {
         return;
       }
-      if (shouldRecover(target.href)) {
+      if (shouldRecover(target.href, 'iframe')) {
         frame.contentWindow.location.replace(target.href);
       }
     } catch (e) {}
@@ -65,7 +95,7 @@ class GakujoExpiredPageRecoveryScript {
       recoverFrame(frame);
     } else if (isExpired(document)) {
       var target = location.origin + '/campusweb/campusportal.do?page=main';
-      if (shouldRecover(target)) {
+      if (shouldRecover(target, 'top')) {
         location.replace(target);
       }
     }
