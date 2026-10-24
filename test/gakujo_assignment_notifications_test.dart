@@ -618,6 +618,40 @@ void main() {
       expect(late.map((r) => r.id).toSet(), hasLength(2));
     });
 
+    test('Android legacy ids exclude ambiguous pre-upgrade report bookings',
+        () {
+      final report = _assignment(
+        _row('レポート', '第三回', '未提出', '2026/10/21 17:01 ～2026/10/28 16:31'),
+      );
+      List<GakujoReminder> reminders(Iterable<GakujoAssignment> assignments) =>
+          planReminders(
+            assignments: assignments,
+            topics: GakujoNotificationTopicLabels.defaults,
+            preferences: const GakujoNotificationPreferences(
+              reminderOffsets: {GakujoReminderOffset.oneHour},
+            ),
+            now: now,
+          );
+      final oldReport = reminders([report]).single;
+      final both = reminders([report, open]);
+
+      expect(both, hasLength(2));
+      expect(both.map((r) => r.toJson()['stableKey']),
+          unorderedEquals([report.id, open.id]));
+      for (final reminder in both) {
+        final booking = reminder.toJson();
+        expect(booking['atMillis'], oldReport.at.millisecondsSinceEpoch);
+        // Old report history cannot identify either kind at this trigger.
+        expect(booking['legacyIds'], isNot(contains(oldReport.id)));
+        expect(booking['legacyIds'], [reminder.id]);
+      }
+
+      // Without a collision, both historical identities still prevent replay.
+      final quiz = both.singleWhere((r) => r.assignmentId == open.id);
+      expect(reminders([open]).single.legacyIds,
+          containsAll([oldReport.id, quiz.id]));
+    });
+
     test('sync replaces obsolete ids when a colliding assignment appears',
         () async {
       final report = _assignment(

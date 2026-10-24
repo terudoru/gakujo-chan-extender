@@ -1387,7 +1387,8 @@ void main() {
   });
 
   test('official iCalendar decodes escaped text in one pass', () {
-    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(r'''
+    final courses =
+        GakujoCalendarExport.coursesFromOfficialScheduleExportText(r'''
 BEGIN:VCALENDAR
 BEGIN:VEVENT
 SUMMARY:Programming \\new\, paths\; strings
@@ -1404,7 +1405,8 @@ END:VCALENDAR
   });
 
   test('official iCalendar ignores alarm descriptions inside an event', () {
-    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+    final courses =
+        GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
 BEGIN:VCALENDAR
 BEGIN:VEVENT
 BEGIN:VALARM
@@ -1421,7 +1423,8 @@ END:VCALENDAR
   });
 
   test('official iCalendar accepts colon inside a quoted parameter', () {
-    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+    final courses =
+        GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
 BEGIN:VCALENDAR
 BEGIN:VEVENT
 SUMMARY;ALTREP="cid:part1@example.com":Actual course
@@ -1510,6 +1513,42 @@ END:VCALENDAR
       GakujoCalendarExport.displayLocationForCourse(moved),
       '総合教育研究棟 E-260',
     );
+  });
+
+  test('official iCalendar cancels an all-day recurrence by date', () {
+    final courses =
+        GakujoCalendarExport.coursesFromOfficialScheduleExportText('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:constitution@example.edu
+RECURRENCE-ID;VALUE=DATE:20261026
+STATUS:CANCELLED
+END:VEVENT
+BEGIN:VEVENT
+UID:constitution@example.edu
+SUMMARY:1限：日本国憲法
+DTSTART;VALUE=DATE:20261019
+DTEND;VALUE=DATE:20261020
+RRULE:FREQ=WEEKLY;COUNT=3
+END:VEVENT
+END:VCALENDAR
+''');
+
+    expect(courses, hasLength(1));
+    expect(courses.single.recursWeekly, isTrue);
+    expect(courses.single.sourceDate, DateTime(2026, 10, 19));
+    expect(courses.single.excludedDates, [DateTime(2026, 10, 26)]);
+
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses,
+      rangeStart: DateTime(2026, 10, 19),
+      rangeEnd: DateTime(2026, 11, 2),
+      generatedAt: DateTime.utc(2026, 10, 18),
+    );
+    expect(RegExp('BEGIN:VEVENT').allMatches(ics), hasLength(1));
+    expect(ics, contains('DTSTART;TZID=Asia/Tokyo:20261019T084500'));
+    expect(ics, contains('RRULE:FREQ=WEEKLY'));
+    expect(ics, contains('EXDATE;TZID=Asia/Tokyo:20261026T084500'));
   });
 
   test('buildIcs writes moved recurrence exceptions as one-off events', () {

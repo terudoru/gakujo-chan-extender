@@ -888,13 +888,12 @@ class GakujoCalendarExport {
       }
       final uid = event.first('UID').trim();
       final master = uid.isEmpty ? null : mastersByUid[uid];
-      final originalStart = _dateTimeFromIcalendarValue(recurrenceId);
-      if (master != null && originalStart != null) {
+      if (master != null) {
         final excludedDates = excludedDatesByMaster.putIfAbsent(
           master,
           () => <DateTime>[],
         );
-        excludedDates.add(originalStart);
+        excludedDates.addAll(_dateTimesFromIcalendarValues([recurrenceId]));
       }
     }
 

@@ -162,7 +162,7 @@ class GakujoReminder {
   final DateTime at;
   final DateTime? dueAt;
   final String? assignmentId;
-  // Both historical OS ids, regardless of whether a same-title kind is present.
+  // Historical OS ids that can be attributed to this assignment.
   final List<int> legacyIds;
 
   Map<String, Object?> toJson() {
@@ -197,19 +197,28 @@ List<GakujoReminder> planReminders({
     ids.update(assignment.notificationId, (count) => count + 1,
         ifAbsent: () => 1);
   }
-  for (final assignment in currentAssignments) {
+  bool remindable(GakujoAssignment assignment) {
     final topic = assignment.isSurvey
         ? GakujoNotificationTopic.survey
         : GakujoNotificationTopic.coursework;
-    if (!topics.contains(topic) ||
-        preferences.isMuted(assignment.course) ||
-        (preferences.skipSubmitted && assignment.isSubmitted)) {
+    return topics.contains(topic) &&
+        !preferences.isMuted(assignment.course) &&
+        !(preferences.skipSubmitted && assignment.isSubmitted) &&
+        assignment.dueAt.isAfter(now);
+  }
+
+  // Old unqualified history can only be attributed to an assignment when no
+  // other remindable assignment shares that identity.
+  final remindableIds = <String, int>{};
+  for (final assignment in currentAssignments.where(remindable)) {
+    remindableIds.update(assignment.notificationId, (count) => count + 1,
+        ifAbsent: () => 1);
+  }
+  for (final assignment in currentAssignments) {
+    if (!remindable(assignment)) {
       continue;
     }
     final due = assignment.dueAt;
-    if (!due.isAfter(now)) {
-      continue;
-    }
     final shown = assignment.dueInJapan;
     GakujoReminder? late;
     for (final offset in GakujoReminderOffset.values) {
@@ -240,7 +249,11 @@ List<GakujoReminder> planReminders({
         at: at,
         dueAt: due,
         assignmentId: assignment.id,
-        legacyIds: [idFor(assignment.notificationId), idFor(assignment.id)],
+        legacyIds: [
+          if (remindableIds[assignment.notificationId] == 1)
+            idFor(assignment.notificationId),
+          idFor(assignment.id),
+        ],
       );
       if (isLate) {
         if (late == null || at.isAfter(late.at)) {
