@@ -24,6 +24,7 @@ class GakujoMessageReaderScript {
   window.__MBG_MESSAGE_READER_DISPOSE = function() {
     disposed = true;
     window.clearTimeout(reloadTimeout);
+    window.clearTimeout(confirmTimer);
     if (cancelPendingFrame) {
       cancelPendingFrame();
     }
@@ -224,6 +225,16 @@ class GakujoMessageReaderScript {
     }
   }
 
+  var confirmTimer = null;
+
+  function disarm(button) {
+    window.clearTimeout(confirmTimer);
+    confirmTimer = null;
+    if (button) {
+      button.textContent = '指定した個数を既読にする';
+    }
+  }
+
   async function readerCall() {
     if (disposed || reading || reloadTimeout) {
       return;
@@ -232,6 +243,20 @@ class GakujoMessageReaderScript {
     if (!urls.length) {
       return;
     }
+    var confirmButton = controlsDocument.getElementById('mbg-read-button');
+    // Gakujo cannot mark a message unread again, so a stray tap must not
+    // read messages the student has not seen: the first tap only asks.
+    if (!confirmTimer) {
+      if (confirmButton) {
+        confirmButton.textContent =
+          urls.length + '件を既読にする（もう一度押して確定）';
+      }
+      confirmTimer = window.setTimeout(function() {
+        disarm(controlsDocument.getElementById('mbg-read-button'));
+      }, 5000);
+      return;
+    }
+    disarm(confirmButton);
     reading = true;
     var button = controlsDocument.getElementById('mbg-read-button');
     if (button) {

@@ -371,6 +371,8 @@ async function main() {
     input.value = scenario.inputValue ?? String(scenario.fetchStatuses.length);
     const button = injectedPage.context.document.getElementById('mbg-read-button');
     const reads = [];
+    // The first tap only asks for confirmation.
+    await button.click();
     for (let i = 0; i < scenario.clickCount; i += 1) reads.push(button.click());
     if (scenario.teardownDuringRead) run(teardownScript, injectedPage);
     await Promise.all(reads);

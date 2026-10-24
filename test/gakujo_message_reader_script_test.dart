@@ -201,6 +201,16 @@ void main() {
     expect(disallowedBaseResult['reloadCount'], 0);
   });
 
+  test('a single tap only asks for confirmation', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200],
+      clickCount: 0,
+    );
+    expect(result['fetchCallCount'], 0);
+    expect(result['reloadCount'], 0);
+  });
+
   test('coalesces repeated clicks while a read is pending', () async {
     final result = await evaluateMessageReaderScript(
       buildScript: GakujoMessageReaderScript.build(),
@@ -488,7 +498,11 @@ async function main() {
   const input = listDoc.getElementById('mbg-read-num-input');
   const button = listDoc.getElementById('mbg-read-button');
   if (input) input.value = '3';
-  if (button) await button.listeners.click();
+  if (button) {
+    // The first tap only asks for confirmation.
+    await button.listeners.click();
+    await button.listeners.click();
+  }
   for (const callback of [...timers.values()]) callback();
   const status = listDoc.getElementById('mbg-read-status');
   const table = listDoc.listTable;
