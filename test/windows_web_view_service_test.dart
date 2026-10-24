@@ -40,6 +40,77 @@ void main() {
     messenger.setMockStreamHandler(events, null);
   });
 
+  group('Windows resource errors', () {
+    const connectivityStatuses = {
+      windows.WebErrorStatus.disconnected,
+      windows.WebErrorStatus.hostNameNotResolved,
+      windows.WebErrorStatus.cannotConnect,
+      windows.WebErrorStatus.connectionAborted,
+      windows.WebErrorStatus.connectionReset,
+      windows.WebErrorStatus.timeout,
+      windows.WebErrorStatus.serverUnreachable,
+    };
+
+    for (final status in windows.WebErrorStatus.values) {
+      test('maps ${status.name} as a main-frame navigation error', () {
+        final mapped = GakujoWebResourceError.fromWindows(status);
+        expect(mapped.description, status.name);
+        expect(mapped.isForMainFrame, isTrue);
+        expect(
+            mapped.isConnectivityError, connectivityStatuses.contains(status));
+      });
+    }
+  });
+
+  testWidgets('an offline error page does not finish a successful navigation', (
+    tester,
+  ) async {
+    const url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+    final native = windows.WebviewController();
+    await tester.runAsync(native.initialize);
+    final controller = WindowsGakujoWebViewController(native);
+    final errors = <GakujoWebResourceError>[];
+    final finished = <String>[];
+    await tester.runAsync(
+      () => controller.setNavigationDelegate(
+        GakujoNavigationDelegate(
+          onWebResourceError: errors.add,
+          onPageFinished: finished.add,
+        ),
+      ),
+    );
+    Future<void> emit(String type, Object value) async {
+      await tester.runAsync(() async {
+        eventSink!.success({'type': type, 'value': value});
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+      });
+    }
+
+    await emit('urlChanged', url);
+    await emit('loadingStateChanged', windows.LoadingState.loading.index);
+    await emit('onLoadError', windows.WebErrorStatus.disconnected.index);
+    await emit(
+      'loadingStateChanged',
+      windows.LoadingState.navigationCompleted.index,
+    );
+    expect(errors.single.description, 'disconnected');
+    expect(errors.single.isForMainFrame, isTrue);
+    expect(errors.single.isConnectivityError, isTrue);
+    expect(finished, isEmpty);
+
+    // A later reload of the same URL can complete without urlChanged.
+    await tester.runAsync(controller.reload);
+    await emit('loadingStateChanged', windows.LoadingState.loading.index);
+    await emit(
+      'loadingStateChanged',
+      windows.LoadingState.navigationCompleted.index,
+    );
+    expect(finished, [url]);
+    expect(calls.where((call) => call.method == 'reload'), hasLength(1));
+    await tester.runAsync(controller.dispose);
+  });
+
   testWidgets('Windows service anchors page popups below app controls', (
     tester,
   ) async {
@@ -50,19 +121,19 @@ void main() {
     await tester.runAsync(controller.setJavaScriptModeUnrestricted);
 
     Widget page(double top) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 24,
-            top: top,
-            width: 600,
-            height: 400,
-            child: service.buildWidget(controller),
+          textDirection: TextDirection.ltr,
+          child: Stack(
+            children: [
+              Positioned(
+                left: 24,
+                top: top,
+                width: 600,
+                height: 400,
+                child: service.buildWidget(controller),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
+        );
     await tester.pumpWidget(page(112));
     await tester.pump();
     List<dynamic> geometry() =>

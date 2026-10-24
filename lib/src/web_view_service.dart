@@ -8,7 +8,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_windows/webview_flutter_windows.dart' as windows;
+import 'package:webview_flutter_windows/webview_flutter_windows.dart'
+    as windows;
 
 import 'allowed_web_origins.dart';
 import 'macos_input_focus_service.dart';
@@ -29,9 +30,50 @@ class GakujoNavigationRequest {
 class GakujoWebResourceError {
   const GakujoWebResourceError({
     required this.description,
+    this.isForMainFrame = true,
+    this.isConnectivityError = false,
   });
 
+  factory GakujoWebResourceError.fromWebViewFlutter(WebResourceError error) {
+    final isConnectivityError = switch (error.errorType) {
+      WebResourceErrorType.hostLookup ||
+      WebResourceErrorType.connect ||
+      WebResourceErrorType.timeout ||
+      WebResourceErrorType.io =>
+        true,
+      WebResourceErrorType.unknown || null => RegExp(
+          r'ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NETWORK_CHANGED|CONNECTION_[A-Z_]+|ADDRESS_UNREACHABLE)',
+          caseSensitive: false,
+        ).hasMatch(error.description),
+      _ => false,
+    };
+    return GakujoWebResourceError(
+      description: error.description,
+      isForMainFrame: error.isForMainFrame ?? true,
+      isConnectivityError: isConnectivityError,
+    );
+  }
+
+  factory GakujoWebResourceError.fromWindows(windows.WebErrorStatus error) {
+    return GakujoWebResourceError(
+      description: error.name,
+      isConnectivityError: switch (error) {
+        windows.WebErrorStatus.disconnected ||
+        windows.WebErrorStatus.hostNameNotResolved ||
+        windows.WebErrorStatus.cannotConnect ||
+        windows.WebErrorStatus.connectionAborted ||
+        windows.WebErrorStatus.connectionReset ||
+        windows.WebErrorStatus.timeout ||
+        windows.WebErrorStatus.serverUnreachable =>
+          true,
+        _ => false,
+      },
+    );
+  }
+
   final String description;
+  final bool isForMainFrame;
+  final bool isConnectivityError;
 }
 
 class GakujoNavigationDelegate {
@@ -245,8 +287,7 @@ Future<List<String>> _pickAndroidUploadFiles(
     final files = allowsMultiple
         ? await openFiles(acceptedTypeGroups: typeGroups)
         : [
-            if (await openFile(acceptedTypeGroups: typeGroups)
-                case final file?)
+            if (await openFile(acceptedTypeGroups: typeGroups) case final file?)
               file,
           ];
     return [
@@ -391,14 +432,14 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
             ListTile(
               leading: const Icon(Icons.photo_camera),
               title: const Text('写真を撮る'),
-              onTap: () => Navigator.of(sheetContext)
-                  .pop(AndroidUploadSource.camera),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(AndroidUploadSource.camera),
             ),
             ListTile(
               leading: const Icon(Icons.folder_open),
               title: const Text('写真やファイルを選ぶ'),
-              onTap: () => Navigator.of(sheetContext)
-                  .pop(AndroidUploadSource.files),
+              onTap: () =>
+                  Navigator.of(sheetContext).pop(AndroidUploadSource.files),
             ),
           ],
         ),
@@ -478,6 +519,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> setNavigationDelegate(GakujoNavigationDelegate delegate) async {
+    var mainFrameConnectivityFailed = false;
     await _inner.setNavigationDelegate(
       NavigationDelegate(
         onNavigationRequest: (request) async {
@@ -488,18 +530,26 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
               ? NavigationDecision.prevent
               : NavigationDecision.navigate;
         },
-        onPageStarted: delegate.onPageStarted,
+        onPageStarted: (url) {
+          mainFrameConnectivityFailed = false;
+          delegate.onPageStarted?.call(url);
+        },
         onPageFinished: (url) async {
-          await delegate.onPageFinished?.call(url);
+          // Error documents also finish loading; keep offline recovery active.
+          if (!mainFrameConnectivityFailed) {
+            await delegate.onPageFinished?.call(url);
+          }
         },
         onWebResourceError: (error) {
           if (error.errorType ==
               WebResourceErrorType.webContentProcessTerminated) {
             unawaited(_recoverFromTerminatedContentProcess());
           }
-          delegate.onWebResourceError?.call(
-            GakujoWebResourceError(description: error.description),
-          );
+          final mapped = GakujoWebResourceError.fromWebViewFlutter(error);
+          if (mapped.isForMainFrame && mapped.isConnectivityError) {
+            mainFrameConnectivityFailed = true;
+          }
+          delegate.onWebResourceError?.call(mapped);
         },
       ),
     );
@@ -652,8 +702,7 @@ class _JavaScriptDialogHostState extends State<_JavaScriptDialogHost> {
         return await _show<bool>(request.message, cancellable: true) ?? false;
       });
       await controller.setOnJavaScriptTextInputDialog((request) async {
-        return await _showTextInput(request.message, request.defaultText) ??
-            '';
+        return await _showTextInput(request.message, request.defaultText) ?? '';
       });
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -930,14 +979,20 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       _canGoForward = value.canGoForward;
     }));
     _subscriptions.add(_inner.loadingState.listen((state) {
-      if (state == windows.LoadingState.navigationCompleted) {
+      if (state == windows.LoadingState.loading) {
+        _mainFrameConnectivityFailed = false;
+      } else if (state == windows.LoadingState.navigationCompleted &&
+          !_mainFrameConnectivityFailed) {
         unawaited(_notifyPageFinished());
       }
     }));
     _subscriptions.add(_inner.onLoadError.listen((error) {
-      _delegate?.onWebResourceError?.call(
-        GakujoWebResourceError(description: error.name),
-      );
+      final mapped = GakujoWebResourceError.fromWindows(error);
+      // WebView2 reports completion after onLoadError even for error pages.
+      if (mapped.isConnectivityError) {
+        _mainFrameConnectivityFailed = true;
+      }
+      _delegate?.onWebResourceError?.call(mapped);
     }));
     _subscriptions.add(_inner.webMessage.listen(_handleWebMessage));
     _subscriptions.add(_inner.processFailed.listen(_handleProcessFailed));
@@ -997,6 +1052,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   final Map<String, FutureOr<void> Function(String)> _javaScriptHandlers = {};
   final List<StreamSubscription<Object?>> _subscriptions = [];
   late final Future<void> _ready;
+
   /// Replaces the WebView with this message when WebView2 cannot be used.
   final ValueNotifier<String?> _unavailableMessage = ValueNotifier(null);
   GakujoNavigationDelegate? _delegate;
@@ -1005,6 +1061,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   bool _canGoBack = false;
   bool _canGoForward = false;
   bool _handlingPreventedNavigation = false;
+  bool _mainFrameConnectivityFailed = false;
 
   @override
   Future<void> setJavaScriptModeUnrestricted() async {

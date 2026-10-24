@@ -46,6 +46,7 @@ import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
 import 'gakujo_message_star_script.dart';
 import 'gakujo_notification_service.dart';
+import 'gakujo_offline_retry.dart';
 import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
@@ -287,6 +288,7 @@ class GakujoWebApp extends StatefulWidget {
     String? startUrl,
     String? initialTwoFactorSecret,
     bool? debugAllowed,
+    Future<bool> Function()? gakujoReachable,
   })  : _secretStore = secretStore,
         _totpGenerator = totpGenerator,
         _lastPageStore = lastPageStore,
@@ -294,7 +296,8 @@ class GakujoWebApp extends StatefulWidget {
         _localPrefsStore = localPrefsStore,
         _startUrl = startUrl,
         _initialTwoFactorSecret = initialTwoFactorSecret,
-        _debugAllowed = debugAllowed;
+        _debugAllowed = debugAllowed,
+        _gakujoReachable = gakujoReachable;
 
   final TwoFactorSecretStore? _secretStore;
   final TotpGenerator? _totpGenerator;
@@ -304,6 +307,7 @@ class GakujoWebApp extends StatefulWidget {
   final String? _startUrl;
   final String? _initialTwoFactorSecret;
   final bool? _debugAllowed;
+  final Future<bool> Function()? _gakujoReachable;
 
   @override
   State<GakujoWebApp> createState() => _GakujoWebAppState();
@@ -796,6 +800,10 @@ const gakujoAuthenticatedSessionResetScript = r'''
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
+  late final GakujoOfflineRetry _offlineRetry;
+  // Reloads since the last successful Gakujo page. The probe can reach the
+  // host while the WebView still fails (proxy, captive portal), so cap it.
+  int _offlineAutoReloads = 0;
   late final Future<void> _webViewReady;
   late final Future<void> _initialPageLoaded;
   late final TwoFactorSecretStore _secretStore;
@@ -899,6 +907,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
     _controller = _webViewService.createController();
+    _offlineRetry = GakujoOfflineRetry(
+      probe: widget._gakujoReachable ?? probeGakujoReachability,
+      onReachable: () => unawaited(_reloadAfterConnectivityRestored()),
+    );
     _downloadService = Platform.isWindows
         ? FileSystemGakujoDownloadService(
             authenticatedBytesLoader: _downloadBytesWithWebViewSession,
@@ -928,6 +940,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
     _pendingMessageOpenTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
@@ -2891,6 +2904,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _showSnackBar('カレンダー連携または再検出の完了後に再読込してください');
           return;
         }
+        _beginNavigation();
         await _controller.reload();
         return;
       case _ToolbarAction.addFavorite:
@@ -3111,6 +3125,34 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectMessageFilterIfAllowed();
   }
 
+  void _beginNavigation() {
+    _offlineRetry.cancel();
+    _navigationRevision += 1;
+  }
+
+  Future<void> _reloadAfterConnectivityRestored() async {
+    if (!mounted) {
+      return;
+    }
+    _beginNavigation();
+    _offlineAutoReloads += 1;
+    final navigationRevision = _navigationRevision;
+    _setStatus('接続が戻ったので再読み込みしました');
+    try {
+      await _controller.reload();
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to reload after connectivity returned',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (navigationRevision == _navigationRevision) {
+        _setStatus('読込エラー: $error');
+      }
+    }
+  }
+
   Future<void> _loadAllowedPageUrl(
     String url, {
     bool ownsPageNavigationOperation = false,
@@ -3133,7 +3175,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!ownsPageNavigationOperation) {
       _setPendingMessageUrl(url);
     }
-    _navigationRevision += 1;
+    _beginNavigation();
     await _controller.loadUrl(url);
   }
 
@@ -3226,13 +3268,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             throw const FormatException('Invalid message URL');
           }
           _setPendingMessageUrl(null);
-          _navigationRevision += 1;
+          _beginNavigation();
           await _controller.loadUrl(targetUrl);
           return true;
         case 'gone':
           _setPendingMessageUrl(null);
           _showSnackBar('連絡通知が見つかりませんでした。一覧を開きます');
-          _navigationRevision += 1;
+          _beginNavigation();
           await _controller.loadUrl(_messageListPortalUrl);
           return true;
         case 'missing':
@@ -3309,7 +3351,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (!ownsPageNavigationOperation) {
       _setPendingMessageUrl(null);
-      _navigationRevision += 1;
+      _beginNavigation();
     }
     if (!_canRunPageScripts) {
       if (fallbackUrl != null) {
@@ -4768,7 +4810,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginRestoreAttempted = false;
       _navigationRecoveryCandidateUrl = restoreTarget;
     }
-    _navigationRevision += 1;
+    _beginNavigation();
     await _controller.loadUrl(targetUrl);
   }
 
@@ -4839,7 +4881,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             // login shell must not replace it before the DOM probe runs.
             _navigationRecoveryCandidateUrl = url;
           }
-          _navigationRevision += 1;
+          _beginNavigation();
           _currentPageUrl = url;
           if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
             _lastAllowedPageUrl = url;
@@ -4868,6 +4910,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+              _offlineRetry.cancel();
+              _offlineAutoReloads = 0;
               _lastAllowedPageUrl = url;
             }
             _setStatus('表示中: ${_displayUrl(url)}');
@@ -4977,6 +5021,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
         },
         onWebResourceError: (error) {
+          if (!mounted) {
+            return;
+          }
+          if (error.isForMainFrame && error.isConnectivityError) {
+            if (_offlineAutoReloads >= 3) {
+              _setStatus('読み込めませんでした。接続を確認して再読込を押してください');
+              return;
+            }
+            _setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
+            _offlineRetry.start();
+            return;
+          }
           _setStatus('読込エラー: ${error.description}');
         },
       ),
@@ -5291,7 +5347,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _loginRestoreAttempted = true;
     _pendingLoginRestoreUrl = null;
     _setStatus('前回のページに戻ります: ${_displayUrl(restoreUrl)}');
-    _navigationRevision += 1;
+    _beginNavigation();
     await _controller.loadUrl(restoreUrl);
   }
 
@@ -5330,7 +5386,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _setPendingMessageUrl(null);
-    _navigationRevision += 1;
+    _beginNavigation();
     await _controller.goBack();
     await _refreshNavigationState();
     return true;
@@ -5355,7 +5411,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _setPendingMessageUrl(null);
-    _navigationRevision += 1;
+    _beginNavigation();
     await _controller.goForward();
     await _refreshNavigationState();
     return true;
@@ -5493,7 +5549,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final pageFinished = _waitForNextPageFinished(
         timeout: const Duration(seconds: 8),
       );
-      _navigationRevision += 1;
+      _beginNavigation();
       await _controller.loadUrl(deferredUrl);
       await pageFinished;
     } on Object catch (error, stackTrace) {

@@ -2,8 +2,106 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
+  group('mobile resource errors', () {
+    const connectivityTypes = {
+      WebResourceErrorType.hostLookup,
+      WebResourceErrorType.connect,
+      WebResourceErrorType.timeout,
+      WebResourceErrorType.io,
+    };
+
+    for (final type in WebResourceErrorType.values) {
+      test('maps ${type.name} without treating other failures as offline', () {
+        final mapped = GakujoWebResourceError.fromWebViewFlutter(
+          WebResourceError(
+            errorCode: -1,
+            description: 'load failed',
+            errorType: type,
+          ),
+        );
+        expect(mapped.description, 'load failed');
+        expect(mapped.isConnectivityError, connectivityTypes.contains(type));
+        expect(mapped.isForMainFrame, isTrue);
+      });
+    }
+
+    for (final type in [WebResourceErrorType.unknown, null]) {
+      for (final description in [
+        'net::ERR_INTERNET_DISCONNECTED',
+        'net::err_name_not_resolved',
+        'Failed: ERR_NETWORK_CHANGED',
+        'net::ERR_CONNECTION_REFUSED',
+        'net::err_connection_reset',
+        'net::ERR_CONNECTION_ABORTED',
+        'net::ERR_CONNECTION_CLOSED',
+        'net::ERR_CONNECTION_TIMED_OUT',
+        'net::ERR_ADDRESS_UNREACHABLE',
+      ]) {
+        test('recognizes $description when the type is $type', () {
+          final mapped = GakujoWebResourceError.fromWebViewFlutter(
+            WebResourceError(
+              errorCode: -1,
+              description: description,
+              errorType: type,
+            ),
+          );
+          expect(mapped.description, description);
+          expect(mapped.isConnectivityError, isTrue);
+        });
+      }
+    }
+
+    for (final isForMainFrame in [true, false, null]) {
+      test('preserves main-frame flag $isForMainFrame', () {
+        final mapped = GakujoWebResourceError.fromWebViewFlutter(
+          WebResourceError(
+            errorCode: -1,
+            description: 'net::ERR_INTERNET_DISCONNECTED',
+            errorType: WebResourceErrorType.unknown,
+            isForMainFrame: isForMainFrame,
+          ),
+        );
+        expect(mapped.isForMainFrame, isForMainFrame ?? true);
+        expect(mapped.isConnectivityError, isTrue);
+      });
+    }
+
+    test('does not infer offline from certificate or cancelled errors', () {
+      for (final description in [
+        'net::ERR_CERT_AUTHORITY_INVALID',
+        'net::ERR_ABORTED',
+        'unknown failure',
+      ]) {
+        final mapped = GakujoWebResourceError.fromWebViewFlutter(
+          WebResourceError(
+            errorCode: -1,
+            description: description,
+            errorType: WebResourceErrorType.unknown,
+          ),
+        );
+        expect(mapped.isConnectivityError, isFalse, reason: description);
+      }
+      expect(
+        GakujoWebResourceError.fromWebViewFlutter(const WebResourceError(
+          errorCode: -1,
+          description: 'ERR_CONNECTION_RESET',
+          errorType: WebResourceErrorType.failedSslHandshake,
+        )).isConnectivityError,
+        isFalse,
+      );
+    });
+
+    test('legacy resource errors default to main-frame and non-connectivity',
+        () {
+      const error = GakujoWebResourceError(description: 'load failed');
+      expect(error.isForMainFrame, isTrue);
+      expect(error.isConnectivityError, isFalse);
+    });
+  });
+
   test('cookiePathMatches follows RFC6265 path boundaries', () {
     expect(cookiePathMatches('/foo', '/foo'), isTrue);
     expect(cookiePathMatches('/foo/bar', '/foo'), isTrue);
