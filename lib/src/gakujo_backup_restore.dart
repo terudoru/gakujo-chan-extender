@@ -11,96 +11,123 @@ Future<void> restoreGakujoBackup({
   required GakujoActivityStore activityStore,
   required bool Function(String) isAllowedUrl,
   required bool Function(String) isAllowedNavigationUrl,
-}) =>
-    runBackupStorageTransaction([
-      settingsStore.backupStorage,
-      historyStore.backupStorage,
-      activityStore.backupStorage,
-    ], () async {
-      if (backup.downloadSaveMode != null) {
-        await settingsStore.saveDownloadSaveMode(backup.downloadSaveMode!);
-      }
-      if (backup.pageMode != null) {
-        await settingsStore.savePageMode(backup.pageMode!);
-      }
-      if (backup.disabledFeatureFlags != null) {
-        await settingsStore
-            .saveDisabledFeatureFlags(backup.disabledFeatureFlags!);
-      }
-      if (backup.setupCompleted != null) {
-        await settingsStore.saveSetupCompleted(backup.setupCompleted!);
-      }
-      if (backup.calendarImportSettings != null) {
-        await settingsStore.saveCalendarImportSettings(
-          backup.calendarImportSettings!,
-        );
-      }
-      if (backup.messageExcludeKeywords != null) {
-        await settingsStore.saveMessageExcludeKeywords(
-          backup.messageExcludeKeywords!,
-        );
-      }
-      if (backup.notificationTopics != null) {
-        await settingsStore.saveNotificationTopics(backup.notificationTopics!);
-      }
-      if (backup.notificationPreferences != null) {
-        await settingsStore.saveNotificationPreferences(
-          backup.notificationPreferences!,
-        );
-      }
-      if (backup.messageNotification != null) {
-        await settingsStore.saveMessageNotification(
-          backup.messageNotification!,
-        );
-      }
-      final downloadHistory = backup.downloadHistory;
-      if (downloadHistory != null) {
-        await historyStore.replaceHistory(downloadHistory);
-      }
-      final failedDownloads = backup.failedDownloads;
-      if (failedDownloads != null) {
-        await historyStore.replaceFailedDownloads(
-          failedDownloads
-              .where(
-                (entry) => isAllowedUrl(entry.request.url),
-              )
-              .toList(),
-        );
-      }
-      final favorites = backup.favorites;
-      if (favorites != null) {
-        await activityStore.replaceFavorites(
-          favorites
-              .where(
-                (entry) => isAllowedNavigationUrl(entry.url),
-              )
-              .toList(),
-        );
-      }
-      final starredMessages = backup.starredMessages;
-      if (starredMessages != null) {
-        await activityStore.replaceStarredMessages(starredMessages);
-      }
-      final deadlines = backup.deadlines;
-      if (deadlines != null) {
-        await activityStore.replaceDeadlines(
-          deadlines.where((entry) => isAllowedUrl(entry.url)).toList(),
-        );
-      }
-      final notifiedDeadlineKeys = backup.notifiedDeadlineKeys;
-      if (notifiedDeadlineKeys != null) {
-        await activityStore.replaceNotifiedDeadlineKeys(notifiedDeadlineKeys);
-      }
-      final changes = backup.changes;
-      if (changes != null) {
-        await activityStore.replaceChanges(
-          changes.where((entry) => isAllowedUrl(entry.url)).toList(),
-        );
-      }
-      final reportLists = backup.reportLists;
-      if (reportLists != null) {
-        await activityStore.replaceReportLists(
-          reportLists.where((entry) => isAllowedUrl(entry.url)).toList(),
-        );
-      }
-    });
+}) async {
+  // Validate every replacement before starting the transaction: even rollback
+  // writes are unnecessary when the backup cannot be read.
+  final messageExcludeKeywords = validateGakujoBackupCollection(
+    'messageExcludeKeywords',
+    backup.messageExcludeKeywords,
+  );
+  final downloadHistory = validateGakujoBackupCollection(
+    'downloadHistory',
+    backup.downloadHistory,
+    retain: historyStore.retainsBackupEntry,
+  );
+  final failedDownloads = validateGakujoBackupCollection(
+    'failedDownloads',
+    backup.failedDownloads,
+    retain: (entry) =>
+        historyStore.retainsBackupEntry(entry) &&
+        isAllowedUrl(entry.request.url),
+  );
+  final favorites = validateGakujoBackupCollection(
+    'favorites',
+    backup.favorites,
+    retain: (entry) =>
+        activityStore.retainsBackupEntry(entry) &&
+        isAllowedNavigationUrl(entry.url),
+  );
+  final starredMessages = validateGakujoBackupCollection(
+    'starredMessages',
+    backup.starredMessages,
+    retain: activityStore.retainsBackupEntry,
+  );
+  final deadlines = validateGakujoBackupCollection(
+    'deadlines',
+    backup.deadlines,
+    retain: (entry) =>
+        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+  );
+  final notifiedDeadlineKeys = validateGakujoBackupCollection(
+    'notifiedDeadlineKeys',
+    backup.notifiedDeadlineKeys,
+  );
+  final changes = validateGakujoBackupCollection(
+    'changes',
+    backup.changes,
+    retain: (entry) =>
+        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+  );
+  final reportLists = validateGakujoBackupCollection(
+    'reportLists',
+    backup.reportLists,
+    retain: (entry) =>
+        activityStore.retainsBackupEntry(entry) && isAllowedUrl(entry.url),
+  );
+  await runBackupStorageTransaction([
+    settingsStore.backupStorage,
+    historyStore.backupStorage,
+    activityStore.backupStorage,
+  ], () async {
+    if (backup.downloadSaveMode != null) {
+      await settingsStore.saveDownloadSaveMode(backup.downloadSaveMode!);
+    }
+    if (backup.pageMode != null) {
+      await settingsStore.savePageMode(backup.pageMode!);
+    }
+    if (backup.disabledFeatureFlags != null) {
+      await settingsStore
+          .saveDisabledFeatureFlags(backup.disabledFeatureFlags!);
+    }
+    if (backup.setupCompleted != null) {
+      await settingsStore.saveSetupCompleted(backup.setupCompleted!);
+    }
+    if (backup.calendarImportSettings != null) {
+      await settingsStore.saveCalendarImportSettings(
+        backup.calendarImportSettings!,
+      );
+    }
+    if (messageExcludeKeywords != null) {
+      await settingsStore.saveMessageExcludeKeywords(
+        messageExcludeKeywords,
+      );
+    }
+    if (backup.notificationTopics != null) {
+      await settingsStore.saveNotificationTopics(backup.notificationTopics!);
+    }
+    if (backup.notificationPreferences != null) {
+      await settingsStore.saveNotificationPreferences(
+        backup.notificationPreferences!,
+      );
+    }
+    if (backup.messageNotification != null) {
+      await settingsStore.saveMessageNotification(
+        backup.messageNotification!,
+      );
+    }
+    if (downloadHistory != null) {
+      await historyStore.replaceHistory(downloadHistory);
+    }
+    if (failedDownloads != null) {
+      await historyStore.replaceFailedDownloads(failedDownloads);
+    }
+    if (favorites != null) {
+      await activityStore.replaceFavorites(favorites);
+    }
+    if (starredMessages != null) {
+      await activityStore.replaceStarredMessages(starredMessages);
+    }
+    if (deadlines != null) {
+      await activityStore.replaceDeadlines(deadlines);
+    }
+    if (notifiedDeadlineKeys != null) {
+      await activityStore.replaceNotifiedDeadlineKeys(notifiedDeadlineKeys);
+    }
+    if (changes != null) {
+      await activityStore.replaceChanges(changes);
+    }
+    if (reportLists != null) {
+      await activityStore.replaceReportLists(reportLists);
+    }
+  });
+}

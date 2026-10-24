@@ -168,7 +168,13 @@ List<GakujoReminder> planReminders({
 }) {
   String two(int value) => value.toString().padLeft(2, '0');
   final reminders = <GakujoReminder>[];
-  for (final assignment in assignments) {
+  final currentAssignments = assignments.toList();
+  final ids = <String, int>{};
+  for (final assignment in currentAssignments) {
+    ids.update(assignment.notificationId, (count) => count + 1,
+        ifAbsent: () => 1);
+  }
+  for (final assignment in currentAssignments) {
     final topic = assignment.isSurvey
         ? GakujoNotificationTopic.survey
         : GakujoNotificationTopic.coursework;
@@ -192,7 +198,11 @@ List<GakujoReminder> planReminders({
       if ((isLate && lateReminders == null) || at.isAfter(now.add(horizon))) {
         continue;
       }
-      final id = '${assignment.notificationId}|${offset.storageValue}';
+      // Keep existing bookings unless another kind shares the old identity.
+      final assignmentId = ids[assignment.notificationId]! > 1
+          ? assignment.id
+          : assignment.notificationId;
+      final id = '$assignmentId|${offset.storageValue}';
       final reminder = GakujoReminder(
         // Stable across runs so a reminder is replaced, not duplicated.
         id: id.codeUnits.fold<int>(17, (hash, unit) {

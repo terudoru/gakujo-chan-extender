@@ -7,6 +7,48 @@ import org.junit.Test
 
 class DeadlineReminderDeliveryTest {
     @Test
+    fun booksOnlyThe150SoonestEligibleReminders() {
+        val reminders = (400 downTo 1).map { it to it * 1000L }
+        val upcoming = DeadlineReminderDelivery.upcoming(
+            reminders,
+            now = 1000L,
+            delivered = setOf(2),
+            id = { it.first },
+            atMillis = { it.second }
+        )
+        assertEquals((3..152).toList(), upcoming.map { it.first })
+        // Two fallback alarms per reminder stay below the per-app limit.
+        assertTrue(upcoming.size * 2 < 500)
+    }
+
+    @Test
+    fun duplicateIdsDoNotConsumeTheBookingBudget() {
+        val reminders = listOf(1 to 200L, 1 to 100L, 2 to 300L)
+        assertEquals(
+            listOf(1 to 100L, 2 to 300L),
+            DeadlineReminderDelivery.upcoming(
+                reminders, 0L, emptySet(), { it.first }, { it.second }
+            )
+        )
+    }
+
+    @Test
+    fun alarmFailuresAreReportedAndDoNotStopLaterOperations() {
+        for (failure in listOf(SecurityException("revoked"), IllegalStateException("alarm limit"))) {
+            val errors = mutableListOf<Exception>()
+            val attempted = mutableListOf<Int>()
+            for (id in 1..3) {
+                DeadlineReminderDelivery.attempt(onError = { errors.add(it) }) {
+                    attempted.add(id)
+                    if (id == 1) throw failure
+                }
+            }
+            assertEquals(listOf(1, 2, 3), attempted)
+            assertEquals(listOf(failure), errors)
+        }
+    }
+
+    @Test
     fun earlyDeliveryIsNotBookedAgainBeforeItsPlannedTime() {
         val at = 11 * 60 * 60 * 1000L
         assertTrue(DeadlineReminderDelivery.shouldBook(42, at, at - 20 * 60 * 1000L, emptySet()))

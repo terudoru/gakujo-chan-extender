@@ -436,6 +436,72 @@ void main() {
       // These are the pre-upgrade course/title/offset booking IDs.
       expect(first.map((r) => r.id), [812177153, 481562399]);
     });
+
+    test('same-title reports and quizzes receive separate stable reminder ids',
+        () {
+      final report = _assignment(
+        _row('レポート', '第三回', '未提出', '2026/10/21 17:01 ～2026/10/28 16:31'),
+      );
+      List<GakujoReminder> reminders(Iterable<GakujoAssignment> assignments) =>
+          planReminders(
+            assignments: assignments,
+            topics: GakujoNotificationTopicLabels.defaults,
+            preferences: const GakujoNotificationPreferences(),
+            now: now,
+          );
+      final oldIds = reminders([open]).map((r) => r.id).toSet();
+      final both = reminders([open, report]);
+      expect(both, hasLength(4));
+      expect(both.map((r) => r.id).toSet(), hasLength(4));
+      expect(both.map((r) => r.id).toSet().intersection(oldIds), isEmpty);
+      expect(reminders([report, open]).map((r) => r.id),
+          unorderedEquals(both.map((r) => r.id)));
+      expect(reminders([open]).map((r) => r.id).toSet(), oldIds);
+      final late = <GakujoReminder>[];
+      planReminders(
+        assignments: [open, report],
+        topics: GakujoNotificationTopicLabels.defaults,
+        preferences: const GakujoNotificationPreferences(),
+        now: _jst(2026, 10, 28, 16, 15),
+        lateReminders: late,
+      );
+      expect(late, hasLength(2));
+      expect(late.map((r) => r.id).toSet(), hasLength(2));
+    });
+
+    test('sync replaces obsolete ids when a colliding assignment appears',
+        () async {
+      final report = _assignment(
+        _row('レポート', '第三回', '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+      );
+      final quiz = _assignment(
+        _row('小テスト', '第三回', '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+      );
+      final store = GakujoActivityStore();
+      final service = _BookingNotificationService();
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => _jst(2099, 10, 21, 12),
+      );
+      Future<void> sync() => coordinator.syncReminders(
+            notificationsEnabled: true,
+            topics: GakujoNotificationTopicLabels.defaults,
+            preferences: const GakujoNotificationPreferences(),
+          );
+      await store.mergeAssignments([quiz], isWholeList: true);
+      await sync();
+      final oldIds = service.bookings.single.map((r) => r.id).toSet();
+      expect(oldIds, hasLength(2));
+      await store.mergeAssignments([quiz, report], isWholeList: true);
+      await sync();
+      final newIds = service.bookings.last.map((r) => r.id).toSet();
+      expect(newIds, hasLength(4));
+      expect(newIds.intersection(oldIds), isEmpty);
+      await store.mergeAssignments([quiz], isWholeList: true);
+      await sync();
+      expect(service.bookings.last.map((r) => r.id).toSet(), oldIds);
+    });
   });
 
   test('the notification choices are saved and loaded', () async {
@@ -542,6 +608,22 @@ class _FakeNotificationService extends GakujoNotificationService {
   @override
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
     titles.add(entry.title);
+    return true;
+  }
+}
+
+class _BookingNotificationService extends GakujoNotificationService {
+  final List<List<GakujoReminder>> bookings = [];
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<bool> scheduleReminders(
+    List<GakujoReminder> reminders, {
+    Future<void> Function(GakujoReminder)? onInAppReminder,
+  }) async {
+    bookings.add(reminders);
     return true;
   }
 }

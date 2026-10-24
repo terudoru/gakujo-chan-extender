@@ -926,6 +926,19 @@ class GakujoActivityStore {
     return newEntries;
   }
 
+  /// Uses the same retention rules as the replacement writers, before import.
+  bool retainsBackupEntry(Object entry) => switch (entry) {
+        final GakujoDeadlineEntry value =>
+          _isUsefulDeadline(value) && _isActiveDeadline(value),
+        final GakujoFavoritePage value => _isUsefulFavorite(value),
+        final GakujoStarredMessage value => value.isValid,
+        final GakujoActivityChangeEntry value =>
+          _isUsefulChange(value) && _isRecentChange(value),
+        final GakujoCachedReportList value =>
+          _isUsefulReportList(value) && _isRecentReportList(value),
+        _ => false,
+      };
+
   Future<void> replaceDeadlines(List<GakujoDeadlineEntry> entries) {
     return _enqueue(() => _replaceDeadlines(entries));
   }

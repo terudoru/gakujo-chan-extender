@@ -55,6 +55,110 @@ void main() {
       expect(backup.downloadHistory, isNull);
     });
 
+    for (final key in [
+      'favorites',
+      'starredMessages',
+      'downloadHistory',
+      'failedDownloads',
+      'deadlines',
+      'changes',
+      'reportLists',
+      'notifiedDeadlineKeys',
+    ]) {
+      test('rejects a non-empty unreadable $key collection', () {
+        expect(
+          () => parseGakujoBackup(jsonEncode({
+            'version': 2,
+            key: key == 'notifiedDeadlineKeys' ? [' ', ''] : [{}],
+          })),
+          throwsA(isA<GakujoBackupImportException>().having(
+            (error) => error.message,
+            'message',
+            allOf(startsWith('バックアップの'), endsWith('を読み取れませんでした')),
+          )),
+        );
+        expect(
+          () => parseGakujoBackup(jsonEncode({'version': 2, key: []})),
+          returnsNormally,
+        );
+      });
+    }
+
+    test('keeps useful favorites when some records have empty required fields',
+        () {
+      final backup = parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'favorites': [
+          {},
+          {'title': ' ', 'url': 'https://example.com'},
+          {'title': 'Missing URL', 'url': ' '},
+          {'title': 'Kept', 'url': 'https://example.com'},
+        ],
+      }));
+      expect(backup.favorites!.single.title, 'Kept');
+    });
+
+    test('rejects non-empty settings lists with no recognized values', () {
+      for (final entry in {
+        'messageExcludeKeywords': [' ', ''],
+        'disabledFeatureFlags': ['unknown-feature'],
+        'notificationTopics': ['unknown-topic'],
+      }.entries) {
+        expect(
+          () => parseGakujoBackup(jsonEncode({
+            'version': 2,
+            entry.key: entry.value,
+          })),
+          throwsA(isA<GakujoBackupImportException>()),
+        );
+        expect(
+          () => parseGakujoBackup(jsonEncode({'version': 2, entry.key: []})),
+          returnsNormally,
+        );
+      }
+      // The legacy message-only choice intentionally has no coursework topic.
+      final messages = parseGakujoBackup(
+        '{"version":2,"notificationTopics":["message"]}',
+      );
+      expect(messages.notificationTopics, isEmpty);
+      expect(messages.messageNotification!.mode,
+          GakujoMessageNotificationMode.deadlines);
+    });
+
+    test('migrates legacy message topics using the settings loader rule', () {
+      for (final topics in [
+        ['message', 'report'],
+        ['report'],
+        <String>[],
+      ]) {
+        final backup = parseGakujoBackup(jsonEncode({
+          'version': 2,
+          'notificationTopics': topics,
+        }));
+        final migrated = GakujoMessageNotificationSettings.fromJson(
+          null,
+          legacyTopics: topics,
+        );
+        expect(backup.messageNotification!.toJson(), migrated.toJson());
+        expect(
+            backup.messageNotification!.mode,
+            topics.contains('message')
+                ? GakujoMessageNotificationMode.deadlines
+                : GakujoMessageNotificationMode.off);
+      }
+      expect(parseGakujoBackup('{"version":2}').messageNotification, isNull);
+    });
+
+    test('an explicit message rule takes precedence over legacy topics', () {
+      final backup = parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'notificationTopics': ['message', 'report'],
+        'messageNotification': {'mode': 'off'},
+      }));
+      expect(
+          backup.messageNotification!.mode, GakujoMessageNotificationMode.off);
+    });
+
     test(
         'rejects null records instead of treating them as an empty replacement',
         () {

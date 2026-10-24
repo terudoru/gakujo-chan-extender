@@ -203,4 +203,78 @@ void main() {
 
     expect(identical(merged, secureSettings), isTrue);
   });
+
+  test('partial local JSON preserves missing secure filters and choices',
+      () async {
+    await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+        .writeAsString('{"version":1,"pageMode":"mobile"}');
+    // Updating navigation must not fill missing settings with default values.
+    await store.saveLastPageUrl('https://example.com');
+    final local = await store.load();
+    const secure = GakujoAppSettings(
+      messageExcludeKeywords: ['広告'],
+      notificationTopics: {GakujoNotificationTopic.other},
+      messageNotification: GakujoMessageNotificationSettings(
+        mode: GakujoMessageNotificationMode.deadlines,
+      ),
+      notificationPreferences: GakujoNotificationPreferences(
+        skipSubmitted: false,
+        mutedCourses: {'科目'},
+        reminderOffsets: {GakujoReminderOffset.threeDays},
+      ),
+    );
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: secure,
+      localPrefs: local,
+    );
+    expect(merged.messageExcludeKeywords, secure.messageExcludeKeywords);
+    expect(merged.notificationTopics, secure.notificationTopics);
+    expect(merged.messageNotification.toJson(),
+        secure.messageNotification.toJson());
+    expect(merged.notificationPreferences.toJson(),
+        secure.notificationPreferences.toJson());
+    final raw = jsonDecode(await File(
+      '${directory.path}/${GakujoLocalPrefsStore.fileName}',
+    ).readAsString()) as Map;
+    expect(raw.keys, unorderedEquals(['version', 'pageMode', 'lastPageUrl']));
+  });
+
+  test('present empty filters override secure values without resetting choices',
+      () async {
+    await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+        .writeAsString('{"version":1,"messageExcludeKeywords":[]}');
+    const preferences = GakujoNotificationPreferences(mutedCourses: {'科目'});
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: const GakujoAppSettings(
+        messageExcludeKeywords: ['広告'],
+        notificationPreferences: preferences,
+      ),
+      localPrefs: await store.load(),
+    );
+    expect(merged.messageExcludeKeywords, isEmpty);
+    expect(merged.notificationPreferences.toJson(), preferences.toJson());
+  });
+
+  test('present local topics preserve a missing secure message rule', () async {
+    await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+        .writeAsString(
+            '{"version":1,"notificationTopics":["message","report"]}');
+    final local = await store.load();
+    const messages = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['授業'],
+    );
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: const GakujoAppSettings(
+        messageExcludeKeywords: ['広告'],
+        messageNotification: messages,
+      ),
+      localPrefs: local,
+    );
+    expect(local!.appSettings!.messageNotification.mode,
+        GakujoMessageNotificationMode.deadlines);
+    expect(merged.messageNotification.toJson(), messages.toJson());
+    expect(merged.notificationTopics, {GakujoNotificationTopic.coursework});
+    expect(merged.messageExcludeKeywords, ['広告']);
+  });
 }

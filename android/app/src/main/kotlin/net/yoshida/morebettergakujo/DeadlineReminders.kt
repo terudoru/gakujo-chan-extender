@@ -10,14 +10,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * Reminders booked ahead of assignment deadlines. They are kept so they can
  * be booked again after a reboot, which clears every alarm.
+ * Only the 150 soonest eligible reminders are booked (up to 300 inexact
+ * alarms); the full list stays saved for subsequent syncs and restores.
  */
 object DeadlineReminders {
+    private const val TAG = "DeadlineReminders"
     const val CHANNEL_ID = "gakujo_deadlines"
     const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"
     private const val PREFS = "deadline_reminders"
@@ -50,7 +54,7 @@ object DeadlineReminders {
 
     /** Books the saved reminders again, as after a reboot. */
     fun restore(context: Context) {
-        book(context, load(context))
+        replace(context, load(context))
     }
 
     fun parse(raw: List<*>?): List<Reminder> {
@@ -166,38 +170,47 @@ object DeadlineReminders {
         val now = System.currentTimeMillis()
         val alarms = alarmManager(context)
         val delivered = loadDelivered(context).toSet()
-        for (reminder in reminders) {
-            if (!DeadlineReminderDelivery.shouldBook(reminder.id, reminder.atMillis, now, delivered)) {
-                continue
-            }
-            val pending = pendingIntent(context, reminder, whileIdle = false)
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms()) {
-                alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.atMillis, pending)
-            } else {
-                // Without exact alarms the system may deliver up to an hour
-                // late, after the deadline. Let it fire early instead.
-                val start = maxOf(now, reminder.atMillis - EARLY_WINDOW_MILLIS)
-                alarms.setWindow(
-                    AlarmManager.RTC_WAKEUP,
-                    start,
-                    reminder.atMillis - start,
-                    pending
-                )
-                // A window alarm waits while the phone dozes; this one does
-                // not. Whichever goes off first cancels the other.
-                alarms.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    start,
-                    pendingIntent(context, reminder, whileIdle = true)
-                )
+        val upcoming = DeadlineReminderDelivery.upcoming(
+            reminders, now, delivered, { it.id }, { it.atMillis }
+        )
+        for (reminder in upcoming) {
+            DeadlineReminderDelivery.attempt(
+                onError = { Log.e(TAG, "Failed to book reminder ${reminder.id}", it) }
+            ) {
+                val pending = pendingIntent(context, reminder, whileIdle = false)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms.canScheduleExactAlarms()) {
+                    alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.atMillis, pending)
+                } else {
+                    // Without exact alarms the system may deliver up to an hour
+                    // late, after the deadline. Let it fire early instead.
+                    val start = maxOf(now, reminder.atMillis - EARLY_WINDOW_MILLIS)
+                    alarms.setWindow(
+                        AlarmManager.RTC_WAKEUP,
+                        start,
+                        reminder.atMillis - start,
+                        pending
+                    )
+                    // A window alarm waits while the phone dozes; this one does
+                    // not. Whichever goes off first cancels the other.
+                    alarms.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        start,
+                        pendingIntent(context, reminder, whileIdle = true)
+                    )
+                }
             }
         }
     }
 
     private fun cancel(context: Context, reminder: Reminder) {
         val alarms = alarmManager(context)
-        alarms.cancel(pendingIntent(context, reminder, whileIdle = false))
-        alarms.cancel(pendingIntent(context, reminder, whileIdle = true))
+        for (whileIdle in listOf(false, true)) {
+            DeadlineReminderDelivery.attempt(
+                onError = { Log.e(TAG, "Failed to cancel reminder ${reminder.id}", it) }
+            ) {
+                alarms.cancel(pendingIntent(context, reminder, whileIdle))
+            }
+        }
     }
 
     private fun pendingIntent(
@@ -277,16 +290,29 @@ object DeadlineReminders {
 /** Shows a reminder when its alarm goes off. */
 class DeadlineReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        DeadlineReminders.show(context, intent)
+        DeadlineReminderDelivery.attempt(
+            onError = { Log.e("DeadlineReminders", "Failed to deliver reminder", it) }
+        ) {
+            DeadlineReminders.show(context, intent)
+        }
     }
 }
 
-/** Books reminders again after a reboot or an app update. */
+/** Books reminders again after a reboot, app update or exact-alarm grant. */
 class DeadlineReminderRestoreReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED -> DeadlineReminders.restore(context)
+        DeadlineReminderDelivery.attempt(
+            onError = { Log.e("DeadlineReminders", "Failed to restore reminders", it) }
+        ) {
+            when (intent.action) {
+                Intent.ACTION_BOOT_COMPLETED,
+                Intent.ACTION_MY_PACKAGE_REPLACED -> DeadlineReminders.restore(context)
+                AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        DeadlineReminders.restore(context)
+                    }
+                }
+            }
         }
     }
 }

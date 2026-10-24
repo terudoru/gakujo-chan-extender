@@ -107,6 +107,18 @@ GakujoBackupImport parseGakujoBackup(String text) {
       (value) =>
           GakujoPageMode.values.any((mode) => mode.storageValue == value));
   validateSetting('setupCompleted', (value) => value is bool);
+  if (decoded['notificationTopics'] is List) {
+    validateGakujoBackupCollection(
+      'notificationTopics',
+      _decodeList(decoded, 'notificationTopics', (value) {
+        final name = value.toString().trim();
+        return name == 'message'
+            ? name
+            : GakujoNotificationTopicLabels.fromStorageValue(name)
+                ?.storageValue;
+      }),
+    );
+  }
 
   return GakujoBackupImport(
     version: version,
@@ -130,11 +142,14 @@ GakujoBackupImport parseGakujoBackup(String text) {
         : null,
     messageExcludeKeywords: decoded.containsKey('messageExcludeKeywords')
         ? normalizeMessageExcludeKeywords(
-            _decodeList(
-              decoded,
+            validateGakujoBackupCollection(
               'messageExcludeKeywords',
-              (value) => value.toString(),
-            ),
+              _decodeList(
+                decoded,
+                'messageExcludeKeywords',
+                (value) => value.toString(),
+              ),
+            )!,
           )
         : null,
     notificationTopics: decoded['notificationTopics'] is List
@@ -144,9 +159,11 @@ GakujoBackupImport parseGakujoBackup(String text) {
             ),
           )
         : null,
-    messageNotification: decoded['messageNotification'] is Map
+    messageNotification: decoded['messageNotification'] is Map ||
+            decoded['notificationTopics'] is List
         ? GakujoMessageNotificationSettings.fromJson(
             decoded['messageNotification'],
+            legacyTopics: decoded['notificationTopics'],
           )
         : null,
     notificationPreferences: decoded['notificationPreferences'] is Map
@@ -156,13 +173,17 @@ GakujoBackupImport parseGakujoBackup(String text) {
         : null,
     disabledFeatureFlags: decoded.containsKey('disabledFeatureFlags')
         ? Set.unmodifiable(
-            _decodeList(
-              decoded,
+            validateGakujoBackupCollection(
               'disabledFeatureFlags',
-              (value) => GakujoFeatureFlagLabels.fromStorageValue(
-                value.toString(),
+              _decodeList(
+                decoded,
+                'disabledFeatureFlags',
+                (value) => GakujoFeatureFlagLabels.fromStorageValue(
+                  value.toString(),
+                ),
               ),
-            ).whereType<GakujoFeatureFlag>(),
+            )!
+                .whereType<GakujoFeatureFlag>(),
           )
         : null,
     downloadHistory: _decodeMapList(
@@ -191,7 +212,8 @@ GakujoBackupImport parseGakujoBackup(String text) {
       GakujoDeadlineEntry.fromJson,
     ),
     notifiedDeadlineKeys: decoded.containsKey('notifiedDeadlineKeys')
-        ? List.unmodifiable(
+        ? validateGakujoBackupCollection(
+            'notifiedDeadlineKeys',
             _decodeList(decoded, 'notifiedDeadlineKeys', (value) {
               if (value is! String) {
                 throw const GakujoBackupImportException(
@@ -241,7 +263,8 @@ List<T>? _decodeMapList<T>(
   if (!decoded.containsKey(key)) {
     return null;
   }
-  return List.unmodifiable(
+  return validateGakujoBackupCollection(
+    key,
     _decodeList(decoded, key, (value) {
       if (value is! Map<dynamic, dynamic>) {
         throw GakujoBackupImportException(
@@ -257,6 +280,61 @@ List<T>? _decodeMapList<T>(
       }
     }),
   );
+}
+
+/// A non-empty unreadable collection must never become a request to clear it.
+List<T>? validateGakujoBackupCollection<T>(
+  String key,
+  List<T>? entries, {
+  bool Function(T)? retain,
+}) {
+  if (entries == null) {
+    return null;
+  }
+  final valid = entries.where((entry) {
+    final readable = switch (entry) {
+      null => false,
+      final GakujoFavoritePage value =>
+        value.title.trim().isNotEmpty && value.url.trim().isNotEmpty,
+      final GakujoStarredMessage value =>
+        value.isValid && value.title.trim().isNotEmpty,
+      final GakujoDownloadHistoryEntry value => value.fileName.trim().isNotEmpty,
+      final GakujoFailedDownloadEntry value =>
+        value.id.trim().isNotEmpty && value.request.url.trim().isNotEmpty,
+      final GakujoDeadlineEntry value => value.title.trim().isNotEmpty &&
+          value.url.trim().isNotEmpty &&
+          value.dueText.trim().isNotEmpty,
+      final GakujoActivityChangeEntry value => value.title.trim().isNotEmpty &&
+          value.url.trim().isNotEmpty &&
+          value.previousHash.trim().isNotEmpty &&
+          value.nextHash.trim().isNotEmpty,
+      final GakujoCachedReportList value => value.title.trim().isNotEmpty &&
+          value.url.trim().isNotEmpty &&
+          value.items.any((item) => item.trim().isNotEmpty),
+      final String value => value.trim().isNotEmpty,
+      _ => true,
+    };
+    return readable && (retain == null || retain(entry));
+  }).toList();
+  if (entries.isNotEmpty && valid.isEmpty) {
+    const kinds = {
+      'downloadHistory': 'ダウンロード履歴',
+      'failedDownloads': '失敗したダウンロード',
+      'favorites': 'お気に入り',
+      'starredMessages': 'スター付き連絡通知',
+      'deadlines': '締切',
+      'notifiedDeadlineKeys': '通知済みキー',
+      'changes': '変更履歴',
+      'reportLists': '課題一覧',
+      'messageExcludeKeywords': '除外キーワード',
+      'notificationTopics': '通知対象',
+      'disabledFeatureFlags': '無効な機能',
+    };
+    throw GakujoBackupImportException(
+      'バックアップの${kinds[key] ?? key}を読み取れませんでした',
+    );
+  }
+  return List.unmodifiable(valid);
 }
 
 List<T> _decodeList<T>(

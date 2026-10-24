@@ -9,10 +9,13 @@ import 'gakujo_app_settings.dart';
 class GakujoLocalPrefs {
   const GakujoLocalPrefs({
     this.appSettings,
+    this.appSettingsKeys,
     this.lastPageUrl,
   });
 
   final GakujoAppSettings? appSettings;
+  // Null denotes a complete settings object supplied by the app.
+  final Set<String>? appSettingsKeys;
   final String? lastPageUrl;
 }
 
@@ -48,6 +51,7 @@ class GakujoLocalPrefsStore {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
         appSettings: current?.appSettings,
+        appSettingsKeys: current?.appSettingsKeys,
         lastPageUrl: url,
       );
     });
@@ -129,7 +133,7 @@ class GakujoLocalPrefsStore {
 
   static Map<String, Object?> _encodePrefs(GakujoLocalPrefs prefs) {
     final settings = prefs.appSettings;
-    return {
+    final encoded = <String, Object?>{
       'version': 1,
       if (settings != null) ...{
         'downloadSaveMode': settings.downloadSaveMode.storageValue,
@@ -148,6 +152,12 @@ class GakujoLocalPrefsStore {
       },
       if (prefs.lastPageUrl != null) 'lastPageUrl': prefs.lastPageUrl,
     };
+    final keys = prefs.appSettingsKeys;
+    if (keys != null) {
+      encoded.removeWhere((key, _) =>
+          key != 'version' && key != 'lastPageUrl' && !keys.contains(key));
+    }
+    return encoded;
   }
 
   static GakujoLocalPrefs _decodePrefs(Map<String, dynamic> raw) {
@@ -179,6 +189,7 @@ class GakujoLocalPrefsStore {
       _ => const <String>[],
     };
     return GakujoLocalPrefs(
+      appSettingsKeys: settingsKeys.where(raw.containsKey).toSet(),
       appSettings: hasSettings
           ? GakujoAppSettings(
               downloadSaveMode: DownloadSaveModeLabels.fromStorageValue(
@@ -233,11 +244,19 @@ GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
   if (localSettings == null) {
     return secureSettings;
   }
+  final keys = localPrefs!.appSettingsKeys;
+  bool has(String key) => keys == null || keys.contains(key);
 
   return secureSettings.copyWith(
-    messageExcludeKeywords: localSettings.messageExcludeKeywords,
-    notificationTopics: localSettings.notificationTopics,
-    messageNotification: localSettings.messageNotification,
-    notificationPreferences: localSettings.notificationPreferences,
+    messageExcludeKeywords: has('messageExcludeKeywords')
+        ? localSettings.messageExcludeKeywords
+        : null,
+    notificationTopics:
+        has('notificationTopics') ? localSettings.notificationTopics : null,
+    messageNotification:
+        has('messageNotification') ? localSettings.messageNotification : null,
+    notificationPreferences: has('notificationPreferences')
+        ? localSettings.notificationPreferences
+        : null,
   );
 }

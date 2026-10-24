@@ -208,6 +208,15 @@ class GakujoDownloadHistoryStore {
     await _replaceHistory(compacted);
   }
 
+  bool retainsBackupEntry(Object entry) => switch (entry) {
+        final GakujoDownloadHistoryEntry value =>
+          value.fileName.trim().isNotEmpty && _isRecentHistory(value),
+        final GakujoFailedDownloadEntry value => value.id.trim().isNotEmpty &&
+            value.request.url.trim().isNotEmpty &&
+            _isRecentFailedDownload(value),
+        _ => false,
+      };
+
   Future<void> replaceHistory(List<GakujoDownloadHistoryEntry> entries) {
     return _enqueue(() => _replaceHistory(entries));
   }

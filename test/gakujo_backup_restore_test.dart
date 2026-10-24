@@ -18,6 +18,163 @@ const _favoritesKey = 'more_better_gakujo_favorites';
 const _notifiedKeysKey = 'more_better_gakujo_notified_deadline_keys';
 
 void main() {
+  final now = DateTime.now().toIso8601String();
+  final validCollections = <String, Object>{
+    'downloadHistory': [
+      {'fileName': 'report.pdf', 'savedAt': now},
+    ],
+    'failedDownloads': [
+      {
+        'id': 'failed',
+        'request': {'url': 'https://example.com/file'},
+        'failedAt': now,
+      },
+    ],
+    'favorites': [
+      {'title': 'Favorite', 'url': 'https://example.com/favorite'},
+    ],
+    'starredMessages': [
+      {'title': 'Message', 'keijitype': '1', 'genrecd': '2', 'seqNo': '3'},
+    ],
+    'deadlines': [
+      {
+        'title': 'Report',
+        'url': 'https://example.com/report',
+        'dueText': '2099/07/01 17:00',
+        'detectedAt': now,
+      },
+    ],
+    'notifiedDeadlineKeys': ['reminder|42'],
+    'changes': [
+      {
+        'title': 'Changed',
+        'url': 'https://example.com/change',
+        'previousHash': 'before',
+        'nextHash': 'after',
+        'changedAt': now,
+      },
+    ],
+    'reportLists': [
+      {
+        'title': 'Reports',
+        'url': 'https://example.com/reports',
+        'items': ['Report'],
+        'capturedAt': now,
+      },
+    ],
+  };
+
+  for (final key in [
+    'failedDownloads',
+    'favorites',
+    'deadlines',
+    'changes',
+    'reportLists',
+  ]) {
+    test('URL filtering cannot turn $key into an empty replacement', () async {
+      final storage = _Storage({
+        _modeKey: 'flat_configured',
+        _favoritesKey: 'old',
+      });
+      final before = Map<String, String>.of(storage.values);
+      await expectLater(
+        restoreGakujoBackup(
+          backup: parseGakujoBackup(jsonEncode({
+            'version': 2,
+            'downloadSaveMode': 'flat_picker_each_time',
+            key: validCollections[key],
+          })),
+          settingsStore: GakujoAppSettingsStore(secureStorage: storage),
+          historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          isAllowedUrl: (_) => false,
+          isAllowedNavigationUrl: (_) => false,
+        ),
+        throwsA(isA<GakujoBackupImportException>()),
+      );
+      expect(storage.writes, 0);
+      expect(storage.values, before);
+    });
+  }
+
+  test('validates direct import objects before any writes', () async {
+    final storage = _Storage({_favoritesKey: 'old'});
+    await expectLater(
+      _restoreActivityBackup(
+        storage,
+        GakujoBackupImport(
+          version: 2,
+          pageMode: GakujoPageMode.mobile,
+          favorites: [GakujoFavoritePage.fromJson({})],
+        ),
+      ),
+      throwsA(isA<GakujoBackupImportException>().having(
+        (error) => error.message,
+        'message',
+        'バックアップのお気に入りを読み取れませんでした',
+      )),
+    );
+    expect(storage.writes, 0);
+    expect(storage.values, {_favoritesKey: 'old'});
+  });
+
+  for (final (key, dateKey) in [
+    ('downloadHistory', 'savedAt'),
+    ('failedDownloads', 'failedAt'),
+    ('changes', 'changedAt'),
+    ('reportLists', 'capturedAt'),
+  ]) {
+    test('rejects $key if every record would be discarded by retention',
+        () async {
+      final records = (validCollections[key] as List)
+          .map((value) => {
+                ...(value as Map),
+                dateKey: '1970-01-01T00:00:00.000Z',
+              })
+          .toList();
+      final storage = _Storage({_modeKey: 'old'});
+      await expectLater(
+        _restoreActivityBackup(
+            storage,
+            parseGakujoBackup(jsonEncode({
+              'version': 2,
+              'pageMode': 'mobile',
+              key: records,
+            }))),
+        throwsA(isA<GakujoBackupImportException>()),
+      );
+      expect(storage.writes, 0);
+    });
+  }
+
+  test('explicit empty lists still clear each restored collection', () async {
+    final storage = _Storage({});
+    final activity = GakujoActivityStore(secureStorage: storage);
+    await _restoreActivityBackup(
+        storage,
+        parseGakujoBackup(jsonEncode({
+          'version': 2,
+          ...validCollections,
+        })),
+        activity: activity);
+    await _restoreActivityBackup(
+        storage,
+        parseGakujoBackup(jsonEncode({
+          'version': 2,
+          for (final key in validCollections.keys) key: [],
+        })),
+        activity: activity);
+    final history = GakujoDownloadHistoryStore(secureStorage: storage);
+    expect(await history.load(), isEmpty);
+    expect(await history.loadFailedDownloads(), isEmpty);
+    expect(await activity.loadFavorites(), isEmpty);
+    expect(await activity.loadStarredMessages(), isEmpty);
+    expect(await activity.loadDeadlines(), isEmpty);
+    expect(await activity.loadNotifiedDeadlineKeys(), isEmpty);
+    expect(await activity.loadChanges(), isEmpty);
+    expect(await activity.loadReportLists(), isEmpty);
+  });
+
   for (final key in [
     _historyKey,
     _favoritesKey,
@@ -31,12 +188,17 @@ void main() {
       final settings = GakujoAppSettingsStore(secureStorage: storage);
       final history = GakujoDownloadHistoryStore(secureStorage: storage);
       final activity = GakujoActivityStore(secureStorage: storage);
-      await expectLater(readGakujoBackupPayload(
-        currentSettings: () => const GakujoAppSettings(),
-        settingsStore: settings, historyStore: history, activityStore: activity,
-      ), throwsStateError);
+      await expectLater(
+          readGakujoBackupPayload(
+            currentSettings: () => const GakujoAppSettings(),
+            settingsStore: settings,
+            historyStore: history,
+            activityStore: activity,
+          ),
+          throwsStateError);
       storage.failReadKey = null;
-      await _restore(storage, settings: settings, history: history, activity: activity)
+      await _restore(storage,
+              settings: settings, history: history, activity: activity)
           .timeout(const Duration(seconds: 2));
     });
   }

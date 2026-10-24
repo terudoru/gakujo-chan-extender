@@ -726,6 +726,11 @@ class MainActivity : FlutterActivity() {
         Thread {
             try {
                 val saved = performDownloadToUri(args, uri)
+                GakujoDocumentPermissions.persistIfOffered(
+                    data.flags,
+                    persist = { contentResolver.takePersistableUriPermission(uri, it) },
+                    onDenied = { Log.w(TAG, "Failed to persist download file permission", it) }
+                )
                 runOnUiThread {
                     result.success(
                         mapOf(
