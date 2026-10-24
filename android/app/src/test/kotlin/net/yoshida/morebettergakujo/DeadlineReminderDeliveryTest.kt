@@ -63,18 +63,47 @@ class DeadlineReminderDeliveryTest {
     fun legacyNumericHistoryPreventsEarlyRebookingButAllowsExtendedDeadlines() {
         val now = 10 * 60 * 60 * 1000L
         val window = 2 * 60 * 60 * 1000L
-        val delivered = DeadlineReminderDelivery.readHistory(listOf(42)).toSet()
-        assertEquals(setOf("42"), delivered)
+        val delivered = DeadlineReminderDelivery.readHistory(listOf(42), now).toSet()
+        assertEquals(setOf("legacy|42|$now"), delivered)
         for (offset in listOf(1L, 10 * 60 * 1000L, window)) {
             assertFalse(DeadlineReminderDelivery.shouldBook(42, now + offset, now, delivered))
             assertTrue(DeadlineReminderDelivery.shouldBook(43, now + offset, now, delivered))
         }
         assertTrue(DeadlineReminderDelivery.shouldBook(42, now + window + 1L, now, delivered))
         assertTrue(DeadlineReminderDelivery.shouldBook(42, now + 24 * 60 * 60 * 1000L, now, delivered))
-        val mixed = DeadlineReminderDelivery.readHistory(listOf(42, "43|1000", null, true))
-        assertEquals(listOf("42", "43|1000"), mixed)
-        assertEquals((2..501).map { it.toString() }, DeadlineReminderDelivery.readHistory((1..501).toList()))
+        val mixed = DeadlineReminderDelivery.readHistory(listOf(42, "43|1000", null, true), now)
+        assertEquals(listOf("legacy|42|$now", "43|1000"), mixed)
+        assertEquals(
+            (2..501).map { "legacy|$it|$now" },
+            DeadlineReminderDelivery.readHistory((1..501).toList(), now)
+        )
         assertEquals(500, DeadlineReminderDelivery.record(mixed + (1..500).map { "$it|1" }, 42, 2L).size)
+    }
+
+    @Test
+    fun legacyHistoryExpiresTwoHoursAfterItsFirstMigration() {
+        val migratedAt = 10 * 60 * 60 * 1000L
+        val expiresAt = migratedAt + 2 * 60 * 60 * 1000L
+        val current = DeadlineReminderDelivery.key(43, expiresAt + 60000L)
+        // Older saves may contain either numeric ids or their string equivalents.
+        val migrated = DeadlineReminderDelivery.readHistory(listOf(42, "41", current), migratedAt)
+        assertEquals(listOf("legacy|42|$migratedAt", "legacy|41|$migratedAt", current), migrated)
+        for (id in listOf(41, 42)) {
+            assertFalse(DeadlineReminderDelivery.shouldBook(id, migratedAt + 60000L, migratedAt, migrated.toSet()))
+        }
+        val reloaded = DeadlineReminderDelivery.readHistory(migrated, expiresAt - 1L)
+        assertEquals(migrated, reloaded)
+        val extendedAt = expiresAt + 60000L
+        assertFalse(DeadlineReminderDelivery.shouldBook(42, extendedAt, expiresAt - 1L, reloaded.toSet()))
+        for (now in listOf(expiresAt, expiresAt + 1L)) {
+            assertTrue(DeadlineReminderDelivery.shouldBook(42, extendedAt, now, reloaded.toSet()))
+            assertFalse(DeadlineReminderDelivery.shouldBook(43, extendedAt, now, reloaded.toSet()))
+            assertEquals(listOf(current), DeadlineReminderDelivery.readHistory(reloaded, now))
+            assertEquals(
+                listOf(current, DeadlineReminderDelivery.key(44, extendedAt)),
+                DeadlineReminderDelivery.record(reloaded, 44, extendedAt, now)
+            )
+        }
     }
 
     @Test

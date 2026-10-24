@@ -5,21 +5,27 @@ internal object DeadlineReminderDelivery {
     // Inexact reminders use two alarms each. Leave room below Android's
     // 500-alarm limit for other work, including alarms from older versions.
     const val MAX_BOOKED_REMINDERS = 150
+    private const val LEGACY_WINDOW_MILLIS = 2 * 60 * 60 * 1000L
 
     fun key(id: Int, atMillis: Long): String = "$id|$atMillis"
 
-    fun readHistory(values: List<*>): List<String> = values.mapNotNull {
+    fun readHistory(values: List<*>, now: Long = System.currentTimeMillis()): List<String> = values.mapNotNull {
         when (it) {
-            is String -> it
-            is Number -> it.toInt().toString()
+            is String -> if (it.toIntOrNull() != null) "legacy|$it|$now" else it
+            is Number -> "legacy|${it.toInt()}|$now"
             else -> null
         }
-    }.takeLast(500)
+    }.filter { !it.startsWith("legacy|") || isActiveLegacy(it, now) }.takeLast(500)
+
+    private fun isActiveLegacy(value: String, now: Long): Boolean =
+        value.substringAfterLast('|').toLongOrNull()?.let { now < it + LEGACY_WINDOW_MILLIS } == true
 
     fun shouldBook(id: Int, atMillis: Long, now: Long, delivered: Set<String>): Boolean =
         atMillis > now && key(id, atMillis) !in delivered &&
-            // Legacy id-only history covers early delivery, not a later extension.
-            (id.toString() !in delivered || atMillis - now > 2 * 60 * 60 * 1000L)
+            // Legacy history only covers early delivery during the migration window.
+            (atMillis - now > LEGACY_WINDOW_MILLIS || delivered.none {
+                it.startsWith("legacy|$id|") && isActiveLegacy(it, now)
+            })
 
     fun <T> upcoming(
         reminders: List<T>,
@@ -41,8 +47,10 @@ internal object DeadlineReminderDelivery {
         }
     }
 
-    fun record(delivered: List<String>, id: Int, atMillis: Long): List<String> {
+    fun record(
+        delivered: List<String>, id: Int, atMillis: Long, now: Long = System.currentTimeMillis()
+    ): List<String> {
         val key = key(id, atMillis)
-        return (delivered.filter { it != key } + key).takeLast(500)
+        return (readHistory(delivered, now).filter { it != key } + key).takeLast(500)
     }
 }

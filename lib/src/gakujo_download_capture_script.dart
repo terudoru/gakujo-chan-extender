@@ -479,6 +479,7 @@ class GakujoDownloadCaptureScript {
     var found = false;
     function check(value, key) {
       if (/^_eventId$/i.test(key) && /download/i.test(value) ||
+          /^_eventId_.*download/i.test(key) ||
           /^(file.?download|download.?file)$/i.test(key)) found = true;
     }
     new URL(url).searchParams.forEach(check);
@@ -571,7 +572,9 @@ class GakujoDownloadCaptureScript {
       /\.(pdf|docx?|xlsx?|pptx?|zip|csv|txt|png|jpe?g)$/i.test(parsed.pathname);
     var workflow = false;
     function check(value, key) {
-      if (/^_eventId$/i.test(key)) {
+      var namedEvent = /^_eventId_(.*)$/i.exec(key);
+      if (/^_eventId$/i.test(key) || namedEvent) {
+        if (namedEvent) value = namedEvent[1];
         if (/download/i.test(value)) explicit = true;
         else if (/(confirm|entry|submit|save|regist|update|delete|back|clear|cancel|next|prev|complete|finish)/i.test(value)) workflow = true;
       }

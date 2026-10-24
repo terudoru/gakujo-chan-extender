@@ -187,6 +187,19 @@ void main() {
     }
   });
 
+  test('named Spring Web Flow events veto workflows and allow downloads',
+      () async {
+    final submit = await _evaluateBehavior('namedWorkflowSubmit');
+    expect(submit['nativeSubmissions'], 1);
+    expect(submit['captured'], isEmpty);
+
+    final result = await _evaluateBehavior('namedEventSubmissions');
+    expect(result['workflowPrevented'], everyElement(isFalse));
+    expect(result['nativeSubmissions'], result['workflowSubmissions']);
+    expect(result['downloadPrevented'], everyElement(isTrue));
+    expect(result['captured'], hasLength(5));
+  });
+
   test('does not capture app-owned stars or their nested targets', () async {
     final result = await _evaluateBehavior('appOwned');
     expect(result['prevented'], everyElement(isFalse));
@@ -523,6 +536,38 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'namedWorkflowSubmit') {
+    const form = submitterWithForm('', 'exports/form.pdf',
+      {_eventId_submit: 'Submit'}).form;
+    form.submit();
+    return {nativeSubmissions, captured};
+  }
+  if (scenario === 'namedEventSubmissions') {
+    const workflowPrevented = [];
+    for (const event of ['confirm', 'entry', 'submit', 'save', 'regist', 'register',
+      'update', 'delete', 'back', 'clear', 'cancel', 'next', 'prev', 'complete', 'finish']) {
+      const form = submitterWithForm('', 'exports/form.pdf',
+        {['_eventId_' + event]: 'Continue'}).form;
+      form.submit();
+      workflowPrevented.push(submitEvent(form));
+      const button = submitterWithForm('Download', 'exports/form.pdf');
+      button.name = '_eventId_' + event;
+      button.value = 'Continue';
+      workflowPrevented.push(click(button), submitEvent(button.form, button));
+    }
+    const download = submitterWithForm('Confirm', 'campussquare.do',
+      {_eventId_download: 'Get file'}).form;
+    download.submit();
+    const downloadPrevented = [submitEvent(download)];
+    const button = submitterWithForm('Confirm', 'campussquare.do');
+    button.name = '_eventId_download';
+    button.value = 'Get file';
+    downloadPrevented.push(click(button), submitEvent(button.form, button));
+    const query = submitterWithForm('', 'campussquare.do?_eventId_download=Get').form;
+    query.submit();
+    return {workflowPrevented, downloadPrevented, captured, nativeSubmissions,
+      workflowSubmissions: 45};
+  }
   if (scenario === 'listenerConfirm') {
     const confirm = submitterWithForm('確認', 'campussquare.do', {_eventId: 'confirm'});
     confirm.form.innerText = 'レポート提出 添付ファイル ダウンロード 確認';

@@ -282,11 +282,17 @@ object DeadlineReminders {
     }
 
     private fun loadDelivered(context: Context): List<String> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_DELIVERED, null) ?: return emptyList()
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val raw = preferences.getString(KEY_DELIVERED, null) ?: return emptyList()
         return try {
             val array = JSONArray(raw)
-            DeadlineReminderDelivery.readHistory((0 until array.length()).map { array.opt(it) })
+            val values = (0 until array.length()).map { array.opt(it) }
+            val history = DeadlineReminderDelivery.readHistory(values)
+            if (history != values) {
+                // Persist the first migration time so rescans/reboots cannot renew it.
+                preferences.edit().putString(KEY_DELIVERED, JSONArray(history).toString()).apply()
+            }
+            history
         } catch (_: Exception) {
             emptyList()
         }
