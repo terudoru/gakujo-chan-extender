@@ -93,6 +93,42 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
     return false;
   }
 
+  std::string decoded_url;
+  for (size_t i = 0; i < url.size(); ++i) {
+    unsigned char value = static_cast<unsigned char>(url[i]);
+    if (value == '%') {
+      if (i + 2 >= url.size()) {
+        return false;
+      }
+      const int high = HexDigit(url[i + 1]);
+      const int low = HexDigit(url[i + 2]);
+      if (high < 0 || low < 0) {
+        return false;
+      }
+      value = static_cast<unsigned char>((high << 4) | low);
+      i += 2;
+    }
+    if (value <= 0x20 || value == 0x7F) {
+      return false;
+    }
+    decoded_url.push_back(static_cast<char>(value));
+  }
+  std::wstring decoded_wide(decoded_url.size(), L'\0');
+  const int decoded_length = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, decoded_url.data(),
+      static_cast<int>(decoded_url.size()), decoded_wide.data(),
+      static_cast<int>(decoded_wide.size()));
+  if (decoded_length == 0) {
+    return false;
+  }
+  for (int i = 0; i < decoded_length; ++i) {
+    WORD type = 0;
+    if (!GetStringTypeW(CT_CTYPE1, &decoded_wide[i], 1, &type) ||
+        (type & C1_SPACE) != 0 || decoded_wide[i] == L'\uFEFF') {
+      return false;
+    }
+  }
+
   // Scheme launches are untrusted: only durable links, never flow actions.
   const size_t fragment = url.find('#');
   const size_t query_end = fragment == std::string::npos ? url.size() : fragment;

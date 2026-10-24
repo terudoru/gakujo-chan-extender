@@ -3,6 +3,8 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
+#include <cstring>
+
 #include "resource.h"
 
 namespace {
@@ -30,6 +32,18 @@ constexpr const wchar_t kWindowPlacementRegKey[] =
 constexpr const wchar_t kWindowPlacementRegValue[] = L"WindowPlacement";
 constexpr int kMinWindowWidth = 960;
 constexpr int kMinWindowHeight = 600;
+constexpr DWORD kWindowPlacementVersion = 1;
+
+struct SavedWindowPlacement {
+  DWORD version;
+  UINT dpi;
+  WINDOWPLACEMENT placement;
+};
+
+struct TitleStripVisibility {
+  RECT strip;
+  bool visible;
+};
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
@@ -66,16 +80,91 @@ void SetMinimumWindowSize(HWND hwnd, MINMAXINFO* min_max_info) {
   min_max_info->ptMinTrackSize.y = Scale(kMinWindowHeight, scale_factor);
 }
 
+BOOL CALLBACK CheckTitleStrip(HMONITOR monitor, HDC, LPRECT, LPARAM data) {
+  auto* visibility = reinterpret_cast<TitleStripVisibility*>(data);
+  MONITORINFO info = {};
+  info.cbSize = sizeof(info);
+  RECT intersection = {};
+  if (GetMonitorInfoW(monitor, &info)) {
+    RECT strip = visibility->strip;
+    // WINDOWPLACEMENT uses workspace coordinates, not screen coordinates.
+    OffsetRect(&strip, info.rcWork.left - info.rcMonitor.left,
+                info.rcWork.top - info.rcMonitor.top);
+    if (IntersectRect(&intersection, &strip, &info.rcWork) &&
+        intersection.right - intersection.left >= 100) {
+      visibility->visible = true;
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+bool HasVisibleTitleStrip(const RECT& rect) {
+  if (rect.right <= rect.left || rect.bottom <= rect.top) {
+    return false;
+  }
+  TitleStripVisibility visibility = {rect, false};
+  if (static_cast<LONGLONG>(rect.bottom) - rect.top > 32) {
+    visibility.strip.bottom = rect.top + 32;
+  }
+  EnumDisplayMonitors(nullptr, nullptr, CheckTitleStrip,
+                       reinterpret_cast<LPARAM>(&visibility));
+  return visibility.visible;
+}
+
 int RestoreWindowPlacement(HWND hwnd) {
-  WINDOWPLACEMENT placement = {};
-  DWORD placement_size = sizeof(placement);
+  SavedWindowPlacement saved = {};
+  DWORD placement_size = sizeof(saved);
   if (RegGetValueW(HKEY_CURRENT_USER, kWindowPlacementRegKey,
                    kWindowPlacementRegValue, RRF_RT_REG_BINARY, nullptr,
-                   &placement, &placement_size) != ERROR_SUCCESS ||
-      placement_size != sizeof(placement) ||
-      placement.length != sizeof(placement) ||
-      MonitorFromRect(&placement.rcNormalPosition, MONITOR_DEFAULTTONULL) ==
-          nullptr) {
+                   &saved, &placement_size) != ERROR_SUCCESS) {
+    return SW_SHOWNORMAL;
+  }
+  WINDOWPLACEMENT placement = {};
+  UINT saved_dpi = 0;
+  if (placement_size == sizeof(placement)) {
+    // Legacy values have no DPI metadata; preserve their physical pixels.
+    std::memcpy(&placement, &saved, sizeof(placement));
+  } else if (placement_size == sizeof(saved) &&
+             saved.version == kWindowPlacementVersion && saved.dpi > 0 &&
+             saved.dpi <= static_cast<UINT>(MAXLONG)) {
+    placement = saved.placement;
+    saved_dpi = saved.dpi;
+  } else {
+    return SW_SHOWNORMAL;
+  }
+  if (placement.length != sizeof(placement)) {
+    return SW_SHOWNORMAL;
+  }
+
+  RECT& rect = placement.rcNormalPosition;
+  const LONGLONG width = static_cast<LONGLONG>(rect.right) - rect.left;
+  const LONGLONG height = static_cast<LONGLONG>(rect.bottom) - rect.top;
+  HMONITOR monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONULL);
+  if (!monitor || width <= 0 || width > MAXLONG || height <= 0 ||
+      height > MAXLONG) {
+    return SW_SHOWNORMAL;
+  }
+  if (saved_dpi != 0) {
+    const UINT target_dpi = FlutterDesktopGetDpiForMonitor(monitor);
+    if (target_dpi == 0 || target_dpi > static_cast<UINT>(MAXLONG)) {
+      return SW_SHOWNORMAL;
+    }
+    const int scaled_width = MulDiv(static_cast<int>(width),
+                                    static_cast<int>(target_dpi),
+                                    static_cast<int>(saved_dpi));
+    const int scaled_height = MulDiv(static_cast<int>(height),
+                                     static_cast<int>(target_dpi),
+                                     static_cast<int>(saved_dpi));
+    if (scaled_width <= 0 || scaled_height <= 0 ||
+        static_cast<LONGLONG>(rect.left) + scaled_width > MAXLONG ||
+        static_cast<LONGLONG>(rect.top) + scaled_height > MAXLONG) {
+      return SW_SHOWNORMAL;
+    }
+    rect.right = rect.left + scaled_width;
+    rect.bottom = rect.top + scaled_height;
+  }
+  if (!HasVisibleTitleStrip(rect)) {
     return SW_SHOWNORMAL;
   }
 
@@ -89,9 +178,12 @@ int RestoreWindowPlacement(HWND hwnd) {
 }
 
 void SaveWindowPlacement(HWND hwnd) {
-  WINDOWPLACEMENT placement = {};
-  placement.length = sizeof(placement);
-  if (!GetWindowPlacement(hwnd, &placement)) {
+  SavedWindowPlacement saved = {};
+  saved.version = kWindowPlacementVersion;
+  saved.dpi = FlutterDesktopGetDpiForMonitor(
+      MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
+  saved.placement.length = sizeof(saved.placement);
+  if (saved.dpi == 0 || !GetWindowPlacement(hwnd, &saved.placement)) {
     return;
   }
 
@@ -101,8 +193,8 @@ void SaveWindowPlacement(HWND hwnd) {
     return;
   }
   RegSetValueExW(key, kWindowPlacementRegValue, 0, REG_BINARY,
-                 reinterpret_cast<const BYTE*>(&placement),
-                 static_cast<DWORD>(sizeof(placement)));
+                 reinterpret_cast<const BYTE*>(&saved),
+                 static_cast<DWORD>(sizeof(saved)));
   RegCloseKey(key);
 }
 

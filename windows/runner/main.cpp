@@ -2,6 +2,7 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 #include <roapi.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 
 #include <memory>
@@ -14,15 +15,52 @@
 
 namespace {
 
-void RegisterUrlProtocol() {
-  std::wstring exe_path(32768, L'\0');
-  const DWORD length = GetModuleFileNameW(
-      nullptr, exe_path.data(), static_cast<DWORD>(exe_path.size()));
-  if (length == 0 || length >= exe_path.size()) {
-    return;
+bool ReadProtocolExecutable(HKEY root, std::wstring* executable) {
+  constexpr wchar_t command_key[] =
+      L"Software\\Classes\\morebettergakujo\\shell\\open\\command";
+  constexpr DWORD flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+  DWORD size = 0;
+  if (RegGetValueW(root, command_key, nullptr, flags, nullptr, nullptr, &size) !=
+          ERROR_SUCCESS ||
+      size < sizeof(wchar_t) || size % sizeof(wchar_t) != 0) {
+    return false;
   }
-  exe_path.resize(length);
+  std::wstring command(size / sizeof(wchar_t), L'\0');
+  if (RegGetValueW(root, command_key, nullptr, flags, nullptr,
+                   command.data(), &size) != ERROR_SUCCESS) {
+    return false;
+  }
+  executable->clear();
+  if (!command.empty() && command.front() != L'\0') {
+    int count = 0;
+    wchar_t** arguments = CommandLineToArgvW(command.c_str(), &count);
+    if (arguments) {
+      if (count > 0) {
+        *executable = arguments[0];
+      }
+      LocalFree(arguments);
+    }
+  }
+  return true;
+}
 
+bool ShouldRegisterPerUser(const std::wstring& exe_path) {
+  std::wstring machine_executable;
+  if (!ReadProtocolExecutable(HKEY_LOCAL_MACHINE, &machine_executable) ||
+      _wcsicmp(machine_executable.c_str(), exe_path.c_str()) != 0) {
+    return true;
+  }
+  std::wstring user_executable;
+  if (!ReadProtocolExecutable(HKEY_CURRENT_USER, &user_executable)) {
+    return false;
+  }
+  // Repair a dangling HKCU override even when the machine entry is current.
+  const DWORD attributes = GetFileAttributesW(user_executable.c_str());
+  return attributes == INVALID_FILE_ATTRIBUTES ||
+         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+void RegisterUrlProtocol(const std::wstring& exe_path) {
   constexpr wchar_t key_path[] = L"Software\\Classes\\morebettergakujo";
   HKEY key = nullptr;
   if (RegCreateKeyExW(HKEY_CURRENT_USER, key_path, 0, nullptr, 0,
@@ -86,8 +124,11 @@ bool ActivateExistingInstance(const std::string& url) {
          result != FALSE;
 }
 
-void RegisterAppIdentity() {
+void RegisterAppIdentity(const std::wstring& exe_path, bool register_per_user) {
   SetCurrentProcessExplicitAppUserModelID(kAppUserModelId);
+  if (!register_per_user) {
+    return;
+  }
 
   const std::wstring key_path =
       std::wstring(L"Software\\Classes\\AppUserModelId\\") + kAppUserModelId;
@@ -102,16 +143,10 @@ void RegisterAppIdentity() {
                  reinterpret_cast<const BYTE*>(display_name),
                  static_cast<DWORD>(sizeof(display_name)));
 
-  std::wstring exe_path(32768, L'\0');
-  const DWORD length = GetModuleFileNameW(
-      nullptr, exe_path.data(), static_cast<DWORD>(exe_path.size()));
   std::wstring icon_path;
-  if (length > 0 && length < exe_path.size()) {
-    exe_path.resize(length);
-    const size_t separator = exe_path.find_last_of(L"\\/");
-    if (separator != std::wstring::npos) {
-      icon_path = exe_path.substr(0, separator + 1) + L"app_icon.png";
-    }
+  const size_t separator = exe_path.find_last_of(L"\\/");
+  if (separator != std::wstring::npos) {
+    icon_path = exe_path.substr(0, separator + 1) + L"app_icon.png";
   }
   const DWORD attributes = icon_path.empty()
                                ? INVALID_FILE_ATTRIBUTES
@@ -137,8 +172,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     CreateAndAttachConsole();
   }
 
-  RegisterAppIdentity();
-  RegisterUrlProtocol();
   std::vector<std::string> command_line_arguments = GetCommandLineArguments();
   std::string pending_notification_url;
   for (const auto& argument : command_line_arguments) {
@@ -162,6 +195,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       return ActivateExistingInstance(pending_notification_url) ? EXIT_SUCCESS
                                                               : EXIT_FAILURE;
     }
+  }
+
+  std::wstring exe_path(32768, L'\0');
+  const DWORD length = GetModuleFileNameW(
+      nullptr, exe_path.data(), static_cast<DWORD>(exe_path.size()));
+  exe_path.resize(length > 0 && length < exe_path.size() ? length : 0);
+  const bool register_per_user =
+      !exe_path.empty() && ShouldRegisterPerUser(exe_path);
+  RegisterAppIdentity(exe_path, register_per_user);
+  if (register_per_user) {
+    RegisterUrlProtocol(exe_path);
   }
 
   // Initialize COM, so that it is available for use in the library and/or

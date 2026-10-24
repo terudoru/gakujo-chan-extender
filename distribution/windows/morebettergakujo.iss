@@ -73,10 +73,10 @@ Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 [Registry]
 Root: HKCU; Subkey: "Software\Yoshida\MoreBetterGakujo"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Yoshida"; Flags: uninsdeletekeyifempty
-Root: HKCU; Subkey: "Software\Classes\AppUserModelId\Yoshida.MoreBetterGakujo"; ValueType: string; ValueName: "DisplayName"; ValueData: "More Better Gakujo"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: ""; ValueData: "URL:More Better Gakujo"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\morebettergakujo\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\AppUserModelId\Yoshida.MoreBetterGakujo"; ValueType: string; ValueName: "DisplayName"; ValueData: "More Better Gakujo"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: ""; ValueData: "URL:More Better Gakujo"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\morebettergakujo"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\morebettergakujo\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "Yoshida.MoreBetterGakujo"
@@ -90,6 +90,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#MyAppRegistryId}_is1';
 
+var
+  PreviousUninstaller: String;
+
 function RemoveOuterQuotes(Value: String): String;
 begin
   Result := Value;
@@ -100,24 +103,48 @@ begin
 end;
 
 function TryGetPreviousInstall(var UninstallString: String; var DisplayVersion: String): Boolean;
+var
+  InstallLocation: String;
+  UninstallerName: String;
 begin
-  Result := RegQueryStringValue(HKLM, UninstallKey, 'UninstallString', UninstallString);
-  if Result then begin
-    RegQueryStringValue(HKLM, UninstallKey, 'DisplayVersion', DisplayVersion);
+  Result := False;
+  // Never execute an HKCU command with the installer's elevated privileges.
+  if not RegQueryStringValue(HKLM, UninstallKey, 'UninstallString', UninstallString) then begin
     exit;
   end;
 
-  Result := RegQueryStringValue(HKCU, UninstallKey, 'UninstallString', UninstallString);
-  if Result then begin
-    RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', DisplayVersion);
+  UninstallString := RemoveOuterQuotes(Trim(UninstallString));
+  if (Copy(UninstallString, 2, 2) <> ':\') or not FileExists(UninstallString) then begin
+    exit;
   end;
+  UninstallString := ExpandFileName(UninstallString);
+  UninstallerName := Lowercase(ExtractFileName(UninstallString));
+  if (Copy(UninstallerName, 1, 5) <> 'unins') or
+     (ExtractFileExt(UninstallerName) <> '.exe') then begin
+    exit;
+  end;
+
+  if not RegQueryStringValue(HKLM, UninstallKey, 'InstallLocation', InstallLocation) or
+     (Trim(InstallLocation) = '') then begin
+    InstallLocation := ExpandConstant('{commonpf}\{#MyAppName}');
+  end;
+  InstallLocation := RemoveOuterQuotes(Trim(InstallLocation));
+  if Copy(InstallLocation, 2, 2) <> ':\' then begin
+    exit;
+  end;
+  InstallLocation := RemoveBackslashUnlessRoot(ExpandFileName(InstallLocation));
+  if CompareText(ExtractFileDir(UninstallString), InstallLocation) <> 0 then begin
+    exit;
+  end;
+
+  RegQueryStringValue(HKLM, UninstallKey, 'DisplayVersion', DisplayVersion);
+  Result := True;
 end;
 
 function InitializeSetup(): Boolean;
 var
   UninstallString: String;
   DisplayVersion: String;
-  ErrorCode: Integer;
   MessageText: String;
 begin
   Result := True;
@@ -140,7 +167,26 @@ begin
     exit;
   end;
 
-  UninstallString := RemoveOuterQuotes(UninstallString);
+  PreviousUninstaller := UninstallString;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  UninstallString: String;
+  DisplayVersion: String;
+  ErrorCode: Integer;
+begin
+  if (CurStep <> ssInstall) or (PreviousUninstaller = '') then begin
+    exit;
+  end;
+  // Revalidate the approved machine entry after the user commits to installing.
+  if not TryGetPreviousInstall(UninstallString, DisplayVersion) then begin
+    exit;
+  end;
+  if CompareText(UninstallString, PreviousUninstaller) <> 0 then begin
+    exit;
+  end;
+  PreviousUninstaller := '';
   if not Exec(
     UninstallString,
     '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
@@ -149,22 +195,15 @@ begin
     ewWaitUntilTerminated,
     ErrorCode
   ) then begin
-    MsgBox(
-      '古いバージョンの削除を開始できませんでした。インストールを中止します。',
-      mbError,
-      MB_OK
+    RaiseException(
+      '古いバージョンの削除を開始できませんでした。インストールを中止します。'
     );
-    Result := False;
-    exit;
   end;
 
   if ErrorCode <> 0 then begin
-    MsgBox(
+    RaiseException(
       '古いバージョンの削除に失敗しました。インストールを中止します。' + #13#10 +
-      '終了コード: ' + IntToStr(ErrorCode),
-      mbError,
-      MB_OK
+      '終了コード: ' + IntToStr(ErrorCode)
     );
-    Result := False;
   end;
 end;

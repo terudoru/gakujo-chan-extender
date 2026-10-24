@@ -113,7 +113,7 @@ void main() {
     test('accepts an allowed Gakujo URL', () {
       expect(
         deadlineNotificationTargetUrl(
-          '  https://gakujo.iess.niigata-u.ac.jp/campusweb/report  ',
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
           debugAllowed: false,
         ),
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
@@ -164,6 +164,53 @@ void main() {
           ),
           isNull,
           reason: query,
+        );
+      }
+    });
+
+    test('rejects literal controls anywhere and encoded ones in names', () {
+      for (final code in [...List.generate(33, (index) => index), 0x7f]) {
+        final literal = String.fromCharCode(code);
+        final encoded = '%${code.toRadixString(16).padLeft(2, '0')}';
+        // Browsers delete raw tabs and line breaks anywhere in a URL.
+        for (final target in [
+          '${literal}campusportal.do',
+          'campusportal.do$literal',
+          'campussquare.do?_even${literal}tId=logout',
+          'campus${literal}portal.do?page=main',
+          'campusportal.do?keyword=a${literal}b',
+          'campusportal.do#section${literal}name',
+        ]) {
+          expect(
+            deadlineNotificationTargetUrl('$baseUrl$target',
+                debugAllowed: false),
+            isNull,
+            reason: 'literal $code in $target',
+          );
+        }
+        // An encoded control stays encoded in values and paths, but a
+        // parameter name containing one is never genuine.
+        expect(
+          deadlineNotificationTargetUrl(
+            '${baseUrl}campussquare.do?_even${encoded}tId=logout',
+            debugAllowed: false,
+          ),
+          isNull,
+          reason: 'encoded $code in a parameter name',
+        );
+      }
+    });
+
+    test('rejects surrounding whitespace before URL normalization', () {
+      for (final url in [
+        ' $baseUrl',
+        '$baseUrl ',
+        '\t$baseUrl',
+        '$baseUrl\n'
+      ]) {
+        expect(
+          deadlineNotificationTargetUrl(url, debugAllowed: false),
+          isNull,
         );
       }
     });

@@ -17,15 +17,23 @@ String? deadlineNotificationTargetUrl(
   String? url, {
   required bool debugAllowed,
 }) {
-  final normalized = url?.trim();
+  final normalized = url;
+  if (normalized == null) {
+    return null;
+  }
   if (!AllowedWebOrigins.canLoad(
     normalized,
     debugAllowed: debugAllowed,
   )) {
     return null;
   }
+  // Browsers delete raw tabs and line breaks while parsing a URL, which could
+  // join '_even<TAB>tId' into '_eventId' after the checks below.
+  if (RegExp(r'[\x00-\x20\x7f]').hasMatch(normalized)) {
+    return null;
+  }
   // Inspect the original query: URI parsing can repair invalid percent escapes.
-  final beforeFragment = normalized!.split('#').first;
+  final beforeFragment = normalized.split('#').first;
   final queryStart = beforeFragment.indexOf('?');
   if (queryStart >= 0) {
     final query = beforeFragment.substring(queryStart + 1);
@@ -34,6 +42,10 @@ String? deadlineNotificationTargetUrl(
     }
     try {
       for (final name in Uri.parse(normalized).queryParametersAll.keys) {
+        // A decoded control or space in a name is never a real parameter.
+        if (RegExp(r'[\x00-\x20\x7f]').hasMatch(name)) {
+          return null;
+        }
         final lower = name.toLowerCase();
         if (lower == '_eventid' ||
             lower == '_flowexecutionkey' ||
