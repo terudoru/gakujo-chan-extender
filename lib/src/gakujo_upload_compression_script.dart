@@ -337,10 +337,14 @@ class GakujoUploadCompressionScript {
         }
         var hook = function() {
           var message = Array.prototype.join.call(arguments, ' ');
-          if (level !== 'log' || /warning:|error:/i.test(message)) {
+          var textWarning = /font|cmap|glyph|character/i.test(message);
+          var renderWarning = /image|jpx|jbig|jpeg|decode|unable to|failed|corrupt|invalid|bad /i.test(message);
+          if ((level !== 'log' || /warning:|error:/i.test(message)) &&
+              !/setting up fake worker|deprecated|deprecation|^info:/i.test(message) &&
+              (textWarning || renderWarning)) {
             pdfFontChecks.forEach(function(active) {
               active.failed = true;
-              active.message = /font|cmap|glyph|character/i.test(message) ?
+              active.message = textWarning ?
                 pdfTextMessage : pdfRenderMessage;
             });
           }
@@ -713,7 +717,8 @@ class GakujoUploadCompressionScript {
     var files = Array.prototype.slice.call(input.files || []);
     var finished = false;
     function isCurrentSelection() {
-      return !finished && input.__mbgUploadCompressionSelection === token &&
+      return !finished && window.__MBG_UPLOAD_COMPRESSION_ENABLED &&
+        input.__mbgUploadCompressionSelection === token &&
         input.files && input.files.length === files.length &&
         files.every(function(file, index) { return input.files[index] === file; });
     }

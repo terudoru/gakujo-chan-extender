@@ -369,6 +369,21 @@ class GakujoWebApp extends StatefulWidget {
 }
 
 @visibleForTesting
+Future<void> saveGakujoSettingsChange({
+  required Future<void> Function() save,
+  required GakujoAppSettings Function() currentSettings,
+  required GakujoAppSettings Function(GakujoAppSettings) update,
+  required ValueChanged<GakujoAppSettings> apply,
+  required Future<void> Function(GakujoAppSettings) mirror,
+}) async {
+  await save();
+  final settings = update(currentSettings());
+  // Apply before awaiting the mirror so overlapping changes see this value.
+  apply(settings);
+  await mirror(settings);
+}
+
+@visibleForTesting
 Future<GakujoLoginCredentials> saveGakujoLoginCredentials({
   required GakujoAppSettingsStore store,
   required String loginId,
@@ -2051,28 +2066,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   child: FeatureFlagsSection(
                     settings: _appSettings,
                     onChanged: (flag, enabled) async {
-                      await _appSettingsStore.saveFeatureEnabled(
-                        flag,
-                        enabled: enabled,
+                      await saveGakujoSettingsChange(
+                        save: () => _appSettingsStore.saveFeatureEnabled(
+                          flag,
+                          enabled: enabled,
+                        ),
+                        currentSettings: () => _appSettings,
+                        update: (settings) => settings.copyWith(
+                          disabledFeatureFlags: {
+                            for (final value in settings.disabledFeatureFlags)
+                              if (value != flag) value,
+                            if (!enabled) flag,
+                          },
+                        ),
+                        apply: (settings) {
+                          if (mounted) {
+                            setState(() => _appSettings = settings);
+                          }
+                        },
+                        mirror: _syncLocalSettingsMirror,
                       );
-                      final disabled = {
-                        ..._appSettings.disabledFeatureFlags,
-                      };
-                      if (enabled) {
-                        disabled.remove(flag);
-                      } else {
-                        disabled.add(flag);
-                      }
-                      final nextSettings = _appSettings.copyWith(
-                        disabledFeatureFlags: disabled,
-                      );
-                      await _syncLocalSettingsMirror(nextSettings);
                       if (!mounted) {
                         return;
                       }
-                      setState(() {
-                        _appSettings = nextSettings;
-                      });
                       if (flag == GakujoFeatureFlag.autoBackup) {
                         _scheduleAutoBackup();
                       }
@@ -2099,11 +2115,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     knownCourses: knownCourses,
                     remindersOnlyWhileOpen: Platform.isWindows,
                     onPreferencesChanged: (update) async {
-                      final saved = _saveNotificationPreferences(update);
+                      await _saveNotificationPreferences(update);
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
-                      await saved;
                     },
                     keywordController: messageNotificationKeywordController,
                     canAddKeyword:
@@ -2114,8 +2129,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     },
                     onMessagesChanged: (messages) async {
                       await _saveMessageNotification(messages);
-                      messageNotificationKeywordInput = '';
-                      messageNotificationKeywordController.clear();
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
@@ -3307,31 +3320,50 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _saveNotificationPreferences(
     NotificationPreferencesUpdate update,
   ) {
-    final preferences = update(_appSettings.notificationPreferences);
-    setState(() {
-      _appSettings = _appSettings.copyWith(
-        notificationPreferences: preferences,
-      );
-    });
     return _notificationPreferenceOperations.run(() async {
-      if (!Platform.isMacOS || _secureStorageAccessAllowed) {
-        try {
-          await _appSettingsStore.saveNotificationPreferences(preferences);
-        } on Object catch (error, stackTrace) {
-          if (!Platform.isMacOS) {
-            rethrow;
-          }
-          developer.log(
-            'Failed to mirror notification preferences to secure storage',
-            name: 'MoreBetterGakujo',
-            error: error,
-            stackTrace: stackTrace,
-          );
-        }
+      final preferences = update(_appSettings.notificationPreferences);
+      try {
+        await saveGakujoSettingsChange(
+          save: () async {
+            if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+              try {
+                await _appSettingsStore
+                    .saveNotificationPreferences(preferences);
+              } on Object catch (error, stackTrace) {
+                if (!Platform.isMacOS) rethrow;
+                developer.log(
+                  'Failed to mirror notification preferences to secure storage',
+                  name: 'MoreBetterGakujo',
+                  error: error,
+                  stackTrace: stackTrace,
+                );
+              }
+            }
+            if (Platform.isMacOS) {
+              await _localPrefsStore.saveAppSettings(_appSettings.copyWith(
+                notificationPreferences: preferences,
+              ));
+            }
+          },
+          currentSettings: () => _appSettings,
+          update: (settings) => settings.copyWith(
+            notificationPreferences: preferences,
+          ),
+          apply: (settings) {
+            if (mounted) setState(() => _appSettings = settings);
+          },
+          mirror: Platform.isMacOS ? (_) async {} : _syncLocalSettingsMirror,
+        );
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to save notification preferences',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        if (mounted) _showSnackBar('通知設定を保存できませんでした');
+        return;
       }
-      await _syncLocalSettingsMirror(_appSettings.copyWith(
-        notificationPreferences: preferences,
-      ));
       if (mounted) {
         unawaited(_syncReminders());
       }

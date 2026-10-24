@@ -431,8 +431,8 @@ class NotificationTopicsSection extends StatelessWidget {
   final bool canAddKeyword;
   final ValueChanged<String> onKeywordInputChanged;
 
-  Future<void> _addKeyword() {
-    return onMessagesChanged(
+  Future<void> _addKeyword() async {
+    await onMessagesChanged(
       messages.copyWith(
         keywords: normalizeMessageExcludeKeywords([
           ...messages.keywords,
@@ -440,6 +440,8 @@ class NotificationTopicsSection extends StatelessWidget {
         ]),
       ),
     );
+    keywordController.clear();
+    onKeywordInputChanged('');
   }
 
   @override

@@ -110,6 +110,28 @@ void main() {
     expect((result['files'] as List).single['size'], 12 * 1024 * 1024);
   });
 
+  test('disabling during compression discards completion and releases submit',
+      () async {
+    for (final teardown in [false, true]) {
+      for (final failure in [false, true]) {
+        final result = await _run({
+          'files': [_photo],
+          'holdImage': true,
+          'imageError': failure,
+          'disableDuringPending': true,
+          'useTeardown': teardown,
+          'checkSubmission': true,
+        });
+        expect(result['originalsKept'], isTrue);
+        expect(result['replayed'], isEmpty);
+        expect(result['status'], result['statusAfterDisable']);
+        expect(result['blockedWhenDisabled'], [false, false, false, false]);
+        expect(result['blockedAfter'], [false, false, false, false]);
+        expect(result['pending'], isFalse);
+      }
+    }
+  });
+
   for (final failure in [false, true]) {
     test('discards stale image ${failure ? 'failure' : 'result'}', () async {
       final result = await _run({
@@ -186,6 +208,31 @@ void main() {
     expect(result['pdfOptions']['stopAtErrors'], isTrue);
     expect(result['destroyed'], 1);
     expect(result['consoleRestored'], isTrue);
+  });
+
+  test(
+      'bundled PDF libraries ignore fake-worker warnings but keep decode failures',
+      () async {
+    for (final decodeWarning in [false, true]) {
+      final result = await _run({
+        'files': [_pdf],
+        'realPdf': true,
+        'decodeWarning': decodeWarning,
+      });
+      expect(result['originalSize'], greaterThan(5 * 1024 * 1024));
+      expect(
+          result['pdfWarnings'], contains('Warning: Setting up fake worker.'));
+      expect(result['originalsKept'], decodeWarning);
+      expect(result['consoleRestored'], isTrue);
+      if (decodeWarning) {
+        expect(result['status'], contains('PDFの内容が正しく変換できない'));
+      } else {
+        expect((result['files'] as List).single['size'], lessThan(4700000));
+        expect(result['outputPages'], 1);
+        expect(result['pdfRenderCount'], 1);
+        expect(result['status'], contains('5MB以下に圧縮しました'));
+      }
+    }
   });
 
   for (final stage in ['load', 'text', 'operators', 'render', 'destroy']) {
@@ -367,6 +414,7 @@ const scenario = JSON.parse(rawScenario);
 
 class FakeFile {
   constructor(parts, name, options) {
+    this.parts = parts;
     this.name = name;
     this.type = options && options.type || '';
     this.size = parts.reduce((sum, part) => sum + (part.size || part.byteLength), 0);
@@ -444,8 +492,14 @@ const document = {
       const canvas = {
         width: 0,
         height: 0,
-        getContext: () => ({ fillRect() {}, drawImage() {} }),
+        getContext: () => ({
+          canvas, fillRect() {}, drawImage() {}, save() {}, restore() {},
+          transform() {}, setTransform() {}, beginPath() {}, rect() {},
+          clip() {}, fill() {}, moveTo() {}, lineTo() {}, closePath() {},
+          getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+        }),
         toBlob: (callback, type, quality) => {
+          if (scenario.realPdf) return callback(new Blob([jpeg], { type }));
           const imageData = scenario.pdf && scenario.pdf.imageData;
           if (imageData === 'missingBlob') return callback(null);
           // A rough model: bytes scale with pixels, JPEG with quality.
@@ -478,6 +532,11 @@ const imageGate = new Promise(resolve => { finishImage = resolve; });
 const timers = new Map();
 let nextTimer = 0;
 const savedConsole = { log() {}, warn() {}, error() {} };
+const pdfWarnings = [];
+if (scenario.realPdf) savedConsole.log = (...args) => pdfWarnings.push(args.join(' '));
+// A valid 1x1 white JPEG stands in for canvas encoding. Parsing, page checks,
+// vector rendering, worker setup, JPEG embedding and PDF writing use the assets.
+const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9U6KKKAP/2Q==', 'base64');
 const context = {
   console: { ...savedConsole },
   document,
@@ -502,8 +561,15 @@ const context = {
   setTimeout: (fn) => { timers.set(++nextTimer, fn); return nextTimer; },
   clearTimeout: (id) => timers.delete(id),
   RegExp,
-  Uint8Array,
+  Uint8Array, ArrayBuffer,
+  Blob, TextDecoder, TextEncoder, URL, URLSearchParams, atob, btoa,
+  ReadableStream, AbortController, structuredClone, DOMException,
+  requestAnimationFrame: callback => setTimeout(callback, 0),
 };
+if (scenario.realPdf) {
+  context.setTimeout = setTimeout;
+  context.clearTimeout = clearTimeout;
+}
 let pdfOptions;
 let pdfRenderCount = 0;
 let pdfEmbedCount = 0;
@@ -585,13 +651,61 @@ const event = {
   target: input,
   stopImmediatePropagation: () => { stopped = true; },
 };
-for (const listener of listeners) listener(event);
-
 async function settle() {
   await new Promise(resolve => setImmediate(resolve));
 }
 (async () => {
+  if (scenario.realPdf) {
+    const fs = require('node:fs');
+    for (const name of ['pdf.worker.min.js', 'pdf.min.js', 'pdf-lib.min.js']) {
+      const source = fs.readFileSync(`assets/js/upload_compression/${name}`, 'utf8');
+      vm.runInContext(`(function(define, module, exports) {\n${source}\n}).call(window);`, context);
+    }
+    const bytes = await vm.runInContext(`(async () => {
+      const pdf = await PDFLib.PDFDocument.create();
+      const page = pdf.addPage([72, 72]);
+      // Keep the page stream uncompressed and >5MB without a binary fixture.
+      const content = '0 0 1 rg 0 0 72 72 re f\\n%' + 'padding'.repeat(900000) + '\\n';
+      page.node.addContentStream(pdf.context.register(pdf.context.stream(content)));
+      return pdf.save({ useObjectStreams: false });
+    })()`, context);
+    input.files = [{ name: 'report.pdf', type: 'application/pdf', size: bytes.length,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }];
+    originalFiles.splice(0, originalFiles.length, ...input.files);
+    const getDocument = context.pdfjsLib.getDocument;
+    context.pdfjsLib = {
+      ...context.pdfjsLib,
+      getDocument: (options) => {
+        context.console.warn('Deprecated API usage: useSystemFonts');
+        context.console.warn('Info: image decoding available');
+        const task = getDocument(options);
+        task.promise.then(pdf => {
+          const getPage = pdf.getPage.bind(pdf);
+          pdf.getPage = async number => {
+            const page = await getPage(number);
+            const render = page.render.bind(page);
+            page.render = params => {
+              pdfRenderCount++;
+              if (scenario.decodeWarning) {
+                context.console.warn('Warning: Unable to decode image: JpxError');
+              }
+              return render(params);
+            };
+            return page;
+          };
+        });
+        return task;
+      },
+    };
+  }
+  for (const listener of listeners) listener(event);
   await settle();
+  if (scenario.realPdf) {
+    for (let i = 0; input.__mbgUploadCompressionPending && i < 1000; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    if (input.__mbgUploadCompressionPending) throw new Error('PDF compression did not settle');
+  }
   let blockedDuring;
   let unrelatedBlocked;
   let pendingStatus;
@@ -603,6 +717,14 @@ async function settle() {
       attemptSubmission('click', { tagName: 'BUTTON', type: 'button', form }),
     ];
     pendingStatus = statusNode.textContent;
+  }
+  let statusAfterDisable;
+  let blockedWhenDisabled;
+  if (scenario.disableDuringPending) {
+    if (scenario.useTeardown) vm.runInContext(teardown, context);
+    else context.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
+    statusAfterDisable = statusNode ? statusNode.textContent : null;
+    blockedWhenDisabled = submissionTargets.map(args => attemptSubmission(...args));
   }
   if (scenario.nextFiles || scenario.reselectSameFiles) {
     if (scenario.teardownBeforeReselect) vm.runInContext(teardown, context);
@@ -622,8 +744,17 @@ async function settle() {
   }
   finishImage();
   await settle();
+  let outputPages;
+  if (scenario.realPdf && input.files[0] !== originalFiles[0]) {
+    const output = await context.PDFLib.PDFDocument.load(input.files[0].parts[0]);
+    outputPages = output.getPageCount();
+  }
   process.stdout.write(JSON.stringify({
     stopped,
+    pending: !!input.__mbgUploadCompressionPending,
+    statusAfterDisable, blockedWhenDisabled,
+    originalSize: originalFiles[0] && originalFiles[0].size,
+    pdfWarnings, outputPages,
     replayed: replayed.filter((type) => type),
     files: Array.from(input.files).map((f) => ({
       name: f.name, type: f.type, size: f.size,

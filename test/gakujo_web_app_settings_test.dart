@@ -9,6 +9,135 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  test('overlapping feature toggles merge before a pending mirror completes',
+      () async {
+    var settings = const GakujoAppSettings();
+    final firstSave = Completer<void>();
+    final secondSave = Completer<void>();
+    final firstMirror = Completer<void>();
+    final mirrorStarted = Completer<void>();
+    final mirrored = <GakujoAppSettings>[];
+    Future<void> toggle(GakujoFeatureFlag flag, Future<void> save) {
+      return saveGakujoSettingsChange(
+        save: () => save,
+        currentSettings: () => settings,
+        update: (latest) => latest.copyWith(
+          disabledFeatureFlags: {...latest.disabledFeatureFlags, flag},
+        ),
+        apply: (latest) => settings = latest,
+        mirror: (latest) async {
+          mirrored.add(latest);
+          if (mirrored.length == 1) {
+            mirrorStarted.complete();
+            await firstMirror.future;
+          }
+        },
+      );
+    }
+
+    final first = toggle(GakujoFeatureFlag.messageStars, firstSave.future);
+    final second =
+        toggle(GakujoFeatureFlag.uploadCompression, secondSave.future);
+    firstSave.complete();
+    await mirrorStarted.future;
+    secondSave.complete();
+    await second;
+    firstMirror.complete();
+    await first;
+
+    final expected = {
+      GakujoFeatureFlag.messageStars,
+      GakujoFeatureFlag.uploadCompression,
+    };
+    expect(settings.disabledFeatureFlags, expected);
+    expect(mirrored.last.disabledFeatureFlags, expected);
+  });
+
+  test('failed notification preference save retains the saved settings',
+      () async {
+    var settings = const GakujoAppSettings(
+      notificationPreferences: GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.threeHours},
+      ),
+    );
+    final savedPreferences = settings.notificationPreferences;
+    var mirrorCalls = 0;
+    final failure = StateError('storage unavailable');
+    await expectLater(
+      saveGakujoSettingsChange(
+        save: () async => throw failure,
+        currentSettings: () => settings,
+        update: (latest) => latest.copyWith(
+          notificationPreferences: const GakujoNotificationPreferences(),
+        ),
+        apply: (latest) => settings = latest,
+        mirror: (_) async {
+          mirrorCalls++;
+        },
+      ),
+      throwsA(same(failure)),
+    );
+    expect(settings.notificationPreferences, same(savedPreferences));
+    expect(mirrorCalls, 0);
+  });
+
+  testWidgets(
+      'deleting a keyword preserves the draft and only a saved add clears it',
+      (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    var messages = const GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['アンケート'],
+    );
+    var input = '';
+    final addSave = Completer<void>();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(builder: (context, setState) {
+          return SingleChildScrollView(
+            child: NotificationTopicsSection(
+              topics: const {},
+              messages: messages,
+              notificationsEnabled: true,
+              onChanged: (_, __) {},
+              onMessagesChanged: (next) async {
+                if (next.keywords.contains('集中講義')) await addSave.future;
+                setState(() => messages = next);
+              },
+              keywordController: controller,
+              canAddKeyword: input.trim().isNotEmpty,
+              onKeywordInputChanged: (value) => setState(() => input = value),
+              preferences: const GakujoNotificationPreferences(),
+              onPreferencesChanged: (_) async {},
+              knownCourses: const [],
+            ),
+          );
+        }),
+      ),
+    ));
+    await tester.enterText(find.byType(TextField), '集中講義');
+    await tester.pump();
+    tester
+        .widget<InputChip>(find.widgetWithText(InputChip, 'アンケート'))
+        .onDeleted!();
+    await tester.pump();
+    expect(messages.keywords, isEmpty);
+    expect(controller.text, '集中講義');
+    expect(input, '集中講義');
+
+    tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '追加'))
+        .onPressed!();
+    await tester.pump();
+    expect(controller.text, '集中講義');
+    addSave.complete();
+    await tester.pump();
+    expect(messages.keywords, ['集中講義']);
+    expect(controller.text, isEmpty);
+    expect(input, isEmpty);
+  });
+
   testWidgets(
       'backup restore requires confirmation and cancellation does nothing',
       (tester) async {
