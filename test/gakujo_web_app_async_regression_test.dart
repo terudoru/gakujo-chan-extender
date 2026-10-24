@@ -8,8 +8,79 @@ import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  group('resource error status and recovery', () {
+    void checkError(
+      GakujoWebResourceError error, {
+      required List<String> expectedStatuses,
+      int offlineAutoReloads = 0,
+      int expectedRetries = 0,
+    }) {
+      final statuses = <String>[];
+      var retries = 0;
+      handleGakujoWebResourceError(
+        error,
+        offlineAutoReloads: offlineAutoReloads,
+        setStatus: statuses.add,
+        startOfflineRetry: () => retries++,
+      );
+      expect(statuses, expectedStatuses);
+      expect(retries, expectedRetries);
+    }
+
+    test('an offline iframe shows manual recovery without starting a retry',
+        () {
+      for (final reloads in [0, 3]) {
+        checkError(
+          const GakujoWebResourceError(
+            description: 'iframe offline',
+            isForMainFrame: false,
+            isConnectivityError: true,
+          ),
+          offlineAutoReloads: reloads,
+          expectedStatuses: ['オフラインのようです。接続が戻ったら再読込してください'],
+        );
+      }
+    });
+
+    test('other sub-resource errors leave the visible status unchanged', () {
+      checkError(
+        const GakujoWebResourceError(
+          description: 'blocked image',
+          isForMainFrame: false,
+        ),
+        expectedStatuses: [],
+      );
+    });
+
+    test('main-frame connectivity errors retain automatic recovery and cap',
+        () {
+      const error = GakujoWebResourceError(
+        description: 'main frame offline',
+        isConnectivityError: true,
+      );
+      checkError(
+        error,
+        expectedStatuses: ['オフラインのようです。接続が戻ると自動で再読み込みします'],
+        expectedRetries: 1,
+      );
+      checkError(
+        error,
+        offlineAutoReloads: 3,
+        expectedStatuses: ['読み込めませんでした。接続を確認して再読込を押してください'],
+      );
+    });
+
+    test('other main-frame errors retain their error status', () {
+      checkError(
+        const GakujoWebResourceError(description: 'certificate failure'),
+        expectedStatuses: ['読込エラー: certificate failure'],
+      );
+    });
+  });
+
   group('message notification links', () {
     const messageUrl =
         'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'

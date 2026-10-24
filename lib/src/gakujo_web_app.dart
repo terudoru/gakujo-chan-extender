@@ -277,6 +277,36 @@ String secureStorageRecoveryGuidance(
       'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
+@visibleForTesting
+void handleGakujoWebResourceError(
+  GakujoWebResourceError error, {
+  required int offlineAutoReloads,
+  required void Function(String) setStatus,
+  required void Function() startOfflineRetry,
+}) {
+  if (error.isForMainFrame && error.isConnectivityError) {
+    if (offlineAutoReloads >= 3) {
+      setStatus('読み込めませんでした。接続を確認して再読込を押してください');
+      return;
+    }
+    setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
+    startOfflineRetry();
+    return;
+  }
+  if (!error.isForMainFrame) {
+    // The portal iframe can fail offline; reloading could discard its form.
+    if (error.isConnectivityError) {
+      setStatus('オフラインのようです。接続が戻ったら再読込してください');
+    }
+    developer.log(
+      'Sub-resource load error: ${error.description}',
+      name: 'MoreBetterGakujo',
+    );
+    return;
+  }
+  setStatus('読込エラー: ${error.description}');
+}
+
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
     super.key,
@@ -5083,26 +5113,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (!mounted) {
             return;
           }
-          if (error.isForMainFrame && error.isConnectivityError) {
-            if (_offlineAutoReloads >= 3) {
-              _setStatus('読み込めませんでした。接続を確認して再読込を押してください');
-              return;
-            }
-            _setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
-            _offlineRetry.start();
-            return;
-          }
-          // A failed image, script or blocked sub-request does not mean the
-          // page failed; showing it would replace 表示中 or the offline
-          // notice with an alarming 読込エラー.
-          if (!error.isForMainFrame) {
-            developer.log(
-              'Sub-resource load error: ${error.description}',
-              name: 'MoreBetterGakujo',
-            );
-            return;
-          }
-          _setStatus('読込エラー: ${error.description}');
+          handleGakujoWebResourceError(
+            error,
+            offlineAutoReloads: _offlineAutoReloads,
+            setStatus: _setStatus,
+            startOfflineRetry: _offlineRetry.start,
+          );
         },
       ),
     );

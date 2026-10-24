@@ -408,6 +408,27 @@ void main() {
       isNotifiableDeadline(hidden, topics: const {}, messages: messages),
       isTrue,
     );
+    final zoom = _entry('Zoom説明会', source: '連絡通知');
+    for (final keyword in ['zoom', 'ZOOM']) {
+      expect(
+        isNotifiableDeadline(
+          zoom,
+          topics: const {},
+          messages: messages,
+          excludeKeywords: [keyword],
+        ),
+        isFalse,
+      );
+    }
+    expect(
+      isNotifiableDeadline(
+        zoom,
+        topics: const {},
+        messages: messages,
+        excludeKeywords: const [''],
+      ),
+      isTrue,
+    );
   });
 }
 

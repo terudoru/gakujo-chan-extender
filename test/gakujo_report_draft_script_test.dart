@@ -150,6 +150,47 @@ void main() {
     expect(result['storedValue'], 'フォーム消失直前の入力');
   });
 
+  for (final kind in ['textarea', 'text', 'checkbox', 'radio', 'select']) {
+    for (final event in ['pagehide', 'beforeunload', 'visibilitychange']) {
+      test('saves $kind edited before binding on $event', () async {
+        final result = await _evaluateDraft({
+          'scenario': 'beforeBinding',
+          'kind': kind,
+          'edited': true,
+          'event': event,
+        });
+        expect(result['bound'], isTrue);
+        expect(result['touched'], isTrue);
+        expect(result['dirty'], isTrue);
+        expect(result['countBeforeHide'], 0);
+        expect(result['count'], 1);
+        expect(result['savedValue'], result['expectedValue']);
+      });
+    }
+  }
+
+  for (final kind in [
+    'textarea',
+    'text',
+    'checkbox',
+    'radio',
+    'select',
+    'contenteditable',
+  ]) {
+    test('does not save untouched prefilled $kind on pagehide', () async {
+      final result = await _evaluateDraft({
+        'scenario': 'beforeBinding',
+        'kind': kind,
+        'edited': false,
+        'event': 'pagehide',
+      });
+      expect(result['bound'], isTrue);
+      expect(result['touched'], isFalse);
+      expect(result['dirty'], isFalse);
+      expect(result['count'], 0);
+    });
+  }
+
   test('counter changes save one draft and restore the latest text', () async {
     final result = await _evaluateDraftScenario('counterLatest');
     expect(result['count'], 1);
@@ -471,6 +512,7 @@ class FakeControl extends FakeContentEditable {
     this.tagName = tag.toUpperCase();
     this.attributes = attributes;
     this.value = options.value || '';
+    this.defaultValue = this.value;
     this.defaultChecked = !!options.defaultChecked;
     this._checked = this.defaultChecked;
     this.options = options.options || [];
@@ -643,6 +685,45 @@ function hidePage(page) {
 
 function runExtendedScenario() {
   const storage = new FakeStorage();
+  if (spec.scenario === 'beforeBinding') {
+    const page = textPage(storage, {value: 'Server value'});
+    let expectedValue = 'Typed before binding';
+    if (spec.kind === 'contenteditable') {
+      page.field = new FakeContentEditable(page.document, 'Server value', 'Server value');
+    } else if (spec.kind !== 'textarea') {
+      page.field = new FakeControl(page.document,
+        spec.kind === 'select' ? 'select' : 'input',
+        {name: 'answer', type: spec.kind, 'aria-label': '回答'}, {
+          value: 'Server value', defaultChecked: true,
+          options: ['a', 'b'].map(value => ({
+            value, selected: value === 'a', defaultSelected: value === 'a'
+          }))
+        });
+    }
+    page.document.field = page.field;
+    if (spec.edited) {
+      if (spec.kind === 'checkbox' || spec.kind === 'radio') {
+        page.field.checked = false;
+        expectedValue = spec.kind === 'radio' ? null : false;
+      } else if (spec.kind === 'select') {
+        setSelection(page.field, ['b']);
+        expectedValue = ['b'];
+      } else {
+        page.field.value = expectedValue;
+      }
+    }
+    runPage(page);
+    const touched = !!page.field.__MBG_REPORT_DRAFT_TOUCHED;
+    const dirty = !!page.field.__MBG_REPORT_DRAFT_DIRTY;
+    const countBeforeHide = storage.length;
+    const target = spec.event === 'visibilitychange' ? page.document : page.window;
+    page.document.visibilityState = 'hidden';
+    for (const callback of target.listeners[spec.event] || []) callback();
+    const draft = storage.length ? JSON.parse(storage.getItem(storage.key(0))) : null;
+    return {bound: !!page.field.__MBG_REPORT_DRAFT_BOUND,
+      touched, dirty, countBeforeHide, count: storage.length,
+      savedValue: draft && draft.fields[0].value, expectedValue};
+  }
   if (spec.scenario === 'counterLatest') {
     const page = textPage(storage, {counter: 0, counterElement: true});
     runPage(page);

@@ -74,8 +74,10 @@ bool isNotifiableDeadline(
 }) {
   if (entry.source == '連絡通知') {
     final text = '${entry.title} ${entry.dueText}';
+    final lowerText = text.toLowerCase();
     if (excludeKeywords.any(
-      (keyword) => keyword.isNotEmpty && text.contains(keyword),
+      (keyword) =>
+          keyword.isNotEmpty && lowerText.contains(keyword.toLowerCase()),
     )) {
       return false;
     }

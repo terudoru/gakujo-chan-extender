@@ -33,6 +33,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   required List<int?> fetchStatuses,
   List<bool> iframeOutcomes = const [],
   String? inputValue,
+  String? inputValueAfterArming,
   int clickCount = 1,
   String teardownScript = '',
   bool teardownDuringRead = false,
@@ -44,6 +45,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     'fetchStatuses': fetchStatuses,
     'iframeOutcomes': iframeOutcomes,
     'inputValue': inputValue,
+    'inputValueAfterArming': inputValueAfterArming,
     'clickCount': clickCount,
     'teardownDuringRead': teardownDuringRead,
     'teardownAfterRead': teardownAfterRead,
@@ -347,6 +349,8 @@ function createPage() {
       fetchCallCount,
       fetchUrls,
       frameCallCount,
+      buttonText: document.getElementById('mbg-read-button')?.textContent,
+      timeoutIds: [...activeTimeouts.keys()],
       globalMarkers: Object.keys(window)
         .filter((key) => key.startsWith(featureConfig.markerPrefix))
         .sort()
@@ -373,12 +377,21 @@ async function main() {
     const reads = [];
     // The first tap only asks for confirmation.
     await button.click();
+    const afterArming = injectedPage.snapshot();
+    let afterCountChange;
+    if (scenario.inputValueAfterArming != null) {
+      input.value = scenario.inputValueAfterArming;
+      await button.click();
+      afterCountChange = injectedPage.snapshot();
+    }
     for (let i = 0; i < scenario.clickCount; i += 1) reads.push(button.click());
     if (scenario.teardownDuringRead) run(teardownScript, injectedPage);
     await Promise.all(reads);
     if (scenario.teardownAfterRead) run(teardownScript, injectedPage);
     injectedPage.flushTimeouts();
-    process.stdout.write(JSON.stringify(injectedPage.snapshot()));
+    process.stdout.write(JSON.stringify({
+      ...injectedPage.snapshot(), afterArming, afterCountChange
+    }));
     return;
   }
 

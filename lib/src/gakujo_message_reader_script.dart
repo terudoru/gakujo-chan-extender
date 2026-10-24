@@ -226,10 +226,12 @@ class GakujoMessageReaderScript {
   }
 
   var confirmTimer = null;
+  var confirmCount = null;
 
   function disarm(button) {
     window.clearTimeout(confirmTimer);
     confirmTimer = null;
+    confirmCount = null;
     if (button) {
       button.textContent = '指定した個数を既読にする';
     }
@@ -246,7 +248,9 @@ class GakujoMessageReaderScript {
     var confirmButton = controlsDocument.getElementById('mbg-read-button');
     // Gakujo cannot mark a message unread again, so a stray tap must not
     // read messages the student has not seen: the first tap only asks.
-    if (!confirmTimer) {
+    if (!confirmTimer || confirmCount !== urls.length) {
+      disarm(confirmButton);
+      confirmCount = urls.length;
       if (confirmButton) {
         confirmButton.textContent =
           urls.length + '件を既読にする（もう一度押して確定）';

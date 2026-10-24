@@ -222,6 +222,26 @@ void main() {
     expect(result['statusText'], '2件を既読にしました（失敗0件）');
   });
 
+  test('changing the count requires confirmation of the new count', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200, 200],
+      inputValue: '1',
+      inputValueAfterArming: '3',
+    );
+
+    expect(result['afterArming']['buttonText'], startsWith('1件'));
+    final rearmed = result['afterCountChange'] as Map;
+    expect(rearmed['fetchCallCount'], 0);
+    expect(rearmed['frameCallCount'], 0);
+    expect(rearmed['buttonText'], '3件を既読にする（もう一度押して確定）');
+    expect(rearmed['timeoutIds'], hasLength(1));
+    expect(rearmed['timeoutIds'], isNot(result['afterArming']['timeoutIds']));
+    expect(result['fetchCallCount'], 3);
+    expect(result['statusText'], '3件を既読にしました（失敗0件）');
+    expect(result['reloadCount'], 1);
+  });
+
   for (final frame in ['empty', 'list', 'none', 'inaccessible']) {
     test('reads the first three smartphone unread messages (frame: $frame)',
         () async {

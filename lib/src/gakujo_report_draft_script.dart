@@ -749,6 +749,20 @@ class GakujoReportDraftScript {
         return;
       }
       field.__MBG_REPORT_DRAFT_BOUND = true;
+      if (!field.matches('[contenteditable]')) {
+        var kind = fieldKind(field);
+        var changed = kind === 'checkbox' || kind === 'radio'
+          ? field.checked !== field.defaultChecked
+          : kind === 'select'
+            ? Array.prototype.slice.call(field.options).some(function(option) {
+              return option.selected !== option.defaultSelected;
+            })
+            : field.value !== field.defaultValue;
+        if (changed) {
+          field.__MBG_REPORT_DRAFT_DIRTY = true;
+          field.__MBG_REPORT_DRAFT_TOUCHED = true;
+        }
+      }
       field.addEventListener('input', function() { scheduleSave(field); });
       field.addEventListener('change', function() { scheduleSave(field); });
       field.addEventListener('keyup', function() { scheduleSave(field); });

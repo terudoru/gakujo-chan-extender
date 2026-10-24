@@ -41,10 +41,19 @@ class GakujoWebResourceError {
       WebResourceErrorType.timeout ||
       WebResourceErrorType.io =>
         true,
-      WebResourceErrorType.unknown || null => RegExp(
-          r'ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NETWORK_CHANGED|CONNECTION_[A-Z_]+|ADDRESS_UNREACHABLE)',
-          caseSensitive: false,
-        ).hasMatch(error.description),
+      WebResourceErrorType.unknown || null => const {
+            -1009, // notConnectedToInternet
+            -1004, // cannotConnectToHost
+            -1003, // cannotFindHost
+            -1001, // timedOut
+            -1005, // networkConnectionLost
+            -1020, // dataNotAllowed
+            -1018, // internationalRoamingOff
+          }.contains(error.errorCode) ||
+          RegExp(
+            r'ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NETWORK_CHANGED|CONNECTION_[A-Z_]+|ADDRESS_UNREACHABLE)',
+            caseSensitive: false,
+          ).hasMatch(error.description),
       _ => false,
     };
     return GakujoWebResourceError(

@@ -69,6 +69,44 @@ void main() {
       });
     }
 
+    for (final type in [WebResourceErrorType.unknown, null]) {
+      test('recognizes Apple connectivity codes when the type is $type', () {
+        for (final code in [-1009, -1004, -1003, -1001, -1005, -1020, -1018]) {
+          final mapped = GakujoWebResourceError.fromWebViewFlutter(
+            WebResourceError(
+              errorCode: code,
+              description: 'Localized WKWebView error',
+              errorType: type,
+              isForMainFrame: false,
+            ),
+          );
+          expect(mapped.isConnectivityError, isTrue, reason: '$code');
+          expect(mapped.isForMainFrame, isFalse);
+        }
+      });
+
+      test('does not classify unrelated codes as offline with type $type', () {
+        for (final code in [
+          -999,
+          -1002,
+          -1011,
+          -1200,
+          -1202,
+          for (var androidCode = -1; androidCode >= -16; androidCode--)
+            androidCode,
+        ]) {
+          final mapped = GakujoWebResourceError.fromWebViewFlutter(
+            WebResourceError(
+              errorCode: code,
+              description: 'Localized non-connectivity error',
+              errorType: type,
+            ),
+          );
+          expect(mapped.isConnectivityError, isFalse, reason: '$code');
+        }
+      });
+    }
+
     test('does not infer offline from certificate or cancelled errors', () {
       for (final description in [
         'net::ERR_CERT_AUTHORITY_INVALID',
