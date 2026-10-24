@@ -34,6 +34,7 @@ class _PendingMessageOpen {
   final String url;
   final ({String keijitype, String genrecd, String seqNo}) message;
   final DateTime startedAt;
+  final navigation = GakujoMessageOpenNavigation();
   int missingResults = 0;
   int? attemptedNavigationRevision;
 }

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:test/test.dart';
 
@@ -31,6 +34,25 @@ void main() {
     expect(script, contains('attachNativeZoomBlockers'));
     expect(script, contains('event.preventDefault()'));
     expect(script, isNot(contains('stepZoom')));
+  });
+
+  test('focused WebView shortcuts post app zoom actions from all frames',
+      () async {
+    final result = await Process.run(
+      'node',
+      ['-e', _shortcutHarness, DesktopPageZoomScript.build(1.25)],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(data['actions'], ['in', 'in', 'out', 'out', 'reset', 'in']);
+    expect(
+        data['prevented'], [true, true, true, true, true, true, false, false]);
+    expect(data['zoom'], 1.25,
+        reason: 'the app owns zoom state and applies the toolbar step logic');
+    expect(data['keydownListeners'], [1, 1],
+        reason: 'reapplying zoom must not multiply shortcut messages');
   });
 
   test('clears visual zoom state at 100 percent', () {
@@ -92,3 +114,51 @@ void main() {
     expect(script, contains('window.__MBG_PAGE_ZOOM_ORIGIN = initialOrigin'));
   });
 }
+
+const _shortcutHarness = r'''
+const vm = require('node:vm');
+const script = process.argv[1];
+const actions = [];
+function page() {
+  const listeners = {};
+  return {
+    document: {
+      body: {style: {}, scrollWidth: 800, scrollHeight: 600},
+      documentElement: {style: {}, clientWidth: 800}
+    },
+    frames: [], innerWidth: 800, innerHeight: 600,
+    addEventListener(type, callback) {
+      (listeners[type] ||= []).push(callback);
+    },
+    listeners,
+    scrollTo() {}, clearTimeout() {}, setTimeout() {}
+  };
+}
+const window = page();
+const frame = page();
+window.frames.push(frame);
+window.MoreBetterGakujoDesktopZoom = {postMessage: action => actions.push(action)};
+const context = vm.createContext({window});
+vm.runInContext(script, context);
+vm.runInContext(script, context);
+const prevented = [];
+for (const [target, key, ctrlKey, metaKey] of [
+  [window, '+', true, false],
+  [window, '=', true, false],
+  [window, '-', true, false],
+  [window, '_', true, false],
+  [window, '0', true, false],
+  [frame, '+', false, true],
+  [window, '+', false, false],
+  [window, 'a', true, false]
+]) {
+  let blocked = false;
+  const event = {key, ctrlKey, metaKey, preventDefault() { blocked = true; }};
+  for (const listener of target.listeners.keydown) listener(event);
+  prevented.push(blocked);
+}
+process.stdout.write(JSON.stringify({
+  actions, prevented, zoom: window.__MBG_PAGE_ZOOM_VALUE,
+  keydownListeners: [window, frame].map(win => win.listeners.keydown.length)
+}));
+''';

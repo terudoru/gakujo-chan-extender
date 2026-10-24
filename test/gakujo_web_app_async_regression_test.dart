@@ -4,13 +4,104 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_libraries.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  group('JavaScript channel origin guard', () {
+    for (final channel in [
+      GakujoDownloadCaptureScript.channelName,
+      LoginAutofillAssistScript.channelName,
+      GakujoUploadCompressionLibraries.channelName,
+      GakujoMessageStarScript.channelName,
+      DesktopPageZoomScript.channelName,
+    ]) {
+      test('$channel trusts the current page rather than the payload URL',
+          () async {
+        const payload =
+            '{"url":"https://gakujo.iess.niigata-u.ac.jp/private.pdf"}';
+        final handled = <String>[];
+        for (final url in [
+          null,
+          '',
+          'about:blank',
+          'file:///android_asset/qa/two_factor.html',
+          'https://www.niigata-u.ac.jp/',
+          'https://accounts.google.com/',
+          'https://docs.google.com/',
+          'https://univcoop.jp/',
+          'http://gakujo.iess.niigata-u.ac.jp/',
+          'https://gakujo.iess.niigata-u.ac.jp:8443/',
+          'https://user@gakujo.iess.niigata-u.ac.jp/',
+          'https://gakujo.iess.niigata-u.ac.jp.example.com/',
+        ]) {
+          await handleGakujoJavaScriptMessage(
+            currentUrl: url,
+            channelName: channel,
+            message: payload,
+            onMessageReceived: handled.add,
+          );
+          expect(handled, isEmpty, reason: '$channel on $url');
+        }
+        await handleGakujoJavaScriptMessage(
+          currentUrl:
+              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+          channelName: channel,
+          message: payload,
+          onMessageReceived: handled.add,
+        );
+        expect(handled, [payload]);
+      });
+    }
+  });
+
+  group('pending message navigation ownership', () {
+    const target =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do';
+    const other =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list.do';
+
+    test('only the recorded app navigation can consume its page start', () {
+      final navigation = GakujoMessageOpenNavigation()..record(target, 7);
+      expect(navigation.owns(target, 7), isTrue);
+      expect(navigation.consume(target, 7), isTrue);
+      expect(navigation.owns(target, 7), isFalse);
+      expect(navigation.consume(other, 8), isFalse);
+      expect(navigation.consume(target, 8), isFalse);
+    });
+
+    test('an ordinary link invalidates an uncompleted app navigation', () {
+      final navigation = GakujoMessageOpenNavigation()..record(target, 7);
+      expect(navigation.owns(other, 7), isFalse);
+      expect(navigation.consume(other, 7), isFalse);
+      expect(navigation.consume(target, 7), isFalse);
+    });
+
+    test('reload and history revisions invalidate the old navigation', () {
+      final navigation = GakujoMessageOpenNavigation()..record(target, 7);
+      expect(navigation.consume(target, 8), isFalse);
+    });
+
+    test('the post-login restore records a new app navigation', () {
+      final navigation = GakujoMessageOpenNavigation()..record(target, 7);
+      expect(navigation.consume(target, 7), isTrue);
+      navigation.record(null, 8); // The app's autofill submits the login form.
+      expect(navigation.consume(other, 8), isTrue);
+      expect(navigation.owns(other, 8), isFalse);
+      navigation.record(target, 9);
+      expect(navigation.consume(target, 9), isTrue);
+      expect(navigation.consume(other, 10), isFalse);
+    });
+  });
+
   group('resource error status and recovery', () {
     void checkError(
       GakujoWebResourceError error, {
@@ -391,15 +482,76 @@ void main() {
         navigationCandidateUrl: requestedB,
         challengeUrl: requestedB,
       );
-      expect(challengeAtCandidate, isNull);
+      expect(challengeAtCandidate, requestedB);
       expect(
         selectGakujoSessionRecoveryUrl(
           navigationCandidateUrl: challengeAtCandidate,
           authenticatedUrl: authenticatedA,
           pendingRestoreUrl: null,
         ),
-        authenticatedA,
+        requestedB,
       );
+    });
+
+    test('flow-key pages never replace the previous durable recovery URL', () {
+      const durable =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
+          '?page=main&tabId=en';
+      for (final query in [
+        '_flowExecutionKey=e1s2',
+        '_FLOWEXECUTIONKEY=e1s2&_eventId=confirm',
+        '%5FflowExecutionKey=e1s2',
+        '_flowExecutionKey',
+      ]) {
+        final flowUrl =
+            'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?$query';
+        expect(
+          usableGakujoNavigationCandidateForChallenge(
+            navigationCandidateUrl: flowUrl,
+            challengeUrl: flowUrl,
+          ),
+          isNull,
+        );
+        expect(
+          selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: flowUrl,
+            pendingRestoreUrl: flowUrl,
+            authenticatedUrl: durable,
+          ),
+          durable,
+        );
+        expect(
+          selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: null,
+            pendingRestoreUrl: null,
+            authenticatedUrl: flowUrl,
+          ),
+          isNull,
+        );
+      }
+    });
+
+    test('login, logout and timeout challenges cannot become destinations', () {
+      const durable =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list.do';
+      for (final page in ['login.do', 'logout.do', 'timeout.do']) {
+        final challenge = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$page';
+        expect(
+          usableGakujoNavigationCandidateForChallenge(
+            navigationCandidateUrl: challenge,
+            challengeUrl: challenge,
+          ),
+          isNull,
+        );
+        expect(
+          selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: challenge,
+            pendingRestoreUrl: challenge,
+            authenticatedUrl: durable,
+          ),
+          durable,
+        );
+      }
     });
 
     test('autofill runtime features expose timer teardown scripts', () {

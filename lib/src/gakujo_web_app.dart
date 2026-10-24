@@ -602,16 +602,72 @@ String? selectGakujoSessionRecoveryUrl({
   required String? navigationCandidateUrl,
   required String? authenticatedUrl,
   required String? pendingRestoreUrl,
+  bool debugAllowed = false,
 }) {
-  return navigationCandidateUrl ?? pendingRestoreUrl ?? authenticatedUrl;
+  for (final url in [
+    navigationCandidateUrl,
+    pendingRestoreUrl,
+    authenticatedUrl,
+  ]) {
+    if (AllowedWebOrigins.canRestoreLastPage(url, debugAllowed: debugAllowed)) {
+      return url;
+    }
+  }
+  return null;
 }
 
 @visibleForTesting
 String? usableGakujoNavigationCandidateForChallenge({
   required String? navigationCandidateUrl,
   required String challengeUrl,
+  bool debugAllowed = false,
 }) {
-  return navigationCandidateUrl == challengeUrl ? null : navigationCandidateUrl;
+  if (navigationCandidateUrl == challengeUrl &&
+      !AllowedWebOrigins.canRestoreLastPage(
+        navigationCandidateUrl,
+        debugAllowed: debugAllowed,
+      )) {
+    return null;
+  }
+  return navigationCandidateUrl;
+}
+
+@visibleForTesting
+Future<void> handleGakujoJavaScriptMessage({
+  required String? currentUrl,
+  required String channelName,
+  required String message,
+  required FutureOr<void> Function(String) onMessageReceived,
+}) async {
+  if (!AllowedWebOrigins.canLoad(currentUrl, debugAllowed: false)) {
+    if (kDebugMode) {
+      debugPrint('Ignored $channelName message outside the Gakujo origin');
+    }
+    return;
+  }
+  await onMessageReceived(message);
+}
+
+@visibleForTesting
+class GakujoMessageOpenNavigation {
+  String? _url;
+  int? _revision;
+
+  void record(String? url, int navigationRevision) {
+    _url = url;
+    _revision = navigationRevision;
+  }
+
+  bool owns(String url, int navigationRevision) {
+    return _revision == navigationRevision && (_url == null || _url == url);
+  }
+
+  bool consume(String url, int navigationRevision) {
+    final matches = owns(url, navigationRevision);
+    _url = null;
+    _revision = null;
+    return matches;
+  }
 }
 
 @visibleForTesting
@@ -1302,6 +1358,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return KeyEventResult.ignored;
   }
 
+  Future<void> _handleDesktopZoomMessage(String message) async {
+    if (!_supportsDesktopZoom) {
+      return;
+    }
+    switch (message) {
+      case 'in':
+        await _changeDesktopZoomBy(_desktopZoomStep);
+        break;
+      case 'out':
+        await _changeDesktopZoomBy(-_desktopZoomStep);
+        break;
+      case 'reset':
+        await _setDesktopZoom(1.0);
+        break;
+    }
+  }
+
   void _handleDesktopZoomPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) {
       return;
@@ -1480,6 +1553,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _setStatus('ブロック: ${_displayUrl(request.url)}');
       _showSnackBar('許可されていない外部サイトをブロックしました');
       return GakujoNavigationDecision.prevent;
+    }
+
+    final pending = _pendingMessageOpen;
+    if (pending != null &&
+        !pending.navigation.owns(request.url, _navigationRevision)) {
+      _setPendingMessageUrl(null);
     }
 
     if (AllowedWebOrigins.canLoad(
@@ -3164,9 +3243,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectMessageFilterIfAllowed();
   }
 
-  void _beginNavigation() {
+  void _beginNavigation({bool preservesPendingMessageOpen = false}) {
+    if (!preservesPendingMessageOpen) {
+      _setPendingMessageUrl(null);
+    }
     _offlineRetry.cancel();
     _navigationRevision += 1;
+  }
+
+  void _beginPendingMessageNavigation(String url) {
+    _beginNavigation(preservesPendingMessageOpen: true);
+    _pendingMessageOpen?.navigation.record(url, _navigationRevision);
   }
 
   Future<void> _reloadAfterConnectivityRestored() async {
@@ -3222,7 +3309,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!ownsPageNavigationOperation) {
       _setPendingMessageUrl(url);
     }
-    _beginNavigation();
+    _beginPendingMessageNavigation(url);
     await _controller.loadUrl(url);
   }
 
@@ -4334,6 +4421,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final navigationCandidateUrl = usableGakujoNavigationCandidateForChallenge(
       navigationCandidateUrl: _navigationRecoveryCandidateUrl,
       challengeUrl: url,
+      debugAllowed: _debugAllowed,
     );
     if (navigationCandidateUrl == null &&
         _navigationRecoveryCandidateUrl == url) {
@@ -4343,6 +4431,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       navigationCandidateUrl: navigationCandidateUrl,
       authenticatedUrl: _sessionRecoveryUrl,
       pendingRestoreUrl: _pendingLoginRestoreUrl,
+      debugAllowed: _debugAllowed,
     );
     if (shouldResetGakujoLoginRestoreAttempt(
       authState: authState,
@@ -4533,11 +4622,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _handleLoginAutofillMessage(String message) {
     try {
       final decoded = jsonDecode(message);
+      if (decoded is Map &&
+          (decoded['event'] == 'submit' || decoded['event'] == '2fa-submit')) {
+        // Autofill is starting this navigation on behalf of the pending open.
+        _pendingMessageOpen?.navigation.record(null, _navigationRevision);
+      }
       if (decoded is Map && decoded['event'] == 'challenge') {
         final recoveryUrl = selectGakujoSessionRecoveryUrl(
           navigationCandidateUrl: _navigationRecoveryCandidateUrl,
           authenticatedUrl: _sessionRecoveryUrl,
           pendingRestoreUrl: _pendingLoginRestoreUrl,
+          debugAllowed: _debugAllowed,
         );
         if (recoveryUrl != null &&
             AllowedWebOrigins.canLoad(
@@ -4883,6 +4978,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             !_appSettings.hasLoginCredentials
         ? pendingNotificationUrl
         : _resolveStartUrl(_appSettings.hasLoginCredentials ? null : savedUrl);
+    _beginPendingMessageNavigation(startUrl);
     await _controller.loadUrl(startUrl);
   }
 
@@ -4921,7 +5017,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginRestoreAttempted = false;
       _navigationRecoveryCandidateUrl = restoreTarget;
     }
-    _beginNavigation();
+    _beginPendingMessageNavigation(targetUrl);
     await _controller.loadUrl(targetUrl);
   }
 
@@ -4957,29 +5053,50 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return url;
   }
 
+  Future<void> _addGakujoJavaScriptChannel(
+    String name, {
+    required FutureOr<void> Function(String) onMessageReceived,
+  }) {
+    return _controller.addJavaScriptChannel(
+      name,
+      onMessageReceived: (message) => handleGakujoJavaScriptMessage(
+        currentUrl: _currentPageUrl,
+        channelName: name,
+        message: message,
+        onMessageReceived: onMessageReceived,
+      ),
+    );
+  }
+
   Future<void> _configureWebViewController() async {
     await _controller.setJavaScriptModeUnrestricted();
-    await _controller.addJavaScriptChannel(
+    await _addGakujoJavaScriptChannel(
       GakujoDownloadCaptureScript.channelName,
       onMessageReceived: _handleDownloadMessage,
     );
-    await _controller.addJavaScriptChannel(
+    await _addGakujoJavaScriptChannel(
       LoginAutofillAssistScript.channelName,
       onMessageReceived: _handleLoginAutofillMessage,
     );
-    await _controller.addJavaScriptChannel(
+    await _addGakujoJavaScriptChannel(
       GakujoUploadCompressionLibraries.channelName,
       onMessageReceived: _handleUploadCompressionLibraryRequest,
     );
-    await _controller.addJavaScriptChannel(
+    await _addGakujoJavaScriptChannel(
       GakujoMessageStarScript.channelName,
       onMessageReceived: _handleMessageStarMessage,
+    );
+    await _addGakujoJavaScriptChannel(
+      DesktopPageZoomScript.channelName,
+      onMessageReceived: _handleDesktopZoomMessage,
     );
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
         onPageStarted: (url) {
           if (_isInternalBlankUrl(url)) {
+            _beginNavigation();
+            _currentPageUrl = url;
             return;
           }
           if (_currentPageUrl == _sessionRecoveryUrl &&
@@ -4992,7 +5109,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             // login shell must not replace it before the DOM probe runs.
             _navigationRecoveryCandidateUrl = url;
           }
-          _beginNavigation();
+          final preservesPendingMessageOpen = _pendingMessageOpen?.navigation
+                  .consume(url, _navigationRevision) ??
+              false;
+          _beginNavigation(
+            preservesPendingMessageOpen: preservesPendingMessageOpen,
+          );
           _currentPageUrl = url;
           if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
             _lastAllowedPageUrl = url;
@@ -5039,7 +5161,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             if (authState == GakujoPortalAuthState.authenticated) {
-              _sessionRecoveryUrl = url;
+              _sessionRecoveryUrl = selectGakujoSessionRecoveryUrl(
+                navigationCandidateUrl: url,
+                authenticatedUrl: _sessionRecoveryUrl,
+                pendingRestoreUrl: null,
+                debugAllowed: _debugAllowed,
+              );
               _navigationRecoveryCandidateUrl = null;
               _lastSessionRecoveryNoticeUrl = null;
               await _resetAutofillSessionStateAfterAuthentication();
@@ -5446,7 +5573,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           currentUrlMatchesRestoreUrl: restoreUrl == currentUrl,
         ) ||
         restoreUrl == null ||
-        !AllowedWebOrigins.canLoad(restoreUrl, debugAllowed: _debugAllowed) ||
+        !AllowedWebOrigins.canRestoreLastPage(
+          restoreUrl,
+          debugAllowed: _debugAllowed,
+        ) ||
         !AllowedWebOrigins.canLoad(currentUrl, debugAllowed: _debugAllowed)) {
       return;
     }
@@ -5454,7 +5584,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _loginRestoreAttempted = true;
     _pendingLoginRestoreUrl = null;
     _setStatus('前回のページに戻ります: ${_displayUrl(restoreUrl)}');
-    _beginNavigation();
+    _beginPendingMessageNavigation(restoreUrl);
     await _controller.loadUrl(restoreUrl);
   }
 
@@ -5487,12 +5617,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    _setPendingMessageUrl(null);
     if (!await _controller.canGoBack()) {
       await _refreshNavigationState();
       return false;
     }
 
-    _setPendingMessageUrl(null);
     _beginNavigation();
     await _controller.goBack();
     await _refreshNavigationState();
@@ -5512,12 +5642,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    _setPendingMessageUrl(null);
     if (!await _controller.canGoForward()) {
       await _refreshNavigationState();
       return false;
     }
 
-    _setPendingMessageUrl(null);
     _beginNavigation();
     await _controller.goForward();
     await _refreshNavigationState();
@@ -5620,6 +5750,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_messageOpenProcessing != null || !_calendarOperationGate.tryStart()) {
       return false;
     }
+    _setPendingMessageUrl(null);
     if (mounted) {
       setState(() {});
     }
@@ -5656,7 +5787,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final pageFinished = _waitForNextPageFinished(
         timeout: const Duration(seconds: 8),
       );
-      _beginNavigation();
+      _beginPendingMessageNavigation(deferredUrl);
       await _controller.loadUrl(deferredUrl);
       await pageFinished;
     } on Object catch (error, stackTrace) {

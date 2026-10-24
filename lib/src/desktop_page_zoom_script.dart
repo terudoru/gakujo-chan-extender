@@ -1,13 +1,15 @@
 class DesktopPageZoomScript {
   const DesktopPageZoomScript._();
 
+  static const channelName = 'MoreBetterGakujoDesktopZoom';
+
   static String build(double zoom, {double? originX, double? originY}) {
     final encodedZoom = zoom.clamp(0.5, 2.0).toStringAsFixed(2);
     final encodedOriginX = originX?.toStringAsFixed(1) ?? 'null';
     final encodedOriginY = originY?.toStringAsFixed(1) ?? 'null';
     return '''
 (function() {
-  var version = 5;
+  var version = 6;
   var initialZoom = $encodedZoom;
   var initialOrigin = {
     x: $encodedOriginX,
@@ -196,11 +198,16 @@ class DesktopPageZoomScript {
             if (!event.metaKey && !event.ctrlKey) {
               return;
             }
-            if (event.key === '+' || event.key === '=' ||
-                event.key === '-' || event.key === '_' ||
-                event.key === '0') {
-              event.preventDefault();
+            var action = event.key === '+' || event.key === '=' ? 'in' :
+              event.key === '-' || event.key === '_' ? 'out' :
+              event.key === '0' ? 'reset' : null;
+            if (!action) {
+              return;
             }
+            event.preventDefault();
+            try {
+              window.$channelName.postMessage(action);
+            } catch (e) {}
           }, true);
 
           win.addEventListener('wheel', function(event) {
