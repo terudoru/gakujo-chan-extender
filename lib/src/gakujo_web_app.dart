@@ -4105,6 +4105,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       topics: _appSettings.notificationTopics,
       messages: _appSettings.messageNotification,
       preferences: _appSettings.notificationPreferences,
+      messageExcludeKeywords: _appSettings.messageExcludeKeywords,
     );
   }
 

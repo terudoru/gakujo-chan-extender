@@ -377,6 +377,38 @@ void main() {
       expect(restored.messageNotification?.keywords, ['授業連絡']);
     });
   });
+
+  test('a 連絡通知 hidden by an exclude keyword is never notified', () {
+    const messages = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['説明会'],
+    );
+    final hidden = _entry('2026/10/22 14:00:54 留学説明会 - アンケート', source: '連絡通知');
+    final shown = _entry('2026/10/22 14:00:54 留学説明会 - 全学連絡', source: '連絡通知');
+
+    expect(
+      isNotifiableDeadline(
+        hidden,
+        topics: const {},
+        messages: messages,
+        excludeKeywords: const ['アンケート'],
+      ),
+      isFalse,
+    );
+    expect(
+      isNotifiableDeadline(
+        shown,
+        topics: const {},
+        messages: messages,
+        excludeKeywords: const ['アンケート'],
+      ),
+      isTrue,
+    );
+    expect(
+      isNotifiableDeadline(hidden, topics: const {}, messages: messages),
+      isTrue,
+    );
+  });
 }
 
 extension on GakujoDeadlineEntry {

@@ -65,15 +65,22 @@ GakujoNotificationTopic notificationTopicFor(GakujoDeadlineEntry entry) {
 
 /// Whether [entry] may become an OS notification under the student's
 /// choices. A 連絡通知 follows [messages]; in keyword mode it need not carry
-/// a deadline.
+/// a deadline. One the student hid with [excludeKeywords] never notifies.
 bool isNotifiableDeadline(
   GakujoDeadlineEntry entry, {
   required Set<GakujoNotificationTopic> topics,
   required GakujoMessageNotificationSettings messages,
+  List<String> excludeKeywords = const [],
 }) {
   if (entry.source == '連絡通知') {
+    final text = '${entry.title} ${entry.dueText}';
+    if (excludeKeywords.any(
+      (keyword) => keyword.isNotEmpty && text.contains(keyword),
+    )) {
+      return false;
+    }
     return messages.allows(
-      text: '${entry.title} ${entry.dueText}',
+      text: text,
       isDeadline: entry.isDeadline,
     );
   }
@@ -425,6 +432,7 @@ class GakujoDeadlineNotificationCoordinator {
     ),
     GakujoNotificationPreferences preferences =
         const GakujoNotificationPreferences(),
+    List<String> messageExcludeKeywords = const [],
   }) {
     return _enqueueNotificationOperation(
       () => _notifyPendingDeadlines(
@@ -432,6 +440,7 @@ class GakujoDeadlineNotificationCoordinator {
         topics: topics,
         messages: messages,
         preferences: preferences,
+        messageExcludeKeywords: messageExcludeKeywords,
       ),
     );
   }
@@ -441,6 +450,7 @@ class GakujoDeadlineNotificationCoordinator {
     required Set<GakujoNotificationTopic> topics,
     required GakujoMessageNotificationSettings messages,
     required GakujoNotificationPreferences preferences,
+    required List<String> messageExcludeKeywords,
   }) async {
     if (!notificationsEnabled) {
       return;
@@ -453,7 +463,12 @@ class GakujoDeadlineNotificationCoordinator {
       if (pending.length >= 5) {
         break;
       }
-      if (!isNotifiableDeadline(entry, topics: topics, messages: messages) ||
+      if (!isNotifiableDeadline(
+            entry,
+            topics: topics,
+            messages: messages,
+            excludeKeywords: messageExcludeKeywords,
+          ) ||
           _activityStore.isDeadlinePassed(entry)) {
         continue;
       }
