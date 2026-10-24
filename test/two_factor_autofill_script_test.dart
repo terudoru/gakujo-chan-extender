@@ -97,7 +97,69 @@ void main() {
     expect(result['hiddenValue'], isEmpty, reason: jsonEncode(result));
     expect(result['visibleValue'], '654321', reason: jsonEncode(result));
     expect(result['clickCount'], 1, reason: jsonEncode(result));
+    expect(result['consoleLogs'], isEmpty);
   });
+
+  for (final url in [
+    'https://www.niigata-u.ac.jp/campussmart.do',
+    'http://gakujo.iess.niigata-u.ac.jp/campussmart.do',
+    'https://gakujo.iess.niigata-u.ac.jp.evil.example/campussmart.do',
+    'file:///android_asset/qa/two_factor.html',
+  ]) {
+    test('does not fill, submit or report a two-factor token on $url',
+        () async {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(
+          token: '654321',
+          secret: 'test-secret',
+          debugLogging: true,
+        ),
+        url: url,
+      );
+
+      expect(result['hiddenValue'], isEmpty);
+      expect(result['visibleValue'], isEmpty);
+      expect(result['clickCount'], 0);
+      expect(result['reports'], isEmpty);
+      expect(result['consoleLogs'], isEmpty);
+    });
+  }
+
+  for (final debugLogging in [false, true]) {
+    test('redacts two-factor event URLs with debugLogging=$debugLogging',
+        () async {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(
+          token: '654321',
+          debugLogging: debugLogging,
+        ),
+        url: 'https://gakujo.iess.niigata-u.ac.jp'
+            '/campusweb;JSESSIONID=path-secret'
+            '/campussmart.do;jsessionid=tail-secret;view=login'
+            '?token=query-secret#hash-secret',
+      );
+
+      final reports = result['reports'] as List<dynamic>;
+      expect(reports, isNotEmpty);
+      for (final report in reports.cast<Map<String, dynamic>>()) {
+        expect(
+          report['url'],
+          'https://gakujo.iess.niigata-u.ac.jp'
+          '/campusweb/campussmart.do;view=login',
+        );
+      }
+      final consoleLogs = result['consoleLogs'] as List<dynamic>;
+      expect(consoleLogs.isNotEmpty, debugLogging);
+      for (final secret in [
+        'path-secret',
+        'tail-secret',
+        'query-secret',
+        'hash-secret',
+      ]) {
+        expect(jsonEncode(result), isNot(contains(secret)));
+      }
+    });
+  }
 
   test('teardown cancels polling before a delayed code field appears',
       () async {
@@ -114,6 +176,7 @@ void main() {
 
 Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   String script, {
+  String? url,
   String? teardownScript,
 }) async {
   final result = await Process.run(
@@ -123,6 +186,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
         _nodeDomHarness,
         script,
         teardownScript ?? '',
+        url ?? 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
       ],
       stdoutEncoding: utf8,
       stderrEncoding: utf8);
@@ -138,6 +202,8 @@ const _nodeDomHarness = r'''
 const vm = require('node:vm');
 const generatedScript = process.argv[1];
 const generatedTeardown = process.argv[2];
+const reports = [];
+const consoleLogs = [];
 let clickCount = 0;
 const sessionValues = new Map();
 const activeTimers = new Map();
@@ -216,7 +282,9 @@ const window = {
     getItem(key) { return sessionValues.get(key) || null; },
     setItem(key, value) { sessionValues.set(key, String(value)); }
   },
-  MoreBetterGakujoLoginAutofill: {postMessage() {}}
+  MoreBetterGakujoLoginAutofill: {
+    postMessage(payload) { reports.push(JSON.parse(payload)); }
+  }
 };
 window.window = window;
 document.defaultView = window;
@@ -228,13 +296,9 @@ for (const element of [hidden, visible, submit]) {
 const context = {
   window,
   document,
-  location: {
-    href: 'https://gakujo.example/campussmart.do',
-    origin: 'https://gakujo.example',
-    pathname: '/campussmart.do'
-  },
+  location: new URL(process.argv[3]),
   Event: FakeEvent,
-  console: {log() {}}
+  console: {log(message) { consoleLogs.push(message); }}
 };
 vm.runInNewContext(generatedScript, context);
 if (generatedTeardown) {
@@ -246,6 +310,8 @@ if (generatedTeardown) {
 process.stdout.write(JSON.stringify({
   hiddenValue: hidden.value,
   visibleValue: visible.value,
-  clickCount
+  clickCount,
+  reports,
+  consoleLogs
 }));
 ''';

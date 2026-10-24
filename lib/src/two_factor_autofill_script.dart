@@ -23,6 +23,7 @@ class TwoFactorAutofillScript {
     int maxAttempts = 20,
     int intervalMillis = 250,
     bool autoSubmit = true,
+    bool debugLogging = false,
   }) {
     if (maxAttempts <= 0) {
       throw ArgumentError.value(maxAttempts, 'maxAttempts', 'must be positive');
@@ -45,7 +46,12 @@ class TwoFactorAutofillScript {
 
     return '''
 (function() {
+  if (location.protocol !== 'https:' ||
+      location.hostname !== 'gakujo.iess.niigata-u.ac.jp') {
+    return;
+  }
   var assistVersion = 3;
+  var debugLogging = $debugLogging;
   var attempts = 0;
   var maxAttempts = $maxAttempts;
   var intervalMillis = $intervalMillis;
@@ -149,14 +155,16 @@ class TwoFactorAutofillScript {
         channel.postMessage(JSON.stringify({
           event: '2fa-' + event,
           detail: detail || '',
-          url: location.href
+          url: location.origin + location.pathname.replace(/;jsessionid=[^;/]*/gi, '')
         }));
       }
     } catch (_) {
     }
-    try {
-      console.log('MBG_2FA_' + event.toUpperCase() + ' ' + (detail || ''));
-    } catch (_) {
+    if (debugLogging) {
+      try {
+        console.log('MBG_2FA_' + event.toUpperCase() + ' ' + (detail || ''));
+      } catch (_) {
+      }
     }
   }
 
@@ -316,7 +324,9 @@ class TwoFactorAutofillScript {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     input.focus();
-    console.log('MBG_2FA_AUTOFILL_SUCCESS');
+    if (debugLogging) {
+      console.log('MBG_2FA_AUTOFILL_SUCCESS');
+    }
     submitFrom(input);
     return true;
   }

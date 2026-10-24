@@ -84,7 +84,79 @@ void main() {
     expect(_valueOf(result, 'password'), 'saved-password');
     expect(result['clickCount'], 1);
     expect(_hasReport(result, 'fill', 'target-found'), isTrue);
+    expect(result['consoleLogs'], isEmpty);
   });
+
+  for (final url in [
+    'https://www.niigata-u.ac.jp/campussmart.do',
+    'http://gakujo.iess.niigata-u.ac.jp/campussmart.do',
+    'https://gakujo.iess.niigata-u.ac.jp.evil.example/campussmart.do',
+    'file:///android_asset/qa/login.html',
+  ]) {
+    test('does not fill, submit or report login credentials on $url', () async {
+      final result = await _evaluateGeneratedLoginAssist(
+        LoginAutofillAssistScript.build(
+          credentials: const GakujoLoginAutofillCredentials(
+            loginId: 'saved-user',
+            password: 'saved-password',
+          ),
+          debugLogging: true,
+        ),
+        [
+          {'tag': 'input', 'type': 'text', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+          {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+        ],
+        url: url,
+        monitorTicks: 3,
+      );
+
+      expect(_valueOf(result, 'userId'), isEmpty);
+      expect(_valueOf(result, 'password'), isEmpty);
+      expect(result['clickCount'], 0);
+      expect(result['requestSubmitCount'], 0);
+      expect(result['formSubmitCount'], 0);
+      expect(result['reports'], isEmpty);
+      expect(result['consoleLogs'], isEmpty);
+      expect(result['sessionValues'], isEmpty);
+    });
+  }
+
+  for (final debugLogging in [false, true]) {
+    test('redacts login event URLs with debugLogging=$debugLogging', () async {
+      final result = await _evaluateGeneratedLoginAssist(
+        LoginAutofillAssistScript.build(debugLogging: debugLogging),
+        [
+          {'tag': 'input', 'type': 'text', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+        ],
+        url: 'https://gakujo.iess.niigata-u.ac.jp'
+            '/campusweb;JSESSIONID=path-secret'
+            '/campussmart.do;jsessionid=tail-secret;view=login'
+            '?token=query-secret#hash-secret',
+      );
+
+      final reports = result['reports'] as List<dynamic>;
+      expect(reports, isNotEmpty);
+      for (final report in reports.cast<Map<String, dynamic>>()) {
+        expect(
+          report['url'],
+          'https://gakujo.iess.niigata-u.ac.jp'
+          '/campusweb/campussmart.do;view=login',
+        );
+      }
+      final consoleLogs = result['consoleLogs'] as List<dynamic>;
+      expect(consoleLogs.isNotEmpty, debugLogging);
+      for (final secret in [
+        'path-secret',
+        'tail-secret',
+        'query-secret',
+        'hash-secret',
+      ]) {
+        expect(jsonEncode(result), isNot(contains(secret)));
+      }
+    });
+  }
 
   test('does not scan authenticated controls without a pending attempt',
       () async {
@@ -105,7 +177,7 @@ void main() {
   for (final pendingAttempt in ['submitted key', 'session count']) {
     test('resets a pending $pendingAttempt with a visible logout list',
         () async {
-      const pageSuffix = ':https://gakujo.example/campussmart.do';
+      const pageSuffix = ':https://gakujo.iess.niigata-u.ac.jp/campussmart.do';
       const sessionSuffix = '$pageSuffix:no-credentials';
       final pendingAttemptScript = pendingAttempt == 'submitted key'
           ? "window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY = 'no-credentials';"
@@ -388,6 +460,7 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
 Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String script,
   List<Map<String, String>> elements, {
+  String? url,
   String? teardownScript,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
@@ -398,6 +471,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
     _nodeDomHarness,
     jsonEncode({
       'elements': elements,
+      'url': url,
       'teardownScript': teardownScript,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
@@ -446,6 +520,7 @@ const vm = require('node:vm');
 const generatedScript = require('node:fs').readFileSync(0, 'utf8');
 const spec = JSON.parse(process.argv[1]);
 const reports = [];
+const consoleLogs = [];
 const sessionValues = new Map();
 let clickCount = 0;
 const clickedNames = [];
@@ -613,12 +688,9 @@ for (const element of elements) {
 const context = {
   window,
   document,
-  location: {
-    href: 'https://gakujo.example/campussmart.do',
-    origin: 'https://gakujo.example',
-    pathname: '/campussmart.do'
-  },
-  console: {log() {}}
+  location: new URL(spec.url ||
+    'https://gakujo.iess.niigata-u.ac.jp/campussmart.do'),
+  console: {log(message) { consoleLogs.push(message); }}
 };
 vm.runInNewContext(generatedScript, context);
 for (let tick = 0; tick < (spec.monitorTicks || 0); tick += 1) {
@@ -658,6 +730,7 @@ process.stdout.write(JSON.stringify({
   authenticatedControlScanCount,
   submittedKey: window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY || null,
   sessionValues: Object.fromEntries(sessionValues),
-  reports
+  reports,
+  consoleLogs
 }));
 ''';

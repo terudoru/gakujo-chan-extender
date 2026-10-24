@@ -4736,11 +4736,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _injectLoginAutofillAssistIfAllowed() async {
-    if (!_canRunPageScripts) {
+    final url = _currentPageUrl;
+    final navigationRevision = _navigationRevision;
+    bool stillCurrent() =>
+        url != null &&
+        _isCurrentPageCallback(url, navigationRevision) &&
+        AllowedWebOrigins.canAutofill(_currentPageUrl, debugAllowed: false);
+    if (!stillCurrent()) {
       return;
     }
     await _loadStoredLoginForAutofillIfNeeded();
-    if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.loginAutofill)) {
+    if (!stillCurrent() ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.loginAutofill)) {
       return;
     }
 
@@ -4759,16 +4766,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           name: 'MoreBetterGakujo',
         );
       }
-      await _controller.runJavaScript(
-        LoginAutofillAssistScript.build(
-          credentials: credentials == null
-              ? null
-              : GakujoLoginAutofillCredentials(
-                  loginId: credentials.loginId,
-                  password: credentials.password,
-                ),
-        ),
+      final script = LoginAutofillAssistScript.build(
+        credentials: credentials == null
+            ? null
+            : GakujoLoginAutofillCredentials(
+                loginId: credentials.loginId,
+                password: credentials.password,
+              ),
+        debugLogging: kDebugMode,
       );
+      if (!stillCurrent()) {
+        return;
+      }
+      await _controller.runJavaScript(script);
     } catch (error, stackTrace) {
       developer.log(
         'Failed to inject login autofill assist script',
@@ -4800,16 +4810,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.twoFactorAutofill)) {
       return;
     }
-    if (!AllowedWebOrigins.canAutofill(
-      _currentPageUrl,
-      debugAllowed: _debugAllowed,
-    )) {
+    final url = _currentPageUrl;
+    final navigationRevision = _navigationRevision;
+    bool stillCurrent() =>
+        url != null &&
+        _isCurrentPageCallback(url, navigationRevision) &&
+        AllowedWebOrigins.canAutofill(_currentPageUrl, debugAllowed: false);
+    if (!stillCurrent()) {
       return;
     }
 
     try {
       final secret = await _secretStore.load();
-      if (secret == null) {
+      if (!stillCurrent() ||
+          !_appSettings.isFeatureEnabled(GakujoFeatureFlag.twoFactorAutofill) ||
+          secret == null) {
         return;
       }
 
@@ -4817,7 +4832,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final script = TwoFactorAutofillScript.build(
         token: token,
         secret: secret,
+        debugLogging: kDebugMode,
       );
+      if (!stillCurrent()) {
+        return;
+      }
       await _controller.runJavaScript(script);
     } catch (error, stackTrace) {
       developer.log(

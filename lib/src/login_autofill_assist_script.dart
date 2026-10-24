@@ -26,6 +26,7 @@ class LoginAutofillAssistScript {
 
   static String build({
     GakujoLoginAutofillCredentials? credentials,
+    bool debugLogging = false,
   }) {
     final username = jsonEncode(credentials?.loginId);
     final password = jsonEncode(credentials?.password);
@@ -42,7 +43,12 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
+  if (location.protocol !== 'https:' ||
+      location.hostname !== 'gakujo.iess.niigata-u.ac.jp') {
+    return;
+  }
   var assistVersion = 9;
+  var debugLogging = $debugLogging;
   var savedUsername = $username;
   var savedPassword = $password;
   var savedCredentialKey = $credentialKey;
@@ -58,7 +64,7 @@ class LoginAutofillAssistScript {
       event: event,
       detail: detail || '',
       hasCredentials: !!(savedUsername && savedPassword),
-      url: location.href
+      url: location.origin + location.pathname.replace(/;jsessionid=[^;/]*/gi, '')
     };
     try {
       if (window[logChannelName] && window[logChannelName].postMessage) {
@@ -66,9 +72,11 @@ class LoginAutofillAssistScript {
       }
     } catch (_) {
     }
-    try {
-      console.log('MBG_LOGIN_AUTOFILL ' + JSON.stringify(payload));
-    } catch (_) {
+    if (debugLogging) {
+      try {
+        console.log('MBG_LOGIN_AUTOFILL ' + JSON.stringify(payload));
+      } catch (_) {
+      }
     }
   }
 
@@ -528,7 +536,9 @@ class LoginAutofillAssistScript {
 
     if (!savedUsername || !savedPassword || shouldBlockAutoSubmit()) {
       reportState('ready-no-submit', 'target-found');
-      console.log('MBG_LOGIN_AUTOFILL_ASSIST_READY');
+      if (debugLogging) {
+        console.log('MBG_LOGIN_AUTOFILL_ASSIST_READY');
+      }
       return;
     }
 
