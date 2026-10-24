@@ -649,7 +649,7 @@ String? captureGakujoNavigationRecoveryCandidate({
   bool debugAllowed = false,
 }) {
   // Keep the original protected request through redirects and login POSTs.
-  // Only a completed authenticated page releases the candidate.
+  // A completed authenticated page or a failed destination releases it.
   if (navigationCandidateUrl != null) {
     return navigationCandidateUrl;
   }
@@ -660,6 +660,21 @@ String? captureGakujoNavigationRecoveryCandidate({
     return url;
   }
   return null;
+}
+
+@visibleForTesting
+String? gakujoNavigationRecoveryCandidateAfterError(
+  GakujoWebResourceError error, {
+  required String? navigationCandidateUrl,
+  required String? navigationUrl,
+}) {
+  // A login redirect can fail too; retain its original protected destination.
+  if (error.isForMainFrame &&
+      error.isConnectivityError &&
+      navigationCandidateUrl == navigationUrl) {
+    return null;
+  }
+  return navigationCandidateUrl;
 }
 
 @visibleForTesting
@@ -1008,6 +1023,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
   String? _navigationRecoveryCandidateUrl;
+  String? _mainFrameNavigationUrl;
   String? _deferredNavigationAfterPageOperationUrl;
   String? _deferredNotificationAfterPageOperationUrl;
   _PendingMessageOpen? _pendingMessageOpen;
@@ -4518,6 +4534,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _captureNavigationRecoveryCandidate(String url) {
+    _mainFrameNavigationUrl = url;
     _navigationRecoveryCandidateUrl = captureGakujoNavigationRecoveryCandidate(
       url: url,
       currentUrl: _currentPageUrl,
@@ -5403,6 +5420,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (!mounted) {
             return;
           }
+          _navigationRecoveryCandidateUrl =
+              gakujoNavigationRecoveryCandidateAfterError(
+            error,
+            navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+            navigationUrl: _mainFrameNavigationUrl,
+          );
           handleGakujoWebResourceError(
             error,
             offlineAutoReloads: _offlineAutoReloads,

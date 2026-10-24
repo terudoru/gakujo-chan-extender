@@ -739,6 +739,69 @@ void main() {
       );
     });
 
+    test('failed destinations release recovery while login failures retain it',
+        () {
+      const portal =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      const messages = '$portal?page=main&tabId=kj';
+      const reports = '$portal?page=main&tabId=en';
+      const schedule = '$portal?page=main&tabId=sch';
+      const connectivityError = GakujoWebResourceError(
+        description: 'timeout',
+        isConnectivityError: true,
+      );
+      final candidate = captureGakujoNavigationRecoveryCandidate(
+        url: reports,
+        currentUrl: messages,
+        authenticatedUrl: messages,
+        navigationCandidateUrl: null,
+      );
+      expect(candidate, reports);
+      final afterFailure = gakujoNavigationRecoveryCandidateAfterError(
+        connectivityError,
+        navigationCandidateUrl: candidate,
+        navigationUrl: reports,
+      );
+      expect(afterFailure, isNull);
+      // Windows can fail before SourceChanged/onPageStarted updates the URL.
+      expect(
+        captureGakujoNavigationRecoveryCandidate(
+          url: schedule,
+          currentUrl: messages,
+          authenticatedUrl: messages,
+          navigationCandidateUrl: afterFailure,
+        ),
+        schedule,
+      );
+      for (final url in [portal, '$portal?_eventId=login']) {
+        expect(
+          gakujoNavigationRecoveryCandidateAfterError(
+            connectivityError,
+            navigationCandidateUrl: candidate,
+            navigationUrl: url,
+          ),
+          reports,
+        );
+      }
+      for (final error in [
+        const GakujoWebResourceError(description: 'authentication failed'),
+        const GakujoWebResourceError(
+          description: 'iframe timeout',
+          isForMainFrame: false,
+          isConnectivityError: true,
+        ),
+      ]) {
+        expect(
+          gakujoNavigationRecoveryCandidateAfterError(
+            error,
+            navigationCandidateUrl: candidate,
+            navigationUrl: reports,
+          ),
+          reports,
+        );
+      }
+    });
+
     test('retains the requested tab across a 302 login redirect and 2FA', () {
       const portal =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';

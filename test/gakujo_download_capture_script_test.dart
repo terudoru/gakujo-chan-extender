@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 15'));
+    expect(script, contains('captureVersion = 16'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -125,6 +125,51 @@ void main() {
       behavior['capturedNames'],
       ['画面表示の資料名', '画面表示の第1回講義資料'],
     );
+  });
+
+  test('download labels cannot turn Gakujo page navigation into downloads',
+      () async {
+    final result = await _evaluateBehavior('navigationLabels');
+    expect(result['navigationPrevented'], everyElement(isFalse));
+    expect(result['downloadPrevented'], everyElement(isTrue));
+    expect(result['captured'], hasLength(5));
+  });
+
+  test('page handlers run before capture and plain attachments capture once',
+      () async {
+    final result = await _evaluateBehavior('pageHandlers');
+    expect(result['handlerPrevented'], everyElement(isFalse));
+    expect(result['handlerStopped'], everyElement(isFalse));
+    expect(result['handlersRun'], 6);
+    expect(result['plainPrevented'], everyElement(isTrue));
+    expect(result['captured'], hasLength(8));
+    final urls = (result['captured'] as List)
+        .cast<Map>()
+        .map((payload) => payload['url']);
+    expect(urls, everyElement(contains('fileId=')));
+    expect(urls.toSet(), hasLength(8));
+    expect(result['nativeSubmissions'], 0);
+  });
+
+  test('submitter overrides govern capture and native fallback', () async {
+    final result = await _evaluateBehavior('submitterOverrides');
+    expect(
+      result['prevented'],
+      [true, false, false, true, true, false, false, true],
+    );
+    final payloads = (result['captured'] as List).cast<Map>();
+    expect(payloads, hasLength(4));
+    expect(payloads.map((payload) => payload['method']),
+        ['POST', 'GET', 'POST', 'GET']);
+    for (final payload in payloads) {
+      expect(payload['formFields'], {'_eventId': 'download'});
+    }
+    expect(payloads.map((payload) => payload['url']), [
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/exports/override.pdf',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/page.do',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/exports/override.pdf',
+      'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/page.do',
+    ]);
   });
 
   for (final scenario in ['inlineSubmit', 'inlineSubmitEvent']) {
@@ -432,7 +477,9 @@ function anchor(href, text, downloadName, attributes = {}) {
       if (name === 'download') return downloadName || null;
       return attributes[name] || null;
     },
-    hasAttribute(name) { return name === 'download' && !!downloadName; },
+    hasAttribute(name) {
+      return name in attributes || name === 'download' && !!downloadName;
+    },
     closest(selector) { return selector === 'a[href]' ? element : null; }
   };
   return element;
@@ -536,6 +583,83 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'navigationLabels') {
+    const navigationPrevented = [];
+    for (const text of ['Download', 'ダウンロード']) {
+      for (const href of [
+        '../campussquare.do?_eventId=reportList',
+        '../campusportal.do?_eventId=display',
+        '../campussquare.do?page=main&tabId=kj',
+        '../message/detail.do?seqNo=42',
+        '../campussquare.do?_eventId=displayMidoku',
+        '../campussquare.do?_eventId=confirm'
+      ]) navigationPrevented.push(click(anchor(href, text)));
+    }
+    const downloadPrevented = [
+      '../campussquare.do?_eventId=download',
+      '../campussquare.do?_eventId=infoDownLoad',
+      '../campussquare.do?_flowId=SDW-filerefer-flow&fileId=41475',
+      'exports/form.pdf?seqNo=42'
+    ].map(href => click(anchor(href, 'Download')));
+    downloadPrevented.push(click(anchor('../campussquare.do?fileId=42', '', 'file.pdf')));
+    return {navigationPrevented, downloadPrevented, captured};
+  }
+  if (scenario === 'pageHandlers') {
+    const handlerPrevented = [], handlerStopped = [];
+    let handlersRun = 0;
+    const controls = [
+      anchor('prepare.do', 'Download', null, {onclick: 'prepareDownload()'}),
+      anchor('#', 'ダウンロード'),
+      anchor('#attachment', 'Download'),
+      anchor('javascript:prepareDownload()', 'Download'),
+      submitterWithForm('Download', 'campussquare.do', {}, {onclick: 'prepareDownload()'}),
+      submitterWithForm('Download', 'campussquare.do', {}, {onclick: 'openDownload()'})
+    ];
+    controls[5].form = null;
+    const closest = controls[5].closest;
+    controls[5].closest = selector => selector === 'form' ? null : closest(selector);
+    for (const [index, control] of controls.entries()) {
+      clickStopped = false;
+      const prevented = click(control);
+      handlerPrevented.push(prevented);
+      handlerStopped.push(clickStopped);
+      if (!prevented && !clickStopped) {
+        handlersRun += 1;
+        const button = control.form ? control : submitterWithForm('', 'campussquare.do');
+        button.form.fields = {_eventId: 'download', fileId: String(index)};
+        button.form.getAttribute = name => name === 'action'
+          ? 'campussquare.do?fileId=' + index : name === 'method' ? 'POST' : null;
+        button.form.submit();
+      }
+    }
+    const plainPrevented = [
+      '../campussquare.do?_eventId=download&fileId=plain',
+      '../campussquare.do?_flowId=SDW-filerefer-flow&fileId=41475'
+    ].map(href => click(anchor(href, 'Download')));
+    return {handlerPrevented, handlerStopped, handlersRun, plainPrevented,
+      captured, nativeSubmissions};
+  }
+  if (scenario === 'submitterOverrides') {
+    const prevented = [];
+    for (const submit of [button => click(button),
+      button => submitEvent(button.form, button)]) {
+      for (const attributes of [
+        {formaction: 'exports/override.pdf', formmethod: 'POST',
+          formenctype: 'application/x-www-form-urlencoded', formtarget: '_self'},
+        {formmethod: 'POST', formenctype: 'text/plain', formtarget: '_self'},
+        {formenctype: 'application/x-www-form-urlencoded', formtarget: '_blank'},
+        {formaction: '', formmethod: '', formenctype: '', formtarget: ''}
+      ]) {
+        const button = submitterWithForm('Download', 'exports/wrong.pdf',
+          {_eventId: 'download'}, attributes);
+        const original = button.form.getAttribute;
+        button.form.getAttribute = name => name === 'enctype' ? 'multipart/form-data'
+          : name === 'target' ? '_blank' : name === 'method' ? 'GET' : original(name);
+        prevented.push(submit(button));
+      }
+    }
+    return {prevented, captured};
+  }
   if (scenario === 'namedWorkflowSubmit') {
     const form = submitterWithForm('', 'exports/form.pdf',
       {_eventId_submit: 'Submit'}).form;

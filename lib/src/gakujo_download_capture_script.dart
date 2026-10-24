@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 15;
+  var captureVersion = 16;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -460,10 +460,17 @@ class GakujoDownloadCaptureScript {
   }
 
   function isDownloadLike(element, url) {
+    if (element.hasAttribute('download')) return true;
+    var parsed = new URL(url);
+    if (!/filerefer/i.test(parsed.searchParams.get('_flowId') || '') &&
+        (/\/(campussquare|campusportal)\.do$/i.test(parsed.pathname) ||
+         parsed.searchParams.has('seqNo') ||
+         /^(displayMidoku|confirm)$/i.test(parsed.searchParams.get('_eventId') || ''))) {
+      return false;
+    }
     var text = textOf(element).toLowerCase();
     var href = (url || '').toLowerCase();
     return (
-      element.hasAttribute('download') ||
       text.indexOf('ダウンロード') >= 0 ||
       text.indexOf('download') >= 0 ||
       href.indexOf('download') >= 0 ||
@@ -585,9 +592,22 @@ class GakujoDownloadCaptureScript {
     return {explicit: explicit, workflow: workflow};
   }
 
+  function submissionAttribute(form, submitter, name) {
+    return submitter && submitter.hasAttribute('form' + name)
+      ? submitter.getAttribute('form' + name) : form.getAttribute(name);
+  }
+
   function captureForm(form, submitter, explicitOnly) {
     if (!form || isAppOwned(form) || submitter && isAppOwned(submitter)) return false;
-    var action = form.getAttribute('action') || baseUrlOf(form);
+    var action = submissionAttribute(form, submitter, 'action') || baseUrlOf(form);
+    var method = (submissionAttribute(form, submitter, 'method') || 'GET').toUpperCase();
+    var enctype = (submissionAttribute(form, submitter, 'enctype') ||
+      'application/x-www-form-urlencoded').toLowerCase();
+    var target = submissionAttribute(form, submitter, 'target') || '_self';
+    // The native request cannot replay other encodings or browsing contexts.
+    if (!/^(GET|POST)$/.test(method) ||
+        method === 'POST' && enctype !== 'application/x-www-form-urlencoded' ||
+        !/^_self$/i.test(target)) return false;
     var absoluteAction = absoluteUrlOf(form, action);
     var fields = formFields(form, submitter);
     var signals = formDownloadSignals(absoluteAction, fields);
@@ -598,7 +618,7 @@ class GakujoDownloadCaptureScript {
     } else if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
     post({
       url: absoluteAction,
-      method: (form.getAttribute('method') || 'GET').toUpperCase(),
+      method: method,
       fileName: downloadFileName(submitter, form),
       courseName: estimateCourseName(),
       formFields: fields
@@ -624,7 +644,10 @@ class GakujoDownloadCaptureScript {
 
     var anchor = target.closest('a[href]');
     if (anchor) {
-      var absoluteUrl = absoluteUrlOf(anchor, anchor.getAttribute('href'));
+      var href = (anchor.getAttribute('href') || '').trim();
+      if (anchor.hasAttribute('onclick') || href.charAt(0) === '#' ||
+          /^javascript:/i.test(href)) return;
+      var absoluteUrl = absoluteUrlOf(anchor, href);
       if (!shouldCapture(anchor, absoluteUrl, {})) {
         return;
       }
