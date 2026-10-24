@@ -244,7 +244,7 @@ void main() {
       expect((shown().single.arguments as Map)['title'], expected.title);
       expect((shown().single.arguments as Map)['body'], expected.body);
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}',
+        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
       });
 
       // A new coordinator, service and store read the persisted key.
@@ -253,7 +253,7 @@ void main() {
 
       expect(shown(), hasLength(1));
       expect(await restartedStore.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}',
+        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
       });
     });
 
@@ -269,7 +269,75 @@ void main() {
 
       expect(onTimeReminder(open).id, oldId);
       expect(shown(), isEmpty);
-      expect(await store.loadNotifiedDeadlineKeys(), {'reminder|$oldId'});
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        'reminder|$oldId',
+        'reminder|$oldId|legacySeen|${now.millisecondsSinceEpoch}',
+      });
+    });
+
+    test('an extended deadline can deliver the same reminder id at a new time',
+        () async {
+      final store = GakujoActivityStore();
+      final original = assignment();
+      final firstReminder = onTimeReminder(original);
+      await store.mergeAssignments([original]);
+      await sync(coordinator(store));
+      expect(shown(), hasLength(1));
+
+      now = now.add(const Duration(days: 1));
+      final extended = assignment();
+      final secondReminder = onTimeReminder(extended);
+      expect(secondReminder.id, firstReminder.id);
+      expect(secondReminder.at, isNot(firstReminder.at));
+      final restartedStore = GakujoActivityStore();
+      await restartedStore.mergeAssignments([extended]);
+      final restarted = coordinator(restartedStore);
+      await sync(restarted);
+      await sync(restarted);
+
+      expect(shown(), hasLength(2));
+      expect(await restartedStore.loadNotifiedDeadlineKeys(), {
+        'reminder|${firstReminder.id}|${firstReminder.at.millisecondsSinceEpoch}',
+        'reminder|${secondReminder.id}|${secondReminder.at.millisecondsSinceEpoch}',
+      });
+    });
+
+    test('legacy suppression ends at the original first-seen trigger window',
+        () async {
+      // Only the one-hour reminder: a three-hour deadline already passed the
+      // one-day reminder, which would show as an unrelated catch-up.
+      const oneHourOnly = GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+      );
+      final store = GakujoActivityStore();
+      final firstSeen = now;
+      final original = assignment(dueIn: const Duration(hours: 3));
+      final id = onTimeReminder(original).id;
+      await store.mergeAssignments([original]);
+      await store.addNotifiedDeadlineKeys(['reminder|$id']);
+      await sync(coordinator(store), preferences: oneHourOnly);
+      expect(shown(), isEmpty);
+
+      // A restart two hours later must not renew the migration window.
+      now = firstSeen.add(const Duration(hours: 2));
+      final atBoundary = assignment(dueIn: const Duration(hours: 1));
+      final restartedStore = GakujoActivityStore();
+      await restartedStore.mergeAssignments([atBoundary]);
+      await sync(coordinator(restartedStore), preferences: oneHourOnly);
+      expect(shown(), isEmpty);
+
+      now = now.add(const Duration(milliseconds: 1));
+      final beyondBoundary = assignment(dueIn: const Duration(hours: 1));
+      await restartedStore.mergeAssignments([beyondBoundary]);
+      final restarted = coordinator(restartedStore);
+      await sync(restarted, preferences: oneHourOnly);
+      await sync(restarted, preferences: oneHourOnly);
+      expect(shown(), hasLength(1));
+      expect(await restartedStore.loadNotifiedDeadlineKeys(), {
+        'reminder|$id',
+        'reminder|$id|legacySeen|${firstSeen.millisecondsSinceEpoch}',
+        'reminder|$id|${onTimeReminder(beyondBoundary).at.millisecondsSinceEpoch}',
+      });
     });
 
     testWidgets('a reminder delayed past closing is skipped and marked done',
@@ -292,7 +360,7 @@ void main() {
 
       expect(shown(), isEmpty);
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}',
+        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
       });
       // Moving the clock back into the catch-up window must not replay it.
       now = open.dueAt.subtract(const Duration(minutes: 30));
@@ -304,7 +372,9 @@ void main() {
         () async {
       final source = GakujoActivityStore();
       final open = assignment();
-      final key = 'reminder|${onTimeReminder(open).id}';
+      final expected = onTimeReminder(open);
+      final key =
+          'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}';
       await source.mergeAssignments([open]);
       await sync(coordinator(source));
       expect(shown(), hasLength(1));
@@ -538,7 +608,7 @@ void main() {
       // The timer must show and persist it before any catch-up sync runs.
       expect(shown(), hasLength(1));
       expect(await store.loadNotifiedDeadlineKeys(), {
-        'reminder|${expected.id}',
+        'reminder|${expected.id}|${expected.at.millisecondsSinceEpoch}',
       });
 
       await sync(first);

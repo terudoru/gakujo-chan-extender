@@ -293,6 +293,55 @@ void main() {
       expect(service.titles, isEmpty);
     });
 
+    for (final hasLegacyKey in [false, true]) {
+      test(
+          'same-title report and quiz each notify once (legacy: $hasLegacyKey)',
+          () async {
+        final report = _assignment(
+          _row('レポート', open.title, '未提出', '2099/10/21 17:01 ～2099/10/28 16:31'),
+        );
+        final store = GakujoActivityStore();
+        final service = _FakeNotificationService();
+        await store.mergeAssignments([open, report]);
+        await store.mergeDeadlines([
+          fromSchedule(open),
+          fromList(open),
+          fromSchedule(report),
+          fromList(report),
+        ]);
+        // An ambiguous old key cannot establish which kind was delivered.
+        if (hasLegacyKey) {
+          await store.addNotifiedDeadlineKeys([
+            'assignment|${open.notificationId}',
+          ]);
+        }
+        Future<void> notify(GakujoActivityStore store) =>
+            GakujoDeadlineNotificationCoordinator(
+              activityStore: store,
+              notificationService: service,
+            ).notifyPendingDeadlines(notificationsEnabled: true);
+
+        await notify(store);
+        await notify(GakujoActivityStore());
+
+        expect(
+            service.titles,
+            unorderedEquals([
+              fromList(open).title,
+              fromList(report).title,
+            ]));
+        expect(await store.loadNotifiedDeadlineKeys(), {
+          if (hasLegacyKey) 'assignment|${open.notificationId}',
+          'assignment|${open.id}',
+          'assignment|${report.id}',
+        });
+        // Once the collision disappears, the remaining kind must stay notified.
+        await store.mergeAssignments([open], isWholeList: true);
+        await notify(GakujoActivityStore());
+        expect(service.titles, hasLength(2));
+      });
+    }
+
     test('a matched exact closing time overrides a date-only deadline',
         () async {
       final store = GakujoActivityStore();

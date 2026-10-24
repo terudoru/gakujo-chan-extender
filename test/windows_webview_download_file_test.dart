@@ -20,6 +20,113 @@ const _request = GakujoDownloadRequest(
 );
 
 void main() {
+  test(
+      'Windows page errors preserve the exact message and remove scratch files',
+      () async {
+    final root = await Directory.systemTemp.createTemp('mbg-page-error-');
+    var cleaned = false;
+    try {
+      await expectLater(
+        receiveWindowsWebViewDownload(
+          request: _request,
+          temporaryRoot: root,
+          start: () async {},
+          readState: () async => jsonEncode({
+            'state': 'error',
+            'code': 'page_response',
+            'message': 'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください',
+          }),
+          cleanup: () async {
+            cleaned = true;
+          },
+        ),
+        throwsA(isA<PlatformException>().having((error) => error.message,
+            'message', 'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください')),
+      );
+      expect(cleaned, isTrue);
+      expect(await root.list().toList(), isEmpty);
+    } finally {
+      await root.delete(recursive: true);
+    }
+  });
+
+  for (final (name, mimeType, body, rejected) in [
+    ('attachment.pdf', 'text/html; charset=UTF-8', 'login required', true),
+    (
+      'attachment.pdf',
+      'application/pdf',
+      '\uFEFF \n<!DoCtYpE hTmL><html>expired</html>',
+      true,
+    ),
+    ('attachment.pdf', '', '\t<HtMl>login</HtMl>', true),
+    ('attachment.HTML', 'text/html', '<html>attachment</html>', false),
+    ('', 'text/html', '<html>attachment</html>', false),
+  ]) {
+    test(
+        'Windows validates pages and cleans temporary files: $name / $mimeType',
+        () async {
+      final root = await Directory.systemTemp.createTemp('mbg-page-webview-');
+      final bytes = utf8.encode(body);
+      final states = [
+        jsonEncode({
+          'state': 'chunk',
+          'index': 0,
+          'bodyBase64': base64Encode(bytes.sublist(0, 2)),
+        }),
+        jsonEncode({
+          'state': 'chunk',
+          'index': 1,
+          'bodyBase64': base64Encode(bytes.sublist(2)),
+        }),
+        jsonEncode({
+          'state': 'done',
+          'payload': {
+            'status': 200,
+            'ok': true,
+            'mimeType': mimeType,
+            'contentDisposition': 'attachment; filename=page.HTM',
+            'bodyByteLength': bytes.length,
+            'chunkCount': 2,
+          },
+        }),
+      ];
+      var cleaned = false;
+      try {
+        final downloading = receiveWindowsWebViewDownload(
+          request: GakujoDownloadRequest(
+            url: _request.url,
+            method: 'GET',
+            fileName: name,
+            courseName: '',
+            formFields: {},
+          ),
+          temporaryRoot: root,
+          start: () async {},
+          readState: () async => states.removeAt(0),
+          cleanup: () async {
+            cleaned = true;
+          },
+        );
+        if (rejected) {
+          await expectLater(
+              downloading,
+              throwsA(isA<PlatformException>()
+                  .having((error) => error.code, 'code', 'download_failed')
+                  .having((error) => error.message, 'message',
+                      'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください')));
+        } else {
+          final downloaded = await downloading;
+          expect(await downloaded.readBytes(), bytes);
+          await downloaded.dispose();
+        }
+        expect(cleaned, isTrue);
+        expect(await root.list().toList(), isEmpty);
+      } finally {
+        await root.delete(recursive: true);
+      }
+    });
+  }
+
   test('streams the JavaScript response through Dart to a saved file',
       () async {
     final root = await Directory.systemTemp.createTemp('mbg-stream-test-');

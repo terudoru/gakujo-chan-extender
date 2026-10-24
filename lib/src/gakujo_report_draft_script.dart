@@ -272,6 +272,10 @@ class GakujoReportDraftScript {
     });
   }
 
+  function observedFieldValue(field) {
+    return JSON.stringify(fieldKind(field) === 'radio' ? field.checked : fieldValue(field));
+  }
+
   function setContentEditableText(field, value) {
     var doc = field.ownerDocument;
     var lines = String(value || '').split(/\r\n?|\n/);
@@ -318,6 +322,7 @@ class GakujoReportDraftScript {
       field.dispatchEvent(new win.Event('input', { bubbles: true }));
     }
     field.dispatchEvent(new win.Event('change', { bubbles: true }));
+    field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
   }
 
   function hashString(text) {
@@ -597,6 +602,7 @@ class GakujoReportDraftScript {
     }
     fields.forEach(function(field) {
       field.__MBG_REPORT_DRAFT_DIRTY = false;
+      field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
     });
     updateStatus(doc, hasContent
       ? '下書きを保存しました（' + savedTime(savedAt, false) + '）' : '下書きは空です');
@@ -733,6 +739,7 @@ class GakujoReportDraftScript {
 
     function scheduleSave(field) {
       if (doc.__MBG_REPORT_DRAFT_RESTORING) return;
+      field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
       field.__MBG_REPORT_DRAFT_DIRTY = true;
       field.__MBG_REPORT_DRAFT_TOUCHED = true;
       var pendingContext = currentDraftContext(doc);
@@ -766,9 +773,20 @@ class GakujoReportDraftScript {
         return;
       }
       field.__MBG_REPORT_DRAFT_BOUND = true;
+      field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
       field.addEventListener('input', function() { scheduleSave(field); });
-      field.addEventListener('change', function() { scheduleSave(field); });
-      field.addEventListener('keyup', function() { scheduleSave(field); });
+      function saveIfChanged() {
+        if (observedFieldValue(field) !== field.__MBG_REPORT_DRAFT_LAST_VALUE) {
+          scheduleSave(field);
+        }
+      }
+      // Picking a choice is an edit even when it lands back on the default;
+      // for text, change and keyup (arrows, shortcuts) only count when the
+      // value actually moved.
+      var isChoice = fieldKind(field) !== 'text';
+      field.addEventListener('change', isChoice ?
+        function() { scheduleSave(field); } : saveIfChanged);
+      field.addEventListener('keyup', saveIfChanged);
     });
 
     Array.prototype.slice.call(doc.querySelectorAll('form')).forEach(function(form) {

@@ -6,6 +6,40 @@ import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_downl
 import 'package:test/test.dart';
 
 void main() {
+  test('an HTTP 200 HTML page fails an attachment fetch with the login message',
+      () async {
+    const id = 'expired-session';
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'GET',
+      fileName: 'attachment.pdf',
+      courseName: '',
+      formFields: {},
+    );
+    final result = await Process.run(
+        'node',
+        [
+          '-e',
+          _webViewDownloadHarness,
+          WindowsWebViewAuthenticatedDownloadScript.start(
+              requestId: id, request: request),
+          WindowsWebViewAuthenticatedDownloadScript.poll(id),
+          WindowsWebViewAuthenticatedDownloadScript.cleanup(id),
+          'Text/HTML; charset=UTF-8',
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['state'], 'error');
+    expect(behavior['code'], 'page_response');
+    expect(
+        behavior['message'], 'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください');
+    expect(behavior['bodyBase64'], isEmpty);
+    expect(behavior['afterCleanup'], isNull);
+  });
+
   test('large responses use bounded messages and pause for the receiver',
       () async {
     const requestId = 'large-download';
@@ -145,7 +179,7 @@ const cleanupScript = process.argv[3];
         headers: {
           get(name) {
             if (name === 'content-type') {
-              return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+              return process.argv[4] || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
             }
             if (name === 'content-disposition') {
               return 'attachment; filename=internal.docx';
@@ -190,6 +224,8 @@ const cleanupScript = process.argv[3];
     requestMethod: requestOptions && requestOptions.method,
     credentials: requestOptions && requestOptions.credentials,
     state: polled && polled.state,
+    code: polled && polled.code,
+    message: polled && polled.message,
     status: polled && polled.payload && polled.payload.status,
     bodyBase64: Buffer.concat(chunks).toString('base64'),
     contentDisposition:

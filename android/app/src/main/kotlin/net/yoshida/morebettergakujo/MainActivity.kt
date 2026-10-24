@@ -20,7 +20,6 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import java.io.BufferedInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -901,7 +900,9 @@ class MainActivity : FlutterActivity() {
                 val file = parent.createFile(mimeType, allocatedName)
                     ?: throw IllegalStateException("ファイルを作成できませんでした")
                 GakujoDownloadStreams.copy(
-                    openInput = { BufferedInputStream(connection.inputStream) },
+                    openInput = {
+                        GakujoDownloadResponsePolicy.openValidated(connection.inputStream, desiredName, mimeType)
+                    },
                     openOutput = {
                         contentResolver.openOutputStream(file.uri)
                             ?: throw IllegalStateException("ファイルを書き込めませんでした")
@@ -984,15 +985,17 @@ class MainActivity : FlutterActivity() {
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
                 ?: "application/octet-stream"
             val dispositionName = GakujoContentDisposition.fileName(connection.getHeaderField("Content-Disposition"))
-            val finalName = displayName(destination)
-                ?: chooseFileName(
-                    requestedName = requestedFileName,
-                    dispositionName = dispositionName,
-                    url = finalUrl,
-                    mimeType = mimeType
-                )
+            val desiredName = chooseFileName(
+                requestedName = requestedFileName,
+                dispositionName = dispositionName,
+                url = finalUrl,
+                mimeType = mimeType
+            )
+            val finalName = displayName(destination) ?: desiredName
             GakujoDownloadStreams.copy(
-                openInput = { BufferedInputStream(connection.inputStream) },
+                openInput = {
+                    GakujoDownloadResponsePolicy.openValidated(connection.inputStream, desiredName, mimeType)
+                },
                 openOutput = {
                     contentResolver.openOutputStream(destination)
                         ?: throw IllegalStateException("ファイルを書き込めませんでした")

@@ -10,6 +10,50 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final mimeType in ['text/html', 'application/octet-stream']) {
+    test('HTTP 200 page responses fail without saving: $mimeType', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = _LocalClient(server.port);
+      final directory =
+          await Directory.systemTemp.createTemp('mbg-page-network-');
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_download_root_path': directory.path,
+      });
+      server.listen((request) async {
+        request.response.headers.set(HttpHeaders.contentTypeHeader, mimeType);
+        // write() would encode as Latin-1 and cannot carry the BOM.
+        request.response
+            .add(utf8.encode('\uFEFF \r\n<HtMl>session expired</HtMl>'));
+        await request.response.close();
+      });
+      try {
+        await expectLater(
+          FileSystemGakujoDownloadService(
+            httpClientFactory: () => client,
+            usesNativeDownloadRoot: false,
+          ).download(
+            const GakujoDownloadRequest(
+              url: 'https://gakujo.iess.niigata-u.ac.jp/attachment.pdf',
+              method: 'GET',
+              fileName: 'attachment.pdf',
+              courseName: '',
+              formFields: {},
+            ),
+            saveMode: DownloadSaveMode.flatToConfiguredFolder,
+          ),
+          throwsA(isA<PlatformException>().having((error) => error.message,
+              'message', 'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください')),
+        );
+        expect(await directory.list().toList(), isEmpty);
+        expect(client.closed, isTrue);
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    });
+  }
+
   test('a completed POST redirect saves the downloaded bytes using GET',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

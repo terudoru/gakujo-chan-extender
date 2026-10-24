@@ -122,10 +122,14 @@ GakujoAssignment? assignmentForDeadline(
 /// are told apart by their own key.
 String deadlineNotificationKey(
   GakujoDeadlineEntry entry,
-  GakujoAssignment? assignment,
-) {
+  GakujoAssignment? assignment, {
+  Set<String> collidingAssignmentIds = const {},
+}) {
   if (assignment != null) {
-    return 'assignment|${assignment.notificationId}';
+    final id = collidingAssignmentIds.contains(assignment.notificationId)
+        ? assignment.id
+        : assignment.notificationId;
+    return 'assignment|$id';
   }
   if (entry.assignment.isNotEmpty &&
       (entry.course.isNotEmpty || entry.courseCode.isNotEmpty)) {
@@ -484,8 +488,15 @@ class GakujoDeadlineNotificationCoordinator {
       return;
     }
     final deadlines = await _activityStore.loadDeadlines();
-    final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
+    final notifiedKeys = await _loadNotifiedKeys();
     final assignments = await _activityStore.loadAssignments();
+    final seenIds = <String>{};
+    final collidingIds = <String>{};
+    for (final assignment in assignments) {
+      if (!seenIds.add(assignment.notificationId)) {
+        collidingIds.add(assignment.notificationId);
+      }
+    }
     final isWholeList = await _activityStore.assignmentsAreWholeList();
     final pending = <String, GakujoDeadlineEntry>{};
     for (final entry in deadlines) {
@@ -515,8 +526,12 @@ class GakujoDeadlineNotificationCoordinator {
           (preferences.skipSubmitted && (assignment?.isSubmitted ?? false))) {
         continue;
       }
-      final key = deadlineNotificationKey(entry, assignment);
-      if (notifiedKeys.contains(key) || notifiedKeys.contains(entry.key)) {
+      final key = deadlineNotificationKey(entry, assignment,
+          collidingAssignmentIds: collidingIds);
+      if (notifiedKeys.contains(key) ||
+          notifiedKeys.contains(entry.key) ||
+          (assignment != null &&
+              notifiedKeys.contains('assignment|${assignment.id}'))) {
         continue;
       }
       pending.putIfAbsent(key, () => entry);
@@ -544,6 +559,9 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoNotificationPreferences preferences,
   }) {
     return _enqueueNotificationOperation(() async {
+      if (notificationsEnabled) {
+        await _loadNotifiedKeys();
+      }
       final lateReminders = <GakujoReminder>[];
       final reminders = notificationsEnabled
           ? planReminders(
@@ -578,9 +596,20 @@ class GakujoDeadlineNotificationCoordinator {
   }
 
   Future<void> _notifyReminderOnce(GakujoReminder reminder) async {
-    final key = 'reminder|${reminder.id}';
-    final notifiedKeys = await _activityStore.loadNotifiedDeadlineKeys();
+    final legacyKey = 'reminder|${reminder.id}';
+    final key = '$legacyKey|${reminder.at.millisecondsSinceEpoch}';
+    final notifiedKeys = await _loadNotifiedKeys();
     if (notifiedKeys.contains(key)) {
+      return;
+    }
+    final legacySeen = notifiedKeys
+        .where((key) => key.startsWith('$legacyKey|legacySeen|'))
+        .map((key) => int.tryParse(key.split('|').last))
+        .whereType<int>();
+    if (notifiedKeys.contains(legacyKey) &&
+        legacySeen.any((seen) =>
+            reminder.at.millisecondsSinceEpoch <=
+            seen + const Duration(hours: 2).inMilliseconds)) {
       return;
     }
     final dueAt = reminder.dueAt;
@@ -588,6 +617,23 @@ class GakujoDeadlineNotificationCoordinator {
         await _notificationService.notifyReminder(reminder)) {
       await _activityStore.addNotifiedDeadlineKeys([key]);
     }
+  }
+
+  Future<Set<String>> _loadNotifiedKeys() async {
+    final keys = await _activityStore.loadNotifiedDeadlineKeys();
+    final firstSeen = _now().millisecondsSinceEpoch;
+    final migrationKeys = <String>[];
+    for (final key
+        in keys.where((key) => RegExp(r'^reminder\|-?\d+$').hasMatch(key))) {
+      if (!keys.any((other) => other.startsWith('$key|legacySeen|'))) {
+        migrationKeys.add('$key|legacySeen|$firstSeen');
+      }
+    }
+    if (migrationKeys.isNotEmpty) {
+      await _activityStore.addNotifiedDeadlineKeys(migrationKeys);
+      keys.addAll(migrationKeys);
+    }
+    return keys;
   }
 
   Future<T> _enqueueNotificationOperation<T>(

@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'allowed_web_origins.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
+import 'download_response_policy.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
@@ -52,6 +53,38 @@ class AuthenticatedDownloadedFile {
   final String? contentDispositionFileName;
 
   Future<Uint8List> readBytes() async => _bytes ?? await _file!.readAsBytes();
+
+  Future<void> validateResponse(String fileName) async {
+    DownloadResponsePolicy.validate(
+      fileName: fileName,
+      mimeType: mimeType,
+      prefix: const [],
+    );
+    Stream<List<int>> chunks() async* {
+      final bytes = _bytes;
+      if (bytes == null) {
+        yield* _file!.openRead();
+      } else {
+        for (var start = 0; start < bytes.length; start += 1024) {
+          final end = start + 1024 < bytes.length ? start + 1024 : bytes.length;
+          yield Uint8List.sublistView(bytes, start, end);
+        }
+      }
+    }
+
+    // Keep only the document opening, even with a long whitespace prefix.
+    var prefix = '';
+    await for (final text
+        in chunks().transform(const Utf8Decoder(allowMalformed: true))) {
+      prefix = (prefix + text).trimLeft();
+      if (prefix.length >= 14) break;
+    }
+    DownloadResponsePolicy.validate(
+      fileName: fileName,
+      mimeType: mimeType,
+      prefix: utf8.encode(prefix),
+    );
+  }
 
   Future<void> saveTo(String path) async {
     final file = _file;
@@ -168,6 +201,11 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         contentDispositionName: downloaded.contentDispositionFileName,
         url: downloaded.finalUrl,
         mimeType: downloaded.mimeType,
+      );
+      // Judge by the name the student asked for: the derived name can take
+      // .html from the page's own Content-Type and slip past the check.
+      await downloaded.validateResponse(
+        request.fileName.trim().isNotEmpty ? request.fileName : fileName,
       );
       final courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,

@@ -298,6 +298,24 @@ void main() {
     expect(result['events'], containsAll(['input', 'change']));
   });
 
+  for (final event in ['ArrowLeft', 'Ctrl+C', 'change']) {
+    test('unchanged $event preserves the newer draft and replacement prompt',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'conflictNavigation',
+        'event': event,
+      });
+      expect(result['storedUnchanged'], isTrue);
+      expect(result['replaceVisible'], isTrue);
+      expect(result['pending'], isFalse);
+      expect(result['touched'], isFalse);
+      expect(result['storedAfterEdit'], '実際の編集');
+      if (event == 'Ctrl+C') {
+        expect(result['inputSavedUnchangedValue'], isTrue);
+      }
+    });
+  }
+
   for (final event in ['pagehide', 'beforeunload', 'visibilitychange']) {
     test('restoring a checkbox preserves a conflicting draft on $event',
         () async {
@@ -792,6 +810,8 @@ function runExtendedScenario() {
     const before = storage.getItem(key);
     const restored = textPage(storage);
     runPage(restored);
+    restored.field.dispatchEvent(new FakeEvent('keyup', {key: 'ArrowLeft'}));
+    restored.field.dispatchEvent(new FakeEvent('change'));
     restored.window.__MBG_REPORT_DRAFT_UPDATE();
     hidePage(restored);
     return {restoredText: restored.field.value,
@@ -909,6 +929,33 @@ function runExtendedScenario() {
     return {quizBound: !!quiz.document.insertedStatus,
       unrelatedBound: !!unrelated.document.insertedStatus,
       loginBound: !!login.document.insertedStatus, count: storage.length};
+  }
+  if (spec.scenario === 'conflictNavigation') {
+    const page = textPage(storage, {value: '端末の新しい下書き'});
+    runPage(page);
+    page.field.dispatchEvent(new FakeEvent('input'));
+    const key = storage.key(0), original = storage.getItem(key);
+    const restoring = textPage(storage, {value: 'サーバー側の古い本文'});
+    runPage(restoring);
+    restoring.field.dispatchEvent(new FakeEvent(
+      spec.event === 'change' ? 'change' : 'keyup',
+      {key: spec.event === 'ArrowLeft' ? 'ArrowLeft' : 'c', ctrlKey: spec.event === 'Ctrl+C'}));
+    restoring.window.__MBG_REPORT_DRAFT_UPDATE();
+    hidePage(restoring);
+    const result = {
+      storedUnchanged: storage.getItem(key) === original,
+      replaceVisible: restoring.document.getElementById('mbg-report-draft-replace').style.display !== 'none',
+      pending: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT,
+      touched: !!restoring.field.__MBG_REPORT_DRAFT_TOUCHED
+    };
+    // Input remains an edit even when the visible value is unchanged.
+    if (spec.event === 'Ctrl+C') {
+      restoring.field.dispatchEvent(new FakeEvent('input'));
+      result.inputSavedUnchangedValue = JSON.parse(storage.getItem(key)).fields[0].value === restoring.field.value;
+    }
+    restoring.field.value = '実際の編集';
+    restoring.field.dispatchEvent(new FakeEvent(spec.event === 'change' ? 'change' : 'keyup'));
+    return {...result, storedAfterEdit: JSON.parse(storage.getItem(key)).fields[0].value};
   }
   if (spec.scenario === 'conflict') {
     const page = textPage(storage, {value: '端末の下書き'});

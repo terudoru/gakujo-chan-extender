@@ -224,8 +224,11 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
       final detail = state['message']?.toString().trim() ?? '';
       throw PlatformException(
         code: 'download_failed',
-        message:
-            detail.isEmpty ? 'ダウンロード通信に失敗しました' : 'ダウンロード通信に失敗しました: $detail',
+        message: state['code'] == 'page_response'
+            ? detail
+            : detail.isEmpty
+                ? 'ダウンロード通信に失敗しました'
+                : 'ダウンロード通信に失敗しました: $detail',
       );
     }
     if (state['state'] != 'pending') {
@@ -304,6 +307,12 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
           DownloadFileNamePolicy.fileNameFromContentDisposition(
               decoded['contentDisposition']?.toString()),
     );
+    await downloaded.validateResponse(DownloadFileNamePolicy.safeFileName(
+      preferredName: request.fileName,
+      contentDispositionName: downloaded.contentDispositionFileName,
+      url: finalUrl,
+      mimeType: downloaded.mimeType,
+    ));
     transferred = true;
     return downloaded;
   } finally {

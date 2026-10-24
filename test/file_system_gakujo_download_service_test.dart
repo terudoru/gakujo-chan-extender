@@ -1,6 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
@@ -11,6 +12,63 @@ void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
   });
+
+  for (final fromFile in [false, true]) {
+    for (final mimeType in ['text/html; charset=UTF-8', 'application/pdf']) {
+      test('rejects a page before saving (file: $fromFile, MIME: $mimeType)',
+          () async {
+        final directory = await Directory.systemTemp.createTemp('mbg-page-');
+        var disposed = false;
+        final bytes = Uint8List.fromList(utf8
+            .encode('\uFEFF${' ' * 2048}\n<!DoCtYpE hTmL><html>login</html>'));
+        final temporary = File('${directory.path}/temporary');
+        if (fromFile) await temporary.writeAsBytes(bytes);
+        final service = FileSystemGakujoDownloadService(
+          secureStorage: _MemorySecureStorage({
+            'more_better_gakujo_download_root_path': directory.path,
+          }),
+          usesNativeDownloadRoot: false,
+          authenticatedBytesLoader: (request, {userAgent}) async => fromFile
+              ? AuthenticatedDownloadedFile.fromFile(
+                  file: temporary,
+                  cleanup: () async {
+                    disposed = true;
+                    await temporary.delete();
+                  },
+                  finalUrl: request.url,
+                  mimeType: mimeType,
+                )
+              : AuthenticatedDownloadedFile(
+                  bytes: bytes,
+                  finalUrl: request.url,
+                  mimeType: mimeType,
+                ),
+        );
+        try {
+          await expectLater(
+            service.download(
+              const GakujoDownloadRequest(
+                url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+                method: 'GET',
+                fileName: 'attachment.pdf',
+                courseName: '',
+                formFields: {},
+              ),
+              saveMode: DownloadSaveMode.flatToConfiguredFolder,
+            ),
+            throwsA(isA<PlatformException>()
+                .having((error) => error.code, 'code', 'download_failed')
+                .having((error) => error.message, 'message',
+                    'ファイルではなくページが返されました。ログインし直してから、もう一度ダウンロードしてください')),
+          );
+          expect(await directory.list().toList(), isEmpty);
+          if (fromFile) expect(disposed, isTrue);
+        } finally {
+          await directory.delete(recursive: true);
+        }
+      });
+    }
+  }
 
   test('resolves relative redirect locations against the current url', () {
     final finalUrl = resolveRedirectedDownloadUrl(

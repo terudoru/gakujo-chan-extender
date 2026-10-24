@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'download_response_policy.dart';
 import 'gakujo_download_request.dart';
 
 class WindowsWebViewAuthenticatedDownloadScript {
@@ -87,6 +88,15 @@ class WindowsWebViewAuthenticatedDownloadScript {
       if (!response.ok) {
         controller.abort();
         setResult({ state: 'done', payload: metadata });
+        return;
+      }
+      const requestedName = ${jsonEncode(request.fileName)};
+      if (/\\.[a-z0-9]{1,8}\$/i.test(requestedName.trim()) &&
+          !/\\.html?\$/i.test(requestedName.trim()) &&
+          metadata.mimeType.split(';')[0].trim().toLowerCase() === 'text/html') {
+        controller.abort();
+        setResult({ state: 'error', code: 'page_response',
+          message: ${jsonEncode(DownloadResponsePolicy.pageReturnedMessage)} });
         return;
       }
       const chunkSize = 256 * 1024;
