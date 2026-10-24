@@ -633,10 +633,33 @@ bool isGakujoNavigationRecoveryCandidateUrl(
   if (path.endsWith('/campussmart.do')) {
     return false;
   }
-  if (path.endsWith('/campusportal.do') && !uri.hasQuery) {
-    return false;
+  if (path.endsWith('/campusportal.do')) {
+    return uri.queryParameters['page'] == 'main' &&
+        (uri.queryParameters['tabId']?.trim().isNotEmpty ?? false);
   }
   return true;
+}
+
+@visibleForTesting
+String? captureGakujoNavigationRecoveryCandidate({
+  required String url,
+  required String? currentUrl,
+  required String? authenticatedUrl,
+  required String? navigationCandidateUrl,
+  bool debugAllowed = false,
+}) {
+  // Keep the original protected request through redirects and login POSTs.
+  // Only a completed authenticated page releases the candidate.
+  if (navigationCandidateUrl != null) {
+    return navigationCandidateUrl;
+  }
+  if (authenticatedUrl != null &&
+      currentUrl == authenticatedUrl &&
+      url != authenticatedUrl &&
+      isGakujoNavigationRecoveryCandidateUrl(url, debugAllowed: debugAllowed)) {
+    return url;
+  }
+  return null;
 }
 
 @visibleForTesting
@@ -664,8 +687,9 @@ String? usableGakujoNavigationCandidateForChallenge({
   required String challengeUrl,
   bool debugAllowed = false,
 }) {
-  if (navigationCandidateUrl == challengeUrl &&
-      !AllowedWebOrigins.canRestoreLastPage(
+  if (navigationCandidateUrl != null &&
+      navigationCandidateUrl == challengeUrl &&
+      !isGakujoNavigationRecoveryCandidateUrl(
         navigationCandidateUrl,
         debugAllowed: debugAllowed,
       )) {
@@ -4488,6 +4512,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _currentPageUrl == url;
   }
 
+  void _captureNavigationRecoveryCandidate(String url) {
+    _navigationRecoveryCandidateUrl = captureGakujoNavigationRecoveryCandidate(
+      url: url,
+      currentUrl: _currentPageUrl,
+      authenticatedUrl: _sessionRecoveryUrl,
+      navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+      debugAllowed: _debugAllowed,
+    );
+  }
+
   Future<void> _handleSessionExpiredIfNeeded(
     String url, {
     required GakujoPortalAuthState authState,
@@ -5201,6 +5235,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
+        // Windows SourceChanged only sees the final URL of an HTTP redirect.
+        onNavigationStarting: _captureNavigationRecoveryCandidate,
         onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
           if (_isInternalBlankUrl(url)) {
@@ -5208,16 +5244,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _currentPageUrl = url;
             return;
           }
-          if (_currentPageUrl == _sessionRecoveryUrl &&
-              url != _sessionRecoveryUrl &&
-              isGakujoNavigationRecoveryCandidateUrl(
-                url,
-                debugAllowed: _debugAllowed,
-              )) {
-            // Freeze the first protected destination. Redirects to a shared
-            // login shell must not replace it before the DOM probe runs.
-            _navigationRecoveryCandidateUrl = url;
-          }
+          _captureNavigationRecoveryCandidate(url);
           final preservesPendingMessageOpen = _pendingMessageOpen?.navigation
                   .consume(url, _navigationRevision) ??
               false;

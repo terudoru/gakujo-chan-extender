@@ -267,20 +267,26 @@ void Webview::RegisterEventHandlers() {
       Callback<ICoreWebView2NavigationStartingEventHandler>(
           [this](ICoreWebView2* sender,
                  ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
-            if (!navigation_allowlist_) {
-              return S_OK;
-            }
             wil::unique_cotaskmem_string wuri;
             if (FAILED(args->get_Uri(&wuri)) || !wuri) {
               return S_OK;
             }
             const std::string uri = util::Utf8FromUtf16(wuri.get());
-            if (util::IsNavigationAllowed(uri, *navigation_allowlist_)) {
+            if (navigation_allowlist_ &&
+                !util::IsNavigationAllowed(uri, *navigation_allowlist_)) {
+              args->put_Cancel(TRUE);
+              if (navigation_blocked_callback_) {
+                navigation_blocked_callback_(uri);
+              }
               return S_OK;
             }
-            args->put_Cancel(TRUE);
-            if (navigation_blocked_callback_) {
-              navigation_blocked_callback_(uri);
+
+            // SourceChanged only reports the final URL after an HTTP redirect.
+            // Preserve the original request without treating redirects as intent.
+            BOOL is_redirect = FALSE;
+            if (navigation_starting_callback_ &&
+                SUCCEEDED(args->get_IsRedirected(&is_redirect)) && !is_redirect) {
+              navigation_starting_callback_(uri);
             }
             return S_OK;
           })

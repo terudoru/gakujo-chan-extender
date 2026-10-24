@@ -113,6 +113,7 @@ class GakujoWebViewDownload {
 class GakujoNavigationDelegate {
   const GakujoNavigationDelegate({
     this.onNavigationRequest,
+    this.onNavigationStarting,
     this.onPageStarted,
     this.onPageFinished,
     this.onWebResourceError,
@@ -121,6 +122,10 @@ class GakujoNavigationDelegate {
 
   final FutureOr<GakujoNavigationDecision> Function(GakujoNavigationRequest)?
       onNavigationRequest;
+
+  /// Windows reports allowed, non-redirect main-frame requests before the
+  /// committed URL changes. This observes intent without changing page state.
+  final void Function(String url)? onNavigationStarting;
   final void Function(String url)? onPageStarted;
   final FutureOr<void> Function(String url)? onPageFinished;
   final void Function(GakujoWebResourceError error)? onWebResourceError;
@@ -1133,6 +1138,11 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
           },
         ),
       );
+    }));
+    _subscriptions.add(_inner.navigationStarting.listen((url) {
+      if (!_disposed) {
+        _delegate?.onNavigationStarting?.call(url);
+      }
     }));
     _subscriptions.add(_inner.title.listen((value) {
       _title = value;

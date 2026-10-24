@@ -139,6 +139,7 @@ class Webview {
 
   typedef std::function<void(const std::string&)> UrlChangedCallback;
   typedef std::function<void(const std::string&)> NavigationBlockedCallback;
+  typedef std::function<void(const std::string&)> NavigationStartingCallback;
   typedef std::function<void(COREWEBVIEW2_PROCESS_FAILED_KIND)>
       ProcessFailedCallback;
   typedef std::function<void(WebviewLoadingState)> LoadingStateChangedCallback;
@@ -251,6 +252,10 @@ class Webview {
     navigation_blocked_callback_ = std::move(callback);
   }
 
+  void OnNavigationStarting(NavigationStartingCallback callback) {
+    navigation_starting_callback_ = std::move(callback);
+  }
+
   void OnUrlChanged(UrlChangedCallback callback) {
     url_changed_callback_ = std::move(callback);
   }
@@ -334,6 +339,7 @@ class Webview {
 
   UrlChangedCallback url_changed_callback_;
   NavigationBlockedCallback navigation_blocked_callback_;
+  NavigationStartingCallback navigation_starting_callback_;
   ProcessFailedCallback process_failed_callback_;
   std::optional<util::NavigationAllowlist> navigation_allowlist_;
   LoadingStateChangedCallback loading_state_changed_callback_;

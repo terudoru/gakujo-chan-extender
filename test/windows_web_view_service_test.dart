@@ -98,6 +98,49 @@ void main() {
   const pageA = 'https://gakujo.iess.niigata-u.ac.jp/a';
   const pageB = 'https://gakujo.iess.niigata-u.ac.jp/b';
 
+  testWidgets('observes a request before its redirect commits the login shell',
+      (tester) async {
+    await tester.runAsync(() async {
+      const portal =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      const messages = '$portal?page=main&tabId=kj';
+      const reports = '$portal?page=main&tabId=en';
+      final native = windows.WebviewController();
+      await native.initialize();
+      final controller = WindowsGakujoWebViewController(native);
+      final starting = <String>[];
+      final started = <String>[];
+      final finished = <String>[];
+      final requested = <String>[];
+      await controller.setNavigationDelegate(GakujoNavigationDelegate(
+        onNavigationRequest: (request) {
+          requested.add(request.url);
+          return GakujoNavigationDecision.navigate;
+        },
+        onNavigationStarting: starting.add,
+        onPageStarted: started.add,
+        onPageFinished: finished.add,
+      ));
+      await emit('urlChanged', messages);
+      await emit('navigationStarting', reports);
+      expect(starting, [reports]);
+      expect(started, [messages]);
+      expect(await controller.currentUrl(), messages);
+      expect(requested, [messages]);
+
+      // The 302 commits only the shell; no urlChanged for reports exists.
+      await emit('urlChanged', portal);
+      await emit('loadingStateChanged',
+          windows.LoadingState.navigationCompleted.index);
+      expect(starting, [reports]);
+      expect(started, [messages, portal]);
+      expect(finished, [portal]);
+      expect(await controller.currentUrl(), portal);
+      expect(calls, isEmpty);
+      await controller.dispose();
+    });
+  });
+
   testWidgets('loadUrl supersedes A before B emits urlChanged', (tester) async {
     await tester.runAsync(() async {
       final native = windows.WebviewController();

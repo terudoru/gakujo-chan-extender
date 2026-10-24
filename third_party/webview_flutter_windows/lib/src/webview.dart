@@ -300,6 +300,13 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   Stream<String> get navigationBlocked =>
       _navigationBlockedStreamController.stream;
 
+  final StreamController<String> _navigationStartingStreamController =
+      StreamController<String>.broadcast();
+
+  /// Allowed, non-redirect main-frame requests, before SourceChanged.
+  Stream<String> get navigationStarting =>
+      _navigationStartingStreamController.stream;
+
   final StreamController<LoadingState> _loadingStateStreamController =
       StreamController<LoadingState>.broadcast();
 
@@ -443,6 +450,9 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       case 'navigationBlocked':
         _navigationBlockedStreamController.add(map['value']);
         break;
+      case 'navigationStarting':
+        _navigationStartingStreamController.add(map['value']);
+        break;
       case 'processFailed':
         _processFailedStreamController.add(map['value'] as int);
         break;
@@ -579,6 +589,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     for (final controller in <StreamController<dynamic>>[
       _urlStreamController,
       _navigationBlockedStreamController,
+      _navigationStartingStreamController,
       _processFailedStreamController,
       _loadingStateStreamController,
       _downloadEventStreamController,

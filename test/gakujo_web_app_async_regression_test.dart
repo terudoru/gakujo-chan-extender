@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/allowed_web_origins.dart';
 import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
@@ -738,6 +739,189 @@ void main() {
       );
     });
 
+    test('retains the requested tab across a 302 login redirect and 2FA', () {
+      const portal =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      const messages = '$portal?page=main&tabId=kj';
+      const reports = '$portal?page=main&tabId=en';
+      const home = '$portal?page=main';
+      String? currentUrl;
+      String? authenticatedUrl;
+      String? candidate;
+      String? pending;
+      var restoreAttempted = true;
+      final restored = <String>[];
+
+      void navigationStarting(String url) {
+        candidate = captureGakujoNavigationRecoveryCandidate(
+          url: url,
+          currentUrl: currentUrl,
+          authenticatedUrl: authenticatedUrl,
+          navigationCandidateUrl: candidate,
+        );
+      }
+
+      void pageStarted(String url) {
+        navigationStarting(url);
+        currentUrl = url;
+      }
+
+      void pageFinished(String url, GakujoPortalAuthState authState) {
+        expect(currentUrl, url);
+        final looksLikeLogin = AllowedWebOrigins.isLoginOrTimeoutPage(url);
+        if (isGakujoAuthenticationChallenge(
+          authState: authState,
+          urlLooksLikeLoginOrTimeout: looksLikeLogin,
+        )) {
+          final recovery = selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: usableGakujoNavigationCandidateForChallenge(
+              navigationCandidateUrl: candidate,
+              challengeUrl: url,
+            ),
+            authenticatedUrl: authenticatedUrl,
+            pendingRestoreUrl: pending,
+          );
+          if (shouldResetGakujoLoginRestoreAttempt(
+            authState: authState,
+            urlLooksLikeLoginOrTimeout: looksLikeLogin,
+            hasRecoveryUrl: recovery != null,
+          )) {
+            pending = recovery;
+            restoreAttempted = false;
+          }
+        }
+        if (authState == GakujoPortalAuthState.authenticated) {
+          authenticatedUrl = selectGakujoSessionRecoveryUrl(
+            navigationCandidateUrl: url,
+            authenticatedUrl: authenticatedUrl,
+            pendingRestoreUrl: null,
+          );
+          candidate = null;
+        }
+        if (shouldConsumePendingGakujoPage(
+          authState: authState,
+          currentUrl: url,
+          restoreUrl: pending,
+        )) {
+          pending = null;
+        } else if (shouldRestorePendingGakujoPage(
+          authState: authState,
+          restoreAttempted: restoreAttempted,
+          hasRestoreUrl: pending != null,
+          currentUrlMatchesRestoreUrl: url == pending,
+        )) {
+          restored.add(pending!);
+          restoreAttempted = true;
+          pending = null;
+        }
+      }
+
+      pageStarted(messages);
+      pageFinished(messages, GakujoPortalAuthState.authenticated);
+
+      // JSESSIONID expires. NavigationStarting sees the tab's GET, but the
+      // 302 means SourceChanged/onPageStarted sees only the login shell.
+      navigationStarting(reports);
+      expect(candidate, reports);
+      pageStarted(portal);
+      pageFinished(portal, GakujoPortalAuthState.login);
+      expect(pending, reports);
+      expect(authenticatedUrl, messages);
+
+      // The autofill challenge message uses the same selection as the DOM
+      // challenge handler, before submitting the login form.
+      expect(
+        selectGakujoSessionRecoveryUrl(
+          navigationCandidateUrl: candidate,
+          authenticatedUrl: authenticatedUrl,
+          pendingRestoreUrl: pending,
+        ),
+        reports,
+      );
+      navigationStarting(portal); // Login POST, then 2FA at the same shell.
+      pageFinished(portal, GakujoPortalAuthState.twoFactor);
+      expect(candidate, reports);
+      expect(pending, reports);
+      expect(restored, isEmpty);
+
+      navigationStarting(home); // 2FA POST result without a tab.
+      pageStarted(home);
+      pageFinished(home, GakujoPortalAuthState.authenticated);
+      expect(authenticatedUrl, home);
+      expect(candidate, isNull);
+      expect(restored, [reports]);
+
+      pageStarted(reports);
+      pageFinished(reports, GakujoPortalAuthState.authenticated);
+      pageFinished(reports, GakujoPortalAuthState.authenticated);
+      expect(authenticatedUrl, reports);
+      expect(pending, isNull);
+      expect(restored, [reports]);
+
+      // A completed authenticated page releases the candidate for the next tab.
+      const schedule = '$portal?page=main&tabId=sch';
+      navigationStarting(schedule);
+      expect(candidate, schedule);
+    });
+
+    test('login shells cannot be captured or replace a frozen tab', () {
+      const portal =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      const messages = '$portal?page=main&tabId=kj';
+      const reports = '$portal?page=main&tabId=en';
+      expect(
+        captureGakujoNavigationRecoveryCandidate(
+          url: '$portal?page=main&tabId=sch',
+          currentUrl: messages,
+          authenticatedUrl: messages,
+          navigationCandidateUrl: reports,
+        ),
+        reports,
+        reason: 'an in-flight destination must not overwrite the first request',
+      );
+      for (final url in [
+        portal,
+        '$portal?page=main',
+        '$portal?locale=ja_JP',
+        '$portal?page=main&tabId=',
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do',
+      ]) {
+        expect(
+          isGakujoNavigationRecoveryCandidateUrl(url, debugAllowed: false),
+          isFalse,
+          reason: url,
+        );
+        expect(
+          usableGakujoNavigationCandidateForChallenge(
+            navigationCandidateUrl: url,
+            challengeUrl: url,
+          ),
+          isNull,
+          reason: url,
+        );
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: url,
+            currentUrl: messages,
+            authenticatedUrl: messages,
+            navigationCandidateUrl: null,
+          ),
+          isNull,
+          reason: url,
+        );
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: url,
+            currentUrl: messages,
+            authenticatedUrl: messages,
+            navigationCandidateUrl: reports,
+          ),
+          reports,
+          reason: url,
+        );
+      }
+    });
+
     test('flow-key pages never replace the previous durable recovery URL', () {
       const durable =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
@@ -750,6 +934,24 @@ void main() {
       ]) {
         final flowUrl =
             'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?$query';
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: flowUrl,
+            currentUrl: durable,
+            authenticatedUrl: durable,
+            navigationCandidateUrl: null,
+          ),
+          isNull,
+        );
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: flowUrl,
+            currentUrl: durable,
+            authenticatedUrl: durable,
+            navigationCandidateUrl: durable,
+          ),
+          durable,
+        );
         expect(
           usableGakujoNavigationCandidateForChallenge(
             navigationCandidateUrl: flowUrl,
