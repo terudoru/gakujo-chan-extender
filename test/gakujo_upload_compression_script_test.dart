@@ -243,6 +243,88 @@ void main() {
     expect(result['status'], _pdfTextMessage);
   });
 
+  test('keeps PDFs with notes, markup, and other non-Link annotations',
+      () async {
+    for (final subtype in [
+      'Text',
+      'FreeText',
+      'Ink',
+      'Highlight',
+      'Square',
+      'Stamp',
+      'Popup',
+    ]) {
+      final result = await _run({
+        'files': [_pdf],
+        'pdf': {
+          'annotations': [
+            {'subtype': subtype}
+          ]
+        },
+      });
+      expect(result['originalsKept'], isTrue, reason: subtype);
+      expect(result['status'], contains('元のファイルのままにしました'));
+      expect(result['pdfRenderCount'], 0);
+      expect(result['destroyed'], 1);
+    }
+  });
+
+  test('keeps PDFs with decoder diagnostics or missing page image data',
+      () async {
+    for (final options in [
+      for (final level in ['log', 'warn', 'error'])
+        {
+          'warningStage': 'render',
+          'warningLevel': level,
+          'warningMessage': 'Warning: Unable to decode image: JpxError',
+        },
+      {
+        'warningStage': 'render',
+        'warningMessage': 'Error: Invalid image data',
+      },
+      for (final imageData in [
+        'missingBlob',
+        'emptyBlob',
+        'missingBytes',
+        'emptyBytes'
+      ])
+        {'imageData': imageData},
+    ]) {
+      final result = await _run({
+        'files': [_pdf],
+        'pdf': options
+      });
+      expect(result['originalsKept'], isTrue, reason: '$options');
+      expect(result['status'], contains('元のファイルのまま'));
+      expect(result['pdfEmbedCount'], 0);
+      expect(result['destroyed'], 1);
+      expect(result['consoleRestored'], isTrue);
+    }
+  });
+
+  test('blocks only the busy form until success, error, or timeout', () async {
+    for (final outcome in ['success', 'error', 'timeout']) {
+      final result = await _run({
+        'files': [_photo],
+        'holdImage': true,
+        'imageError': outcome == 'error',
+        'compressionTimeout': outcome == 'timeout',
+        'checkSubmission': true,
+      });
+      expect(result['blockedDuring'], [true, true, true, true],
+          reason: outcome);
+      expect(result['unrelatedBlocked'], [false, false]);
+      expect(result['pendingStatus'], 'ファイルを圧縮しています。完了してから提出してください');
+      expect(result['blockedAfter'], [false, false, false, false]);
+      expect(result['listenerCounts'], {'change': 1, 'submit': 1, 'click': 1});
+      expect(result['listenersCapture'], isTrue);
+      expect(result['autoSubmits'], 0);
+      expect(result['originalsKept'], outcome != 'success');
+      expect(result['status'],
+          contains(outcome == 'success' ? '5MB以下に圧縮しました' : '元のファイルのまま'));
+    }
+  });
+
   for (final content in ['attachments', 'fields', 'link', 'widget']) {
     test('keeps the original PDF with $content', () async {
       final result = await _run({
@@ -250,7 +332,7 @@ void main() {
         'pdf': {content: true},
       });
       expect(result['originalsKept'], isTrue);
-      expect(result['status'], contains('添付ファイル・フォーム・リンクを保持できない'));
+      expect(result['status'], contains('添付ファイル・フォーム・リンク・注釈を保持できない'));
       expect(result['status'], contains('元のファイルのままにしました'));
       expect(result['pdfRenderCount'], 0);
       expect(result['destroyed'], 1);
@@ -301,6 +383,7 @@ class FakeDataTransfer {
 }
 
 const listeners = [];
+const documentListeners = { change: [], submit: [], click: [] };
 const replayed = [];
 let statusNode = null;
 function filesFor(files) {
@@ -319,13 +402,42 @@ const input = {
   },
 };
 const originalFiles = input.files.slice();
+let autoSubmits = 0;
+const form = {
+  tagName: 'FORM', elements: [input],
+  submit() { autoSubmits++; }, requestSubmit() { autoSubmits++; },
+};
+input.form = form;
+const submitButton = { tagName: 'BUTTON', form };
+const submitInput = { tagName: 'INPUT', type: 'submit', form };
+const imageInput = { tagName: 'INPUT', type: 'image', form };
+const submissionTargets = [
+  ['submit', form],
+  ['click', { tagName: 'SPAN', parentNode: submitButton }],
+  ['click', submitInput],
+  ['click', imageInput],
+];
+function attemptSubmission(type, target) {
+  let prevented = false;
+  let stopped = false;
+  for (const { listener } of documentListeners[type]) {
+    listener({ type, target,
+      preventDefault() { prevented = true; },
+      stopImmediatePropagation() { stopped = true; },
+    });
+    if (stopped) break;
+  }
+  if (prevented !== stopped) throw new Error('Submission must also stop page handlers');
+  return prevented;
+}
 const document = {
   querySelectorAll: (selector) =>
     selector.indexOf('upload-compression-owned') >= 0 && statusNode
       ? [statusNode]
       : [],
-  addEventListener: (type, listener) => {
+  addEventListener: (type, listener, capture) => {
     if (type === 'change') listeners.push(listener);
+    if (documentListeners[type]) documentListeners[type].push({ listener, capture });
   },
   createElement: (tag) => {
     if (tag === 'canvas') {
@@ -334,10 +446,15 @@ const document = {
         height: 0,
         getContext: () => ({ fillRect() {}, drawImage() {} }),
         toBlob: (callback, type, quality) => {
+          const imageData = scenario.pdf && scenario.pdf.imageData;
+          if (imageData === 'missingBlob') return callback(null);
           // A rough model: bytes scale with pixels, JPEG with quality.
           const perPixel = type === 'image/jpeg' ? 1.2 * (quality || 0.9) : 1.5;
           const size = Math.round(canvas.width * canvas.height * perPixel);
-          callback({ type, size, arrayBuffer: async () => new ArrayBuffer(size) });
+          callback({ type, size: imageData === 'emptyBlob' ? 0 : size,
+            arrayBuffer: async () => imageData === 'missingBytes' ? null :
+              new ArrayBuffer(imageData === 'emptyBytes' ? 0 : size),
+          });
         },
       };
       return canvas;
@@ -389,13 +506,14 @@ const context = {
 };
 let pdfOptions;
 let pdfRenderCount = 0;
+let pdfEmbedCount = 0;
 let destroyed = 0;
 function loadPdfLibraries() {
   const options = scenario.pdf;
   function warning(stage) {
     if (options.warningStage === stage) {
       context.console[options.warningLevel || 'log'](
-        'Warning: loadFont - translateFont failed: Unknown CMap name'
+        options.warningMessage || 'Warning: loadFont - translateFont failed: Unknown CMap name'
       );
     }
   }
@@ -420,8 +538,8 @@ function loadPdfLibraries() {
               warning('operators');
               return { fnArray: options.noTextDrawing ? [] : [44] };
             },
-            getAnnotations: async () => options.link ? [{ subtype: 'Link' }] :
-              options.widget ? [{ subtype: 'Widget' }] : [],
+            getAnnotations: async () => options.annotations || (options.link ? [{ subtype: 'Link' }] :
+              options.widget ? [{ subtype: 'Widget' }] : []),
             getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale }),
             render: () => {
               pdfRenderCount++;
@@ -437,7 +555,7 @@ function loadPdfLibraries() {
   context.PDFLib = {
     PDFDocument: {
       create: async () => ({
-        embedJpg: async () => ({}),
+        embedJpg: async () => { pdfEmbedCount++; return {}; },
         addPage: () => ({ drawImage() {} }),
         save: async () => new Uint8Array(1000),
       }),
@@ -474,6 +592,18 @@ async function settle() {
 }
 (async () => {
   await settle();
+  let blockedDuring;
+  let unrelatedBlocked;
+  let pendingStatus;
+  if (scenario.checkSubmission) {
+    vm.runInContext(build, context);
+    blockedDuring = submissionTargets.map(args => attemptSubmission(...args));
+    unrelatedBlocked = [
+      attemptSubmission('submit', { tagName: 'FORM', elements: [] }),
+      attemptSubmission('click', { tagName: 'BUTTON', type: 'button', form }),
+    ];
+    pendingStatus = statusNode.textContent;
+  }
   if (scenario.nextFiles || scenario.reselectSameFiles) {
     if (scenario.teardownBeforeReselect) vm.runInContext(teardown, context);
     if (scenario.nextFiles) input.files = filesFor(scenario.nextFiles);
@@ -485,6 +615,10 @@ async function settle() {
     for (const [id, fn] of Array.from(timers)) { timers.delete(id); fn(); }
     await settle();
     for (const listener of listeners) listener(event);
+  }
+  if (scenario.compressionTimeout) {
+    for (const [id, fn] of Array.from(timers)) { timers.delete(id); fn(); }
+    await settle();
   }
   finishImage();
   await settle();
@@ -500,8 +634,16 @@ async function settle() {
       originalFiles.every((file, i) => input.files[i] === file),
     pdfOptions,
     pdfRenderCount,
+    pdfEmbedCount,
     destroyed,
     consoleRestored: Object.keys(savedConsole).every(key => context.console[key] === savedConsole[key]),
+    blockedDuring, unrelatedBlocked, pendingStatus,
+    blockedAfter: scenario.checkSubmission &&
+      submissionTargets.map(args => attemptSubmission(...args)),
+    listenerCounts: Object.fromEntries(Object.entries(documentListeners)
+      .map(([type, handlers]) => [type, handlers.length])),
+    listenersCapture: Object.values(documentListeners).flat().every(({ capture }) => capture === true),
+    autoSubmits,
   }));
 })().catch(error => { console.error(error); process.exitCode = 1; });
 ''';

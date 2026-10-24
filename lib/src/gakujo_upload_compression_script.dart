@@ -36,6 +36,7 @@ class GakujoUploadCompressionScript {
   var targetBytes = 4700000;
   var maxCanvasPixels = 16000000;
   var libraryTimeoutMs = 30000;
+  var compressionTimeoutMs = 120000;
   var replaying = typeof WeakSet === 'function' ? new WeakSet() : null;
   var libraryWaiters = {};
 
@@ -312,7 +313,8 @@ class GakujoUploadCompressionScript {
   ];
 
   var pdfTextMessage = 'PDFの文字が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-  var pdfContentMessage = 'PDFの添付ファイル・フォーム・リンクを保持できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
+  var pdfContentMessage = 'PDFの添付ファイル・フォーム・リンク・注釈を保持できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
+  var pdfRenderMessage = 'PDFの内容が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
   var pdfFontChecks = [];
 
   function keepOriginalPdf(message) {
@@ -324,7 +326,7 @@ class GakujoUploadCompressionScript {
   // The bundled pdf.js worker runs on the page thread. Its warn() uses
   // console.log, so listen there too, and restore the hooks after all jobs.
   function watchPdfFonts() {
-    var check = { failed: false };
+    var check = { failed: false, message: pdfRenderMessage };
     var console = window.console;
     var hooks = [];
     if (!pdfFontChecks.length && console) {
@@ -335,9 +337,12 @@ class GakujoUploadCompressionScript {
         }
         var hook = function() {
           var message = Array.prototype.join.call(arguments, ' ');
-          if ((level !== 'log' || /warning:/i.test(message)) &&
-              /font|cmap|glyph|character/i.test(message)) {
-            pdfFontChecks.forEach(function(active) { active.failed = true; });
+          if (level !== 'log' || /warning:|error:/i.test(message)) {
+            pdfFontChecks.forEach(function(active) {
+              active.failed = true;
+              active.message = /font|cmap|glyph|character/i.test(message) ?
+                pdfTextMessage : pdfRenderMessage;
+            });
           }
           return original.apply(console, arguments);
         };
@@ -361,7 +366,7 @@ class GakujoUploadCompressionScript {
     };
     check.verify = function() {
       if (check.failed) {
-        throw keepOriginalPdf(pdfTextMessage);
+        throw keepOriginalPdf(check.message);
       }
     };
     return check;
@@ -412,8 +417,8 @@ class GakujoUploadCompressionScript {
           return tryStep();
         });
     }).catch(function(error) {
-      if ((fontCheck && fontCheck.failed) ||
-          /font|cmap|glyph/i.test(String(error && error.message || error))) {
+      if (fontCheck) { fontCheck.verify(); }
+      if (/font|cmap|glyph/i.test(String(error && error.message || error))) {
         throw keepOriginalPdf(pdfTextMessage);
       }
       if (error && error.name === 'PasswordException') {
@@ -444,9 +449,7 @@ class GakujoUploadCompressionScript {
       if (hasText && !hasTextDrawing) {
         throw keepOriginalPdf(pdfTextMessage);
       }
-      if (content[2].some(function(annotation) {
-        return /^(Link|Widget|FileAttachment)$/.test(annotation.subtype);
-      })) {
+      if (content[2].length) {
         throw keepOriginalPdf(pdfContentMessage);
       }
       return page;
@@ -486,6 +489,9 @@ class GakujoUploadCompressionScript {
               return canvasToBlob(canvas, 'image/jpeg', settings.quality);
             })
             .then(function(blob) {
+              if (!blob.size) {
+                throw keepOriginalPdf(pdfRenderMessage);
+              }
               return readBytes(blob);
             })
             .finally(function() {
@@ -493,6 +499,9 @@ class GakujoUploadCompressionScript {
               page.cleanup();
             })
             .then(function(jpeg) {
+              if (!jpeg || !jpeg.byteLength) {
+                throw keepOriginalPdf(pdfRenderMessage);
+              }
               imageBytes += jpeg.byteLength;
               if (imageBytes > targetBytes) {
                 return null;
@@ -648,6 +657,33 @@ class GakujoUploadCompressionScript {
     return replaying ? replaying.has(input) : !!input.__mbgUploadCompressionReplaying;
   }
 
+  function blockPendingSubmit(event) {
+    if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
+      return;
+    }
+    var target = event.target;
+    if (event.type === 'click') {
+      while (target && target.tagName !== 'BUTTON' && target.tagName !== 'INPUT') {
+        target = target.parentNode;
+      }
+      if (!target || !/^(submit|image)$/.test(String(target.type ||
+          (target.tagName === 'BUTTON' ? 'submit' : '')).toLowerCase())) {
+        return;
+      }
+      target = target.form;
+    }
+    var elements = target && target.elements || [];
+    for (var i = 0; i < elements.length; i += 1) {
+      if (elements[i].__mbgUploadCompressionPending) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showStatus(elements[i],
+          'ファイルを圧縮しています。完了してから提出してください', false);
+        return;
+      }
+    }
+  }
+
   function compress(input, file, progress) {
     switch (kindOf(file)) {
       case 'image':
@@ -670,12 +706,14 @@ class GakujoUploadCompressionScript {
     }
     var token = input.__mbgUploadCompressionSelection =
       (input.__mbgUploadCompressionSelection || 0) + 1;
+    delete input.__mbgUploadCompressionPending;
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
       return;
     }
     var files = Array.prototype.slice.call(input.files || []);
+    var finished = false;
     function isCurrentSelection() {
-      return input.__mbgUploadCompressionSelection === token &&
+      return !finished && input.__mbgUploadCompressionSelection === token &&
         input.files && input.files.length === files.length &&
         files.every(function(file, index) { return input.files[index] === file; });
     }
@@ -707,6 +745,7 @@ class GakujoUploadCompressionScript {
 
     // Hold the page's own handlers until the replacement files are ready.
     event.stopImmediatePropagation();
+    input.__mbgUploadCompressionPending = token;
     var originalTotal = oversized.reduce(function(sum, file) {
       return sum + file.size;
     }, 0);
@@ -730,7 +769,13 @@ class GakujoUploadCompressionScript {
       });
     });
 
-    chain.then(function() {
+    var timer;
+    var timeout = new Promise(function(resolve, reject) {
+      timer = window.setTimeout(function() {
+        reject(new Error('ファイルの圧縮がタイムアウトしました'));
+      }, compressionTimeoutMs);
+    });
+    Promise.race([chain, timeout]).then(function() {
       if (!isCurrentSelection()) {
         return;
       }
@@ -747,7 +792,7 @@ class GakujoUploadCompressionScript {
         '5MB以下に圧縮しました: ' + formatSize(originalTotal) + ' → ' +
         formatSize(compressedTotal), false);
       replayChange(input);
-    }, function(error) {
+    }).catch(function(error) {
       if (!isCurrentSelection()) {
         return;
       }
@@ -755,6 +800,12 @@ class GakujoUploadCompressionScript {
         '圧縮できませんでした: ' + (error && error.message || error) +
         '。元のファイルのままです。', true);
       replayChange(input);
+    }).finally(function() {
+      finished = true;
+      window.clearTimeout(timer);
+      if (input.__mbgUploadCompressionPending === token) {
+        delete input.__mbgUploadCompressionPending;
+      }
     });
   }
 
@@ -768,6 +819,8 @@ class GakujoUploadCompressionScript {
       doc.__mbgUploadCompressionAttached = true;
       // Capture phase runs before handlers registered on the input itself.
       doc.addEventListener('change', handleChange, true);
+      doc.addEventListener('submit', blockPendingSubmit, true);
+      doc.addEventListener('click', blockPendingSubmit, true);
     }
   }
 
