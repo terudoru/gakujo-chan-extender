@@ -3139,7 +3139,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final navigationRevision = _navigationRevision;
     _setStatus('接続が戻ったので再読み込みしました');
     try {
-      await _controller.reload();
+      // Android's reload() keeps the error page's 1:1 scale, so the desktop
+      // page would not fit the width; a fresh load resets the overview.
+      final failedUrl = _currentPageUrl;
+      if (failedUrl != null &&
+          AllowedWebOrigins.canLoad(failedUrl, debugAllowed: _debugAllowed)) {
+        await _controller.loadUrl(failedUrl);
+      } else {
+        await _controller.reload();
+      }
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to reload after connectivity returned',
