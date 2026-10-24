@@ -135,8 +135,9 @@ jobs:
           xcrun simctl io "$udid" screenshot dist/ios-simulator.png
           xcrun simctl spawn "$udid" log show --last 2m --style compact \
             --predicate 'process == "Runner"' > dist/ios-simulator.log || true
-          if ! xcrun simctl spawn "$udid" launchctl list \
-            | grep -q 'UIKitApplication:net.yoshida.morebettergakujo'; then
+          # Simulator apps run as host processes; the launchctl label format
+          # varies between iOS runtimes, so look for the process itself.
+          if ! pgrep -f 'iphonesimulator/Runner.app/Runner|/Runner.app/Runner' > /dev/null; then
             echo "The app is not running 45 seconds after launch" >&2
             tail -50 dist/ios-simulator.log >&2 || true
             exit 1
