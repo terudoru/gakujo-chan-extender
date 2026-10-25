@@ -849,6 +849,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
+              final usesWindowsAutomaticImport = Platform.isWindows &&
+                  selectedSettings.method ==
+                      GakujoCalendarImportMethod.automatic;
+
               GakujoCalendarImportSettings currentSettings() {
                 return selectedSettings.copyWith(
                   calendarTitle: calendarTitleController.text,
@@ -880,8 +884,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Text(
-                        '追加する授業予定は学務のGoogle連携から取れたものだけを使い、ターム期間と授業なしの日はMore Better Gakujo側で判定します。',
+                      Text(
+                        usesWindowsAutomaticImport
+                            ? 'Windowsの自動追加は学務のGoogleカレンダー連携を開きます。学期・休講補講・締切・カレンダー名などの設定を反映するにはICSファイルで保存してください。'
+                            : '追加する授業予定は学務のGoogle連携から取れたものだけを使い、ターム期間と授業なしの日はMore Better Gakujo側で判定します。',
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<GakujoCalendarImportMethod>(
@@ -929,15 +935,17 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                               ),
                             ),
                         ],
-                        onChanged: (source) {
-                          if (source == null) {
-                            return;
-                          }
-                          selectedSettings = selectedSettings.copyWith(
-                            termSource: source,
-                          );
-                          setDialogState(() {});
-                        },
+                        onChanged: usesWindowsAutomaticImport
+                            ? null
+                            : (source) {
+                                if (source == null) {
+                                  return;
+                                }
+                                selectedSettings = selectedSettings.copyWith(
+                                  termSource: source,
+                                );
+                                setDialogState(() {});
+                              },
                       ),
                       if (selectedSettings.termSource ==
                           GakujoCalendarTermSource
@@ -961,20 +969,23 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                                 ),
                               ),
                           ],
-                          onChanged: (target) {
-                            if (target == null) {
-                              return;
-                            }
-                            selectedSettings = selectedSettings.copyWith(
-                              termTarget: target,
-                            );
-                            setDialogState(() {});
-                          },
+                          onChanged: usesWindowsAutomaticImport
+                              ? null
+                              : (target) {
+                                  if (target == null) {
+                                    return;
+                                  }
+                                  selectedSettings = selectedSettings.copyWith(
+                                    termTarget: target,
+                                  );
+                                  setDialogState(() {});
+                                },
                         ),
                       ],
                       const SizedBox(height: 8),
                       CheckboxListTile(
                         dense: true,
+                        enabled: !usesWindowsAutomaticImport,
                         contentPadding: EdgeInsets.zero,
                         title: const Text('授業なしの日・授業振替日を反映する'),
                         subtitle: const Text(
@@ -990,6 +1001,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       ),
                       CheckboxListTile(
                         dense: true,
+                        enabled: !usesWindowsAutomaticImport,
                         contentPadding: EdgeInsets.zero,
                         title: const Text('休講・補講・教室変更を反映する'),
                         subtitle: const Text(
@@ -1005,6 +1017,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       ),
                       CheckboxListTile(
                         dense: true,
+                        enabled: !usesWindowsAutomaticImport,
                         contentPadding: EdgeInsets.zero,
                         title: const Text('課題の締切も追加する'),
                         subtitle: const Text(
@@ -1021,6 +1034,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       const SizedBox(height: 8),
                       TextField(
                         controller: calendarTitleController,
+                        enabled: !usesWindowsAutomaticImport,
                         decoration: const InputDecoration(
                           labelText: '追加先カレンダー名',
                           border: OutlineInputBorder(),
@@ -1035,7 +1049,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
-                      if (!_calendarService.supportsDirectSync) ...[
+                      if (!_calendarService.supportsDirectSync &&
+                          !usesWindowsAutomaticImport) ...[
                         const SizedBox(height: 8),
                         Text(
                           'WindowsではOSカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
@@ -1054,13 +1069,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                             icon: const Icon(Icons.science_outlined),
                             label: const Text('検証'),
                           ),
-                          TextButton.icon(
-                            onPressed: () => popWith(
-                              _ScheduleIntegrationAction.deleteDeviceCalendar,
+                          if (_calendarService.supportsDirectSync)
+                            TextButton.icon(
+                              onPressed: () => popWith(
+                                _ScheduleIntegrationAction.deleteDeviceCalendar,
+                              ),
+                              icon: const Icon(Icons.event_busy_outlined),
+                              label: const Text('追加済みを削除'),
                             ),
-                            icon: const Icon(Icons.event_busy_outlined),
-                            label: const Text('追加済みを削除'),
-                          ),
                         ],
                       ),
                     ],
@@ -1381,11 +1397,12 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('キャンセル'),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext)
-                  .pop(_CalendarValidationAction.delete),
-              child: const Text('検証予定を削除'),
-            ),
+            if (_calendarService.supportsDirectSync)
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext)
+                    .pop(_CalendarValidationAction.delete),
+                child: const Text('検証予定を削除'),
+              ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_CalendarValidationAction.add),
