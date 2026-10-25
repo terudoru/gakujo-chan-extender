@@ -136,6 +136,18 @@ void main() {
     expect(grades['controlCount'], 3);
   });
 
+  test('reports GPA once and skips unchanged grades', () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final report = result['gpaReport'] as Map<String, dynamic>;
+
+    expect(report['afterBuild'], ['{"gpa":4}']);
+    expect(report['afterUnchangedUpdate'], ['{"gpa":4}']);
+    expect(report['afterTeardown']['globalMarkers'], isEmpty);
+  });
+
   test('DOM mutations invalidate misses and the interval discovers frames',
       () async {
     final result = await _evaluateGpaDisplayLifecycle(
@@ -196,16 +208,25 @@ Future<Map<String, dynamic>> _evaluateGpaDisplayLifecycle({
   required String buildScript,
   required String teardownScript,
 }) async {
-  final result = await Process.run(
-      'node',
-      [
-        '-e',
-        _gpaDisplayDomHarness,
-        buildScript,
-        teardownScript,
-      ],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8);
+  // Inlined, the harness and scripts exceed Windows' command-line length limit.
+  final dir = Directory.systemTemp.createTempSync('gakujo_gpa_display_');
+  final ProcessResult result;
+  try {
+    File file(String name, String contents) =>
+        File('${dir.path}${Platform.pathSeparator}$name')
+          ..writeAsStringSync(contents);
+    result = await Process.run(
+        'node',
+        [
+          file('harness.js', _gpaDisplayDomHarness).path,
+          file('build.js', buildScript).path,
+          file('teardown.js', teardownScript).path,
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8);
+  } finally {
+    dir.deleteSync(recursive: true);
+  }
 
   expect(
     result.exitCode,
@@ -217,8 +238,9 @@ Future<Map<String, dynamic>> _evaluateGpaDisplayLifecycle({
 
 const _gpaDisplayDomHarness = r'''
 const vm = require('node:vm');
-const buildScript = process.argv[1];
-const teardownScript = process.argv[2];
+const fs = require('node:fs');
+const buildScript = fs.readFileSync(process.argv[2], 'utf8');
+const teardownScript = fs.readFileSync(process.argv[3], 'utf8');
 
 class FakeElement {
   constructor(tag, ownerDocument) {
@@ -456,7 +478,8 @@ function createPage({hasGradeTable = true} = {}) {
       globalMarkers: Object.keys(window)
         .filter((key) =>
           key.startsWith('__MBG_GPA_DISPLAY_') ||
-          key === '__MBG_UPDATE_GPA_DISPLAY')
+          key === '__MBG_UPDATE_GPA_DISPLAY' ||
+          key === '__MBG_GPA_LAST_REPORTED')
         .sort()
     };
   }
@@ -548,6 +571,19 @@ const afterGpChange = gradePage.gpaText();
 gradePage.addRow();
 gradePage.tickInterval();
 const afterGradeRowAdded = gradePage.gpaText();
+
+const reportingPage = createPage();
+const reportedMessages = [];
+reportingPage.context.window.GakujoGpaReport = {
+  postMessage(message) { reportedMessages.push(message); }
+};
+run(buildScript, reportingPage);
+const gpaReport = {afterBuild: [...reportedMessages]};
+reportingPage.context.window.__MBG_UPDATE_GPA_DISPLAY();
+gpaReport.afterUnchangedUpdate = [...reportedMessages];
+run(teardownScript, reportingPage);
+gpaReport.afterTeardown = reportingPage.snapshot();
+
 // A recognised course shows GP 0 but is not graded.
 const recognisedPage = createPage();
 run(buildScript, recognisedPage);
@@ -665,6 +701,7 @@ process.stdout.write(JSON.stringify({
     gpaDisplayCount: gradePage.snapshot().gpaDisplayCount,
     controlCount: gradePage.snapshot().controlIds.length
   },
+  gpaReport,
   gpaAfterHeaderMutation: mutatedPage.gpaText(),
   gpaInNewFrame: newFrame.gpaText(),
   frameNavigation,

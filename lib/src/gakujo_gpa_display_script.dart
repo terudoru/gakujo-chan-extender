@@ -1,10 +1,12 @@
 class GakujoGpaDisplayScript {
   const GakujoGpaDisplayScript._();
 
+  static const channelName = 'GakujoGpaReport';
+
   static String build() {
     return r'''
 (function() {
-  var version = 9;
+  var version = 10;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -428,11 +430,15 @@ class GakujoGpaDisplayScript {
       removeGpaDisplay(gradeTable.headerCell);
       return;
     }
-    renderGpaDisplay(
-      gradeTable.headerCell,
-      weightedGp / totalCredits,
-      totalCredits
-    );
+    var gpa = weightedGp / totalCredits;
+    renderGpaDisplay(gradeTable.headerCell, gpa, totalCredits);
+    try {
+      if (window.GakujoGpaReport && window.GakujoGpaReport.postMessage &&
+          window.__MBG_GPA_LAST_REPORTED !== gpa) {
+        window.GakujoGpaReport.postMessage(JSON.stringify({gpa: gpa}));
+        window.__MBG_GPA_LAST_REPORTED = gpa;
+      }
+    } catch (e) {}
   }
 
   function updateAll() {
@@ -588,6 +594,7 @@ class GakujoGpaDisplayScript {
   delete window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
   delete window.__MBG_UPDATE_GPA_DISPLAY;
   delete window.__MBG_GPA_DISPLAY_VERSION;
+  delete window.__MBG_GPA_LAST_REPORTED;
 })();
 ''';
   }

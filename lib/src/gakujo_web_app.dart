@@ -66,6 +66,7 @@ import 'two_factor_secret_store.dart';
 import 'web_view_service.dart';
 import 'windows_webview_authenticated_download.dart';
 import 'widgets/app_data_sections.dart';
+import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/settings_sections.dart';
 
@@ -1087,6 +1088,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
+  double? _reportedGpa;
   String? _currentCourseName;
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
@@ -1274,8 +1276,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: _compactToolbarHeight,
-          titleSpacing: 0,
-          title: const SizedBox.shrink(),
+          titleSpacing: 12,
+          title: GakujoGpaTaunt(gpa: _reportedGpa),
+          centerTitle: false,
           actions: [
             GakujoNavigationActions(
               canGoBack: _canGoBack && !_calendarOperationGate.isRunning,
@@ -5017,6 +5020,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  void _handleGpaReportMessage(String message) {
+    try {
+      final decoded = jsonDecode(message);
+      if (decoded is! Map) {
+        return;
+      }
+      final gpa = decoded['gpa'];
+      if (gpa is! num || !gpa.isFinite || gpa < 0 || gpa > 5) {
+        return;
+      }
+      if (mounted &&
+          _appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay) &&
+          _reportedGpa != gpa.toDouble()) {
+        setState(() {
+          _reportedGpa = gpa.toDouble();
+        });
+      }
+    } on FormatException {
+      return;
+    }
+  }
+
   Future<void> _injectExpiredPageRecoveryIfAllowed() async {
     if (!_canRunPageScripts) {
       return;
@@ -5085,6 +5110,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
+    if (!enabled && flag == GakujoFeatureFlag.gpaDisplay && mounted) {
+      setState(() {
+        _reportedGpa = null;
+      });
+    }
     final controller = _controller;
     if (flag == GakujoFeatureFlag.downloadCapture &&
         controller is WindowsGakujoWebViewController) {
@@ -5455,6 +5485,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _addGakujoJavaScriptChannel(
       GakujoMessageStarScript.channelName,
       onMessageReceived: _handleMessageStarMessage,
+    );
+    await _addGakujoJavaScriptChannel(
+      GakujoGpaDisplayScript.channelName,
+      onMessageReceived: _handleGpaReportMessage,
     );
     await _addGakujoJavaScriptChannel(
       DesktopPageZoomScript.channelName,
