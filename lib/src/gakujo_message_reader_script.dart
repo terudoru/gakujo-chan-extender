@@ -167,7 +167,13 @@ class GakujoMessageReaderScript {
       cancelPendingFrame = function() { finish(false); };
       frame.style.display = 'none';
       frame.onload = function() {
-        finish(true);
+        var html = '';
+        try {
+          html = frame.contentDocument.documentElement.outerHTML;
+        } catch (e) {
+          html = '';
+        }
+        finish(!isSessionLostPage(html));
       };
       frame.onerror = function() {
         finish(false);
@@ -180,11 +186,18 @@ class GakujoMessageReaderScript {
     });
   }
 
+  // A 200 answer can still be Gakujo's expired-page or login page, in which
+  // case the message was not opened and is still unread.
+  function isSessionLostPage(text) {
+    return /ページの有効期限|有効期限が過ぎています|type=["']?password|name=["']?password/i
+      .test(String(text || ''));
+  }
+
   async function markRead(url) {
     try {
       var response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
-        return true;
+        return !isSessionLostPage(await response.text());
       }
       return false;
     } catch (e) {

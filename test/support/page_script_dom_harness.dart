@@ -31,6 +31,7 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
 Future<Map<String, dynamic>> evaluateMessageReaderScript({
   required String buildScript,
   required List<int?> fetchStatuses,
+  List<String> fetchBodies = const [],
   List<bool> iframeOutcomes = const [],
   String? inputValue,
   String? inputValueAfterArming,
@@ -43,6 +44,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
 }) async {
   final scenario = jsonEncode({
     'fetchStatuses': fetchStatuses,
+    'fetchBodies': fetchBodies,
     'iframeOutcomes': iframeOutcomes,
     'inputValue': inputValue,
     'inputValueAfterArming': inputValueAfterArming,
@@ -232,6 +234,7 @@ function createPage() {
   const activeIntervals = new Set();
   const activeTimeouts = new Map();
   const fetchStatuses = scenario ? [...scenario.fetchStatuses] : [200];
+  const fetchBodies = scenario && scenario.fetchBodies ? [...scenario.fetchBodies] : [];
   const iframeOutcomes = scenario ? [...scenario.iframeOutcomes] : [];
   const target = new FakeElement('div');
   target.id = 'tabmenutable';
@@ -323,7 +326,8 @@ function createPage() {
       fetchUrls.push(String(url));
       const status = fetchStatuses.shift();
       if (status === null) throw new Error('simulated fetch failure');
-      return {ok: status >= 200 && status < 300, status};
+      const body = fetchBodies.shift() || '<html><body>連絡通知</body></html>';
+      return {ok: status >= 200 && status < 300, status, text: async () => body};
     },
     console: {log() {}}
   };

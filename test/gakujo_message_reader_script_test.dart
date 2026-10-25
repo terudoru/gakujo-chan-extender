@@ -63,6 +63,21 @@ void main() {
     expect(result['reloadCount'], 0);
   });
 
+  test('an expired page answered with 200 is not counted as read', () async {
+    final result = await evaluateMessageReaderScript(
+      buildScript: GakujoMessageReaderScript.build(),
+      fetchStatuses: [200, 200],
+      fetchBodies: [
+        '<html><body>連絡通知</body></html>',
+        '<html><head><title>ページの有効期限ぎれ</title></head>'
+            '<body>ページの有効期限が過ぎています。</body></html>',
+      ],
+    );
+
+    expect(result['statusText'], '1件を既読にしました（失敗1件）');
+    expect(result['reloadCount'], 0);
+  });
+
   test('does not count the iframe initial about:blank load as success',
       () async {
     final result = await evaluateMessageReaderScript(
