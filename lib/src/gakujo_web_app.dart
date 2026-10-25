@@ -3545,6 +3545,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _setPendingMessageUrl(null);
     }
     _offlineRetry.cancel();
+    _offlineRetryPausedInBackground = false;
     _navigationRevision += 1;
   }
 
@@ -5507,6 +5508,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             }
             if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
               _offlineRetry.cancel();
+              // A page that loaded must not be reloaded again on resume.
+              _offlineRetryPausedInBackground = false;
               _offlineAutoReloads = 0;
               _lastAllowedPageUrl = url;
             }

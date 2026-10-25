@@ -473,8 +473,7 @@ void main() {
     }
   });
 
-  test('a 255-character name is shortened, saved once and reused',
-      () async {
+  test('a 255-character name is shortened, saved once and reused', () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
     try {
       final base = List.filled(251, 'a').join();
@@ -506,6 +505,34 @@ void main() {
       expect(second.location, first.location);
       expect(await existing.readAsBytes(), [9]);
       expect(await directory.list().length, 2);
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('a file saved earlier under a longer name is still recognised',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-download-');
+    try {
+      final desired = '${List.filled(220, 'a').join()}.pdf';
+      // Saved by a build that did not bound names yet.
+      final existing =
+          File('${directory.path}${Platform.pathSeparator}$desired');
+      await existing.writeAsBytes([1, 2, 3]);
+      final service = _dedupeService(directory, [1, 2, 3]);
+      final result = await service.download(
+        GakujoDownloadRequest(
+          url: _dedupeRequest.url,
+          method: 'GET',
+          courseName: 'course',
+          fileName: desired,
+          formFields: const {},
+        ),
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+      );
+      expect(result.alreadySaved, isTrue);
+      expect(result.location, existing.path);
+      expect(await directory.list().length, 1);
     } finally {
       await directory.delete(recursive: true);
     }

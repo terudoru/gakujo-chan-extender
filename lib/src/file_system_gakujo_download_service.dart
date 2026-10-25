@@ -598,9 +598,14 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     };
     final size = await newFile.length();
     await for (final entity in directory.list(followLinks: false)) {
+      final existingName = _baseName(entity.path);
+      // Files saved before names were bounded keep their longer name.
       if (entity is! File ||
           entity.path == newFile.path ||
-          !candidateNames.contains(_baseName(entity.path).toLowerCase())) {
+          !(candidateNames.contains(existingName.toLowerCase()) ||
+              candidateNames.contains(DownloadFileNamePolicy.boundedName(
+                existingName,
+              ).toLowerCase()))) {
         continue;
       }
       try {

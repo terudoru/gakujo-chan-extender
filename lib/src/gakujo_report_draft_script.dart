@@ -778,7 +778,6 @@ class GakujoReportDraftScript {
     // The v0.70 lookup hashes the page once per counter value; one search per
     // page is enough, since a found draft moves to the v2 key.
     if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {
-      doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
       var legacyFields = legacyDraft.fields(doc);
       var oldDraft = null;
       legacyDraft.keys(doc, legacyFields).some(function(candidate) {
@@ -786,6 +785,9 @@ class GakujoReportDraftScript {
         legacyKey = oldDraft ? candidate : null;
         return !!oldDraft;
       });
+      // Only a search that found nothing is final; a found draft is marked
+      // once it has been moved to the v2 key below.
+      if (!oldDraft) doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
       if (oldDraft && Array.isArray(oldDraft.fields)) {
         var oldByKey = Object.create(null);
         oldDraft.fields.forEach(function(item) {
@@ -885,6 +887,7 @@ class GakujoReportDraftScript {
     // Keep the original until the converted answers (including conflicts) persist.
     if (legacyKey && writeDraft(store, key, draft)) {
       removeDraft(store, legacyKey);
+      doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
     }
     if (conflict) {
       ensureStatus(doc, store, key);
