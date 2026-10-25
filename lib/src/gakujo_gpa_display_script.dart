@@ -383,6 +383,19 @@ class GakujoGpaDisplayScript {
     addGradeSortButton('mbg-grade-score-button', '得点でソート', sortByScore);
   }
 
+  // Recognised, pass/fail, cancelled and in-progress courses are not graded,
+  // even when the GP column shows a number.
+  function isOutsideGpa(cells) {
+    for (var i = 0; i < cells.length; i += 1) {
+      var text = String(cells[i] && (cells[i].innerText || cells[i].textContent) || '')
+        .replace(/\s+/g, '');
+      if (/^(認定|合|否|合格|不合格|取消|履修取消|履修中|保留)$/.test(text)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function updateDocument(documentRef) {
     var gradeTable = findGradeTable(documentRef);
     if (!gradeTable) {
@@ -402,7 +415,8 @@ class GakujoGpaDisplayScript {
       var gpCell = cells[gradeTable.gpIndex];
       var credits = numberFromCell(unitCell);
       var gp = numberFromCell(gpCell);
-      if (!isFinite(credits) || credits <= 0 || !isFinite(gp)) {
+      if (!isFinite(credits) || credits <= 0 || !isFinite(gp) ||
+          isOutsideGpa(cells)) {
         continue;
       }
       weightedGp += credits * gp;

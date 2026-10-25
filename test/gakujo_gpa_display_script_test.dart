@@ -131,6 +131,7 @@ void main() {
     expect(grades['initialText'], 'GPA:4.0000');
     expect(grades['afterGpChange'], 'GPA:3.0000');
     expect(grades['afterAddingRow'], 'GPA:2.0000');
+    expect(grades['withRecognisedCourse'], 'GPA:4.0000');
     expect(grades['gpaDisplayCount'], 1);
     expect(grades['controlCount'], 3);
   });
@@ -470,8 +471,9 @@ function createPage({hasGradeTable = true} = {}) {
     for (const callback of callbacks) callback();
   }
 
-  function addRow(credits = '2', gp = '1') {
+  function addRow(credits = '2', gp = '1', evaluation = '') {
     const cells = Array.from({length: 13}, () => cell(''));
+    cells[10].innerText = cells[10].textContent = evaluation;
     cells[8].innerText = cells[8].textContent = credits;
     cells[12].innerText = cells[12].textContent = gp;
     rows.push({cells, children: cells});
@@ -546,6 +548,12 @@ const afterGpChange = gradePage.gpaText();
 gradePage.addRow();
 gradePage.tickInterval();
 const afterGradeRowAdded = gradePage.gpaText();
+// A recognised course shows GP 0 but is not graded.
+const recognisedPage = createPage();
+run(buildScript, recognisedPage);
+recognisedPage.addRow('2', '0', '認定');
+recognisedPage.tickInterval();
+const withRecognisedCourse = recognisedPage.gpaText();
 
 const mutatedPage = createPage({hasGradeTable: false});
 run(buildScript, mutatedPage);
@@ -651,6 +659,7 @@ process.stdout.write(JSON.stringify({
   },
   gradeUpdates: {
     initialText, afterGpChange, afterAddingRow: afterGradeRowAdded,
+    withRecognisedCourse,
     gpaDisplayCount: gradePage.snapshot().gpaDisplayCount,
     controlCount: gradePage.snapshot().controlIds.length
   },
