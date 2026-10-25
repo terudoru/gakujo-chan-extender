@@ -2374,6 +2374,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 previousSettings,
                 wizardSettings,
               );
+              // Startup may already have booked reminders before setup; turning
+              // notifications off here must cancel them.
+              unawaited(_syncReminders());
               if (!dialogContext.mounted) {
                 return;
               }
