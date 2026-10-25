@@ -1056,6 +1056,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
   late final GakujoOfflineRetry _offlineRetry;
+  bool _offlineRetryPausedInBackground = false;
   // Reloads since the last successful Gakujo page. The probe can reach the
   // host while the WebView still fails (proxy, captive portal), so cap it.
   int _offlineAutoReloads = 0;
@@ -1214,6 +1215,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Do not probe the network every few seconds while the app is in the
+    // background; check again once it is back.
+    if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
+      _offlineRetry.cancel();
+      _offlineRetryPausedInBackground = true;
+    } else if (state == AppLifecycleState.resumed &&
+        _offlineRetryPausedInBackground) {
+      _offlineRetryPausedInBackground = false;
+      _offlineRetry.start();
+    }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_resumeNotificationsAndRefresh());
     }
