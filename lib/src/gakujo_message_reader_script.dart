@@ -4,7 +4,7 @@ class GakujoMessageReaderScript {
   static String build() {
     return r'''
 (function() {
-  var version = 6;
+  var version = 7;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -194,14 +194,32 @@ class GakujoMessageReaderScript {
   }
 
   async function markRead(url) {
+    var controller = typeof AbortController === 'function'
+      ? new AbortController() : null;
+    var timeoutId;
     try {
-      var response = await fetch(url, { credentials: 'include' });
-      if (response.ok) {
-        return !isSessionLostPage(await response.text());
-      }
-      return false;
+      return await Promise.race([
+        (async function() {
+          var response = await fetch(url, {
+            credentials: 'include',
+            signal: controller ? controller.signal : undefined
+          });
+          if (response.ok) {
+            return !isSessionLostPage(await response.text());
+          }
+          return false;
+        })(),
+        new Promise(function(resolve) {
+          timeoutId = window.setTimeout(function() {
+            resolve(false);
+            if (controller) controller.abort();
+          }, 15000);
+        })
+      ]);
     } catch (e) {
       // Fall through to the iframe request.
+    } finally {
+      window.clearTimeout(timeoutId);
     }
     if (disposed) {
       return false;

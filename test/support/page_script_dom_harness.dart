@@ -31,7 +31,8 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
 Future<Map<String, dynamic>> evaluateMessageReaderScript({
   required String buildScript,
   required List<int?> fetchStatuses,
-  List<String> fetchBodies = const [],
+  List<String?> fetchBodies = const [],
+  bool supportsAbortController = true,
   List<bool> iframeOutcomes = const [],
   String? inputValue,
   String? inputValueAfterArming,
@@ -45,6 +46,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   final scenario = jsonEncode({
     'fetchStatuses': fetchStatuses,
     'fetchBodies': fetchBodies,
+    'supportsAbortController': supportsAbortController,
     'iframeOutcomes': iframeOutcomes,
     'inputValue': inputValue,
     'inputValueAfterArming': inputValueAfterArming,
@@ -231,6 +233,7 @@ function createPage() {
   let fetchCallCount = 0;
   let frameCallCount = 0;
   const fetchUrls = [];
+  const fetchSignals = [];
   const activeIntervals = new Set();
   const activeTimeouts = new Map();
   const fetchStatuses = scenario ? [...scenario.fetchStatuses] : [200];
@@ -307,9 +310,9 @@ function createPage() {
       activeIntervals.add(id);
       return id;
     },
-    setTimeout(callback) {
+    setTimeout(callback, delay) {
       const id = nextTimeoutId++;
-      activeTimeouts.set(id, callback);
+      activeTimeouts.set(id, {callback, delay});
       return id;
     },
     clearTimeout(id) { activeTimeouts.delete(id); }
@@ -321,21 +324,30 @@ function createPage() {
     document,
     location,
     URL,
-    fetch: async function(url) {
+    AbortController: scenario?.supportsAbortController === false ? undefined : AbortController,
+    fetch: async function(url, options) {
       fetchCallCount += 1;
       fetchUrls.push(String(url));
+      fetchSignals.push(options?.signal);
       const status = fetchStatuses.shift();
       if (status === null) throw new Error('simulated fetch failure');
-      const body = fetchBodies.shift() || '<html><body>連絡通知</body></html>';
-      return {ok: status >= 200 && status < 300, status, text: async () => body};
+      // A null body models a response stream that never finishes.
+      const body = fetchBodies.shift();
+      return {
+        ok: status >= 200 && status < 300, status,
+        text: () => body === null ? new Promise(() => {}) :
+          Promise.resolve(body || '<html><body>連絡通知</body></html>')
+      };
     },
     console: {log() {}}
   };
 
-  function flushTimeouts() {
-    const callbacks = [...activeTimeouts.values()];
-    activeTimeouts.clear();
-    for (const callback of callbacks) callback();
+  function flushTimeouts(delay) {
+    for (const [id, timer] of [...activeTimeouts]) {
+      if (delay !== undefined && timer.delay !== delay) continue;
+      activeTimeouts.delete(id);
+      timer.callback();
+    }
   }
 
   function snapshot() {
@@ -352,7 +364,9 @@ function createPage() {
       reloadCount,
       fetchCallCount,
       fetchUrls,
+      abortedFetchCount: fetchSignals.filter(signal => signal?.aborted).length,
       frameCallCount,
+      buttonDisabled: !!document.getElementById('mbg-read-button')?.disabled,
       buttonText: document.getElementById('mbg-read-button')?.textContent,
       timeoutIds: [...activeTimeouts.keys()],
       globalMarkers: Object.keys(window)
@@ -390,11 +404,17 @@ async function main() {
     }
     for (let i = 0; i < scenario.clickCount; i += 1) reads.push(button.click());
     if (scenario.teardownDuringRead) run(teardownScript, injectedPage);
+    let beforeTimeout;
+    if (scenario.fetchBodies?.includes(null)) {
+      await Promise.resolve();
+      beforeTimeout = injectedPage.snapshot();
+      injectedPage.flushTimeouts(15000);
+    }
     await Promise.all(reads);
     if (scenario.teardownAfterRead) run(teardownScript, injectedPage);
     injectedPage.flushTimeouts();
     process.stdout.write(JSON.stringify({
-      ...injectedPage.snapshot(), afterArming, afterCountChange
+      ...injectedPage.snapshot(), afterArming, afterCountChange, beforeTimeout
     }));
     return;
   }

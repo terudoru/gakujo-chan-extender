@@ -638,8 +638,15 @@ class MainActivity : FlutterActivity() {
             type = mimeType
             putExtra(Intent.EXTRA_TITLE, fileName)
         }
-        @Suppress("DEPRECATION")
-        startActivityForResult(intent, REQUEST_EXPORT_FILE)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_EXPORT_FILE)
+        } catch (error: Exception) {
+            pendingExportResult = null
+            pendingExportBytes = null
+            pendingExportFileName = null
+            result.error("picker_failed", error.message ?: "保存先選択を開けませんでした", null)
+        }
     }
 
     private fun handleExportFileResult(resultCode: Int, data: Intent?) {
@@ -696,8 +703,13 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
         }
-        @Suppress("DEPRECATION")
-        startActivityForResult(intent, REQUEST_PICK_DOWNLOAD_ROOT)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_PICK_DOWNLOAD_ROOT)
+        } catch (error: Exception) {
+            pendingPickRootResult = null
+            result.error("picker_failed", error.message ?: "フォルダ選択を開けませんでした", null)
+        }
     }
 
     private fun handlePickDownloadRootResult(resultCode: Int, data: Intent?) {
@@ -859,8 +871,14 @@ class MainActivity : FlutterActivity() {
             putExtra(Intent.EXTRA_TITLE, suggestedName)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
-        @Suppress("DEPRECATION")
-        startActivityForResult(intent, REQUEST_CREATE_DOWNLOAD_FILE)
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_CREATE_DOWNLOAD_FILE)
+        } catch (error: Exception) {
+            pendingPickFileResult = null
+            pendingPickFileArgs = null
+            result.error("picker_failed", error.message ?: "保存先選択を開けませんでした", null)
+        }
     }
 
     private fun performDownload(

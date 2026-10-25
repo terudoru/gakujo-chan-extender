@@ -16,7 +16,7 @@ void main() {
     expect(script, contains("doc.querySelector('table.normal:nth-child(9)')"));
     expect(script, contains('指定した個数を既読にする'));
     expect(script, contains('既読にする数(半角数字)'));
-    expect(script, contains("fetch(url, { credentials: 'include' })"));
+    expect(script, contains("credentials: 'include'"));
     expect(script, contains('if (response.ok)'));
     expect(script, contains('markReadWithFrame(url)'));
     expect(script, contains('location.reload()'));
@@ -76,6 +76,26 @@ void main() {
 
     expect(result['statusText'], '1件を既読にしました（失敗1件）');
     expect(result['reloadCount'], 0);
+  });
+
+  test('a stalled response body times out and re-enables the read button',
+      () async {
+    for (final supportsAbortController in [true, false]) {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [200],
+        fetchBodies: [null],
+        supportsAbortController: supportsAbortController,
+      );
+
+      expect(result['beforeTimeout']['buttonDisabled'], isTrue);
+      expect(result['buttonDisabled'], isFalse);
+      expect(result['statusText'], '0件を既読にしました（失敗1件）');
+      expect(result['abortedFetchCount'], supportsAbortController ? 1 : 0);
+      expect(result['frameCallCount'], 0);
+      expect(result['reloadCount'], 0);
+      expect(result['timeoutIds'], isEmpty);
+    }
   });
 
   test('does not count the iframe initial about:blank load as success',

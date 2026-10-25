@@ -1623,6 +1623,61 @@ void main() {
     });
   });
 
+  test('official export timeout reaches the message and navigation cleanup',
+      () {
+    final source =
+        File('lib/src/gakujo_web_app_calendar.dart').readAsStringSync();
+    final fetch = source.substring(
+      source.indexOf(
+          'Future<_OfficialScheduleExportFetch> _runOfficialScheduleExportFetchScript('),
+      source.indexOf('Future<bool> _openOfficialGoogleScheduleIntegration('),
+    );
+    expect(
+      fetch,
+      matches(RegExp(
+        r'\.runJavaScriptReturningResult\([\s\S]*?'
+        r'GakujoCalendarExport\.officialScheduleExportFetchScript\([\s\S]*?'
+        r'\)\s*\.timeout\(const Duration\(seconds: 90\)\)',
+      )),
+    );
+    final read = source.substring(
+      source.indexOf(
+          'Future<GakujoCalendarExtraction?> _readOfficialGoogleScheduleAfterActivation('),
+      source.indexOf(
+          'Future<GakujoCalendarExtraction?> _readOfficialScheduleExportAfterExecution('),
+    );
+    expect(
+      read,
+      matches(RegExp(
+        r'on TimeoutException \{\s*_nextPageFinishedCompleter = null;\s*'
+        r'rethrow;\s*\} on Object catch',
+      )),
+    );
+    final export = source.substring(
+      source.indexOf('Future<void> _exportCurrentScheduleToCalendar('),
+      source.indexOf('Future<void> _showCalendarSourceMissingMessage('),
+    );
+    expect(
+      export,
+      matches(RegExp(
+        r"on TimeoutException \{\s*_showSnackBar\('"
+        r'学務からの応答がないため、カレンダーの処理を中止しました。もう一度お試しください'
+        r"'\);\s*\} on Object catch",
+      )),
+    );
+    final dialog = source.substring(
+      source.indexOf('Future<void> _showScheduleIntegrationDialog('),
+      source.indexOf('_runOfficialGoogleScheduleIntegrationScript({'),
+    );
+    expect(
+      dialog,
+      matches(RegExp(
+        r'finally \{\s*controllerToDispose\?\.dispose\(\);\s*'
+        r'await _finishPageNavigationOperation\(\);',
+      )),
+    );
+  });
+
   test('calendar operation gate rejects a concurrent operation', () {
     final gate = GakujoCalendarOperationGate();
 

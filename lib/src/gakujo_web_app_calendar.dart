@@ -589,6 +589,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         error: error,
       );
       _showSnackBar('カレンダー用ファイルを作成できませんでした: ${error.message ?? error.code}');
+    } on TimeoutException {
+      _showSnackBar('学務からの応答がないため、カレンダーの処理を中止しました。もう一度お試しください');
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to export calendar file',
@@ -1162,12 +1164,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   Future<_OfficialScheduleExportFetch> _runOfficialScheduleExportFetchScript({
     GakujoCalendarTermRange? termRange,
   }) async {
-    final result = await _controller.runJavaScriptReturningResult(
-      GakujoCalendarExport.officialScheduleExportFetchScript(
-        startDate: termRange == null ? '' : _formatDate(termRange.start),
-        endDate: termRange == null ? '' : _formatDate(termRange.end),
-      ),
-    );
+    final result = await _controller
+        .runJavaScriptReturningResult(
+          GakujoCalendarExport.officialScheduleExportFetchScript(
+            startDate: termRange == null ? '' : _formatDate(termRange.start),
+            endDate: termRange == null ? '' : _formatDate(termRange.end),
+          ),
+        )
+        .timeout(const Duration(seconds: 90));
     return _OfficialScheduleExportFetch.fromJson(
       _stringFromJavaScriptResult(result),
     );
@@ -1979,6 +1983,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
       _nextPageFinishedCompleter = null;
       return null;
+    } on TimeoutException {
+      _nextPageFinishedCompleter = null;
+      rethrow;
     } on Object catch (error, stackTrace) {
       _nextPageFinishedCompleter = null;
       developer.log(
