@@ -225,7 +225,9 @@ void main() {
       });
     }
 
-    for (final granted in <bool?>[false, null]) {
+    // An unknown state (null) falls back to the platform's silent request;
+    // see 'platforms that cannot report permission still book on refresh'.
+    for (final granted in <bool?>[false]) {
       test('resume and its refresh do not prompt when permission is $granted',
           () async {
         final service = GakujoNotificationService(now: () => now);
@@ -259,6 +261,42 @@ void main() {
             calls.map((call) => call.method), everyElement('checkPermission'));
       });
     }
+
+    test('platforms that cannot report permission still book on refresh',
+        () async {
+      final service = GakujoNotificationService(now: () => now);
+      final notifications = await coordinator(service);
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_channel, (call) async {
+        calls.add(call);
+        // Windows and Apple runners do not implement checkPermission.
+        if (call.method == 'checkPermission') throw MissingPluginException();
+        return true;
+      });
+      await notifications.syncReminders(
+        notificationsEnabled: true,
+        topics: topics,
+        preferences: preferences,
+        allowPermissionRequest: false,
+      );
+      expect(calls.map((call) => call.method), contains('scheduleReminders'));
+    });
+
+    test('an Android check before the first prompt does not block the prompt',
+        () async {
+      final service = GakujoNotificationService(now: () => now);
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_channel, (call) async {
+        calls.add(call);
+        // Android 13+ reports "not enabled" until the student is asked.
+        return call.method == 'checkPermission' ? false : true;
+      });
+      expect(await service.checkPermission(), isFalse);
+      expect(await service.requestPermission(), isTrue);
+      expect(calls.map((call) => call.method), contains('requestPermission'));
+    });
 
     test('resume respects the app notification switch', () async {
       final service = GakujoNotificationService(now: () => now);

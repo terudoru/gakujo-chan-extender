@@ -10,6 +10,19 @@ class GakujoDocumentPermissionsTest {
         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
     @Test
+    fun reselectingTheSameTreeInAnotherFormKeepsItsGrant() {
+        var released = false
+        GakujoDocumentPermissions.replaceRoot(
+            "content://0@com.android.externalstorage.documents/tree/primary%3ADocuments",
+            "content://com.android.externalstorage.documents/tree/primary:Documents",
+            persist = {},
+            release = { released = true },
+            onReleaseDenied = { fail("Nothing should be released") }
+        )
+        assertEquals(false, released)
+    }
+
+    @Test
     fun replacingRootPersistsTheNewGrantBeforeReleasingOnlyTheOldRoot() {
         val oldRoot = "content://provider/tree/old"
         val newRoot = "content://provider/tree/new"

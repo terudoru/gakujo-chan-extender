@@ -3,6 +3,15 @@ package net.yoshida.morebettergakujo
 import android.content.Intent
 
 internal object GakujoDocumentPermissions {
+    /** Android stores user-0 grants without the "0@" authority prefix. */
+    fun sameGrant(first: String, second: String): Boolean {
+        fun normalized(uri: String) = java.net.URLDecoder.decode(
+            uri.replace(Regex("""^content://\d+@"""), "content://").replace("+", "%2B"),
+            "UTF-8"
+        ).trimEnd('/')
+        return normalized(first) == normalized(second)
+    }
+
     fun replaceRoot(
         previousUri: String?,
         newUri: String,
@@ -11,7 +20,7 @@ internal object GakujoDocumentPermissions {
         onReleaseDenied: (SecurityException) -> Unit
     ) {
         persist()
-        if (previousUri.isNullOrBlank() || previousUri == newUri) {
+        if (previousUri.isNullOrBlank() || sameGrant(previousUri, newUri)) {
             return
         }
         try {

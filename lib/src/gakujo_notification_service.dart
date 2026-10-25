@@ -345,8 +345,10 @@ class GakujoNotificationService {
       // Older or unsupported platforms leave the state unknown.
     }
     permissionGranted.value = granted;
-    if (granted != null) {
-      _permissionRefused = !granted;
+    // Android reports "not enabled" before the first prompt too, so only a
+    // grant may clear an earlier refusal; it never records one itself.
+    if (granted == true) {
+      _permissionRefused = false;
     }
     return granted;
   }
@@ -511,9 +513,13 @@ class GakujoDeadlineNotificationCoordinator {
   Future<void> _pendingNotificationOperation = Future<void>.value();
 
   Future<bool> _hasPermission(bool allowPermissionRequest) async {
-    return allowPermissionRequest
-        ? await _notificationService.requestPermission()
-        : await _notificationService.checkPermission() == true;
+    if (allowPermissionRequest) {
+      return _notificationService.requestPermission();
+    }
+    // Windows and Apple cannot report the state without asking; their
+    // requestPermission answers silently once the student has decided.
+    return await _notificationService.checkPermission() ??
+        await _notificationService.requestPermission();
   }
 
   /// Rebooks cached assignments immediately when OS settings granted access.
