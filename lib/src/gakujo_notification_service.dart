@@ -489,6 +489,19 @@ class GakujoNotificationService {
       _inAppReminderCheck = null;
     }
     final reminder = booked.reminder;
+    // After sleep several offsets of one assignment are overdue together;
+    // only the most urgent one is worth showing.
+    final now = _now();
+    final supersededBy = _inAppReminders.values.any(
+      (other) =>
+          other.reminder.assignmentId != null &&
+          other.reminder.assignmentId == reminder.assignmentId &&
+          other.reminder.at.isAfter(reminder.at) &&
+          !other.reminder.at.isAfter(now),
+    );
+    if (supersededBy) {
+      return;
+    }
     final onInAppReminder = _onInAppReminder;
     if (onInAppReminder != null) {
       unawaited(onInAppReminder(reminder));

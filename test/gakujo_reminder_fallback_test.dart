@@ -117,6 +117,35 @@ void main() {
     await service.scheduleReminders(const []);
   });
 
+  testWidgets(
+      'after sleep only the most urgent reminder of an assignment shows',
+      (tester) async {
+    answer(booksAhead: false);
+    var now = DateTime(2099, 10, 28, 12);
+    final service = GakujoNotificationService(now: () => now);
+
+    GakujoReminder at(int id, String title, DateTime time) => GakujoReminder(
+          id: id,
+          title: title,
+          body: '',
+          url: '',
+          at: time,
+          assignmentId: 'レポート|263T0506|レポート２',
+        );
+    await service.scheduleReminders([
+      at(1, '【あと1日】レポート２', DateTime(2099, 10, 29, 8, 45)),
+      at(2, '【あと1時間】レポート２', DateTime(2099, 10, 30, 7, 45)),
+    ]);
+    // The computer sleeps until both offsets have passed.
+    now = DateTime(2099, 10, 30, 8, 15);
+    await tester.pump(const Duration(minutes: 1));
+
+    final shown = calls.where((call) => call.method == 'notifyDeadline');
+    expect(shown.map((call) => (call.arguments as Map)['title']),
+        ['【あと1時間】レポート２']);
+    await service.scheduleReminders(const []);
+  });
+
   testWidgets('where the OS books ahead, the app does not remind as well',
       (tester) async {
     answer(booksAhead: true);

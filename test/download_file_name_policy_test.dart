@@ -14,6 +14,24 @@ void main() {
     expect(name, '授業資料.pdf');
   });
 
+  test('bounds very long names and keeps the extension', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      preferredName: 'あ' * 252,
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+      mimeType: 'application/pdf',
+    );
+    expect(name.length, lessThanOrEqualTo(200));
+    expect(name, endsWith('.pdf'));
+    expect(DownloadFileNamePolicy.uniqueName(name, {name}).length,
+        lessThanOrEqualTo(255));
+
+    // An emoji (surrogate pair) at the cut point is not split.
+    final emoji = DownloadFileNamePolicy.boundedName('${'a' * 195}😀😀😀.pdf');
+    expect(emoji.length, lessThanOrEqualTo(200));
+    expect(emoji, endsWith('.pdf'));
+    expect(emoji.runes.every((rune) => rune < 0xD800 || rune > 0xDFFF), isTrue);
+  });
+
   test('prefers the frontend display name over a different server name', () {
     final name = DownloadFileNamePolicy.safeFileName(
       preferredName: '画面表示の第1回講義資料',

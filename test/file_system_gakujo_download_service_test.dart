@@ -473,7 +473,7 @@ void main() {
     }
   });
 
-  test('a 255-character collision saves and reuses the shortened suffix name',
+  test('a 255-character name is shortened, saved once and reused',
       () async {
     final directory = await Directory.systemTemp.createTemp('mbg-download-');
     try {
@@ -494,8 +494,9 @@ void main() {
         request,
         saveMode: DownloadSaveMode.flatToConfiguredFolder,
       );
-      expect(first.fileName, '${base.substring(0, 247)} (1).pdf');
-      expect(first.fileName.length, 255);
+      // Names are bounded below the 255-unit limit before any collision.
+      expect(first.fileName, '${base.substring(0, 196)}.pdf');
+      expect(first.fileName.length, 200);
       expect(await File(first.location!).readAsBytes(), [1, 2, 3]);
       final second = await service.download(
         request,

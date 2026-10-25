@@ -24,12 +24,40 @@ class DownloadFileNamePolicy {
     final displayedName = _isUsefulDisplayedName(preferred) ? preferred : null;
     final base =
         displayedName ?? disposition ?? usableUrlName ?? fallbackBaseName;
-    return _withExtension(
+    return boundedName(_withExtension(
       base,
       contentDispositionName: disposition,
       mimeType: mimeType,
       urlName: usableUrlName,
-    );
+    ));
+  }
+
+  /// Longest file name kept, in UTF-16 units. Windows and most providers stop
+  /// at 255 per component; the margin leaves room for a ' (n)' suffix.
+  static const maxFileNameLength = 200;
+
+  /// Shortens the base name (never the extension) to [maxFileNameLength].
+  static String boundedName(String name) {
+    if (name.length <= maxFileNameLength) {
+      return name;
+    }
+    final dot = name.lastIndexOf('.');
+    final hasExtension =
+        dot > 0 && dot < name.length - 1 && name.length - dot <= 16;
+    final base = hasExtension ? name.substring(0, dot) : name;
+    final extension = hasExtension ? name.substring(dot) : '';
+    final limit = maxFileNameLength - extension.length;
+    final shortened = StringBuffer();
+    // Dart lengths count UTF-16 units; never cut between a surrogate pair.
+    for (final rune in base.runes) {
+      final character = String.fromCharCode(rune);
+      if (shortened.length + character.length > limit) {
+        break;
+      }
+      shortened.write(character);
+    }
+    final trimmed = shortened.toString().replaceAll(RegExp(r'[ .]+$'), '');
+    return '${trimmed.isEmpty ? fallbackBaseName : trimmed}$extension';
   }
 
   static String safeFolderName(String? name) {
