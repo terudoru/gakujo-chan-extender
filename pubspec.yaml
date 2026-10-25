@@ -24,6 +24,9 @@ dependencies:
   image_picker: ^1.2.4
 
 dependency_overrides:
+  # 0.3.2 with a macOS keychain readAll fix; see third_party/flutter_secure_storage_darwin.
+  flutter_secure_storage_darwin:
+    path: third_party/flutter_secure_storage_darwin
   # 4.2.2 with Windows data-loss fixes; see third_party/flutter_secure_storage_windows.
   flutter_secure_storage_windows:
     path: third_party/flutter_secure_storage_windows

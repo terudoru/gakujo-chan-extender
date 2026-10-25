@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class MigratingSecureStorage extends FlutterSecureStorage {
@@ -627,7 +628,8 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         wOptions: wOptions,
       );
       return true;
-    } on Object {
+    } on Object catch (error) {
+      debugPrint('Secure-storage migration failed: $error');
       return false;
     }
   }
