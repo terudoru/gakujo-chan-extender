@@ -159,6 +159,7 @@ window.setTimeout = function(callback) {
     for (final message in [
       'ロックされています',
       'アカウントはロック中です',
+      'ログインIDはロック中です',
       'パスワードの有効期限が切れました',
       'パスワードが期限切れです',
       'パスワードを変更してください',

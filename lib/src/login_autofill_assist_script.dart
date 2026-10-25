@@ -154,7 +154,7 @@ class LoginAutofillAssistScript {
   function hasLoginLockout() {
     // Scoped to the account or password: login pages also carry unrelated
     // notices about certificates or deadlines that expire.
-    return hasLoginMessage(/(アカウント|ユーザー?id|ユーザ).{0,20}(ロックされ|ロック中)|ロックされています|パスワード.{0,20}(有効期限が切れ|期限切れ|期限が過ぎ)|パスワードを変更してください|パスワード.{0,10}変更が必要/);
+    return hasLoginMessage(/(アカウント|ユーザー?id|ユーザ|ログインid|ログイン|id).{0,20}(ロックされ|ロック中)|ロックされています|パスワード.{0,20}(有効期限が切れ|期限切れ|期限が過ぎ)|パスワードを変更してください|パスワード.{0,10}変更が必要/);
   }
 
   function shouldBlockAutoSubmit() {
