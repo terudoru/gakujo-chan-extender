@@ -136,6 +136,18 @@ void main() {
     expect(grades['controlCount'], 3);
   });
 
+  test('reports no GPA until a course is graded', () async {
+    final result = await _evaluateGpaDisplayLifecycle(
+      buildScript: GakujoGpaDisplayScript.build(),
+      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+    );
+    final report = result['gpaReport'] as Map<String, dynamic>;
+
+    expect(report['withoutGrades'], isEmpty);
+    expect(report['withoutGradesText'], isNull);
+    expect(report['afterFirstGrade'], ['{"gpa":2.5}']);
+  });
+
   test('reports GPA once and skips unchanged grades', () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
@@ -583,6 +595,21 @@ reportingPage.context.window.__MBG_UPDATE_GPA_DISPLAY();
 gpaReport.afterUnchangedUpdate = [...reportedMessages];
 run(teardownScript, reportingPage);
 gpaReport.afterTeardown = reportingPage.snapshot();
+
+// A first-year student has only in-progress courses with blank GP.
+const ungradedPage = createPage();
+const ungradedReports = [];
+ungradedPage.context.window.GakujoGpaReport = {
+  postMessage(message) { ungradedReports.push(message); }
+};
+ungradedPage.setGp('');
+ungradedPage.addRow('2', '', '履修中');
+run(buildScript, ungradedPage);
+gpaReport.withoutGrades = [...ungradedReports];
+gpaReport.withoutGradesText = ungradedPage.gpaText();
+ungradedPage.setGp('2.5');
+ungradedPage.tickInterval();
+gpaReport.afterFirstGrade = [...ungradedReports];
 
 // A recognised course shows GP 0 but is not graded.
 const recognisedPage = createPage();
