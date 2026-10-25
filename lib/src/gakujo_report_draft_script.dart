@@ -775,7 +775,10 @@ class GakujoReportDraftScript {
   function restoreDraft(doc, store, key, fields, force) {
     var draft = readDraft(store, key);
     var legacyKey = null;
-    if (!draft) {
+    // The v0.70 lookup hashes the page once per counter value; one search per
+    // page is enough, since a found draft moves to the v2 key.
+    if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {
+      doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
       var legacyFields = legacyDraft.fields(doc);
       var oldDraft = null;
       legacyDraft.keys(doc, legacyFields).some(function(candidate) {
