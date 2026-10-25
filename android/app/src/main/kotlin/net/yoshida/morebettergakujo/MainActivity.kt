@@ -416,12 +416,22 @@ class MainActivity : FlutterActivity() {
     private var pendingCalendarCall: MethodCall? = null
     private var notificationsChannel: MethodChannel? = null
     private var pendingNotificationUrl: String? = null
+    private var consumedNotificationUrl: String? = null
     private val downloadFolderLock = Any()
     private val calendarOperationLock = Any()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A recreated activity keeps its launch Intent; do not reopen a tap
+        // that was already handled before the process was killed.
+        consumedNotificationUrl = savedInstanceState?.getString(KEY_CONSUMED_NOTIFICATION_URL)
         pendingNotificationUrl = notificationUrlFromIntent(intent)
+            ?.takeIf { it != consumedNotificationUrl }
         super.onCreate(savedInstanceState)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        consumedNotificationUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -436,6 +446,7 @@ class MainActivity : FlutterActivity() {
                 override fun success(result: Any?) {
                     if (result == true && pendingNotificationUrl == url) {
                         pendingNotificationUrl = null
+                        consumedNotificationUrl = url
                     }
                 }
 
@@ -507,6 +518,7 @@ class MainActivity : FlutterActivity() {
                     "takePendingNotificationUrl" -> {
                         val url = pendingNotificationUrl
                         pendingNotificationUrl = null
+                        if (url != null) consumedNotificationUrl = url
                         result.success(url)
                     }
                     else -> result.notImplemented()
@@ -712,7 +724,9 @@ class MainActivity : FlutterActivity() {
                     contentResolver.takePersistableUriPermission(uri, data.flags and flags)
                     prefs().edit().putString(KEY_DOWNLOAD_ROOT_URI, uri.toString()).apply()
                 },
-                release = { contentResolver.releasePersistableUriPermission(Uri.parse(it), flags) },
+                // Download history still opens documents under the previous
+                // folder, and folder-mode files get no grant of their own.
+                release = {},
                 onReleaseDenied = { Log.w(TAG, "Failed to release previous download root permission", it) }
             )
             result.success(downloadRootState())
@@ -2120,6 +2134,7 @@ class MainActivity : FlutterActivity() {
         const val REQUEST_EXPORT_FILE = 2005
         const val PREFS_NAME = "morebettergakujo_downloads"
         const val KEY_DOWNLOAD_ROOT_URI = "download_root_uri"
+        const val KEY_CONSUMED_NOTIFICATION_URL = "consumed_notification_url"
         const val KEY_CALENDAR_SYNC_RANGE_PREFIX = "calendar_sync_range_"
         const val KEY_CALENDAR_NAMESPACE_CLEANUP_PREFIX = "calendar_namespace_cleanup_"
     }
