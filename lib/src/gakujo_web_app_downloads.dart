@@ -113,6 +113,36 @@ bool opensSavedDownloadNatively(Uri uri, TargetPlatform platform) {
 }
 
 @visibleForTesting
+Future<void> openGakujoSavedDownload(
+  String location, {
+  required TargetPlatform platform,
+  required Future<bool> Function(Uri uri) openNative,
+  required Future<bool> Function(Uri uri) openExternal,
+  required ValueChanged<String> showSnackBar,
+}) async {
+  var opened = false;
+  try {
+    final uri = savedDownloadLocationUri(location);
+    if (opensSavedDownloadNatively(uri, platform)) {
+      // macOS checks existence after acquiring the folder's security scope.
+      opened = await openNative(uri);
+    } else if (uri.scheme != 'file' || File.fromUri(uri).existsSync()) {
+      opened = await openExternal(uri);
+    }
+  } catch (error, stackTrace) {
+    developer.log(
+      'Failed to open saved download',
+      name: 'MoreBetterGakujo',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+  if (!opened) {
+    showSnackBar('ファイルを開けませんでした');
+  }
+}
+
+@visibleForTesting
 Future<bool> recordGakujoDownloadMetadataBestEffort({
   required GakujoDownloadHistoryStore historyStore,
   required GakujoDownloadHistoryEntry historyEntry,
@@ -743,6 +773,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     GakujoDownloadRequest request, {
     String? retryEntryId,
   }) async {
+    if (retryEntryId != null && request.requiresPageReopenForRetry) {
+      _showSnackBar('ページを開き直してから、もう一度ダウンロードしてください');
+      return;
+    }
     if (!AllowedWebOrigins.canLoad(
       request.url,
       debugAllowed: _debugAllowed,
@@ -1046,13 +1080,14 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   Future<void> _openSavedDownload(String location) async {
-    final uri = savedDownloadLocationUri(location);
-    final launched = opensSavedDownloadNatively(uri, defaultTargetPlatform)
-        ? await _openSavedDownloadNatively(uri)
-        : await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched) {
-      _showSnackBar('ファイルを開けませんでした');
-    }
+    await openGakujoSavedDownload(
+      location,
+      platform: defaultTargetPlatform,
+      openNative: _openSavedDownloadNatively,
+      openExternal: (uri) =>
+          launchUrl(uri, mode: LaunchMode.externalApplication),
+      showSnackBar: _showSnackBar,
+    );
   }
 
   Future<bool> _openSavedDownloadNatively(Uri uri) async {

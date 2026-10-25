@@ -117,6 +117,81 @@ void main() {
     expect(restored.addedAt, addedAt);
   });
 
+  test('favorites and changes persist durable links across flow visits',
+      () async {
+    const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+    const pages = [
+      (
+        category: 'レポート・小テスト',
+        url: '${base}campussquare.do?_flowExecutionKey=e1s1',
+        durable: '${base}campusportal.do?page=main&tabId=en',
+      ),
+      (
+        category: '連絡通知',
+        url: '${base}campussquare.do?_flowExecutionKey=e1s1&seqNo=42',
+        durable: '${base}campussquare.do?_flowId=KJW0001100-flow&seqNo=42',
+      ),
+      (
+        category: '連絡通知',
+        url: '${base}campussquare.do?_flowExecutionKey=e1s1&seqNo=43',
+        durable: '${base}campussquare.do?_flowId=KJW0001100-flow&seqNo=43',
+      ),
+    ];
+    final now = DateTime.now();
+    FlutterSecureStorage.setMockInitialValues({
+      'more_better_gakujo_favorites': jsonEncode([
+        for (final page in pages)
+          {
+            'title': page.category,
+            'url': page.url,
+            'addedAt': now.toIso8601String(),
+          },
+      ]),
+      'more_better_gakujo_activity_changes': jsonEncode([
+        {
+          'category': '連絡通知',
+          'title': '以前の更新',
+          'url': pages[1].url,
+          'changedAt': now.toIso8601String(),
+          'previousHash': 'old',
+          'nextHash': 'new',
+        },
+      ]),
+    });
+    final store = GakujoActivityStore();
+    expect((await store.loadFavorites()).map((page) => page.url),
+        unorderedEquals(pages.map((page) => page.url)));
+    expect((await store.loadChanges()).single.title, '以前の更新');
+
+    for (final page in pages) {
+      await store.addFavorite(GakujoFavoritePage(
+        title: page.category,
+        url: page.url.replaceFirst('e1s1', 'e2s1'),
+        addedAt: now,
+      ));
+      for (final content in ['before', 'after']) {
+        await store.recordSnapshot(
+          category: page.category,
+          title: page.category,
+          url: page.url,
+          content: content,
+        );
+      }
+    }
+
+    final reloaded = GakujoActivityStore();
+    expect((await reloaded.loadFavorites()).map((page) => page.url),
+        unorderedEquals(pages.map((page) => page.durable)));
+    final changes = await reloaded.loadChanges();
+    expect(changes.where((entry) => entry.title == '以前の更新'), hasLength(1));
+    expect(
+      changes
+          .where((entry) => entry.title != '以前の更新')
+          .map((entry) => entry.url),
+      unorderedEquals(pages.map((page) => page.durable)),
+    );
+  });
+
   test('recordSnapshot treats the first scan as a baseline', () async {
     final store = GakujoActivityStore();
 

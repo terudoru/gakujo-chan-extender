@@ -1,8 +1,52 @@
-import 'package:flutter/foundation.dart';
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
+  test('missing files and launcher errors show the open-failure message',
+      () async {
+    final directory = Directory.systemTemp.createTempSync('saved_download_');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final file = File('${directory.path}/report.pdf')..writeAsStringSync('pdf');
+    final messages = <String>[];
+    var launchCalls = 0;
+    Future<void> open(String location, Future<bool> Function(Uri) launch) =>
+        openGakujoSavedDownload(
+          location,
+          platform: TargetPlatform.windows,
+          openNative: (_) async => throw StateError('unexpected native open'),
+          openExternal: (uri) {
+            launchCalls += 1;
+            return launch(uri);
+          },
+          showSnackBar: messages.add,
+        );
+
+    await open(file.path, (_) async => true);
+    expect(messages, isEmpty);
+    expect(launchCalls, 1);
+
+    file.deleteSync();
+    for (final location in [file.path, file.uri.toString()]) {
+      await open(location, (_) async => true);
+    }
+    expect(launchCalls, 1, reason: 'missing files must not reach the launcher');
+    expect(messages, List.filled(2, 'ファイルを開けませんでした'));
+
+    file.writeAsStringSync('pdf');
+    for (final error in [
+      PlatformException(code: 'open_failed'),
+      StateError('file moved after the existence check'),
+    ]) {
+      await open(file.path, (_) async => throw error);
+    }
+    await open(file.path, (_) async => false);
+    expect(launchCalls, 4);
+    expect(messages, List.filled(5, 'ファイルを開けませんでした'));
+  });
+
   test('converts Windows drive paths to file uris', () {
     final uri = savedDownloadLocationUri(r'C:\Users\student\Downloads\資料.pdf');
 

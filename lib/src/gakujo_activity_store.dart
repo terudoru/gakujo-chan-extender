@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'gakujo_activity_classifier.dart';
 import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
 import 'secure_storage_factory.dart';
@@ -296,10 +297,15 @@ class GakujoFavoritePage {
   final String url;
   final DateTime addedAt;
 
+  String get durableUrl => durableGakujoLink(
+        gakujoMessageLinkFor(url),
+        GakujoActivityClassifier.categoryFor(url: url, title: title, text: ''),
+      );
+
   Map<String, Object?> toJson() {
     return {
       'title': title,
-      'url': url,
+      'url': durableUrl,
       'addedAt': addedAt.toIso8601String(),
     };
   }
@@ -836,7 +842,7 @@ class GakujoActivityStore {
         GakujoActivityChangeEntry(
           category: category,
           title: title,
-          url: url,
+          url: durableGakujoLink(gakujoMessageLinkFor(url), category),
           changedAt: now,
           previousHash: existing.contentHash,
           nextHash: hash,
@@ -1105,8 +1111,9 @@ class GakujoActivityStore {
       return;
     }
     final favorites = favoriteRead.value;
-    final filtered =
-        favorites.where((favorite) => favorite.url != page.url).toList();
+    final filtered = favorites
+        .where((favorite) => favorite.durableUrl != page.durableUrl)
+        .toList();
     await _writeList(_favoritesKey, [page, ...filtered].take(_maxFavorites));
   }
 
