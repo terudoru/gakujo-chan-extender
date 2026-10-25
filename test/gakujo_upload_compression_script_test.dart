@@ -424,6 +424,37 @@ void main() {
     }
   });
 
+  test('releases the submit hold before a replayed change handler submits',
+      () async {
+    for (final failure in [false, true]) {
+      final result = await _run({
+        'files': [_photo],
+        'holdImage': true,
+        'imageError': failure,
+        'checkSubmission': true,
+        'submitOnChange': true,
+      });
+      expect(result['stopped'], isTrue);
+      expect(result['blockedDuring'], [true, true, true, true]);
+      expect(result['submitsDuring'], 0);
+      expect(result['replayed'], ['input', 'change']);
+      expect(result['autoSubmits'], 1);
+      expect(result['pendingOnChange'], isFalse);
+      expect(result['pending'], isFalse);
+      expect(result['blockedAfter'], [false, false, false, false]);
+      expect(result['originalsKept'], failure);
+    }
+  });
+
+  test('keeps only live submit hooks after 30 iframe document replacements',
+      () async {
+    final result = await _runNode([
+      _iframeDocumentReplacementHarness,
+      GakujoUploadCompressionScript.build(),
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+  });
+
   test('blocks programmatic submits with either download hook install order',
       () async {
     final result = await _runNode([
@@ -512,16 +543,30 @@ const input = {
   getAttribute: (name) => name === 'accept' ? (scenario.accept || null) : null,
   dispatchEvent: (event) => {
     replayed.push(event.type);
-    for (const listener of listeners) listener(event);
+    event.target = input;
+    if (event.type === 'change') {
+      for (const listener of listeners) {
+        listener(event);
+        if (event.stopped) return;
+      }
+      if (input.onchange) input.onchange(event);
+    }
   },
 };
 const originalFiles = input.files.slice();
 let autoSubmits = 0;
-const form = {
-  tagName: 'FORM', elements: [input],
-  submit() { autoSubmits++; }, requestSubmit() { autoSubmits++; },
-};
+class FakeForm {
+  constructor() { this.tagName = 'FORM'; this.elements = [input]; }
+  submit() { autoSubmits++; }
+  requestSubmit() { autoSubmits++; }
+}
+const form = new FakeForm();
 input.form = form;
+let pendingOnChange;
+if (scenario.submitOnChange) input.onchange = () => {
+  pendingOnChange = !!input.__mbgUploadCompressionPending;
+  form.submit();
+};
 const submitButton = { tagName: 'BUTTON', form };
 const submitInput = { tagName: 'INPUT', type: 'submit', form };
 const imageInput = { tagName: 'INPUT', type: 'image', form };
@@ -617,7 +662,11 @@ const context = {
   document,
   File: FakeFile,
   DataTransfer: FakeDataTransfer,
-  Event: class { constructor(type) { this.type = type; } },
+  HTMLFormElement: FakeForm,
+  Event: class {
+    constructor(type) { this.type = type; }
+    stopImmediatePropagation() { this.stopped = true; }
+  },
   WeakSet,
   Promise,
   Math,
@@ -784,7 +833,9 @@ async function settle() {
     };
   }
   for (const listener of listeners) listener(event);
+  if (!stopped && input.onchange) input.onchange(event);
   await settle();
+  const submitsDuring = autoSubmits;
   if (scenario.realPdf) {
     for (let i = 0; input.__mbgUploadCompressionPending && i < 1000; i++) {
       await new Promise(resolve => setTimeout(resolve, 5));
@@ -864,9 +915,52 @@ async function settle() {
     listenerCounts: Object.fromEntries(Object.entries(documentListeners)
       .map(([type, handlers]) => [type, handlers.length])),
     listenersCapture: Object.values(documentListeners).flat().every(({ capture }) => capture === true),
-    autoSubmits,
+    autoSubmits, submitsDuring, pendingOnChange,
   }));
 })().catch(error => { console.error(error); process.exitCode = 1; });
+''';
+
+const _iframeDocumentReplacementHarness = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const [upload] = process.argv.slice(1);
+
+function makeDocument() {
+  return {
+    defaultView: {HTMLFormElement: class {
+      submit() {}
+      requestSubmit() {}
+    }},
+    addEventListener() {},
+    querySelectorAll(selector) {
+      return this === top && selector === 'iframe,frame' ? [iframe] : [];
+    },
+  };
+}
+const top = makeDocument();
+const iframe = {contentWindow: {document: makeDocument()}};
+const window = {setInterval() { return 1; }};
+const context = vm.createContext({window, document: top});
+vm.runInContext(upload, context);
+
+function checkHooks() {
+  const liveDocuments = [top, iframe.contentWindow.document];
+  const hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES;
+  assert.equal(hooks.length, liveDocuments.length * 2);
+  for (const doc of liveDocuments) {
+    for (const method of ['submit', 'requestSubmit']) {
+      assert.equal(hooks.filter(entry =>
+        entry.prototype === doc.defaultView.HTMLFormElement.prototype &&
+        entry.method === method).length, 1);
+    }
+  }
+}
+checkHooks();
+for (let i = 0; i < 30; i++) {
+  iframe.contentWindow.document = makeDocument();
+  window.__MBG_UPLOAD_COMPRESSION_UPDATE();
+  checkHooks();
+}
 ''';
 
 const _programmaticSubmissionHarness = r'''

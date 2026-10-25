@@ -699,8 +699,15 @@ class GakujoUploadCompressionScript {
     var view = doc.defaultView;
     var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
     if (!prototype) return;
+    var live = documents().map(function(liveDoc) {
+      var liveView = liveDoc.defaultView;
+      return liveView && liveView.HTMLFormElement && liveView.HTMLFormElement.prototype;
+    });
+    // Replaced iframe documents leave their prototypes behind; drop those.
     var hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES =
-      window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || [];
+      (window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || []).filter(function(entry) {
+        return live.indexOf(entry.prototype) >= 0;
+      });
     ['submit', 'requestSubmit'].forEach(function(method) {
       if (typeof prototype[method] !== 'function' || hooks.some(function(entry) {
         return entry.prototype === prototype && entry.method === method;
@@ -807,6 +814,11 @@ class GakujoUploadCompressionScript {
       });
     });
 
+    function releasePending() {
+      if (input.__mbgUploadCompressionPending === token) {
+        delete input.__mbgUploadCompressionPending;
+      }
+    }
     var timer;
     var timeout = new Promise(function(resolve, reject) {
       timer = window.setTimeout(function() {
@@ -829,6 +841,8 @@ class GakujoUploadCompressionScript {
       showStatus(input,
         '5MB以下に圧縮しました: ' + formatSize(originalTotal) + ' → ' +
         formatSize(compressedTotal), false);
+      // Release the submit hold first: the page's change handler may submit.
+      releasePending();
       replayChange(input);
     }).catch(function(error) {
       if (!isCurrentSelection()) {
@@ -837,13 +851,12 @@ class GakujoUploadCompressionScript {
       showStatus(input, error && error.keepOriginal ? error.message :
         '圧縮できませんでした: ' + (error && error.message || error) +
         '。元のファイルのままです。', true);
+      releasePending();
       replayChange(input);
     }).finally(function() {
       finished = true;
       window.clearTimeout(timer);
-      if (input.__mbgUploadCompressionPending === token) {
-        delete input.__mbgUploadCompressionPending;
-      }
+      releasePending();
     });
   }
 
