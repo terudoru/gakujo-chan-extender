@@ -82,6 +82,120 @@ void main() {
     expect(jsonEncode(json), isNot(contains('secret-password')));
   });
 
+  for (final gpa in [0.0, 3.25, 5.0]) {
+    test('saveLastGpa round-trips $gpa', () async {
+      await store.saveLastGpa(gpa);
+
+      final loaded = await GakujoLocalPrefsStore(directory: directory).load();
+      expect(loaded?.lastGpa, gpa);
+      expect(loaded?.lastGpa, isA<double>());
+    });
+  }
+
+  test('saveAppSettings preserves last GPA', () async {
+    await store.saveLastGpa(3.25);
+
+    await store.saveAppSettings(const GakujoAppSettings(
+      pageMode: GakujoPageMode.mobile,
+    ));
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, 3.25);
+    expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
+  });
+
+  test('saveLastPageUrl preserves last GPA', () async {
+    const lastPageUrl = 'https://example.com';
+    await store.saveLastGpa(3.25);
+
+    await store.saveLastPageUrl(lastPageUrl);
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, 3.25);
+    expect(loaded?.lastPageUrl, lastPageUrl);
+  });
+
+  test('saveLastGpa preserves settings and last page URL', () async {
+    const lastPageUrl = 'https://example.com';
+    await store.saveAppSettings(const GakujoAppSettings(
+      pageMode: GakujoPageMode.mobile,
+      setupCompleted: true,
+      messageExcludeKeywords: ['survey'],
+    ));
+    await store.saveLastPageUrl(lastPageUrl);
+    await store.saveLastGpa(2.5);
+
+    await store.saveLastGpa(3.25);
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, 3.25);
+    expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
+    expect(loaded?.appSettings?.setupCompleted, isTrue);
+    expect(loaded?.appSettings?.messageExcludeKeywords, ['survey']);
+    expect(loaded?.lastPageUrl, lastPageUrl);
+  });
+
+  test('saveLastGpa preserves partial settings keys', () async {
+    await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+        .writeAsString('{"version":1,"pageMode":"mobile"}');
+
+    await store.saveLastGpa(3.25);
+    await store.saveLastPageUrl('https://example.com');
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, 3.25);
+    expect(loaded?.appSettingsKeys, {'pageMode'});
+    final raw = jsonDecode(await File(
+      '${directory.path}/${GakujoLocalPrefsStore.fileName}',
+    ).readAsString()) as Map;
+    expect(raw.keys,
+        unorderedEquals(['version', 'pageMode', 'lastPageUrl', 'lastGpa']));
+  });
+
+  test('saveLastGpa clears GPA without changing settings or last page URL',
+      () async {
+    const lastPageUrl = 'https://example.com';
+    await store.saveAppSettings(const GakujoAppSettings(
+      pageMode: GakujoPageMode.mobile,
+    ));
+    await store.saveLastPageUrl(lastPageUrl);
+    await store.saveLastGpa(3.25);
+
+    await store.saveLastGpa(null);
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, isNull);
+    expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
+    expect(loaded?.lastPageUrl, lastPageUrl);
+    final raw = jsonDecode(await File(
+      '${directory.path}/${GakujoLocalPrefsStore.fileName}',
+    ).readAsString()) as Map;
+    expect(raw.containsKey('lastGpa'), isFalse);
+  });
+
+  for (final invalidGpa in ['3.25', -1, 9]) {
+    test('decodes invalid stored GPA ${jsonEncode(invalidGpa)} as null',
+        () async {
+      await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+          .writeAsString(jsonEncode({'lastGpa': invalidGpa}));
+
+      final loaded = await store.load();
+      expect(loaded, isNotNull);
+      expect(loaded?.lastGpa, isNull);
+    });
+  }
+
+  test('a GPA-only file has no app settings', () async {
+    await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
+        .writeAsString('{"lastGpa":3}');
+
+    final loaded = await store.load();
+    expect(loaded?.lastGpa, 3.0);
+    expect(loaded?.lastGpa, isA<double>());
+    expect(loaded?.appSettings, isNull);
+    expect(loaded?.appSettingsKeys, isEmpty);
+  });
+
   test('returns null when the mirror file is missing', () async {
     expect(await store.load(), isNull);
   });

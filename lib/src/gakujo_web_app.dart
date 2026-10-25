@@ -1164,6 +1164,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
+    unawaited(_restoreSavedGpa());
     _macosInputFocusService = const MacosInputFocusService();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
@@ -1277,7 +1278,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         appBar: AppBar(
           toolbarHeight: _compactToolbarHeight,
           titleSpacing: 12,
-          title: GakujoGpaTaunt(gpa: _reportedGpa),
+          title: GakujoGpaTaunt(
+            gpa: _appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)
+                ? _reportedGpa
+                : null,
+          ),
           centerTitle: false,
           actions: [
             GakujoNavigationActions(
@@ -5020,6 +5025,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _restoreSavedGpa() async {
+    try {
+      final lastGpa = (await _localPrefsStore.load())?.lastGpa;
+      if (mounted && _reportedGpa == null && lastGpa != null) {
+        setState(() {
+          _reportedGpa = lastGpa;
+        });
+      }
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to restore saved GPA',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   void _handleGpaReportMessage(String message) {
     try {
       final decoded = jsonDecode(message);
@@ -5030,12 +5053,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (gpa is! num || !gpa.isFinite || gpa < 0 || gpa > 5) {
         return;
       }
-      if (mounted &&
-          _appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay) &&
-          _reportedGpa != gpa.toDouble()) {
+      if (mounted && _reportedGpa != gpa.toDouble()) {
         setState(() {
           _reportedGpa = gpa.toDouble();
         });
+        unawaited(_localPrefsStore.saveLastGpa(gpa.toDouble()).catchError(
+          (Object error, StackTrace stackTrace) {
+            developer.log(
+              'Failed to save last GPA',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          },
+        ));
       }
     } on FormatException {
       return;
@@ -5114,6 +5145,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       setState(() {
         _reportedGpa = null;
       });
+      unawaited(_localPrefsStore.saveLastGpa(null).catchError(
+        (Object error, StackTrace stackTrace) {
+          developer.log(
+            'Failed to clear last GPA',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        },
+      ));
     }
     final controller = _controller;
     if (flag == GakujoFeatureFlag.downloadCapture &&
@@ -5915,6 +5956,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       setState(() {
         _appSettings = const GakujoAppSettings();
         _appSettingsLoaded = true;
+        _reportedGpa = null;
         _deadlineCount = 0;
       });
       await _applyFeatureFlagRuntimeState(

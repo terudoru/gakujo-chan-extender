@@ -11,12 +11,14 @@ class GakujoLocalPrefs {
     this.appSettings,
     this.appSettingsKeys,
     this.lastPageUrl,
+    this.lastGpa,
   });
 
   final GakujoAppSettings? appSettings;
   // Null denotes a complete settings object supplied by the app.
   final Set<String>? appSettingsKeys;
   final String? lastPageUrl;
+  final double? lastGpa;
 }
 
 class GakujoLocalPrefsStore {
@@ -43,6 +45,7 @@ class GakujoLocalPrefsStore {
       return GakujoLocalPrefs(
         appSettings: settings.copyWith(loginCredentials: null),
         lastPageUrl: current?.lastPageUrl,
+        lastGpa: current?.lastGpa,
       );
     });
   }
@@ -53,6 +56,18 @@ class GakujoLocalPrefsStore {
         appSettings: current?.appSettings,
         appSettingsKeys: current?.appSettingsKeys,
         lastPageUrl: url,
+        lastGpa: current?.lastGpa,
+      );
+    });
+  }
+
+  Future<void> saveLastGpa(double? gpa) {
+    return _enqueueUpdate((current) {
+      return GakujoLocalPrefs(
+        appSettings: current?.appSettings,
+        appSettingsKeys: current?.appSettingsKeys,
+        lastPageUrl: current?.lastPageUrl,
+        lastGpa: gpa,
       );
     });
   }
@@ -151,11 +166,15 @@ class GakujoLocalPrefsStore {
         'notificationPreferences': settings.notificationPreferences.toJson(),
       },
       if (prefs.lastPageUrl != null) 'lastPageUrl': prefs.lastPageUrl,
+      if (prefs.lastGpa != null) 'lastGpa': prefs.lastGpa,
     };
     final keys = prefs.appSettingsKeys;
     if (keys != null) {
       encoded.removeWhere((key, _) =>
-          key != 'version' && key != 'lastPageUrl' && !keys.contains(key));
+          key != 'version' &&
+          key != 'lastPageUrl' &&
+          key != 'lastGpa' &&
+          !keys.contains(key));
     }
     return encoded;
   }
@@ -188,6 +207,7 @@ class GakujoLocalPrefsStore {
         ),
       _ => const <String>[],
     };
+    final lastGpa = raw['lastGpa'];
     return GakujoLocalPrefs(
       appSettingsKeys: settingsKeys.where(raw.containsKey).toSet(),
       appSettings: hasSettings
@@ -218,6 +238,10 @@ class GakujoLocalPrefsStore {
           : null,
       lastPageUrl:
           raw['lastPageUrl'] is String ? raw['lastPageUrl'] as String : null,
+      lastGpa:
+          lastGpa is num && lastGpa.isFinite && lastGpa >= 0 && lastGpa <= 5
+              ? lastGpa.toDouble()
+              : null,
     );
   }
 }
