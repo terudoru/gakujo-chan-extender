@@ -57,7 +57,13 @@ class SecureStorageFactory {
       }
       return _macosMigratingStorage;
     }
-    return const FlutterSecureStorage();
+    // The plugin's defaults delete every stored value (login, 2FA, settings,
+    // history) when one entry cannot be decrypted, and drop old keys before a
+    // cipher migration is committed. Fail the read instead; callers already
+    // fall back per key and report unreadable data.
+    return const FlutterSecureStorage(
+      aOptions: AndroidOptions(resetOnError: false, migrateWithBackup: true),
+    );
   }
 
   static bool get _isFlutterTest {
