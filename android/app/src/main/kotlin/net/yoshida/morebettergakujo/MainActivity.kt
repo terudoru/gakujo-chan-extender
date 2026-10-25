@@ -1467,7 +1467,12 @@ class MainActivity : FlutterActivity() {
 
     private fun requestNotificationPermission(result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.success(true)
+            // No runtime prompt exists here, but the student can still turn
+            // the app's notifications off; report that instead of "granted".
+            result.success(
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.N ||
+                    getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+            )
             return
         }
         val permission = android.Manifest.permission.POST_NOTIFICATIONS
