@@ -780,7 +780,12 @@ class GakujoReportDraftScript {
     if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {
       var legacyFields = legacyDraft.fields(doc);
       var oldDraft = null;
-      legacyDraft.keys(doc, legacyFields).some(function(candidate) {
+      // Once found, retry only that key: the full search is expensive and a
+      // failing migration write would otherwise repeat it every tick.
+      var found = doc.__MBG_REPORT_DRAFT_LEGACY_FOUND;
+      var candidates = found && found.key === key
+        ? [found.legacyKey] : legacyDraft.keys(doc, legacyFields);
+      candidates.some(function(candidate) {
         oldDraft = readDraft(store, candidate);
         legacyKey = oldDraft ? candidate : null;
         return !!oldDraft;
@@ -788,6 +793,7 @@ class GakujoReportDraftScript {
       // Only a search that found nothing is final; a found draft is marked
       // once it has been moved to the v2 key below.
       if (!oldDraft) doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
+      else doc.__MBG_REPORT_DRAFT_LEGACY_FOUND = { key: key, legacyKey: legacyKey };
       if (oldDraft && Array.isArray(oldDraft.fields)) {
         var oldByKey = Object.create(null);
         oldDraft.fields.forEach(function(item) {
