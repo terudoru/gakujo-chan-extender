@@ -433,9 +433,16 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         termName: resolvedTerm.termName ?? '',
       );
       if (settings.applyClassChanges && courses.isNotEmpty) {
+        final changes = await _readClassChanges(termRange);
+        if (changes == null) {
+          _showSnackBar(
+            '休講・補講の情報を取得できなかったため、カレンダーを更新しませんでした。もう一度お試しください',
+          );
+          return;
+        }
         courses = GakujoCalendarExport.applyClassChanges(
           courses,
-          await _readClassChanges(termRange),
+          changes,
         );
       }
       final deadlineEvents = settings.includeAssignmentDeadlines
@@ -1642,7 +1649,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   }
 
   /// 休講・補講・教室変更 in [termRange], from the 休講補講 page.
-  Future<List<GakujoClassChange>> _readClassChanges(
+  /// Returns null if any page could not be read.
+  Future<List<GakujoClassChange>?> _readClassChanges(
     GakujoCalendarTermRange termRange,
   ) async {
     try {
@@ -1652,13 +1660,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           end: termRange.end,
         ),
       );
-      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
-      final changes = decoded is Map ? decoded['changes'] : null;
-      return [
-        if (changes is List)
-          for (final change in changes.whereType<Map<dynamic, dynamic>>())
-            if (GakujoClassChange.fromJson(change) case final parsed?) parsed,
-      ];
+      return GakujoCalendarExport.classChangesFromJson(
+        _stringFromJavaScriptResult(result),
+      );
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to read class changes',
@@ -1666,7 +1670,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         error: error,
         stackTrace: stackTrace,
       );
-      return const [];
+      return null;
     }
   }
 

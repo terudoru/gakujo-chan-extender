@@ -159,6 +159,47 @@ void main() {
         ],
       );
     });
+
+    test('a failed week is rejected while successful empty weeks are accepted',
+        () async {
+      for (final scenario in ['httpError', 'htmlError', 'timeout', 'empty']) {
+        final result = await Process.run(
+          'node',
+          [
+            '-e',
+            _changesHarness,
+            GakujoCalendarExport.classChangesFetchScript(
+              start: DateTime(2026, 12, 28),
+              end: DateTime(2027, 1, 10),
+            ),
+            scenario,
+          ],
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
+        );
+        expect(result.exitCode, 0, reason: '$scenario: ${result.stderr}');
+        final raw = result.stdout as String;
+        final payload = jsonDecode(raw) as Map;
+        expect(
+          payload['requests'],
+          [
+            '_flowId=KHW0001100-flow',
+            'k1 20261228',
+            'k2 20270104',
+          ],
+          reason: scenario,
+        );
+        if (scenario == 'empty') {
+          expect(GakujoCalendarExport.classChangesFromJson(raw), isEmpty);
+        } else {
+          expect(
+            () => GakujoCalendarExport.classChangesFromJson(raw),
+            throwsFormatException,
+            reason: scenario,
+          );
+        }
+      }
+    });
   });
 
   test('assignment deadlines become events at their closing time', () {
@@ -227,6 +268,7 @@ DateTime japanMoment(int y, int m, int d, int h, int min) =>
 const _changesHarness = r'''
 const vm = require('node:vm');
 const script = process.argv[1];
+const scenario = process.argv[2];
 const requests = [];
 function cell(text) { return {textContent: text}; }
 function row(kind, cells) { return {className: kind, cells: cells.map(cell)}; }
@@ -246,7 +288,8 @@ class XMLHttpRequest {
     const day = (this.url.match(/day=([0-9]{8})/) || [])[1];
     const key = (this.url.match(/_flowExecutionKey=([^&]+)/) || [])[1];
     requests.push(day ? key + ' ' + day : '_flowId=KHW0001100-flow');
-    this.status = 200;
+    if (day === '20270104' && scenario === 'timeout') throw new Error('Timeout');
+    this.status = day === '20270104' && scenario === 'httpError' ? 503 : 200;
     this.responseText = '';
   }
 }
@@ -255,9 +298,11 @@ class DOMParser {
   parseFromString() {
     page += 1;
     const day = (lastUrl.match(/day=([0-9]{8})/) || [])[1];
-    const rows = day ? (weeks[day] || []) : [];
+    const invalidPage = day === '20270104' && scenario === 'htmlError';
+    const rows = day && scenario !== 'empty' && !invalidPage ? (weeks[day] || []) : [];
     return {
       querySelector(selector) {
+        if (invalidPage) return null;
         return selector.indexOf('_flowExecutionKey') >= 0 ? {value: 'k' + page} : null;
       },
       querySelectorAll() { return rows; }

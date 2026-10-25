@@ -572,10 +572,14 @@ class GakujoCalendarExport {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url, false);
     xhr.send(null);
-    if (xhr.status < 200 || xhr.status >= 400) {
+    if (xhr.status < 200 || xhr.status >= 300) {
       throw new Error('HTTP ' + xhr.status);
     }
-    return new DOMParser().parseFromString(xhr.responseText, 'text/html');
+    var doc = new DOMParser().parseFromString(xhr.responseText, 'text/html');
+    if (!keyOf(doc)) {
+      throw new Error('Invalid class changes page');
+    }
+    return doc;
   }
   function keyOf(doc) {
     var input = doc.querySelector('input[name="_flowExecutionKey"]');
@@ -606,7 +610,7 @@ class GakujoCalendarExport {
         '&kyokanCode=&day=' + stamp +
         '&dispData=chg&dispType=list&jikanwaricd=&kamokunm='
       );
-      key = keyOf(doc) || key;
+      key = keyOf(doc);
       var rows = doc.querySelectorAll(
         'tr.kyuko-kyuko, tr.kyuko-hoko, tr.kyuko-kyoshitsu'
       );
@@ -649,6 +653,20 @@ class GakujoCalendarExport {
   }
 })()
 """;
+  }
+
+  /// A failed fetch must not be mistaken for a successful empty change list.
+  static List<GakujoClassChange> classChangesFromJson(String raw) {
+    final decoded = jsonDecode(raw);
+    final changes =
+        decoded is Map && decoded['status'] == 'ok' ? decoded['changes'] : null;
+    if (changes is! List) {
+      throw const FormatException('Failed to read class changes');
+    }
+    return [
+      for (final change in changes.whereType<Map<dynamic, dynamic>>())
+        if (GakujoClassChange.fromJson(change) case final parsed?) parsed,
+    ];
   }
 
   /// Applies 休講・補講・教室変更 to courses: a cancelled meeting is
