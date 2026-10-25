@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
@@ -77,6 +79,42 @@ void main() {
       notificationService.notifiedEntries.map((entry) => entry.title),
       ['押し出される課題', '別の課題'],
     );
+  });
+
+  test('v0.70.0 notified keys survive a change of flow execution key',
+      () async {
+    const baseUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report';
+    final deadline = GakujoDeadlineEntry(
+      title: 'Report _flowExecutionKey=title',
+      url: '$baseUrl?report=42&_flowExecutionKey=e9s9',
+      dueText: '2099/07/01 17:00',
+      detectedAt: DateTime.now(),
+    );
+    // v0.70.0 used '$kind|$url|$title|$dueText', retaining the full URL.
+    final legacyKey = 'deadline|$baseUrl?_flowExecutionKey=e1s1&report=42|'
+        '${deadline.title}|${deadline.dueText}';
+    FlutterSecureStorage.setMockInitialValues({
+      'more_better_gakujo_notified_deadline_keys': jsonEncode([
+        legacyKey,
+        legacyKey.replaceFirst('e1s1', 'e2s2'),
+        'assignment|42',
+        'reminder|42',
+      ]),
+    });
+    final store = GakujoActivityStore();
+    final notificationService = _FakeNotificationService(notifyResult: true);
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: notificationService,
+    );
+
+    expect(await store.loadNotifiedDeadlineKeys(),
+        {deadline.key, 'assignment|42', 'reminder|42'});
+    await store.mergeDeadlines([deadline]);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+
+    expect(notificationService.notifiedEntries, isEmpty);
+    expect(notificationService.permissionRequestCount, 0);
   });
 
   test('連絡通知 do not push coursework deadlines out of storage', () async {

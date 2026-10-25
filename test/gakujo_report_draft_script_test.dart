@@ -100,6 +100,20 @@ void main() {
     expect(result['xssExecutionCount'], 0);
   });
 
+  test('migrates v0.70.x drafts with their original page and field keys',
+      () async {
+    final result = await _evaluateDraftScenario('legacyMigration');
+    expect(result['restored'], ['Legacy answer', 'Second legacy answer']);
+    expect(result['key'], startsWith('mbg-report-draft:v2:'));
+    expect(result['legacyRemoved'], isTrue);
+    expect(result['savedAtPreserved'], isTrue);
+    expect(result['restoredAgain'], result['restored']);
+    expect(result['conflictingValue'], 'Server answer');
+    expect(result['replacementVisible'], isTrue);
+    expect(result['storedConflict'], 'Legacy answer');
+    expect(result['afterReplace'], 'Legacy answer');
+  });
+
   test('restores multiline contenteditable drafts with visible line breaks',
       () async {
     const text = '一段落目\n二段落目';
@@ -677,6 +691,10 @@ function createPage(html, text, storage, options = {}) {
       (this.listeners[type] ||= []).push(callback);
     },
     querySelectorAll(selector) {
+      if (selector === 'textarea,input,[contenteditable]') {
+        return (this.fields || (this.field ? [this.field] : []))
+          .filter(field => field.tagName !== 'SELECT');
+      }
       if (selector === 'textarea,input,select,[contenteditable]') {
         return this.fields || (this.field ? [this.field] : []);
       }
@@ -783,6 +801,48 @@ function hidePage(page) {
 
 function runExtendedScenario() {
   const storage = new FakeStorage();
+  if (spec.scenario === 'legacyMigration') {
+    const legacyKey = 'mbg-report-draft:v1:cmm5xw';
+    // Captured from v0.70.0's script on this form, including its counter text.
+    const oldDraft = {
+      savedAt: Date.now() - 60000,
+      title: 'レポート提出', url: 'https://gakujo.example/report/input',
+      fields: [
+        {key: 'textarea||gakuComment gakuComment 入力文字数：17/200文字|0', value: 'Legacy answer'},
+        {key: 'textarea||Q2 入力文字数：17/200文字|1', value: 'Second legacy answer'}
+      ]
+    };
+    function form(value) {
+      const page = textPage(storage, {value, counter: 17, counterElement: true});
+      page.document.fields = [page.field,
+        new FakeControl(page.document, 'select', {name: 'choice'}),
+        new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+      return page;
+    }
+    storage.setItem(legacyKey, JSON.stringify(oldDraft));
+    const page = form();
+    runPage(page);
+    const key = storage.key(0);
+    const migrated = JSON.parse(storage.getItem(key));
+    const restored = [page.field.value, page.document.fields[2].value];
+    const legacyRemoved = storage.getItem(legacyKey) === null;
+    const again = form();
+    runPage(again);
+    const restoredAgain = [again.field.value, again.document.fields[2].value];
+    storage.values.clear();
+    storage.setItem(legacyKey, JSON.stringify(oldDraft));
+    const conflicting = form('Server answer');
+    runPage(conflicting);
+    const conflictingValue = conflicting.field.value;
+    const button = conflicting.document.getElementById('mbg-report-draft-replace');
+    const replacementVisible = button.style.display !== 'none';
+    const storedConflict = JSON.parse(storage.getItem(key)).fields[0].value;
+    button.listeners.click();
+    return {restored, key, legacyRemoved,
+      savedAtPreserved: migrated.savedAt === oldDraft.savedAt,
+      restoredAgain, conflictingValue, replacementVisible, storedConflict,
+      afterReplace: conflicting.field.value};
+  }
   if (spec.scenario === 'beforeBinding') {
     const page = textPage(storage, {value: 'Server value'});
     let expectedValue = 'Typed before binding';

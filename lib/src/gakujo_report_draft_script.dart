@@ -367,6 +367,131 @@ class GakujoReportDraftScript {
     return key;
   }
 
+  // v0.70.x identity rules must stay independent of v2's counters and choices.
+  var legacyDraft = (function() {
+    var prefix = 'mbg-report-draft:v1:';
+
+    function isIgnoredInput(input) {
+      var type = (input.getAttribute('type') || 'text').toLowerCase();
+      if ([
+        'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'password',
+        'radio', 'range', 'reset', 'submit'
+      ].indexOf(type) >= 0) {
+        return true;
+      }
+      var metadata = [
+        input.getAttribute('name'),
+        input.getAttribute('id'),
+        input.getAttribute('autocomplete'),
+        input.getAttribute('aria-label')
+      ].join(' ').toLowerCase();
+      return metadata.indexOf('password') >= 0 ||
+        metadata.indexOf('login') >= 0 ||
+        metadata.indexOf('userid') >= 0 ||
+        metadata.indexOf('username') >= 0 ||
+        metadata.indexOf('ninshocode') >= 0;
+    }
+
+    function saveableFields(doc) {
+      var fields = Array.prototype.slice.call(
+        doc.querySelectorAll('textarea,input,[contenteditable]')
+      ).filter(function(field) {
+        if (!visible(field)) {
+          return false;
+        }
+        if (field.matches('[contenteditable]')) {
+          return field.getAttribute('contenteditable') !== 'false';
+        }
+        if (field.tagName.toLowerCase() === 'textarea') {
+          return true;
+        }
+        return field.tagName.toLowerCase() === 'input' && !isIgnoredInput(field);
+      });
+      return fields;
+    }
+
+    function pageTextWithoutFields(doc) {
+      if (!doc.body) {
+        return '';
+      }
+      var clone = doc.body.cloneNode(true);
+      Array.prototype.slice.call(
+        clone.querySelectorAll(
+          'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
+        )
+      ).forEach(function(node) {
+        node.remove();
+      });
+      return compactText(clone.innerText || clone.textContent || '');
+    }
+
+    function stablePageTextForKey(doc) {
+      return pageTextWithoutFields(doc)
+        .replace(/残り約\s*[0-9０-９]+\s*分/g, '')
+        .replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
+        .replace(/[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function labelFor(field) {
+      var doc = field.ownerDocument;
+      var labels = [
+        field.getAttribute('name'),
+        field.getAttribute('id'),
+        field.getAttribute('aria-label'),
+        field.getAttribute('title'),
+        field.getAttribute('placeholder')
+      ];
+      if (field.id && doc.defaultView.CSS && doc.defaultView.CSS.escape) {
+        var label = doc.querySelector(
+          'label[for="' + doc.defaultView.CSS.escape(field.id) + '"]'
+        );
+        if (label) {
+          labels.push(label.innerText || label.textContent || '');
+        }
+      }
+      var row = field.closest('tr,div,p,li,section');
+      if (row) {
+        var rowClone = row.cloneNode(true);
+        Array.prototype.slice.call(
+          rowClone.querySelectorAll('textarea,input,select,button,[contenteditable]')
+        ).forEach(function(node) {
+          node.remove();
+        });
+        labels.push(rowClone.innerText || rowClone.textContent || '');
+      }
+      return compactText(labels.filter(Boolean).join(' ')).substring(0, 120);
+    }
+
+    function fieldKey(field, index) {
+      return [
+        field.tagName.toLowerCase(),
+        (field.getAttribute('type') || '').toLowerCase(),
+        labelFor(field),
+        index
+      ].join('|');
+    }
+
+    function legacyDraftKey(doc, fields) {
+      var path = '';
+      try {
+        path = doc.location.pathname || '';
+      } catch (e) {
+        path = '';
+      }
+      var signature = [
+        path,
+        doc.title || '',
+        stablePageTextForKey(doc).substring(0, 4000),
+        fields.map(labelFor).join('|')
+      ].join('\n');
+      return prefix + hashString(signature);
+    }
+
+    return { key: legacyDraftKey, fields: saveableFields, fieldKey: fieldKey };
+  })();
+
   function readDraft(store, key) {
     if (!store) {
       return null;
@@ -624,6 +749,33 @@ class GakujoReportDraftScript {
 
   function restoreDraft(doc, store, key, fields, force) {
     var draft = readDraft(store, key);
+    var legacyKey = null;
+    if (!draft) {
+      var legacyFields = legacyDraft.fields(doc);
+      legacyKey = legacyDraft.key(doc, legacyFields);
+      var oldDraft = readDraft(store, legacyKey);
+      if (oldDraft && Array.isArray(oldDraft.fields)) {
+        var oldByKey = Object.create(null);
+        oldDraft.fields.forEach(function(item) {
+          if (item) oldByKey[item.key] = item;
+        });
+        draft = {
+          savedAt: oldDraft.savedAt,
+          title: oldDraft.title,
+          url: oldDraft.url,
+          heading: headingFor(doc),
+          fields: legacyFields.map(function(field, index) {
+            var item = oldByKey[legacyDraft.fieldKey(field, index)];
+            var currentIndex = fields.indexOf(field);
+            return item && currentIndex >= 0 ? {
+              key: fieldKey(field, currentIndex, fields),
+              value: item.value,
+              kind: 'text'
+            } : null;
+          }).filter(Boolean)
+        };
+      }
+    }
     if (!draft || !Array.isArray(draft.fields)) {
       return;
     }
@@ -695,6 +847,10 @@ class GakujoReportDraftScript {
       });
     } finally {
       doc.__MBG_REPORT_DRAFT_RESTORING = false;
+    }
+    // Keep the original until the converted answers (including conflicts) persist.
+    if (legacyKey && writeDraft(store, key, draft)) {
+      removeDraft(store, legacyKey);
     }
     if (conflict) {
       ensureStatus(doc, store, key);

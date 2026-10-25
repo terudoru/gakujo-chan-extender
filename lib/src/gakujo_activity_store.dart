@@ -534,6 +534,10 @@ class GakujoActivityStore {
             .whereType<String>()
             .map((key) => key.trim())
             .where((key) => key.isNotEmpty)
+            .map((key) => key.replaceFirstMapped(
+                  RegExp(r'^(deadline|notice|schedule)\|([^|]*)\|'),
+                  (match) => '${match[1]}|${stableGakujoUrl(match[2]!)}|',
+                ))
             .toSet(),
       );
     } on Object {
