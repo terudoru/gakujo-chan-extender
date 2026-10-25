@@ -1076,6 +1076,79 @@ void main() {
       }
     });
 
+    test(
+        'downloads and attachments never become navigation recovery candidates',
+        () {
+      const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+      const durable = '${base}campusportal.do?page=main&tabId=en';
+      for (final destination in [
+        'download.do?fileId=42',
+        'campussquare.do?_eventId=download&fileId=42',
+        'campussquare.do?_EVENTID=%64ownload&fileId=42',
+        'campussquare.do?_flowId=SDW-filerefer-flow&fileId=42',
+        'campussquare.do?_FLOWID=sdw-filerefer-flow&FILEID=42',
+        'campusportal.do?page=main&tabId=en&_eventId=infoDownLoad',
+        for (final extension in [
+          'pdf',
+          'doc',
+          'docx',
+          'xls',
+          'xlsx',
+          'ppt',
+          'pptx',
+          'zip',
+          'csv',
+          'txt',
+          'png',
+          'jpg',
+          'jpeg',
+        ])
+          'files/attachment.$extension?fileId=42',
+        'files/attachment.PDF;jsessionid=X',
+      ]) {
+        final url = '$base$destination';
+        expect(
+          isGakujoNavigationRecoveryCandidateUrl(url, debugAllowed: false),
+          isFalse,
+          reason: url,
+        );
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: url,
+            currentUrl: durable,
+            authenticatedUrl: durable,
+            navigationCandidateUrl: null,
+          ),
+          isNull,
+          reason: url,
+        );
+        expect(
+          captureGakujoNavigationRecoveryCandidate(
+            url: url,
+            currentUrl: durable,
+            authenticatedUrl: durable,
+            navigationCandidateUrl: durable,
+            navigationCandidateFailed: true,
+          ),
+          durable,
+          reason: url,
+        );
+      }
+      for (final destination in [
+        'report/list.do',
+        'campussquare.do?fileId=42',
+        'campussquare.do?_flowId=SDW-filerefer-flow',
+        'campussquare.do?_flowId=SDW-filerefer-flow&fileId=',
+      ]) {
+        expect(
+          isGakujoNavigationRecoveryCandidateUrl('$base$destination',
+              debugAllowed: false),
+          isTrue,
+          reason: destination,
+        );
+      }
+    });
+
     test('flow-key pages never replace the previous durable recovery URL', () {
       const durable =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'

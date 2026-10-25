@@ -661,10 +661,22 @@ class GakujoUploadCompressionScript {
     return replaying ? replaying.has(input) : !!input.__mbgUploadCompressionReplaying;
   }
 
-  function blockPendingSubmit(event) {
+  function hasPendingCompression(form) {
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
-      return;
+      return false;
     }
+    var elements = form && form.elements || [];
+    for (var i = 0; i < elements.length; i += 1) {
+      if (elements[i].__mbgUploadCompressionPending) {
+        showStatus(elements[i],
+          'ファイルを圧縮しています。完了してから提出してください', false);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function blockPendingSubmit(event) {
     var target = event.target;
     if (event.type === 'click') {
       while (target && target.tagName !== 'BUTTON' && target.tagName !== 'INPUT') {
@@ -676,16 +688,35 @@ class GakujoUploadCompressionScript {
       }
       target = target.form;
     }
-    var elements = target && target.elements || [];
-    for (var i = 0; i < elements.length; i += 1) {
-      if (elements[i].__mbgUploadCompressionPending) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        showStatus(elements[i],
-          'ファイルを圧縮しています。完了してから提出してください', false);
+    if (hasPendingCompression(target)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }
+
+  function wrapFormSubmits(doc) {
+    if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) return;
+    var view = doc.defaultView;
+    var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
+    if (!prototype) return;
+    var hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES =
+      window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || [];
+    ['submit', 'requestSubmit'].forEach(function(method) {
+      if (typeof prototype[method] !== 'function' || hooks.some(function(entry) {
+        return entry.prototype === prototype && entry.method === method;
+      })) {
         return;
       }
-    }
+      var entry = { prototype: prototype, method: method, original: prototype[method] };
+      var wrapper = function() {
+        if (!hasPendingCompression(this)) return entry.original.apply(this, arguments);
+      };
+      // Both page scripts use this link to remove a hook beneath the other.
+      wrapper.__mbgFormSubmitHook = entry;
+      entry.wrapper = wrapper;
+      prototype[method] = wrapper;
+      hooks.push(entry);
+    });
   }
 
   function compress(input, file, progress) {
@@ -820,6 +851,7 @@ class GakujoUploadCompressionScript {
     var docs = documents();
     for (var i = 0; i < docs.length; i += 1) {
       var doc = docs[i];
+      wrapFormSubmits(doc);
       if (doc.__mbgUploadCompressionAttached) {
         continue;
       }
@@ -845,6 +877,17 @@ class GakujoUploadCompressionScript {
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
   window.__MBG_UPLOAD_COMPRESSION_GENERATION =
     (window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0) + 1;
+  var hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || [];
+  hooks.forEach(function(entry) {
+    var owner = entry.prototype;
+    var key = entry.method;
+    while (owner[key] && owner[key] !== entry.wrapper && owner[key].__mbgFormSubmitHook) {
+      owner = owner[key].__mbgFormSubmitHook;
+      key = 'original';
+    }
+    if (owner[key] === entry.wrapper) owner[key] = entry.original;
+  });
+  window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES = [];
   var docs = [document];
   var frames = document.querySelectorAll('iframe,frame');
   for (var i = 0; i < frames.length; i += 1) {

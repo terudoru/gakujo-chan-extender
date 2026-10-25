@@ -648,6 +648,18 @@ bool isGakujoNavigationRecoveryCandidateUrl(
     return false;
   }
   final path = uri.path.toLowerCase().replaceAll(RegExp(r';[^/]*'), '');
+  final query = {
+    for (final entry in uri.queryParameters.entries)
+      entry.key.toLowerCase(): entry.value.toLowerCase(),
+  };
+  if (GakujoDownloadUrlPolicy.shouldDownload(url) ||
+      (query['_eventid']?.contains('download') ?? false) ||
+      (query['_flowid'] == 'sdw-filerefer-flow' &&
+          (query['fileid']?.trim().isNotEmpty ?? false)) ||
+      RegExp(r'\.(pdf|docx?|xlsx?|pptx?|zip|csv|txt|png|jpe?g)$')
+          .hasMatch(path)) {
+    return false;
+  }
   // These shared shell URLs can reveal login controls without changing URL.
   // They cannot identify the protected page that triggered authentication.
   if (path.endsWith('/campussmart.do')) {

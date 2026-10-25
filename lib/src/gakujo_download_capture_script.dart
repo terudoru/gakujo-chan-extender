@@ -707,9 +707,13 @@ class GakujoDownloadCaptureScript {
   function restoreFormSubmits() {
     var prototypes = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES || [];
     prototypes.forEach(function(entry) {
-      if (entry.prototype.submit === entry.wrapper) {
-        entry.prototype.submit = entry.original;
+      var owner = entry.prototype;
+      var key = 'submit';
+      while (owner[key] && owner[key] !== entry.wrapper && owner[key].__mbgFormSubmitHook) {
+        owner = owner[key].__mbgFormSubmitHook;
+        key = 'original';
       }
+      if (owner[key] === entry.wrapper) owner[key] = entry.original;
     });
     window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES = [];
   }
@@ -718,16 +722,16 @@ class GakujoDownloadCaptureScript {
     var view = doc.defaultView;
     var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
     if (!prototype) return;
-    var original = prototype.submit;
+    var entry = { prototype: prototype, original: prototype.submit };
     var wrapper = function() {
       var submitter = formSubmitters.get(this);
       formSubmitters.delete(this);
-      if (!captureForm(this, submitter, true)) return original.apply(this, arguments);
+      if (!captureForm(this, submitter, true)) return entry.original.apply(this, arguments);
     };
+    wrapper.__mbgFormSubmitHook = entry;
+    entry.wrapper = wrapper;
     prototype.submit = wrapper;
-    window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.push({
-      prototype: prototype, original: original, wrapper: wrapper
-    });
+    window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.push(entry);
   }
 
   window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER = function(event) {
@@ -827,9 +831,13 @@ class GakujoDownloadCaptureScript {
   }
   var prototypes = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES || [];
   prototypes.forEach(function(entry) {
-    if (entry.prototype.submit === entry.wrapper) {
-      entry.prototype.submit = entry.original;
+    var owner = entry.prototype;
+    var key = 'submit';
+    while (owner[key] && owner[key] !== entry.wrapper && owner[key].__mbgFormSubmitHook) {
+      owner = owner[key].__mbgFormSubmitHook;
+      key = 'original';
     }
+    if (owner[key] === entry.wrapper) owner[key] = entry.original;
   });
   window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES = [];
   var loadHandler = window.__MBG_DOWNLOAD_CAPTURE_LOAD_HANDLER;
