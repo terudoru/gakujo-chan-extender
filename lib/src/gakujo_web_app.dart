@@ -1186,8 +1186,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
-      _notificationService.forgetRefusal();
-      unawaited(_refreshAssignmentsInBackground());
+      unawaited(_resumeNotificationsAndRefresh());
     }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
@@ -1197,6 +1196,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         unawaited(_writeAutomaticBackup());
       }
     }
+  }
+
+  Future<void> _resumeNotificationsAndRefresh() async {
+    try {
+      await _deadlineNotificationCoordinator.onAppResumed(
+        notificationsEnabled: _appSettings.isFeatureEnabled(
+          GakujoFeatureFlag.deadlineNotifications,
+        ),
+        topics: _appSettings.notificationTopics,
+        preferences: _appSettings.notificationPreferences,
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to sync reminders after notification permission check',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    if (!mounted) {
+      return;
+    }
+    await _refreshAssignmentsInBackground(allowPermissionRequest: false);
   }
 
   @override
@@ -1788,6 +1810,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _showSettingsDialog() async {
+    unawaited(_notificationService.checkPermission());
     var secretInput = '';
     var loginIdInput = '';
     var loginPasswordInput = '';
@@ -2131,6 +2154,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     preferences: _appSettings.notificationPreferences,
                     knownCourses: knownCourses,
                     remindersOnlyWhileOpen: Platform.isWindows,
+                    notificationPermission:
+                        _notificationService.permissionGranted,
+                    onOpenNotificationSettings: Platform.isAndroid
+                        ? () => unawaited(
+                              _notificationService.openNotificationSettings(),
+                            )
+                        : null,
                     onPreferencesChanged: (update) async {
                       await _saveNotificationPreferences(update);
                       if (dialogContext.mounted) {
@@ -4416,7 +4446,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return items;
   }
 
-  Future<void> _notifyPendingDeadlines() {
+  Future<void> _notifyPendingDeadlines({bool allowPermissionRequest = true}) {
     return _deadlineNotificationCoordinator.notifyPendingDeadlines(
       notificationsEnabled: _appSettings.isFeatureEnabled(
         GakujoFeatureFlag.deadlineNotifications,
@@ -4425,13 +4455,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       messages: _appSettings.messageNotification,
       preferences: _appSettings.notificationPreferences,
       messageExcludeKeywords: _appSettings.messageExcludeKeywords,
+      allowPermissionRequest: allowPermissionRequest,
     );
   }
 
   /// Keeps assignments and 連絡通知 current without opening their pages:
   /// fetches them in the background at most every half hour while signed
   /// in, then tells about new deadlines and messages and rebooks reminders.
-  Future<void> _refreshAssignmentsInBackground() async {
+  Future<void> _refreshAssignmentsInBackground({
+    bool allowPermissionRequest = true,
+  }) async {
     if (!_canRunPageScripts ||
         _calendarOperationGate.isRunning ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
@@ -4479,8 +4512,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
         ...messages.entries,
       ], unreadMessageUrls: messages.unreadMessageUrls);
-      await _notifyPendingDeadlines();
-      await _syncReminders();
+      await _notifyPendingDeadlines(
+        allowPermissionRequest: allowPermissionRequest,
+      );
+      await _syncReminders(allowPermissionRequest: allowPermissionRequest);
     } on Object catch (error, stackTrace) {
       // The page may have navigated away mid-fetch; try again soon.
       _lastAssignmentRefresh = null;
@@ -4548,13 +4583,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _syncReminders() {
+  Future<void> _syncReminders({bool allowPermissionRequest = true}) {
     return _deadlineNotificationCoordinator.syncReminders(
       notificationsEnabled: _appSettings.isFeatureEnabled(
         GakujoFeatureFlag.deadlineNotifications,
       ),
       topics: _appSettings.notificationTopics,
       preferences: _appSettings.notificationPreferences,
+      allowPermissionRequest: allowPermissionRequest,
     );
   }
 

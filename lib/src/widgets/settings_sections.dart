@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../gakujo_app_settings.dart';
@@ -409,6 +410,8 @@ class NotificationTopicsSection extends StatelessWidget {
     required this.onPreferencesChanged,
     required this.knownCourses,
     this.remindersOnlyWhileOpen = false,
+    this.notificationPermission,
+    this.onOpenNotificationSettings,
   });
 
   final GakujoNotificationPreferences preferences;
@@ -420,6 +423,8 @@ class NotificationTopicsSection extends StatelessWidget {
 
   /// The OS cannot book reminders ahead here; they come from the open app.
   final bool remindersOnlyWhileOpen;
+  final ValueListenable<bool?>? notificationPermission;
+  final VoidCallback? onOpenNotificationSettings;
 
   final Set<GakujoNotificationTopic> topics;
   final GakujoMessageNotificationSettings messages;
@@ -459,6 +464,23 @@ class NotificationTopicsSection extends StatelessWidget {
               ? 'チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'
               : '「機能設定」で「提出期限のOS通知」がオフのため、通知は出ません。',
         ),
+        if (notificationsEnabled && notificationPermission != null)
+          ValueListenableBuilder<bool?>(
+            valueListenable: notificationPermission!,
+            builder: (context, granted, _) => granted == false
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('端末の設定で通知が許可されていません'),
+                      if (onOpenNotificationSettings != null)
+                        TextButton(
+                          onPressed: onOpenNotificationSettings,
+                          child: const Text('端末の通知設定を開く'),
+                        ),
+                    ],
+                  )
+                : const SizedBox.shrink(),
+          ),
         for (final topic in GakujoNotificationTopic.values)
           CheckboxListTile(
             dense: true,

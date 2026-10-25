@@ -332,16 +332,44 @@ class GakujoNotificationService {
   }
 
   bool _permissionRefused = false;
+  final permissionGranted = ValueNotifier<bool?>(null);
 
-  /// The student may have allowed notifications in the system settings
-  /// meanwhile, as when returning to the app.
+  /// Reads the OS state without displaying a permission prompt.
+  Future<bool?> checkPermission() async {
+    bool? granted;
+    try {
+      granted = await _channel.invokeMethod<bool>('checkPermission');
+    } on PlatformException {
+      // This platform cannot currently report its permission state.
+    } on MissingPluginException {
+      // Older or unsupported platforms leave the state unknown.
+    }
+    permissionGranted.value = granted;
+    if (granted != null) {
+      _permissionRefused = !granted;
+    }
+    return granted;
+  }
+
+  Future<bool> openNotificationSettings() async {
+    try {
+      return await _channel.invokeMethod<bool>('openNotificationSettings') ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Allows an explicit retry. Resume uses [checkPermission] without prompting.
   void forgetRefusal() {
     _permissionRefused = false;
   }
 
   /// Asks for permission to notify. Once refused, it is not asked again
-  /// until [forgetRefusal]: reminders are rebooked by background refreshes,
-  /// and Android would otherwise raise the prompt at random moments.
+  /// until [forgetRefusal] or [checkPermission] observes a grant: reminders are
+  /// rebooked by background refreshes, which should not keep raising prompts.
   Future<bool> requestPermission() async {
     if (_permissionRefused) {
       return false;
@@ -349,6 +377,7 @@ class GakujoNotificationService {
     try {
       final result = await _channel.invokeMethod<bool>('requestPermission');
       _permissionRefused = result != true;
+      permissionGranted.value = result;
       return result ?? false;
     } on PlatformException {
       return false;
@@ -481,10 +510,35 @@ class GakujoDeadlineNotificationCoordinator {
   final DateTime Function() _now;
   Future<void> _pendingNotificationOperation = Future<void>.value();
 
+  Future<bool> _hasPermission(bool allowPermissionRequest) async {
+    return allowPermissionRequest
+        ? await _notificationService.requestPermission()
+        : await _notificationService.checkPermission() == true;
+  }
+
+  /// Rebooks cached assignments immediately when OS settings granted access.
+  Future<void> onAppResumed({
+    required bool notificationsEnabled,
+    required Set<GakujoNotificationTopic> topics,
+    required GakujoNotificationPreferences preferences,
+  }) async {
+    final previouslyGranted = _notificationService.permissionGranted.value;
+    final granted = await _notificationService.checkPermission();
+    if (granted == true && previouslyGranted != true && notificationsEnabled) {
+      await syncReminders(
+        notificationsEnabled: notificationsEnabled,
+        topics: topics,
+        preferences: preferences,
+        allowPermissionRequest: false,
+      );
+    }
+  }
+
   /// Notifies new deadlines the student chose through [topics] and
   /// [messages].
   Future<void> notifyPendingDeadlines({
     required bool notificationsEnabled,
+    bool allowPermissionRequest = true,
     Set<GakujoNotificationTopic> topics = const {
       ...GakujoNotificationTopic.values,
     },
@@ -499,6 +553,7 @@ class GakujoDeadlineNotificationCoordinator {
     return _enqueueNotificationOperation(
       () => _notifyPendingDeadlines(
         notificationsEnabled: notificationsEnabled,
+        allowPermissionRequest: allowPermissionRequest,
         topics: topics,
         messages: messages,
         preferences: preferences,
@@ -509,6 +564,7 @@ class GakujoDeadlineNotificationCoordinator {
 
   Future<void> _notifyPendingDeadlines({
     required bool notificationsEnabled,
+    required bool allowPermissionRequest,
     required Set<GakujoNotificationTopic> topics,
     required GakujoMessageNotificationSettings messages,
     required GakujoNotificationPreferences preferences,
@@ -569,7 +625,7 @@ class GakujoDeadlineNotificationCoordinator {
     if (pending.isEmpty) {
       return;
     }
-    if (!await _notificationService.requestPermission()) {
+    if (!await _hasPermission(allowPermissionRequest)) {
       return;
     }
     final notifiedNow = <String>[];
@@ -593,6 +649,7 @@ class GakujoDeadlineNotificationCoordinator {
     required bool notificationsEnabled,
     required Set<GakujoNotificationTopic> topics,
     required GakujoNotificationPreferences preferences,
+    bool allowPermissionRequest = true,
   }) {
     return _enqueueNotificationOperation(() async {
       if (notificationsEnabled) {
@@ -609,7 +666,7 @@ class GakujoDeadlineNotificationCoordinator {
             )
           : const <GakujoReminder>[];
       if (reminders.isNotEmpty &&
-          !await _notificationService.requestPermission()) {
+          !await _hasPermission(allowPermissionRequest)) {
         return;
       }
       final booksAhead = await _notificationService.scheduleReminders(
@@ -622,8 +679,7 @@ class GakujoDeadlineNotificationCoordinator {
       if (booksAhead || lateReminders.isEmpty) {
         return;
       }
-      if (reminders.isEmpty &&
-          !await _notificationService.requestPermission()) {
+      if (reminders.isEmpty && !await _hasPermission(allowPermissionRequest)) {
         return;
       }
       for (final reminder in lateReminders) {

@@ -1,6 +1,8 @@
 package net.yoshida.morebettergakujo
 
 import android.app.Activity
+import android.app.NotificationManager
+import android.content.ActivityNotFoundException
 import android.content.ContentProviderOperation
 import android.content.ContentUris
 import android.content.ContentValues
@@ -14,6 +16,7 @@ import android.os.Bundle
 import android.provider.CalendarContract
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
@@ -483,6 +486,14 @@ class MainActivity : FlutterActivity() {
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "requestPermission" -> requestNotificationPermission(result)
+                    "checkPermission" -> result.success(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+                        } else {
+                            null
+                        }
+                    )
+                    "openNotificationSettings" -> result.success(openNotificationSettings())
                     "notifyDeadline" -> {
                         result.success(showDeadlineNotification(call))
                     }
@@ -694,8 +705,16 @@ class MainActivity : FlutterActivity() {
 
         try {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            contentResolver.takePersistableUriPermission(uri, data.flags and flags)
-            prefs().edit().putString(KEY_DOWNLOAD_ROOT_URI, uri.toString()).apply()
+            GakujoDocumentPermissions.replaceRoot(
+                previousUri = prefs().getString(KEY_DOWNLOAD_ROOT_URI, null),
+                newUri = uri.toString(),
+                persist = {
+                    contentResolver.takePersistableUriPermission(uri, data.flags and flags)
+                    prefs().edit().putString(KEY_DOWNLOAD_ROOT_URI, uri.toString()).apply()
+                },
+                release = { contentResolver.releasePersistableUriPermission(Uri.parse(it), flags) },
+                onReleaseDenied = { Log.w(TAG, "Failed to release previous download root permission", it) }
+            )
             result.success(downloadRootState())
         } catch (error: SecurityException) {
             Log.e(TAG, "Failed to persist download root permission", error)
@@ -1425,6 +1444,25 @@ class MainActivity : FlutterActivity() {
 
     private fun isDebuggable(): Boolean {
         return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
+    private fun openNotificationSettings(): Boolean {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        }
+        return try {
+            startActivity(intent)
+            true
+        } catch (error: ActivityNotFoundException) {
+            Log.w(TAG, "Notification settings are unavailable", error)
+            false
+        } catch (error: SecurityException) {
+            Log.w(TAG, "Notification settings could not be opened", error)
+            false
+        }
     }
 
     private fun requestNotificationPermission(result: MethodChannel.Result) {

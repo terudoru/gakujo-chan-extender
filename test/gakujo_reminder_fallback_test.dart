@@ -155,6 +155,124 @@ void main() {
     expect(asked, 1);
   });
 
+  group('permission changes on resume', () {
+    final now = DateTime.utc(2099, 10, 28, 12);
+    const topics = {GakujoNotificationTopic.coursework};
+    const preferences = GakujoNotificationPreferences(
+      reminderOffsets: {GakujoReminderOffset.oneHour},
+    );
+
+    Future<GakujoDeadlineNotificationCoordinator> coordinator(
+      GakujoNotificationService service,
+    ) async {
+      final store = GakujoActivityStore();
+      await store.mergeAssignments([
+        GakujoAssignment(
+          kind: 'レポート',
+          title: '課題',
+          status: '未提出',
+          course: '科目',
+          dueAt: now.add(const Duration(hours: 3)),
+          capturedAt: now,
+        ),
+      ]);
+      await store.mergeDeadlines([
+        GakujoDeadlineEntry(
+          title: '課題',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report',
+          dueText: '提出期限 2099/10/28 17:00',
+          detectedAt: now,
+        ),
+      ]);
+      return GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => now,
+      );
+    }
+
+    for (final initiallyGranted in <bool?>[false, null]) {
+      test('resume rebooks cached reminders after $initiallyGranted to granted',
+          () async {
+        final service = GakujoNotificationService(now: () => now);
+        final notifications = await coordinator(service);
+        answer(booksAhead: true, permissionGranted: false);
+        if (initiallyGranted == false) {
+          expect(await service.requestPermission(), isFalse);
+        }
+        answer(booksAhead: true);
+
+        Future<void> resume() => notifications.onAppResumed(
+              notificationsEnabled: true,
+              topics: topics,
+              preferences: preferences,
+            );
+        await resume();
+
+        final booking = calls.singleWhere(
+          (call) => call.method == 'scheduleReminders',
+        );
+        final reminders = (booking.arguments as Map)['reminders'] as List;
+        expect(reminders, hasLength(1));
+        expect(reminders.single['atMillis'],
+            now.add(const Duration(hours: 2)).millisecondsSinceEpoch);
+        expect(
+            calls.where((call) => call.method == 'requestPermission'), isEmpty);
+
+        calls.clear();
+        await resume();
+        expect(calls.map((call) => call.method), ['checkPermission']);
+      });
+    }
+
+    for (final granted in <bool?>[false, null]) {
+      test('resume and its refresh do not prompt when permission is $granted',
+          () async {
+        final service = GakujoNotificationService(now: () => now);
+        final notifications = await coordinator(service);
+        calls.clear();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(_channel, (call) async {
+          calls.add(call);
+          expect(call.method, 'checkPermission');
+          return granted;
+        });
+
+        await notifications.onAppResumed(
+          notificationsEnabled: true,
+          topics: topics,
+          preferences: preferences,
+        );
+        await notifications.notifyPendingDeadlines(
+          notificationsEnabled: true,
+          allowPermissionRequest: false,
+        );
+        await notifications.syncReminders(
+          notificationsEnabled: true,
+          topics: topics,
+          preferences: preferences,
+          allowPermissionRequest: false,
+        );
+        // Steps with nothing to deliver return before checking; none prompts.
+        expect(calls, isNotEmpty);
+        expect(
+            calls.map((call) => call.method), everyElement('checkPermission'));
+      });
+    }
+
+    test('resume respects the app notification switch', () async {
+      final service = GakujoNotificationService(now: () => now);
+      final notifications = await coordinator(service);
+      answer(booksAhead: true);
+      await notifications.onAppResumed(
+        notificationsEnabled: false,
+        topics: topics,
+        preferences: preferences,
+      );
+      expect(calls.map((call) => call.method), ['checkPermission']);
+    });
+  });
+
   group('catch-up reminders', () {
     late DateTime now;
     final services = <GakujoNotificationService>[];

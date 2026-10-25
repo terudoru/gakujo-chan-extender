@@ -11,6 +11,69 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  testWidgets('notification denial warning follows permission and app settings',
+      (tester) async {
+    final permission = ValueNotifier<bool?>(null);
+    final keywords = TextEditingController();
+    addTearDown(permission.dispose);
+    addTearDown(keywords.dispose);
+    var opened = 0;
+
+    Future<void> show(
+        {bool enabled = true, bool canOpenSettings = true}) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: NotificationTopicsSection(
+              topics: const {},
+              messages: const GakujoMessageNotificationSettings(),
+              notificationsEnabled: enabled,
+              notificationPermission: permission,
+              onOpenNotificationSettings: canOpenSettings
+                  ? () {
+                      opened += 1;
+                    }
+                  : null,
+              onChanged: (_, __) {},
+              onMessagesChanged: (_) async {},
+              keywordController: keywords,
+              canAddKeyword: false,
+              onKeywordInputChanged: (_) {},
+              preferences: const GakujoNotificationPreferences(),
+              onPreferencesChanged: (_) async {},
+              knownCourses: const [],
+            ),
+          ),
+        ),
+      ));
+    }
+
+    final warning = find.text('端末の設定で通知が許可されていません');
+    final button = find.text('端末の通知設定を開く');
+    await show();
+    expect(warning, findsNothing);
+    expect(button, findsNothing);
+    permission.value = false;
+    await tester.pump();
+    expect(warning, findsOneWidget);
+    await tester.tap(button);
+    expect(opened, 1);
+    permission.value = true;
+    await tester.pump();
+    expect(warning, findsNothing);
+    expect(button, findsNothing);
+    permission.value = false;
+    await show(enabled: false);
+    expect(warning, findsNothing);
+    expect(button, findsNothing);
+    await show(canOpenSettings: false);
+    expect(warning, findsOneWidget);
+    expect(button, findsNothing);
+    permission.value = null;
+    await tester.pump();
+    expect(warning, findsNothing);
+  });
+
   test('queued topic and preference saves preserve the latest local settings',
       () async {
     final directory =

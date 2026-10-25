@@ -25,6 +25,64 @@ void main() {
     expect(await GakujoNotificationService().requestPermission(), isTrue);
   });
 
+  test('permission checks update the state and clear a previous refusal',
+      () async {
+    var granted = false;
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      return granted;
+    });
+    final service = GakujoNotificationService();
+
+    expect(await service.requestPermission(), isFalse);
+    expect(service.permissionGranted.value, isFalse);
+    expect(await service.checkPermission(), isFalse);
+    expect(await service.requestPermission(), isFalse);
+    granted = true;
+    expect(await service.checkPermission(), isTrue);
+    expect(service.permissionGranted.value, isTrue);
+    expect(await service.requestPermission(), isTrue);
+    expect(methods, [
+      'requestPermission',
+      'checkPermission',
+      'checkPermission',
+      'requestPermission',
+    ]);
+  });
+
+  test('unavailable permission state stays unknown without prompting',
+      () async {
+    final service = GakujoNotificationService();
+    expect(await service.checkPermission(), isNull);
+    for (final error in [
+      MissingPluginException(),
+      PlatformException(code: 'unavailable'),
+    ]) {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'checkPermission');
+        throw error;
+      });
+      expect(await service.checkPermission(), isNull);
+      expect(service.permissionGranted.value, isNull);
+    }
+  });
+
+  test('opens native notification settings and handles unavailable settings',
+      () async {
+    final service = GakujoNotificationService();
+    expect(await service.openNotificationSettings(), isFalse);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'openNotificationSettings');
+      return true;
+    });
+    expect(await service.openNotificationSettings(), isTrue);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(code: 'unavailable');
+    });
+    expect(await service.openNotificationSettings(), isFalse);
+  });
+
   test('notifyDeadline forwards title body and url', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       expect(call.method, 'notifyDeadline');

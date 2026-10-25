@@ -3,6 +3,24 @@ package net.yoshida.morebettergakujo
 import android.content.Intent
 
 internal object GakujoDocumentPermissions {
+    fun replaceRoot(
+        previousUri: String?,
+        newUri: String,
+        persist: () -> Unit,
+        release: (String) -> Unit,
+        onReleaseDenied: (SecurityException) -> Unit
+    ) {
+        persist()
+        if (previousUri.isNullOrBlank() || previousUri == newUri) {
+            return
+        }
+        try {
+            release(previousUri)
+        } catch (error: SecurityException) {
+            onReleaseDenied(error)
+        }
+    }
+
     fun persistIfOffered(
         flags: Int,
         persist: (Int) -> Unit,

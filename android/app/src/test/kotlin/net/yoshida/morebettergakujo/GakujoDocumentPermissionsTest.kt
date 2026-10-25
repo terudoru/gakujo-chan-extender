@@ -10,6 +10,75 @@ class GakujoDocumentPermissionsTest {
         Intent.FLAG_GRANT_WRITE_URI_PERMISSION
 
     @Test
+    fun replacingRootPersistsTheNewGrantBeforeReleasingOnlyTheOldRoot() {
+        val oldRoot = "content://provider/tree/old"
+        val newRoot = "content://provider/tree/new"
+        val file = "content://provider/document/file.pdf"
+        val grants = mutableSetOf(oldRoot, file)
+        GakujoDocumentPermissions.replaceRoot(
+            oldRoot,
+            newRoot,
+            persist = { grants.add(newRoot) },
+            release = {
+                assertEquals(setOf(oldRoot, newRoot, file), grants)
+                assertEquals(oldRoot, it)
+                grants.remove(it)
+            },
+            onReleaseDenied = { fail("Old root should release") }
+        )
+        assertEquals(setOf(newRoot, file), grants)
+    }
+
+    @Test
+    fun firstSelectionAndReselectingTheSameRootDoNotReleaseAnything() {
+        for (oldRoot in listOf(null, "", "content://provider/tree/new")) {
+            var persisted = false
+            GakujoDocumentPermissions.replaceRoot(
+                oldRoot,
+                "content://provider/tree/new",
+                persist = { persisted = true },
+                release = { fail("No old root should release") },
+                onReleaseDenied = { fail("No release was expected") }
+            )
+            assertEquals(true, persisted)
+        }
+    }
+
+    @Test
+    fun failedNewRootPersistenceKeepsTheOldGrant() {
+        val denied = SecurityException("Provider refused")
+        try {
+            GakujoDocumentPermissions.replaceRoot(
+                "content://provider/tree/old",
+                "content://provider/tree/new",
+                persist = { throw denied },
+                release = { fail("Old root must remain after persistence fails") },
+                onReleaseDenied = { fail("No release was expected") }
+            )
+            fail("Persistence failure must reach the caller")
+        } catch (error: SecurityException) {
+            assertEquals(denied, error)
+        }
+    }
+
+    @Test
+    fun revokedOldRootDoesNotFailTheNewSelection() {
+        val denied = SecurityException("Old grant was already revoked")
+        val operations = mutableListOf<String>()
+        GakujoDocumentPermissions.replaceRoot(
+            "content://provider/tree/old",
+            "content://provider/tree/new",
+            persist = { operations.add("persist") },
+            release = { throw denied },
+            onReleaseDenied = {
+                assertEquals(denied, it)
+                operations.add("release denied")
+            }
+        )
+        assertEquals(listOf("persist", "release denied"), operations)
+    }
+
+    @Test
     fun persistsOnlyTheOfferedReadWriteFlags() {
         for (offered in listOf(readWrite, Intent.FLAG_GRANT_READ_URI_PERMISSION)) {
             val persisted = mutableListOf<Int>()
