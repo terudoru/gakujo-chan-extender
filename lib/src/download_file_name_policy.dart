@@ -56,7 +56,16 @@ class DownloadFileNamePolicy {
       }
       shortened.write(character);
     }
-    final trimmed = shortened.toString().replaceAll(RegExp(r'[ .]+$'), '');
+    var cut = shortened.toString();
+    if (!hasExtension) {
+      // Cutting a long dotted tail can leave something like ".abcd" that
+      // later passes as an extension and stops the real one being added.
+      final tailDot = cut.lastIndexOf('.');
+      if (tailDot > 0 && cut.length - tailDot <= 16) {
+        cut = cut.substring(0, tailDot);
+      }
+    }
+    final trimmed = cut.replaceAll(RegExp(r'[ .]+$'), '');
     return '${trimmed.isEmpty ? fallbackBaseName : trimmed}$extension';
   }
 

@@ -25,6 +25,18 @@ void main() {
     expect(DownloadFileNamePolicy.uniqueName(name, {name}).length,
         lessThanOrEqualTo(255));
 
+    // Cutting a long dotted tail does not leave a fake extension behind.
+    final dotted =
+        DownloadFileNamePolicy.boundedName('${'a' * 195}.abcdefghijklmnop');
+    expect(dotted, 'a' * 195);
+    expect(
+      DownloadFileNamePolicy.safeFileName(
+        preferredName: dotted,
+        mimeType: 'application/pdf',
+      ),
+      '${'a' * 195}.pdf',
+    );
+
     // An emoji (surrogate pair) at the cut point is not split.
     final emoji = DownloadFileNamePolicy.boundedName('${'a' * 195}😀😀😀.pdf');
     expect(emoji.length, lessThanOrEqualTo(200));
