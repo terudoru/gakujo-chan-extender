@@ -17,12 +17,6 @@ class GakujoDownloadRequest {
   final String fileName;
   final Map<String, String> formFields;
 
-  /// A POST restored from a backup lost its form fields, so resubmitting
-  /// it cannot name the attachment. Flow-key URLs may still work within
-  /// the same session; an expired one reports the page-returned message.
-  bool get requiresPageReopenForRetry =>
-      method.toUpperCase() == 'POST' && formFields.isEmpty;
-
   factory GakujoDownloadRequest.fromJsonText(String text) {
     final raw = jsonDecode(text);
     if (raw is! Map<String, dynamic>) {

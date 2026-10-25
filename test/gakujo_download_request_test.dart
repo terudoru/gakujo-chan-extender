@@ -2,47 +2,6 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('retry requires reopening only POSTs without saved fields', () {
-    const url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download';
-    const post = GakujoDownloadRequest(
-      url: url,
-      method: 'post',
-      courseName: '情報リテラシー',
-      fileName: '資料.pdf',
-      formFields: {'file': '42'},
-    );
-    final restored = GakujoDownloadRequest.fromJsonMap(post.toExternalJson());
-
-    expect(post.requiresPageReopenForRetry, isFalse);
-    expect(restored.formFields, isEmpty);
-    expect(restored.requiresPageReopenForRetry, isTrue);
-    for (final method in ['GET', 'POST']) {
-      for (final fields in [
-        <String, String>{},
-        {'file': '42'}
-      ]) {
-        final request = GakujoDownloadRequest(
-          url: '$url?_flowExecutionKey=e1s1',
-          method: method,
-          courseName: '',
-          fileName: '',
-          formFields: fields,
-        );
-        // Flow-key URLs may still work within the same session.
-        expect(request.requiresPageReopenForRetry,
-            method == 'POST' && fields.isEmpty);
-      }
-    }
-    const get = GakujoDownloadRequest(
-      url: url,
-      method: 'GET',
-      courseName: '',
-      fileName: '',
-      formFields: {},
-    );
-    expect(get.requiresPageReopenForRetry, isFalse);
-  });
-
   test('keeps empty captured file names unresolved for response headers', () {
     final request = GakujoDownloadRequest.fromJsonText(
       '{"url":"https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do",'

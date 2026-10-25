@@ -773,10 +773,6 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     GakujoDownloadRequest request, {
     String? retryEntryId,
   }) async {
-    if (retryEntryId != null && request.requiresPageReopenForRetry) {
-      _showSnackBar('ページを開き直してから、もう一度ダウンロードしてください');
-      return;
-    }
     if (!AllowedWebOrigins.canLoad(
       request.url,
       debugAllowed: _debugAllowed,
