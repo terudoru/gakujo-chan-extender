@@ -473,7 +473,17 @@ class GakujoReportDraftScript {
       ].join('|');
     }
 
-    function legacyDraftKey(doc, fields) {
+    // v1 hashed the page with its character counters, which show the typed
+    // length when the draft was saved but 0 once the form is reopened empty.
+    function zeroCounters(text) {
+      return String(text || '')
+        .replace(/(入力文字数[:：]?\s*)[0-9０-９]+(\s*\/)/g, '$10$2')
+        .replace(/(^|[^0-9０-９\/])[0-9０-９]+(\s*\/\s*[0-9０-９]+\s*文字)/g, '$10$2');
+    }
+
+    // The saved key used the count shown while typing, so try each count up
+    // to the counter's maximum (only when no v2 draft exists for this form).
+    function legacyDraftKeys(doc, fields) {
       var path = '';
       try {
         path = doc.location.pathname || '';
@@ -486,10 +496,25 @@ class GakujoReportDraftScript {
         stablePageTextForKey(doc).substring(0, 4000),
         fields.map(labelFor).join('|')
       ].join('\n');
-      return prefix + hashString(signature);
+      var keys = [prefix + hashString(signature)];
+      // The counter appears in the page text and in the field labels.
+      var pattern = /(入力文字数[:：]?\s*)[0-9０-９]+(\s*\/\s*)([0-9]+)/g;
+      var counter = /(入力文字数[:：]?\s*)[0-9０-９]+(\s*\/\s*)([0-9]+)/.exec(signature);
+      if (!counter) return keys;
+      var max = Math.min(Number(counter[3]), 4000);
+      for (var count = 0; count <= max; count += 1) {
+        var candidate = signature.replace(pattern, function(_, label, slash, limit) {
+          return label + count + slash + limit;
+        });
+        if (candidate !== signature) keys.push(prefix + hashString(candidate));
+      }
+      return keys;
     }
 
-    return { key: legacyDraftKey, fields: saveableFields, fieldKey: fieldKey };
+    return {
+      keys: legacyDraftKeys, fields: saveableFields, fieldKey: fieldKey,
+      zeroCounters: zeroCounters
+    };
   })();
 
   function readDraft(store, key) {
@@ -752,12 +777,16 @@ class GakujoReportDraftScript {
     var legacyKey = null;
     if (!draft) {
       var legacyFields = legacyDraft.fields(doc);
-      legacyKey = legacyDraft.key(doc, legacyFields);
-      var oldDraft = readDraft(store, legacyKey);
+      var oldDraft = null;
+      legacyDraft.keys(doc, legacyFields).some(function(candidate) {
+        oldDraft = readDraft(store, candidate);
+        legacyKey = oldDraft ? candidate : null;
+        return !!oldDraft;
+      });
       if (oldDraft && Array.isArray(oldDraft.fields)) {
         var oldByKey = Object.create(null);
         oldDraft.fields.forEach(function(item) {
-          if (item) oldByKey[item.key] = item;
+          if (item) oldByKey[legacyDraft.zeroCounters(item.key)] = item;
         });
         draft = {
           savedAt: oldDraft.savedAt,
@@ -765,7 +794,9 @@ class GakujoReportDraftScript {
           url: oldDraft.url,
           heading: headingFor(doc),
           fields: legacyFields.map(function(field, index) {
-            var item = oldByKey[legacyDraft.fieldKey(field, index)];
+            var item = oldByKey[
+              legacyDraft.zeroCounters(legacyDraft.fieldKey(field, index))
+            ];
             var currentIndex = fields.indexOf(field);
             return item && currentIndex >= 0 ? {
               key: fieldKey(field, currentIndex, fields),

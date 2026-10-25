@@ -100,6 +100,13 @@ void main() {
     expect(result['xssExecutionCount'], 0);
   });
 
+  test('migrates a v0.70.x draft when the reopened form counter reads 0',
+      () async {
+    final result = await _evaluateDraftScenario('legacyMigrationReopenedEmpty');
+    expect(result['restored'], ['Legacy answer', 'Second legacy answer']);
+    expect(result['legacyRemoved'], isTrue);
+  });
+
   test('migrates v0.70.x drafts with their original page and field keys',
       () async {
     final result = await _evaluateDraftScenario('legacyMigration');
@@ -801,6 +808,25 @@ function hidePage(page) {
 
 function runExtendedScenario() {
   const storage = new FakeStorage();
+  if (spec.scenario === 'legacyMigrationReopenedEmpty') {
+    // Same captured v0.70.0 draft, but the reopened form's counter shows 0.
+    const legacyKey = 'mbg-report-draft:v1:cmm5xw';
+    storage.setItem(legacyKey, JSON.stringify({
+      savedAt: Date.now() - 60000,
+      title: 'レポート提出', url: 'https://gakujo.example/report/input',
+      fields: [
+        {key: 'textarea||gakuComment gakuComment 入力文字数：17/200文字|0', value: 'Legacy answer'},
+        {key: 'textarea||Q2 入力文字数：17/200文字|1', value: 'Second legacy answer'}
+      ]
+    }));
+    const page = textPage(storage, {counter: 0, counterElement: true});
+    page.document.fields = [page.field,
+      new FakeControl(page.document, 'select', {name: 'choice'}),
+      new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+    runPage(page);
+    return {restored: [page.field.value, page.document.fields[2].value],
+      legacyRemoved: storage.getItem(legacyKey) === null};
+  }
   if (spec.scenario === 'legacyMigration') {
     const legacyKey = 'mbg-report-draft:v1:cmm5xw';
     // Captured from v0.70.0's script on this form, including its counter text.
