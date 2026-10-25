@@ -430,14 +430,14 @@ class NotificationTopicsSection extends StatelessWidget {
   final GakujoMessageNotificationSettings messages;
   final bool notificationsEnabled;
   final void Function(GakujoNotificationTopic topic, bool enabled) onChanged;
-  final Future<void> Function(GakujoMessageNotificationSettings messages)
+  final Future<bool> Function(GakujoMessageNotificationSettings messages)
       onMessagesChanged;
   final TextEditingController keywordController;
   final bool canAddKeyword;
   final ValueChanged<String> onKeywordInputChanged;
 
   Future<void> _addKeyword() async {
-    await onMessagesChanged(
+    final saved = await onMessagesChanged(
       messages.copyWith(
         keywords: normalizeMessageExcludeKeywords([
           ...messages.keywords,
@@ -445,6 +445,7 @@ class NotificationTopicsSection extends StatelessWidget {
         ]),
       ),
     );
+    if (!saved) return;
     keywordController.clear();
     onKeywordInputChanged('');
   }

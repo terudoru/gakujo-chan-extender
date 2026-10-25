@@ -442,10 +442,14 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   Future<void> _showDownloadHistoryDialog() async {
-    var entries = await _downloadHistoryStore.load();
-    if (!mounted) {
+    final loaded = await readGakujoSavedData(
+      _downloadHistoryStore.load,
+      showSnackBar: _showSnackBar,
+    );
+    if (loaded == null || !mounted) {
       return;
     }
+    var entries = loaded;
 
     await showDialog<void>(
       context: context,
@@ -541,10 +545,14 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   Future<void> _showFailedDownloadsDialog() async {
-    var entries = await _downloadHistoryStore.loadFailedDownloads();
-    if (!mounted) {
+    final loaded = await readGakujoSavedData(
+      _downloadHistoryStore.loadFailedDownloads,
+      showSnackBar: _showSnackBar,
+    );
+    if (loaded == null || !mounted) {
       return;
     }
+    var entries = loaded;
 
     await showDialog<void>(
       context: context,
@@ -618,8 +626,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   Future<void> _showCourseMaterialsDialog() async {
-    final entries = await _downloadHistoryStore.load();
-    if (!mounted) {
+    final entries = await readGakujoSavedData(
+      _downloadHistoryStore.load,
+      showSnackBar: _showSnackBar,
+    );
+    if (entries == null || !mounted) {
       return;
     }
 

@@ -1102,7 +1102,11 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       if (result == null) {
         return;
       }
-      await _saveCalendarImportSettings(result.settings);
+      if (!await _trySaveSettings(
+        () => _saveCalendarImportSettings(result.settings),
+      )) {
+        return;
+      }
       switch (result.action) {
         case _ScheduleIntegrationAction.syncCalendar:
           await _exportCurrentScheduleToCalendar(

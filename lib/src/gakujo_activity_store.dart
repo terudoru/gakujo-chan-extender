@@ -1112,7 +1112,7 @@ class GakujoActivityStore {
     }
     final favoriteRead = await _readFavorites();
     if (!favoriteRead.isSuccessful) {
-      return;
+      throw StateError('Failed to read favorites');
     }
     final favorites = favoriteRead.value;
     final filtered = favorites

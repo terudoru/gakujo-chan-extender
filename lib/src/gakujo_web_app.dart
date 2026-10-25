@@ -368,6 +368,35 @@ class GakujoWebApp extends StatefulWidget {
   State<GakujoWebApp> createState() => _GakujoWebAppState();
 }
 
+const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
+
+@visibleForTesting
+Future<T?> readGakujoSavedData<T extends Object>(
+  Future<T> Function() read, {
+  required ValueChanged<String> showSnackBar,
+}) async {
+  try {
+    return await read();
+  } on Object {
+    showSnackBar('保存データを読み込めませんでした。しばらくしてからもう一度お試しください');
+    return null;
+  }
+}
+
+@visibleForTesting
+Future<bool> saveGakujoSettingsSafely(
+  Future<void> Function() save, {
+  required ValueChanged<String> showSnackBar,
+}) async {
+  try {
+    await save();
+    return true;
+  } on Object {
+    showSnackBar(_settingsSaveFailureMessage);
+    return false;
+  }
+}
+
 @visibleForTesting
 Future<void> saveGakujoSettingsChange({
   required Future<void> Function() save,
@@ -2044,7 +2073,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (mode == null) {
                         return;
                       }
-                      await _appSettingsStore.saveDownloadSaveMode(mode);
+                      if (!await _trySaveSettings(
+                        () => _appSettingsStore.saveDownloadSaveMode(mode),
+                      )) {
+                        return;
+                      }
                       final nextSettings = _appSettings.copyWith(
                         downloadSaveMode: mode,
                       );
@@ -2081,7 +2114,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (mode == null) {
                         return;
                       }
-                      await _appSettingsStore.savePageMode(mode);
+                      if (!await _trySaveSettings(
+                        () => _appSettingsStore.savePageMode(mode),
+                      )) {
+                        return;
+                      }
                       final nextSettings = _appSettings.copyWith(
                         pageMode: mode,
                       );
@@ -2106,26 +2143,30 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   child: FeatureFlagsSection(
                     settings: _appSettings,
                     onChanged: (flag, enabled) async {
-                      await saveGakujoSettingsChange(
-                        save: () => _appSettingsStore.saveFeatureEnabled(
-                          flag,
-                          enabled: enabled,
-                        ),
-                        currentSettings: () => _appSettings,
-                        update: (settings) => settings.copyWith(
-                          disabledFeatureFlags: {
-                            for (final value in settings.disabledFeatureFlags)
-                              if (value != flag) value,
-                            if (!enabled) flag,
-                          },
-                        ),
-                        apply: (settings) {
-                          if (mounted) {
-                            setState(() => _appSettings = settings);
-                          }
-                        },
-                        mirror: _syncLocalSettingsMirror,
-                      );
+                      if (!await _trySaveSettings(() =>
+                          saveGakujoSettingsChange(
+                            save: () => _appSettingsStore.saveFeatureEnabled(
+                              flag,
+                              enabled: enabled,
+                            ),
+                            currentSettings: () => _appSettings,
+                            update: (settings) => settings.copyWith(
+                              disabledFeatureFlags: {
+                                for (final value
+                                    in settings.disabledFeatureFlags)
+                                  if (value != flag) value,
+                                if (!enabled) flag,
+                              },
+                            ),
+                            apply: (settings) {
+                              if (mounted) {
+                                setState(() => _appSettings = settings);
+                              }
+                            },
+                            mirror: _syncLocalSettingsMirror,
+                          ))) {
+                        return;
+                      }
                       if (!mounted) {
                         return;
                       }
@@ -2175,20 +2216,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       setDialogState(() {});
                     },
                     onMessagesChanged: (messages) async {
-                      await _saveMessageNotification(messages);
+                      if (!await _trySaveSettings(
+                        () => _saveMessageNotification(messages),
+                      )) {
+                        return false;
+                      }
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
+                      return true;
                     },
                     notificationsEnabled: _appSettings.isFeatureEnabled(
                       GakujoFeatureFlag.deadlineNotifications,
                     ),
                     onChanged: (topic, enabled) async {
-                      await _saveNotificationTopics({
-                        for (final value in _appSettings.notificationTopics)
-                          if (value != topic) value,
-                        if (enabled) topic,
-                      });
+                      if (!await _trySaveSettings(
+                          () => _saveNotificationTopics({
+                                for (final value
+                                    in _appSettings.notificationTopics)
+                                  if (value != topic) value,
+                                if (enabled) topic,
+                              }))) {
+                        return;
+                      }
                       if (dialogContext.mounted) {
                         setDialogState(() {});
                       }
@@ -2213,7 +2263,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         ..._appSettings.messageExcludeKeywords,
                         messageExcludeKeywordInput,
                       ]);
-                      await _saveMessageExcludeKeywords(next);
+                      if (!await _trySaveSettings(
+                        () => _saveMessageExcludeKeywords(next),
+                      )) {
+                        return;
+                      }
                       messageExcludeKeywordInput = '';
                       messageExcludeKeywordController.clear();
                       if (!dialogContext.mounted) {
@@ -2225,7 +2279,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       final next = _appSettings.messageExcludeKeywords
                           .where((value) => value != keyword)
                           .toList();
-                      await _saveMessageExcludeKeywords(next);
+                      if (!await _trySaveSettings(
+                        () => _saveMessageExcludeKeywords(next),
+                      )) {
+                        return;
+                      }
                       if (!dialogContext.mounted) {
                         return;
                       }
@@ -2850,14 +2908,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _showDataManagementDialog() async {
-    final history = await _downloadHistoryStore.load();
-    final failedDownloads = await _downloadHistoryStore.loadFailedDownloads();
-    final favorites = await _activityStore.loadFavorites();
-    final starredMessages = await _activityStore.loadStarredMessages();
-    final deadlines = await _activityStore.loadDeadlines();
-    final changes = await _activityStore.loadChanges();
-    final reportLists = await _activityStore.loadReportLists();
-    if (!mounted) {
+    final data = await readGakujoSavedData(
+      () async => (
+        history: await _downloadHistoryStore.load(),
+        failedDownloads: await _downloadHistoryStore.loadFailedDownloads(),
+        favorites: await _activityStore.loadFavoritesForBackup(),
+        starredMessages: await _activityStore.loadStarredMessagesForBackup(),
+        deadlines: await _activityStore.loadDeadlinesForBackup(),
+        changes: await _activityStore.loadChangesForBackup(),
+        reportLists: await _activityStore.loadReportListsForBackup(),
+      ),
+      showSnackBar: _showSnackBar,
+    );
+    if (data == null || !mounted) {
       return;
     }
 
@@ -2890,15 +2953,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             child: ListView(
               shrinkWrap: true,
               children: [
-                _DataCountTile(label: 'ダウンロード履歴', count: history.length),
+                _DataCountTile(label: 'ダウンロード履歴', count: data.history.length),
                 _DataCountTile(
-                    label: '失敗したダウンロード', count: failedDownloads.length),
-                _DataCountTile(label: 'お気に入り', count: favorites.length),
+                    label: '失敗したダウンロード', count: data.failedDownloads.length),
+                _DataCountTile(label: 'お気に入り', count: data.favorites.length),
                 _DataCountTile(
-                    label: 'スター付き連絡通知', count: starredMessages.length),
-                _DataCountTile(label: '新着情報・期限・予定', count: deadlines.length),
-                _DataCountTile(label: '変更履歴', count: changes.length),
-                _DataCountTile(label: '保存済み課題一覧', count: reportLists.length),
+                    label: 'スター付き連絡通知', count: data.starredMessages.length),
+                _DataCountTile(
+                    label: '新着情報・期限・予定', count: data.deadlines.length),
+                _DataCountTile(label: '変更履歴', count: data.changes.length),
+                _DataCountTile(
+                    label: '保存済み課題一覧', count: data.reportLists.length),
               ],
             ),
           ),
@@ -3230,13 +3295,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     switch (action) {
       case _ToolbarAction.addFavorite:
         final title = await _controller.getTitle();
-        await _activityStore.addFavorite(
-          GakujoFavoritePage(
-            title: _favoriteTitle(title, url),
-            url: url,
-            addedAt: DateTime.now(),
-          ),
-        );
+        try {
+          await _activityStore.addFavorite(
+            GakujoFavoritePage(
+              title: _favoriteTitle(title, url),
+              url: url,
+              addedAt: DateTime.now(),
+            ),
+          );
+        } on Object {
+          _showSnackBar('お気に入りに追加できませんでした');
+          return;
+        }
         _showSnackBar('お気に入りに追加しました');
         return;
       case _ToolbarAction.copyUrl:
@@ -3273,6 +3343,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return null;
     }
     return _currentPageUrl;
+  }
+
+  Future<bool> _trySaveSettings(Future<void> Function() save) {
+    return saveGakujoSettingsSafely(save, showSnackBar: _showSnackBar);
   }
 
   Future<void> _saveCalendarImportSettings(
@@ -3411,7 +3485,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           error: error,
           stackTrace: stackTrace,
         );
-        if (mounted) _showSnackBar('通知設定を保存できませんでした');
+        if (mounted) _showSnackBar(_settingsSaveFailureMessage);
         return;
       }
       if (mounted) {

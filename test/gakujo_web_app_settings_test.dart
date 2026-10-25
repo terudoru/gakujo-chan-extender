@@ -35,7 +35,7 @@ void main() {
                     }
                   : null,
               onChanged: (_, __) {},
-              onMessagesChanged: (_) async {},
+              onMessagesChanged: (_) async => true,
               keywordController: keywords,
               canAddKeyword: false,
               onKeywordInputChanged: (_) {},
@@ -232,6 +232,7 @@ void main() {
               onMessagesChanged: (next) async {
                 if (next.keywords.contains('集中講義')) await addSave.future;
                 setState(() => messages = next);
+                return true;
               },
               keywordController: controller,
               canAddKeyword: input.trim().isNotEmpty,
@@ -342,7 +343,7 @@ void main() {
             messages: const GakujoMessageNotificationSettings(),
             notificationsEnabled: true,
             onChanged: (_, __) {},
-            onMessagesChanged: (_) async {},
+            onMessagesChanged: (_) async => true,
             keywordController: keywords,
             canAddKeyword: false,
             onKeywordInputChanged: (_) {},
