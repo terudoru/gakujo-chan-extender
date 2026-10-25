@@ -552,6 +552,8 @@ const afterGradeRowAdded = gradePage.gpaText();
 const recognisedPage = createPage();
 run(buildScript, recognisedPage);
 recognisedPage.addRow('2', '0', '認定');
+// Every graded Gakujo row also carries 合 in its own 合否 column.
+recognisedPage.addRow('2', '4', '合');
 recognisedPage.tickInterval();
 const withRecognisedCourse = recognisedPage.gpaText();
 
