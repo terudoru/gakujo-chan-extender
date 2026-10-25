@@ -13,7 +13,13 @@ class GakujoLastPageStore {
   final FlutterSecureStorage _secureStorage;
 
   Future<String?> load({required bool debugAllowed}) async {
-    final url = await _secureStorage.read(key: lastUrlKey);
+    final String? url;
+    try {
+      url = await _secureStorage.read(key: lastUrlKey);
+    } on Object {
+      // An unreadable store must not stop startup; open the default page.
+      return null;
+    }
     if (AllowedWebOrigins.canRestoreLastPage(
       url,
       debugAllowed: debugAllowed,

@@ -23,6 +23,11 @@ dependencies:
   package_info_plus: ^10.1.0
   image_picker: ^1.2.4
 
+dependency_overrides:
+  # 4.2.2 with Windows data-loss fixes; see third_party/flutter_secure_storage_windows.
+  flutter_secure_storage_windows:
+    path: third_party/flutter_secure_storage_windows
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
