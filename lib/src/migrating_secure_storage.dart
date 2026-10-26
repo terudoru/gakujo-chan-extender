@@ -9,23 +9,21 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     required FlutterSecureStorage fallback,
     bool deleteFallbackAfterMigration = true,
     String? migrationMarkerKey,
+    Duration operationTimeout = const Duration(seconds: 3),
   })  : _primary = primary,
         _fallback = fallback,
         _deleteFallbackAfterMigration = deleteFallbackAfterMigration,
-        _migrationMarkerKey = migrationMarkerKey;
+        _migrationMarkerKey = migrationMarkerKey,
+        _storageOperationTimeout = operationTimeout;
 
   final FlutterSecureStorage _primary;
   final FlutterSecureStorage _fallback;
   final bool _deleteFallbackAfterMigration;
   final String? _migrationMarkerKey;
+  final Duration _storageOperationTimeout;
   Future<bool>? _migrationSweepFuture;
   Future<void> _pendingStorageOperation = Future<void>.value();
   bool _fallbackReadsSuppressed = false;
-  // A cold macOS keychain read (first access after launch, possibly behind an
-  // unlock prompt) can take well over a second. Keep the timeout generous
-  // enough that a slow-but-successful primary read is not abandoned to the
-  // legacy fallback store, which would surface as missing credentials/settings.
-  static const _storageOperationTimeout = Duration(seconds: 3);
 
   Future<Map<String, String?>> readKeys(Iterable<String> keys) async {
     final migrationCompleted = _fallbackReadsSuppressed

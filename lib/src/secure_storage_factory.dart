@@ -14,6 +14,8 @@ class SecureStorageFactory {
   static const _macosBundleKey = 'more_better_gakujo_secure_storage_bundle_v1';
   static const _macosMigrationMarkerKey =
       'more_better_gakujo_migration_completed_v1';
+  // Ad-hoc signed updates can require the user to approve Keychain access.
+  static const _macosStorageOperationTimeout = Duration(minutes: 2);
 
   static const FlutterSecureStorage _macosStorage = FlutterSecureStorage(
     mOptions: MacOsOptions(
@@ -45,9 +47,11 @@ class SecureStorageFactory {
       // must stay on the traditional macOS keychain.
       fallback: _macosLegacyClassicStorage,
       deleteFallbackAfterMigration: false,
+      operationTimeout: _macosStorageOperationTimeout,
     ),
     deleteFallbackAfterMigration: false,
     migrationMarkerKey: _macosMigrationMarkerKey,
+    operationTimeout: _macosStorageOperationTimeout,
   );
 
   static FlutterSecureStorage create() {

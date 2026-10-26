@@ -20,6 +20,36 @@ void main() {
     expect(fallback.values['token'], 'fallback');
   });
 
+  for (final operation in ['read', 'readKeys', 'readAll']) {
+    testWidgets('$operation waits past three seconds with a longer timeout',
+        (tester) async {
+      final primary = _MemorySecureStorage({'token': 'primary'})
+        ..readDelay = const Duration(seconds: 4)
+        ..readAllDelay = const Duration(seconds: 4);
+      final fallback = _MemorySecureStorage({'token': 'fallback'});
+      final storage = MigratingSecureStorage(
+        primary: primary,
+        fallback: fallback,
+        operationTimeout: const Duration(minutes: 2),
+      );
+
+      final read = switch (operation) {
+        'read' => storage.read(key: 'token'),
+        'readKeys' => storage.readKeys(['token']),
+        _ => storage.readAll(),
+      };
+      final result = expectLater(
+        read,
+        completion(operation == 'read' ? 'primary' : {'token': 'primary'}),
+      );
+      await tester.pump(const Duration(seconds: 4));
+      await result;
+
+      expect(fallback.readKeys, isEmpty);
+      expect(fallback.readAllCount, 0);
+    });
+  }
+
   test('read migrates fallback values into primary storage', () async {
     final primary = _MemorySecureStorage();
     final fallback = _MemorySecureStorage({'token': 'fallback'});
@@ -310,6 +340,48 @@ void main() {
       markerKey: '1',
     });
     expect(middle.values, {'download-history': 'recent'});
+    expect(legacy.values, {'two-factor-secret': 'legacy'});
+  });
+
+  testWidgets(
+      'write waits for slow migration through bundled and legacy stores',
+      (tester) async {
+    const markerKey = 'migration-completed';
+    final backing = _MemorySecureStorage()
+      ..readDelay = const Duration(seconds: 4)
+      ..readAllDelay = const Duration(seconds: 4);
+    final legacy = _MemorySecureStorage({'two-factor-secret': 'legacy'})
+      ..readAllDelay = const Duration(seconds: 4);
+    final bundled = BundledSecureStorage(storage: backing, bundleKey: 'bundle');
+    final storage = MigratingSecureStorage(
+      primary: bundled,
+      fallback: MigratingSecureStorage(
+        primary: backing,
+        fallback: legacy,
+        deleteFallbackAfterMigration: false,
+        operationTimeout: const Duration(minutes: 2),
+      ),
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+      operationTimeout: const Duration(minutes: 2),
+    );
+
+    final write = expectLater(
+      storage.write(key: 'setting', value: 'configured'),
+      completes,
+    );
+    await tester.pump();
+    // Each physical keychain read can wait for a separate access prompt.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 4));
+    }
+    await write;
+
+    expect(await bundled.readAll(), {
+      'two-factor-secret': 'legacy',
+      markerKey: '1',
+      'setting': 'configured',
+    });
     expect(legacy.values, {'two-factor-secret': 'legacy'});
   });
 

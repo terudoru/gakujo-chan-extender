@@ -6066,7 +6066,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await _secretStore.save(secret).timeout(const Duration(seconds: 3));
+      final save = _secretStore.save(secret);
+      if (Platform.isMacOS) {
+        // This explicit debug secret can require a Keychain access prompt.
+        await save;
+      } else {
+        await save.timeout(const Duration(seconds: 3));
+      }
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to save initial two-factor secret',
