@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 17'));
+    expect(script, contains('captureVersion = 18'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -244,6 +244,48 @@ void main() {
     expect((result['captured'] as List).length, 8);
   });
 
+  test('programmatic bulk downloads capture POST fields in top and frame',
+      () async {
+    final result = await _evaluateBehavior('multiDownloadSubmissions');
+    expect(result['nativeSubmissions'], 0);
+    expect(result['hookCount'], 2);
+    final payloads = (result['captured'] as List).cast<Map>();
+    expect(payloads, hasLength(2));
+    for (final payload in payloads) {
+      expect(payload['url'],
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do');
+      expect(payload['method'], 'POST');
+      expect(payload['fileName'], '');
+      expect(payload['formFields'], {
+        '_flowId': 'SDW-filerefer-flow',
+        'downloadType': 'multi',
+        'fileId': '41881,41882',
+      });
+    }
+  });
+
+  test('file refer and download type signals respect workflow vetoes',
+      () async {
+    final result = await _evaluateBehavior('fileReferSubmissions');
+    expect(result['captured'], hasLength(6));
+    expect(result['nativeSubmissions'], result['expectedSubmissions']);
+  });
+
+  test('app-owned bulk forms and unrelated programmatic submits stay native',
+      () async {
+    final result = await _evaluateBehavior('ownedMultiDownloadSubmissions');
+    expect(result['captured'], isEmpty);
+    expect(result['nativeSubmissions'], 7);
+  });
+
+  test('requestSubmit uses the submit handler without a prototype hook',
+      () async {
+    final result = await _evaluateBehavior('requestSubmit');
+    expect(result['prototypeUnchanged'], isTrue);
+    expect(result['captured'], hasLength(1));
+    expect(result['nativeSubmissions'], 1);
+  });
+
   test('file actions capture programmatic POST bodies and veto workflow events',
       () async {
     final result = await _evaluateBehavior('fileActionSubmissions');
@@ -296,7 +338,7 @@ void main() {
     expect(result['submitListenersAfterTeardown'], 0);
     expect(result['ordinarySubmitPrevented'], isFalse);
     expect(result['nativeSubmissions'], 4);
-    expect((result['captured'] as List).length, 2);
+    expect((result['captured'] as List).length, 3);
   });
 }
 
@@ -456,6 +498,9 @@ function createDocument(baseURI) {
     baseURI,
     defaultView: {HTMLFormElement: class {
       submit() { nativeSubmissions += 1; }
+      requestSubmit(submitter) {
+        if (!this.invalid) submitEvent(this, submitter);
+      }
     }},
     location: {href: baseURI},
     title: '',
@@ -590,6 +635,16 @@ function click(target) {
   return prevented;
 }
 
+function multiDownloadForm(ownerDocument = childDocument, fields = {
+  _flowId: 'SDW-filerefer-flow', downloadType: 'multi', fileId: '41881,41882'
+}, action = '/campusweb/campussquare.do') {
+  const form = submitterWithForm('', action, fields, {}, ownerDocument).form;
+  form.name = 'multiDownloadForm';
+  form.querySelectorAll = () => [];
+  return form;
+}
+
+const originalRequestSubmit = childDocument.defaultView.HTMLFormElement.prototype.requestSubmit;
 const context = vm.createContext({
   window,
   document: topDocument,
@@ -610,6 +665,82 @@ function submitEvent(form, submitter) {
 }
 
 function behavior() {
+  if (scenario === 'multiDownloadSubmissions') {
+    vm.runInContext(buildScript, context);
+    vm.runInContext(buildScript, context);
+    for (const doc of [topDocument, childDocument]) {
+      const form = multiDownloadForm(doc);
+      // submit() has no submitter, even after an inline button click.
+      const button = submitterWithForm('一括ダウンロード', '', {}, {
+        onclick: 'multiDownloadClick()', formaction: 'wrong.do', formmethod: 'GET'
+      }, doc);
+      button.form = form;
+      button.name = '_eventId';
+      button.value = 'confirm';
+      click(button);
+      form.submit();
+    }
+    return {captured, nativeSubmissions,
+      hookCount: window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.length};
+  }
+  if (scenario === 'fileReferSubmissions') {
+    for (const [action, fields] of [
+      ['campussquare.do', {_flowId: 'SDW-filerefer-flow', fileId: '42'}],
+      ['campussquare.do?_flowId=SDW-filerefer-flow&fileId=42', {}],
+      ['campussquare.do?_flowId=SDW-filerefer-flow', {fileId: '42'}],
+      ['campussquare.do?fileId=42', {_flowId: 'SDW-filerefer-flow'}],
+      ['campussquare.do', {downloadType: 'multi'}],
+      ['campussquare.do?downloadType=multi', {}]
+    ]) multiDownloadForm(childDocument, fields, action).submit();
+    let expectedSubmissions = 0;
+    for (const event of ['confirm', 'entry', 'submit', 'save', 'regist', 'register',
+      'update', 'delete', 'back', 'clear', 'cancel', 'next', 'prev', 'complete', 'finish']) {
+      for (const named of [false, true]) {
+        const form = multiDownloadForm();
+        form.fields[named ? '_eventId_' + event : '_eventId'] = event;
+        form.submit();
+        multiDownloadForm(childDocument, undefined,
+          'campussquare.do?_eventId' + (named ? '_' + event : '=' + event)).submit();
+        expectedSubmissions += 2;
+      }
+    }
+    for (const fields of [
+      {_flowId: 'SDW-filerefer-flow'},
+      {_flowId: 'SDW-filerefer-flow', fileId: '   '},
+      {_flowId: 'SDW-report-flow', fileId: '42'},
+      {fileId: '42'}
+    ]) {
+      multiDownloadForm(childDocument, fields).submit();
+      expectedSubmissions += 1;
+    }
+    return {captured, nativeSubmissions, expectedSubmissions};
+  }
+  if (scenario === 'ownedMultiDownloadSubmissions') {
+    for (const ownership of [{id: 'mbg-download'}, {class: 'other mbg-download'},
+      {'data-mbg-download': 'true'}]) {
+      for (const nested of [false, true]) {
+        const form = multiDownloadForm();
+        const owner = nested ? {} : form;
+        owner.id = ownership.id || '';
+        owner.attributes = Object.keys(ownership).map(name => ({name}));
+        const original = owner.getAttribute;
+        owner.getAttribute = name => ownership[name] || (original ? original(name) : null);
+        if (nested) form.parentElement = owner;
+        form.submit();
+      }
+    }
+    multiDownloadForm(childDocument, {_eventId: 'confirm'}).submit();
+    return {captured, nativeSubmissions};
+  }
+  if (scenario === 'requestSubmit') {
+    const form = multiDownloadForm();
+    form.requestSubmit();
+    form.invalid = true;
+    form.requestSubmit();
+    multiDownloadForm(childDocument, {_eventId: 'confirm'}).requestSubmit();
+    return {captured, nativeSubmissions,
+      prototypeUnchanged: childDocument.defaultView.HTMLFormElement.prototype.requestSubmit === originalRequestSubmit};
+  }
   if (scenario === 'onclickFilereferDetails') {
     vm.runInContext(buildScript, context);
     const flow = '../campussquare.do?_flowId=SDW-filerefer-flow';
@@ -909,7 +1040,7 @@ function behavior() {
     const topOriginal = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES.find(e => e.prototype === topPrototype).original;
     vm.runInContext(buildScript, context);
     for (const doc of [topDocument, childDocument]) {
-      submitterWithForm('Download', 'campussquare.do', {_eventId: 'download'}, {}, doc).form.submit();
+      multiDownloadForm(doc).submit();
     }
     const ordinary = submitterWithForm('確認', 'campussquare.do', {_eventId: 'confirm'});
     ordinary.form.submit();
@@ -921,10 +1052,11 @@ function behavior() {
     topDocument.listeners.get('load')({target: {tagName: 'IFRAME'}});
     const oldPrototypeRestored = oldPrototype.submit === oldOriginal;
     const oldSubmitListenerRemoved = !childDocument.listeners.has('submit');
+    multiDownloadForm(newDocument).submit();
     vm.runInContext(teardownScript, context);
     vm.runInContext(teardownScript, context);
     ordinary.form.submit();
-    submitterWithForm('Download', 'campussquare.do', {_eventId: 'download'}, {}, newDocument).form.submit();
+    multiDownloadForm(newDocument).submit();
     return {oldPrototypeRestored, oldSubmitListenerRemoved, ordinarySubmitPrevented,
       topPrototypeRestored: topPrototype.submit === topOriginal,
       newPrototypeRestored: newPrototype.submit === newOriginal,

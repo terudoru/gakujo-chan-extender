@@ -6,7 +6,7 @@ class GakujoDownloadCaptureScript {
   static String build() {
     return r'''
 (function() {
-  var captureVersion = 17;
+  var captureVersion = 18;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -578,6 +578,8 @@ class GakujoDownloadCaptureScript {
     var explicit = /download/i.test(url) ||
       /\.(pdf|docx?|xlsx?|pptx?|zip|csv|txt|png|jpe?g)$/i.test(parsed.pathname);
     var workflow = false;
+    var fileRefer = false;
+    var hasFileId = false;
     function check(value, key) {
       var namedEvent = /^_eventId_(.*)$/i.exec(key);
       if (/^_eventId$/i.test(key) || namedEvent) {
@@ -585,10 +587,13 @@ class GakujoDownloadCaptureScript {
         if (/download/i.test(value)) explicit = true;
         else if (/(confirm|entry|submit|save|regist|update|delete|back|clear|cancel|next|prev|complete|finish)/i.test(value)) workflow = true;
       }
-      if (/^(file.?download|download.?file)$/i.test(key)) explicit = true;
+      if (/^(file.?download|download.?file|downloadType)$/i.test(key)) explicit = true;
+      if (/^_flowId$/i.test(key) && /filerefer/i.test(value)) fileRefer = true;
+      if (/^fileId$/i.test(key) && value.trim()) hasFileId = true;
     }
     params.forEach(check);
     Object.keys(fields).forEach(function(key) { check(fields[key], key); });
+    if (fileRefer && hasFileId) explicit = true;
     return {explicit: explicit, workflow: workflow};
   }
 
@@ -719,14 +724,14 @@ class GakujoDownloadCaptureScript {
   }
 
   function wrapFormSubmit(doc) {
+    // requestSubmit fires the submit event and uses the existing handler.
     var view = doc.defaultView;
     var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
     if (!prototype) return;
     var entry = { prototype: prototype, original: prototype.submit };
     var wrapper = function() {
-      var submitter = formSubmitters.get(this);
       formSubmitters.delete(this);
-      if (!captureForm(this, submitter, true)) return entry.original.apply(this, arguments);
+      if (!captureForm(this, null, true)) return entry.original.apply(this, arguments);
     };
     wrapper.__mbgFormSubmitHook = entry;
     entry.wrapper = wrapper;

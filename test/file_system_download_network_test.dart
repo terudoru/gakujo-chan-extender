@@ -54,6 +54,69 @@ void main() {
     });
   }
 
+  for (final responseName in [null, 'course-files.zip']) {
+    test(
+        'bulk POST preserves fields and saves ZIP as ${responseName ?? 'document.zip'}',
+        () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = _LocalClient(server.port);
+      final directory =
+          await Directory.systemTemp.createTemp('mbg-zip-network-');
+      const fields = {
+        '_flowId': 'SDW-filerefer-flow',
+        'downloadType': 'multi',
+        'fileId': '41881,41882',
+      };
+      final zipBytes = [0x50, 0x4b, 0x05, 0x06, ...List.filled(18, 0)];
+      final methods = <String>[];
+      final bodies = <String>[];
+      final contentTypes = <String?>[];
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_download_root_path': directory.path,
+      });
+      server.listen((request) async {
+        methods.add(request.method);
+        bodies.add(await utf8.decoder.bind(request).join());
+        contentTypes.add(request.headers.contentType?.mimeType);
+        request.response.headers.contentType =
+            ContentType('application', 'zip');
+        if (responseName != null) {
+          request.response.headers.set(HttpHeaders.contentDisposition,
+              'attachment; filename="$responseName"');
+        }
+        request.response.add(zipBytes);
+        await request.response.close();
+      });
+      try {
+        final result = await FileSystemGakujoDownloadService(
+          httpClientFactory: () => client,
+          usesNativeDownloadRoot: false,
+        ).download(
+          GakujoDownloadRequest.fromJsonText(jsonEncode({
+            'url':
+                'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+            'method': 'POST',
+            'fileName': '',
+            'courseName': '',
+            'formFields': fields,
+          })),
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+        expect(methods, ['POST']);
+        expect(Uri.splitQueryString(bodies.single), fields);
+        expect(contentTypes, ['application/x-www-form-urlencoded']);
+        final saved = File(result.location!);
+        expect(saved.uri.pathSegments.last, responseName ?? 'document.zip');
+        expect(await saved.readAsBytes(), zipBytes);
+        expect(client.closed, isTrue);
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    });
+  }
+
   test('a completed POST redirect saves the downloaded bytes using GET',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
