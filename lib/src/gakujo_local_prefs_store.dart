@@ -260,6 +260,21 @@ GakujoAppSettings macosStartupSettingsFromLocalPrefs(
   );
 }
 
+GakujoAppSettings gakujoSettingsForPersistence(
+  GakujoAppSettings settings, {
+  required Set<GakujoFeatureFlag> placeholderFeatureFlags,
+  Set<GakujoFeatureFlag> changedFeatureFlags = const {},
+}) {
+  return settings.copyWith(
+    disabledFeatureFlags: {
+      for (final flag in settings.disabledFeatureFlags)
+        if (!placeholderFeatureFlags.contains(flag) ||
+            changedFeatureFlags.contains(flag))
+          flag,
+    },
+  );
+}
+
 GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
   required GakujoAppSettings secureSettings,
   required GakujoLocalPrefs? localPrefs,

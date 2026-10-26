@@ -432,6 +432,10 @@ Future<GakujoLoginCredentials> saveGakujoLoginCredentials({
     loginId: credentials.loginId,
     password: credentials.password,
   );
+  await store.saveFeatureEnabled(
+    GakujoFeatureFlag.loginAutofill,
+    enabled: true,
+  );
   return credentials;
 }
 
@@ -1111,6 +1115,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _notificationPreferenceOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
+  final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
   bool _loginAutofillStorageLoadAttempted = false;
   bool _secureStorageRecoveryDialogVisible = false;
   int _deadlineCount = 0;
@@ -2000,16 +2005,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               return;
                             }
                             setState(() {
+                              _startupPlaceholderFeatureFlags.remove(
+                                GakujoFeatureFlag.loginAutofill,
+                              );
                               _appSettings = _appSettings.copyWith(
                                 loginCredentials: credentials,
+                                disabledFeatureFlags: {
+                                  for (final flag
+                                      in _appSettings.disabledFeatureFlags)
+                                    if (flag != GakujoFeatureFlag.loginAutofill)
+                                      flag,
+                                },
                               );
                             });
+                            await _syncLocalSettingsMirror(_appSettings);
                             if (!dialogContext.mounted) {
                               return;
                             }
                             setDialogState(() {});
                             _showSnackBar('ログイン情報を保存しました');
-                            await _injectLoginAutofillAssistIfAllowed();
+                            await _applyFeatureFlagRuntimeState(
+                              GakujoFeatureFlag.loginAutofill,
+                              enabled: true,
+                            );
                           } on Object catch (error, stackTrace) {
                             developer.log(
                               'Failed to save login credentials',
@@ -2178,6 +2196,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               },
                             ),
                             apply: (settings) {
+                              _startupPlaceholderFeatureFlags.remove(flag);
                               if (mounted) {
                                 setState(() => _appSettings = settings);
                               }
@@ -2407,6 +2426,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var selectedDownloadSaveMode = _appSettings.downloadSaveMode;
     var selectedPageMode = _appSettings.pageMode;
     final disabledFeatureFlags = {..._appSettings.disabledFeatureFlags};
+    final placeholderFeatureFlags = {..._startupPlaceholderFeatureFlags};
+    final changedFeatureFlags = <GakujoFeatureFlag>{};
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
@@ -2422,6 +2443,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
             Future<void> complete() async {
               final previousSettings = _appSettings;
+              final settingsToSave = gakujoSettingsForPersistence(
+                wizardSettings,
+                placeholderFeatureFlags: placeholderFeatureFlags,
+                changedFeatureFlags: changedFeatureFlags,
+              );
+              _startupPlaceholderFeatureFlags.removeAll(changedFeatureFlags);
               Object? saveError;
               StackTrace? saveStackTrace;
               try {
@@ -2431,11 +2458,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                   _appSettingsStore.savePageMode(selectedPageMode),
                   _appSettingsStore.saveDisabledFeatureFlags(
-                    disabledFeatureFlags,
+                    settingsToSave.disabledFeatureFlags,
                   ),
                   _appSettingsStore.saveSetupCompleted(true),
                 ]);
-                await _syncLocalSettingsMirror(wizardSettings);
+                await _syncLocalSettingsMirror(settingsToSave);
               } on Object catch (error, stackTrace) {
                 saveError = error;
                 saveStackTrace = stackTrace;
@@ -2443,13 +2470,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               if (!mounted) {
                 return;
               }
+              // Secure settings may have replaced startup while setup was open.
+              final nextSettings = gakujoSettingsForPersistence(
+                wizardSettings,
+                placeholderFeatureFlags: placeholderFeatureFlags
+                    .difference(_startupPlaceholderFeatureFlags),
+                changedFeatureFlags: changedFeatureFlags,
+              );
               setState(() {
-                _appSettings = wizardSettings;
+                _appSettings = nextSettings;
               });
               _scheduleAutoBackup();
               await _applyChangedRuntimeFeatureFlags(
                 previousSettings,
-                wizardSettings,
+                nextSettings,
               );
               // Startup may already have booked reminders before setup; turning
               // notifications off here must cancel them.
@@ -2545,6 +2579,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     FeatureFlagsSection(
                       settings: wizardSettings,
                       onChanged: (flag, enabled) {
+                        changedFeatureFlags.add(flag);
                         if (enabled) {
                           disabledFeatureFlags.remove(flag);
                         } else {
@@ -3384,11 +3419,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
+  GakujoAppSettings _settingsForPersistence(GakujoAppSettings settings) {
+    return gakujoSettingsForPersistence(
+      settings,
+      placeholderFeatureFlags: _startupPlaceholderFeatureFlags,
+    );
+  }
+
   Future<void> _syncLocalSettingsMirror(
     GakujoAppSettings settings,
   ) async {
     try {
-      await _localPrefsStore.saveAppSettings(settings);
+      await _localPrefsStore.saveAppSettings(_settingsForPersistence(settings));
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to update local app settings mirror',
@@ -3483,9 +3525,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               }
             }
             if (Platform.isMacOS) {
-              await _localPrefsStore.saveAppSettings(_appSettings.copyWith(
-                notificationPreferences: preferences,
-              ));
+              await _localPrefsStore.saveAppSettings(
+                _settingsForPersistence(_appSettings.copyWith(
+                  notificationPreferences: preferences,
+                )),
+              );
             }
           },
           currentSettings: () => _appSettings,
@@ -4834,7 +4878,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<Map<String, Object?>> _backupPayload() => _backupOperations.run(
         () => readGakujoBackupPayload(
-          currentSettings: () => _appSettings,
+          currentSettings: () => _settingsForPersistence(_appSettings),
           settingsStore: _appSettingsStore,
           historyStore: _downloadHistoryStore,
           activityStore: _activityStore,
@@ -4951,13 +4995,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         messageNotification: backup.messageNotification,
         notificationPreferences: backup.notificationPreferences,
       );
-      await _syncLocalSettingsMirror(nextSettings);
       if (!mounted) {
         return;
       }
       setState(() {
+        if (backup.disabledFeatureFlags != null) {
+          _startupPlaceholderFeatureFlags.clear();
+        }
         _appSettings = nextSettings;
       });
+      await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(
         previousSettings,
         nextSettings,
@@ -5744,6 +5791,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
       setState(() {
         _appSettings = macosStartupSettingsFromLocalPrefs(localPrefs);
+        _startupPlaceholderFeatureFlags
+          ..clear()
+          ..addAll(_appSettings.disabledFeatureFlags.difference(
+            localPrefs?.appSettings?.disabledFeatureFlags ?? const {},
+          ));
         _appSettingsLoaded = true;
       });
       return true;
@@ -5788,16 +5840,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
         }
       }
-      await _syncLocalSettingsMirror(settings);
       if (!mounted) {
         return true;
       }
 
       _secureStorageAccessAllowed = true;
       setState(() {
+        _startupPlaceholderFeatureFlags.clear();
         _appSettings = settings;
         _appSettingsLoaded = true;
       });
+      await _syncLocalSettingsMirror(settings);
       await _loadDownloadRoot();
       unawaited(_compactStoredData());
       if (activityBellToolbarButtonEnabled) {
@@ -5826,6 +5879,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           : const GakujoAppSettings();
       setState(() {
         _appSettings = fallbackSettings;
+        _startupPlaceholderFeatureFlags
+          ..clear()
+          ..addAll(fallbackSettings.disabledFeatureFlags);
         _appSettingsLoaded = true;
       });
       _setStatus('保存データにアクセスできません');
@@ -5953,6 +6009,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
       _secureStorageAccessAllowed = true;
+      _startupPlaceholderFeatureFlags.clear();
       setState(() {
         _appSettings = const GakujoAppSettings();
         _appSettingsLoaded = true;

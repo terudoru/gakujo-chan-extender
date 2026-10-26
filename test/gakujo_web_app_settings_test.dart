@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
@@ -315,6 +316,7 @@ void main() {
     );
     loginId = 'student-b';
     password = 'password-b';
+    expect(store.enabledFeatures, isEmpty);
     store.release.complete();
     final runtimeCredentials = await saving;
 
@@ -324,6 +326,51 @@ void main() {
     expect(runtimeCredentials.password, store.saved?.password);
     expect(runtimeCredentials.loginId, isNot(loginId));
     expect(runtimeCredentials.password, isNot(password));
+    expect(store.enabledFeatures, [GakujoFeatureFlag.loginAutofill]);
+  });
+
+  test('credential save recovers login autofill without changing 2FA',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final store = GakujoAppSettingsStore(
+      secureStorage: const FlutterSecureStorage(),
+    );
+    await store.saveDisabledFeatureFlags({
+      GakujoFeatureFlag.loginAutofill,
+      GakujoFeatureFlag.twoFactorAutofill,
+      GakujoFeatureFlag.gpaDisplay,
+    });
+    await store.saveSetupCompleted(true);
+
+    await saveGakujoLoginCredentials(
+      store: store,
+      loginId: ' student ',
+      password: 'password',
+    );
+    final settings = await store.load();
+
+    expect(settings.loginCredentials?.loginId, 'student');
+    expect(settings.loginCredentials?.password, 'password');
+    expect(settings.disabledFeatureFlags, {
+      GakujoFeatureFlag.twoFactorAutofill,
+      GakujoFeatureFlag.gpaDisplay,
+    });
+    expect(settings.setupCompleted, isTrue);
+  });
+
+  test('failed credential save does not enable login autofill', () async {
+    final store = _PendingLoginSettingsStore();
+    final saving = saveGakujoLoginCredentials(
+      store: store,
+      loginId: 'student',
+      password: 'password',
+    );
+    final failure = StateError('credential write failed');
+    final check = expectLater(saving, throwsA(same(failure)));
+    store.release.completeError(failure);
+    await check;
+
+    expect(store.enabledFeatures, isEmpty);
   });
 
   testWidgets('rapid reminder toggles compose while the first save is pending',
@@ -1490,6 +1537,7 @@ void main() {
 
 class _PendingLoginSettingsStore extends GakujoAppSettingsStore {
   final release = Completer<void>();
+  final enabledFeatures = <GakujoFeatureFlag>[];
   GakujoLoginCredentials? saved;
 
   @override
@@ -1499,5 +1547,15 @@ class _PendingLoginSettingsStore extends GakujoAppSettingsStore {
   }) async {
     await release.future;
     saved = GakujoLoginCredentials(loginId: loginId, password: password);
+  }
+
+  @override
+  Future<void> saveFeatureEnabled(
+    GakujoFeatureFlag flag, {
+    required bool enabled,
+  }) async {
+    expect(saved, isNotNull);
+    expect(enabled, isTrue);
+    enabledFeatures.add(flag);
   }
 }

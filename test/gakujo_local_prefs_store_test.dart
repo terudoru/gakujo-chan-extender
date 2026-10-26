@@ -272,6 +272,88 @@ void main() {
     );
   });
 
+  test('setup and local mirror exclude untouched startup placeholders',
+      () async {
+    final startup = macosStartupSettingsFromLocalPrefs(null);
+    final settings = gakujoSettingsForPersistence(
+      startup.copyWith(setupCompleted: true),
+      placeholderFeatureFlags: startup.disabledFeatureFlags,
+    );
+
+    expect(settings.disabledFeatureFlags, isEmpty);
+    expect(settings.setupCompleted, isTrue);
+    await store.saveAppSettings(settings);
+    expect((await store.load())!.appSettings!.disabledFeatureFlags, isEmpty);
+    expect(startup.disabledFeatureFlags, {
+      GakujoFeatureFlag.loginAutofill,
+      GakujoFeatureFlag.twoFactorAutofill,
+    });
+  });
+
+  test('setup preserves flags already disabled in local preferences', () {
+    const localSettings = GakujoAppSettings(
+      disabledFeatureFlags: {
+        GakujoFeatureFlag.loginAutofill,
+        GakujoFeatureFlag.gpaDisplay,
+      },
+    );
+    final startup = macosStartupSettingsFromLocalPrefs(
+      const GakujoLocalPrefs(appSettings: localSettings),
+    );
+    final settings = gakujoSettingsForPersistence(
+      startup,
+      placeholderFeatureFlags: startup.disabledFeatureFlags
+          .difference(localSettings.disabledFeatureFlags),
+    );
+
+    expect(settings.disabledFeatureFlags, localSettings.disabledFeatureFlags);
+  });
+
+  for (final flag in [
+    GakujoFeatureFlag.loginAutofill,
+    GakujoFeatureFlag.twoFactorAutofill,
+  ]) {
+    test('setup persists $flag explicitly toggled back off', () {
+      final startup = macosStartupSettingsFromLocalPrefs(null);
+      final settings = gakujoSettingsForPersistence(
+        startup,
+        placeholderFeatureFlags: startup.disabledFeatureFlags,
+        changedFeatureFlags: {flag},
+      );
+
+      expect(settings.disabledFeatureFlags, {flag});
+    });
+
+    test('setup keeps $flag explicitly toggled on enabled', () {
+      final startup = macosStartupSettingsFromLocalPrefs(null);
+      final settings = gakujoSettingsForPersistence(
+        startup.copyWith(
+          disabledFeatureFlags: startup.disabledFeatureFlags.difference({flag}),
+        ),
+        placeholderFeatureFlags: startup.disabledFeatureFlags,
+        changedFeatureFlags: {flag},
+      );
+
+      expect(settings.disabledFeatureFlags, isEmpty);
+    });
+  }
+
+  test('real secure settings retain disabled flags after placeholders clear',
+      () {
+    const settings = GakujoAppSettings(
+      disabledFeatureFlags: {
+        GakujoFeatureFlag.loginAutofill,
+        GakujoFeatureFlag.twoFactorAutofill,
+      },
+    );
+
+    expect(
+      gakujoSettingsForPersistence(settings, placeholderFeatureFlags: {})
+          .disabledFeatureFlags,
+      settings.disabledFeatureFlags,
+    );
+  });
+
   test('macOS keeps local filters when secure credentials become available',
       () {
     const localPrefs = GakujoLocalPrefs(
