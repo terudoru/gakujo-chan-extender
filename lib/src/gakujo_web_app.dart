@@ -1205,6 +1205,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Timer? _desktopHistorySwipeResetTimer;
   Timer? _autoBackupTimer;
   Timer? _autoBackupDebounce;
+  bool _autoBackupWrittenThisLaunch = false;
   Completer<String>? _nextPageFinishedCompleter;
   ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
@@ -3290,6 +3291,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const Duration(hours: 6),
       (_) => unawaited(_writeAutomaticBackup()),
     );
+    if (!_autoBackupWrittenThisLaunch) {
+      _autoBackupWrittenThisLaunch = true;
+      unawaited(_writeAutomaticBackup());
+      return;
+    }
     // Only the last ten automatic backups are kept, so a burst of setting
     // changes must not rotate out older ones: write once things settle.
     _autoBackupDebounce = Timer(
@@ -5496,7 +5502,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _loginAutofillStorageLoadAttempted = true;
-    await _loadAppSettings(allowMacosKeychainPrompt: true);
+    final startupSettings = _appSettings;
+    if (!await _loadAppSettings(allowMacosKeychainPrompt: true) || !mounted) {
+      return;
+    }
+    // Page scripts after this one ran from the startup mirror meanwhile; bring
+    // them in line with the keychain settings. The caller injects autofill.
+    await _applyChangedRuntimeFeatureFlags(
+      startupSettings.copyWith(disabledFeatureFlags: {
+        ...startupSettings.disabledFeatureFlags.difference({
+          GakujoFeatureFlag.loginAutofill,
+          GakujoFeatureFlag.twoFactorAutofill,
+        }),
+        ..._appSettings.disabledFeatureFlags.intersection({
+          GakujoFeatureFlag.loginAutofill,
+          GakujoFeatureFlag.twoFactorAutofill,
+        }),
+      }),
+      _appSettings,
+    );
   }
 
   Future<void> _injectTwoFactorAutofillIfAllowed() async {
