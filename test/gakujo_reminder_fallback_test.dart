@@ -412,6 +412,52 @@ void main() {
           now: assignment.dueAt.subtract(const Duration(hours: 2)),
         ).single;
 
+    for (final booksAhead in [true, false]) {
+      testWidgets('unreadable assignments preserve bookings (OS: $booksAhead)',
+          (tester) async {
+        answer(booksAhead: booksAhead);
+        final storage = _AssignmentReadFailureStorage();
+        final store = GakujoActivityStore(secureStorage: storage);
+        await store.mergeAssignments([
+          assignment(dueIn: const Duration(hours: 1, seconds: 1)),
+        ], isWholeList: true);
+        final first = coordinator(store);
+        const preferences = GakujoNotificationPreferences(
+          reminderOffsets: {GakujoReminderOffset.oneHour},
+        );
+        await sync(first, preferences: preferences);
+        final booking = calls.singleWhere(
+          (call) => call.method == 'scheduleReminders',
+        );
+        expect((booking.arguments as Map)['reminders'], hasLength(1));
+
+        storage.failAssignmentReads = true;
+        calls.clear();
+        await sync(first, preferences: preferences);
+        expect(storage.failedReads, 1);
+        expect(calls, isEmpty);
+        if (!booksAhead) {
+          now = now.add(const Duration(seconds: 2));
+          await tester.pump(const Duration(seconds: 2));
+          expect(shown(), hasLength(1));
+        }
+
+        final failedReads = storage.failedReads;
+        calls.clear();
+        await sync(first, enabled: false, preferences: preferences);
+        expect(storage.failedReads, failedReads);
+        expect(calls.map((call) => call.method), ['scheduleReminders']);
+        expect((calls.single.arguments as Map)['reminders'], isEmpty);
+
+        storage.failAssignmentReads = false;
+        await store.mergeAssignments([], isWholeList: true);
+        calls.clear();
+        await sync(first, preferences: preferences);
+        expect(calls.map((call) => call.method), ['scheduleReminders']);
+        expect((calls.single.arguments as Map)['reminders'], isEmpty);
+      });
+    }
+
     test('a late reminder is shown once across syncs and a restart', () async {
       final store = GakujoActivityStore();
       final open = assignment();

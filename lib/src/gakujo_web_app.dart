@@ -376,6 +376,25 @@ class GakujoWebApp extends StatefulWidget {
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
 
 @visibleForTesting
+GakujoAppSettings gakujoSettingsAfterStorageLoadFailure({
+  required GakujoAppSettings currentSettings,
+  required bool isMacOS,
+  required Object error,
+}) {
+  if (isMacOS) {
+    return currentSettings;
+  }
+  return error is TimeoutException
+      ? const GakujoAppSettings(
+          disabledFeatureFlags: {
+            GakujoFeatureFlag.loginAutofill,
+            GakujoFeatureFlag.twoFactorAutofill,
+          },
+        )
+      : const GakujoAppSettings();
+}
+
+@visibleForTesting
 Future<T?> readGakujoSavedData<T extends Object>(
   Future<T> Function() read, {
   required ValueChanged<String> showSnackBar,
@@ -5484,9 +5503,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoFeatureFlag.downloadCapture,
       enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
     );
-    if (appSettingsLoaded) {
-      unawaited(_syncReminders());
-    }
     if (appSettingsLoaded && !_appSettings.setupCompleted && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -5951,6 +5967,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         unawaited(_refreshActivityCounts());
       }
       _scheduleAutoBackup();
+      // The macOS startup mirror must not read the secure activity store.
+      unawaited(_syncReminders());
       return true;
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -5963,19 +5981,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return false;
       }
 
-      final fallbackSettings = error is TimeoutException
-          ? const GakujoAppSettings(
-              disabledFeatureFlags: {
-                GakujoFeatureFlag.loginAutofill,
-                GakujoFeatureFlag.twoFactorAutofill,
-              },
-            )
-          : const GakujoAppSettings();
+      final fallbackSettings = gakujoSettingsAfterStorageLoadFailure(
+        currentSettings: _appSettings,
+        isMacOS: Platform.isMacOS,
+        error: error,
+      );
       setState(() {
         _appSettings = fallbackSettings;
-        _startupPlaceholderFeatureFlags
-          ..clear()
-          ..addAll(fallbackSettings.disabledFeatureFlags);
+        if (!Platform.isMacOS) {
+          _startupPlaceholderFeatureFlags
+            ..clear()
+            ..addAll(fallbackSettings.disabledFeatureFlags);
+        }
         _appSettingsLoaded = true;
       });
       _setStatus('保存データにアクセスできません');

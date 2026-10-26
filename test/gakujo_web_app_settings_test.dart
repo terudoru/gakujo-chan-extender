@@ -75,6 +75,101 @@ void main() {
     expect(warning, findsNothing);
   });
 
+  for (final error in [
+    TimeoutException('keychain dialog unanswered'),
+    PlatformException(code: 'errSecUserCanceled'),
+  ]) {
+    test('macOS retains mirrored settings after ${error.runtimeType}',
+        () async {
+      const mirrored = GakujoAppSettings(
+        downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
+        pageMode: GakujoPageMode.mobile,
+        disabledFeatureFlags: {
+          GakujoFeatureFlag.loginAutofill,
+          GakujoFeatureFlag.gpaDisplay,
+          GakujoFeatureFlag.deadlineNotifications,
+        },
+        setupCompleted: true,
+        calendarImportSettings: GakujoCalendarImportSettings(
+          method: GakujoCalendarImportMethod.icsFile,
+        ),
+        messageExcludeKeywords: ['除外'],
+        notificationTopics: {GakujoNotificationTopic.other},
+        messageNotification: GakujoMessageNotificationSettings(
+          mode: GakujoMessageNotificationMode.keywords,
+          keywords: ['アンケート'],
+        ),
+        notificationPreferences: GakujoNotificationPreferences(
+          skipSubmitted: false,
+          mutedCourses: {'科目'},
+          reminderOffsets: {GakujoReminderOffset.threeHours},
+        ),
+      );
+      final startup = macosStartupSettingsFromLocalPrefs(
+        const GakujoLocalPrefs(appSettings: mirrored),
+      );
+      final placeholders = startup.disabledFeatureFlags
+          .difference(mirrored.disabledFeatureFlags);
+      final fallback = gakujoSettingsAfterStorageLoadFailure(
+        currentSettings: startup,
+        isMacOS: true,
+        error: error,
+      );
+
+      expect(fallback, same(startup));
+      expect(fallback.loginCredentials, isNull);
+      expect(
+          fallback.isFeatureEnabled(GakujoFeatureFlag.loginAutofill), isFalse);
+      expect(fallback.isFeatureEnabled(GakujoFeatureFlag.twoFactorAutofill),
+          isFalse);
+      final directory =
+          Directory.systemTemp.createTempSync('keychain_failure_prefs_');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final local = GakujoLocalPrefsStore(directory: directory);
+      await local.saveAppSettings(gakujoSettingsForPersistence(
+        fallback,
+        placeholderFeatureFlags: placeholders,
+      ));
+      final persisted = (await local.load())!.appSettings!;
+      expect(persisted.downloadSaveMode, mirrored.downloadSaveMode);
+      expect(persisted.pageMode, mirrored.pageMode);
+      expect(persisted.disabledFeatureFlags, mirrored.disabledFeatureFlags);
+      expect(persisted.setupCompleted, isTrue);
+      expect(persisted.calendarImportSettings.toJson(),
+          mirrored.calendarImportSettings.toJson());
+      expect(persisted.messageExcludeKeywords, mirrored.messageExcludeKeywords);
+      expect(persisted.notificationTopics, mirrored.notificationTopics);
+      expect(persisted.messageNotification.toJson(),
+          mirrored.messageNotification.toJson());
+      expect(persisted.notificationPreferences.toJson(),
+          mirrored.notificationPreferences.toJson());
+    });
+
+    test('other platforms keep the default fallback after ${error.runtimeType}',
+        () {
+      final fallback = gakujoSettingsAfterStorageLoadFailure(
+        currentSettings: const GakujoAppSettings(
+          pageMode: GakujoPageMode.mobile,
+          setupCompleted: true,
+        ),
+        isMacOS: false,
+        error: error,
+      );
+
+      expect(fallback.pageMode, GakujoPageMode.desktop);
+      expect(fallback.setupCompleted, isFalse);
+      expect(fallback.loginCredentials, isNull);
+      expect(
+          fallback.disabledFeatureFlags,
+          error is TimeoutException
+              ? {
+                  GakujoFeatureFlag.loginAutofill,
+                  GakujoFeatureFlag.twoFactorAutofill,
+                }
+              : isEmpty);
+    });
+  }
+
   test('queued topic and preference saves preserve the latest local settings',
       () async {
     final directory =

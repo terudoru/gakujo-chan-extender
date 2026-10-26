@@ -675,13 +675,19 @@ class GakujoDeadlineNotificationCoordinator {
     bool allowPermissionRequest = true,
   }) {
     return _enqueueNotificationOperation(() async {
+      final assignments = notificationsEnabled
+          ? await _activityStore.loadAssignmentsIfAvailable()
+          : const <GakujoAssignment>[];
+      if (assignments == null) {
+        return;
+      }
       if (notificationsEnabled) {
         await _loadNotifiedKeys();
       }
       final lateReminders = <GakujoReminder>[];
       final reminders = notificationsEnabled
           ? planReminders(
-              assignments: await _activityStore.loadAssignments(),
+              assignments: assignments,
               topics: topics,
               preferences: preferences,
               now: _now(),
