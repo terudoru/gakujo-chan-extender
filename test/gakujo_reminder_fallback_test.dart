@@ -299,7 +299,7 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(_channel, (call) async {
         calls.add(call);
-        // Windows and Apple runners do not implement checkPermission.
+        // Windows and older Apple runners do not implement checkPermission.
         if (call.method == 'checkPermission') throw MissingPluginException();
         return true;
       });

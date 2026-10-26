@@ -991,11 +991,41 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     channel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "requestPermission":
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+          if let error {
+            let nativeError = error as NSError
+            NSLog("MoreBetterGakujo: notification authorization failed (%@ %ld): %@", nativeError.domain, nativeError.code, nativeError.localizedDescription)
+          }
           DispatchQueue.main.async {
             result(granted)
           }
         }
+      case "checkPermission":
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+          DispatchQueue.main.async {
+            switch settings.authorizationStatus {
+            case .authorized, .provisional:
+              result(true)
+            case .denied:
+              result(false)
+            case .notDetermined:
+              result(nil)
+            @unknown default:
+              result(nil)
+            }
+          }
+        }
+      case "openNotificationSettings":
+        for target in [
+          "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+          "x-apple.systempreferences:com.apple.preference.notifications",
+        ] {
+          if let url = URL(string: target), NSWorkspace.shared.open(url) {
+            result(true)
+            return
+          }
+        }
+        result(false)
       case "notifyDeadline":
         let args = call.arguments as? [String: Any]
         let content = UNMutableNotificationContent()

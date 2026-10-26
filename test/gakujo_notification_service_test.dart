@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 
 void main() {
@@ -43,18 +44,94 @@ void main() {
     expect(await service.checkPermission(), isTrue);
     expect(service.permissionGranted.value, isTrue);
     expect(await service.requestPermission(), isTrue);
+    granted = false;
+    expect(await service.checkPermission(), isFalse);
+    expect(service.permissionGranted.value, isFalse);
     expect(methods, [
       'requestPermission',
       'checkPermission',
       'checkPermission',
       'requestPermission',
+      'checkPermission',
     ]);
+  });
+
+  for (final permissionResult in <bool?>[false, null]) {
+    for (final unknown in <String, Exception?>{
+      'null': null,
+      'not implemented': MissingPluginException(),
+      'platform error': PlatformException(code: 'unavailable'),
+    }.entries) {
+      test(
+          'permission check keeps a $permissionResult refusal on ${unknown.key}',
+          () async {
+        var requests = 0;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'requestPermission') {
+            requests += 1;
+            return permissionResult;
+          }
+          expect(call.method, 'checkPermission');
+          final error = unknown.value;
+          if (error != null) {
+            throw error;
+          }
+          return null;
+        });
+        final service = GakujoNotificationService();
+
+        expect(await service.requestPermission(), isFalse);
+        expect(await service.checkPermission(), isFalse);
+        expect(service.permissionGranted.value, isFalse);
+        expect(await service.requestPermission(), isFalse);
+        expect(requests, 1);
+
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: GakujoActivityStore(),
+          notificationService: service,
+        );
+        await coordinator.onAppResumed(
+          notificationsEnabled: true,
+          topics: const {},
+          preferences: const GakujoNotificationPreferences(),
+        );
+        expect(service.permissionGranted.value, isFalse);
+        expect(requests, 1);
+      });
+    }
+  }
+
+  test('an unknown check preserves a denial without blocking the first prompt',
+      () async {
+    bool? granted = false;
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      return call.method == 'checkPermission' ? granted : true;
+    });
+    final service = GakujoNotificationService();
+
+    expect(await service.checkPermission(), isFalse);
+    expect(service.permissionGranted.value, isFalse);
+    granted = null;
+    expect(await service.checkPermission(), isFalse);
+    expect(service.permissionGranted.value, isFalse);
+    expect(await service.requestPermission(), isTrue);
+    expect(service.permissionGranted.value, isTrue);
+    expect(
+        methods, ['checkPermission', 'checkPermission', 'requestPermission']);
   });
 
   test('unavailable permission state stays unknown without prompting',
       () async {
     final service = GakujoNotificationService();
     expect(await service.checkPermission(), isNull);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'checkPermission');
+      return null;
+    });
+    expect(await service.checkPermission(), isNull);
+    expect(service.permissionGranted.value, isNull);
     for (final error in [
       MissingPluginException(),
       PlatformException(code: 'unavailable'),

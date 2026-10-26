@@ -794,9 +794,44 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
     channel.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "requestPermission":
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+          if let error {
+            let nativeError = error as NSError
+            NSLog("MoreBetterGakujo: notification authorization failed (%@ %ld): %@", nativeError.domain, nativeError.code, nativeError.localizedDescription)
+          }
           DispatchQueue.main.async {
             result(granted)
+          }
+        }
+      case "checkPermission":
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+          DispatchQueue.main.async {
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+              result(true)
+            case .denied:
+              result(false)
+            case .notDetermined:
+              result(nil)
+            @unknown default:
+              result(nil)
+            }
+          }
+        }
+      case "openNotificationSettings":
+        let target: String
+        if #available(iOS 16.0, *) {
+          target = UIApplication.openNotificationSettingsURLString
+        } else {
+          target = UIApplication.openSettingsURLString
+        }
+        guard let url = URL(string: target) else {
+          result(false)
+          return
+        }
+        UIApplication.shared.open(url, options: [:]) { opened in
+          DispatchQueue.main.async {
+            result(opened)
           }
         }
       case "notifyDeadline":

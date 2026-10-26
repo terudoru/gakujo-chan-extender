@@ -344,6 +344,10 @@ class GakujoNotificationService {
     } on MissingPluginException {
       // Older or unsupported platforms leave the state unknown.
     }
+    if (granted == null &&
+        (_permissionRefused || permissionGranted.value == false)) {
+      granted = false;
+    }
     permissionGranted.value = granted;
     // Android reports "not enabled" before the first prompt too, so only a
     // grant may clear an earlier refusal; it never records one itself.
@@ -529,8 +533,8 @@ class GakujoDeadlineNotificationCoordinator {
     if (allowPermissionRequest) {
       return _notificationService.requestPermission();
     }
-    // Windows and Apple cannot report the state without asking; their
-    // requestPermission answers silently once the student has decided.
+    // Older or unsupported runners fall back to requestPermission, which
+    // answers silently once the student has decided.
     return await _notificationService.checkPermission() ??
         await _notificationService.requestPermission();
   }

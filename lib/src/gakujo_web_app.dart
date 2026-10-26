@@ -2275,7 +2275,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     remindersOnlyWhileOpen: Platform.isWindows,
                     notificationPermission:
                         _notificationService.permissionGranted,
-                    onOpenNotificationSettings: Platform.isAndroid
+                    onOpenNotificationSettings: Platform.isAndroid ||
+                            Platform.isIOS ||
+                            Platform.isMacOS
                         ? () => unawaited(
                               _notificationService.openNotificationSettings(),
                             )
