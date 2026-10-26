@@ -1204,6 +1204,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Offset? _desktopZoomOrigin;
   Timer? _desktopHistorySwipeResetTimer;
   Timer? _autoBackupTimer;
+  Timer? _autoBackupDebounce;
   Completer<String>? _nextPageFinishedCompleter;
   ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
@@ -1291,6 +1292,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipeResetTimer?.cancel();
     _autoBackupTimer?.cancel();
+    _autoBackupDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -3280,6 +3282,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _scheduleAutoBackup() {
     _autoBackupTimer?.cancel();
+    _autoBackupDebounce?.cancel();
     if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup)) {
       return;
     }
@@ -3287,7 +3290,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const Duration(hours: 6),
       (_) => unawaited(_writeAutomaticBackup()),
     );
-    unawaited(_writeAutomaticBackup());
+    // Only the last ten automatic backups are kept, so a burst of setting
+    // changes must not rotate out older ones: write once things settle.
+    _autoBackupDebounce = Timer(
+      const Duration(minutes: 1),
+      () => unawaited(_writeAutomaticBackup()),
+    );
   }
 
   Future<File?> _writeAutomaticBackup() async {
