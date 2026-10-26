@@ -75,6 +75,138 @@ void main() {
     expect(warning, findsNothing);
   });
 
+  test('setup rebases wizard fields onto settings loaded from Keychain', () {
+    const mirrored = GakujoAppSettings(
+      disabledFeatureFlags: {
+        GakujoFeatureFlag.loginAutofill,
+        GakujoFeatureFlag.gpaDisplay,
+      },
+    );
+    final startup = macosStartupSettingsFromLocalPrefs(
+      const GakujoLocalPrefs(appSettings: mirrored),
+    );
+    final wizard = startup.copyWith(
+      downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
+      pageMode: GakujoPageMode.mobile,
+      disabledFeatureFlags: {
+        ...startup.disabledFeatureFlags,
+        GakujoFeatureFlag.uploadCompression,
+      },
+    );
+    const loaded = GakujoAppSettings(
+      loginCredentials: GakujoLoginCredentials(
+        loginId: 'student',
+        password: 'password',
+      ),
+      disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+      calendarImportSettings: GakujoCalendarImportSettings(
+        method: GakujoCalendarImportMethod.icsFile,
+      ),
+      messageExcludeKeywords: ['除外'],
+      notificationTopics: {GakujoNotificationTopic.other},
+      messageNotification: GakujoMessageNotificationSettings(
+        mode: GakujoMessageNotificationMode.keywords,
+        keywords: ['アンケート'],
+      ),
+      notificationPreferences: GakujoNotificationPreferences(
+        skipSubmitted: false,
+        mutedCourses: {'科目'},
+        reminderOffsets: {GakujoReminderOffset.threeHours},
+      ),
+    );
+    final settings = gakujoSettingsAfterInitialSetup(
+      currentSettings: loaded,
+      wizardSettings: wizard,
+      placeholderFeatureFlags: startup.disabledFeatureFlags
+          .difference(mirrored.disabledFeatureFlags),
+      changedFeatureFlags: {GakujoFeatureFlag.uploadCompression},
+    );
+
+    expect(settings.loginCredentials, same(loaded.loginCredentials));
+    expect(
+        settings.calendarImportSettings, same(loaded.calendarImportSettings));
+    expect(
+        settings.messageExcludeKeywords, same(loaded.messageExcludeKeywords));
+    expect(settings.notificationTopics, same(loaded.notificationTopics));
+    expect(settings.messageNotification, same(loaded.messageNotification));
+    expect(
+        settings.notificationPreferences, same(loaded.notificationPreferences));
+    expect(settings.downloadSaveMode, wizard.downloadSaveMode);
+    expect(settings.pageMode, wizard.pageMode);
+    expect(settings.disabledFeatureFlags, {
+      GakujoFeatureFlag.loginAutofill,
+      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.uploadCompression,
+    });
+    expect(settings.setupCompleted, isTrue);
+  });
+
+  for (final unlocked in [false, true]) {
+    for (final loginEnabled in [null, false, true]) {
+      test(
+          'setup keeps placeholder rules: unlocked=$unlocked, '
+          'loginEnabled=$loginEnabled', () {
+        final startup = macosStartupSettingsFromLocalPrefs(null);
+        final placeholders = startup.disabledFeatureFlags;
+        final changed = {
+          if (loginEnabled != null) GakujoFeatureFlag.loginAutofill,
+        };
+        final wizard = startup.copyWith(
+          disabledFeatureFlags: startup.disabledFeatureFlags.difference({
+            if (loginEnabled == true) GakujoFeatureFlag.loginAutofill,
+          }),
+        );
+        final remainingPlaceholders =
+            unlocked ? <GakujoFeatureFlag>{} : placeholders.difference(changed);
+        final settings = gakujoSettingsAfterInitialSetup(
+          currentSettings: unlocked ? const GakujoAppSettings() : startup,
+          wizardSettings: wizard,
+          placeholderFeatureFlags:
+              placeholders.difference(remainingPlaceholders),
+          changedFeatureFlags: changed,
+        );
+        final persisted = gakujoSettingsForPersistence(
+          wizard,
+          placeholderFeatureFlags: placeholders,
+          changedFeatureFlags: changed,
+        );
+        final expectedDisabled = {
+          if (loginEnabled == false) GakujoFeatureFlag.loginAutofill,
+        };
+
+        expect(settings.disabledFeatureFlags,
+            {...expectedDisabled, ...remainingPlaceholders});
+        expect(settings.setupCompleted, isTrue);
+        expect(persisted.disabledFeatureFlags, expectedDisabled);
+      });
+    }
+  }
+
+  for (final (error, attempted) in [
+    (TimeoutException('keychain dialog unanswered'), false),
+    (PlatformException(code: 'errSecUserCanceled'), true),
+    (PlatformException(code: 'errSecAuthFailed'), true),
+    (PlatformException(code: 'timeout'), true),
+    (StateError('storage unavailable'), true),
+  ]) {
+    test('login storage attempt guard after $error', () {
+      expect(
+        gakujoLoginStorageLoadAttemptedAfterFailure(
+          attempted: true,
+          error: error,
+        ),
+        attempted,
+      );
+      expect(
+        gakujoLoginStorageLoadAttemptedAfterFailure(
+          attempted: false,
+          error: error,
+        ),
+        isFalse,
+      );
+    });
+  }
+
   for (final error in [
     TimeoutException('keychain dialog unanswered'),
     PlatformException(code: 'errSecUserCanceled'),

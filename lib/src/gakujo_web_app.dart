@@ -376,6 +376,33 @@ class GakujoWebApp extends StatefulWidget {
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
 
 @visibleForTesting
+GakujoAppSettings gakujoSettingsAfterInitialSetup({
+  required GakujoAppSettings currentSettings,
+  required GakujoAppSettings wizardSettings,
+  required Set<GakujoFeatureFlag> placeholderFeatureFlags,
+  Set<GakujoFeatureFlag> changedFeatureFlags = const {},
+}) {
+  return gakujoSettingsForPersistence(
+    currentSettings.copyWith(
+      downloadSaveMode: wizardSettings.downloadSaveMode,
+      pageMode: wizardSettings.pageMode,
+      disabledFeatureFlags: wizardSettings.disabledFeatureFlags,
+      setupCompleted: true,
+    ),
+    placeholderFeatureFlags: placeholderFeatureFlags,
+    changedFeatureFlags: changedFeatureFlags,
+  );
+}
+
+@visibleForTesting
+bool gakujoLoginStorageLoadAttemptedAfterFailure({
+  required bool attempted,
+  required Object error,
+}) {
+  return attempted && error is! TimeoutException;
+}
+
+@visibleForTesting
 GakujoAppSettings gakujoSettingsAfterStorageLoadFailure({
   required GakujoAppSettings currentSettings,
   required bool isMacOS,
@@ -2507,7 +2534,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             );
 
             Future<void> complete() async {
-              final previousSettings = _appSettings;
               final settingsToSave = gakujoSettingsForPersistence(
                 wizardSettings,
                 placeholderFeatureFlags: placeholderFeatureFlags,
@@ -2536,8 +2562,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 return;
               }
               // Secure settings may have replaced startup while setup was open.
-              final nextSettings = gakujoSettingsForPersistence(
-                wizardSettings,
+              final previousSettings = _appSettings;
+              final nextSettings = gakujoSettingsAfterInitialSetup(
+                currentSettings: previousSettings,
+                wizardSettings: wizardSettings,
                 placeholderFeatureFlags: placeholderFeatureFlags
                     .difference(_startupPlaceholderFeatureFlags),
                 changedFeatureFlags: changedFeatureFlags,
@@ -5981,6 +6009,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return false;
       }
 
+      _loginAutofillStorageLoadAttempted =
+          gakujoLoginStorageLoadAttemptedAfterFailure(
+        attempted: _loginAutofillStorageLoadAttempted,
+        error: error,
+      );
       final fallbackSettings = gakujoSettingsAfterStorageLoadFailure(
         currentSettings: _appSettings,
         isMacOS: Platform.isMacOS,
@@ -6012,8 +6045,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _retrySecureStorageLoad() async {
     SecureStorageFactory.resetMacosCache();
-    _secureStorageAccessAllowed = true;
-    await _loadAppSettings(allowMacosKeychainPrompt: true);
+    _loginAutofillStorageLoadAttempted = true;
+    if (!await _loadAppSettings(allowMacosKeychainPrompt: true)) {
+      // Other platforms keep storage access; only macOS defers the keychain.
+      if (Platform.isMacOS) {
+        _secureStorageAccessAllowed = false;
+      }
+      return;
+    }
     await _applyFeatureFlagRuntimeState(
       GakujoFeatureFlag.downloadCapture,
       enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
