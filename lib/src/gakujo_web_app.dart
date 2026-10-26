@@ -5281,9 +5281,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     for (final flag in _originalExtensionFeatureBuilders.keys) {
-      if (_appSettings.isFeatureEnabled(flag)) {
-        await _applyFeatureFlagRuntimeState(flag, enabled: true);
+      if (!_appSettings.isFeatureEnabled(flag)) {
+        continue;
       }
+      // Stars are read from the keychain first, which can wait on a macOS
+      // access dialog; the scripts after them must not wait too.
+      if (flag == GakujoFeatureFlag.messageStars) {
+        unawaited(_applyFeatureFlagRuntimeState(flag, enabled: true));
+        continue;
+      }
+      await _applyFeatureFlagRuntimeState(flag, enabled: true);
     }
   }
 
