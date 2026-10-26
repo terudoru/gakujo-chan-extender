@@ -294,6 +294,203 @@ void main() {
     expect(fallback.readAllCount, 1);
   });
 
+  test('keyed sweep reads only missing keys and writes the marker last',
+      () async {
+    const markerKey = 'migration-completed';
+    final primary = _MemorySecureStorage({'setting': 'configured'});
+    final fallback = _MemorySecureStorage({
+      'setting': 'stale',
+      'two-factor-secret': 'legacy',
+      'unrelated': 'other-app',
+    });
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: markerKey,
+      migrationKeys: ['setting', 'two-factor-secret', 'missing'],
+    );
+
+    expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+    expect(primary.values, {
+      'setting': 'configured',
+      'two-factor-secret': 'legacy',
+      markerKey: '1',
+    });
+    expect(primary.readAllCount, 1);
+    expect(primary.writeKeys, ['two-factor-secret', markerKey]);
+    expect(fallback.readAllCount, 0);
+    expect(fallback.readKeys, ['two-factor-secret', 'missing']);
+    expect(fallback.values, {'setting': 'stale', 'unrelated': 'other-app'});
+
+    expect(await storage.read(key: 'missing'), isNull);
+    expect(fallback.readKeys, ['two-factor-secret', 'missing']);
+  });
+
+  test('keyed bundled sweep never enumerates either legacy service', () async {
+    const markerKey = 'migration-completed';
+    const bundleKey = 'secure-storage-bundle';
+    const migrationKeys = [
+      'setting',
+      'download-history',
+      'two-factor-secret',
+      'missing',
+    ];
+    final backing = _MemorySecureStorage({
+      bundleKey: jsonEncode({'setting': 'configured'}),
+      'setting': 'stale',
+      'download-history': 'recent',
+      'stray': 'unrelated-v2-item',
+    });
+    final legacy = _MemorySecureStorage({
+      'download-history': 'stale-history',
+      'two-factor-secret': 'legacy',
+      'other-app': 'unrelated-default-item',
+    });
+    final bundled = BundledSecureStorage(
+      storage: backing,
+      bundleKey: bundleKey,
+    );
+    final storage = MigratingSecureStorage(
+      primary: bundled,
+      fallback: MigratingSecureStorage(
+        primary: backing,
+        fallback: legacy,
+        deleteFallbackAfterMigration: false,
+        migrationKeys: migrationKeys,
+      ),
+      deleteFallbackAfterMigration: false,
+      migrationMarkerKey: markerKey,
+      migrationKeys: migrationKeys,
+    );
+
+    expect(await storage.readAll(), {
+      'setting': 'configured',
+      'download-history': 'recent',
+      'two-factor-secret': 'legacy',
+    });
+    expect(await bundled.read(key: markerKey), '1');
+    expect(backing.readAllCount, 0);
+    expect(backing.readKeys.toSet(), {
+      bundleKey,
+      'download-history',
+      'two-factor-secret',
+      'missing',
+    });
+    expect(legacy.readAllCount, 0);
+    expect(legacy.readKeys, ['two-factor-secret', 'missing']);
+    expect(backing.values['stray'], 'unrelated-v2-item');
+    expect(legacy.values['other-app'], 'unrelated-default-item');
+  });
+
+  for (final hasPrimaryValue in [false, true]) {
+    test(
+        'keyed readAll reads missing fallback keys (primary: $hasPrimaryValue)',
+        () async {
+      final primary = _MemorySecureStorage(
+        hasPrimaryValue ? {'setting': 'configured'} : null,
+      );
+      final fallback = _MemorySecureStorage({
+        'setting': 'stale',
+        'two-factor-secret': 'legacy',
+        'unrelated': 'other-app',
+      });
+      final storage = MigratingSecureStorage(
+        primary: primary,
+        fallback: fallback,
+        migrationKeys: ['setting', 'two-factor-secret', 'missing'],
+      );
+
+      final expected = {
+        'setting': hasPrimaryValue ? 'configured' : 'stale',
+        'two-factor-secret': 'legacy',
+      };
+      expect(await storage.readAll(), expected);
+      expect(primary.values, expected);
+      expect(primary.readAllCount, 1);
+      expect(fallback.readAllCount, 0);
+      expect(fallback.readKeys, [
+        if (!hasPrimaryValue) 'setting',
+        'two-factor-secret',
+        'missing',
+      ]);
+      expect(fallback.values['unrelated'], 'other-app');
+    });
+  }
+
+  for (final operation in ['read', 'readKeys']) {
+    test('keyed $operation avoids readAll when checking a missing key',
+        () async {
+      final primary = _MemorySecureStorage({'setting': 'configured'});
+      final fallback = _MemorySecureStorage({'two-factor-secret': 'legacy'});
+      final storage = MigratingSecureStorage(
+        primary: primary,
+        fallback: fallback,
+        migrationKeys: ['setting', 'two-factor-secret'],
+      );
+
+      if (operation == 'read') {
+        expect(await storage.read(key: 'two-factor-secret'), 'legacy');
+      } else {
+        expect(await storage.readKeys(['setting', 'two-factor-secret']), {
+          'setting': 'configured',
+          'two-factor-secret': 'legacy',
+        });
+      }
+      expect(primary.values['two-factor-secret'], 'legacy');
+      expect(primary.readAllCount, 0);
+      expect(fallback.readAllCount, 0);
+      expect(fallback.readKeys, ['two-factor-secret']);
+    });
+  }
+
+  test('empty migration keys do not read fallback storage', () async {
+    final primary = _MemorySecureStorage();
+    final fallback = _MemorySecureStorage({'unrelated': 'other-app'});
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: 'migration-completed',
+      migrationKeys: const [],
+    );
+
+    expect(await storage.readAll(), isEmpty);
+    expect(primary.values, {'migration-completed': '1'});
+    expect(fallback.readAllCount, 0);
+    expect(fallback.readKeys, isEmpty);
+  });
+
+  test('failed keyed sweep leaves no marker and retries the fallback chain',
+      () async {
+    const markerKey = 'migration-completed';
+    const migrationKeys = ['setting', 'two-factor-secret'];
+    final primary = _MemorySecureStorage({'setting': 'configured'});
+    final middle = _MemorySecureStorage({'unrelated': 'v2-item'});
+    final legacy = _MemorySecureStorage({'two-factor-secret': 'legacy'})
+      ..readError = StateError('keychain unavailable');
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: MigratingSecureStorage(
+        primary: middle,
+        fallback: legacy,
+        migrationKeys: migrationKeys,
+      ),
+      migrationMarkerKey: markerKey,
+      migrationKeys: migrationKeys,
+    );
+
+    expect(await storage.readAll(), {'setting': 'configured'});
+    expect(primary.values.containsKey(markerKey), isFalse);
+    legacy.readError = null;
+
+    expect(await storage.readAll(), {
+      'setting': 'configured',
+      'two-factor-secret': 'legacy',
+    });
+    expect(primary.values[markerKey], '1');
+    expect(middle.readAllCount, 0);
+    expect(legacy.readAllCount, 0);
+  });
+
   test('existing migration marker prevents every fallback read', () async {
     const markerKey = 'migration-completed';
     final primary = _MemorySecureStorage({
@@ -631,6 +828,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
   Duration readAllDelay = Duration.zero;
   int readAllCount = 0;
   final List<String> readKeys = [];
+  final List<String> writeKeys = [];
 
   @override
   Future<String?> read({
@@ -692,6 +890,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    writeKeys.add(key);
     if (value == null) {
       values.remove(key);
     } else {

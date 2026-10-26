@@ -9,6 +9,35 @@ import 'migrating_secure_storage.dart';
 class SecureStorageFactory {
   const SecureStorageFactory._();
 
+  static const macosMigrationKeys = [
+    'more_better_gakujo_2fa_secret',
+    'more_better_gakujo_activity_changes',
+    'more_better_gakujo_activity_snapshots',
+    'more_better_gakujo_assignments',
+    'more_better_gakujo_cached_report_lists',
+    'more_better_gakujo_calendar_import_settings',
+    'more_better_gakujo_deadlines',
+    'more_better_gakujo_disabled_feature_flags',
+    'more_better_gakujo_download_history',
+    'more_better_gakujo_download_root_path',
+    'more_better_gakujo_download_save_mode',
+    'more_better_gakujo_failed_downloads',
+    'more_better_gakujo_favorites',
+    'more_better_gakujo_last_url',
+    'more_better_gakujo_login_credentials_v2',
+    'more_better_gakujo_login_id',
+    'more_better_gakujo_login_password',
+    'more_better_gakujo_message_exclude_keywords',
+    'more_better_gakujo_message_notification',
+    'more_better_gakujo_notification_preferences',
+    'more_better_gakujo_notification_topics',
+    'more_better_gakujo_notified_deadline_keys',
+    'more_better_gakujo_page_mode',
+    'more_better_gakujo_setup_completed',
+    'more_better_gakujo_starred_messages',
+    'more_better_gakujo_whole_assignment_list',
+  ];
+
   static const _macosCurrentAccountName =
       'net.yoshida.morebettergakujoFlutter.secure_storage.v2';
   static const _macosBundleKey = 'more_better_gakujo_secure_storage_bundle_v1';
@@ -47,10 +76,12 @@ class SecureStorageFactory {
       // must stay on the traditional macOS keychain.
       fallback: _macosLegacyClassicStorage,
       deleteFallbackAfterMigration: false,
+      migrationKeys: macosMigrationKeys,
       operationTimeout: _macosStorageOperationTimeout,
     ),
     deleteFallbackAfterMigration: false,
     migrationMarkerKey: _macosMigrationMarkerKey,
+    migrationKeys: macosMigrationKeys,
     operationTimeout: _macosStorageOperationTimeout,
   );
 

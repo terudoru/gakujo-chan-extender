@@ -9,17 +9,20 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     required FlutterSecureStorage fallback,
     bool deleteFallbackAfterMigration = true,
     String? migrationMarkerKey,
+    Iterable<String>? migrationKeys,
     Duration operationTimeout = const Duration(seconds: 3),
   })  : _primary = primary,
         _fallback = fallback,
         _deleteFallbackAfterMigration = deleteFallbackAfterMigration,
         _migrationMarkerKey = migrationMarkerKey,
+        _migrationKeys = migrationKeys?.toSet(),
         _storageOperationTimeout = operationTimeout;
 
   final FlutterSecureStorage _primary;
   final FlutterSecureStorage _fallback;
   final bool _deleteFallbackAfterMigration;
   final String? _migrationMarkerKey;
+  final Set<String>? _migrationKeys;
   final Duration _storageOperationTimeout;
   Future<bool>? _migrationSweepFuture;
   Future<void> _pendingStorageOperation = Future<void>.value();
@@ -83,6 +86,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       return values;
     }
     if (migrationCompleted == null &&
+        _migrationKeys == null &&
         primaryError == null &&
         values.values.any((value) => value != null)) {
       return values;
@@ -169,6 +173,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       return null;
     }
     if (migrationCompleted == null &&
+        _migrationKeys == null &&
         primaryError == null &&
         await _primaryHasAnyValue()) {
       return null;
@@ -257,11 +262,14 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       }
       return _withoutMigrationMarker(primaryValues);
     }
-    if (primaryError == null && primaryValues.isNotEmpty) {
+    if (_migrationKeys == null &&
+        primaryError == null &&
+        primaryValues.isNotEmpty) {
       return primaryValues;
     }
 
     final fallbackValues = await _readFallbackAll(
+      primaryValues: primaryValues,
       iOptions: iOptions,
       aOptions: aOptions,
       lOptions: lOptions,
@@ -495,6 +503,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   }
 
   Future<Map<String, String>> _readFallbackAll({
+    required Map<String, String> primaryValues,
     AppleOptions? iOptions,
     AndroidOptions? aOptions,
     LinuxOptions? lOptions,
@@ -503,6 +512,17 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     try {
+      if (_migrationKeys != null) {
+        return await _readAllForMigrationSweep(
+          keys: _migrationKeys.where((key) => !primaryValues.containsKey(key)),
+          iOptions: iOptions,
+          aOptions: aOptions,
+          lOptions: lOptions,
+          webOptions: webOptions,
+          mOptions: mOptions,
+          wOptions: wOptions,
+        );
+      }
       return await _fallback
           .readAll(
             iOptions: iOptions,
@@ -588,6 +608,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
           )
           .timeout(_storageOperationTimeout);
       final fallbackValues = await _readAllForMigrationSweep(
+        keys: _migrationKeys?.where(
+          (key) => key != markerKey && !primaryValues.containsKey(key),
+        ),
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,
@@ -643,6 +666,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   }
 
   Future<Map<String, String>> _readAllForMigrationSweep({
+    Iterable<String>? keys,
     AppleOptions? iOptions,
     AndroidOptions? aOptions,
     LinuxOptions? lOptions,
@@ -650,10 +674,24 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    keys ??= _migrationKeys;
     final fallback = _fallback;
     if (fallback is MigratingSecureStorage &&
         fallback._migrationMarkerKey == null) {
       return fallback._readAllAcrossFallbackLayers(
+        keys: keys,
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+    }
+    if (keys != null) {
+      return _readStorageKeys(
+        fallback,
+        keys,
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,
@@ -675,6 +713,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   }
 
   Future<Map<String, String>> _readAllAcrossFallbackLayers({
+    Iterable<String>? keys,
     AppleOptions? iOptions,
     AndroidOptions? aOptions,
     LinuxOptions? lOptions,
@@ -682,17 +721,30 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    final primaryValues = await _primary
-        .readAll(
-          iOptions: iOptions,
-          aOptions: aOptions,
-          lOptions: lOptions,
-          webOptions: webOptions,
-          mOptions: mOptions,
-          wOptions: wOptions,
-        )
-        .timeout(_storageOperationTimeout);
+    keys ??= _migrationKeys;
+    final primaryValues = keys == null
+        ? await _primary
+            .readAll(
+              iOptions: iOptions,
+              aOptions: aOptions,
+              lOptions: lOptions,
+              webOptions: webOptions,
+              mOptions: mOptions,
+              wOptions: wOptions,
+            )
+            .timeout(_storageOperationTimeout)
+        : await _readStorageKeys(
+            _primary,
+            keys,
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          );
     final fallbackValues = await _readAllForMigrationSweep(
+      keys: keys?.where((key) => !primaryValues.containsKey(key)),
       iOptions: iOptions,
       aOptions: aOptions,
       lOptions: lOptions,
@@ -704,6 +756,38 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       ...fallbackValues,
       ...primaryValues,
     };
+  }
+
+  Future<Map<String, String>> _readStorageKeys(
+    FlutterSecureStorage storage,
+    Iterable<String> keys, {
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    // Legacy macOS services can contain unrelated items, each of which can
+    // require a separate access approval after an ad-hoc signed update.
+    final values = <String, String>{};
+    for (final key in keys) {
+      final value = await storage
+          .read(
+            key: key,
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          )
+          .timeout(_storageOperationTimeout);
+      if (value != null) {
+        values[key] = value;
+      }
+    }
+    return values;
   }
 
   Map<String, String> _withoutMigrationMarker(Map<String, String> values) {

@@ -5,6 +5,38 @@ import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('macOS migration keys cover every app storage key in lib/src', () {
+    final keyLiteral =
+        RegExp(r'''['"](more_better_gakujo_[a-zA-Z0-9_]+)['"]''');
+    const excludedKeys = {
+      'more_better_gakujo_secure_storage_bundle_v1',
+      'more_better_gakujo_migration_completed_v1',
+    };
+    final storageKeys = <String>{};
+    for (final file in Directory('lib/src').listSync(recursive: true)) {
+      if (file is! File || !file.path.endsWith('.dart')) {
+        continue;
+      }
+      storageKeys.addAll(
+        keyLiteral
+            .allMatches(file.readAsStringSync())
+            .map((match) => match.group(1)!)
+            .where((key) => !excludedKeys.contains(key)),
+      );
+    }
+
+    final migrationKeys = SecureStorageFactory.macosMigrationKeys.toSet();
+    expect(storageKeys, isNotEmpty);
+    expect(
+      storageKeys.difference(migrationKeys),
+      isEmpty,
+      reason: 'Add new storage keys to SecureStorageFactory.macosMigrationKeys',
+    );
+    expect(migrationKeys.intersection(excludedKeys), isEmpty);
+    expect(
+        migrationKeys.length, SecureStorageFactory.macosMigrationKeys.length);
+  });
+
   test('create returns the same storage instance in macOS Flutter tests', () {
     final first = SecureStorageFactory.create();
     final second = SecureStorageFactory.create();
