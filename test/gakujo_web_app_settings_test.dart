@@ -141,6 +141,23 @@ void main() {
     expect(settings.setupCompleted, isTrue);
   });
 
+  test('setup keeps an autofill choice loaded while it was open', () {
+    final startup = macosStartupSettingsFromLocalPrefs(null);
+    final loaded = startup.copyWith(
+      disabledFeatureFlags: {GakujoFeatureFlag.twoFactorAutofill},
+    );
+
+    final settings = gakujoSettingsAfterInitialSetup(
+      currentSettings: loaded,
+      wizardSettings: startup,
+      placeholderFeatureFlags: startup.disabledFeatureFlags,
+    );
+
+    expect(settings.disabledFeatureFlags, {
+      GakujoFeatureFlag.twoFactorAutofill,
+    });
+  });
+
   for (final unlocked in [false, true]) {
     for (final loginEnabled in [null, false, true]) {
       test(

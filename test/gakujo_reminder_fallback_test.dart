@@ -449,6 +449,16 @@ void main() {
         expect(calls.map((call) => call.method), ['scheduleReminders']);
         expect((calls.single.arguments as Map)['reminders'], isEmpty);
 
+        // Turning every offset off cancels bookings without reading them.
+        calls.clear();
+        await sync(
+          first,
+          preferences: const GakujoNotificationPreferences(reminderOffsets: {}),
+        );
+        expect(storage.failedReads, failedReads);
+        expect(calls.map((call) => call.method), ['scheduleReminders']);
+        expect((calls.single.arguments as Map)['reminders'], isEmpty);
+
         storage.failAssignmentReads = false;
         await store.mergeAssignments([], isWholeList: true);
         calls.clear();

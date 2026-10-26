@@ -675,9 +675,11 @@ class GakujoDeadlineNotificationCoordinator {
     bool allowPermissionRequest = true,
   }) {
     return _enqueueNotificationOperation(() async {
-      final assignments = notificationsEnabled
-          ? await _activityStore.loadAssignmentsIfAvailable()
-          : const <GakujoAssignment>[];
+      // With no reminder offsets every booking is cancelled, readable or not.
+      final assignments =
+          notificationsEnabled && preferences.reminderOffsets.isNotEmpty
+              ? await _activityStore.loadAssignmentsIfAvailable()
+              : const <GakujoAssignment>[];
       if (assignments == null) {
         return;
       }

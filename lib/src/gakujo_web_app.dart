@@ -382,15 +382,20 @@ GakujoAppSettings gakujoSettingsAfterInitialSetup({
   required Set<GakujoFeatureFlag> placeholderFeatureFlags,
   Set<GakujoFeatureFlag> changedFeatureFlags = const {},
 }) {
-  return gakujoSettingsForPersistence(
-    currentSettings.copyWith(
-      downloadSaveMode: wizardSettings.downloadSaveMode,
-      pageMode: wizardSettings.pageMode,
-      disabledFeatureFlags: wizardSettings.disabledFeatureFlags,
-      setupCompleted: true,
-    ),
-    placeholderFeatureFlags: placeholderFeatureFlags,
-    changedFeatureFlags: changedFeatureFlags,
+  // A placeholder the wizard did not touch takes the value loaded since.
+  bool keepsCurrent(GakujoFeatureFlag flag) =>
+      placeholderFeatureFlags.contains(flag) &&
+      !changedFeatureFlags.contains(flag);
+  return currentSettings.copyWith(
+    downloadSaveMode: wizardSettings.downloadSaveMode,
+    pageMode: wizardSettings.pageMode,
+    disabledFeatureFlags: {
+      for (final flag in wizardSettings.disabledFeatureFlags)
+        if (!keepsCurrent(flag)) flag,
+      for (final flag in currentSettings.disabledFeatureFlags)
+        if (keepsCurrent(flag)) flag,
+    },
+    setupCompleted: true,
   );
 }
 
@@ -6117,6 +6122,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       },
     );
     _secureStorageRecoveryDialogVisible = false;
+    // Only an explicit retry should touch the keychain again; otherwise every
+    // later login page would reopen this dialog after another timeout.
+    if (action != _SecureStorageRecoveryAction.retry) {
+      _loginAutofillStorageLoadAttempted = true;
+    }
 
     if (action == _SecureStorageRecoveryAction.retry && mounted) {
       await _retrySecureStorageLoad();
