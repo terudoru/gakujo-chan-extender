@@ -667,6 +667,22 @@ bool shouldConsumePendingGakujoPage({
 }
 
 @visibleForTesting
+bool shouldAdoptGakujoPageFinishedUrl({
+  required String url,
+  required String? currentUrl,
+  required String? webViewUrl,
+  required int navigationRevision,
+  required int currentNavigationRevision,
+  required int? pendingNavigationRevision,
+}) {
+  return currentUrl != null &&
+      currentUrl != url &&
+      webViewUrl == url &&
+      navigationRevision == currentNavigationRevision &&
+      pendingNavigationRevision == navigationRevision;
+}
+
+@visibleForTesting
 bool isGakujoNavigationRecoveryCandidateUrl(
   String url, {
   required bool debugAllowed,
@@ -1140,6 +1156,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoDownloadOperationGate();
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
+  int? _pendingPageFinishedNavigationRevision;
 
   static const double _minimumDesktopZoom = 0.5;
   static const double _maximumDesktopZoom = 2.0;
@@ -3622,6 +3639,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _offlineRetry.cancel();
     _offlineRetryPausedInBackground = false;
     _navigationRevision += 1;
+    _pendingPageFinishedNavigationRevision = null;
   }
 
   void _beginPendingMessageNavigation(String url) {
@@ -5614,6 +5632,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onPageStarted: (url) {
           if (_isInternalBlankUrl(url)) {
             _beginNavigation();
+            _pendingPageFinishedNavigationRevision = _navigationRevision;
             _currentPageUrl = url;
             return;
           }
@@ -5624,6 +5643,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _beginNavigation(
             preservesPendingMessageOpen: preservesPendingMessageOpen,
           );
+          _pendingPageFinishedNavigationRevision = _navigationRevision;
           _currentPageUrl = url;
           if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
             _lastAllowedPageUrl = url;
@@ -5632,6 +5652,54 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _setStatus('読込中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
+          final navigationRevision = _navigationRevision;
+          bool stillCurrent() =>
+              _isCurrentPageCallback(url, navigationRevision);
+          if (!mounted) {
+            return;
+          }
+          if (_currentPageUrl != url &&
+              _pendingPageFinishedNavigationRevision == navigationRevision) {
+            // WebKit may finish at a server redirect without another start.
+            // Confirm the committed URL so a superseded finish cannot adopt it.
+            final String? webViewUrl;
+            try {
+              webViewUrl = await _controller.currentUrl();
+            } on Object catch (error, stackTrace) {
+              developer.log(
+                'Failed to confirm redirected page URL',
+                name: 'MoreBetterGakujo',
+                error: error,
+                stackTrace: stackTrace,
+              );
+              return;
+            }
+            if (!mounted ||
+                !shouldAdoptGakujoPageFinishedUrl(
+                  url: url,
+                  currentUrl: _currentPageUrl,
+                  webViewUrl: webViewUrl,
+                  navigationRevision: navigationRevision,
+                  currentNavigationRevision: _navigationRevision,
+                  pendingNavigationRevision:
+                      _pendingPageFinishedNavigationRevision,
+                )) {
+              return;
+            }
+            final requestedUrl = _currentPageUrl!;
+            // Preserve the protected request even before any authenticated page.
+            if (_navigationRecoveryCandidateUrl == null &&
+                isGakujoNavigationRecoveryCandidateUrl(requestedUrl,
+                    debugAllowed: _debugAllowed)) {
+              _navigationRecoveryCandidateUrl = requestedUrl;
+              _navigationRecoveryCandidateFailed = false;
+            }
+            _currentPageUrl = url;
+            _mainFrameNavigationUrl = url;
+          }
+          if (stillCurrent()) {
+            _pendingPageFinishedNavigationRevision = null;
+          }
           final processing = Completer<void>();
           _pageFinishedProcessing = (url: url, completer: processing);
           try {
@@ -5645,9 +5713,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               await _applyDesktopZoomIfAllowed();
               return;
             }
-            final navigationRevision = _navigationRevision;
-            bool stillCurrent() =>
-                _isCurrentPageCallback(url, navigationRevision);
             if (!stillCurrent()) {
               return;
             }

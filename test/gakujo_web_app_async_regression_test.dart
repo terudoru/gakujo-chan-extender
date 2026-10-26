@@ -480,6 +480,108 @@ void main() {
     });
   });
 
+  group('page-finished redirects', () {
+    const portal =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+    const requested = '$portal?page=main&tabId=sd';
+    const newer = '$portal?page=main&tabId=kj';
+
+    test('adopts the committed redirect of an unfinished navigation', () {
+      expect(
+        shouldAdoptGakujoPageFinishedUrl(
+          url: portal,
+          currentUrl: requested,
+          webViewUrl: portal,
+          navigationRevision: 1,
+          currentNavigationRevision: 1,
+          pendingNavigationRevision: 1,
+        ),
+        isTrue,
+      );
+    });
+
+    test('ignores an older finish after a newer page has started', () {
+      for (final oldUrl in [portal, requested]) {
+        expect(
+          shouldAdoptGakujoPageFinishedUrl(
+            url: oldUrl,
+            currentUrl: newer,
+            webViewUrl: newer,
+            navigationRevision: 2,
+            currentNavigationRevision: 2,
+            pendingNavigationRevision: 2,
+          ),
+          isFalse,
+          reason: oldUrl,
+        );
+      }
+    });
+
+    test('ignores a URL lookup superseded by a newer navigation', () {
+      expect(
+        shouldAdoptGakujoPageFinishedUrl(
+          url: portal,
+          currentUrl: newer,
+          webViewUrl: portal,
+          navigationRevision: 1,
+          currentNavigationRevision: 2,
+          pendingNavigationRevision: 2,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not adopt after completion or before the next page starts', () {
+      for (final pendingRevision in [null, 1]) {
+        expect(
+          shouldAdoptGakujoPageFinishedUrl(
+            url: portal,
+            currentUrl: requested,
+            webViewUrl: portal,
+            navigationRevision: 2,
+            currentNavigationRevision: 2,
+            pendingNavigationRevision: pendingRevision,
+          ),
+          isFalse,
+        );
+      }
+    });
+
+    test('requires a known started URL and a confirmed WebView URL', () {
+      for (final urls in [
+        (current: null, webView: portal),
+        (current: requested, webView: null),
+        (current: requested, webView: requested),
+      ]) {
+        expect(
+          shouldAdoptGakujoPageFinishedUrl(
+            url: portal,
+            currentUrl: urls.current,
+            webViewUrl: urls.webView,
+            navigationRevision: 1,
+            currentNavigationRevision: 1,
+            pendingNavigationRevision: 1,
+          ),
+          isFalse,
+        );
+      }
+    });
+
+    test('leaves matching page-start and page-finish callbacks unchanged', () {
+      expect(
+        shouldAdoptGakujoPageFinishedUrl(
+          url: portal,
+          currentUrl: portal,
+          webViewUrl: portal,
+          navigationRevision: 2,
+          currentNavigationRevision: 2,
+          pendingNavigationRevision: 2,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('portal authentication state', () {
     test('detects login fields when name and id repeat the same userId',
         () async {
@@ -893,7 +995,8 @@ void main() {
       );
     });
 
-    test('retains the requested tab across a 302 login redirect and 2FA', () {
+    test('retains requested tabs across redirect callback patterns and 2FA',
+        () {
       const portal =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
       const messages = '$portal?page=main&tabId=kj';
@@ -903,6 +1006,8 @@ void main() {
       String? authenticatedUrl;
       String? candidate;
       String? pending;
+      var navigationRevision = 0;
+      int? pendingNavigationRevision;
       var restoreAttempted = true;
       final restored = <String>[];
 
@@ -917,11 +1022,24 @@ void main() {
 
       void pageStarted(String url) {
         navigationStarting(url);
+        navigationRevision += 1;
+        pendingNavigationRevision = navigationRevision;
         currentUrl = url;
       }
 
       void pageFinished(String url, GakujoPortalAuthState authState) {
+        if (shouldAdoptGakujoPageFinishedUrl(
+          url: url,
+          currentUrl: currentUrl,
+          webViewUrl: url,
+          navigationRevision: navigationRevision,
+          currentNavigationRevision: navigationRevision,
+          pendingNavigationRevision: pendingNavigationRevision,
+        )) {
+          currentUrl = url;
+        }
         expect(currentUrl, url);
+        pendingNavigationRevision = null;
         final looksLikeLogin = AllowedWebOrigins.isLoginOrTimeoutPage(url);
         if (isGakujoAuthenticationChallenge(
           authState: authState,
@@ -1013,9 +1131,26 @@ void main() {
       expect(restored, [reports]);
 
       // A completed authenticated page releases the candidate for the next tab.
-      const schedule = '$portal?page=main&tabId=sch';
+      const schedule = '$portal?page=main&tabId=sd';
       navigationStarting(schedule);
       expect(candidate, schedule);
+
+      // WKWebView starts at the requested tab and only finishes at the shell.
+      pageStarted(schedule);
+      pageFinished(portal, GakujoPortalAuthState.login);
+      expect(currentUrl, portal);
+      expect(candidate, schedule);
+      expect(pending, schedule);
+      pageFinished(portal, GakujoPortalAuthState.twoFactor);
+      expect(pending, schedule);
+      pageStarted(home);
+      pageFinished(home, GakujoPortalAuthState.authenticated);
+      expect(restored, [reports, schedule]);
+      pageStarted(schedule);
+      pageFinished(schedule, GakujoPortalAuthState.authenticated);
+      expect(authenticatedUrl, schedule);
+      expect(pending, isNull);
+      expect(restored, [reports, schedule]);
     });
 
     test('login shells cannot be captured or replace a frozen tab', () {
