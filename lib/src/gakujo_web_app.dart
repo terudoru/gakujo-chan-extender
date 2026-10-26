@@ -2074,10 +2074,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         onSave: () async {
                           try {
                             await _secretStore.save(secretInput);
-                            if (mounted) {
-                              _showSnackBar('2FA秘密鍵を保存しました');
+                            await _appSettingsStore.saveFeatureEnabled(
+                              GakujoFeatureFlag.twoFactorAutofill,
+                              enabled: true,
+                            );
+                            if (!mounted) {
+                              return;
                             }
-                            await _injectTwoFactorAutofillIfAllowed();
+                            setState(() {
+                              _startupPlaceholderFeatureFlags.remove(
+                                GakujoFeatureFlag.twoFactorAutofill,
+                              );
+                              _appSettings = _appSettings.copyWith(
+                                disabledFeatureFlags: {
+                                  for (final flag
+                                      in _appSettings.disabledFeatureFlags)
+                                    if (flag !=
+                                        GakujoFeatureFlag.twoFactorAutofill)
+                                      flag,
+                                },
+                              );
+                            });
+                            await _syncLocalSettingsMirror(_appSettings);
+                            _showSnackBar('2FA秘密鍵を保存しました');
+                            await _applyFeatureFlagRuntimeState(
+                              GakujoFeatureFlag.twoFactorAutofill,
+                              enabled: true,
+                            );
                           } on FormatException {
                             if (mounted) {
                               _showSnackBar('長いBase32秘密鍵を確認してください');
