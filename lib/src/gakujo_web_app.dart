@@ -5826,14 +5826,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (!stillCurrent()) {
               return;
             }
-            await _injectLoginAutofillAssistIfAllowed();
-            if (!stillCurrent()) {
-              return;
-            }
-            await _injectTwoFactorAutofillIfAllowed();
-            if (!stillCurrent()) {
-              return;
-            }
+            // Both read the keychain, which can wait on a macOS access dialog
+            // indefinitely; do not hold back download capture and the rest.
+            unawaited(() async {
+              await _injectLoginAutofillAssistIfAllowed();
+              if (stillCurrent()) {
+                await _injectTwoFactorAutofillIfAllowed();
+              }
+            }());
             await _injectDownloadCaptureIfAllowed();
             if (!stillCurrent()) {
               return;
