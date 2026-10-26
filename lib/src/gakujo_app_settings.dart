@@ -222,7 +222,6 @@ class GakujoCalendarImportSettings {
     this.includeNoClassDates = true,
     this.calendarTitle = defaultCalendarTitle,
     this.applyClassChanges = true,
-    this.includeAssignmentDeadlines = true,
   });
 
   static const defaultCalendarTitle = 'More Better Gakujo 授業';
@@ -238,9 +237,6 @@ class GakujoCalendarImportSettings {
   /// move room changes.
   final bool applyClassChanges;
 
-  /// Also add each レポート・小テスト closing time as an event.
-  final bool includeAssignmentDeadlines;
-
   String get effectiveCalendarTitle {
     final trimmed = calendarTitle.trim();
     return trimmed.isEmpty || trimmed == validationCalendarTitle
@@ -255,7 +251,6 @@ class GakujoCalendarImportSettings {
     bool? includeNoClassDates,
     String? calendarTitle,
     bool? applyClassChanges,
-    bool? includeAssignmentDeadlines,
   }) {
     return GakujoCalendarImportSettings(
       method: method ?? this.method,
@@ -264,8 +259,6 @@ class GakujoCalendarImportSettings {
       includeNoClassDates: includeNoClassDates ?? this.includeNoClassDates,
       calendarTitle: calendarTitle ?? this.calendarTitle,
       applyClassChanges: applyClassChanges ?? this.applyClassChanges,
-      includeAssignmentDeadlines:
-          includeAssignmentDeadlines ?? this.includeAssignmentDeadlines,
     );
   }
 
@@ -277,7 +270,6 @@ class GakujoCalendarImportSettings {
       'includeNoClassDates': includeNoClassDates,
       'calendarTitle': effectiveCalendarTitle,
       'applyClassChanges': applyClassChanges,
-      'includeAssignmentDeadlines': includeAssignmentDeadlines,
     };
   }
 
@@ -310,7 +302,6 @@ class GakujoCalendarImportSettings {
               ? raw['calendarTitle'].toString().trim()
               : defaultCalendarTitle,
       applyClassChanges: raw['applyClassChanges'] != false,
-      includeAssignmentDeadlines: raw['includeAssignmentDeadlines'] != false,
     );
   }
 }

@@ -386,7 +386,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     GakujoCalendarTermRange? fallbackTermRange;
     String? fallbackUidNamespace;
     String? fallbackTermLabel;
-    var fallbackDeadlineEvents = const <GakujoCalendarEvent>[];
     // The import drives the WebView through several Gakujo pages; bring the
     // student back to where they started unless it opened a page for them.
     String? returnUrl;
@@ -450,15 +449,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           changes,
         );
       }
-      final deadlineEvents = settings.includeAssignmentDeadlines
-          ? GakujoCalendarEventBuilder.buildAssignmentEvents(
-              assignments: await _activityStore.loadAssignments(),
-              rangeStart: termRange.start,
-              rangeEnd: termRange.end,
-              uidNamespace: uidNamespace,
-            )
-          : const <GakujoCalendarEvent>[];
-      fallbackDeadlineEvents = deadlineEvents;
       if (courses.isEmpty) {
         _showSnackBar(
             '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業が見つかりませんでした');
@@ -484,16 +474,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         );
         // The iOS and macOS bridges still refuse an empty replacement, so
         // only Android clears a range whose last class was cancelled.
-        if (events.isEmpty &&
-            deadlineEvents.isEmpty &&
-            (Platform.isIOS || Platform.isMacOS)) {
+        if (events.isEmpty && (Platform.isIOS || Platform.isMacOS)) {
           _showSnackBar(
             '${resolvedTerm.termName ?? '選択した期間'}に追加できる授業日がありませんでした',
           );
           return;
         }
         final result = await _calendarService.syncEvents(
-          events: [...events, ...deadlineEvents],
+          events: events,
           rangeStart: termRange.start,
           rangeEnd: termRange.end,
           calendarTitle: settings.effectiveCalendarTitle,
@@ -503,7 +491,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           _calendarSyncMessage(
             result,
             resolvedTerm.termName,
-            deadlines: deadlineEvents.length,
           ),
         );
         return;
@@ -516,7 +503,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           uidNamespace: icsUidNamespace,
           termLabel: termLabel,
           calendarName: settings.effectiveCalendarTitle,
-          extraEvents: deadlineEvents,
           reason: settings.method == GakujoCalendarImportMethod.deviceCalendar
               ? 'この環境ではOSカレンダー直接追加に未対応のため'
               : null,
@@ -537,7 +523,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         uidNamespace: icsUidNamespace,
         termLabel: termLabel,
         calendarName: settings.effectiveCalendarTitle,
-        extraEvents: deadlineEvents,
         reason: null,
       );
     } on PlatformException catch (error) {
@@ -578,7 +563,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             uidNamespace: uidNamespace,
             termLabel: termLabel,
             calendarName: settings.effectiveCalendarTitle,
-            extraEvents: fallbackDeadlineEvents,
             reason: reason,
           );
         } on PlatformException catch (fallbackError) {
@@ -1054,22 +1038,6 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           setDialogState(() {});
                         },
                       ),
-                      CheckboxListTile(
-                        dense: true,
-                        enabled: !usesWindowsAutomaticImport,
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('課題の締切も追加する'),
-                        subtitle: const Text(
-                          'レポート・小テスト一覧の締切を、締切時刻の予定として追加します。',
-                        ),
-                        value: selectedSettings.includeAssignmentDeadlines,
-                        onChanged: (value) {
-                          selectedSettings = selectedSettings.copyWith(
-                            includeAssignmentDeadlines: value ?? true,
-                          );
-                          setDialogState(() {});
-                        },
-                      ),
                       const SizedBox(height: 8),
                       TextField(
                         controller: calendarTitleController,
@@ -1311,14 +1279,11 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
 
   String _calendarSyncMessage(
     GakujoCalendarSyncResult result,
-    String? term, {
-    int deadlines = 0,
-  }) {
+    String? term,
+  ) {
     final termText = term == null ? '' : ' ($term)';
     final removedText = result.removed > 0 ? '、古い予定${result.removed}件を更新' : '';
-    final classes = result.added - deadlines;
-    final deadlineText = deadlines > 0 ? 'と課題の締切$deadlines件' : '';
-    return '$classes件の授業予定$deadlineTextをカレンダーに追加$removedTextしました$termText';
+    return '${result.added}件の授業予定をカレンダーに追加$removedTextしました$termText';
   }
 
   Future<void> _deleteAddedCalendarEvents({
@@ -1624,10 +1589,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     required String calendarName,
     required String? reason,
     String fileName = 'more-better-gakujo-classes.ics',
-    List<GakujoCalendarEvent> extraEvents = const [],
   }) async {
     final ics = GakujoCalendarExport.buildIcs(
-      extraEvents: extraEvents,
       courses: courses,
       rangeStart: termRange.start,
       rangeEnd: termRange.end,

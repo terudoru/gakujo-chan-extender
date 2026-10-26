@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
-import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_service.dart';
 
@@ -202,66 +201,41 @@ void main() {
     });
   });
 
-  test('assignment deadlines become events at their closing time', () {
-    GakujoAssignment assignment(String title, String status, String period) =>
-        GakujoAssignment.fromReportRow(
-          {
-            'kind': '小テスト',
-            'title': title,
-            'status': status,
-            'code': '260G3529',
-            'course': '情報処理概論Ａ II',
-            'period': period,
-          },
-          capturedAt: DateTime(2026, 10, 21),
-        )!;
-    final events = GakujoCalendarEventBuilder.buildAssignmentEvents(
-      assignments: [
-        assignment('第三回', '未提出', '2026/10/21 17:01 ～2026/10/28 16:31'),
-        assignment('第二回', '提出済', '2026/10/14 16:45 ～2026/10/14 23:59'),
-        assignment('期間外', '未提出', '2026/12/20 00:00 ～2026/12/24 12:00'),
-      ],
-      rangeStart: _term.start,
-      rangeEnd: _term.end,
-      uidNamespace: 'niigata-2026-第3ターム',
-    );
-
-    expect(events.map((e) => e.title), [
-      '〆切 小テスト 第二回（提出済）',
-      '〆切 小テスト 第三回',
-    ]);
-    expect(events.last.end, japanMoment(2026, 10, 28, 16, 31));
-    // Synced together with the classes, so the same namespace.
-    expect(events.last.id, startsWith('niigata-2026-第3ターム|deadline|'));
-
-    final ics = GakujoCalendarExport.buildIcs(
-      courses: _weekly,
-      rangeStart: _term.start,
-      rangeEnd: _term.end,
-      extraEvents: events,
-    );
-    expect(ics, contains('SUMMARY:〆切 小テスト 第三回'));
-    expect(ics, contains('DTEND;TZID=Asia/Tokyo:20261028T163100'));
+  test('legacy deadline options are ignored without losing calendar settings',
+      () {
+    final expected = const GakujoCalendarImportSettings(
+      method: GakujoCalendarImportMethod.deviceCalendar,
+      termSource: GakujoCalendarTermSource.pageOrManual,
+      termTarget: GakujoCalendarTermTarget.third,
+      includeNoClassDates: false,
+      calendarTitle: '授業',
+      applyClassChanges: false,
+    ).toJson();
+    for (final includeDeadlines in [true, false]) {
+      final legacy = {
+        ...expected,
+        'includeAssignmentDeadlines': includeDeadlines,
+      };
+      for (final raw in [legacy, jsonEncode(legacy)]) {
+        final restored = GakujoCalendarImportSettings.fromJson(raw);
+        expect(restored.toJson(), expected);
+      }
+    }
   });
 
   test('the calendar options are saved with the import settings', () {
     final restored = GakujoCalendarImportSettings.fromJson(
       const GakujoCalendarImportSettings(
         applyClassChanges: false,
-        includeAssignmentDeadlines: false,
       ).toJson(),
     );
     expect(restored.applyClassChanges, isFalse);
-    expect(restored.includeAssignmentDeadlines, isFalse);
     expect(
       GakujoCalendarImportSettings.fromJson(const {}).applyClassChanges,
       isTrue,
     );
   });
 }
-
-DateTime japanMoment(int y, int m, int d, int h, int min) =>
-    DateTime.utc(y, m, d, h, min).subtract(const Duration(hours: 9));
 
 /// Gakujo's 休講補講 flow: the entry page, then one page per week with rows
 /// classed kyuko-kyuko (休講), kyuko-hoko (補講), kyuko-kaiko (no change).
