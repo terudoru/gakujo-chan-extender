@@ -409,6 +409,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       setState(() {
         _downloadRoot = root;
       });
+      _refreshSetupWizard?.call();
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to load download root',

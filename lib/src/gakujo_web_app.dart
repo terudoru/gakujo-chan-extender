@@ -1174,6 +1174,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
+  // The setup wizard can open before macOS reads the saved download folder.
+  VoidCallback? _refreshSetupWizard;
   DateTime? _lastAssignmentRefresh;
   Timer? _backgroundRefreshTimer;
   bool _isImportingSettings = false;
@@ -2526,6 +2528,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            _refreshSetupWizard = () => setDialogState(() {});
             final wizardSettings = _appSettings.copyWith(
               downloadSaveMode: selectedDownloadSaveMode,
               pageMode: selectedPageMode,
@@ -2699,6 +2702,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+    _refreshSetupWizard = null;
     // 「あとで」 or a tap outside used to bring the wizard back on every
     // launch. Keep the defaults and leave changes to the settings screen.
     if (mounted && !_appSettings.setupCompleted) {
