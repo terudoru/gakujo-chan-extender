@@ -387,8 +387,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     String? fallbackUidNamespace;
     String? fallbackTermLabel;
     var fallbackDeadlineEvents = const <GakujoCalendarEvent>[];
+    // The import drives the WebView through several Gakujo pages; bring the
+    // student back to where they started unless it opened a page for them.
+    String? returnUrl;
+    var keepCurrentPage = false;
 
     try {
+      returnUrl = await _currentActionableUrl();
       final preferredTerm = settings.termSource ==
               GakujoCalendarTermSource.officialAcademicCalendar
           ? await _resolveCalendarTerm(settings: settings)
@@ -523,6 +528,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         successMessage: 'この環境ではOSカレンダー直接追加に未対応のため、本家Googleスケジュール連携を開きました',
       );
       if (openedOfficial) {
+        keepCurrentPage = true;
         return;
       }
       await _writeCalendarFallbackFile(
@@ -599,6 +605,37 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         stackTrace: stackTrace,
       );
       _showSnackBar('カレンダー用ファイルを作成できませんでした: $error');
+    } finally {
+      if (!keepCurrentPage) {
+        await _returnAfterCalendarImport(returnUrl);
+      }
+    }
+  }
+
+  Future<void> _returnAfterCalendarImport(String? returnUrl) async {
+    if (!mounted ||
+        returnUrl == null ||
+        !AllowedWebOrigins.canRestoreLastPage(
+          returnUrl,
+          debugAllowed: _debugAllowed,
+        )) {
+      return;
+    }
+    try {
+      final currentUrl = await _currentActionableUrl();
+      if (!mounted ||
+          currentUrl == returnUrl ||
+          AllowedWebOrigins.isLoginOrTimeoutPage(currentUrl)) {
+        return;
+      }
+      await _loadAllowedPageUrl(returnUrl, ownsPageNavigationOperation: true);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to return after calendar import',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
