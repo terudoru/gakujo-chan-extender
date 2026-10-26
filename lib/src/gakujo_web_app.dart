@@ -282,6 +282,10 @@ String secureStorageRecoveryGuidance(
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
 
+  if (platform == TargetPlatform.macOS && error is TimeoutException) {
+    return 'macOS のキーチェーン確認ダイアログが開いたままになっている可能性があります。\n\n'
+        'ダイアログで「常に許可」を選んでから「再試行」を押してください。';
+  }
   final userDenied = isLikelyMacosKeychainUserDeniedError(error);
   if (platform == TargetPlatform.macOS && userDenied) {
     return 'macOS が拒否を記憶している場合、「再試行」だけでは許可ダイアログが再表示されません。\n\n'
@@ -5975,7 +5979,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _appSettingsLoaded = true;
       });
       _setStatus('保存データにアクセスできません');
-      if (error is! TimeoutException) {
+      // On macOS a timeout here usually means the keychain dialog went
+      // unanswered; nothing reloads once it is answered, so offer a retry.
+      if (error is! TimeoutException ||
+          (Platform.isMacOS && allowMacosKeychainPrompt)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             unawaited(_showSecureStorageRecoveryDialog(error));
@@ -6030,12 +6037,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               child: const Text('このまま使う'),
             ),
             if (!missingEntitlement) ...[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(
-                  _SecureStorageRecoveryAction.reset,
+              // A timeout is not corruption; resetting would discard data.
+              if (error is! TimeoutException)
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    _SecureStorageRecoveryAction.reset,
+                  ),
+                  child: const Text('保存データをリセット'),
                 ),
-                child: const Text('保存データをリセット'),
-              ),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(
                   _SecureStorageRecoveryAction.retry,

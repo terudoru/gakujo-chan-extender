@@ -639,6 +639,17 @@ void main() {
     expect(guidance, contains('再試行'));
   });
 
+  test('macOS keychain timeout guidance asks to answer the dialog first', () {
+    final guidance = secureStorageRecoveryGuidance(
+      TimeoutException('Future not completed'),
+      platform: TargetPlatform.macOS,
+    );
+
+    expect(guidance, contains('常に許可'));
+    expect(guidance, contains('再試行'));
+    expect(guidance, isNot(contains('保存データをリセット')));
+  });
+
   test('activity page reading follows independent feature toggles', () {
     expect(
       shouldReadPageForActivityFeatures(const GakujoAppSettings()),
