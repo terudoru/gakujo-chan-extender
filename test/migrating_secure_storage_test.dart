@@ -202,6 +202,29 @@ void main() {
     );
   });
 
+  test('readKeys fails fast after a migration sweep times out', () async {
+    final primary = _MemorySecureStorage({'login': 'student'})
+      ..readDelay = const Duration(milliseconds: 300);
+    final fallback = _MemorySecureStorage({'password': 'legacy-secret'})
+      ..readDelay = const Duration(milliseconds: 300);
+    final storage = MigratingSecureStorage(
+      primary: primary,
+      fallback: fallback,
+      migrationMarkerKey: 'migration-completed',
+      operationTimeout: const Duration(milliseconds: 100),
+    );
+    final watch = Stopwatch()..start();
+
+    await expectLater(
+      storage.readKeys(['login', 'password']),
+      throwsA(isA<TimeoutException>()),
+    );
+
+    // One sweep timeout, not another wait for the primary and fallback reads.
+    expect(watch.elapsed, lessThan(const Duration(milliseconds: 250)));
+    expect(fallback.readKeys, isEmpty);
+  });
+
   test('readAll avoids fallback when primary has values', () async {
     final primary = _MemorySecureStorage({'token': 'primary'});
     final fallback = _MemorySecureStorage({

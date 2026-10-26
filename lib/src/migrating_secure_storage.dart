@@ -24,6 +24,9 @@ class MigratingSecureStorage extends FlutterSecureStorage {
   Future<bool>? _migrationSweepFuture;
   Future<void> _pendingStorageOperation = Future<void>.value();
   bool _fallbackReadsSuppressed = false;
+  // A timed-out sweep means the keychain is blocked (e.g. an unanswered macOS
+  // access dialog); further reads would only wait out their own timeouts.
+  TimeoutException? _sweepTimeout;
 
   Future<Map<String, String?>> readKeys(Iterable<String> keys) async {
     final migrationCompleted = _fallbackReadsSuppressed
@@ -31,6 +34,10 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         : _migrationMarkerKey == null
             ? null
             : await _ensureMigrationSweep();
+    final sweepTimeout = _sweepTimeout;
+    if (migrationCompleted == false && sweepTimeout != null) {
+      throw sweepTimeout;
+    }
     final requestedKeys = keys.toList(growable: false);
     Object? primaryError;
     StackTrace? primaryStackTrace;
@@ -566,6 +573,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
           )
           .timeout(_storageOperationTimeout);
       if (markerValue != null) {
+        _sweepTimeout = null;
         return true;
       }
 
@@ -625,9 +633,11 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         mOptions: mOptions,
         wOptions: wOptions,
       );
+      _sweepTimeout = null;
       return true;
     } on Object catch (error) {
       debugPrint('Secure-storage migration failed: $error');
+      _sweepTimeout = error is TimeoutException ? error : null;
       return false;
     }
   }
