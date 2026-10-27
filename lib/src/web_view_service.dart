@@ -1011,6 +1011,26 @@ MouseHistoryNavigation? mouseHistoryNavigation(PointerDownEvent event) {
   return null;
 }
 
+const _windowsWebViewAdditionalArguments = '--enable-smooth-scrolling';
+
+/// Remote Desktop sessions and Windows with animation effects turned off
+/// disable Chromium's wheel-scroll animation, so every notch jumps the page.
+Future<void> configureWindowsWebViewEnvironment({
+  @visibleForTesting
+  Future<void> Function({String? additionalArguments})? initializeEnvironment,
+}) async {
+  try {
+    await (initializeEnvironment ??
+        windows.WebviewController.initializeEnvironment)(
+      additionalArguments: _windowsWebViewAdditionalArguments,
+    );
+  } catch (error) {
+    debugPrint(
+      'MoreBetterGakujo Windows WebView environment setup failed: $error',
+    );
+  }
+}
+
 class WindowsGakujoWebViewService extends GakujoWebViewService {
   const WindowsGakujoWebViewService();
 

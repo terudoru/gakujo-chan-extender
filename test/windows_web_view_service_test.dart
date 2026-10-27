@@ -42,6 +42,27 @@ void main() {
     messenger.setMockStreamHandler(events, null);
   });
 
+  test('Windows environment enables smooth scrolling', () async {
+    final arguments = <String?>[];
+    await configureWindowsWebViewEnvironment(
+      initializeEnvironment: ({String? additionalArguments}) async {
+        arguments.add(additionalArguments);
+      },
+    );
+    expect(arguments, ['--enable-smooth-scrolling']);
+  });
+
+  test('Windows environment setup tolerates initialization failures', () async {
+    await expectLater(
+      configureWindowsWebViewEnvironment(
+        initializeEnvironment: ({String? additionalArguments}) async {
+          throw PlatformException(code: 'environment_creation_failed');
+        },
+      ),
+      completes,
+    );
+  });
+
   Future<void> flushEvents() async {
     // URL delegates intentionally remain pending in the race tests. Only
     // drain a bounded number of turns; never wait for their callbacks.
