@@ -1206,6 +1206,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Timer? _autoBackupTimer;
   Timer? _autoBackupDebounce;
   bool _autoBackupWrittenThisLaunch = false;
+  DateTime? _lastAutomaticBackupAt;
   Completer<String>? _nextPageFinishedCompleter;
   ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
@@ -1316,8 +1317,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       unawaited(_saveCurrentPageUrl());
+      // Desktop windows turn inactive on every focus change; keep the ten
+      // retained backups from rotating away within minutes.
+      final lastBackup = _lastAutomaticBackupAt;
       if (_appSettingsLoaded &&
-          _appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup)) {
+          _appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup) &&
+          (lastBackup == null ||
+              DateTime.now().difference(lastBackup) >=
+                  const Duration(minutes: 10))) {
         unawaited(_writeAutomaticBackup());
       }
     }
@@ -3305,6 +3312,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<File?> _writeAutomaticBackup() async {
+    _lastAutomaticBackupAt = DateTime.now();
     try {
       return await _writeBackupFile(prefix: 'auto');
     } on Object catch (error, stackTrace) {
