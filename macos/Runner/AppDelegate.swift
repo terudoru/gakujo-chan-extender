@@ -12,6 +12,12 @@ class AppDelegate: FlutterAppDelegate {
   private let inputFocusBridge = MacosInputFocusBridge()
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
+    // A notification that launched the app arrives here rather than (or
+    // before) the notification center delegate.
+    if let response = notification.userInfo?[NSApplication.launchUserNotificationUserInfoKey]
+      as? UNNotificationResponse {
+      notificationsBridge.rememberLaunchResponse(response)
+    }
     if let controller = mainFlutterWindow?.contentViewController as? FlutterViewController {
       downloadsBridge.register(messenger: controller.engine.binaryMessenger)
       notificationsBridge.register(messenger: controller.engine.binaryMessenger)
@@ -1109,16 +1115,30 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     }
   }
 
+  func rememberLaunchResponse(_ response: UNNotificationResponse) {
+    guard let url = Self.url(of: response) else { return }
+    NSLog("MoreBetterGakujo: app launched from a notification")
+    pendingNotificationURL = url
+  }
+
+  private static func url(of response: UNNotificationResponse) -> String? {
+    guard let url = response.notification.request.content.userInfo[notificationURLKey] as? String,
+          !url.isEmpty else {
+      return nil
+    }
+    return url
+  }
+
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     defer { completionHandler() }
-    guard let url = response.notification.request.content.userInfo[Self.notificationURLKey] as? String,
-          !url.isEmpty else {
+    guard let url = Self.url(of: response) else {
       return
     }
+    NSLog("MoreBetterGakujo: notification tapped (channel ready: %d)", channel == nil ? 0 : 1)
     pendingNotificationURL = url
     NSApp.activate(ignoringOtherApps: true)
     channel?.invokeMethod(
