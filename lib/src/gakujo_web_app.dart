@@ -1857,7 +1857,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     if (!canNavigate) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      _showSnackBar('許可されていない外部サイトをブロックしました');
+      // Gakujo links to sites such as its own support form; keep them out of
+      // this WebView but let the student open them in the browser.
+      final external = Uri.tryParse(request.url);
+      final canOpenExternally = request.isMainFrame &&
+          external != null &&
+          (external.scheme == 'https' || external.scheme == 'http') &&
+          external.host.isNotEmpty;
+      _showSnackBar(
+        '許可されていない外部サイトをブロックしました',
+        action: canOpenExternally
+            ? SnackBarAction(
+                label: 'ブラウザで開く',
+                onPressed: () => unawaited(
+                  launchUrl(external, mode: LaunchMode.externalApplication),
+                ),
+              )
+            : null,
+      );
       return GakujoNavigationDecision.prevent;
     }
 
