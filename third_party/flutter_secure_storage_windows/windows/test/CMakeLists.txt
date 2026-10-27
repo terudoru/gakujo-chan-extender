@@ -25,6 +25,7 @@ add_executable(flutter_secure_storage_windows_test
 # dedicated test prefix is used to avoid touching real application data.
 target_compile_definitions(flutter_secure_storage_windows_test PRIVATE
   SECURE_STORAGE_KEY_PREFIX="fss_native_test_"
+  FSS_TESTING
   FLUTTER_PLUGIN_IMPL
 )
 

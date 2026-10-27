@@ -20,9 +20,7 @@ void main() {
     }
   });
 
-  test('round-trips non-sensitive settings and last page URL', () async {
-    const lastPageUrl =
-        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do';
+  test('round-trips non-sensitive settings without credentials or URLs', () async {
     const settings = GakujoAppSettings(
       downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
       pageMode: GakujoPageMode.mobile,
@@ -46,7 +44,6 @@ void main() {
     );
 
     await store.saveAppSettings(settings);
-    await store.saveLastPageUrl(lastPageUrl);
 
     final loaded = await store.load();
     final loadedSettings = loaded?.appSettings;
@@ -68,7 +65,6 @@ void main() {
       GakujoCalendarTermTarget.third,
     );
     expect(loadedSettings?.messageExcludeKeywords, ['アンケート', '説明会']);
-    expect(loaded?.lastPageUrl, lastPageUrl);
 
     final json = jsonDecode(
       await File(
@@ -79,6 +75,7 @@ void main() {
     expect(json.containsKey('loginCredentials'), isFalse);
     expect(json.containsKey('loginId'), isFalse);
     expect(json.containsKey('password'), isFalse);
+    expect(json.containsKey('lastPageUrl'), isFalse);
     expect(jsonEncode(json), isNot(contains('secret-password')));
   });
 
@@ -104,25 +101,45 @@ void main() {
     expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
   });
 
-  test('saveLastPageUrl preserves last GPA', () async {
-    const lastPageUrl = 'https://example.com';
-    await store.saveLastGpa(3.25);
-
-    await store.saveLastPageUrl(lastPageUrl);
-
+  test('load removes the legacy plaintext URL and preserves other data', () async {
+    final file = File('${directory.path}/${GakujoLocalPrefsStore.fileName}');
+    await file.writeAsString(jsonEncode({
+      'version': 1,
+      'pageMode': 'mobile',
+      'lastGpa': 3.25,
+      'lastPageUrl': 'https://example.com/private?token=synthetic-secret',
+      'futureSetting': {'kept': true},
+    }));
     final loaded = await store.load();
     expect(loaded?.lastGpa, 3.25);
-    expect(loaded?.lastPageUrl, lastPageUrl);
+    expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
+    final raw = jsonDecode(await file.readAsString()) as Map;
+    expect(raw.containsKey('lastPageUrl'), isFalse);
+    expect(jsonEncode(raw), isNot(contains('synthetic-secret')));
+    expect(raw['futureSetting'], {'kept': true});
   });
 
-  test('saveLastGpa preserves settings and last page URL', () async {
-    const lastPageUrl = 'https://example.com';
+  test('failed URL migration preserves the original file and can be retried',
+      () async {
+    final file = File('${directory.path}/${GakujoLocalPrefsStore.fileName}');
+    const original = '{"version":1,"pageMode":"mobile","lastPageUrl":"https://example.com/private"}';
+    await file.writeAsString(original);
+    final failingStore = GakujoLocalPrefsStore(
+      directory: directory,
+      atomicReplace: (_, _) async => throw const FileSystemException('replace failed'),
+    );
+    await expectLater(failingStore.load(), throwsA(isA<FileSystemException>()));
+    expect(await file.readAsString(), original);
+    expect((await store.load())?.appSettings?.pageMode, GakujoPageMode.mobile);
+    expect((jsonDecode(await file.readAsString()) as Map).containsKey('lastPageUrl'), isFalse);
+  });
+
+  test('saveLastGpa preserves settings', () async {
     await store.saveAppSettings(const GakujoAppSettings(
       pageMode: GakujoPageMode.mobile,
       setupCompleted: true,
       messageExcludeKeywords: ['survey'],
     ));
-    await store.saveLastPageUrl(lastPageUrl);
     await store.saveLastGpa(2.5);
 
     await store.saveLastGpa(3.25);
@@ -132,7 +149,6 @@ void main() {
     expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
     expect(loaded?.appSettings?.setupCompleted, isTrue);
     expect(loaded?.appSettings?.messageExcludeKeywords, ['survey']);
-    expect(loaded?.lastPageUrl, lastPageUrl);
   });
 
   test('saveLastGpa preserves partial settings keys', () async {
@@ -140,7 +156,6 @@ void main() {
         .writeAsString('{"version":1,"pageMode":"mobile"}');
 
     await store.saveLastGpa(3.25);
-    await store.saveLastPageUrl('https://example.com');
 
     final loaded = await store.load();
     expect(loaded?.lastGpa, 3.25);
@@ -149,16 +164,14 @@ void main() {
       '${directory.path}/${GakujoLocalPrefsStore.fileName}',
     ).readAsString()) as Map;
     expect(raw.keys,
-        unorderedEquals(['version', 'pageMode', 'lastPageUrl', 'lastGpa']));
+        unorderedEquals(['version', 'pageMode', 'lastGpa']));
   });
 
-  test('saveLastGpa clears GPA without changing settings or last page URL',
+  test('saveLastGpa clears GPA without changing settings',
       () async {
-    const lastPageUrl = 'https://example.com';
     await store.saveAppSettings(const GakujoAppSettings(
       pageMode: GakujoPageMode.mobile,
     ));
-    await store.saveLastPageUrl(lastPageUrl);
     await store.saveLastGpa(3.25);
 
     await store.saveLastGpa(null);
@@ -166,7 +179,6 @@ void main() {
     final loaded = await store.load();
     expect(loaded?.lastGpa, isNull);
     expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
-    expect(loaded?.lastPageUrl, lastPageUrl);
     final raw = jsonDecode(await File(
       '${directory.path}/${GakujoLocalPrefsStore.fileName}',
     ).readAsString()) as Map;
@@ -210,13 +222,11 @@ void main() {
   });
 
   test('failed atomic replace preserves the previous mirror file', () async {
-    const oldUrl = 'https://gakujo.iess.niigata-u.ac.jp/old';
-    const newUrl = 'https://gakujo.iess.niigata-u.ac.jp/new';
     await store.saveAppSettings(const GakujoAppSettings(
       pageMode: GakujoPageMode.mobile,
       setupCompleted: true,
     ));
-    await store.saveLastPageUrl(oldUrl);
+    await store.saveLastGpa(3.25);
     final failingStore = GakujoLocalPrefsStore(
       directory: directory,
       atomicReplace: (temporaryFile, targetFile) async {
@@ -227,12 +237,12 @@ void main() {
     );
 
     await expectLater(
-      failingStore.saveLastPageUrl(newUrl),
+      failingStore.saveLastGpa(4.0),
       throwsA(isA<FileSystemException>()),
     );
 
     final loaded = await GakujoLocalPrefsStore(directory: directory).load();
-    expect(loaded?.lastPageUrl, oldUrl);
+    expect(loaded?.lastGpa, 3.25);
     expect(loaded?.appSettings?.pageMode, GakujoPageMode.mobile);
     expect(loaded?.appSettings?.setupCompleted, isTrue);
     expect(
@@ -404,8 +414,8 @@ void main() {
       () async {
     await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
         .writeAsString('{"version":1,"pageMode":"mobile"}');
-    // Updating navigation must not fill missing settings with default values.
-    await store.saveLastPageUrl('https://example.com');
+    // Updating GPA must not fill missing settings with default values.
+    await store.saveLastGpa(3.25);
     final local = await store.load();
     const secure = GakujoAppSettings(
       messageExcludeKeywords: ['広告'],
@@ -432,7 +442,7 @@ void main() {
     final raw = jsonDecode(await File(
       '${directory.path}/${GakujoLocalPrefsStore.fileName}',
     ).readAsString()) as Map;
-    expect(raw.keys, unorderedEquals(['version', 'pageMode', 'lastPageUrl']));
+    expect(raw.keys, unorderedEquals(['version', 'pageMode', 'lastGpa']));
   });
 
   test('present empty filters override secure values without resetting choices',

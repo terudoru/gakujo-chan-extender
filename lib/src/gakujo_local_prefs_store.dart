@@ -10,23 +10,20 @@ class GakujoLocalPrefs {
   const GakujoLocalPrefs({
     this.appSettings,
     this.appSettingsKeys,
-    this.lastPageUrl,
     this.lastGpa,
   });
 
   final GakujoAppSettings? appSettings;
   // Null denotes a complete settings object supplied by the app.
   final Set<String>? appSettingsKeys;
-  final String? lastPageUrl;
   final double? lastGpa;
 }
 
 class GakujoLocalPrefsStore {
   GakujoLocalPrefsStore({
-    Directory? directory,
-    Future<void> Function(File temporaryFile, File targetFile)? atomicReplace,
-  })  : _directory = directory,
-        _atomicReplace = atomicReplace;
+    this._directory,
+    this._atomicReplace,
+  });
 
   static const fileName = 'local_prefs.json';
 
@@ -36,26 +33,17 @@ class GakujoLocalPrefsStore {
   Future<void> _pendingWrite = Future<void>.value();
 
   Future<GakujoLocalPrefs?> load() async {
-    await _pendingWrite;
-    return _read();
+    GakujoLocalPrefs? loaded;
+    await _enqueue(() async {
+      loaded = await _read();
+    });
+    return loaded;
   }
 
   Future<void> saveAppSettings(GakujoAppSettings settings) {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
         appSettings: settings.copyWith(loginCredentials: null),
-        lastPageUrl: current?.lastPageUrl,
-        lastGpa: current?.lastGpa,
-      );
-    });
-  }
-
-  Future<void> saveLastPageUrl(String? url) {
-    return _enqueueUpdate((current) {
-      return GakujoLocalPrefs(
-        appSettings: current?.appSettings,
-        appSettingsKeys: current?.appSettingsKeys,
-        lastPageUrl: url,
         lastGpa: current?.lastGpa,
       );
     });
@@ -66,7 +54,6 @@ class GakujoLocalPrefsStore {
       return GakujoLocalPrefs(
         appSettings: current?.appSettings,
         appSettingsKeys: current?.appSettingsKeys,
-        lastPageUrl: current?.lastPageUrl,
         lastGpa: gpa,
       );
     });
@@ -107,6 +94,12 @@ class GakujoLocalPrefsStore {
       if (decoded is! Map<String, dynamic>) {
         return null;
       }
+      if (decoded.containsKey('lastPageUrl')) {
+        // Remove the old plaintext navigation URL while preserving settings
+        // and GPA. All reads and writes are serialized through _enqueue.
+        decoded.remove('lastPageUrl');
+        await _writeJson(decoded);
+      }
       return _decodePrefs(decoded);
     } on FormatException {
       return null;
@@ -114,6 +107,10 @@ class GakujoLocalPrefsStore {
   }
 
   Future<void> _write(GakujoLocalPrefs prefs) async {
+    await _writeJson(_encodePrefs(prefs));
+  }
+
+  Future<void> _writeJson(Map<String, Object?> value) async {
     final file = await _file();
     await file.parent.create(recursive: true);
     final temporaryFile = File(
@@ -121,7 +118,7 @@ class GakujoLocalPrefsStore {
     );
     try {
       await temporaryFile.writeAsString(
-        jsonEncode(_encodePrefs(prefs)),
+        jsonEncode(value),
         flush: true,
       );
       final atomicReplace = _atomicReplace;
@@ -165,14 +162,12 @@ class GakujoLocalPrefsStore {
         'messageNotification': settings.messageNotification.toJson(),
         'notificationPreferences': settings.notificationPreferences.toJson(),
       },
-      if (prefs.lastPageUrl != null) 'lastPageUrl': prefs.lastPageUrl,
       if (prefs.lastGpa != null) 'lastGpa': prefs.lastGpa,
     };
     final keys = prefs.appSettingsKeys;
     if (keys != null) {
       encoded.removeWhere((key, _) =>
           key != 'version' &&
-          key != 'lastPageUrl' &&
           key != 'lastGpa' &&
           !keys.contains(key));
     }
@@ -236,8 +231,6 @@ class GakujoLocalPrefsStore {
               ),
             )
           : null,
-      lastPageUrl:
-          raw['lastPageUrl'] is String ? raw['lastPageUrl'] as String : null,
       lastGpa:
           lastGpa is num && lastGpa.isFinite && lastGpa >= 0 && lastGpa <= 5
               ? lastGpa.toDouble()

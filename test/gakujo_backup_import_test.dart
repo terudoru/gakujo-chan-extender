@@ -7,6 +7,37 @@ import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
 
 void main() {
   group('parseGakujoBackup', () {
+    test('rejects oversized input before JSON parsing', () {
+      expect(
+        () => parseGakujoBackup(' ' * (maxGakujoBackupBytes + 1)),
+        throwsA(isA<GakujoBackupImportException>()),
+      );
+      expect(
+        () => parseGakujoBackup('あ' * (maxGakujoBackupBytes ~/ 2)),
+        throwsA(isA<GakujoBackupImportException>()),
+      );
+    });
+
+    test('external failed download cannot retain form fields or retry authority', () {
+      final backup = parseGakujoBackup(jsonEncode({
+        'version': 2,
+        'failedDownloads': [{
+          'id': 'imported',
+          'request': {
+            'url': 'https://gakujo.iess.niigata-u.ac.jp/download',
+            'method': 'POST',
+            'fileName': 'file.pdf',
+            'formFields': {'action': 'untrusted'},
+          },
+          'failedAt': '2026-10-01T00:00:00Z',
+          'errorMessage': 'failure',
+          'canRetry': true,
+        }],
+      }));
+      final entry = backup.failedDownloads!.single;
+      expect(entry.request.formFields, isEmpty);
+      expect(entry.canRetry, isFalse);
+    });
     test('rejects missing and unknown versions with explicit errors', () {
       expect(
         () => parseGakujoBackup('{"pageMode":"mobile"}'),

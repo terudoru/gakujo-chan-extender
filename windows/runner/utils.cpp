@@ -89,7 +89,7 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
   constexpr char prefix[] = "https://gakujo.iess.niigata-u.ac.jp/";
   if (url.compare(0, sizeof(prefix) - 1, prefix) != 0 ||
       url.find('\0') != std::string::npos ||
-      url.size() > static_cast<size_t>((std::numeric_limits<int>::max)())) {
+      url.size() > 2048) {
     return false;
   }
 
@@ -149,6 +149,23 @@ bool IsDeadlineNotificationUrl(const std::string& url) {
   }
   return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(),
                              static_cast<int>(url.size()), nullptr, 0) > 0;
+}
+
+bool ConfirmDeadlineNotificationUrl(const std::string& url) {
+  if (!IsDeadlineNotificationUrl(url)) return false;
+  const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                         url.data(), static_cast<int>(url.size()),
+                                         nullptr, 0);
+  if (length <= 0) return false;
+  std::wstring destination(length, L'\0');
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, url.data(),
+                          static_cast<int>(url.size()), destination.data(),
+                          length) != length) return false;
+  const std::wstring prompt =
+      L"通知から指定されたリンクを開きますか？\n"
+      L"心当たりがない場合は開かないでください。\n\n" + destination;
+  return MessageBoxW(nullptr, prompt.c_str(), L"通知リンクの確認",
+                     MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
 
 void CreateAndAttachConsole() {

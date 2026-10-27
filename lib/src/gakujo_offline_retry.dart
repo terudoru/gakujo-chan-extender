@@ -22,12 +22,10 @@ Future<bool> probeGakujoReachability() async {
 
 class GakujoOfflineRetry {
   GakujoOfflineRetry({
-    required Future<bool> Function() probe,
-    required void Function() onReachable,
+    required this._probe,
+    required this._onReachable,
     DateTime Function()? now,
-  })  : _probe = probe,
-        _onReachable = onReachable,
-        _now = now ?? DateTime.now;
+  })  : _now = now ?? DateTime.now;
 
   final Future<bool> Function() _probe;
   final void Function() _onReachable;

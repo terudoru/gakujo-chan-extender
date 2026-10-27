@@ -197,6 +197,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     }
   }
 
+  if (!pending_notification_url.empty() &&
+      !ConfirmDeadlineNotificationUrl(pending_notification_url)) {
+    pending_notification_url.clear();
+  }
+
   std::wstring exe_path(32768, L'\0');
   const DWORD length = GetModuleFileNameW(
       nullptr, exe_path.data(), static_cast<DWORD>(exe_path.size()));

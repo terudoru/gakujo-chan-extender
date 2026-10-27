@@ -322,7 +322,7 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
       GakujoFeatureFlag.deadlineNotifications => '提出期限のOS通知',
       GakujoFeatureFlag.reportListCache => '課題一覧の保存',
       GakujoFeatureFlag.sessionRecoveryGuide => 'セッション復帰ガイド',
-      GakujoFeatureFlag.autoBackup => '自動バックアップ',
+      GakujoFeatureFlag.autoBackup => '自動バックアップ（スター付き通知を除く）',
       GakujoFeatureFlag.uploadCompression => '5MB超の添付ファイルを自動圧縮',
     };
   }
@@ -416,8 +416,7 @@ extension GakujoNotificationTopicLabels on GakujoNotificationTopic {
       for (final value in values)
         if (value is GakujoNotificationTopic)
           value
-        else if (fromStorageValue(value?.toString().trim()) case final topic?)
-          topic,
+        else ?fromStorageValue(value?.toString().trim()),
     };
   }
 }
@@ -688,9 +687,7 @@ class GakujoNotificationPreferences {
     final recognizedOffsets = offsets is List
         ? {
             for (final value in offsets)
-              if (GakujoReminderOffsetLabels.fromStorageValue(value.toString())
-                  case final offset?)
-                offset,
+              ?GakujoReminderOffsetLabels.fromStorageValue(value.toString()),
           }
         : defaultReminderOffsets;
     return GakujoNotificationPreferences(
@@ -1050,7 +1047,19 @@ class GakujoAppSettingsStore {
         'cleared': true,
       }),
     );
-    await _deleteLegacyLoginCredentialsBestEffort();
+    Object? failure;
+    StackTrace? failureStack;
+    for (final key in const [_loginIdKey, _loginPasswordKey]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Object catch (error, stackTrace) {
+        failure ??= error;
+        failureStack ??= stackTrace;
+      }
+    }
+    if (failure != null) {
+      Error.throwWithStackTrace(failure, failureStack!);
+    }
   }
 
   Future<GakujoLoginCredentials?> _loadLoginCredentials(

@@ -287,7 +287,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       return FALSE;
     }
     const std::string url(static_cast<const char*>(data->lpData), data->cbData);
-    if (!IsDeadlineNotificationUrl(url)) {
+    if (!ConfirmDeadlineNotificationUrl(url)) {
       return FALSE;
     }
     ShowWindow(hwnd, SW_RESTORE);
@@ -310,6 +310,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (callback_message == NIN_BALLOONUSERCLICK) {
       const auto url = deadline_notification_urls.find(notification_id);
       if (url != deadline_notification_urls.end()) {
+        if (!ConfirmDeadlineNotificationUrl(url->second)) {
+          DeleteDeadlineNotification(hwnd, notification_id);
+          return 0;
+        }
         ShowWindow(hwnd, SW_RESTORE);
         SetForegroundWindow(hwnd);
         if (notification_channel_) {

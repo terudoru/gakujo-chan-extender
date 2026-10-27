@@ -11,6 +11,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import android.util.Base64
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -24,9 +29,11 @@ object DeadlineReminders {
     private const val TAG = "DeadlineReminders"
     const val CHANNEL_ID = "gakujo_deadlines"
     const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"
+    const val EXTRA_NOTIFICATION_PROOF = "net.yoshida.morebettergakujo.NOTIFICATION_PROOF"
     private const val PREFS = "deadline_reminders"
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_DELIVERED = "delivered"
+    private const val KEY_NOTIFICATION_SECRET = "notification_authentication_key"
     private const val EXTRA_ID = "reminder_id"
     private const val EXTRA_STABLE_KEY = "reminder_stable_key"
     private const val EXTRA_LEGACY_IDS = "reminder_legacy_ids"
@@ -37,6 +44,30 @@ object DeadlineReminders {
     private const val EARLY_WINDOW_MILLIS = 15 * 60 * 1000L
     private const val GROUP_KEY = "net.yoshida.morebettergakujo.DEADLINES"
     private const val SUMMARY_ID = 1
+
+    @Synchronized
+    private fun notificationSecret(context: Context, create: Boolean): ByteArray? {
+        val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val existing = preferences.getString(KEY_NOTIFICATION_SECRET, null)
+        if (existing != null) return try { Base64.decode(existing, Base64.NO_WRAP) } catch (_: IllegalArgumentException) { null }
+        if (!create) return null
+        val secret = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        check(preferences.edit().putString(KEY_NOTIFICATION_SECRET, Base64.encodeToString(secret, Base64.NO_WRAP)).commit())
+        return secret
+    }
+
+    internal fun notificationProof(secret: ByteArray, url: String): ByteArray =
+        Mac.getInstance("HmacSHA256").run {
+            init(SecretKeySpec(secret, "HmacSHA256"))
+            doFinal(url.toByteArray(Charsets.UTF_8))
+        }
+
+    fun isAuthenticNotification(context: Context, url: String, encodedProof: String?): Boolean {
+        if (encodedProof == null) return false
+        val secret = notificationSecret(context, false) ?: return false
+        val provided = try { Base64.decode(encodedProof, Base64.NO_WRAP) } catch (_: IllegalArgumentException) { return false }
+        return MessageDigest.isEqual(notificationProof(secret, url), provided)
+    }
 
     data class Reminder(
         val id: Int,
@@ -151,6 +182,8 @@ object DeadlineReminders {
             ?: Intent(context, MainActivity::class.java)
         launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         launch.putExtra(EXTRA_NOTIFICATION_URL, url)
+        val secret = checkNotNull(notificationSecret(context, true))
+        launch.putExtra(EXTRA_NOTIFICATION_PROOF, Base64.encodeToString(notificationProof(secret, url), Base64.NO_WRAP))
         val contentIntent = PendingIntent.getActivity(
             context,
             id,

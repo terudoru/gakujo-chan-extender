@@ -162,7 +162,7 @@ class DownloadFileNamePolicy {
 
   static String? _cleanCandidate(String? raw, {String replacement = ''}) {
     final value = raw
-        ?.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), replacement)
+        ?.replaceAll(RegExp(r'[\x00-\x1F\x7F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]'), replacement)
         .replaceAll(RegExp(r'''[\\/:*?"<>|]'''), replacement)
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim()

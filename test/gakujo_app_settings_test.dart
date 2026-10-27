@@ -271,10 +271,11 @@ void main() {
       ..deleteErrorKey = 'more_better_gakujo_login_password';
     final store = GakujoAppSettingsStore(secureStorage: storage);
 
-    await store.clearLoginCredentials();
+    await expectLater(store.clearLoginCredentials(), throwsA(isA<Object>()));
     final settings = await store.load();
 
     expect(settings.loginCredentials, isNull);
+    expect(storage.values, isNot(contains('more_better_gakujo_login_id')));
     expect(
       storage.values['more_better_gakujo_login_password'],
       'old-secret',
@@ -283,6 +284,17 @@ void main() {
       storage.values['more_better_gakujo_login_credentials_v2'],
       contains('"cleared":true'),
     );
+  });
+
+  test('clear attempts both legacy keys even if the first delete fails', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_id': 'old-student',
+      'more_better_gakujo_login_password': 'old-secret',
+    })..deleteErrorKey = 'more_better_gakujo_login_id';
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+    await expectLater(store.clearLoginCredentials(), throwsStateError);
+    expect(storage.values, isNot(contains('more_better_gakujo_login_password')));
+    expect((await store.load()).loginCredentials, isNull);
   });
 
   test('malformed credential record does not revive a legacy pair', () async {

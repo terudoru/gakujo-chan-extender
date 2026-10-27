@@ -2,6 +2,20 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('limits concurrent downloads and releases slots after completion', () {
+    final gate = GakujoDownloadOperationGate(maxConcurrentDownloads: 2);
+    GakujoDownloadRequest request(int number) => GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/$number',
+      method: 'GET', courseName: '', fileName: '', formFields: const {},
+    );
+    final first = gate.tryStart(request(1))!;
+    final second = gate.tryStart(request(2))!;
+    expect(gate.atCapacity, isTrue);
+    expect(gate.tryStart(request(3)), isNull);
+    gate.finish(first);
+    expect(gate.tryStart(request(3)), isNotNull);
+    gate.finish(second);
+  });
   test('keeps empty captured file names unresolved for response headers', () {
     final request = GakujoDownloadRequest.fromJsonText(
       '{"url":"https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do",'

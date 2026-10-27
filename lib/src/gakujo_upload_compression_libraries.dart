@@ -13,11 +13,11 @@ class GakujoUploadCompressionLibraries {
 
   static const _assetDirectory = 'assets/js/upload_compression';
 
-  /// Asset files per requested kind, in load order. pdf.js finds the worker
-  /// through `globalThis.pdfjsWorker` and then runs it on the page thread,
-  /// which avoids loading a worker script from a URL the page may block.
+  /// Asset files per requested kind, in load order. PDF parsing runs in a
+  /// dedicated, terminable worker instead of blocking the page thread.
   static const _assets = {
-    'pdf': ['pdf.worker.min.js', 'pdf.min.js', 'pdf-lib.min.js'],
+    'pdf': ['qpdf-worker.js', 'qpdf.js'],
+    'preview': ['pdf.worker.min.js', 'pdf.min.js'],
     'office': ['jszip.min.js'],
   };
 
@@ -25,10 +25,7 @@ class GakujoUploadCompressionLibraries {
 
   /// Returns the script that defines the libraries for [kind] and then tells
   /// the page they are ready, or null for an unknown request.
-  static Future<String?> scriptFor(
-    String kind, {
-    AssetBundle? bundle,
-  }) async {
+  static Future<String?> scriptFor(String kind, {AssetBundle? bundle}) async {
     final files = _assets[kind.trim()];
     if (files == null) {
       return null;
@@ -41,6 +38,15 @@ class GakujoUploadCompressionLibraries {
           () => loader.loadString('$_assetDirectory/$file', cache: false),
         ),
     ]);
+    if (kind.trim() == 'pdf') {
+      final wasm = await loader.load('$_assetDirectory/qpdf.wasm');
+      return buildInjectionScript(kind.trim(), [
+        ...sources,
+        base64Encode(
+          wasm.buffer.asUint8List(wasm.offsetInBytes, wasm.lengthInBytes),
+        ),
+      ]);
+    }
     return buildInjectionScript(kind.trim(), sources);
   }
 
@@ -48,15 +54,45 @@ class GakujoUploadCompressionLibraries {
   /// it, then signals the waiting compression script.
   static String buildInjectionScript(String kind, List<String> sources) {
     final buffer = StringBuffer();
-    for (final source in sources) {
+    if (kind == 'pdf' && sources.length == 3) {
+      buffer.writeln(
+        'window.__MBG_QPDF_WORKER_URL = URL.createObjectURL('
+        'new Blob([${jsonEncode(sources[0])}], {type: "text/javascript"}));',
+      );
+      buffer.writeln(
+        'window.__MBG_QPDF_MODULE_URL = URL.createObjectURL('
+        'new Blob([${jsonEncode(sources[1])}], {type: "text/javascript"}));',
+      );
+      buffer.writeln(
+        '(function() { var raw = atob(${jsonEncode(sources[2])});'
+        ' var bytes = new Uint8Array(raw.length);'
+        ' for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);'
+        ' window.__MBG_QPDF_WASM_URL = URL.createObjectURL('
+        'new Blob([bytes], {type: "application/wasm"})); })();',
+      );
+    } else if (kind == 'preview' && sources.isNotEmpty) {
+      buffer.writeln(
+        'window.__MBG_PDF_WORKER_URL = URL.createObjectURL('
+        'new Blob([${jsonEncode(sources.first)}], {type: "text/javascript"}));',
+      );
+    }
+    for (final source
+        in kind == 'pdf'
+            ? <String>[]
+            : kind == 'preview'
+            ? sources.skip(1)
+            : sources) {
       buffer
         ..writeln('(function(define, module, exports) {')
         ..writeln(source)
         ..writeln('}).call(window);');
     }
+    final callback = kind == 'preview'
+        ? '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'
+        : '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED';
     buffer.writeln(
-      'if (window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED) {'
-      ' window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED(${jsonEncode(kind)});'
+      'if (window.$callback) {'
+      ' window.$callback(${jsonEncode(kind)});'
       ' }',
     );
     return buffer.toString();

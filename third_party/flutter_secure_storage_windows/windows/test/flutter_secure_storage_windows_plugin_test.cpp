@@ -2,10 +2,12 @@
 #include <flutter/standard_method_codec.h>
 #include <gtest/gtest.h>
 #include <windows.h>
+#include <wincred.h>
 
 #include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "flutter_secure_storage_windows_plugin.h"
 
@@ -89,9 +91,44 @@ class FlutterSecureStorageWindowsPluginTest : public ::testing::Test {
   FlutterSecureStorageWindowsPlugin plugin_;
 };
 
+TEST(FlutterSecureStorageWindowsKeyValidationTest, RejectsPathComponentsBeforeStorageAccess) {
+  FlutterSecureStorageWindowsPlugin plugin;
+  for (const std::string& key : std::vector<std::string>{
+           "../outside", "..\\outside", "folder/file", "stream:name",
+           std::string("key\0suffix", 10)}) {
+    EXPECT_FALSE(Invoke(plugin, "read", {{EncodableValue("key"), EncodableValue(key)}}));
+    EXPECT_FALSE(Invoke(plugin, "write", {{EncodableValue("key"), EncodableValue(key)},
+                                          {EncodableValue("value"), EncodableValue("synthetic")}}));
+    EXPECT_FALSE(Invoke(plugin, "delete", {{EncodableValue("key"), EncodableValue(key)}}));
+  }
+}
+
 TEST_F(FlutterSecureStorageWindowsPluginTest, WriteAndReadRoundTrip) {
   ASSERT_TRUE(Write(plugin_, "key1", "value1"));
   EXPECT_EQ(Read(plugin_, "key1"), "value1");
+}
+
+TEST_F(FlutterSecureStorageWindowsPluginTest, LegacyOnlyCredentialUsesBlobSizeAndIsDeleted) {
+  wchar_t target[] = L"fss_native_test_legacy_only";
+  BYTE value[] = {'a', 'b', 'c'};  // Deliberately has no trailing NUL.
+  CREDENTIALW credential = {};
+  credential.Type = CRED_TYPE_GENERIC;
+  credential.TargetName = target;
+  credential.CredentialBlobSize = sizeof(value);
+  credential.CredentialBlob = value;
+  credential.Persist = CRED_PERSIST_SESSION;
+  ASSERT_TRUE(CredWriteW(&credential, 0));
+
+  EXPECT_EQ(Read(plugin_, "legacy_only"), std::optional<std::string>("abc"));
+  EncodableValue result;
+  ASSERT_TRUE(Invoke(plugin_, "readAll", {}, &result));
+  const auto* entries = std::get_if<EncodableMap>(&result);
+  ASSERT_NE(entries, nullptr);
+  EXPECT_EQ(entries->at(EncodableValue("legacy_only")), EncodableValue("abc"));
+  ASSERT_TRUE(DeleteAll(plugin_));
+  PCREDENTIALW existing = nullptr;
+  EXPECT_FALSE(CredReadW(target, CRED_TYPE_GENERIC, 0, &existing));
+  if (existing) CredFree(existing);
 }
 
 TEST_F(FlutterSecureStorageWindowsPluginTest, ReadMissingKeyReturnsNullopt) {

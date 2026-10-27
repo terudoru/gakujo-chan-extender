@@ -5,6 +5,7 @@ import 'gakujo_app_settings.dart';
 import 'gakujo_download_history_store.dart';
 
 const supportedGakujoBackupVersions = {2};
+const maxGakujoBackupBytes = 5 * 1024 * 1024;
 
 class GakujoBackupImportException implements FormatException {
   const GakujoBackupImportException(this.message);
@@ -69,6 +70,11 @@ GakujoBackupImport parseGakujoBackup(
   Set<GakujoReminderOffset> currentReminderOffsets =
       GakujoNotificationPreferences.defaultReminderOffsets,
 }) {
+  // Bound every caller, including clipboard imports, before JSON decoding.
+  if (text.length > maxGakujoBackupBytes ||
+      utf8.encode(text).length > maxGakujoBackupBytes) {
+    throw const GakujoBackupImportException('バックアップが大きすぎます');
+  }
   final Object? decoded;
   try {
     decoded = jsonDecode(text);
@@ -199,7 +205,7 @@ GakujoBackupImport parseGakujoBackup(
     failedDownloads: _decodeMapList(
       decoded,
       'failedDownloads',
-      GakujoFailedDownloadEntry.fromJson,
+      GakujoFailedDownloadEntry.fromExternalJson,
     ),
     favorites: _decodeMapList(
       decoded,

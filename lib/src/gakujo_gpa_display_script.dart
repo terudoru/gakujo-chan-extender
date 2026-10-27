@@ -103,7 +103,7 @@ class GakujoGpaDisplayScript {
     var cells = row ? row.children : [];
     for (var i = 0; i < cells.length; i += 1) {
       var span = Number(cells[i].getAttribute('colspan') || '1');
-      if (!isFinite(span) || span < 1) {
+      if (!isFinite(span) || span < 1 || span > 100 || Math.floor(span) !== span) {
         span = 1;
       }
       for (var j = 0; j < span; j += 1) {

@@ -14,6 +14,11 @@ class WindowsWebViewAuthenticatedDownloadScript {
   }) {
     return '''
 (function() {
+  // The native caller can race a navigation; reject the receiving document
+  // before constructing request fields or invoking page-controlled APIs.
+  if (location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') {
+    return false;
+  }
   const requestId = ${jsonEncode(requestId)};
   const results = window.$_resultStore =
     window.$_resultStore || Object.create(null);
@@ -41,7 +46,9 @@ class WindowsWebViewAuthenticatedDownloadScript {
       const options = {
         method,
         credentials: 'include',
-        redirect: 'follow',
+        // Fetch cannot expose each redirect destination before following it.
+        // Refuse redirects rather than forwarding authenticated POST data.
+        redirect: 'error',
         signal: controller.signal
       };
       if (method === 'GET') {
@@ -115,6 +122,9 @@ class WindowsWebViewAuthenticatedDownloadScript {
       let chunkIndex = 0;
       let totalBytes = 0;
       async function emitChunk(bytes) {
+        if (totalBytes + bytes.length > $maxGakujoDownloadBytes) {
+          throw Object.assign(new Error('ダウンロードが大きすぎます'), { code: 'download_too_large' });
+        }
         if (chunkIndex === 0 && checkPage &&
             /^(?:\\xEF\\xBB\\xBF)?[\\x09-\\x0D\\x20]*(?:<!doctype html|<html)[\\x09-\\x0D\\x20/>]/i.test(
               String.fromCharCode.apply(null, bytes.subarray(0, 1024)))) {

@@ -517,12 +517,10 @@ class GakujoNotificationService {
 
 class GakujoDeadlineNotificationCoordinator {
   GakujoDeadlineNotificationCoordinator({
-    required GakujoActivityStore activityStore,
-    required GakujoNotificationService notificationService,
+    required this._activityStore,
+    required this._notificationService,
     DateTime Function()? now,
-  })  : _activityStore = activityStore,
-        _notificationService = notificationService,
-        _now = now ?? DateTime.now;
+  })  : _now = now ?? DateTime.now;
 
   final GakujoActivityStore _activityStore;
   final GakujoNotificationService _notificationService;
@@ -801,7 +799,7 @@ class GakujoDeadlineNotificationCoordinator {
     final next = _pendingNotificationOperation.then((_) => operation());
     _pendingNotificationOperation = next.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace _) {},
     );
     return next;
   }

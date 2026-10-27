@@ -1,10 +1,11 @@
 import 'gakujo_upload_compression_libraries.dart';
+import 'gakujo_image_bounds_script.dart';
 
 /// Shrinks files chosen in Gakujo file inputs that exceed the 5 MB upload
 /// limit, before the page sees them. Every file keeps its name and format:
 ///
 /// - JPEG, PNG and WebP images are re-encoded in the same format.
-/// - PDFs are rebuilt with each page rendered as a JPEG image.
+/// - PDFs retain their structure and have embedded images compressed with qpdf.
 /// - Word, PowerPoint and Excel files keep their content and have their
 ///   embedded pictures re-encoded.
 ///
@@ -13,13 +14,14 @@ import 'gakujo_upload_compression_libraries.dart';
 class GakujoUploadCompressionScript {
   const GakujoUploadCompressionScript._();
 
-  static const limitBytes = 5 * 1024 * 1024;
+  static const limitBytes = 5000000;
 
   static String build() {
     return '''
 (function() {
   var version = 2;
   var libraryChannelName = '${GakujoUploadCompressionLibraries.channelName}';
+  ${GakujoImageBoundsScript.source}
 '''
         r'''
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = true;
@@ -31,9 +33,12 @@ class GakujoUploadCompressionScript {
   }
   window.__MBG_UPLOAD_COMPRESSION_VERSION = version;
 
-  var limitBytes = 5 * 1024 * 1024;
+  var limitBytes = 5000000;
   // Leave headroom for multipart overhead and servers that count 5,000,000.
   var targetBytes = 4700000;
+  var maxCompressionInputBytes = 128 * 1024 * 1024;
+  var maxOfficeEntryBytes = 32 * 1024 * 1024;
+  var maxOfficeExpandedBytes = 128 * 1024 * 1024;
   var maxCanvasPixels = 16000000;
   var libraryTimeoutMs = 30000;
   var compressionTimeoutMs = 120000;
@@ -68,7 +73,7 @@ class GakujoUploadCompressionScript {
   }
 
   function formatSize(bytes) {
-    return (bytes / 1024 / 1024).toFixed(1) + 'MB';
+    return (bytes / 1000000).toFixed(1) + 'MB';
   }
 
   function isFileInput(element) {
@@ -128,7 +133,7 @@ class GakujoUploadCompressionScript {
 
   function libraryReady(kind) {
     if (kind === 'pdf') {
-      return !!(window.pdfjsLib && window.PDFLib);
+      return !!(window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL);
     }
     return !!window.JSZip;
   }
@@ -179,17 +184,16 @@ class GakujoUploadCompressionScript {
 
   // ------------------------------------------------------------------ images
 
-  function loadImage(blob) {
-    if (typeof createImageBitmap === 'function') {
-      return createImageBitmap(blob, { imageOrientation: 'from-image' })
-        .catch(function() {
-          return createImageBitmap(blob);
-        })
-        .catch(function() {
-          return loadImageElement(blob);
-        });
-    }
-    return loadImageElement(blob);
+  function loadImage(blob, cancelled) {
+    return mbgValidateImage(blob).then(function() {
+      if (cancelled && cancelled()) throw new Error('圧縮を中止しました');
+      if (typeof createImageBitmap === 'function') {
+        return createImageBitmap(blob, { imageOrientation: 'from-image' })
+          .catch(function() { return createImageBitmap(blob); })
+          .catch(function() { return loadImageElement(blob); });
+      }
+      return loadImageElement(blob);
+    });
   }
 
   function loadImageElement(blob) {
@@ -265,7 +269,12 @@ class GakujoUploadCompressionScript {
 
   function compressImage(input, file) {
     var type = imageTypeOf(file);
-    return loadImage(file).then(function(image) {
+    var token = input.__mbgUploadCompressionPending;
+    function cancelled() {
+      return !window.__MBG_UPLOAD_COMPRESSION_ENABLED ||
+        input.__mbgUploadCompressionPending !== token;
+    }
+    return loadImage(file, cancelled).then(function(image) {
       var width = image.width || image.naturalWidth;
       var height = image.height || image.naturalHeight;
       if (!width || !height) {
@@ -276,15 +285,14 @@ class GakujoUploadCompressionScript {
       var attempt = 0;
 
       function tryNext() {
+        if (cancelled()) throw new Error('圧縮を中止しました');
         var quality = qualities[attempt % qualities.length];
         return encodeImage(image, type, scale, quality).then(function(blob) {
+          if (cancelled()) throw new Error('圧縮を中止しました');
           if (!blob) {
             throw new Error('この形式の画像は圧縮できません');
           }
           if (blob.size <= targetBytes) {
-            if (image.close) {
-              image.close();
-            }
             return makeFile(input, [blob], file, type);
           }
           attempt += 1;
@@ -297,230 +305,82 @@ class GakujoUploadCompressionScript {
           return tryNext();
         });
       }
-      return tryNext();
+      return Promise.resolve().then(tryNext).finally(function() {
+        if (image.close) image.close();
+      });
     });
   }
 
   // --------------------------------------------------------------------- PDF
-
-  // Rendering resolution and JPEG quality, tried in order until it fits.
-  var pdfSteps = [
-    { dpi: 150, quality: 0.75 },
-    { dpi: 120, quality: 0.65 },
-    { dpi: 96, quality: 0.6 },
-    { dpi: 72, quality: 0.5 },
-    { dpi: 56, quality: 0.45 }
-  ];
-
-  var pdfTextMessage = 'PDFの文字が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-  var pdfContentMessage = 'PDFの添付ファイル・フォーム・リンク・注釈を保持できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-  var pdfRenderMessage = 'PDFの内容が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-  var pdfFontChecks = [];
-
-  function keepOriginalPdf(message) {
-    var error = new Error(message);
-    error.keepOriginal = true;
-    return error;
-  }
-
-  // The bundled pdf.js worker runs on the page thread. Its warn() uses
-  // console.log, so listen there too, and restore the hooks after all jobs.
-  function watchPdfFonts() {
-    var check = { failed: false, message: pdfRenderMessage };
-    var console = window.console;
-    var hooks = [];
-    if (!pdfFontChecks.length && console) {
-      ['log', 'warn', 'error'].forEach(function(level) {
-        var original = console[level];
-        if (typeof original !== 'function') {
-          return;
-        }
-        var hook = function() {
-          var message = Array.prototype.join.call(arguments, ' ');
-          var textWarning = /font|cmap|glyph|character/i.test(message);
-          var renderWarning = /image|jpx|jbig|jpeg|decode|unable to|failed|corrupt|invalid|bad |unsupported|mask|colorspace|smask/i.test(message);
-          if ((level !== 'log' || /warning:|error:/i.test(message)) &&
-              !/setting up fake worker|deprecated|deprecation|^info:/i.test(message) &&
-              (textWarning || renderWarning)) {
-            pdfFontChecks.forEach(function(active) {
-              active.failed = true;
-              active.message = textWarning ?
-                pdfTextMessage : pdfRenderMessage;
-            });
-          }
-          return original.apply(console, arguments);
-        };
-        hooks.push(function() {
-          if (console[level] === hook) {
-            console[level] = original;
-          }
-        });
-        console[level] = hook;
-      });
-      pdfFontChecks.restore = function() {
-        hooks.forEach(function(restore) { restore(); });
-      };
-    }
-    pdfFontChecks.push(check);
-    check.stop = function() {
-      pdfFontChecks.splice(pdfFontChecks.indexOf(check), 1);
-      if (!pdfFontChecks.length && pdfFontChecks.restore) {
-        pdfFontChecks.restore();
-      }
-    };
-    check.verify = function() {
-      if (check.failed) {
-        throw keepOriginalPdf(check.message);
-      }
-    };
-    return check;
-  }
-
+  // qpdf rewrites the existing PDF instead of rasterizing pages. Each attempt
+  // starts from the original bytes to avoid cumulative JPEG degradation.
   function compressPdf(input, file, progress) {
-    var fontCheck;
-    var loadingTask;
+    if (file.size > 64 * 1024 * 1024) {
+      return Promise.reject(new Error('PDFは64 MiB以下のファイルを選択してください'));
+    }
+    var lockHost = window;
+    try {
+      if (window.top && window.top.location.origin === window.location.origin) {
+        lockHost = window.top;
+      }
+    } catch (_) {}
+    if (lockHost.__MBG_ACTIVE_PDF_COMPRESSION) {
+      return Promise.reject(new Error('別のPDFを圧縮中です。完了後に再試行してください'));
+    }
+    var lock = {};
+    lockHost.__MBG_ACTIVE_PDF_COMPRESSION = lock;
+    var worker = null;
+    var cancelled = false;
+    var rejectPending = null;
+    function releaseLock() {
+      if (lockHost.__MBG_ACTIVE_PDF_COMPRESSION === lock) {
+        delete lockHost.__MBG_ACTIVE_PDF_COMPRESSION;
+      }
+    }
+    function cancelWorker() {
+      cancelled = true;
+      if (worker) { worker.terminate(); worker = null; }
+      if (rejectPending) { rejectPending(new Error('圧縮を中止しました')); rejectPending = null; }
+    }
+    input.__mbgPdfCompressionCancel = cancelWorker;
     return requestLibrary('pdf').then(function() {
+      if (cancelled) throw new Error('圧縮を中止しました');
       return readBytes(file);
     }).then(function(buffer) {
-      fontCheck = watchPdfFonts();
-      // CMaps and standard font data are not bundled. Fail closed when the
-      // source needs them instead of submitting a PDF with missing glyphs.
-      loadingTask = window.pdfjsLib.getDocument({
-        data: new Uint8Array(buffer),
-        isEvalSupported: false,
-        useSystemFonts: true,
-        stopAtErrors: true,
-        verbosity: window.pdfjsLib.VerbosityLevel.WARNINGS
+      if (cancelled) throw new Error('圧縮を中止しました');
+      if (typeof window.Worker !== 'function') {
+        throw new Error('このWebViewではPDFを安全に圧縮できません');
+      }
+      return new Promise(function(resolve, reject) {
+        rejectPending = reject;
+        worker = new window.Worker(window.__MBG_QPDF_WORKER_URL, {type: 'module'});
+        worker.onmessage = function(event) {
+          var result = event.data || {};
+          if (result.type === 'progress') {
+            progress(result.quality === null ? 'PDFを圧縮しています…' :
+              'PDF内の画像を圧縮しています…（画質 ' + result.quality + '）');
+          } else if (result.type === 'result' && result.bytes) {
+            rejectPending = null;
+            resolve(makeFile(input, [result.bytes], file, 'application/pdf'));
+          } else if (result.type === 'error') {
+            rejectPending = null;
+            reject(new Error(result.message || 'PDFを圧縮できませんでした'));
+          }
+        };
+        worker.onerror = function() {
+          rejectPending = null;
+          reject(new Error('このWebViewではPDFを安全に圧縮できません'));
+        };
+        worker.postMessage({bytes: buffer, target: targetBytes,
+          moduleUrl: window.__MBG_QPDF_MODULE_URL, wasmUrl: window.__MBG_QPDF_WASM_URL}, [buffer]);
       });
-      return loadingTask.promise;
-    }).then(function(pdf) {
-      var step = 0;
-      function tryStep() {
-        fontCheck.verify();
-        if (step >= pdfSteps.length) {
-          throw new Error('5MB以下まで小さくできませんでした');
-        }
-        var settings = pdfSteps[step];
-        return rasterizePdf(pdf, settings, progress, fontCheck).then(function(bytes) {
-          fontCheck.verify();
-          if (bytes && bytes.length <= targetBytes) {
-            return makeFile(input, [bytes], file, 'application/pdf');
-          }
-          step += 1;
-          return tryStep();
-        });
-      }
-      return Promise.all([pdf.getAttachments(), pdf.getFieldObjects()])
-        .then(function(content) {
-          fontCheck.verify();
-          if (content.some(function(items) {
-            return items && Object.keys(items).length;
-          })) {
-            throw keepOriginalPdf(pdfContentMessage);
-          }
-          return tryStep();
-        });
-    }).catch(function(error) {
-      if (fontCheck) { fontCheck.verify(); }
-      if (/font|cmap|glyph/i.test(String(error && error.message || error))) {
-        throw keepOriginalPdf(pdfTextMessage);
-      }
-      if (error && error.name === 'PasswordException') {
-        throw new Error('パスワード付きのPDFは圧縮できません');
-      }
-      throw error;
     }).finally(function() {
-      // Keep observing warnings until pdf.js has finished destroying the job.
-      return Promise.resolve(loadingTask && loadingTask.destroy())
-        .then(function() { if (fontCheck) { fontCheck.verify(); } })
-        .finally(function() { if (fontCheck) { fontCheck.stop(); } });
-    });
-  }
-
-  function checkPdfPage(page, fontCheck) {
-    return Promise.all([
-      page.getTextContent(), page.getOperatorList(), page.getAnnotations()
-    ]).then(function(content) {
-      fontCheck.verify();
-      var hasText = content[0].items.some(function(item) {
-        return /\S/.test(item.str || '');
-      });
-      var ops = window.pdfjsLib.OPS;
-      var hasTextDrawing = content[1].fnArray.some(function(op) {
-        return op === ops.showText || op === ops.showSpacedText ||
-          op === ops.nextLineShowText || op === ops.nextLineSetSpacingShowText;
-      });
-      if (hasText && !hasTextDrawing) {
-        throw keepOriginalPdf(pdfTextMessage);
+      if (worker) { worker.terminate(); worker = null; }
+      rejectPending = null;
+      releaseLock();
+      if (input.__mbgPdfCompressionCancel === cancelWorker) {
+        delete input.__mbgPdfCompressionCancel;
       }
-      if (content[2].length) {
-        throw keepOriginalPdf(pdfContentMessage);
-      }
-      return page;
-    });
-  }
-
-  // Returns the rebuilt PDF bytes, or null as soon as the pages alone already
-  // exceed the target so the next, smaller step can start.
-  function rasterizePdf(pdf, settings, progress, fontCheck) {
-    var PDFDocument = window.PDFLib.PDFDocument;
-    return PDFDocument.create().then(function(output) {
-      var pageNumber = 0;
-      var imageBytes = 0;
-      function nextPage() {
-        pageNumber += 1;
-        if (pageNumber > pdf.numPages) {
-          return output.save({ useObjectStreams: true });
-        }
-        progress('PDFを圧縮しています… ' + pageNumber + '/' + pdf.numPages + 'ページ');
-        return pdf.getPage(pageNumber).then(function(page) {
-          return checkPdfPage(page, fontCheck);
-        }).then(function(page) {
-          var size = page.getViewport({ scale: 1 });
-          var scale = settings.dpi / 72;
-          var pixels = size.width * scale * size.height * scale;
-          if (pixels > maxCanvasPixels) {
-            scale *= Math.sqrt(maxCanvasPixels / pixels);
-          }
-          var viewport = page.getViewport({ scale: scale });
-          var canvas = newCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
-          var context = canvas.getContext('2d');
-          context.fillStyle = '#ffffff';
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          return page.render({ canvasContext: context, viewport: viewport }).promise
-            .then(function() {
-              fontCheck.verify();
-              return canvasToBlob(canvas, 'image/jpeg', settings.quality);
-            })
-            .then(function(blob) {
-              if (!blob.size) {
-                throw keepOriginalPdf(pdfRenderMessage);
-              }
-              return readBytes(blob);
-            })
-            .finally(function() {
-              releaseCanvas(canvas);
-              page.cleanup();
-            })
-            .then(function(jpeg) {
-              if (!jpeg || !jpeg.byteLength) {
-                throw keepOriginalPdf(pdfRenderMessage);
-              }
-              imageBytes += jpeg.byteLength;
-              if (imageBytes > targetBytes) {
-                return null;
-              }
-              return output.embedJpg(jpeg).then(function(image) {
-                var outputPage = output.addPage([size.width, size.height]);
-                outputPage.drawImage(image, {
-                  x: 0, y: 0, width: size.width, height: size.height
-                });
-                return nextPage();
-              });
-            });
-        });
-      }
-      return nextPage();
     });
   }
 
@@ -539,17 +399,22 @@ class GakujoUploadCompressionScript {
     var folder = officeTypes[extensionOf(file)];
     var mediaPattern = new RegExp('^' + folder + '/media/[^/]+\\.(jpe?g|png)$', 'i');
     var original;
+    var cancelled = false;
+    function cancelOffice() { cancelled = true; }
+    input.__mbgOfficeCompressionCancel = cancelOffice;
     return requestLibrary('office').then(function() {
+      if (cancelled) throw new Error('圧縮を中止しました');
       return readBytes(file);
     }).then(function(buffer) {
       original = buffer;
       var step = 0;
       function tryStep() {
+        if (cancelled) throw new Error('圧縮を中止しました');
         if (step >= officeSteps.length) {
           throw new Error('5MB以下まで小さくできませんでした');
         }
         progress('文書内の画像を圧縮しています…');
-        return rebuildOffice(original, mediaPattern, officeSteps[step], file.type)
+        return rebuildOffice(original, mediaPattern, officeSteps[step], file.type, function() { return cancelled; })
           .then(function(bytes) {
             if (bytes.length <= targetBytes) {
               return makeFile(input, [bytes], file);
@@ -559,39 +424,121 @@ class GakujoUploadCompressionScript {
           });
       }
       return tryStep();
+    }).finally(function() {
+      if (input.__mbgOfficeCompressionCancel === cancelOffice) delete input.__mbgOfficeCompressionCancel;
     });
   }
 
-  function rebuildOffice(buffer, mediaPattern, settings, mimeType) {
+  // Inspect the actual central directory before JSZip parses it synchronously.
+  // Reject ZIP64: its extensible metadata has no bounded parser in the bundled
+  // version and Office files accepted here are already limited to 128 MiB.
+  function validateOfficeDirectory(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var end = -1;
+    var min = Math.max(0, bytes.length - 65557);
+    for (var p = bytes.length - 4; p >= min; p--) {
+      if (view.getUint32(p, true) === 0x06054b50) { end = p; break; }
+    }
+    if (end < 0 || end + 22 > bytes.length ||
+        end + 22 + view.getUint16(end + 20, true) !== bytes.length) {
+      throw new Error('文書のZIP構造を確認できません');
+    }
+    var count = view.getUint16(end + 10, true);
+    var size = view.getUint32(end + 12, true);
+    var offset = view.getUint32(end + 16, true);
+    if (view.getUint16(end + 4, true) !== 0 ||
+        view.getUint16(end + 6, true) !== 0 ||
+        view.getUint16(end + 8, true) !== count ||
+        count === 0xffff || size === 0xffffffff || offset === 0xffffffff ||
+        count > 5000 || offset + size > end) {
+      throw new Error('文書のZIP構造が大きすぎるか未対応です');
+    }
+    var cursor = offset, limit = offset + size;
+    for (var i = 0; i < count; i++) {
+      if (cursor + 46 > limit || view.getUint32(cursor, true) !== 0x02014b50 ||
+          view.getUint32(cursor + 20, true) === 0xffffffff ||
+          view.getUint32(cursor + 24, true) === 0xffffffff ||
+          view.getUint32(cursor + 42, true) === 0xffffffff) {
+        throw new Error('文書のZIP構造が不正か未対応です');
+      }
+      cursor += 46 + view.getUint16(cursor + 28, true) +
+        view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
+      if (cursor > limit) throw new Error('文書のZIP構造が不正です');
+    }
+    if (cursor !== limit) throw new Error('文書のZIP構造が不正です');
+  }
+
+  function rebuildOffice(buffer, mediaPattern, settings, mimeType, cancelled) {
+    validateOfficeDirectory(buffer);
     return window.JSZip.loadAsync(buffer).then(function(zip) {
+      if (cancelled()) throw new Error('圧縮を中止しました');
+      var entries = Object.keys(zip.files);
+      if (entries.length > 5000) throw new Error('文書内のファイルが多すぎます');
+      var declaredTotal = 0;
+      entries.forEach(function(name) {
+        var entry = zip.files[name];
+        if (entry.dir) return;
+        var size = entry._data && entry._data.uncompressedSize;
+        if (!Number.isSafeInteger(size) || size < 0 || size > maxOfficeEntryBytes) {
+          throw new Error('文書内のファイルが大きすぎます');
+        }
+        declaredTotal += size;
+        if (declaredTotal > maxOfficeExpandedBytes) {
+          throw new Error('文書の展開サイズが大きすぎます');
+        }
+      });
       var names = Object.keys(zip.files).filter(function(name) {
         return mediaPattern.test(name) && !zip.files[name].dir;
       });
+      var checkedIndex = 0, actualTotal = 0;
+      function checkNextEntry() {
+        if (cancelled()) throw new Error('圧縮を中止しました');
+        if (checkedIndex >= entries.length) return nextImage();
+        var name = entries[checkedIndex++];
+        var entry = zip.files[name];
+        if (entry.dir) return checkNextEntry();
+        return readBoundedOfficeEntry(entry, cancelled).then(function(bytes) {
+          actualTotal += bytes.length;
+          if (actualTotal > maxOfficeExpandedBytes) {
+            throw new Error('文書の展開サイズが大きすぎます');
+          }
+          // Preserve metadata while replacing all compressed input with bytes
+          // already checked against the actual, not just declared, size.
+          zip.file(name, bytes, {binary: true, createFolders: false,
+            date: entry.date, comment: entry.comment,
+            unixPermissions: entry.unixPermissions, dosPermissions: entry.dosPermissions});
+          return checkNextEntry();
+        });
+      }
       var index = 0;
       function nextImage() {
+        if (cancelled()) throw new Error('圧縮を中止しました');
         if (index >= names.length) {
-          return zip.generateAsync({
+          return readBoundedOfficeStream(zip.generateInternalStream({
             type: 'uint8array',
             compression: 'DEFLATE',
             compressionOptions: { level: 9 },
             mimeType: mimeType || undefined
-          });
+          }), cancelled, maxOfficeExpandedBytes);
         }
         var name = names[index];
         index += 1;
         var type = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg';
-        return zip.file(name).async('uint8array').then(function(bytes) {
+        return readBoundedOfficeEntry(zip.file(name), cancelled).then(function(bytes) {
           var blob = new Blob([bytes], { type: type });
-          return loadImage(blob).then(function(image) {
+          return loadImage(blob, cancelled).then(function(image) {
             var width = image.width || image.naturalWidth;
             var height = image.height || image.naturalHeight;
             var scale = Math.min(1, settings.maxSide / Math.max(width, height));
             // A PNG only shrinks by losing pixels; leave small ones untouched.
             if (type === 'image/png' && scale >= 1) {
+              if (image.close) image.close();
               return null;
             }
             return encodeImage(image, type, scale,
-              type === 'image/png' ? undefined : settings.quality);
+              type === 'image/png' ? undefined : settings.quality)
+              .finally(function() { if (image.close) image.close(); });
           }).then(function(encoded) {
             if (!encoded || encoded.size >= bytes.length) {
               return null;
@@ -609,7 +556,37 @@ class GakujoUploadCompressionScript {
           });
         });
       }
-      return nextImage();
+      return checkNextEntry();
+    });
+  }
+
+  function readBoundedOfficeEntry(entry, cancelled) {
+    return readBoundedOfficeStream(entry.internalStream('uint8array'), cancelled, maxOfficeEntryBytes);
+  }
+
+  function readBoundedOfficeStream(stream, cancelled, limit) {
+    return new Promise(function(resolve, reject) {
+      var parts = [], length = 0, failed = false;
+      stream.on('data', function(chunk) {
+        if (failed) return;
+        length += chunk.length;
+        if (cancelled() || length > limit) {
+          failed = true;
+          stream.pause();
+          reject(new Error(cancelled() ? '圧縮を中止しました' : '文書内のファイルが大きすぎます'));
+          return;
+        }
+        parts.push(chunk);
+      });
+      stream.on('error', function(error) { if (!failed) reject(error); });
+      stream.on('end', function() {
+        if (failed) return;
+        if (cancelled()) { reject(new Error('圧縮を中止しました')); return; }
+        var bytes = new Uint8Array(length), offset = 0;
+        parts.forEach(function(part) { bytes.set(part, offset); offset += part.length; });
+        resolve(bytes);
+      });
+      stream.resume();
     });
   }
 
@@ -746,6 +723,8 @@ class GakujoUploadCompressionScript {
     if (!isFileInput(input) || isReplaying(input)) {
       return;
     }
+    if (input.__mbgPdfCompressionCancel) input.__mbgPdfCompressionCancel();
+    if (input.__mbgOfficeCompressionCancel) input.__mbgOfficeCompressionCancel();
     var token = input.__mbgUploadCompressionSelection =
       (input.__mbgUploadCompressionSelection || 0) + 1;
     delete input.__mbgUploadCompressionPending;
@@ -769,6 +748,10 @@ class GakujoUploadCompressionScript {
       return file.size > limitBytes;
     });
     if (!oversized.length) {
+      return;
+    }
+    if (oversized.some(function(file) { return file.size > maxCompressionInputBytes; })) {
+      showStatus(input, '圧縮できるファイルのサイズを超えています。', true);
       return;
     }
     var unsupported = oversized.filter(function(file) {
@@ -805,11 +788,13 @@ class GakujoUploadCompressionScript {
     var chain = Promise.resolve();
     files.forEach(function(file) {
       chain = chain.then(function() {
+        if (!isCurrentSelection()) throw new Error('圧縮を中止しました');
         if (file.size <= limitBytes) {
           return file;
         }
         return compress(input, file, progress);
       }).then(function(result) {
+        if (!isCurrentSelection()) throw new Error('圧縮を中止しました');
         results.push(result);
       });
     });
@@ -822,6 +807,12 @@ class GakujoUploadCompressionScript {
     var timer;
     var timeout = new Promise(function(resolve, reject) {
       timer = window.setTimeout(function() {
+        if (input.__mbgUploadCompressionPending === token && input.__mbgPdfCompressionCancel) {
+          input.__mbgPdfCompressionCancel();
+        }
+        if (input.__mbgUploadCompressionPending === token && input.__mbgOfficeCompressionCancel) {
+          input.__mbgOfficeCompressionCancel();
+        }
         reject(new Error('ファイルの圧縮がタイムアウトしました'));
       }, compressionTimeoutMs);
     });
@@ -915,6 +906,8 @@ class GakujoUploadCompressionScript {
   for (var d = 0; d < docs.length; d += 1) {
     var inputs = docs[d].querySelectorAll('input[type="file"]');
     for (var k = 0; k < inputs.length; k += 1) {
+      if (inputs[k].__mbgPdfCompressionCancel) inputs[k].__mbgPdfCompressionCancel();
+      if (inputs[k].__mbgOfficeCompressionCancel) inputs[k].__mbgOfficeCompressionCancel();
       delete inputs[k].__mbgUploadCompressionPending;
     }
     var owned = docs[d].querySelectorAll('[data-mbg-upload-compression-owned="true"]');

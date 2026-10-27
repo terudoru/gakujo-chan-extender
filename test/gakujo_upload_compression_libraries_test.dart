@@ -4,20 +4,25 @@ import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_libraries
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('bundles pdf.js with its worker and pdf-lib for PDFs', () async {
+  test('bundles qpdf worker and WebAssembly for PDF compression', () async {
     final script = await GakujoUploadCompressionLibraries.scriptFor('pdf');
 
     expect(script, isNotNull);
-    // The worker must load first so pdf.js runs it on the page thread.
+    expect(script, contains('__MBG_QPDF_WORKER_URL'));
+    expect(script, contains('__MBG_QPDF_MODULE_URL'));
+    expect(script, contains('__MBG_QPDF_WASM_URL'));
+    expect(script, contains('URL.createObjectURL'));
     expect(
-      script!.indexOf('WorkerMessageHandler'),
-      lessThan(script.indexOf('PDFLib')),
-    );
-    expect(script, contains('pdfjsLib'));
-    expect(
-      script.trimRight(),
+      script!.trimRight(),
       endsWith("window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED(\"pdf\"); }"),
     );
+  });
+
+  test('bundles pdf.js and its worker for preview', () async {
+    final script = await GakujoUploadCompressionLibraries.scriptFor('preview');
+    expect(script, contains('__MBG_PDF_WORKER_URL'));
+    expect(script, contains('pdfjsLib'));
+    expect(script, contains('__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'));
   });
 
   test('bundles JSZip for Office files', () async {

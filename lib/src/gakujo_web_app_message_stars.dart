@@ -80,7 +80,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                 ? const Text('学務の連絡通知一覧や詳細で、表題の前にある☆を押すと保存できます。')
                 : ListView.separated(
                     itemCount: entries.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final entry = entries[index];
                       return ListTile(

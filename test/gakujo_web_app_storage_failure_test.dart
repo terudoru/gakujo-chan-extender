@@ -125,7 +125,7 @@ void main() {
               topics: const {},
               messages: messages,
               notificationsEnabled: true,
-              onChanged: (_, __) {},
+              onChanged: (_, _) {},
               onMessagesChanged: (next) async {
                 final saved = await saveGakujoSettingsSafely(
                   () => store.saveMessageNotification(next),

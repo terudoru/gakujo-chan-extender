@@ -156,7 +156,9 @@ class LoginCredentialsSection extends StatelessWidget {
                   label: const Text('ログイン情報を保存'),
                 ),
                 TextButton.icon(
-                  onPressed: isConfigured && onClear != null
+                  // The visible state may be cleared even if deletion of a
+                  // legacy credential failed; keep deletion retryable.
+                  onPressed: onClear != null
                       ? () => unawaited(onClear!())
                       : null,
                   icon: const Icon(Icons.delete_outline),
@@ -390,9 +392,13 @@ class FeatureFlagsSection extends StatelessWidget {
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
-            subtitle: flag == GakujoFeatureFlag.messageStars
-                ? const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。')
-                : null,
+            subtitle: switch (flag) {
+              GakujoFeatureFlag.messageStars =>
+                const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。'),
+              GakujoFeatureFlag.uploadCompression =>
+                const Text('5MBを超えるファイルを提出前に圧縮します。オフでもプレビューできます。'),
+              _ => null,
+            },
             value: settings.isFeatureEnabled(flag),
             onChanged: (value) => onChanged(flag, value ?? true),
           ),

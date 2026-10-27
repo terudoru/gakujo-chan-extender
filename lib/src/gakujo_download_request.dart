@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'download_file_name_policy.dart';
 
+const maxGakujoDownloadBytes = 128 * 1024 * 1024;
+
 class GakujoDownloadRequest {
   const GakujoDownloadRequest({
     required this.url,
@@ -75,8 +77,14 @@ class GakujoDownloadRequest {
 
   /// Serializes without POST form fields for file or clipboard output.
   Map<String, Object?> toExternalJson() {
+    final uri = Uri.tryParse(url);
+    final publicOrigin = uri != null &&
+            (uri.scheme == 'https' || uri.scheme == 'http') &&
+            uri.host.isNotEmpty
+        ? '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}/'
+        : 'about:blank';
     return {
-      'url': url,
+      'url': publicOrigin,
       'method': method,
       'courseName': courseName,
       'fileName': fileName,
@@ -116,14 +124,19 @@ class GakujoDownloadRequest {
 class GakujoDownloadOperationGate {
   GakujoDownloadOperationGate({
     this.duplicateCaptureWindow = const Duration(milliseconds: 250),
+    this.maxConcurrentDownloads = 4,
   });
 
   final Duration duplicateCaptureWindow;
+  final int maxConcurrentDownloads;
   final Map<String, DateTime> _recentRequestStarts = <String, DateTime>{};
   final Set<String> _activeOperationIds = <String>{};
   var _nextOperationId = 0;
 
+  bool get atCapacity => _activeOperationIds.length >= maxConcurrentDownloads;
+
   String? tryStart(GakujoDownloadRequest request, {DateTime? now}) {
+    if (atCapacity) return null;
     final startedAt = now ?? DateTime.now();
     _recentRequestStarts.removeWhere(
       (_, previous) =>

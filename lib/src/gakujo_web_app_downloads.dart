@@ -123,6 +123,11 @@ Future<void> openGakujoSavedDownload(
   var opened = false;
   try {
     final uri = savedDownloadLocationUri(location);
+    if (uri.scheme == 'file' && uri.host.isNotEmpty &&
+        uri.host.toLowerCase() != 'localhost') {
+      showSnackBar('ネットワーク上の保存先は開けません');
+      return;
+    }
     if (opensSavedDownloadNatively(uri, platform)) {
       // macOS checks existence after acquiring the folder's security scope.
       opened = await openNative(uri);
@@ -213,6 +218,9 @@ Future<Map<String, dynamic>> pollWindowsWebViewDownloadResult({
       }
       nextChunkIndex++;
       receivedBytes += bytes.length;
+      if (receivedBytes > maxGakujoDownloadBytes) {
+        throw const FormatException('WebView download exceeds size limit');
+      }
       if (onChunk != null) {
         final remaining = timeout - elapsed.elapsed;
         if (remaining <= Duration.zero) {
@@ -466,7 +474,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: entries.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final entry = entries[index];
                           return ListTile(
@@ -569,7 +577,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: entries.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final entry = entries[index];
                           return ListTile(
@@ -586,9 +594,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                             ),
                             isThreeLine: true,
                             trailing: IconButton(
-                              tooltip: '再試行',
+                              tooltip: entry.canRetry ? '再試行' : '元のページから再度ダウンロードしてください',
                               icon: const Icon(Icons.refresh),
-                              onPressed: () async {
+                              onPressed: !entry.canRetry ? null : () async {
                                 Navigator.of(dialogContext).pop();
                                 await _handleDownloadRequest(
                                   entry.request,
@@ -727,7 +735,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   /// meets an oversized PDF or Office file.
   Future<void> _handleUploadCompressionLibraryRequest(String message) async {
     if (!_canRunPageScripts ||
-        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression)) {
+        (message.trim() != 'preview' &&
+            !_appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression))) {
       return;
     }
     try {
@@ -796,6 +805,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
     final operationKey = _downloadOperationGate.tryStart(request);
     if (operationKey == null) {
+      if (_downloadOperationGate.atCapacity) {
+        _showSnackBar('同時に実行できるダウンロード数の上限です');
+        return;
+      }
       if (kDebugMode) {
         debugPrint(
           'Ignored duplicate in-flight download ${request.method} '

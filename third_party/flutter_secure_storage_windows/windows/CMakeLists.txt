@@ -55,9 +55,9 @@ set(flutter_secure_storage_bundled_libraries
 )
 
 if(NOT DEFINED STORAGE_PREFIX)
-  add_compile_definitions(SECURE_STORAGE_KEY_PREFIX="${BINARY_NAME}_VGhpcyBpcyB0aGUgcHJlZml4IGZv_")
+  target_compile_definitions(${PLUGIN_NAME} PRIVATE SECURE_STORAGE_KEY_PREFIX="${BINARY_NAME}_VGhpcyBpcyB0aGUgcHJlZml4IGZv_")
 else()
-  add_compile_definitions(SECURE_STORAGE_KEY_PREFIX="${STORAGE_PREFIX}_VGhpcyBpcyB0aGUgcHJlZml4IGZv_")
+  target_compile_definitions(${PLUGIN_NAME} PRIVATE SECURE_STORAGE_KEY_PREFIX="${STORAGE_PREFIX}_VGhpcyBpcyB0aGUgcHJlZml4IGZv_")
 endif()
 
 # === Tests ===
@@ -91,6 +91,7 @@ add_executable(${TEST_RUNNER}
 apply_standard_settings(${TEST_RUNNER})
 target_compile_definitions(${TEST_RUNNER} PRIVATE
   SECURE_STORAGE_KEY_PREFIX="fss_native_test_"
+  FSS_TESTING
   FLUTTER_PLUGIN_IMPL
 )
 target_include_directories(${TEST_RUNNER} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

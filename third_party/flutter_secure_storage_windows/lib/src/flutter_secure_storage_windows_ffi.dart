@@ -520,16 +520,27 @@ class DpapiJsonFileMapStorage extends MapStorage {
   @override
   FutureOr<void> clear(Map<String, String> options) async {
     final file = _fileFactory(await _getJsonFilePath());
-    if (file.existsSync()) {
+    final parent = Directory(path.dirname(file.path));
+    final baseName = path.basename(file.path);
+    final recoveryName = RegExp('^${RegExp.escape(baseName)}\\.corrupt-[0-9]+\$');
+    final residuals = <String>[];
+    try {
+      await for (final entry in parent.list(followLinks: false)) {
+        final name = path.basename(entry.path);
+        if (name != '$baseName.tmp' && !recoveryName.hasMatch(name)) continue;
+        if (entry is! File) {
+          throw FileSystemException('Unexpected secure storage recovery entry', entry.path);
+        }
+        residuals.add(entry.path);
+      }
+    } on FileSystemException catch (error) {
+      if (!_isMissingFile(error)) rethrow;
+    }
+    for (final candidate in [file.path, ...residuals]) {
       try {
-        await file.delete();
-      } on FileSystemException catch (e) {
-        // Another process has been deleted a file or parent directory
-        // since previous File.exists() call.
-        // We can ignore it.
-        debugPrint(
-          'Deleting file has been deleted by another process. $e',
-        );
+        await _fileFactory(candidate).delete();
+      } on FileSystemException catch (error) {
+        if (!_isMissingFile(error)) rethrow;
       }
     }
   }

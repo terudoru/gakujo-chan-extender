@@ -1,8 +1,63 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar_resolver.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('calendar PDF rejects oversized operand sequences', () {
+    expect(
+      () => GakujoAcademicCalendarPdfParser.textLinesFromContentStream(
+        '${'1 ' * 4097}Tj', const {},
+      ),
+      throwsFormatException,
+    );
+    expect(
+      GakujoAcademicCalendarPdfParser.textLinesFromContentStream(
+        'BT 1 0 0 1 10 20 Tm (Hello) Tj ET', const {},
+      ),
+      ['Hello'],
+    );
+  });
+  test('rejects untrusted calendar PDF destinations', () {
+    for (final url in [
+      'https://untrusted.example/2026.pdf',
+      '//untrusted.example/2026.pdf',
+      'http://www.niigata-u.ac.jp/2026.pdf',
+      'https://www.niigata-u.ac.jp.untrusted.example/2026.pdf',
+    ]) {
+      expect(GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
+        '<a href="$url">2026</a>', 2026), isNull, reason: url);
+    }
+  });
+
+  test('rejects oversized PDF and unbounded character map ranges', () {
+    expect(
+      () => GakujoAcademicCalendarPdfParser.extractText(
+        Uint8List(GakujoAcademicCalendarResolver.maxResponseBytes + 1),
+      ),
+      throwsFormatException,
+    );
+    final content = ascii.encode('beginbfrange\n<0000> <FFFFF> <0001>\nendbfrange');
+    final bytes = Uint8List.fromList([
+      ...ascii.encode('1 0 obj << /Filter /FlateDecode >>\nstream\n'),
+      ...zlib.encode(content),
+      ...ascii.encode('\nendstream\nendobj'),
+    ]);
+    expect(() => GakujoAcademicCalendarPdfParser.extractText(bytes), throwsFormatException);
+  });
+
+  test('stops a compressed stream exceeding the PDF expansion budget', () {
+    final compressed = zlib.encode(Uint8List(65 * 1024 * 1024));
+    final bytes = Uint8List.fromList([
+      ...ascii.encode('1 0 obj << /Filter /FlateDecode >>\nstream\n'),
+      ...compressed,
+      ...ascii.encode('\nendstream\nendobj'),
+    ]);
+    expect(() => GakujoAcademicCalendarPdfParser.extractText(bytes), throwsFormatException);
+  });
   test('findPdfUrlForAcademicYear finds the matching official PDF link', () {
     final uri = GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
       '''

@@ -1,6 +1,7 @@
 import 'gakujo_activity_store.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_download_history_store.dart';
+import 'gakujo_external_url.dart';
 import 'secure_storage_transaction.dart';
 
 Future<Map<String, Object?>> readGakujoBackupPayload({
@@ -8,6 +9,7 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
   required GakujoAppSettingsStore settingsStore,
   required GakujoDownloadHistoryStore historyStore,
   required GakujoActivityStore activityStore,
+  bool includeStarredMessages = true,
 }) =>
     runWithBackupStorageLocks([
       settingsStore.backupStorage,
@@ -17,8 +19,9 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
       final history = await historyStore.load();
       final failedDownloads = await historyStore.loadFailedDownloads();
       final favorites = await activityStore.loadFavoritesForBackup();
-      final starredMessages =
-          await activityStore.loadStarredMessagesForBackup();
+      final starredMessages = includeStarredMessages
+          ? await activityStore.loadStarredMessagesForBackup()
+          : const <GakujoStarredMessage>[];
       final deadlines = await activityStore.loadDeadlinesForBackup();
       final notifiedDeadlineKeys =
           await activityStore.loadNotifiedDeadlineKeysForBackup();
@@ -30,6 +33,7 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
         failedDownloads: failedDownloads,
         favorites: favorites,
         starredMessages: starredMessages,
+        includeStarredMessages: includeStarredMessages,
         deadlines: deadlines,
         notifiedDeadlineKeys: notifiedDeadlineKeys,
         changes: changes,
@@ -43,6 +47,7 @@ Map<String, Object?> buildGakujoBackupPayload({
   required Iterable<GakujoFailedDownloadEntry> failedDownloads,
   required Iterable<GakujoFavoritePage> favorites,
   Iterable<GakujoStarredMessage> starredMessages = const [],
+  bool includeStarredMessages = true,
   required Iterable<GakujoDeadlineEntry> deadlines,
   Iterable<String> notifiedDeadlineKeys = const [],
   required Iterable<GakujoActivityChangeEntry> changes,
@@ -67,11 +72,12 @@ Map<String, Object?> buildGakujoBackupPayload({
     'downloadHistory': downloadHistory.map((entry) => entry.toJson()).toList(),
     'failedDownloads':
         failedDownloads.map((entry) => entry.toExternalJson()).toList(),
-    'favorites': favorites.map((entry) => entry.toJson()).toList(),
-    'starredMessages': starredMessages.map((entry) => entry.toJson()).toList(),
-    'deadlines': deadlines.map((entry) => entry.toJson()).toList(),
-    'notifiedDeadlineKeys': notifiedDeadlineKeys.toList(),
-    'changes': changes.map((entry) => entry.toJson()).toList(),
-    'reportLists': reportLists.map((entry) => entry.toJson()).toList(),
+    'favorites': favorites.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
+    if (includeStarredMessages)
+      'starredMessages': starredMessages.map((entry) => entry.toJson()).toList(),
+    'deadlines': deadlines.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
+    'notifiedDeadlineKeys': notifiedDeadlineKeys.map(sanitizeGakujoNotificationKey).toList(),
+    'changes': changes.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
+    'reportLists': reportLists.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
   };
 }

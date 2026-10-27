@@ -23,7 +23,10 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <regex>
+#include <algorithm>
+#include <vector>
 
 #pragma comment(lib, "version.lib")
 #pragma comment(lib, "bcrypt.lib")
@@ -31,12 +34,25 @@
 namespace flutter_secure_storage_windows
 {
 
+#ifdef FSS_TESTING
+  static_assert(std::string_view(SECURE_STORAGE_KEY_PREFIX) == "fss_native_test_",
+                "Native tests must never use the application's credential prefix");
+#endif
+
   const std::string ELEMENT_PREFERENCES_KEY_PREFIX = SECURE_STORAGE_KEY_PREFIX;
   const int ELEMENT_PREFERENCES_KEY_PREFIX_LENGTH = (sizeof SECURE_STORAGE_KEY_PREFIX) - 1;
 
   // this string is used to filter the credential storage so that only the values written
   // by this plugin shows up.
   const CA2W CREDENTIAL_FILTER((ELEMENT_PREFERENCES_KEY_PREFIX + '*').c_str());
+
+  static std::string CredentialValue(const CREDENTIALW& credential) {
+      if (credential.CredentialBlobSize == 0) return {};
+      if (!credential.CredentialBlob) throw static_cast<DWORD>(ERROR_INVALID_DATA);
+      const char* begin = reinterpret_cast<const char*>(credential.CredentialBlob);
+      const char* end = begin + credential.CredentialBlobSize;
+      return std::string(begin, std::find(begin, end, '\0'));
+  }
 
   static inline void rtrim(std::wstring& s) {
       s.erase(std::find_if(s.rbegin(), s.rend(), [](wchar_t ch) {
@@ -71,8 +87,13 @@ namespace flutter_secure_storage_windows
   std::optional<std::string> FlutterSecureStorageWindowsPlugin::GetValueKey(const flutter::EncodableMap *args)
   {
     auto key = this->GetStringArg("key", args);
-    if (key.has_value())
+    if (key.has_value()) {
+      if (key->find_first_of("\\/:*?\"<>|") != std::string::npos ||
+          key->find('\0') != std::string::npos) {
+        throw static_cast<DWORD>(ERROR_INVALID_NAME);
+      }
       return ELEMENT_PREFERENCES_KEY_PREFIX + key.value();
+    }
     return std::nullopt;
   }
 
@@ -144,6 +165,15 @@ namespace flutter_secure_storage_windows
 
   DWORD FlutterSecureStorageWindowsPlugin::GetApplicationSupportPath(std::wstring &path)
   {
+#ifdef FSS_TESTING
+      wchar_t testRoot[MAX_PATH + 1]{};
+      DWORD testRootLength = GetEnvironmentVariableW(
+          L"FSS_TEST_ROOT", testRoot, MAX_PATH + 1);
+      if (testRootLength == 0 || testRootLength > MAX_PATH)
+          return ERROR_INVALID_PARAMETER;
+      path.assign(testRoot, testRootLength);
+      return ERROR_SUCCESS;
+#else
       std::wstring companyName;
       std::wstring productName;
       TCHAR nameBuffer[MAX_PATH + 1]{};
@@ -207,6 +237,7 @@ namespace flutter_secure_storage_windows
           path = stream.str();
       }
       return ERROR_SUCCESS;
+#endif
 
   }
 
@@ -565,7 +596,13 @@ namespace flutter_secure_storage_windows
           bool ok = CredReadW(target_name.m_psz, CRED_TYPE_GENERIC, 0, &pcred);
           if (ok)
           {
-              auto val = std::string((char*)pcred->CredentialBlob);
+              if (pcred->CredentialBlobSize && !pcred->CredentialBlob) {
+                  CredFree(pcred);
+                  HeapFree(GetProcessHeap(), 0, encryptionKey);
+                  encryptionKey = nullptr;
+                  throw static_cast<DWORD>(ERROR_INVALID_DATA);
+              }
+              auto val = CredentialValue(*pcred);
               CredFree(pcred);
               returnVal = val;
           }
@@ -688,26 +725,28 @@ namespace flutter_secure_storage_windows
           MakePath(appSupportPath);
       }
       hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
-      if (hFile == INVALID_HANDLE_VALUE) {
-          return flutter::EncodableMap();
-      }
-
       flutter::EncodableMap creds;
-
-      do {
+      if (hFile == INVALID_HANDLE_VALUE) {
+          DWORD error = GetLastError();
+          if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) throw error;
+      } else {
+        const std::unique_ptr<void, decltype(&FindClose)> findHandle(hFile, &FindClose);
+        do {
           std::wstring fileName(searchRes.cFileName);
           size_t pos = fileName.find(L".secure");
           fileName.erase(pos, 7);
-          char* out = new char[fileName.length() + 1];
+          std::vector<char> out(fileName.length() + 1);
           size_t charsConverted = 0;
-          wcstombs_s(&charsConverted, out, fileName.length() + 1, fileName.c_str(), fileName.length() + 1);
-          std::optional<std::string> val = this->Read(out);
-          auto key = this->RemoveKeyPrefix(out);
+          if (wcstombs_s(&charsConverted, out.data(), out.size(), fileName.c_str(), out.size()) != 0) continue;
+          std::optional<std::string> val = this->Read(out.data());
+          auto key = this->RemoveKeyPrefix(out.data());
           if (val.has_value()) {
               creds[key] = val.value();
-              continue;
           }
-      } while (FindNextFile(hFile, &searchRes) != 0);
+        } while (FindNextFile(hFile, &searchRes) != 0);
+        DWORD error = GetLastError();
+        if (error != ERROR_NO_MORE_FILES) throw error;
+      }
 
     //Backwards comp.
     PCREDENTIALW* pcreds;
@@ -716,13 +755,19 @@ namespace flutter_secure_storage_windows
     bool ok = CredEnumerateW(CREDENTIAL_FILTER.m_psz, 0, &cred_count, &pcreds);
     if (!ok)
     {
+        DWORD error = GetLastError();
+        if (error != ERROR_NOT_FOUND) throw error;
         return creds;
     }
     for (DWORD i = 0; i < cred_count; i++)
     {
       auto pcred = pcreds[i];
       std::string target_name(CW2A(pcred->TargetName));
-      auto val = std::string((char*)pcred->CredentialBlob);
+      if (pcred->CredentialBlobSize && !pcred->CredentialBlob) {
+        CredFree(pcreds);
+        throw static_cast<DWORD>(ERROR_INVALID_DATA);
+      }
+      auto val = CredentialValue(*pcred);
       auto key = this->RemoveKeyPrefix(target_name);
       //If the key exists then data was already read from a file, which implies that the data read from the credential system is outdated
       if (creds.find(key) == creds.end()) {
@@ -775,18 +820,26 @@ namespace flutter_secure_storage_windows
       }
       hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
       if (hFile == INVALID_HANDLE_VALUE) {
-          return;
-      }
-      do {
+          DWORD error = GetLastError();
+          if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+              throw error;
+          }
+      } else {
+        do {
           std::wstring fileName(searchRes.cFileName);
           BOOL ok = DeleteFile((appSupportPath + L"\\" + fileName).c_str());
           if (!ok) {
               DWORD error = GetLastError();
               if (error != ERROR_FILE_NOT_FOUND) {
+                  FindClose(hFile);
                   throw error;
               }
           }
-      } while (FindNextFile(hFile, &searchRes) != 0);
+        } while (FindNextFile(hFile, &searchRes) != 0);
+        DWORD error = GetLastError();
+        FindClose(hFile);
+        if (error != ERROR_NO_MORE_FILES) throw error;
+      }
 
     //Backwards comp.
     PCREDENTIALW* pcreds;
@@ -810,7 +863,9 @@ namespace flutter_secure_storage_windows
       bool delete_ok = CredDeleteW(target_name, CRED_TYPE_GENERIC, 0);
       if (!delete_ok)
       {
-        throw GetLastError();
+        auto error = GetLastError();
+        CredFree(pcreds);
+        throw error;
       }
     }
 

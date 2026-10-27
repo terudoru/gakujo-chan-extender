@@ -22,5 +22,6 @@ inline constexpr std::uintptr_t kDeadlineNotificationCopyDataId = 0x4D42474E;
 std::string DeadlineNotificationActivationUrl(const std::string& url);
 std::string DeadlineNotificationUrlFromArgument(const std::string& argument);
 bool IsDeadlineNotificationUrl(const std::string& url);
+bool ConfirmDeadlineNotificationUrl(const std::string& url);
 
 #endif  // RUNNER_UTILS_H_

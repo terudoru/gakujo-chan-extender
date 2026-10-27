@@ -87,6 +87,21 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  test('a navigated external page cannot bypass the origin check', () async {
+    final result = await _evaluateLoginAssist(
+      [
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'password'},
+        {'tag': 'button', 'type': 'submit', 'text': 'ログイン'},
+      ],
+      url: 'https://docs.google.com/document',
+      setupScript: 'Array.prototype.indexOf = function() { return 0; };',
+    );
+    expect(_valueOf(result, 'userId'), isEmpty);
+    expect(_valueOf(result, 'password'), isEmpty);
+    expect(result['clickCount'], 0);
+  });
+
   test('checks form and submitter actions before filling and submitting',
       () async {
     final elements = [
@@ -629,6 +644,7 @@ window.setTimeout = function(callback) {
 Future<Map<String, dynamic>> _evaluateLoginAssist(
   List<Map<String, String>> elements, {
   String setupScript = '',
+  String? url,
   String? frameBodyText,
   int monitorTicks = 0,
 }) async {
@@ -641,6 +657,7 @@ Future<Map<String, dynamic>> _evaluateLoginAssist(
   return _evaluateGeneratedLoginAssist(
     '$setupScript\n$script',
     elements,
+    url: url,
     frameBodyText: frameBodyText,
     monitorTicks: monitorTicks,
   );

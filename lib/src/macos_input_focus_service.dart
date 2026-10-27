@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 
 class MacosInputFocusService {
   const MacosInputFocusService({
-    MethodChannel channel = _defaultChannel,
-  }) : _channel = channel;
+    this._channel = _defaultChannel,
+  });
 
   static const MethodChannel _defaultChannel = MethodChannel(
     'net.yoshida.morebettergakujo/input_focus',

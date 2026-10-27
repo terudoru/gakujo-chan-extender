@@ -60,6 +60,33 @@ void main() {
     expect(await File('${file.path}.tmp').exists(), isFalse);
   });
 
+  test('clear removes primary, temporary and recovery files only', () async {
+    await storage.write(key: 'existing', value: 'fixture', options: options);
+    final temporary = File('${file.path}.tmp');
+    final recovery = File('${file.path}.corrupt-123');
+    final unrelated = File('${file.path}.corrupt-not-a-timestamp');
+    await temporary.writeAsString('temporary');
+    await recovery.writeAsString('recovery');
+    await unrelated.writeAsString('unrelated');
+
+    await mapStorage.clear(options);
+    expect(await file.exists(), isFalse);
+    expect(await temporary.exists(), isFalse);
+    expect(await recovery.exists(), isFalse);
+    expect(await unrelated.exists(), isTrue);
+    await mapStorage.clear(options);
+  });
+
+  test('clear reports a primary file access failure', () async {
+    await storage.write(key: 'existing', value: 'fixture', options: options);
+    faults.deleteError = FileSystemException('Injected failure', file.path, const OSError('access denied', 5));
+    await expectLater(mapStorage.clear(options), throwsA(isA<FileSystemException>()));
+    expect(await file.exists(), isTrue);
+    faults.deleteError = null;
+    await mapStorage.clear(options);
+    expect(await file.exists(), isFalse);
+  });
+
   test('a missing parent directory is empty and created on write', () async {
     final nested = DpapiJsonFileMapStorage.forTesting(
       getFilePath: () =>
@@ -257,6 +284,7 @@ void main() {
 }
 
 class _FileFaults {
+  FileSystemException? deleteError;
   FileSystemException? readError;
   bool interruptWrite = false;
   bool failRename = false;
@@ -319,6 +347,7 @@ class _ControlledFile implements File {
 
   @override
   Future<FileSystemEntity> delete({bool recursive = false}) async {
+    if (_faults.deleteError != null) throw _faults.deleteError!;
     if (path.endsWith('.tmp')) _faults.temporaryDeletes++;
     return _delegate.delete(recursive: recursive);
   }

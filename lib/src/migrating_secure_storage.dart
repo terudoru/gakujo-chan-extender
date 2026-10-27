@@ -5,17 +5,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class MigratingSecureStorage extends FlutterSecureStorage {
   MigratingSecureStorage({
-    required FlutterSecureStorage primary,
-    required FlutterSecureStorage fallback,
-    bool deleteFallbackAfterMigration = true,
-    String? migrationMarkerKey,
+    required this._primary,
+    required this._fallback,
+    this._deleteFallbackAfterMigration = true,
+    this._migrationMarkerKey,
     Iterable<String>? migrationKeys,
     Duration operationTimeout = const Duration(seconds: 3),
-  })  : _primary = primary,
-        _fallback = fallback,
-        _deleteFallbackAfterMigration = deleteFallbackAfterMigration,
-        _migrationMarkerKey = migrationMarkerKey,
-        _migrationKeys = migrationKeys?.toSet(),
+  })  : _migrationKeys = migrationKeys?.toSet(),
         _storageOperationTimeout = operationTimeout;
 
   final FlutterSecureStorage _primary;
@@ -407,6 +403,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
       );
       await _deleteFallbackKey(
         key: key,
+        propagateFailure: true,
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,
@@ -900,6 +897,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
 
   Future<void> _deleteFallbackKey({
     required String key,
+    bool propagateFailure = false,
     AppleOptions? iOptions,
     AndroidOptions? aOptions,
     LinuxOptions? lOptions,
@@ -918,6 +916,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
         wOptions: wOptions,
       );
     } on Object {
+      if (propagateFailure) rethrow;
       // The primary value (or the migration/deletion marker) remains
       // authoritative when a legacy keychain cannot be cleaned up.
     }
@@ -927,7 +926,7 @@ class MigratingSecureStorage extends FlutterSecureStorage {
     final next = _pendingStorageOperation.then((_) => operation());
     _pendingStorageOperation = next.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace _) {},
     );
     return next;
   }

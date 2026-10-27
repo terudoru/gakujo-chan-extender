@@ -195,7 +195,7 @@ String gakujoMessageLinkFor(String url) {
     queryParameters: {
       '_flowId': 'KJW0001100-flow',
       for (final name in const ['keijitype', 'genrecd'])
-        if (uri.queryParameters[name] case final value?) name: value,
+        name: ?uri.queryParameters[name],
       'seqNo': seqNo,
     },
   ).toString();
@@ -936,7 +936,7 @@ class GakujoActivityStore {
             unreadMessageUrls.length < 60
         ? {
             for (final url in unreadMessageUrls)
-              if (_messageSeqNo(url) case final seqNo?) seqNo,
+              ?_messageSeqNo(url),
           }
         : null;
     final entries = <String, GakujoDeadlineEntry>{

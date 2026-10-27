@@ -78,7 +78,7 @@ class _GakujoGpaTauntState extends State<GakujoGpaTaunt> {
         alignment: AlignmentDirectional.centerStart,
         children: [
           ...previousChildren,
-          if (currentChild != null) currentChild,
+          ?currentChild,
         ],
       ),
       child: Text(

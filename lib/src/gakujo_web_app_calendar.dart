@@ -113,7 +113,7 @@ Set<int> initialGakujoAmbiguousCourseTermSelections(
       .replaceAll('４', '4');
   return {
     for (final match in RegExp(r'第\s*([1-4])\s*ターム').allMatches(normalized))
-      if (int.tryParse(match.group(1) ?? '') case final term?) term,
+      ?int.tryParse(match.group(1) ?? ''),
   };
 }
 
@@ -1963,7 +1963,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         final extraction = await _readCalendarScheduleFromPage();
         final courses = GakujoCalendarExport.officialGoogleCourses(
           pageCourses: extraction.courses,
-          urls: [if (currentUrl != null) currentUrl],
+          urls: [?currentUrl],
         );
         if (courses.isNotEmpty) {
           return GakujoCalendarExtraction(
@@ -2049,7 +2049,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     await Future<void>.delayed(const Duration(milliseconds: 900));
     final currentUrl = await _controller.currentUrl();
     final courses = GakujoCalendarExport.coursesFromOfficialGoogleCalendarUrls([
-      if (currentUrl != null) currentUrl,
+      ?currentUrl,
     ]);
     if (courses.isNotEmpty) {
       return GakujoCalendarExtraction(

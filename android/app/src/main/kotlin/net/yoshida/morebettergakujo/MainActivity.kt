@@ -1067,29 +1067,40 @@ class MainActivity : FlutterActivity() {
                 Log.w(TAG, "Could not determine picked download size", error)
                 null
             }
-            GakujoDownloadStreams.copy(
-                openInput = {
-                    GakujoDownloadResponsePolicy.openValidated(
-                        connection.inputStream, requestedFileName, mimeType, dispositionName,
-                        urlPath = requestUrlPath
-                    )
-                },
-                openOutput = {
-                    contentResolver.openOutputStream(destination)
-                        ?: throw IllegalStateException("ファイルを書き込めませんでした")
-                },
-                cleanupFailedDestination = {
-                    if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
-                        try {
-                            if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
-                                Log.w(TAG, "Could not delete incomplete picked download")
+            // Stage and bound the response before opening a picker destination:
+            // it may be an existing document and opening it can truncate it.
+            val staged = java.io.File.createTempFile("gakujo-download-", ".part", cacheDir)
+            try {
+                GakujoDownloadStreams.copy(
+                    openInput = {
+                        GakujoDownloadResponsePolicy.openValidated(
+                            connection.inputStream, requestedFileName, mimeType, dispositionName,
+                            urlPath = requestUrlPath
+                        )
+                    },
+                    openOutput = { staged.outputStream() }
+                )
+                GakujoDownloadStreams.copy(
+                    openInput = { staged.inputStream() },
+                    openOutput = {
+                        contentResolver.openOutputStream(destination)
+                            ?: throw IllegalStateException("ファイルを書き込めませんでした")
+                    },
+                    cleanupFailedDestination = {
+                        if (GakujoDownloadStreams.shouldDeleteFailedPickedDestination(initialSize)) {
+                            try {
+                                if (!DocumentsContract.deleteDocument(contentResolver, destination)) {
+                                    Log.w(TAG, "Could not delete incomplete picked download")
+                                }
+                            } catch (error: Exception) {
+                                Log.w(TAG, "Failed to delete incomplete picked download", error)
                             }
-                        } catch (error: Exception) {
-                            Log.w(TAG, "Failed to delete incomplete picked download", error)
                         }
                     }
-                }
-            )
+                )
+            } finally {
+                if (!staged.delete()) Log.w(TAG, "Could not delete staged download")
+            }
             if (isDebuggable()) {
                 Log.i(TAG, "Download saved file=$finalName")
             }
@@ -1405,7 +1416,7 @@ class MainActivity : FlutterActivity() {
 
     private fun sanitizeName(raw: String?): String {
         return raw.orEmpty()
-            .replace(Regex("[\\x00-\\x1F\\x7F]"), "")
+            .replace(Regex("[\\x00-\\x1F\\x7F\\u061C\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]"), "")
             .replace(Regex("""[\\/:*?"<>|]"""), "")
             .replace(Regex("\\.{2,}"), ".")
             .replace(Regex("\\s+"), " ")
@@ -1468,9 +1479,6 @@ class MainActivity : FlutterActivity() {
             extras.getString(EXTRA_DEBUG_URL)
                 ?.takeIf { it.isNotBlank() }
                 ?.let { put("startUrl", it) }
-            extras.getString(EXTRA_DEBUG_2FA_SECRET)
-                ?.takeIf { it.isNotBlank() }
-                ?.let { put("twoFactorSecret", it) }
         }
     }
 
@@ -1536,7 +1544,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun notificationUrlFromIntent(intent: Intent?): String? {
-        return intent?.getStringExtra(EXTRA_NOTIFICATION_URL)?.takeIf { it.isNotBlank() }
+        val url = intent?.getStringExtra(EXTRA_NOTIFICATION_URL)?.takeIf { it.isNotBlank() } ?: return null
+        val proof = intent.getStringExtra(DeadlineReminders.EXTRA_NOTIFICATION_PROOF)
+        return url.takeIf { DeadlineReminders.isAuthenticNotification(this, it, proof) }
     }
 
     private fun syncCalendarEvents(call: MethodCall, result: MethodChannel.Result) {
@@ -2143,7 +2153,6 @@ class MainActivity : FlutterActivity() {
         const val NOTIFICATIONS_CHANNEL = "net.yoshida.morebettergakujo/notifications"
         const val CALENDAR_CHANNEL = "net.yoshida.morebettergakujo/calendar"
         const val EXTRA_DEBUG_URL = "net.yoshida.morebettergakujo.DEBUG_URL"
-        const val EXTRA_DEBUG_2FA_SECRET = "net.yoshida.morebettergakujo.DEBUG_2FA_SECRET"
         const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"
         const val REQUEST_PICK_DOWNLOAD_ROOT = 2001
         const val REQUEST_CREATE_DOWNLOAD_FILE = 2002

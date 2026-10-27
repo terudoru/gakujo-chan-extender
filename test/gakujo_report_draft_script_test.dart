@@ -455,7 +455,7 @@ Future<Map<String, dynamic>> _evaluateContentEditableDraft({
   return _evaluateDraft({
     'initialHtml': initialHtml,
     'initialText': initialText,
-    if (legacyValue != null) 'legacyValue': legacyValue,
+    'legacyValue': ?legacyValue,
     'replaceFieldInSameDocument': replaceFieldInSameDocument,
     'deferSaveTimer': deferSaveTimer,
     'firePageHide': firePageHide,

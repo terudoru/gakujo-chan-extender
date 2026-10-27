@@ -294,7 +294,7 @@ Future<Map<String, dynamic>> _evaluate({
             'smartphone': smartphone,
             'count': count,
             'controls': controls,
-            if (pages != null) 'pages': pages,
+            'pages': ?pages,
           }),
           encoding: utf8);
     final result = await Process.run('node', [harness.path, input.path],

@@ -6,24 +6,26 @@ import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_script.da
 import 'package:test/test.dart';
 
 void main() {
-  test('compresses an oversized photo in place, keeping name and format',
-      () async {
-    final result = await _run({
-      'files': [
-        {'name': 'scan.JPG', 'type': 'image/jpeg', 'size': 12 * 1024 * 1024},
-      ],
-      'width': 4000,
-      'height': 3000,
-    });
+  test(
+    'compresses an oversized photo in place, keeping name and format',
+    () async {
+      final result = await _run({
+        'files': [
+          {'name': 'scan.JPG', 'type': 'image/jpeg', 'size': 12 * 1024 * 1024},
+        ],
+        'width': 4000,
+        'height': 3000,
+      });
 
-    expect(result['stopped'], isTrue);
-    expect(result['replayed'], ['input', 'change']);
-    final files = result['files'] as List;
-    expect(files.single['name'], 'scan.JPG');
-    expect(files.single['type'], 'image/jpeg');
-    expect(files.single['size'], lessThanOrEqualTo(4700000));
-    expect(result['status'], contains('5MB以下に圧縮しました'));
-  });
+      expect(result['stopped'], isTrue);
+      expect(result['replayed'], ['input', 'change']);
+      final files = result['files'] as List;
+      expect(files.single['name'], 'scan.JPG');
+      expect(files.single['type'], 'image/jpeg');
+      expect(files.single['size'], lessThanOrEqualTo(4700000));
+      expect(result['status'], contains('5MB以下に圧縮しました'));
+    },
+  );
 
   test('keeps PNG files as PNG', () async {
     final result = await _run({
@@ -40,6 +42,18 @@ void main() {
     expect(file['size'], lessThanOrEqualTo(4700000));
   });
 
+  test('compresses files above 5,000,000 bytes, even below 5 MiB', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'scan.jpg', 'type': 'image/jpeg', 'size': 5000001},
+      ],
+      'width': 2000,
+      'height': 2000,
+    });
+    expect(result['stopped'], isTrue);
+    expect(result['files'].single['size'], lessThanOrEqualTo(4700000));
+  });
+
   test('requests the PDF libraries from the app', () async {
     final result = await _run({
       'channel': true,
@@ -53,6 +67,42 @@ void main() {
     expect(result['status'], contains('PDFを圧縮しています'));
   });
 
+  test('keeps a PDF above the safe input limit without starting a worker', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'large.pdf', 'type': 'application/pdf', 'size': 64 * 1024 * 1024 + 1},
+      ],
+      'pdf': <String, Object?>{},
+    });
+    expect(result['originalsKept'], isTrue);
+    expect(result['workerCreated'], 0);
+    expect(result['status'], contains('64 MiB'));
+  });
+
+  test('does not start a second PDF compression while another is running', () async {
+    final result = await _run({
+      'files': [_pdf],
+      'pdf': <String, Object?>{},
+      'pdfAlreadyRunning': true,
+    });
+    expect(result['originalsKept'], isTrue);
+    expect(result['workerCreated'], 0);
+    expect(result['status'], contains('別のPDFを圧縮中'));
+  });
+
+  test('cancelled PDF reads do not overlap a reselected file', () async {
+    final result = await _run({
+      'files': [_pdf],
+      'nextFiles': [_pdf],
+      'pdf': <String, Object?>{},
+      'holdPdfRead': true,
+    });
+    expect(result['pdfReadCount'], 1);
+    expect(result['maxPdfReads'], 1);
+    expect(result['workerCreated'], 0);
+    expect(result['files'].single['size'], 8000000);
+  });
+
   test('requests JSZip for Word files', () async {
     final result = await _run({
       'channel': true,
@@ -62,6 +112,80 @@ void main() {
     });
 
     expect(result['channelMessages'], ['office']);
+  });
+
+  test('terminates a stalled PDF worker on timeout', () async {
+    final result = await _run({
+      'files': [_pdf],
+      'pdf': {'hold': true},
+      'compressionTimeout': true,
+    });
+    expect(result['workerTerminated'], 1);
+    expect(result['pending'], isFalse);
+    expect(result['originalsKept'], isTrue);
+    expect(result['consoleRestored'], isTrue);
+  });
+
+  test(
+    'a cancelled PDF never starts a worker after libraries load late',
+    () async {
+      final result = await _run({
+        'files': [_pdf],
+        'pdf': <String, Object?>{},
+        'channel': true,
+        'latePdfLibrary': true,
+        'nextFiles': [_photo],
+      });
+      expect(result['workerCreated'], 0);
+      expect(result['files'].single['name'], 'scan.jpg');
+    },
+  );
+
+  test(
+    'bounds real Office archive expansion and preserves normal content',
+    () async {
+      for (final bomb in [false, true]) {
+        final result = await _run({
+          'files': [
+            {'name': 'report.docx', 'type': '', 'size': 8000000},
+          ],
+          'realOffice': true,
+          'officeBomb': bomb,
+        });
+        expect(result['originalsKept'], bomb);
+        if (bomb) {
+          expect(result['status'], contains('大きすぎます'));
+        } else {
+          expect(result['officeContent'], 'normal office content');
+          expect(result['status'], contains('5MB以下に圧縮しました'));
+        }
+      }
+    },
+  );
+
+  test('rejects ZIP64 directory metadata before invoking JSZip', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'report.docx', 'type': '', 'size': 8000000},
+      ],
+      'realOffice': true,
+      'officeZip64': true,
+    });
+    expect(result['originalsKept'], isTrue);
+    expect(result['officeParseCalls'], 0);
+    expect(result['status'], contains('ZIP構造'));
+  });
+
+  test('rejects oversized image dimensions before invoking the decoder', () async {
+    final result = await _run({
+      'files': [
+        {'name': 'photo.png', 'type': 'image/png', 'size': 8000000},
+      ],
+      'headerWidth': 10001,
+    });
+    expect(result['originalsKept'], isTrue);
+    expect(result['bitmapCalls'], 0);
+    expect(result['status'], contains('ピクセル数'));
   });
 
   test('keeps the original file when the libraries are unavailable', () async {
@@ -111,47 +235,51 @@ void main() {
     expect((result['files'] as List).single['size'], 12 * 1024 * 1024);
   });
 
-  test('disabling during compression discards completion and releases submit',
-      () async {
-    for (final teardown in [false, true]) {
+  test(
+    'disabling during compression discards completion and releases submit',
+    () async {
+      for (final teardown in [false, true]) {
+        for (final failure in [false, true]) {
+          final result = await _run({
+            'files': [_photo],
+            'holdImage': true,
+            'imageError': failure,
+            'disableDuringPending': true,
+            'useTeardown': teardown,
+            'checkSubmission': true,
+          });
+          expect(result['originalsKept'], isTrue);
+          expect(result['replayed'], isEmpty);
+          expect(result['status'], result['statusAfterDisable']);
+          expect(result['blockedWhenDisabled'], [false, false, false, false]);
+          expect(result['blockedAfter'], [false, false, false, false]);
+          expect(result['pending'], isFalse);
+        }
+      }
+    },
+  );
+
+  test(
+    're-enabling compression never revives a job cancelled by teardown',
+    () async {
       for (final failure in [false, true]) {
         final result = await _run({
           'files': [_photo],
           'holdImage': true,
           'imageError': failure,
           'disableDuringPending': true,
-          'useTeardown': teardown,
+          'useTeardown': true,
+          'reenableDuringPending': true,
           'checkSubmission': true,
         });
         expect(result['originalsKept'], isTrue);
         expect(result['replayed'], isEmpty);
-        expect(result['status'], result['statusAfterDisable']);
-        expect(result['blockedWhenDisabled'], [false, false, false, false]);
-        expect(result['blockedAfter'], [false, false, false, false]);
+        expect(result['status'], isNull);
+        expect(result['blockedAfterReenable'], [false, false, false, false]);
         expect(result['pending'], isFalse);
       }
-    }
-  });
-
-  test('re-enabling compression never revives a job cancelled by teardown',
-      () async {
-    for (final failure in [false, true]) {
-      final result = await _run({
-        'files': [_photo],
-        'holdImage': true,
-        'imageError': failure,
-        'disableDuringPending': true,
-        'useTeardown': true,
-        'reenableDuringPending': true,
-        'checkSubmission': true,
-      });
-      expect(result['originalsKept'], isTrue);
-      expect(result['replayed'], isEmpty);
-      expect(result['status'], isNull);
-      expect(result['blockedAfterReenable'], [false, false, false, false]);
-      expect(result['pending'], isFalse);
-    }
-  });
+    },
+  );
 
   for (final failure in [false, true]) {
     test('discards stale image ${failure ? 'failure' : 'result'}', () async {
@@ -169,29 +297,33 @@ void main() {
     });
   }
 
-  test('selection token invalidates work even for the same File object',
-      () async {
-    final result = await _run({
-      'files': [_photo],
-      'holdImage': true,
-      'reselectSameFiles': true,
-      'teardownBeforeReselect': true,
-    });
-    expect(result['originalsKept'], isTrue);
-    expect(result['replayed'], isEmpty);
-  });
+  test(
+    'selection token invalidates work even for the same File object',
+    () async {
+      final result = await _run({
+        'files': [_photo],
+        'holdImage': true,
+        'reselectSameFiles': true,
+        'teardownBeforeReselect': true,
+      });
+      expect(result['originalsKept'], isTrue);
+      expect(result['replayed'], isEmpty);
+    },
+  );
 
-  test('checks the original File identity even without a change event',
-      () async {
-    final result = await _run({
-      'files': [_photo],
-      'holdImage': true,
-      'nextFiles': [_photo],
-      'replaceWithoutChange': true,
-    });
-    expect((result['files'] as List).single['size'], _photo['size']);
-    expect(result['replayed'], isEmpty);
-  });
+  test(
+    'checks the original File identity even without a change event',
+    () async {
+      final result = await _run({
+        'files': [_photo],
+        'holdImage': true,
+        'nextFiles': [_photo],
+        'replaceWithoutChange': true,
+      });
+      expect((result['files'] as List).single['size'], _photo['size']);
+      expect(result['replayed'], isEmpty);
+    },
+  );
 
   test('cancelling the selection discards an in-flight result', () async {
     final result = await _run({
@@ -204,201 +336,40 @@ void main() {
     expect(result['status'], isEmpty);
   });
 
-  test('removes timed-out waiters and requests libraries on the next pick',
-      () async {
+  test(
+    'removes timed-out waiters and requests libraries on the next pick',
+    () async {
+      final result = await _run({
+        'files': [_pdf],
+        'channel': true,
+        'timeoutLibrary': true,
+        'pdf': <String, Object?>{},
+      });
+      expect(result['channelMessages'], ['pdf', 'pdf']);
+      expect(result['originalsKept'], isFalse);
+      expect(result['status'], contains('5MB以下に圧縮しました'));
+    },
+  );
+
+  test('replaces a PDF only when the worker succeeds', () async {
     final result = await _run({
       'files': [_pdf],
-      'channel': true,
-      'timeoutLibrary': true,
       'pdf': <String, Object?>{},
     });
-    expect(result['channelMessages'], ['pdf', 'pdf']);
     expect(result['originalsKept'], isFalse);
+    expect(result['files'].single['name'], 'report.pdf');
     expect(result['status'], contains('5MB以下に圧縮しました'));
+    expect(result['workerTerminated'], 1);
   });
 
-  test('compresses a PDF whose text and content checks pass', () async {
-    final result = await _run({
-      'files': [_pdf],
-      'pdf': <String, Object?>{}
-    });
-    expect(result['originalsKept'], isFalse);
-    expect((result['files'] as List).single['name'], 'report.pdf');
-    expect(result['status'], contains('5MB以下に圧縮しました'));
-    expect(result['pdfOptions']['verbosity'], 1);
-    expect(result['pdfOptions']['stopAtErrors'], isTrue);
-    expect(result['destroyed'], 1);
-    expect(result['consoleRestored'], isTrue);
-  });
-
-  test(
-      'bundled PDF libraries ignore fake-worker warnings but keep decode failures',
-      () async {
-    for (final decodeWarning in [false, true]) {
-      final result = await _run({
-        'files': [_pdf],
-        'realPdf': true,
-        'decodeWarning': decodeWarning,
-      });
-      expect(result['originalSize'], greaterThan(5 * 1024 * 1024));
-      expect(
-          result['pdfWarnings'], contains('Warning: Setting up fake worker.'));
-      expect(result['originalsKept'], decodeWarning);
-      expect(result['consoleRestored'], isTrue);
-      if (decodeWarning) {
-        expect(result['status'], contains('PDFの内容が正しく変換できない'));
-      } else {
-        expect((result['files'] as List).single['size'], lessThan(4700000));
-        expect(result['outputPages'], 1);
-        expect(result['pdfRenderCount'], 1);
-        expect(result['status'], contains('5MB以下に圧縮しました'));
-      }
-    }
-  });
-
-  test('keeps PDFs with unsupported masks using the bundled libraries',
-      () async {
-    for (final mask in ['SMask', 'Mask']) {
-      final result = await _run({
-        'files': [_pdf],
-        'realPdf': true,
-        'unsupportedMask': mask,
-      });
-      expect(result['pdfWarnings'],
-          contains('Warning: Unsupported /$mask format.'));
-      expect(result['originalsKept'], isTrue);
-      expect(result['status'], _pdfRenderMessage);
-      expect(result['replayed'], ['input', 'change']);
-      expect(result['consoleRestored'], isTrue);
-    }
-    for (final warning in [
-      'Unsupported rendering feature.',
-      'Unknown ColorSpace.'
-    ]) {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': {
-          'warningStage': 'render',
-          'warningMessage': 'Warning: $warning'
-        },
-      });
-      expect(result['originalsKept'], isTrue);
-      expect(result['status'], _pdfRenderMessage);
-    }
-  });
-
-  for (final stage in ['load', 'text', 'operators', 'render', 'destroy']) {
-    test('keeps the PDF when $stage warns about a font or CMap', () async {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': {'warningStage': stage},
-      });
-      expect(result['originalsKept'], isTrue);
-      expect(result['status'], _pdfTextMessage);
-      expect(result['replayed'], ['input', 'change']);
-      expect(result['destroyed'], 1);
-      expect(result['consoleRestored'], isTrue);
-    });
-  }
-
-  for (final level in ['warn', 'error']) {
-    test('observes console.$level for font failures', () async {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': {'warningStage': 'load', 'warningLevel': level},
-      });
-      expect(result['originalsKept'], isTrue);
-      expect(result['status'], _pdfTextMessage);
-    });
-  }
-
-  test('keeps a PDF with extracted text but no text drawing operators',
-      () async {
-    final result = await _run({
-      'files': [_pdf],
-      'pdf': {'noTextDrawing': true},
-    });
-    expect(result['originalsKept'], isTrue);
-    expect(result['status'], _pdfTextMessage);
-    expect(result['pdfRenderCount'], 0);
-  });
-
-  test('still compresses image-only PDFs', () async {
-    final result = await _run({
-      'files': [_pdf],
-      'pdf': {'noTextDrawing': true, 'noText': true},
-    });
-    expect(result['originalsKept'], isFalse);
-    expect(result['status'], contains('5MB以下に圧縮しました'));
-  });
-
-  test('keeps all originals when a PDF in a multiple selection is unsafe',
-      () async {
+  test('preserves all selected originals when PDF compression fails', () async {
     final result = await _run({
       'files': [_photo, _pdf],
-      'pdf': {'warningStage': 'load'},
+      'pdf': {'error': '署名付きPDFは圧縮できません'},
     });
     expect(result['originalsKept'], isTrue);
-    expect(result['status'], _pdfTextMessage);
-  });
-
-  test('keeps PDFs with notes, markup, and other non-Link annotations',
-      () async {
-    for (final subtype in [
-      'Text',
-      'FreeText',
-      'Ink',
-      'Highlight',
-      'Square',
-      'Stamp',
-      'Popup',
-    ]) {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': {
-          'annotations': [
-            {'subtype': subtype}
-          ]
-        },
-      });
-      expect(result['originalsKept'], isTrue, reason: subtype);
-      expect(result['status'], contains('元のファイルのままにしました'));
-      expect(result['pdfRenderCount'], 0);
-      expect(result['destroyed'], 1);
-    }
-  });
-
-  test('keeps PDFs with decoder diagnostics or missing page image data',
-      () async {
-    for (final options in [
-      for (final level in ['log', 'warn', 'error'])
-        {
-          'warningStage': 'render',
-          'warningLevel': level,
-          'warningMessage': 'Warning: Unable to decode image: JpxError',
-        },
-      {
-        'warningStage': 'render',
-        'warningMessage': 'Error: Invalid image data',
-      },
-      for (final imageData in [
-        'missingBlob',
-        'emptyBlob',
-        'missingBytes',
-        'emptyBytes'
-      ])
-        {'imageData': imageData},
-    ]) {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': options
-      });
-      expect(result['originalsKept'], isTrue, reason: '$options');
-      expect(result['status'], contains('元のファイルのまま'));
-      expect(result['pdfEmbedCount'], 0);
-      expect(result['destroyed'], 1);
-      expect(result['consoleRestored'], isTrue);
-    }
+    expect(result['status'], contains('署名付きPDF'));
+    expect(result['replayed'], ['input', 'change']);
   });
 
   test('blocks only the busy form until success, error, or timeout', () async {
@@ -410,8 +381,12 @@ void main() {
         'compressionTimeout': outcome == 'timeout',
         'checkSubmission': true,
       });
-      expect(result['blockedDuring'], [true, true, true, true],
-          reason: outcome);
+      expect(result['blockedDuring'], [
+        true,
+        true,
+        true,
+        true,
+      ], reason: outcome);
       expect(result['unrelatedBlocked'], [false, false]);
       expect(result['pendingStatus'], 'ファイルを圧縮しています。完了してから提出してください');
       expect(result['blockedAfter'], [false, false, false, false]);
@@ -419,76 +394,65 @@ void main() {
       expect(result['listenersCapture'], isTrue);
       expect(result['autoSubmits'], 0);
       expect(result['originalsKept'], outcome != 'success');
-      expect(result['status'],
-          contains(outcome == 'success' ? '5MB以下に圧縮しました' : '元のファイルのまま'));
+      expect(
+        result['status'],
+        contains(outcome == 'success' ? '5MB以下に圧縮しました' : '元のファイルのまま'),
+      );
     }
   });
 
-  test('releases the submit hold before a replayed change handler submits',
-      () async {
-    for (final failure in [false, true]) {
-      final result = await _run({
-        'files': [_photo],
-        'holdImage': true,
-        'imageError': failure,
-        'checkSubmission': true,
-        'submitOnChange': true,
-      });
-      expect(result['stopped'], isTrue);
-      expect(result['blockedDuring'], [true, true, true, true]);
-      expect(result['submitsDuring'], 0);
-      expect(result['replayed'], ['input', 'change']);
-      expect(result['autoSubmits'], 1);
-      expect(result['pendingOnChange'], isFalse);
-      expect(result['pending'], isFalse);
-      expect(result['blockedAfter'], [false, false, false, false]);
-      expect(result['originalsKept'], failure);
-    }
-  });
+  test(
+    'releases the submit hold before a replayed change handler submits',
+    () async {
+      for (final failure in [false, true]) {
+        final result = await _run({
+          'files': [_photo],
+          'holdImage': true,
+          'imageError': failure,
+          'checkSubmission': true,
+          'submitOnChange': true,
+        });
+        expect(result['stopped'], isTrue);
+        expect(result['blockedDuring'], [true, true, true, true]);
+        expect(result['submitsDuring'], 0);
+        expect(result['replayed'], ['input', 'change']);
+        expect(result['autoSubmits'], 1);
+        expect(result['pendingOnChange'], isFalse);
+        expect(result['pending'], isFalse);
+        expect(result['blockedAfter'], [false, false, false, false]);
+        expect(result['originalsKept'], failure);
+      }
+    },
+  );
 
-  test('keeps only live submit hooks after 30 iframe document replacements',
-      () async {
-    final result = await _runNode([
-      _iframeDocumentReplacementHarness,
-      GakujoUploadCompressionScript.build(),
-    ]);
-    expect(result.exitCode, 0, reason: '${result.stderr}');
-  });
+  test(
+    'keeps only live submit hooks after 30 iframe document replacements',
+    () async {
+      final result = await _runNode([
+        _iframeDocumentReplacementHarness,
+        GakujoUploadCompressionScript.build(),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+    },
+  );
 
-  test('blocks programmatic submits with either download hook install order',
-      () async {
-    final result = await _runNode([
-      _programmaticSubmissionHarness,
-      GakujoUploadCompressionScript.build(),
-      GakujoUploadCompressionScript.buildTeardown(),
-      GakujoDownloadCaptureScript.build(),
-      GakujoDownloadCaptureScript.buildTeardown(),
-    ]);
-    expect(result.exitCode, 0, reason: '${result.stderr}');
-  });
-
-  for (final content in ['attachments', 'fields', 'link', 'widget']) {
-    test('keeps the original PDF with $content', () async {
-      final result = await _run({
-        'files': [_pdf],
-        'pdf': {content: true},
-      });
-      expect(result['originalsKept'], isTrue);
-      expect(result['status'], contains('添付ファイル・フォーム・リンク・注釈を保持できない'));
-      expect(result['status'], contains('元のファイルのままにしました'));
-      expect(result['pdfRenderCount'], 0);
-      expect(result['destroyed'], 1);
-    });
-  }
+  test(
+    'blocks programmatic submits with either download hook install order',
+    () async {
+      final result = await _runNode([
+        _programmaticSubmissionHarness,
+        GakujoUploadCompressionScript.build(),
+        GakujoUploadCompressionScript.buildTeardown(),
+        GakujoDownloadCaptureScript.build(),
+        GakujoDownloadCaptureScript.buildTeardown(),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+    },
+  );
 }
 
 const _photo = {'name': 'scan.jpg', 'type': 'image/jpeg', 'size': 12000000};
 const _pdf = {'name': 'report.pdf', 'type': 'application/pdf', 'size': 8000000};
-const _pdfTextMessage =
-    'PDFの文字が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-const _pdfRenderMessage =
-    'PDFの内容が正しく変換できないため、元のファイルのままにしました（5MBを超える場合は提出前に容量を減らしてください）';
-
 Future<Map<String, dynamic>> _run(Map<String, Object?> scenario) async {
   final result = await _runNode(
     [
@@ -531,9 +495,27 @@ const listeners = [];
 const documentListeners = { change: [], submit: [], click: [] };
 const replayed = [];
 let statusNode = null;
+let pdfReadCount = 0, activePdfReads = 0, maxPdfReads = 0;
+let releasePdfRead;
+const pdfReadGate = new Promise(resolve => { releasePdfRead = resolve; });
 function filesFor(files) {
+  const header = Uint8Array.from([
+    137,80,78,71,13,10,26,10, 0,0,0,13, 73,72,68,82,
+    0,0,0,1, 0,0,0,1, 8,2,0,0,0, 0,0,0,0,
+    0,0,0,0, 73,68,65,84, 0,0,0,0
+  ]);
+  new DataView(header.buffer).setUint32(16, scenario.headerWidth || 1, false);
   return files.map((f) => Object.assign({
-    lastModified: 1, arrayBuffer: async () => new ArrayBuffer(16),
+    lastModified: 1, arrayBuffer: async () => {
+      if (scenario.holdPdfRead && f.type === 'application/pdf') {
+        pdfReadCount++; activePdfReads++;
+        maxPdfReads = Math.max(maxPdfReads, activePdfReads);
+        await pdfReadGate;
+        activePdfReads--;
+      }
+      return new ArrayBuffer(16);
+    },
+    slice: () => ({arrayBuffer: async () => header.buffer.slice(0)}),
   }, f));
 }
 const input = {
@@ -651,6 +633,10 @@ let finishImage;
 const imageGate = new Promise(resolve => { finishImage = resolve; });
 const timers = new Map();
 let nextTimer = 0;
+let workerTerminated = 0;
+let workerCreated = 0;
+let officeParseCalls = 0;
+let bitmapCalls = 0;
 const savedConsole = { log() {}, warn() {}, error() {} };
 const pdfWarnings = [];
 if (scenario.realPdf) savedConsole.log = (...args) => pdfWarnings.push(args.join(' '));
@@ -672,6 +658,7 @@ const context = {
   Math,
   Date,
   createImageBitmap: async () => {
+    bitmapCalls++;
     if (scenario.holdImage) await imageGate;
     if (scenario.imageError) throw new Error('image decoding failed');
     return {
@@ -689,8 +676,24 @@ const context = {
   Blob, TextDecoder, TextEncoder, URL, URLSearchParams, atob, btoa,
   ReadableStream, AbortController, structuredClone, DOMException,
   requestAnimationFrame: callback => setTimeout(callback, 0),
+  __MBG_PDF_WORKER_URL: 'test-worker',
+  Worker: class {
+    constructor() { workerCreated++; }
+    postMessage() {
+      if (scenario.pdf && scenario.pdf.hold) return;
+      setImmediate(() => {
+        if (scenario.pdf && scenario.pdf.error) {
+          this.onmessage({data: {type: 'error', message: scenario.pdf.error}});
+        } else {
+          this.onmessage({data: {type: 'result', bytes: new ArrayBuffer(1000)}});
+        }
+      });
+    }
+    addEventListener() {}
+    terminate() { workerTerminated++; }
+  },
 };
-if (scenario.realPdf) {
+if (scenario.realPdf || scenario.realOffice) {
   context.setTimeout = setTimeout;
   context.clearTimeout = clearTimeout;
 }
@@ -699,6 +702,9 @@ let pdfRenderCount = 0;
 let pdfEmbedCount = 0;
 let destroyed = 0;
 function loadPdfLibraries() {
+  context.__MBG_QPDF_WORKER_URL = 'worker';
+  context.__MBG_QPDF_MODULE_URL = 'module';
+  context.__MBG_QPDF_WASM_URL = 'wasm';
   const options = scenario.pdf;
   function warning(stage) {
     if (options.warningStage === stage) {
@@ -709,13 +715,14 @@ function loadPdfLibraries() {
   }
   context.pdfjsLib = {
     VerbosityLevel: { WARNINGS: 1 },
+    PDFWorker: {fromPort: ({port}) => ({port})},
     OPS: { showText: 44, showSpacedText: 45, nextLineShowText: 46, nextLineSetSpacingShowText: 47 },
     getDocument: (params) => {
       pdfOptions = { verbosity: params.verbosity, stopAtErrors: params.stopAtErrors };
       warning('load');
       return {
         destroy: async () => { destroyed++; warning('destroy'); },
-        promise: Promise.resolve({
+        promise: options.hold ? new Promise(() => {}) : Promise.resolve({
           numPages: 1,
           getAttachments: async () => options.attachments ? { 'notes.txt': {} } : null,
           getFieldObjects: async () => options.fields ? { answer: [] } : null,
@@ -752,7 +759,7 @@ function loadPdfLibraries() {
     },
   };
 }
-if (scenario.pdf && !scenario.timeoutLibrary) loadPdfLibraries();
+if (scenario.pdf && !scenario.timeoutLibrary && !scenario.latePdfLibrary) loadPdfLibraries();
 const channelMessages = [];
 if (scenario.channel) {
   context.MbgUploadCompression = { postMessage: (m) => {
@@ -764,6 +771,7 @@ if (scenario.channel) {
   } };
 }
 context.window = context;
+if (scenario.pdfAlreadyRunning) context.__MBG_ACTIVE_PDF_COMPRESSION = {};
 document.defaultView = context;
 vm.createContext(context);
 vm.runInContext(build, context);
@@ -779,7 +787,47 @@ async function settle() {
   await new Promise(resolve => setImmediate(resolve));
 }
 (async () => {
+  if (scenario.realOffice) {
+    context.JSZip = require(require('node:path').resolve('assets/js/upload_compression/jszip.min.js'));
+    const zip = new context.JSZip();
+    zip.file('word/document.xml', scenario.officeBomb ? new Uint8Array(33 * 1024 * 1024) : 'normal office content');
+    const bytes = await zip.generateAsync({type: 'uint8array', compression: 'DEFLATE'});
+    if (scenario.officeZip64) {
+      bytes[bytes.length - 12] = 255;
+      bytes[bytes.length - 11] = 255;
+    }
+    const originalLoad = context.JSZip.loadAsync;
+    context.JSZip.loadAsync = function() { officeParseCalls++; return originalLoad.apply(this, arguments); };
+    input.files = [{name: 'report.docx', type: '', size: 8000000,
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)}];
+    originalFiles.splice(0, originalFiles.length, ...input.files);
+  }
   if (scenario.realPdf) {
+  const { Worker: NodeWorker } = require('node:worker_threads');
+  const workerSource = require('node:fs').readFileSync('assets/js/upload_compression/pdf.worker.min.js', 'utf8');
+  const bootstrap = `
+    const {parentPort, workerData} = require('node:worker_threads');
+    const listeners = new Set();
+    globalThis.self = globalThis;
+    globalThis.onmessage = null;
+    globalThis.postMessage = (value, transfer) => parentPort.postMessage(value, transfer);
+    globalThis.addEventListener = (type, fn) => { if (type === 'message') listeners.add(fn); };
+    globalThis.removeEventListener = (type, fn) => listeners.delete(fn);
+    parentPort.on('message', data => { for (const fn of listeners) fn({data}); });
+    globalThis.process = undefined;
+    eval(workerData);
+  `;
+  context.Worker = class {
+    constructor() {
+      this.listeners = new Set();
+      this.worker = new NodeWorker(bootstrap, {eval: true, workerData: workerSource});
+      this.worker.on('message', data => { for (const fn of this.listeners) fn({data}); });
+    }
+    addEventListener(type, fn) { if (type === 'message') this.listeners.add(fn); }
+    removeEventListener(type, fn) { this.listeners.delete(fn); }
+    postMessage(value, transfer) { this.worker.postMessage(value, transfer); }
+    terminate() { workerTerminated++; this.worker.terminate(); }
+  };
     const fs = require('node:fs');
     for (const name of ['pdf.worker.min.js', 'pdf.min.js', 'pdf-lib.min.js']) {
       const source = fs.readFileSync(`assets/js/upload_compression/${name}`, 'utf8');
@@ -836,7 +884,7 @@ async function settle() {
   if (!stopped && input.onchange) input.onchange(event);
   await settle();
   const submitsDuring = autoSubmits;
-  if (scenario.realPdf) {
+  if (scenario.realPdf || scenario.realOffice) {
     for (let i = 0; input.__mbgUploadCompressionPending && i < 1000; i++) {
       await new Promise(resolve => setTimeout(resolve, 5));
     }
@@ -874,6 +922,15 @@ async function settle() {
       for (const listener of listeners) listener(event);
     }
   }
+  if (scenario.holdPdfRead) {
+    await settle();
+    releasePdfRead();
+  }
+  if (scenario.latePdfLibrary) {
+    loadPdfLibraries();
+    context.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED('pdf');
+    await settle();
+  }
   if (scenario.timeoutLibrary) {
     for (const [id, fn] of Array.from(timers)) { timers.delete(id); fn(); }
     await settle();
@@ -885,7 +942,13 @@ async function settle() {
   }
   finishImage();
   await settle();
+  if (scenario.timeoutLibrary) await settle();
   let outputPages;
+  let officeContent;
+  if (scenario.realOffice && input.files[0] !== originalFiles[0]) {
+    const output = await context.JSZip.loadAsync(input.files[0].parts[0]);
+    officeContent = await output.file('word/document.xml').async('string');
+  }
   if (scenario.realPdf && input.files[0] !== originalFiles[0]) {
     const output = await context.PDFLib.PDFDocument.load(input.files[0].parts[0]);
     outputPages = output.getPageCount();
@@ -895,7 +958,10 @@ async function settle() {
     pending: !!input.__mbgUploadCompressionPending,
     statusAfterDisable, blockedWhenDisabled, blockedAfterReenable,
     originalSize: originalFiles[0] && originalFiles[0].size,
-    pdfWarnings, outputPages,
+    pdfWarnings, outputPages, officeContent,
+    pdfReadCount, maxPdfReads,
+    officeParseCalls,
+    bitmapCalls,
     replayed: replayed.filter((type) => type),
     files: Array.from(input.files).map((f) => ({
       name: f.name, type: f.type, size: f.size,
@@ -908,6 +974,8 @@ async function settle() {
     pdfRenderCount,
     pdfEmbedCount,
     destroyed,
+    workerTerminated,
+    workerCreated,
     consoleRestored: Object.keys(savedConsole).every(key => context.console[key] === savedConsole[key]),
     blockedDuring, unrelatedBlocked, pendingStatus,
     blockedAfter: scenario.checkSubmission &&
@@ -917,7 +985,7 @@ async function settle() {
     listenersCapture: Object.values(documentListeners).flat().every(({ capture }) => capture === true),
     autoSubmits, submitsDuring, pendingOnChange,
   }));
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => { console.error(error); process.exit(1); });
 ''';
 
 const _iframeDocumentReplacementHarness = r'''

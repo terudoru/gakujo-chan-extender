@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +8,33 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
+  test('channel capability rejects direct frame messages and rotates', () async {
+    final guard = GakujoJavaScriptChannelGuard(token: 'test-capability');
+    final native = guard.register('TrustedChannel');
+    final result = await Process.run('node', [
+      '-e',
+      r'''const vm = require('node:vm');
+const [script, native] = process.argv.slice(1);
+const messages = [];
+const top = {}; top.top = top;
+top[native] = {postMessage: value => messages.push(value)};
+vm.runInNewContext(script, {window: top});
+top.TrustedChannel.postMessage('allowed');
+const frame = {top: {}}; frame[native] = {postMessage: value => messages.push(value)};
+vm.runInNewContext(script, {window: frame});
+process.stdout.write(JSON.stringify({messages, frameHasWrapper: !!frame.TrustedChannel}));''',
+      guard.installScript(), native,
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final output = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(output['frameHasWrapper'], isFalse);
+    final message = (output['messages'] as List).single as String;
+    expect(guard.unwrap(message), 'allowed');
+    expect(guard.unwrap(jsonEncode(['wrong-capability', 'forged'])), isNull);
+    expect(guard.unwrap('forged'), isNull);
+    guard.rotate();
+    expect(guard.unwrap(message), isNull);
+  });
   for (final isMainFrame in [false, true]) {
     test('preserves navigation frame flag $isMainFrame from WKWebView', () {
       final mapped = GakujoNavigationRequest.fromWebViewFlutter(

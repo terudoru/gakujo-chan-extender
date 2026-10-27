@@ -5,6 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
+  test('does not contact remote UNC locations or file URI hosts', () async {
+    final messages = <String>[];
+    var calls = 0;
+    for (final location in [r'\\untrusted.example\share\file.pdf', 'file://untrusted.example/share/file.pdf']) {
+      await openGakujoSavedDownload(
+        location,
+        platform: TargetPlatform.windows,
+        openNative: (_) async { calls++; return true; },
+        openExternal: (_) async { calls++; return true; },
+        showSnackBar: messages.add,
+      );
+    }
+    expect(calls, 0);
+    expect(messages, List.filled(2, 'ネットワーク上の保存先は開けません'));
+  });
+
   test('missing files and launcher errors show the open-failure message',
       () async {
     final directory = Directory.systemTemp.createTempSync('saved_download_');

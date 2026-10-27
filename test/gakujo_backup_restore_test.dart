@@ -334,7 +334,7 @@ void main() {
     test('late restore failure rolls back notified keys ($originalKeys)',
         () async {
       final storage = _Storage({
-        if (originalKeys != null) _notifiedKeysKey: originalKeys,
+        _notifiedKeysKey: ?originalKeys,
       })
         ..failWriteKey = 'more_better_gakujo_activity_changes';
       final before = Map<String, String>.of(storage.values);

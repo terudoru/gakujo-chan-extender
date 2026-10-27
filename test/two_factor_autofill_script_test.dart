@@ -5,6 +5,27 @@ import 'package:morebettergakujo_flutter/src/two_factor_autofill_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('local debug fixture uses only its synthetic token on its exact URL',
+      () async {
+    const fixture = 'file:///android_asset/qa/two_factor.html';
+    final script = TwoFactorAutofillScript.buildDebugFixture();
+    final allowed = await _evaluateTwoFactorAssist(script, url: fixture);
+    expect(allowed['visibleValue'], '123456');
+    for (final url in [
+      'file:///android_asset/qa/other.html',
+      'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
+      '$fixture?other=1',
+    ]) {
+      final rejected = await _evaluateTwoFactorAssist(script, url: url);
+      expect(rejected['visibleValue'], isEmpty, reason: url);
+    }
+    final production = await _evaluateTwoFactorAssist(
+      TwoFactorAutofillScript.build(token: '654321'),
+      url: fixture,
+    );
+    expect(production['visibleValue'], isEmpty);
+  });
+
   test('builds an autofill script for ninshoCode', () {
     final script = TwoFactorAutofillScript.build(token: '123456');
 
@@ -154,6 +175,22 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  test('rejects cross-origin form action, submit override and hostile base', () async {
+    for (final settings in [
+      {'formAction': 'https://untrusted.example/collect'},
+      {'formAction': '//untrusted.example/collect'},
+      {'formAction': '/safe', 'formOverride': 'https://untrusted.example/collect'},
+      {'formAction': 'submit', 'baseUri': 'https://untrusted.example/'},
+    ]) {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(token: '654321'),
+        formSettings: settings,
+      );
+      expect(result['visibleValue'], isEmpty, reason: jsonEncode(settings));
+      expect(result['clickCount'], 0, reason: jsonEncode(settings));
+    }
+  });
+
   for (final url in [
     'https://www.niigata-u.ac.jp/campussmart.do',
     'http://gakujo.iess.niigata-u.ac.jp/campussmart.do',
@@ -233,6 +270,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   String? url,
   String? teardownScript,
   List<Map<String, String>>? controls,
+  Map<String, String>? formSettings,
 }) async {
   final result = await Process.run(
       'node',
@@ -242,7 +280,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
         script,
         teardownScript ?? '',
         url ?? 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
-        jsonEncode({'controls': controls}),
+        jsonEncode({'controls': controls, ...?formSettings}),
       ],
       stdoutEncoding: utf8,
       stderrEncoding: utf8);
@@ -284,6 +322,7 @@ class FakeElement {
     this.form = null;
   }
   getAttribute(name) { return this.attributes[name] ?? null; }
+  hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
   getClientRects() { return this.attributes.display === 'none' ? [] : [{}]; }
   closest(selector) { return selector === 'form' ? this.form : null; }
   dispatchEvent() { return true; }
@@ -301,9 +340,10 @@ const visible = new FakeElement('input', {
   name: 'ninshoCode', type: 'password'
 });
 const controls = (spec.controls || [
-  {tag: 'button', type: 'submit', text: '認証'}
+  {tag: 'button', type: 'submit', text: '認証', ...(spec.formOverride ? {formaction: spec.formOverride} : {})}
 ]).map((attributes) => new FakeElement(attributes.tag, attributes));
 const form = {
+  getAttribute(name) { return name === 'action' ? (spec.formAction ?? null) : null; },
   querySelectorAll(selector) {
     const elements = [hidden, visible, ...controls];
     if (selector === 'button, input, a, [role="button"]') return elements;
@@ -315,6 +355,8 @@ const form = {
 };
 const document = {
   body: {innerText: '', textContent: ''},
+  location: new URL(process.argv[3]),
+  baseURI: spec.baseUri || process.argv[3],
   defaultView: null,
   querySelectorAll(selector) {
     if (selector === 'iframe, frame') return [];

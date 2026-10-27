@@ -35,7 +35,7 @@ void main() {
                       opened += 1;
                     }
                   : null,
-              onChanged: (_, __) {},
+              onChanged: (_, _) {},
               onMessagesChanged: (_) async => true,
               keywordController: keywords,
               canAddKeyword: false,
@@ -473,7 +473,7 @@ void main() {
               topics: const {},
               messages: messages,
               notificationsEnabled: true,
-              onChanged: (_, __) {},
+              onChanged: (_, _) {},
               onMessagesChanged: (next) async {
                 if (next.keywords.contains('集中講義')) await addSave.future;
                 setState(() => messages = next);
@@ -633,7 +633,7 @@ void main() {
             topics: const {},
             messages: const GakujoMessageNotificationSettings(),
             notificationsEnabled: true,
-            onChanged: (_, __) {},
+            onChanged: (_, _) {},
             onMessagesChanged: (_) async => true,
             keywordController: keywords,
             canAddKeyword: false,
@@ -1414,7 +1414,7 @@ void main() {
             find.widgetWithText(TextButton, 'ログイン情報を削除'),
           )
           .onPressed,
-      isNull,
+      isNotNull,
     );
 
     final loginIdField =
@@ -1433,6 +1433,9 @@ void main() {
     expect(password, 'secret');
     expect(saved, isFalse);
     expect(cleared, isFalse);
+    await tester.tap(find.widgetWithText(TextButton, 'ログイン情報を削除'));
+    await tester.pump();
+    expect(cleared, isTrue);
   });
 
   testWidgets('login credentials section saves and clears configured state',

@@ -35,6 +35,7 @@ import 'gakujo_dated_activity.dart';
 import 'gakujo_download_capture_script.dart';
 import 'gakujo_download_history_store.dart';
 import 'gakujo_download_request.dart';
+import 'gakujo_external_url.dart';
 import 'gakujo_download_service.dart';
 import 'gakujo_download_url_policy.dart';
 import 'gakujo_expired_page_recovery_script.dart';
@@ -55,6 +56,7 @@ import 'gakujo_session_extender_script.dart';
 import 'gakujo_timeout_popup_script.dart';
 import 'gakujo_upload_compression_libraries.dart';
 import 'gakujo_upload_compression_script.dart';
+import 'gakujo_upload_preview_script.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
@@ -341,24 +343,16 @@ void handleGakujoWebResourceError(
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
     super.key,
-    TwoFactorSecretStore? secretStore,
-    TotpGenerator? totpGenerator,
-    GakujoLastPageStore? lastPageStore,
-    GakujoAppSettingsStore? appSettingsStore,
-    GakujoLocalPrefsStore? localPrefsStore,
-    String? startUrl,
-    String? initialTwoFactorSecret,
-    bool? debugAllowed,
-    Future<bool> Function()? gakujoReachable,
-  })  : _secretStore = secretStore,
-        _totpGenerator = totpGenerator,
-        _lastPageStore = lastPageStore,
-        _appSettingsStore = appSettingsStore,
-        _localPrefsStore = localPrefsStore,
-        _startUrl = startUrl,
-        _initialTwoFactorSecret = initialTwoFactorSecret,
-        _debugAllowed = debugAllowed,
-        _gakujoReachable = gakujoReachable;
+    this._secretStore,
+    this._totpGenerator,
+    this._lastPageStore,
+    this._appSettingsStore,
+    this._localPrefsStore,
+    this._startUrl,
+    this._initialTwoFactorSecret,
+    this._debugAllowed,
+    this._gakujoReachable,
+  });
 
   final TwoFactorSecretStore? _secretStore;
   final TotpGenerator? _totpGenerator;
@@ -375,6 +369,13 @@ class GakujoWebApp extends StatefulWidget {
 }
 
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
+
+@visibleForTesting
+Future<void> gakujoWaitForDialogDismissal(ModalRoute<void>? route) async {
+  if (route != null) {
+    await route.completed;
+  }
+}
 
 @visibleForTesting
 GakujoAppSettings gakujoSettingsAfterInitialSetup({
@@ -2103,6 +2104,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
+    ModalRoute<void>? dialogRoute;
     try {
       await _prepareSettingsDialogInput();
       if (!mounted) {
@@ -2112,6 +2114,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         context: context,
         requestFocus: true,
         builder: (dialogContext) {
+          dialogRoute = ModalRoute.of<void>(dialogContext);
           return StatefulBuilder(
             builder: (context, setDialogState) {
               final canSaveSecret = secretInput.trim().isNotEmpty;
@@ -2170,19 +2173,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         },
                         onClear: () async {
                           try {
-                            await _appSettingsStore.clearLoginCredentials();
-                            await _applyFeatureFlagRuntimeState(
-                              GakujoFeatureFlag.loginAutofill,
-                              enabled: false,
-                            );
-                            TextInput.finishAutofillContext(shouldSave: false);
-                            if (!mounted) {
-                              return;
+                            try {
+                              await _appSettingsStore.clearLoginCredentials();
+                            } finally {
+                              try {
+                                await _applyFeatureFlagRuntimeState(
+                                  GakujoFeatureFlag.loginAutofill,
+                                  enabled: false,
+                                );
+                              } finally {
+                                TextInput.finishAutofillContext(shouldSave: false);
+                                if (mounted) {
+                                  setState(() {
+                                    _appSettings = _appSettings.copyWith(
+                                      loginCredentials: null,
+                                    );
+                                  });
+                                }
+                              }
                             }
-                            setState(() {
-                              _appSettings =
-                                  _appSettings.copyWith(loginCredentials: null);
-                            });
+                            if (!mounted) return;
                             if (!dialogContext.mounted) {
                               return;
                             }
@@ -2547,7 +2557,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
                       itemCount: sections.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (context, index) => sections[index],
                     ),
                   ),
@@ -2558,6 +2568,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
       );
     } finally {
+      await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted) {
         setState(() {
           _isSettingsDialogOpen = false;
@@ -2589,6 +2600,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final disabledFeatureFlags = {..._appSettings.disabledFeatureFlags};
     final placeholderFeatureFlags = {..._startupPlaceholderFeatureFlags};
     final changedFeatureFlags = <GakujoFeatureFlag>{};
+    ModalRoute<void>? dialogRoute;
     GakujoAppSettings buildWizardSettings() => _appSettings.copyWith(
           downloadSaveMode: selectedDownloadSaveMode,
           pageMode: selectedPageMode,
@@ -2606,6 +2618,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         barrierDismissible: true,
         requestFocus: true,
         builder: (dialogContext) {
+          dialogRoute = ModalRoute.of<void>(dialogContext);
           return StatefulBuilder(
             builder: (context, setDialogState) {
               _refreshSetupWizard = () => setDialogState(() {});
@@ -2860,6 +2873,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
       );
     } finally {
+      await gakujoWaitForDialogDismissal(dialogRoute);
       _refreshSetupWizard = null;
       if (mounted) {
         setState(() {
@@ -3014,7 +3028,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 : ListView.separated(
                     shrinkWrap: true,
                     itemCount: sorted.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final change = sorted[index];
                       return ListTile(
@@ -3482,7 +3496,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return _writeJsonFile(
       directoryName: 'MoreBetterGakujoBackups',
       fileName: '$prefix-backup-${DateTime.now().microsecondsSinceEpoch}.json',
-      payload: await _backupPayload(),
+      payload: await _backupPayload(includeStarredMessages: prefix != 'auto'),
       pruneAfterWrite: prefix == 'auto',
       pruneFileNamePrefix: prefix == 'auto' ? 'auto-backup-' : null,
     );
@@ -3540,7 +3554,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: favorites.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final favorite = favorites[index];
                           return ListTile(
@@ -4335,7 +4349,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (shouldScanDeadlines) {
       final assignments = [
         for (final row in result.reportItems)
-          if (GakujoAssignment.fromReportRow(
+          ?GakujoAssignment.fromReportRow(
             row,
             capturedAt: DateTime.now(),
             // A reminder opens the list it can be submitted from, even when
@@ -4343,9 +4357,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             url: category == 'レポート・小テスト'
                 ? durableGakujoLink(url, category)
                 : _reportListPortalUrl,
-          )
-              case final assignment?)
-            assignment,
+          ),
       ];
       await _activityStore.mergeAssignments(assignments);
       if (assignments.isNotEmpty) {
@@ -4908,13 +4920,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final assignments = [
         if (rows is List)
           for (final row in rows.whereType<Map<dynamic, dynamic>>())
-            if (GakujoAssignment.fromReportRow(
+            ?GakujoAssignment.fromReportRow(
               row,
               capturedAt: now,
               url: _reportListPortalUrl,
-            )
-                case final assignment?)
-              assignment,
+            ),
       ];
       final total = decoded['total'];
       await _activityStore.mergeAssignments(
@@ -5146,19 +5156,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _exportSettingsToClipboard() async {
-    final payload = await _backupPayload();
+    final payload = await _backupPayload(includeStarredMessages: false);
     await Clipboard.setData(
       ClipboardData(text: const JsonEncoder.withIndent('  ').convert(payload)),
     );
     _showSnackBar('設定をクリップボードにコピーしました');
   }
 
-  Future<Map<String, Object?>> _backupPayload() => _backupOperations.run(
+  Future<Map<String, Object?>> _backupPayload({bool includeStarredMessages = true}) => _backupOperations.run(
         () => readGakujoBackupPayload(
           currentSettings: () => _settingsForPersistence(_appSettings),
           settingsStore: _appSettingsStore,
           historyStore: _downloadHistoryStore,
           activityStore: _activityStore,
+          includeStarredMessages: includeStarredMessages,
         ),
       );
 
@@ -5205,7 +5216,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (file == null) {
       return;
     }
-    if (await file.length() > 5 * 1024 * 1024) {
+    if (await file.length() > maxGakujoBackupBytes) {
       _showSnackBar('バックアップファイルが大きすぎます');
       return;
     }
@@ -5454,6 +5465,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    try {
+      await _controller.runJavaScript(GakujoUploadPreviewScript.build());
+    } catch (error, stackTrace) {
+      developer.log('Failed to inject upload preview',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+
     for (final flag in _originalExtensionFeatureBuilders.keys) {
       if (!_appSettings.isFeatureEnabled(flag)) {
         continue;
@@ -5689,6 +5707,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final url = _currentPageUrl;
     final navigationRevision = _navigationRevision;
+    if (kDebugMode &&
+        Platform.isAndroid &&
+        url != null &&
+        url == 'file:///android_asset/qa/two_factor.html' &&
+        _isCurrentPageCallback(url, navigationRevision)) {
+      try {
+        await _controller.runJavaScript(TwoFactorAutofillScript.buildDebugFixture());
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to inject local 2FA fixture',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+      return;
+    }
     bool stillCurrent() =>
         url != null &&
         _isCurrentPageCallback(url, navigationRevision) &&
@@ -5809,34 +5840,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<String?> _loadInitialLastPageUrl() async {
     if (Platform.isMacOS && !_secureStorageAccessAllowed) {
-      try {
-        final url = (await _localPrefsStore.load())?.lastPageUrl;
-        if (AllowedWebOrigins.canRestoreLastPage(
-          url,
-          debugAllowed: _debugAllowed,
-        )) {
-          return url;
-        }
-        if (url != null) {
-          await _syncLocalLastPageMirror(null);
-        }
-        return null;
-      } on Object catch (error, stackTrace) {
-        developer.log(
-          'Failed to load local last page mirror',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
-        return null;
-      }
+      // Navigation URLs may contain session data and are never mirrored in
+      // plaintext. Start at the home page until secure storage is available.
+      return null;
     }
 
-    final url = await _lastPageStore.load(debugAllowed: _debugAllowed);
-    if (Platform.isMacOS) {
-      await _syncLocalLastPageMirror(url);
-    }
-    return url;
+    return _lastPageStore.load(debugAllowed: _debugAllowed);
   }
 
   Future<void> _addGakujoJavaScriptChannel(
@@ -6579,32 +6588,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     if (!_secureStorageAccessAllowed) {
-      if (Platform.isMacOS) {
-        await _syncLocalLastPageMirror(url);
-      }
       return;
     }
     try {
       await _lastPageStore.saveIfAllowed(url, debugAllowed: _debugAllowed);
-      if (Platform.isMacOS) {
-        await _syncLocalLastPageMirror(url);
-      }
     } catch (error, stackTrace) {
       developer.log(
         'Failed to save last page URL',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<void> _syncLocalLastPageMirror(String? url) async {
-    try {
-      await _localPrefsStore.saveLastPageUrl(url);
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to update local last page mirror',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,

@@ -211,7 +211,7 @@ class MethodChannelGakujoCalendarService extends GakujoCalendarService {
     final result = await _channel.invokeMapMethod<String, Object?>(
       'deleteAddedEvents',
       {
-        if (calendarTitle != null) 'calendarTitle': calendarTitle,
+        'calendarTitle': ?calendarTitle,
         'rangeStartMillis': _tokyoDateBoundaryMillis(rangeStart),
         'rangeEndMillis': _tokyoDateBoundaryMillis(
           _calendarDateAfterDays(rangeEnd, 1),
@@ -265,6 +265,11 @@ class GakujoCalendarEventBuilder {
     String uidNamespace = 'manual',
     String termLabel = '',
   }) {
+    final firstDay = DateTime.utc(rangeStart.year, rangeStart.month, rangeStart.day);
+    final lastDay = DateTime.utc(rangeEnd.year, rangeEnd.month, rangeEnd.day);
+    if (lastDay.isBefore(firstDay) || lastDay.difference(firstDay).inDays > 740 || courses.length > 1000) {
+      throw const FormatException('カレンダーの期間または授業数が大きすぎます');
+    }
     final noClassKeys = noClassDates
         .map((date) => DateTime(date.year, date.month, date.day))
         .toSet();
@@ -287,6 +292,7 @@ class GakujoCalendarEventBuilder {
       void addEvent(DateTime date) {
         final dayKey = DateTime(date.year, date.month, date.day);
         if (!excludedKeys.contains(dayKey)) {
+          if (events.length >= 10000) throw const FormatException('カレンダーの予定数が大きすぎます');
           final start = DateTime(
             date.year,
             date.month,

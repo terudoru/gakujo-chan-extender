@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
@@ -16,6 +17,13 @@ class GakujoAcademicCalendarResolver {
 
   final GakujoCalendarHtmlFetcher? fetchHtml;
   final GakujoCalendarBytesFetcher? fetchBytes;
+  static const maxResponseBytes = 16 * 1024 * 1024;
+
+  static bool _isOfficialUrl(Uri uri) {
+    final origin = Uri.parse(GakujoAcademicCalendar.calendarPageUrl);
+    return uri.scheme == 'https' && uri.host == origin.host &&
+        (!uri.hasPort || uri.port == 443) && uri.userInfo.isEmpty;
+  }
 
   Future<List<GakujoAcademicTerm>> fetchTermsForAcademicYear(
     int academicYear,
@@ -70,11 +78,11 @@ class GakujoAcademicCalendarResolver {
               : nearby.contains(year)
                   ? 1
                   : 0;
+      final resolved = Uri.parse(GakujoAcademicCalendar.calendarPageUrl).resolveUri(uri);
+      if (!_isOfficialUrl(resolved)) continue;
       if (score > bestScore) {
         bestScore = score;
-        best = uri.hasScheme
-            ? uri
-            : Uri.parse(GakujoAcademicCalendar.calendarPageUrl).resolveUri(uri);
+        best = resolved;
       }
     }
     return best;
@@ -95,22 +103,36 @@ class GakujoAcademicCalendarResolver {
   static Future<Uint8List> _defaultFetchBytes(Uri uri) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
     try {
-      final request =
-          await client.getUrl(uri).timeout(const Duration(seconds: 8));
-      request.headers.set(HttpHeaders.userAgentHeader, 'MoreBetterGakujo');
-      final response =
-          await request.close().timeout(const Duration(seconds: 12));
+      var current = uri;
+      HttpClientResponse? response;
+      for (var redirects = 0; redirects <= 5; redirects++) {
+        if (!_isOfficialUrl(current)) throw const FormatException('Untrusted calendar URL');
+        final request = await client.getUrl(current).timeout(const Duration(seconds: 8));
+        request.followRedirects = false;
+        request.headers.set(HttpHeaders.userAgentHeader, 'MoreBetterGakujo');
+        response = await request.close().timeout(const Duration(seconds: 12));
+        if (!response.isRedirect) break;
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        if (location == null || redirects == 5) throw const FormatException('Invalid calendar redirect');
+        current = current.resolve(location);
+      }
+      if (response == null) throw const FormatException('No calendar response');
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException(
           'Unexpected status ${response.statusCode}',
           uri: uri,
         );
       }
-      final chunks = <int>[];
-      await for (final chunk in response) {
-        chunks.addAll(chunk);
+      if (response.contentLength > maxResponseBytes) throw const FormatException('Calendar response too large');
+      final chunks = BytesBuilder(copy: false);
+      final timer = Stopwatch()..start();
+      await for (final chunk in response.timeout(const Duration(seconds: 12))) {
+        if (timer.elapsed > const Duration(seconds: 30) || chunks.length + chunk.length > maxResponseBytes) {
+          throw const FormatException('Calendar response exceeds limits');
+        }
+        chunks.add(chunk);
       }
-      return Uint8List.fromList(chunks);
+      return chunks.takeBytes();
     } finally {
       client.close(force: true);
     }
@@ -231,6 +253,9 @@ class GakujoAcademicCalendarPdfParser {
   }
 
   static GakujoPdfText extractText(Uint8List bytes) {
+    if (bytes.length > GakujoAcademicCalendarResolver.maxResponseBytes) {
+      throw const FormatException('Calendar PDF exceeds size limit');
+    }
     final streams = _decodedStreams(bytes);
     final cmap = _parseToUnicodeMap(streams);
     final lines = <String>[];
@@ -241,10 +266,13 @@ class GakujoAcademicCalendarPdfParser {
       }
       lines.addAll(textLinesFromContentStream(text, cmap));
     }
-    final raw = bytes.toList() + streams.expand((stream) => stream).toList();
+    final raw = BytesBuilder(copy: false)..add(bytes);
+    for (final stream in streams) {
+      raw.add(stream);
+    }
     return GakujoPdfText(
       text: lines.join('\n'),
-      actualTexts: _actualTexts(Uint8List.fromList(raw)),
+      actualTexts: _actualTexts(raw.takeBytes()),
     );
   }
 
@@ -265,6 +293,9 @@ class GakujoAcademicCalendarPdfParser {
     var leading = 0.0;
     final operands = <Object>[];
     List<Object>? array;
+    const maxContentTokens = 250000;
+    const maxPendingOperands = 4096;
+    var tokenCount = 0;
 
     void breakLine() {
       if (current.isNotEmpty) {
@@ -372,8 +403,14 @@ class GakujoAcademicCalendarPdfParser {
     void push(Object value) {
       final open = array;
       if (open != null) {
+        if (open.length >= maxPendingOperands) {
+          throw const FormatException('Calendar PDF operand limit exceeded');
+        }
         open.add(value);
       } else {
+        if (operands.length >= maxPendingOperands) {
+          throw const FormatException('Calendar PDF operand limit exceeded');
+        }
         operands.add(value);
       }
     }
@@ -383,6 +420,9 @@ class GakujoAcademicCalendarPdfParser {
       if (isWhitespace(code)) {
         index += 1;
         continue;
+      }
+      if (++tokenCount > maxContentTokens) {
+        throw const FormatException('Calendar PDF token limit exceeded');
       }
       switch (content[index]) {
         case '%':
@@ -413,7 +453,7 @@ class GakujoAcademicCalendarPdfParser {
           final closed = array;
           array = null;
           if (closed != null) {
-            operands.add(closed);
+            push(closed);
           }
           index += 1;
         case '{':
@@ -689,27 +729,42 @@ class GakujoAcademicCalendarPdfParser {
 
   static List<Uint8List> _decodedStreams(Uint8List bytes) {
     final streams = <Uint8List>[];
+    var totalBytes = 0;
+    var scannedStreams = 0;
     final pattern = RegExp(r'stream\r?\n');
     final source = latin1.decode(bytes, allowInvalid: true);
     for (final match in pattern.allMatches(source)) {
+      if (++scannedStreams > 1000) throw const _PdfLimitException();
       final start = match.end;
       final end = source.indexOf('endstream', start);
       if (end < 0) {
         continue;
       }
-      final headerStart = source.lastIndexOf('obj', match.start);
-      final header = source.substring(
-        headerStart < 0 ? 0 : headerStart,
-        match.start,
-      );
+      final headerLimit = match.start > 8192 ? match.start - 8192 : 0;
+      final headerSlice = source.substring(headerLimit, match.start);
+      final headerStart = headerSlice.lastIndexOf('obj');
+      final header = headerStart < 0 ? headerSlice : headerSlice.substring(headerStart);
       final raw = bytes.sublist(start, end);
       final trimmed = _trimLineBreaks(raw);
       if (!header.contains('/FlateDecode')) {
+        totalBytes += trimmed.length;
+        if (totalBytes > _maxDecodedPdfBytes) throw const _PdfLimitException();
         streams.add(trimmed);
         continue;
       }
       try {
-        streams.add(Uint8List.fromList(zlib.decode(trimmed)));
+        final sink = _BoundedPdfSink(_maxDecodedPdfBytes - totalBytes);
+        final decoder = zlib.decoder.startChunkedConversion(sink);
+        for (var offset = 0; offset < trimmed.length; offset += 4096) {
+          final end = offset + 4096 < trimmed.length ? offset + 4096 : trimmed.length;
+          decoder.add(trimmed.sublist(offset, end));
+        }
+        decoder.close();
+        final decoded = sink.bytes.takeBytes();
+        totalBytes += decoded.length;
+        streams.add(decoded);
+      } on _PdfLimitException {
+        rethrow;
       } on Object {
         // Ignore malformed compressed streams.
       }
@@ -734,6 +789,9 @@ class GakujoAcademicCalendarPdfParser {
           final from = int.tryParse(pair.group(1) ?? '', radix: 16);
           final to = int.tryParse(pair.group(2) ?? '', radix: 16);
           if (from != null && to != null) {
+            if (from > 65535 || to > 0x10ffff || map.length >= 65536) {
+              throw const _PdfLimitException();
+            }
             map[from] = String.fromCharCode(to);
           }
         }
@@ -750,6 +808,10 @@ class GakujoAcademicCalendarPdfParser {
           final target = int.tryParse(range.group(3) ?? '', radix: 16);
           if (from == null || to == null || target == null) {
             continue;
+          }
+          if (to < from || to - from > 65535 || map.length + to - from + 1 > 65536 ||
+              target + to - from > 0x10ffff) {
+            throw const _PdfLimitException();
           }
           for (var code = from; code <= to; code += 1) {
             map[code] = String.fromCharCode(target + code - from);
@@ -827,6 +889,27 @@ class _PdfStringToken {
     }
     return printable(bytes) ? String.fromCharCodes(bytes) : '';
   }
+}
+
+const _maxDecodedPdfBytes = 64 * 1024 * 1024;
+
+class _PdfLimitException extends FormatException {
+  const _PdfLimitException() : super('Calendar PDF exceeds processing limits');
+}
+
+class _BoundedPdfSink extends ByteConversionSink {
+  _BoundedPdfSink(this.limit);
+  final int limit;
+  final bytes = BytesBuilder(copy: false);
+
+  @override
+  void add(List<int> chunk) {
+    if (bytes.length + chunk.length > limit) throw const _PdfLimitException();
+    bytes.add(chunk);
+  }
+
+  @override
+  void close() {}
 }
 
 class GakujoPdfText {

@@ -24,14 +24,39 @@ env:
   RELEASE_NOTES: "iOS/iPadOS self-signed build. See the GitHub release notes for details."
 
 jobs:
+  verify_release:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.verify.outputs.commit }}
+    steps:
+      - name: Checkout main and tags
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release tag is part of main
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo '::error::Invalid release tag.'
+            exit 1
+          fi
+          commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "$commit" origin/main
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+
   android:
+    needs: [verify_release]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.verify_release.outputs.commit }}
 
       - name: Set up Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -43,6 +68,7 @@ jobs:
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.8'
           cache: false
 
       - name: Install Flutter dependencies
@@ -98,18 +124,20 @@ jobs:
           if-no-files-found: error
 
   ios:
+    needs: [verify_release]
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.verify_release.outputs.commit }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.8'
           cache: false
 
       - name: Select Xcode
@@ -131,18 +159,20 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: [verify_release]
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.verify_release.outputs.commit }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.8'
           cache: false
 
       - name: Select Xcode
@@ -185,18 +215,20 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: [verify_release]
     runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.verify_release.outputs.commit }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.8'
           cache: false
 
       - name: Install Flutter dependencies
@@ -257,7 +289,7 @@ jobs:
   publish:
     permissions:
       contents: write
-    needs: [android, ios, macos, windows]
+    needs: [verify_release, android, ios, macos, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -308,6 +340,8 @@ jobs:
       - name: Regenerate SideStore/AltStore source
         if: ${{ !contains(env.RELEASE_TAG, '-') }}
         working-directory: repository
+        env:
+          RELEASE_COMMIT: ${{ needs.verify_release.outputs.commit }}
         run: |
           set -euo pipefail
           ipa_path="$(find ../artifacts/ios-ipa -type f -name '*.ipa' -print -quit)"
@@ -317,7 +351,7 @@ jobs:
           fi
 
           release_pubspec_version="$(
-            git show "${RELEASE_TAG}:pubspec.yaml" |
+            git show "${RELEASE_COMMIT}:pubspec.yaml" |
               awk '/^version:/ { print $2; exit }'
           )"
           if [ -z "$release_pubspec_version" ]; then
@@ -325,14 +359,11 @@ jobs:
             exit 1
           fi
 
-          generator_path="${RUNNER_TEMP}/generate_altstore_source.sh"
-          git show "${RELEASE_TAG}:scripts/generate_altstore_source.sh" > "$generator_path"
-
           PUBSPEC_VERSION="$release_pubspec_version" \
           RELEASE_TAG="${RELEASE_TAG}" \
           RELEASE_DATE="$(date +%Y-%m-%d)" \
           RELEASE_NOTES="${RELEASE_NOTES}" \
-          bash "$generator_path" "$ipa_path"
+          bash scripts/generate_altstore_source.sh "$ipa_path"
 
       - name: Commit AltStore source update to main
         if: ${{ !contains(env.RELEASE_TAG, '-') }}

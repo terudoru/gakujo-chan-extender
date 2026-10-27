@@ -25,6 +25,37 @@ class TwoFactorAutofillScript {
     bool autoSubmit = true,
     bool debugLogging = false,
   }) {
+    return _build(
+      token: token,
+      secret: secret,
+      maxAttempts: maxAttempts,
+      intervalMillis: intervalMillis,
+      autoSubmit: autoSubmit,
+      debugLogging: debugLogging,
+      debugFixture: false,
+    );
+  }
+
+  /// The local Android QA page receives only a public synthetic value.
+  static String buildDebugFixture() => _build(
+        token: '123456',
+        secret: null,
+        maxAttempts: 20,
+        intervalMillis: 250,
+        autoSubmit: true,
+        debugLogging: true,
+        debugFixture: true,
+      );
+
+  static String _build({
+    required String token,
+    required String? secret,
+    required int maxAttempts,
+    required int intervalMillis,
+    required bool autoSubmit,
+    required bool debugLogging,
+    required bool debugFixture,
+  }) {
     if (maxAttempts <= 0) {
       throw ArgumentError.value(maxAttempts, 'maxAttempts', 'must be positive');
     }
@@ -43,11 +74,15 @@ class TwoFactorAutofillScript {
           : sha256.convert(utf8.encode(secret)).toString(),
     );
     final autoSubmitLiteral = autoSubmit ? 'true' : 'false';
+    final originGuard = debugFixture
+        ? "location.href !== 'file:///android_asset/qa/two_factor.html'"
+        : "location.protocol !== 'https:' || "
+            "location.hostname !== 'gakujo.iess.niigata-u.ac.jp' || "
+            "(location.port && location.port !== '443')";
 
     return '''
 (function() {
-  if (location.protocol !== 'https:' ||
-      location.hostname !== 'gakujo.iess.niigata-u.ac.jp') {
+  if ($originGuard) {
     return;
   }
   var assistVersion = 3;
@@ -246,6 +281,28 @@ class TwoFactorAutofillScript {
     return labeled || explicit || null;
   }
 
+  function hasSafeSubmitDestination(input, control) {
+    try {
+      var doc = input.ownerDocument;
+      var form = input.form || input.closest('form');
+      if (!doc || !form || !doc.location || !doc.location.href) return false;
+      var documentUrl = new URL(doc.location.href);
+      if (documentUrl.origin !== location.origin) return false;
+      var base = doc.baseURI || documentUrl.href;
+      var action = form.getAttribute('action');
+      var destination = action ? new URL(action, base) : documentUrl;
+      if (destination.origin !== location.origin || destination.username || destination.password) return false;
+      if (control && control.hasAttribute('formaction')) {
+        var override = control.getAttribute('formaction');
+        destination = override ? new URL(override, base) : documentUrl;
+        if (destination.origin !== location.origin || destination.username || destination.password) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function submitFrom(input) {
     if (window.__MBG_2FA_AUTOFILL_DISABLED) {
       return false;
@@ -256,6 +313,10 @@ class TwoFactorAutofillScript {
     }
 
     var control = findSubmitControl(input);
+    if (!hasSafeSubmitDestination(input, control)) {
+      reportProgress('submit-blocked', 'unsafe-destination');
+      return false;
+    }
     if (control) {
       markAutoSubmitAttempted();
       reportProgress('submit', 'click ' + (control.tagName || '') + '/' +
@@ -322,6 +383,10 @@ class TwoFactorAutofillScript {
       return false;
     }
 
+    if (!hasSafeSubmitDestination(input, findSubmitControl(input))) {
+      reportProgress('submit-blocked', 'unsafe-destination');
+      return false;
+    }
     input.type = 'text';
     input.value = token;
     input.dispatchEvent(new Event('input', { bubbles: true }));

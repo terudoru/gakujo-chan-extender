@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
@@ -348,8 +349,7 @@ Future<List<String>> pickAndroidUploadFiles(
     final files = allowsMultiple
         ? await openFiles(acceptedTypeGroups: typeGroups)
         : [
-            if (await openFile(acceptedTypeGroups: typeGroups) case final file?)
-              file,
+            ?await openFile(acceptedTypeGroups: typeGroups),
           ];
     return [
       for (final file in files)
@@ -606,10 +606,68 @@ List<XTypeGroup> androidUploadTypeGroups(List<String> acceptTypes) {
   ];
 }
 
+/// A channel exposed by Android's JavaScript interface is visible in every
+/// frame. Authenticate messages with a capability held only by the top-frame
+/// wrapper instead of trusting the current top-level URL as the sender.
+@visibleForTesting
+class GakujoJavaScriptChannelGuard {
+  GakujoJavaScriptChannelGuard({String? token}) : _token = token ?? _newToken();
+
+  final Map<String, String> _names = {};
+  String _token;
+
+  static String _newToken() {
+    final random = Random.secure();
+    return base64Url.encode(List<int>.generate(32, (_) => random.nextInt(256)));
+  }
+
+  String register(String name) => _names.putIfAbsent(
+        name,
+        () => 'MbgNative${_newToken().replaceAll(RegExp(r'[^A-Za-z0-9]'), '')}',
+      );
+
+  void rotate() => _token = _newToken();
+
+  String? unwrap(String raw) {
+    try {
+      final value = jsonDecode(raw);
+      if (value is List && value.length == 2 && value[0] == _token && value[1] is String) {
+        return value[1] as String;
+      }
+    } on FormatException {
+      // Treat malformed or unauthenticated frames as untrusted.
+    }
+    return null;
+  }
+
+  String installScript() {
+    final mappings = jsonEncode(_names);
+    final capability = jsonEncode(_token);
+    return '''
+(function() {
+  if (window !== window.top) return;
+  const mappings = $mappings;
+  const capability = $capability;
+  Object.keys(mappings).forEach(function(name) {
+    const nativeChannel = window[mappings[name]];
+    if (!nativeChannel || !nativeChannel.postMessage) return;
+    Object.defineProperty(window, name, {
+      configurable: true,
+      value: Object.freeze({postMessage: function(message) {
+        nativeChannel.postMessage(JSON.stringify([capability, String(message)]));
+      }})
+    });
+  });
+})();
+''';
+  }
+}
+
 class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   WebViewFlutterGakujoWebViewController(this._inner);
 
   final WebViewController _inner;
+  final GakujoJavaScriptChannelGuard _channelGuard = GakujoJavaScriptChannelGuard();
   final Stopwatch _contentProcessRecoveryClock = Stopwatch()..start();
   final List<Duration> _contentProcessRecoveries = [];
 
@@ -623,11 +681,14 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     String name, {
     required FutureOr<void> Function(String message) onMessageReceived,
   }) async {
+    final nativeName = _channelGuard.register(name);
     await _inner.addJavaScriptChannel(
-      name,
+      nativeName,
       onMessageReceived: (message) {
+        final verified = _channelGuard.unwrap(message.message);
+        if (verified == null) return;
         unawaited(
-          Future.sync(() => onMessageReceived(message.message)).catchError(
+          Future.sync(() => onMessageReceived(verified)).catchError(
             (Object error, StackTrace stackTrace) {
               developer.log(
                 'WebView JavaScript channel handler failed',
@@ -656,12 +717,23 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
               : NavigationDecision.navigate;
         },
         onPageStarted: (url) {
+          _channelGuard.rotate();
           mainFrameConnectivityFailed = false;
           delegate.onPageStarted?.call(url);
         },
         onPageFinished: (url) async {
           // Error documents also finish loading; keep offline recovery active.
           if (!mainFrameConnectivityFailed) {
+            if (AllowedWebOrigins.canLoad(url, debugAllowed: kDebugMode)) {
+              try {
+                if (await _inner.currentUrl() == url) {
+                  await _inner.runJavaScript(_channelGuard.installScript());
+                }
+              } on Object catch (error, stackTrace) {
+                developer.log('Could not install authenticated WebView channels',
+                    name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+              }
+            }
             await delegate.onPageFinished?.call(url);
           }
         },
@@ -1123,8 +1195,8 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
 class WindowsGakujoWebViewController implements GakujoWebViewController {
   WindowsGakujoWebViewController(
     this._inner, {
-    Duration Function()? recoveryElapsed,
-  }) : _recoveryElapsed = recoveryElapsed {
+    this._recoveryElapsed,
+  }) {
     _ready = _inner.initialize();
     // Without this the page would show "preparing" forever when WebView2 is
     // missing or fails to start.

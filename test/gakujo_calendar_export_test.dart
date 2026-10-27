@@ -926,6 +926,19 @@ void main() {
     expect(ics, contains(r'X-WR-CALNAME:大学\, 第2ターム'));
   });
 
+  test('calendar names cannot inject properties with carriage returns', () {
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: const [],
+      rangeStart: DateTime(2026, 6, 29),
+      rangeEnd: DateTime(2026, 6, 29),
+      calendarName: 'Safe\rX-WR-CALNAME:Injected\r\nEND:VCALENDAR',
+      generatedAt: DateTime.utc(2026, 6, 29),
+    );
+    expect(ics, contains(r'X-WR-CALNAME:Safe\nX-WR-CALNAME:Injected\nEND:VCALENDAR'));
+    expect(ics.replaceAll('\r\n', ''), isNot(contains('\r')));
+    expect(ics.split('\r\n').where((line) => line == 'END:VCALENDAR').length, 1);
+  });
+
   test('buildIcs folds long lines without splitting surrogate pairs', () {
     // A long title with emoji scattered across UTF-8 fold boundaries: each
     // emoji is a UTF-16 surrogate pair that must never be split by folding.

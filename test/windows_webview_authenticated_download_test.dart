@@ -8,6 +8,37 @@ import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_downl
 import 'package:test/test.dart';
 
 void main() {
+  test('does not expose captured form values to a navigated external page',
+      () async {
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'POST',
+      fileName: 'attachment.pdf',
+      courseName: '',
+      formFields: {'session': 'synthetic-only'},
+    );
+    final result = await Process.run('node', [
+      '-e',
+      r'''
+const vm = require('node:vm');
+let called = false;
+const location = new URL('https://docs.google.com/document');
+const context = {
+  window: { location }, location,
+  URL,
+  fetch() { called = true; throw new Error('unexpected fetch'); }
+};
+const result = vm.runInNewContext(process.argv[1], context);
+if (result !== false || called || context.window.__MBG_AUTHENTICATED_DOWNLOAD_RESULTS) process.exit(1);
+''',
+      WindowsWebViewAuthenticatedDownloadScript.start(
+        requestId: 'foreign',
+        request: request,
+      ),
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+  });
+
   test('an HTML timeout redirect is rejected by Dart and Windows JavaScript',
       () async {
     const id = 'expired-session';
@@ -299,6 +330,7 @@ void main() {
     expect(behavior['requestedUrl'], request.url);
     expect(behavior['requestMethod'], 'GET');
     expect(behavior['credentials'], 'include');
+    expect(behavior['redirect'], 'error');
     expect(behavior['state'], 'done');
     expect(behavior['status'], 200);
     expect(behavior['bodyBase64'], 'AQID');
@@ -318,12 +350,11 @@ const cleanupScript = process.argv[3];
   let requestedUrl = '';
   let requestOptions = null;
   const window = {
-    location: {
-      href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do'
-    }
+    location: new URL('https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do')
   };
   const context = vm.createContext({
     window,
+    location: window.location,
     URL,
     URLSearchParams,
     Uint8Array,
@@ -384,6 +415,7 @@ const cleanupScript = process.argv[3];
     requestedUrl,
     requestMethod: requestOptions && requestOptions.method,
     credentials: requestOptions && requestOptions.credentials,
+    redirect: requestOptions && requestOptions.redirect,
     state: polled && polled.state,
     code: polled && polled.code,
     message: polled && polled.message,
@@ -401,8 +433,9 @@ const vm = require('node:vm');
 (async function() {
   const [start, poll, cleanup] = process.argv.slice(1);
   const pending = [];
+  const location = new URL('https://gakujo.iess.niigata-u.ac.jp/');
   const context = vm.createContext({
-    window: { location: { href: 'https://gakujo.iess.niigata-u.ac.jp/' } },
+    window: { location }, location,
     URL, URLSearchParams, Uint8Array, AbortController,
     fetch(url, options) {
       return new Promise(resolve => pending.push({ url, options, resolve }));
@@ -437,8 +470,9 @@ const vm = require('node:vm');
     for (let i=0;i<size;i++) bytes[i] = (offset + i) % 251;
     return bytes;
   }
+  const location = new URL('https://gakujo.iess.niigata-u.ac.jp/');
   const context = vm.createContext({
-    window: {location: {href: 'https://gakujo.iess.niigata-u.ac.jp/'}},
+    window: {location}, location,
     URL, URLSearchParams, Uint8Array, AbortController,
     fetch: async url => ({url, status: 200, ok: true, headers: {get: () => ''},
       arrayBuffer: async () => { sourceOffset=length; return makeBytes(length, 0).buffer; },

@@ -26,24 +26,21 @@ typedef AuthenticatedDownloadBytesLoader = Future<AuthenticatedDownloadedFile>
 
 class AuthenticatedDownloadedFile {
   const AuthenticatedDownloadedFile({
-    required Uint8List bytes,
+    required Uint8List this._bytes,
     required this.finalUrl,
     this.mimeType,
     this.contentDispositionFileName,
-  })  : _bytes = bytes,
-        _file = null,
+  })  : _file = null,
         _cleanup = null;
 
   /// Transfers ownership of a completed temporary file to the save operation.
   const AuthenticatedDownloadedFile.fromFile({
-    required File file,
-    required Future<void> Function() cleanup,
+    required File this._file,
+    required Future<void> Function() this._cleanup,
     required this.finalUrl,
     this.mimeType,
     this.contentDispositionFileName,
-  })  : _file = file,
-        _cleanup = cleanup,
-        _bytes = null;
+  })  : _bytes = null;
 
   final Uint8List? _bytes;
   final File? _file;
@@ -99,14 +96,12 @@ class AuthenticatedDownloadedFile {
 class FileSystemGakujoDownloadService extends GakujoDownloadService {
   FileSystemGakujoDownloadService({
     FlutterSecureStorage? secureStorage,
-    AuthenticatedDownloadBytesLoader? authenticatedBytesLoader,
+    this._authenticatedBytesLoader,
     HttpClient Function()? httpClientFactory,
-    @visibleForTesting Duration requestTimeout = const Duration(seconds: 30),
+    @visibleForTesting this._requestTimeout = const Duration(seconds: 30),
     @visibleForTesting bool? usesNativeDownloadRoot,
   })  : _secureStorage = secureStorage ?? SecureStorageFactory.create(),
-        _authenticatedBytesLoader = authenticatedBytesLoader,
         _httpClientFactory = httpClientFactory ?? HttpClient.new,
-        _requestTimeout = requestTimeout,
         _usesNativeDownloadRootOverride = usesNativeDownloadRoot;
 
   static const _downloadRootPathKey = 'more_better_gakujo_download_root_path';
@@ -369,7 +364,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     final next = _pendingConfiguredFolderSave.then((_) => operation());
     _pendingConfiguredFolderSave = next.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace _) {},
     );
     return next;
   }
@@ -482,16 +477,33 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           );
         }
 
-        final builder = BytesBuilder(copy: false);
-        await for (final chunk in response.timeout(
-          const Duration(seconds: 60),
-        )) {
-          builder.add(chunk);
+        if (response.contentLength > maxGakujoDownloadBytes) {
+          throw PlatformException(code: 'download_too_large', message: 'ダウンロードが大きすぎます');
+        }
+        final directory = await Directory.systemTemp.createTemp('mbg_download_');
+        final file = File('${directory.path}${Platform.pathSeparator}download');
+        final sink = file.openWrite();
+        var received = 0;
+        try {
+          await for (final chunk in response.timeout(const Duration(seconds: 60))) {
+            received += chunk.length;
+            if (received > maxGakujoDownloadBytes) {
+              throw PlatformException(code: 'download_too_large', message: 'ダウンロードが大きすぎます');
+            }
+            sink.add(chunk);
+            await sink.flush();
+          }
+          await sink.close();
+        } on Object {
+          await sink.close();
+          await directory.delete(recursive: true);
+          rethrow;
         }
         final disposition =
             response.headers.value(HttpHeaders.contentDisposition);
-        return AuthenticatedDownloadedFile(
-          bytes: builder.takeBytes(),
+        return AuthenticatedDownloadedFile.fromFile(
+          file: file,
+          cleanup: () => directory.delete(recursive: true),
           finalUrl: finalUrl,
           mimeType: response.headers.contentType?.mimeType,
           contentDispositionFileName:

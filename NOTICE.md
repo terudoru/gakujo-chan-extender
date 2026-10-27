@@ -28,4 +28,10 @@ Android WebView向けに実装したものです。
   `LICENSE` を参照してください。
 - `assets/js/upload_compression/`: 添付ファイル圧縮に使う pdf.js 3.11.174
   （Apache-2.0、Mozilla）、pdf-lib 1.17.1（MIT）、JSZip 3.10.1（MIT）。
-  ライセンスは同ディレクトリの `LICENSE.*` を参照してください。
+  qpdf 12.4.2 の WebAssembly 版（Apache-2.0、Emscripten 4.0.14 でビルド）は
+  zlib 1.3.1 と IJG libjpeg 9f を含みます。This software is based in part on the work
+  of the Independent JPEG Group.
+  pdf.js の動的な字形評価を無効化し、worker の注釈、フォント対応表、
+  シェーディング解析に処理量の上限と診断転送を追加しています。
+  IJG 9f の README は `LICENSE.libjpeg-9f`、その他のライセンスは
+  同ディレクトリの `LICENSE.*` を参照してください。

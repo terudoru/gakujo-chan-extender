@@ -101,7 +101,10 @@ Future<void> restoreGakujoBackup({
       await historyStore.replaceHistory(downloadHistory);
     }
     if (failedDownloads != null) {
-      await historyStore.replaceFailedDownloads(failedDownloads);
+      await historyStore.replaceFailedDownloads([
+        for (final entry in failedDownloads)
+          GakujoFailedDownloadEntry.fromExternalJson(entry.toJson()),
+      ]);
     }
     if (favorites != null) {
       await activityStore.replaceFavorites(favorites);

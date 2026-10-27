@@ -5,10 +5,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class BundledSecureStorage extends FlutterSecureStorage {
   BundledSecureStorage({
-    required FlutterSecureStorage storage,
-    required String bundleKey,
-  })  : _storage = storage,
-        _bundleKey = bundleKey;
+    required this._storage,
+    required this._bundleKey,
+  });
 
   final FlutterSecureStorage _storage;
   final String _bundleKey;

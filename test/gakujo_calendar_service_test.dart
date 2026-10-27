@@ -8,6 +8,20 @@ void main() {
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('event builder rejects invalid or excessively long ranges', () {
+    for (final range in [
+      (DateTime(2026, 1, 2), DateTime(2026, 1, 1)),
+      (DateTime(2026), DateTime(2030)),
+    ]) {
+      expect(
+        () => GakujoCalendarEventBuilder.buildEvents(
+          courses: const [], rangeStart: range.$1, rangeEnd: range.$2,
+        ),
+        throwsFormatException,
+      );
+    }
+  });
+
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);

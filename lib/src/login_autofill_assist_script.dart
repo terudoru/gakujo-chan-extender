@@ -43,9 +43,8 @@ class LoginAutofillAssistScript {
     final channelName = jsonEncode(LoginAutofillAssistScript.channelName);
     return '''
 (function() {
-  var allowedLoginOrigins = ['https://gakujo.iess.niigata-u.ac.jp'];
   if (location.protocol !== 'https:' ||
-      allowedLoginOrigins.indexOf(location.origin) === -1) {
+      location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') {
     return;
   }
   var assistVersion = 9;
@@ -499,7 +498,7 @@ class LoginAutofillAssistScript {
         var effectiveAction = new URL(actions[i], target.doc.baseURI || target.doc.URL);
         if (action.protocol !== 'https:' || action.origin !== location.origin ||
             effectiveAction.origin !== location.origin ||
-            allowedLoginOrigins.indexOf(action.origin) === -1) {
+            action.origin !== 'https://gakujo.iess.niigata-u.ac.jp') {
           return false;
         }
       }

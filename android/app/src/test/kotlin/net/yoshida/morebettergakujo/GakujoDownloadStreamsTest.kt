@@ -123,6 +123,41 @@ class GakujoDownloadStreamsTest {
     }
 
     @Test
+    fun enforcesLimitOnActualBytesAndCleansFailedDestination() {
+        var cleaned = false
+        val output = ByteArrayOutputStream()
+        assertThrows(IOException::class.java) {
+            GakujoDownloadStreams.copy(
+                { ByteArrayInputStream(byteArrayOf(1, 2, 3, 4, 5)) },
+                { output },
+                { cleaned = true },
+                maxBytes = 4
+            )
+        }
+        assertTrue(cleaned)
+        assertTrue(output.size() <= 4)
+        val exact = ByteArrayOutputStream()
+        GakujoDownloadStreams.copy(
+            { ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)) },
+            { exact },
+            maxBytes = 4
+        )
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), exact.toByteArray())
+    }
+
+    @Test
+    fun zeroLengthReadsDoNotSpinForever() {
+        val input = object : InputStream() {
+            private var next = 0
+            override fun read(buffer: ByteArray, offset: Int, length: Int) = 0
+            override fun read(): Int = if (next++ == 0) 42 else -1
+        }
+        val output = ByteArrayOutputStream()
+        GakujoDownloadStreams.copy({ input }, { output }, maxBytes = 1)
+        assertArrayEquals(byteArrayOf(42), output.toByteArray())
+    }
+
+    @Test
     fun closesInputWhenDestinationCannotBeOpened() {
         var inputClosed = false
         val input = object : ByteArrayInputStream(byteArrayOf(1)) {

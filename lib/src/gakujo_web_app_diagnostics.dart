@@ -119,8 +119,8 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
       'cachedReportListCount': reportLists.length,
     };
     if (includeStoredData) {
-      payload['currentUrl'] = _displayUrl(_currentPageUrl);
-      payload['lastAllowedUrl'] = _displayUrl(_lastAllowedPageUrl);
+      payload['currentUrl'] = sanitizeGakujoExternalUrl(_currentPageUrl ?? '');
+      payload['lastAllowedUrl'] = sanitizeGakujoExternalUrl(_lastAllowedPageUrl ?? '');
       payload['backup'] = redactGakujoDiagnosticBackup(await _backupPayload());
       payload['failedDownloads'] =
           (await _downloadHistoryStore.loadFailedDownloads())

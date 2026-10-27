@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_download_request.dart';
@@ -52,12 +53,14 @@ class GakujoFailedDownloadEntry {
     required this.request,
     required this.failedAt,
     required this.errorMessage,
+    this.canRetry = true,
   });
 
   final String id;
   final GakujoDownloadRequest request;
   final DateTime failedAt;
   final String errorMessage;
+  final bool canRetry;
 
   Map<String, Object?> toJson() {
     return {
@@ -65,16 +68,18 @@ class GakujoFailedDownloadEntry {
       'request': request.toJson(),
       'failedAt': failedAt.toIso8601String(),
       'errorMessage': errorMessage,
+      'canRetry': canRetry,
     };
   }
 
   /// Serializes for external output without the request's POST form fields.
   Map<String, Object?> toExternalJson() {
     return {
-      'id': id,
+      'id': sha256.convert(utf8.encode(id)).toString(),
       'request': request.toExternalJson(),
       'failedAt': failedAt.toIso8601String(),
-      'errorMessage': errorMessage,
+      'errorMessage': '詳細は元の端末で確認してください',
+      'canRetry': false,
     };
   }
 
@@ -94,6 +99,24 @@ class GakujoFailedDownloadEntry {
       failedAt: DateTime.tryParse(json['failedAt']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       errorMessage: json['errorMessage']?.toString() ?? '',
+      canRetry: json['canRetry'] != false,
+    );
+  }
+
+  factory GakujoFailedDownloadEntry.fromExternalJson(Map<dynamic, dynamic> json) {
+    final entry = GakujoFailedDownloadEntry.fromJson(json);
+    return GakujoFailedDownloadEntry(
+      id: entry.id,
+      request: GakujoDownloadRequest(
+        url: entry.request.url,
+        method: entry.request.method,
+        courseName: entry.request.courseName,
+        fileName: entry.request.fileName,
+        formFields: const {},
+      ),
+      failedAt: entry.failedAt,
+      errorMessage: entry.errorMessage,
+      canRetry: false,
     );
   }
 }

@@ -798,7 +798,7 @@ void main() {
     expect(await storage.read(key: 'token'), 'legacy');
     fallback.deleteError = StateError('legacy key delete failed');
 
-    await storage.delete(key: 'token');
+    await expectLater(storage.delete(key: 'token'), throwsA(isA<StateError>()));
 
     expect(primary.values, {markerKey: '1'});
     expect(fallback.values, {'token': 'legacy'});
@@ -808,6 +808,9 @@ void main() {
       migrationMarkerKey: markerKey,
     );
     expect(await restartedStorage.read(key: 'token'), isNull);
+    fallback.deleteError = null;
+    await restartedStorage.delete(key: 'token');
+    expect(fallback.values, isEmpty);
   });
 }
 

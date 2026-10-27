@@ -665,7 +665,7 @@ class GakujoCalendarExport {
     }
     return [
       for (final change in changes.whereType<Map<dynamic, dynamic>>())
-        if (GakujoClassChange.fromJson(change) case final parsed?) parsed,
+        ?GakujoClassChange.fromJson(change),
     ];
   }
 
@@ -4267,6 +4267,8 @@ class GakujoCalendarExport {
 
   static String _escape(String text) {
     return text
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
         .replaceAll(r'\', r'\\')
         .replaceAll('\n', r'\n')
         .replaceAll(';', r'\;')

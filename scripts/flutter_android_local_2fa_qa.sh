@@ -6,7 +6,6 @@ PACKAGE_NAME="net.yoshida.morebettergakujo"
 APK_PATH="$ROOT_DIR/build/app/outputs/flutter-apk/app-debug.apk"
 ARTIFACT_DIR="$ROOT_DIR/build/qa"
 ADB_BIN="${ADB:-adb}"
-TEST_SECRET="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 DEBUG_URL="file:///android_asset/qa/two_factor.html"
 
 find_executable() {
@@ -62,10 +61,6 @@ EOF
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
-    --secret)
-      TEST_SECRET="${2:?Missing value for --secret}"
-      shift 2
-      ;;
     --serial)
       SERIAL="${2:?Missing value for --serial}"
       shift 2
@@ -80,9 +75,7 @@ done
 resolve_adb
 mkdir -p "$ARTIFACT_DIR"
 
-if [[ ! -f "$APK_PATH" ]]; then
-  (cd "$ROOT_DIR" && flutter build apk --debug)
-fi
+(cd "$ROOT_DIR" && flutter build apk --debug)
 
 if ! command -v "$ADB_BIN" >/dev/null 2>&1 && [[ ! -x "$ADB_BIN" ]]; then
   print_tooling_help
@@ -124,8 +117,7 @@ echo "Using adb serial: $SERIAL"
 "$ADB_BIN" -s "$SERIAL" shell am force-stop "$PACKAGE_NAME" || true
 "$ADB_BIN" -s "$SERIAL" shell am start \
   -n "$PACKAGE_NAME/.MainActivity" \
-  --es net.yoshida.morebettergakujo.DEBUG_URL "$DEBUG_URL" \
-  --es net.yoshida.morebettergakujo.DEBUG_2FA_SECRET "$TEST_SECRET"
+  --es net.yoshida.morebettergakujo.DEBUG_URL "$DEBUG_URL"
 
 sleep 3
 "$ADB_BIN" -s "$SERIAL" exec-out screencap -p > "$ARTIFACT_DIR/${TIMESTAMP}-launch.png"

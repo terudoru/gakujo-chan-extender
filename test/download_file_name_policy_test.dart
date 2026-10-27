@@ -2,6 +2,16 @@ import 'package:morebettergakujo_flutter/src/download_file_name_policy.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('removes bidirectional controls while keeping visible names', () {
+    expect(
+      DownloadFileNamePolicy.safeFileName(preferredName: 'report\u202Efdp.exe'),
+      'reportfdp.exe',
+    );
+    expect(
+      DownloadFileNamePolicy.safeFileName(preferredName: '授業資料.pdf'),
+      '授業資料.pdf',
+    );
+  });
   test(
       'does not keep campussquare.do when a button name is available elsewhere',
       () {

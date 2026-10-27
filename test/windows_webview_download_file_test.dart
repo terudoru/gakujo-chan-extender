@@ -353,6 +353,7 @@ const vm=require('node:vm'), readline=require('node:readline');
 const [start,poll,cleanup]=process.argv.slice(1);
 const length=8*1024*1024+13;
 const context=vm.createContext({
+  location:{origin:'https://gakujo.iess.niigata-u.ac.jp'},
   window:{location:{href:'https://gakujo.iess.niigata-u.ac.jp/'}},
   URL, URLSearchParams, Uint8Array, AbortController,
   fetch:async url=>({url,ok:true,status:200,headers:{get:()=>''},
