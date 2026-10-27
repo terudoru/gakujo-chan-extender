@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
+import 'base32.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
@@ -1946,6 +1947,127 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<bool> _saveLoginCredentialsInput({
+    required String loginId,
+    required String password,
+  }) async {
+    try {
+      final credentials = await saveGakujoLoginCredentials(
+        store: _appSettingsStore,
+        loginId: loginId,
+        password: password,
+      );
+      TextInput.finishAutofillContext(shouldSave: true);
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _startupPlaceholderFeatureFlags.remove(
+          GakujoFeatureFlag.loginAutofill,
+        );
+        _appSettings = _appSettings.copyWith(
+          loginCredentials: credentials,
+          disabledFeatureFlags: {
+            for (final flag in _appSettings.disabledFeatureFlags)
+              if (flag != GakujoFeatureFlag.loginAutofill) flag,
+          },
+        );
+      });
+      await _syncLocalSettingsMirror(_appSettings);
+      if (!mounted) {
+        return false;
+      }
+      _showSnackBar('ログイン情報を保存しました');
+      await _applyFeatureFlagRuntimeState(
+        GakujoFeatureFlag.loginAutofill,
+        enabled: true,
+      );
+      return true;
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to save login credentials',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showSnackBar('ログイン情報を保存できませんでした');
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _saveTwoFactorSecretInput(String secret) async {
+    try {
+      await _secretStore.save(secret);
+      await _appSettingsStore.saveFeatureEnabled(
+        GakujoFeatureFlag.twoFactorAutofill,
+        enabled: true,
+      );
+      if (!mounted) {
+        return false;
+      }
+      setState(() {
+        _startupPlaceholderFeatureFlags.remove(
+          GakujoFeatureFlag.twoFactorAutofill,
+        );
+        _appSettings = _appSettings.copyWith(
+          disabledFeatureFlags: {
+            for (final flag in _appSettings.disabledFeatureFlags)
+              if (flag != GakujoFeatureFlag.twoFactorAutofill) flag,
+          },
+        );
+      });
+      await _syncLocalSettingsMirror(_appSettings);
+      if (!mounted) {
+        return false;
+      }
+      _showSnackBar('2FA秘密鍵を保存しました');
+      await _applyFeatureFlagRuntimeState(
+        GakujoFeatureFlag.twoFactorAutofill,
+        enabled: true,
+      );
+      return true;
+    } on FormatException {
+      if (mounted) {
+        _showSnackBar('長いBase32秘密鍵を確認してください');
+      }
+      return false;
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to save two-factor secret',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showSnackBar('2FA秘密鍵を保存できませんでした');
+      }
+      return false;
+    }
+  }
+
+  Future<void> _prepareSettingsDialogInput() async {
+    setState(() {
+      _isSettingsDialogOpen = true;
+    });
+    FocusManager.instance.primaryFocus?.unfocus();
+    // Removing WKWebView and waiting for that frame prevents its native view
+    // from remaining the macOS keyboard first responder behind the dialog.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+    final firstResponderRestored =
+        await _macosInputFocusService.restoreFlutterFirstResponder();
+    if (!firstResponderRestored) {
+      developer.log(
+        'Failed to restore the Flutter first responder before settings',
+        name: 'MoreBetterGakujo',
+      );
+    }
+  }
+
   Future<void> _showSettingsDialog() async {
     unawaited(_notificationService.checkPermission());
     var secretInput = '';
@@ -1962,25 +2084,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
-    setState(() {
-      _isSettingsDialogOpen = true;
-    });
-    FocusManager.instance.primaryFocus?.unfocus();
     try {
-      // Removing WKWebView and waiting for that frame prevents its native view
-      // from remaining the macOS keyboard first responder behind the dialog.
-      await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) {
-        return;
-      }
-      final firstResponderRestored =
-          await _macosInputFocusService.restoreFlutterFirstResponder();
-      if (!firstResponderRestored) {
-        developer.log(
-          'Failed to restore the Flutter first responder before settings',
-          name: 'MoreBetterGakujo',
-        );
-      }
+      await _prepareSettingsDialogInput();
       if (!mounted) {
         return;
       }
@@ -2077,51 +2182,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                         onSave: () async {
-                          try {
-                            final credentials =
-                                await saveGakujoLoginCredentials(
-                              store: _appSettingsStore,
-                              loginId: loginIdInput,
-                              password: loginPasswordInput,
-                            );
-                            TextInput.finishAutofillContext(shouldSave: true);
-                            if (!mounted) {
-                              return;
-                            }
-                            setState(() {
-                              _startupPlaceholderFeatureFlags.remove(
-                                GakujoFeatureFlag.loginAutofill,
-                              );
-                              _appSettings = _appSettings.copyWith(
-                                loginCredentials: credentials,
-                                disabledFeatureFlags: {
-                                  for (final flag
-                                      in _appSettings.disabledFeatureFlags)
-                                    if (flag != GakujoFeatureFlag.loginAutofill)
-                                      flag,
-                                },
-                              );
-                            });
-                            await _syncLocalSettingsMirror(_appSettings);
-                            if (!dialogContext.mounted) {
-                              return;
-                            }
+                          await _saveLoginCredentialsInput(
+                            loginId: loginIdInput,
+                            password: loginPasswordInput,
+                          );
+                          if (dialogContext.mounted) {
                             setDialogState(() {});
-                            _showSnackBar('ログイン情報を保存しました');
-                            await _applyFeatureFlagRuntimeState(
-                              GakujoFeatureFlag.loginAutofill,
-                              enabled: true,
-                            );
-                          } on Object catch (error, stackTrace) {
-                            developer.log(
-                              'Failed to save login credentials',
-                              name: 'MoreBetterGakujo',
-                              error: error,
-                              stackTrace: stackTrace,
-                            );
-                            if (mounted) {
-                              _showSnackBar('ログイン情報を保存できませんでした');
-                            }
                           }
                         },
                       ),
@@ -2156,49 +2222,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                         onSave: () async {
-                          try {
-                            await _secretStore.save(secretInput);
-                            await _appSettingsStore.saveFeatureEnabled(
-                              GakujoFeatureFlag.twoFactorAutofill,
-                              enabled: true,
-                            );
-                            if (!mounted) {
-                              return;
-                            }
-                            setState(() {
-                              _startupPlaceholderFeatureFlags.remove(
-                                GakujoFeatureFlag.twoFactorAutofill,
-                              );
-                              _appSettings = _appSettings.copyWith(
-                                disabledFeatureFlags: {
-                                  for (final flag
-                                      in _appSettings.disabledFeatureFlags)
-                                    if (flag !=
-                                        GakujoFeatureFlag.twoFactorAutofill)
-                                      flag,
-                                },
-                              );
-                            });
-                            await _syncLocalSettingsMirror(_appSettings);
-                            _showSnackBar('2FA秘密鍵を保存しました');
-                            await _applyFeatureFlagRuntimeState(
-                              GakujoFeatureFlag.twoFactorAutofill,
-                              enabled: true,
-                            );
-                          } on FormatException {
-                            if (mounted) {
-                              _showSnackBar('長いBase32秘密鍵を確認してください');
-                            }
-                          } on Object catch (error, stackTrace) {
-                            developer.log(
-                              'Failed to save two-factor secret',
-                              name: 'MoreBetterGakujo',
-                              error: error,
-                              stackTrace: stackTrace,
-                            );
-                            if (mounted) {
-                              _showSnackBar('2FA秘密鍵を保存できませんでした');
-                            }
+                          await _saveTwoFactorSecretInput(secretInput);
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
                           }
                         },
                       ),
@@ -2532,127 +2558,244 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    var loginIdInput = '';
+    var loginPasswordInput = '';
+    var secretInput = '';
+    var isCompleting = false;
+    final loginIdController = TextEditingController();
+    final loginPasswordController = TextEditingController();
+    final secretController = TextEditingController();
     var selectedDownloadSaveMode = _appSettings.downloadSaveMode;
     var selectedPageMode = _appSettings.pageMode;
     final disabledFeatureFlags = {..._appSettings.disabledFeatureFlags};
     final placeholderFeatureFlags = {..._startupPlaceholderFeatureFlags};
     final changedFeatureFlags = <GakujoFeatureFlag>{};
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            _refreshSetupWizard = () => setDialogState(() {});
-            final wizardSettings = _appSettings.copyWith(
-              downloadSaveMode: selectedDownloadSaveMode,
-              pageMode: selectedPageMode,
-              disabledFeatureFlags: disabledFeatureFlags,
-              setupCompleted: true,
-            );
+    GakujoAppSettings buildWizardSettings() => _appSettings.copyWith(
+          downloadSaveMode: selectedDownloadSaveMode,
+          pageMode: selectedPageMode,
+          disabledFeatureFlags: disabledFeatureFlags,
+          setupCompleted: true,
+        );
 
-            Future<void> complete() async {
-              final settingsToSave = gakujoSettingsForPersistence(
-                wizardSettings,
-                placeholderFeatureFlags: placeholderFeatureFlags,
-                changedFeatureFlags: changedFeatureFlags,
-              );
-              _startupPlaceholderFeatureFlags.removeAll(changedFeatureFlags);
-              Object? saveError;
-              StackTrace? saveStackTrace;
-              try {
-                await Future.wait([
-                  _appSettingsStore.saveDownloadSaveMode(
-                    selectedDownloadSaveMode,
-                  ),
-                  _appSettingsStore.savePageMode(selectedPageMode),
-                  _appSettingsStore.saveDisabledFeatureFlags(
-                    settingsToSave.disabledFeatureFlags,
-                  ),
-                  _appSettingsStore.saveSetupCompleted(true),
-                ]);
-                await _syncLocalSettingsMirror(settingsToSave);
-              } on Object catch (error, stackTrace) {
-                saveError = error;
-                saveStackTrace = stackTrace;
-              }
-              if (!mounted) {
-                return;
-              }
-              // Secure settings may have replaced startup while setup was open.
-              final previousSettings = _appSettings;
-              final nextSettings = gakujoSettingsAfterInitialSetup(
-                currentSettings: previousSettings,
-                wizardSettings: wizardSettings,
-                placeholderFeatureFlags: placeholderFeatureFlags
-                    .difference(_startupPlaceholderFeatureFlags),
-                changedFeatureFlags: changedFeatureFlags,
-              );
-              setState(() {
-                _appSettings = nextSettings;
-              });
-              _scheduleAutoBackup();
-              await _applyChangedRuntimeFeatureFlags(
-                previousSettings,
-                nextSettings,
-              );
-              // Startup may already have booked reminders before setup; turning
-              // notifications off here must cancel them.
-              unawaited(_syncReminders());
-              if (!dialogContext.mounted) {
-                return;
-              }
-              Navigator.of(dialogContext).pop();
-              if (saveError != null) {
-                developer.log(
-                  'Failed to persist initial setup settings',
-                  name: 'MoreBetterGakujo',
-                  error: saveError,
-                  stackTrace: saveStackTrace,
-                );
-                _showSnackBar(
-                  '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
-                );
-              }
-              await _loadAllowedPageUrl(selectedPageMode.startUrl);
-            }
+    try {
+      await _prepareSettingsDialogInput();
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        requestFocus: true,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              _refreshSetupWizard = () => setDialogState(() {});
+              final wizardSettings = buildWizardSettings();
 
-            return AlertDialog(
-              title: const Text('初回セットアップ'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text('ここでの設定は、あとから「設定」画面でいつでも変えられます。'),
-                    const SizedBox(height: 12),
-                    GakujoPageModeSection(
-                      pageMode: selectedPageMode,
-                      onChanged: (mode) {
-                        if (mode == null) {
-                          return;
-                        }
-                        selectedPageMode = mode;
-                        setDialogState(() {});
-                      },
-                    ),
-                    const Divider(height: 32),
-                    DownloadDestinationSection(
-                      rootLabel: _downloadRootLabel(_downloadRoot),
-                      isConfigured: _downloadRoot.isConfigured,
-                      saveMode: selectedDownloadSaveMode,
-                      helperText: _downloadDestinationHelperText,
-                      onSaveModeChanged: (mode) {
-                        if (mode == null) {
-                          return;
-                        }
-                        selectedDownloadSaveMode = mode;
-                        setDialogState(() {});
-                      },
-                      onPick: () async {
-                        try {
+              Future<void> complete() async {
+                if (isCompleting) {
+                  return;
+                }
+                final loginId = loginIdInput.trim();
+                final password = loginPasswordInput;
+                final secret = secretInput;
+                if (loginId.isNotEmpty != password.isNotEmpty) {
+                  _showSnackBar('ログインIDとパスワードを両方入力してください');
+                  return;
+                }
+                if (secret.trim().isNotEmpty &&
+                    !Base32.isValid(Base32.normalize(secret))) {
+                  _showSnackBar('長いBase32秘密鍵を確認してください');
+                  return;
+                }
+                setDialogState(() {
+                  isCompleting = true;
+                });
+                try {
+                  if (loginId.isNotEmpty) {
+                    if (!await _saveLoginCredentialsInput(
+                      loginId: loginId,
+                      password: password,
+                    )) {
+                      return;
+                    }
+                    if (!mounted || !dialogContext.mounted) {
+                      return;
+                    }
+                    disabledFeatureFlags
+                        .remove(GakujoFeatureFlag.loginAutofill);
+                    changedFeatureFlags.add(GakujoFeatureFlag.loginAutofill);
+                  }
+                  if (secret.trim().isNotEmpty) {
+                    if (!await _saveTwoFactorSecretInput(secret)) {
+                      return;
+                    }
+                    if (!mounted || !dialogContext.mounted) {
+                      return;
+                    }
+                    disabledFeatureFlags.remove(
+                      GakujoFeatureFlag.twoFactorAutofill,
+                    );
+                    changedFeatureFlags
+                        .add(GakujoFeatureFlag.twoFactorAutofill);
+                  }
+                  final completedWizardSettings = buildWizardSettings();
+                  final settingsToSave = gakujoSettingsForPersistence(
+                    completedWizardSettings,
+                    placeholderFeatureFlags: placeholderFeatureFlags,
+                    changedFeatureFlags: changedFeatureFlags,
+                  );
+                  _startupPlaceholderFeatureFlags
+                      .removeAll(changedFeatureFlags);
+                  Object? saveError;
+                  StackTrace? saveStackTrace;
+                  try {
+                    await Future.wait([
+                      _appSettingsStore.saveDownloadSaveMode(
+                        selectedDownloadSaveMode,
+                      ),
+                      _appSettingsStore.savePageMode(selectedPageMode),
+                      _appSettingsStore.saveDisabledFeatureFlags(
+                        settingsToSave.disabledFeatureFlags,
+                      ),
+                      _appSettingsStore.saveSetupCompleted(true),
+                    ]);
+                    await _syncLocalSettingsMirror(settingsToSave);
+                  } on Object catch (error, stackTrace) {
+                    saveError = error;
+                    saveStackTrace = stackTrace;
+                  }
+                  if (!mounted) {
+                    return;
+                  }
+                  // Secure settings may have replaced startup while setup was open.
+                  final previousSettings = _appSettings;
+                  final nextSettings = gakujoSettingsAfterInitialSetup(
+                    currentSettings: previousSettings,
+                    wizardSettings: completedWizardSettings,
+                    placeholderFeatureFlags: placeholderFeatureFlags
+                        .difference(_startupPlaceholderFeatureFlags),
+                    changedFeatureFlags: changedFeatureFlags,
+                  );
+                  setState(() {
+                    _appSettings = nextSettings;
+                  });
+                  _scheduleAutoBackup();
+                  await _applyChangedRuntimeFeatureFlags(
+                    previousSettings,
+                    nextSettings,
+                  );
+                  // Startup may already have booked reminders before setup; turning
+                  // notifications off here must cancel them.
+                  unawaited(_syncReminders());
+                  if (!dialogContext.mounted) {
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop();
+                  if (saveError != null) {
+                    developer.log(
+                      'Failed to persist initial setup settings',
+                      name: 'MoreBetterGakujo',
+                      error: saveError,
+                      stackTrace: saveStackTrace,
+                    );
+                    _showSnackBar(
+                      '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
+                    );
+                  }
+                  await _loadAllowedPageUrl(selectedPageMode.startUrl);
+                } finally {
+                  if (dialogContext.mounted) {
+                    setDialogState(() {
+                      isCompleting = false;
+                    });
+                  }
+                }
+              }
+
+              return AlertDialog(
+                title: const Text('初回セットアップ'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('ここでの設定は、あとから「設定」画面でいつでも変えられます。'),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'ログイン情報と2FA秘密鍵は端末内に保存され、自動ログインに使われます。空欄のままでも続けられます。',
+                      ),
+                      const SizedBox(height: 12),
+                      LoginCredentialsSection(
+                        loginIdController: loginIdController,
+                        passwordController: loginPasswordController,
+                        isConfigured: _appSettings.hasLoginCredentials,
+                        canSave: false,
+                        onLoginIdChanged: (value) {
+                          loginIdInput = value;
+                        },
+                        onPasswordChanged: (value) {
+                          loginPasswordInput = value;
+                        },
+                      ),
+                      const Divider(height: 32),
+                      TwoFactorSecretSection(
+                        controller: secretController,
+                        canSave: false,
+                        onChanged: (value) {
+                          secretInput = value;
+                        },
+                      ),
+                      const Divider(height: 32),
+                      GakujoPageModeSection(
+                        pageMode: selectedPageMode,
+                        onChanged: (mode) {
+                          if (mode == null) {
+                            return;
+                          }
+                          selectedPageMode = mode;
+                          setDialogState(() {});
+                        },
+                      ),
+                      const Divider(height: 32),
+                      DownloadDestinationSection(
+                        rootLabel: _downloadRootLabel(_downloadRoot),
+                        isConfigured: _downloadRoot.isConfigured,
+                        saveMode: selectedDownloadSaveMode,
+                        helperText: _downloadDestinationHelperText,
+                        onSaveModeChanged: (mode) {
+                          if (mode == null) {
+                            return;
+                          }
+                          selectedDownloadSaveMode = mode;
+                          setDialogState(() {});
+                        },
+                        onPick: () async {
+                          try {
+                            final root =
+                                await _downloadService.pickDownloadRoot();
+                            if (!mounted) {
+                              return;
+                            }
+                            setState(() {
+                              _downloadRoot = root;
+                            });
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                          } on PlatformException catch (error) {
+                            if (!mounted || !dialogContext.mounted) {
+                              return;
+                            }
+                            _showSnackBar(
+                              '保存先を設定できませんでした: ${error.message ?? error.code}',
+                            );
+                          }
+                        },
+                        onClear: () async {
                           final root =
-                              await _downloadService.pickDownloadRoot();
+                              await _downloadService.clearDownloadRoot();
                           if (!mounted) {
                             return;
                           }
@@ -2663,61 +2806,51 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             return;
                           }
                           setDialogState(() {});
-                        } on PlatformException catch (error) {
-                          if (!mounted || !dialogContext.mounted) {
-                            return;
+                        },
+                      ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: wizardSettings,
+                        onChanged: (flag, enabled) {
+                          changedFeatureFlags.add(flag);
+                          if (enabled) {
+                            disabledFeatureFlags.remove(flag);
+                          } else {
+                            disabledFeatureFlags.add(flag);
                           }
-                          _showSnackBar(
-                            '保存先を設定できませんでした: ${error.message ?? error.code}',
-                          );
-                        }
-                      },
-                      onClear: () async {
-                        final root = await _downloadService.clearDownloadRoot();
-                        if (!mounted) {
-                          return;
-                        }
-                        setState(() {
-                          _downloadRoot = root;
-                        });
-                        if (!dialogContext.mounted) {
-                          return;
-                        }
-                        setDialogState(() {});
-                      },
-                    ),
-                    const Divider(height: 32),
-                    FeatureFlagsSection(
-                      settings: wizardSettings,
-                      onChanged: (flag, enabled) {
-                        changedFeatureFlags.add(flag);
-                        if (enabled) {
-                          disabledFeatureFlags.remove(flag);
-                        } else {
-                          disabledFeatureFlags.add(flag);
-                        }
-                        setDialogState(() {});
-                      },
-                    ),
-                  ],
+                          setDialogState(() {});
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('あとで'),
-                ),
-                FilledButton(
-                  onPressed: () => unawaited(complete()),
-                  child: const Text('完了'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    _refreshSetupWizard = null;
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('あとで'),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        isCompleting ? null : () => unawaited(complete()),
+                    child: const Text('完了'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      _refreshSetupWizard = null;
+      if (mounted) {
+        setState(() {
+          _isSettingsDialogOpen = false;
+        });
+      }
+      loginIdController.dispose();
+      loginPasswordController.dispose();
+      secretController.dispose();
+    }
     // 「あとで」 or a tap outside used to bring the wizard back on every
     // launch. Keep the defaults and leave changes to the settings screen.
     if (mounted && !_appSettings.setupCompleted) {

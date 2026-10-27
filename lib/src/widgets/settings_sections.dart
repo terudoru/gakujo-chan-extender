@@ -10,16 +10,16 @@ class TwoFactorSecretSection extends StatelessWidget {
     super.key,
     required this.canSave,
     required this.onChanged,
-    required this.onClear,
-    required this.onSave,
+    this.onClear,
+    this.onSave,
     this.controller,
   });
 
   final TextEditingController? controller;
   final bool canSave;
   final ValueChanged<String> onChanged;
-  final Future<void> Function() onClear;
-  final Future<void> Function() onSave;
+  final Future<void> Function()? onClear;
+  final Future<void> Function()? onSave;
 
   @override
   Widget build(BuildContext context) {
@@ -47,23 +47,27 @@ class TwoFactorSecretSection extends StatelessWidget {
           textInputAction: TextInputAction.done,
           onChanged: onChanged,
         ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            FilledButton.icon(
-              onPressed: canSave ? () => unawaited(onSave()) : null,
-              icon: const Icon(Icons.key),
-              label: const Text('秘密鍵を保存'),
-            ),
-            TextButton.icon(
-              onPressed: () => unawaited(onClear()),
-              icon: const Icon(Icons.delete_outline),
-              label: const Text('秘密鍵を削除'),
-            ),
-          ],
-        ),
+        if (onSave != null || onClear != null) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: canSave && onSave != null
+                    ? () => unawaited(onSave!())
+                    : null,
+                icon: const Icon(Icons.key),
+                label: const Text('秘密鍵を保存'),
+              ),
+              TextButton.icon(
+                onPressed: onClear != null ? () => unawaited(onClear!()) : null,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('秘密鍵を削除'),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -76,8 +80,8 @@ class LoginCredentialsSection extends StatelessWidget {
     required this.canSave,
     required this.onLoginIdChanged,
     required this.onPasswordChanged,
-    required this.onClear,
-    required this.onSave,
+    this.onClear,
+    this.onSave,
     this.loginIdController,
     this.passwordController,
   });
@@ -88,8 +92,8 @@ class LoginCredentialsSection extends StatelessWidget {
   final bool canSave;
   final ValueChanged<String> onLoginIdChanged;
   final ValueChanged<String> onPasswordChanged;
-  final Future<void> Function() onClear;
-  final Future<void> Function() onSave;
+  final Future<void> Function()? onClear;
+  final Future<void> Function()? onSave;
 
   @override
   Widget build(BuildContext context) {
@@ -138,23 +142,29 @@ class LoginCredentialsSection extends StatelessWidget {
             textInputAction: TextInputAction.done,
             onChanged: onPasswordChanged,
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: canSave ? () => unawaited(onSave()) : null,
-                icon: const Icon(Icons.login),
-                label: const Text('ログイン情報を保存'),
-              ),
-              TextButton.icon(
-                onPressed: isConfigured ? () => unawaited(onClear()) : null,
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('ログイン情報を削除'),
-              ),
-            ],
-          ),
+          if (onSave != null || onClear != null) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: canSave && onSave != null
+                      ? () => unawaited(onSave!())
+                      : null,
+                  icon: const Icon(Icons.login),
+                  label: const Text('ログイン情報を保存'),
+                ),
+                TextButton.icon(
+                  onPressed: isConfigured && onClear != null
+                      ? () => unawaited(onClear!())
+                      : null,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('ログイン情報を削除'),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
