@@ -1858,10 +1858,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!canNavigate) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
       // Gakujo links to sites such as its own support form; keep them out of
-      // this WebView but let the student open them in the browser.
+      // this WebView but let the student open them in the browser on request.
       final external = Uri.tryParse(request.url);
-      final canOpenExternally = request.isMainFrame &&
-          external != null &&
+      // Gakujo's external links open a new window (target=_blank), which
+      // WebKit reports as a non-main-frame navigation.
+      final canOpenExternally = external != null &&
           (external.scheme == 'https' || external.scheme == 'http') &&
           external.host.isNotEmpty;
       _showSnackBar(
