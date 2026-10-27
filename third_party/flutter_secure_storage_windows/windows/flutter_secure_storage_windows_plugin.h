@@ -5,6 +5,10 @@
 
 #include <optional>
 #include <string>
+#ifdef FSS_TESTING
+#include <functional>
+#include <utility>
+#endif
 
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
@@ -31,7 +35,18 @@ class FlutterSecureStorageWindowsPlugin : public flutter::Plugin {
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
+#ifdef FSS_TESTING
+  void SetSupportPathResolverForTesting(
+      std::function<DWORD(std::wstring&)> resolver) {
+    support_path_resolver_for_testing_ = std::move(resolver);
+  }
+  bool IsSupportPathComponentValidForTesting(std::wstring value);
+#endif
+
  private:
+#ifdef FSS_TESTING
+  std::function<DWORD(std::wstring&)> support_path_resolver_for_testing_;
+#endif
   std::optional<std::string> GetStringArg(const std::string& param,
                                           const flutter::EncodableMap* args);
   std::optional<std::string> GetValueKey(const flutter::EncodableMap* args);
@@ -42,13 +57,14 @@ class FlutterSecureStorageWindowsPlugin : public flutter::Plugin {
   std::wstring SanitizeDirString(std::wstring string);
   bool PathExists(const std::wstring& path);
   bool MakePath(const std::wstring& path);
+  void EnsureSupportDirectory(const std::wstring& path);
   PBYTE GetEncryptionKey();
-  void Write(const std::string& key, const std::string& val);
-  std::optional<std::string> Read(const std::string& key);
-  flutter::EncodableMap ReadAll();
-  void Delete(const std::string& key);
-  void DeleteAll();
-  bool ContainsKey(const std::string& key);
+  void Write(const std::string& key, const std::string& val, const std::wstring& path);
+  std::optional<std::string> Read(const std::string& key, const std::wstring& path);
+  flutter::EncodableMap ReadAll(const std::wstring& path);
+  void Delete(const std::string& key, const std::wstring& path);
+  void DeleteAll(const std::wstring& path);
+  bool ContainsKey(const std::string& key, const std::wstring& path);
 };
 
 }  // namespace flutter_secure_storage_windows

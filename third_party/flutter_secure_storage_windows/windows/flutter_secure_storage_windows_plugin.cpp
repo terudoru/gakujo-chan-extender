@@ -163,9 +163,17 @@ namespace flutter_secure_storage_windows
       return oss.str();
   }
 
+  static bool IsValidSupportPathComponent(const std::wstring& value)
+  {
+      return !value.empty() && value.find_first_not_of(L'.') != std::wstring::npos;
+  }
+
   DWORD FlutterSecureStorageWindowsPlugin::GetApplicationSupportPath(std::wstring &path)
   {
 #ifdef FSS_TESTING
+      if (support_path_resolver_for_testing_) {
+          return support_path_resolver_for_testing_(path);
+      }
       wchar_t testRoot[MAX_PATH + 1]{};
       DWORD testRootLength = GetEnvironmentVariableW(
           L"FSS_TEST_ROOT", testRoot, MAX_PATH + 1);
@@ -182,10 +190,17 @@ namespace flutter_secure_storage_windows
       DWORD resVal;
       UINT queryLen;
       LPVOID queryVal;
-      LPWSTR appdataPath;
+      LPWSTR appdataPath = nullptr;
       std::wostringstream stream;
 
-      SHGetKnownFolderPath(FOLDERID_RoamingAppData,KF_FLAG_DEFAULT,NULL,&appdataPath);
+      const HRESULT folderStatus = SHGetKnownFolderPath(
+          FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, NULL, &appdataPath);
+      if (FAILED(folderStatus) || appdataPath == nullptr || appdataPath[0] == L'\0') {
+          if (appdataPath != nullptr) CoTaskMemFree(appdataPath);
+          return HRESULT_FACILITY(folderStatus) == FACILITY_WIN32 && HRESULT_CODE(folderStatus) != 0
+              ? HRESULT_CODE(folderStatus) : ERROR_PATH_NOT_FOUND;
+      }
+      const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> appdataGuard(appdataPath, &CoTaskMemFree);
       
       if (nameBuffer == NULL) {
           return ERROR_OUTOFMEMORY;
@@ -195,6 +210,9 @@ namespace flutter_secure_storage_windows
       if (resVal == 0) {
           return GetLastError();
       }
+      if (resVal >= MAX_PATH) {
+          return ERROR_INSUFFICIENT_BUFFER;
+      }
 
       versionInfoSize = GetFileVersionInfoSize(nameBuffer, NULL);
       if (versionInfoSize != 0) {
@@ -203,8 +221,9 @@ namespace flutter_secure_storage_windows
               return ERROR_OUTOFMEMORY;
           }
           if (GetFileVersionInfo(nameBuffer, 0, versionInfoSize, infoBuffer) == 0) {
+              const DWORD error = GetLastError();
               free(infoBuffer);
-              infoBuffer = NULL;
+              return error != ERROR_SUCCESS ? error : ERROR_INVALID_DATA;
           }
           else {
 
@@ -226,6 +245,10 @@ namespace flutter_secure_storage_windows
               else {
                   productName = L"placeholder_product";
               }
+              free(infoBuffer);
+          }
+          if (!IsValidSupportPathComponent(companyName) || !IsValidSupportPathComponent(productName)) {
+              return ERROR_INVALID_NAME;
           }
           stream << appdataPath << "\\" << companyName << "\\" << productName;
           path = stream.str();
@@ -243,7 +266,7 @@ namespace flutter_secure_storage_windows
 
   std::wstring FlutterSecureStorageWindowsPlugin::SanitizeDirString(std::wstring string)
   {
-      std::wstring illegalChars = L"\\/:?\"<>|";
+      std::wstring illegalChars = L"\\/:*?\"<>|";
       for (auto it = string.begin(); it < string.end(); ++it) {
           if (illegalChars.find(*it) != std::wstring::npos) {
               *it = L'_';
@@ -252,6 +275,14 @@ namespace flutter_secure_storage_windows
       rtrim(string);
       return string;
   }
+
+#ifdef FSS_TESTING
+  bool FlutterSecureStorageWindowsPlugin::IsSupportPathComponentValidForTesting(std::wstring value)
+  {
+      value = SanitizeDirString(std::move(value));
+      return IsValidSupportPathComponent(value);
+  }
+#endif
 
   bool FlutterSecureStorageWindowsPlugin::PathExists(const std::wstring& path)
   {
@@ -284,6 +315,13 @@ namespace flutter_secure_storage_windows
           return PathExists(path);
       default:
           return false;
+      }
+  }
+
+  void FlutterSecureStorageWindowsPlugin::EnsureSupportDirectory(const std::wstring& path)
+  {
+      if (!PathExists(path) && !MakePath(path)) {
+          throw static_cast<DWORD>(ERROR_CANNOT_MAKE);
       }
   }
 
@@ -341,7 +379,7 @@ namespace flutter_secure_storage_windows
     auto method = method_call.method_name();
     const auto *args = std::get_if<flutter::EncodableMap>(method_call.arguments());
     std::wstring path;
-    if (GetApplicationSupportPath(path) != ERROR_SUCCESS) {
+    if (GetApplicationSupportPath(path) != ERROR_SUCCESS || path.empty()) {
         result->Error("Exception occurred", "GetApplicationSupportPath");
         return;
     }
@@ -354,9 +392,9 @@ namespace flutter_secure_storage_windows
         if (key.has_value())
         {
           if (val.has_value())
-            this->Write(key.value(), val.value());
+            this->Write(key.value(), val.value(), path);
           else
-            this->Delete(key.value());
+            this->Delete(key.value(), path);
           result->Success();
         }
         else
@@ -369,7 +407,7 @@ namespace flutter_secure_storage_windows
         auto key = this->GetValueKey(args);
         if (key.has_value())
         {
-          auto val = this->Read(key.value());
+          auto val = this->Read(key.value(), path);
           if (val.has_value())
             result->Success(flutter::EncodableValue(val.value()));
           else
@@ -382,7 +420,7 @@ namespace flutter_secure_storage_windows
       }
       else if (method == "readAll")
       {
-        auto creds = this->ReadAll();
+        auto creds = this->ReadAll(path);
         result->Success(flutter::EncodableValue(creds));
       }
       else if (method == "delete")
@@ -390,7 +428,7 @@ namespace flutter_secure_storage_windows
         auto key = this->GetValueKey(args);
         if (key.has_value())
         {
-          this->Delete(key.value());
+          this->Delete(key.value(), path);
           result->Success();
         }
         else
@@ -400,7 +438,7 @@ namespace flutter_secure_storage_windows
       }
       else if (method == "deleteAll")
       {
-        this->DeleteAll();
+        this->DeleteAll(path);
         result->Success();
       }
       else if (method == "containsKey")
@@ -408,7 +446,7 @@ namespace flutter_secure_storage_windows
         auto key = this->GetValueKey(args);
         if (key.has_value())
         {
-          auto contains_key = this->ContainsKey(key.value());
+          auto contains_key = this->ContainsKey(key.value(), path);
           result->Success(flutter::EncodableValue(contains_key));
         }
         else
@@ -426,10 +464,15 @@ namespace flutter_secure_storage_windows
       auto str_code = this->GetErrorString(e);
       result->Error("Exception encountered: " + str_code, method);
     }
+    catch (const std::exception&)
+    {
+      result->Error("Exception occurred", method);
+    }
   }
 
-  void FlutterSecureStorageWindowsPlugin::Write(const std::string &key, const std::string &val)
+  void FlutterSecureStorageWindowsPlugin::Write(const std::string &key, const std::string &val, const std::wstring &appSupportPath)
   {
+      EnsureSupportDirectory(appSupportPath);
       //The recommended size for AES-GCM IV is 12 bytes
       const DWORD NONCE_SIZE = 12;
       const DWORD KEY_SIZE = 16;
@@ -445,7 +488,6 @@ namespace flutter_secure_storage_windows
       BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo{};
       BCRYPT_AUTH_TAG_LENGTHS_STRUCT authTagLengths{};
       std::basic_ofstream<BYTE> fs;
-      std::wstring appSupportPath;
       std::string error;
 
       if (iv == NULL) {
@@ -518,10 +560,6 @@ namespace flutter_secure_storage_windows
           error = NtStatusToString("BCryptEncrypt2", status);
           goto err;
       }
-      GetApplicationSupportPath(appSupportPath);
-      if (!PathExists(appSupportPath)) {
-          MakePath(appSupportPath);
-      }
       fs = std::basic_ofstream<BYTE>(appSupportPath + L"\\" + std::wstring(key.begin(), key.end()) + L".secure", std::ios::binary | std::ios::trunc);
       if (!fs) {
           error = "Failed to open output stream";
@@ -556,8 +594,9 @@ namespace flutter_secure_storage_windows
       throw std::runtime_error(error);
   }
 
-  std::optional<std::string> FlutterSecureStorageWindowsPlugin::Read(const std::string &key)
+  std::optional<std::string> FlutterSecureStorageWindowsPlugin::Read(const std::string &key, const std::wstring &appSupportPath)
   {
+      EnsureSupportDirectory(appSupportPath);
       const DWORD NONCE_SIZE = 12;
       const DWORD KEY_SIZE = 16;
 
@@ -574,7 +613,6 @@ namespace flutter_secure_storage_windows
       DWORD plaintextSize = 0,
           bytesWritten = 0,
           ciphertextSize = 0;
-      std::wstring appSupportPath;
       std::basic_ifstream<BYTE> fs;
       std::streampos fileSize;
       std::optional<std::string> returnVal = std::nullopt;
@@ -582,10 +620,6 @@ namespace flutter_secure_storage_windows
       if (encryptionKey == NULL) {
           std::cerr << "encryptionKey is NULL" << std::endl;
           goto cleanup;
-      }
-      GetApplicationSupportPath(appSupportPath);
-      if (!PathExists(appSupportPath)) {
-          MakePath(appSupportPath);
       }
       //Read full file into a buffer
       fs = std::basic_ifstream<BYTE>(appSupportPath + L"\\" + std::wstring(key.begin(), key.end()) + L".secure", std::ios::binary);
@@ -714,16 +748,11 @@ namespace flutter_secure_storage_windows
       return returnVal;
   }
 
-  flutter::EncodableMap FlutterSecureStorageWindowsPlugin::ReadAll()
+  flutter::EncodableMap FlutterSecureStorageWindowsPlugin::ReadAll(const std::wstring &appSupportPath)
   {
+      EnsureSupportDirectory(appSupportPath);
       WIN32_FIND_DATA searchRes;
       HANDLE hFile;
-      std::wstring appSupportPath;
-
-      GetApplicationSupportPath(appSupportPath);
-      if (!PathExists(appSupportPath)) {
-          MakePath(appSupportPath);
-      }
       hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
       flutter::EncodableMap creds;
       if (hFile == INVALID_HANDLE_VALUE) {
@@ -738,7 +767,7 @@ namespace flutter_secure_storage_windows
           std::vector<char> out(fileName.length() + 1);
           size_t charsConverted = 0;
           if (wcstombs_s(&charsConverted, out.data(), out.size(), fileName.c_str(), out.size()) != 0) continue;
-          std::optional<std::string> val = this->Read(out.data());
+          std::optional<std::string> val = this->Read(out.data(), appSupportPath);
           auto key = this->RemoveKeyPrefix(out.data());
           if (val.has_value()) {
               creds[key] = val.value();
@@ -780,10 +809,9 @@ namespace flutter_secure_storage_windows
     return creds;
   }
 
-  void FlutterSecureStorageWindowsPlugin::Delete(const std::string &key)
+  void FlutterSecureStorageWindowsPlugin::Delete(const std::string &key, const std::wstring &appSupportPath)
   {
-      std::wstring appSupportPath;
-      GetApplicationSupportPath(appSupportPath);
+      EnsureSupportDirectory(appSupportPath);
       auto wstr = std::wstring(key.begin(), key.end());
       BOOL ok = DeleteFile((appSupportPath + L"\\" + wstr + L".secure").c_str());
       if (!ok) {
@@ -807,17 +835,11 @@ namespace flutter_secure_storage_windows
     }
   }
 
-  void FlutterSecureStorageWindowsPlugin::DeleteAll()
+  void FlutterSecureStorageWindowsPlugin::DeleteAll(const std::wstring &appSupportPath)
   {
-
+      EnsureSupportDirectory(appSupportPath);
       WIN32_FIND_DATA searchRes;
       HANDLE hFile;
-      std::wstring appSupportPath;
-
-      GetApplicationSupportPath(appSupportPath);
-      if (!PathExists(appSupportPath)) {
-          MakePath(appSupportPath);
-      }
       hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
       if (hFile == INVALID_HANDLE_VALUE) {
           DWORD error = GetLastError();
@@ -872,10 +894,9 @@ namespace flutter_secure_storage_windows
     CredFree(pcreds);
   }
 
-  bool FlutterSecureStorageWindowsPlugin::ContainsKey(const std::string &key)
+  bool FlutterSecureStorageWindowsPlugin::ContainsKey(const std::string &key, const std::wstring &appSupportPath)
   {
-      std::wstring appSupportPath;
-      GetApplicationSupportPath(appSupportPath);
+      EnsureSupportDirectory(appSupportPath);
       std::wstring wstr = std::wstring(key.begin(), key.end());
       if (INVALID_FILE_ATTRIBUTES == GetFileAttributes((appSupportPath + L"\\" + wstr + L".secure").c_str())) {
           //Backwards comp.

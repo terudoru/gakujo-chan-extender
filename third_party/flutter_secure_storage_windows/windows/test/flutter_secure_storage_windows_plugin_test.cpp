@@ -103,6 +103,79 @@ TEST(FlutterSecureStorageWindowsKeyValidationTest, RejectsPathComponentsBeforeSt
   }
 }
 
+TEST(FlutterSecureStorageWindowsSupportPathTest, FailureStopsAllOperations) {
+  FlutterSecureStorageWindowsPlugin plugin;
+  int calls = 0;
+  plugin.SetSupportPathResolverForTesting([&](std::wstring&) {
+    ++calls;
+    return static_cast<DWORD>(ERROR_ACCESS_DENIED);
+  });
+  for (const auto& method : {"read", "write", "delete", "containsKey", "readAll", "deleteAll"}) {
+    EXPECT_FALSE(Invoke(plugin, method,
+                        {{EncodableValue("key"), EncodableValue("synthetic")},
+                         {EncodableValue("value"), EncodableValue("synthetic")}}));
+  }
+  EXPECT_EQ(calls, 6);
+}
+
+TEST(FlutterSecureStorageWindowsSupportPathTest, ReusesTheValidatedPath) {
+  wchar_t root[MAX_PATH + 1]{};
+  const DWORD length = GetEnvironmentVariableW(L"FSS_TEST_ROOT", root, MAX_PATH + 1);
+  ASSERT_GT(length, 0u);
+  ASSERT_LE(length, MAX_PATH);
+  const std::wstring file = std::wstring(root, length) + L"\\fss_native_test_path_sentinel.secure";
+  HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  CloseHandle(handle);
+
+  FlutterSecureStorageWindowsPlugin plugin;
+  int calls = 0;
+  plugin.SetSupportPathResolverForTesting([&](std::wstring& path) {
+    if (++calls != 1) return static_cast<DWORD>(ERROR_ACCESS_DENIED);
+    path.assign(root, length);
+    return static_cast<DWORD>(ERROR_SUCCESS);
+  });
+  EXPECT_TRUE(ContainsKey(plugin, "path_sentinel"));
+  EXPECT_EQ(calls, 1);
+  EXPECT_TRUE(DeleteFileW(file.c_str()));
+}
+
+TEST(FlutterSecureStorageWindowsSupportPathTest, RejectsUnsafeMetadataComponents) {
+  FlutterSecureStorageWindowsPlugin plugin;
+  for (const auto* invalid : {L"", L" ", L".", L"..", L"... "}) {
+    EXPECT_FALSE(plugin.IsSupportPathComponentValidForTesting(invalid));
+  }
+  for (const auto* valid : {L"net.yoshida", L"More Better Gakujo", L"ACME Inc."}) {
+    EXPECT_TRUE(plugin.IsSupportPathComponentValidForTesting(valid));
+  }
+}
+
+TEST(FlutterSecureStorageWindowsSupportPathTest, UnusableDirectoryStopsAllOperations) {
+  wchar_t root[MAX_PATH + 1]{};
+  const DWORD length = GetEnvironmentVariableW(L"FSS_TEST_ROOT", root, MAX_PATH + 1);
+  ASSERT_GT(length, 0u);
+  ASSERT_LE(length, MAX_PATH);
+  const std::wstring blocker = std::wstring(root, length) + L"\\path_blocker";
+  HANDLE handle = CreateFileW(blocker.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  CloseHandle(handle);
+
+  FlutterSecureStorageWindowsPlugin plugin;
+  plugin.SetSupportPathResolverForTesting([&](std::wstring& path) {
+    path = blocker + L"\\child";
+    return static_cast<DWORD>(ERROR_SUCCESS);
+  });
+  for (const auto& method : {"read", "write", "delete", "containsKey", "readAll", "deleteAll"}) {
+    EXPECT_FALSE(Invoke(plugin, method,
+                        {{EncodableValue("key"), EncodableValue("synthetic")},
+                         {EncodableValue("value"), EncodableValue("synthetic")}}));
+  }
+  EXPECT_NE(GetFileAttributesW(blocker.c_str()), INVALID_FILE_ATTRIBUTES);
+  EXPECT_TRUE(DeleteFileW(blocker.c_str()));
+}
+
 TEST_F(FlutterSecureStorageWindowsPluginTest, WriteAndReadRoundTrip) {
   ASSERT_TRUE(Write(plugin_, "key1", "value1"));
   EXPECT_EQ(Read(plugin_, "key1"), "value1");
