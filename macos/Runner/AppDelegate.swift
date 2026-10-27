@@ -981,6 +981,10 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
 
   private var channel: FlutterMethodChannel?
   private var pendingNotificationURL: String?
+  // The tap that launched the app can reach both entry points, in either
+  // order; open it once.
+  private var launchResponseIdentifier: String?
+  private var tappedResponseIdentifier: String?
 
   override init() {
     super.init()
@@ -1116,8 +1120,10 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
   }
 
   func rememberLaunchResponse(_ response: UNNotificationResponse) {
-    guard let url = Self.url(of: response) else { return }
+    guard let url = Self.url(of: response),
+          response.notification.request.identifier != tappedResponseIdentifier else { return }
     NSLog("MoreBetterGakujo: app launched from a notification")
+    launchResponseIdentifier = response.notification.request.identifier
     pendingNotificationURL = url
   }
 
@@ -1138,6 +1144,12 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     guard let url = Self.url(of: response) else {
       return
     }
+    if response.notification.request.identifier == launchResponseIdentifier {
+      // Already waiting in pendingNotificationURL for startup to take it.
+      launchResponseIdentifier = nil
+      return
+    }
+    tappedResponseIdentifier = response.notification.request.identifier
     NSLog("MoreBetterGakujo: notification tapped (channel ready: %d)", channel == nil ? 0 : 1)
     pendingNotificationURL = url
     NSApp.activate(ignoringOtherApps: true)
