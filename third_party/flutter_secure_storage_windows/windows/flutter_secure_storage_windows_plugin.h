@@ -41,11 +41,29 @@ class FlutterSecureStorageWindowsPlugin : public flutter::Plugin {
     support_path_resolver_for_testing_ = std::move(resolver);
   }
   bool IsSupportPathComponentValidForTesting(std::wstring value);
+  void SetEncryptionKeyProviderForTesting(
+      std::function<PBYTE(bool, const std::wstring&)> provider) {
+    encryption_key_provider_for_testing_ = std::move(provider);
+  }
+  void SetLegacyReaderForTesting(
+      std::function<std::optional<std::string>(const std::string&)> reader) {
+    legacy_reader_for_testing_ = std::move(reader);
+  }
+  void SetLegacyEnumerationForTesting(std::function<void()> enumerator) {
+    legacy_enumerator_for_testing_ = std::move(enumerator);
+  }
+  void SetLegacyDeleteAllForTesting(std::function<void()> deleter) {
+    legacy_delete_all_for_testing_ = std::move(deleter);
+  }
 #endif
 
  private:
 #ifdef FSS_TESTING
   std::function<DWORD(std::wstring&)> support_path_resolver_for_testing_;
+  std::function<PBYTE(bool, const std::wstring&)> encryption_key_provider_for_testing_;
+  std::function<std::optional<std::string>(const std::string&)> legacy_reader_for_testing_;
+  std::function<void()> legacy_enumerator_for_testing_;
+  std::function<void()> legacy_delete_all_for_testing_;
 #endif
   std::optional<std::string> GetStringArg(const std::string& param,
                                           const flutter::EncodableMap* args);
@@ -58,7 +76,7 @@ class FlutterSecureStorageWindowsPlugin : public flutter::Plugin {
   bool PathExists(const std::wstring& path);
   bool MakePath(const std::wstring& path);
   void EnsureSupportDirectory(const std::wstring& path);
-  PBYTE GetEncryptionKey();
+  PBYTE GetEncryptionKey(bool allowCreate, const std::wstring& path);
   void Write(const std::string& key, const std::string& val, const std::wstring& path);
   std::optional<std::string> Read(const std::string& key, const std::wstring& path);
   flutter::EncodableMap ReadAll(const std::wstring& path);

@@ -325,8 +325,13 @@ namespace flutter_secure_storage_windows
       }
   }
 
-  PBYTE FlutterSecureStorageWindowsPlugin::GetEncryptionKey()
+  PBYTE FlutterSecureStorageWindowsPlugin::GetEncryptionKey(bool allowCreate, const std::wstring& path)
   {
+#ifdef FSS_TESTING
+      if (encryption_key_provider_for_testing_) {
+          return encryption_key_provider_for_testing_(allowCreate, path);
+      }
+#endif
       const size_t KEY_SIZE = 16;
       DWORD credError = 0;
       PBYTE AesKey;
@@ -340,10 +345,10 @@ namespace flutter_secure_storage_windows
 
       bool ok = CredReadW(target_name.m_psz, CRED_TYPE_GENERIC, 0, &pcred);
       if (ok) {
-          if (pcred->CredentialBlobSize != KEY_SIZE) {
+          if (pcred->CredentialBlobSize != KEY_SIZE || pcred->CredentialBlob == nullptr) {
               CredFree(pcred);
-              CredDeleteW(target_name.m_psz, CRED_TYPE_GENERIC, 0);
-              goto NewKey;
+              HeapFree(GetProcessHeap(), 0, AesKey);
+              return NULL;
           }
           memcpy(AesKey, pcred->CredentialBlob, KEY_SIZE);
           CredFree(pcred);
@@ -351,10 +356,29 @@ namespace flutter_secure_storage_windows
       }
       credError = GetLastError();
       if (credError != ERROR_NOT_FOUND) {
+          HeapFree(GetProcessHeap(), 0, AesKey);
           return NULL;
       }
-  NewKey:
+      if (!allowCreate) {
+          HeapFree(GetProcessHeap(), 0, AesKey);
+          return NULL;
+      }
+      // A missing key must never be silently replaced while ciphertext exists.
+      WIN32_FIND_DATA existing{};
+      const std::wstring prefix(ELEMENT_PREFERENCES_KEY_PREFIX.begin(), ELEMENT_PREFERENCES_KEY_PREFIX.end());
+      HANDLE existingFile = FindFirstFile((path + L"\\" + prefix + L"*.secure").c_str(), &existing);
+      if (existingFile != INVALID_HANDLE_VALUE) {
+          FindClose(existingFile);
+          HeapFree(GetProcessHeap(), 0, AesKey);
+          return NULL;
+      }
+      const DWORD findError = GetLastError();
+      if (findError != ERROR_FILE_NOT_FOUND && findError != ERROR_PATH_NOT_FOUND) {
+          HeapFree(GetProcessHeap(), 0, AesKey);
+          return NULL;
+      }
       if (BCryptGenRandom(NULL, AesKey, KEY_SIZE, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != ERROR_SUCCESS) {
+          HeapFree(GetProcessHeap(), 0, AesKey);
           return NULL;
       }
       CREDENTIALW cred = { 0 };
@@ -367,6 +391,7 @@ namespace flutter_secure_storage_windows
       ok = CredWriteW(&cred, 0);
       if (!ok) {
           std::cerr << "Failed to write encryption key" << std::endl;
+          HeapFree(GetProcessHeap(), 0, AesKey);
           return NULL;
       }
       return AesKey;
@@ -484,7 +509,7 @@ namespace flutter_secure_storage_windows
           ciphertextSize = 0;
       PBYTE ciphertext = NULL,
           iv = (PBYTE)HeapAlloc(GetProcessHeap(), 0, NONCE_SIZE),
-          encryptionKey = GetEncryptionKey();
+          encryptionKey = GetEncryptionKey(true, appSupportPath);
       BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo{};
       BCRYPT_AUTH_TAG_LENGTHS_STRUCT authTagLengths{};
       std::basic_ofstream<BYTE> fs;
@@ -600,13 +625,39 @@ namespace flutter_secure_storage_windows
       const DWORD NONCE_SIZE = 12;
       const DWORD KEY_SIZE = 16;
 
+      const std::wstring filePath = appSupportPath + L"\\" + std::wstring(key.begin(), key.end()) + L".secure";
+      const DWORD attributes = GetFileAttributesW(filePath.c_str());
+      if (attributes == INVALID_FILE_ATTRIBUTES) {
+          const DWORD error = GetLastError();
+          if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) throw error;
+          // A credential-only legacy item does not need an AES key.
+#ifdef FSS_TESTING
+          if (legacy_reader_for_testing_) return legacy_reader_for_testing_(key);
+#endif
+          PCREDENTIALW pcred = nullptr;
+          CA2W target_name(key.c_str());
+          if (!CredReadW(target_name.m_psz, CRED_TYPE_GENERIC, 0, &pcred)) {
+              const DWORD credentialError = GetLastError();
+              if (credentialError == ERROR_NOT_FOUND) return std::nullopt;
+              throw credentialError;
+          }
+          if (pcred->CredentialBlobSize && !pcred->CredentialBlob) {
+              CredFree(pcred);
+              throw static_cast<DWORD>(ERROR_INVALID_DATA);
+          }
+          const auto value = CredentialValue(*pcred);
+          CredFree(pcred);
+          return value;
+      }
+      if (attributes & FILE_ATTRIBUTE_DIRECTORY) throw static_cast<DWORD>(ERROR_INVALID_DATA);
+
       NTSTATUS status;
       BCRYPT_ALG_HANDLE algo = NULL;
       BCRYPT_KEY_HANDLE keyHandle = NULL;
       BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo{};
       BCRYPT_AUTH_TAG_LENGTHS_STRUCT authTagLengths{};
 
-      PBYTE encryptionKey = GetEncryptionKey(),
+      PBYTE encryptionKey = GetEncryptionKey(false, appSupportPath),
           ciphertext = NULL,
           fileBuffer = NULL,
           plaintext = NULL;
@@ -616,35 +667,23 @@ namespace flutter_secure_storage_windows
       std::basic_ifstream<BYTE> fs;
       std::streampos fileSize;
       std::optional<std::string> returnVal = std::nullopt;
+      bool readComplete = false;
 
       if (encryptionKey == NULL) {
           std::cerr << "encryptionKey is NULL" << std::endl;
           goto cleanup;
       }
       //Read full file into a buffer
-      fs = std::basic_ifstream<BYTE>(appSupportPath + L"\\" + std::wstring(key.begin(), key.end()) + L".secure", std::ios::binary);
+      fs = std::basic_ifstream<BYTE>(filePath, std::ios::binary);
       if (!fs.good()) {
-          //Backwards comp.
-          PCREDENTIALW pcred;
-          CA2W target_name(key.c_str());
-          bool ok = CredReadW(target_name.m_psz, CRED_TYPE_GENERIC, 0, &pcred);
-          if (ok)
-          {
-              if (pcred->CredentialBlobSize && !pcred->CredentialBlob) {
-                  CredFree(pcred);
-                  HeapFree(GetProcessHeap(), 0, encryptionKey);
-                  encryptionKey = nullptr;
-                  throw static_cast<DWORD>(ERROR_INVALID_DATA);
-              }
-              auto val = CredentialValue(*pcred);
-              CredFree(pcred);
-              returnVal = val;
-          }
           goto cleanup;
       }
       fs.unsetf(std::ios::skipws);
       fs.seekg(0, std::ios::end);
       fileSize = fs.tellg();
+      if (fileSize <= 0 || static_cast<unsigned long long>(fileSize) > MAXDWORD) {
+          goto cleanup;
+      }
       fs.seekg(0, std::ios::beg);
       fileBuffer = (PBYTE)HeapAlloc(GetProcessHeap(), 0, fileSize);
       if (NULL == fileBuffer) {
@@ -652,6 +691,7 @@ namespace flutter_secure_storage_windows
           goto cleanup;
       }
       fs.read(fileBuffer, fileSize);
+      if (!fs) goto cleanup;
       fs.close();
 
       status = BCryptOpenAlgorithmProvider(&algo, BCRYPT_AES_ALGORITHM, NULL, 0);
@@ -725,8 +765,12 @@ namespace flutter_secure_storage_windows
           std::cerr << NtStatusToString("BCryptDecrypt2", status) << std::endl;
           goto cleanup;
       }
-      returnVal = (char*)plaintext;
+      if (bytesWritten == 0 || plaintext[bytesWritten - 1] != 0) goto cleanup;
+      returnVal = std::string(reinterpret_cast<char*>(plaintext), bytesWritten - 1);
+      readComplete = true;
   cleanup:
+      if (keyHandle) BCryptDestroyKey(keyHandle);
+      if (algo) BCryptCloseAlgorithmProvider(algo, 0);
       if (encryptionKey) {
           HeapFree(GetProcessHeap(), 0, encryptionKey);
       }
@@ -745,6 +789,7 @@ namespace flutter_secure_storage_windows
       if (authInfo.pbTag) {
           HeapFree(GetProcessHeap(), 0, authInfo.pbTag);
       }
+      if (!readComplete) throw static_cast<DWORD>(ERROR_INVALID_DATA);
       return returnVal;
   }
 
@@ -753,7 +798,8 @@ namespace flutter_secure_storage_windows
       EnsureSupportDirectory(appSupportPath);
       WIN32_FIND_DATA searchRes;
       HANDLE hFile;
-      hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
+      const std::wstring prefix(ELEMENT_PREFERENCES_KEY_PREFIX.begin(), ELEMENT_PREFERENCES_KEY_PREFIX.end());
+      hFile = FindFirstFile((appSupportPath + L"\\" + prefix + L"*.secure").c_str(), &searchRes);
       flutter::EncodableMap creds;
       if (hFile == INVALID_HANDLE_VALUE) {
           DWORD error = GetLastError();
@@ -762,11 +808,15 @@ namespace flutter_secure_storage_windows
         const std::unique_ptr<void, decltype(&FindClose)> findHandle(hFile, &FindClose);
         do {
           std::wstring fileName(searchRes.cFileName);
-          size_t pos = fileName.find(L".secure");
-          fileName.erase(pos, 7);
+          if (fileName.size() < 7 || fileName.compare(fileName.size() - 7, 7, L".secure") != 0) {
+              throw static_cast<DWORD>(ERROR_INVALID_NAME);
+          }
+          fileName.erase(fileName.size() - 7);
           std::vector<char> out(fileName.length() + 1);
           size_t charsConverted = 0;
-          if (wcstombs_s(&charsConverted, out.data(), out.size(), fileName.c_str(), out.size()) != 0) continue;
+          if (wcstombs_s(&charsConverted, out.data(), out.size(), fileName.c_str(), out.size()) != 0) {
+              throw static_cast<DWORD>(ERROR_NO_UNICODE_TRANSLATION);
+          }
           std::optional<std::string> val = this->Read(out.data(), appSupportPath);
           auto key = this->RemoveKeyPrefix(out.data());
           if (val.has_value()) {
@@ -778,6 +828,12 @@ namespace flutter_secure_storage_windows
       }
 
     //Backwards comp.
+#ifdef FSS_TESTING
+    if (legacy_enumerator_for_testing_) {
+      legacy_enumerator_for_testing_();
+      return creds;
+    }
+#endif
     PCREDENTIALW* pcreds;
     DWORD cred_count = 0;
 
@@ -840,7 +896,8 @@ namespace flutter_secure_storage_windows
       EnsureSupportDirectory(appSupportPath);
       WIN32_FIND_DATA searchRes;
       HANDLE hFile;
-      hFile = FindFirstFile((appSupportPath + L"\\*.secure").c_str(), &searchRes);
+      const std::wstring prefix(ELEMENT_PREFERENCES_KEY_PREFIX.begin(), ELEMENT_PREFERENCES_KEY_PREFIX.end());
+      hFile = FindFirstFile((appSupportPath + L"\\" + prefix + L"*.secure").c_str(), &searchRes);
       if (hFile == INVALID_HANDLE_VALUE) {
           DWORD error = GetLastError();
           if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
@@ -864,6 +921,12 @@ namespace flutter_secure_storage_windows
       }
 
     //Backwards comp.
+#ifdef FSS_TESTING
+    if (legacy_delete_all_for_testing_) {
+      legacy_delete_all_for_testing_();
+      return;
+    }
+#endif
     PCREDENTIALW* pcreds;
     DWORD cred_count = 0;
     

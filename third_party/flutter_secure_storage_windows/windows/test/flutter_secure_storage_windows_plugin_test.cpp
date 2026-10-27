@@ -176,6 +176,103 @@ TEST(FlutterSecureStorageWindowsSupportPathTest, UnusableDirectoryStopsAllOperat
   EXPECT_TRUE(DeleteFileW(blocker.c_str()));
 }
 
+TEST(FlutterSecureStorageWindowsLegacySafetyTest, UnreadableCiphertextFailsWithoutDeletingFiles) {
+  wchar_t root[MAX_PATH + 1]{};
+  const DWORD length = GetEnvironmentVariableW(L"FSS_TEST_ROOT", root, MAX_PATH + 1);
+  ASSERT_GT(length, 0u);
+  ASSERT_LE(length, MAX_PATH);
+  const std::wstring file = std::wstring(root, length) + L"\\fss_native_test_broken.secure";
+  HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  BYTE bytes[64]{};
+  DWORD written = 0;
+  ASSERT_TRUE(WriteFile(handle, bytes, sizeof(bytes), &written, nullptr));
+  ASSERT_EQ(written, sizeof(bytes));
+  CloseHandle(handle);
+
+  FlutterSecureStorageWindowsPlugin plugin;
+  int keyReads = 0;
+  plugin.SetEncryptionKeyProviderForTesting([&](bool allowCreate, const std::wstring&) -> PBYTE {
+    EXPECT_FALSE(allowCreate);
+    ++keyReads;
+    return nullptr;
+  });
+  EXPECT_FALSE(Invoke(plugin, "read", {{EncodableValue("key"), EncodableValue("broken")}}));
+  EXPECT_FALSE(Invoke(plugin, "readAll", {}));
+  EXPECT_EQ(keyReads, 2);
+  EXPECT_NE(GetFileAttributesW(file.c_str()), INVALID_FILE_ATTRIBUTES);
+
+  plugin.SetEncryptionKeyProviderForTesting([](bool allowCreate, const std::wstring&) -> PBYTE {
+    EXPECT_FALSE(allowCreate);
+    return static_cast<PBYTE>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 16));
+  });
+  EXPECT_FALSE(Invoke(plugin, "read", {{EncodableValue("key"), EncodableValue("broken")}}));
+  EXPECT_FALSE(Invoke(plugin, "readAll", {}));
+  EXPECT_NE(GetFileAttributesW(file.c_str()), INVALID_FILE_ATTRIBUTES);
+  EXPECT_TRUE(DeleteFileW(file.c_str()));
+}
+
+TEST(FlutterSecureStorageWindowsLegacySafetyTest, CredentialOnlyReadDoesNotCreateEncryptionKey) {
+  FlutterSecureStorageWindowsPlugin plugin;
+  bool keyAccessed = false;
+  plugin.SetEncryptionKeyProviderForTesting([&](bool, const std::wstring&) -> PBYTE {
+    keyAccessed = true;
+    return nullptr;
+  });
+  plugin.SetLegacyReaderForTesting([](const std::string&) -> std::optional<std::string> {
+    return "synthetic";
+  });
+  EXPECT_EQ(Read(plugin, "credential_only"), std::optional<std::string>("synthetic"));
+  EXPECT_FALSE(keyAccessed);
+}
+
+TEST(FlutterSecureStorageWindowsLegacySafetyTest, EncryptedValueRoundTripsWithSyntheticKey) {
+  wchar_t root[MAX_PATH + 1]{};
+  const DWORD length = GetEnvironmentVariableW(L"FSS_TEST_ROOT", root, MAX_PATH + 1);
+  ASSERT_GT(length, 0u);
+  ASSERT_LE(length, MAX_PATH);
+  const std::wstring file = std::wstring(root, length) + L"\\fss_native_test_roundtrip.secure";
+  ASSERT_EQ(GetFileAttributesW(file.c_str()), INVALID_FILE_ATTRIBUTES);
+  FlutterSecureStorageWindowsPlugin plugin;
+  plugin.SetEncryptionKeyProviderForTesting([](bool, const std::wstring&) -> PBYTE {
+    return static_cast<PBYTE>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 16));
+  });
+  ASSERT_TRUE(Write(plugin, "roundtrip", "synthetic value"));
+  EXPECT_EQ(Read(plugin, "roundtrip"), std::optional<std::string>("synthetic value"));
+  EXPECT_TRUE(DeleteFileW(file.c_str()));
+}
+
+TEST(FlutterSecureStorageWindowsLegacySafetyTest, BulkReadKeepsFullKeyAndDeleteAllPreservesOtherFiles) {
+  wchar_t root[MAX_PATH + 1]{};
+  const DWORD length = GetEnvironmentVariableW(L"FSS_TEST_ROOT", root, MAX_PATH + 1);
+  ASSERT_GT(length, 0u);
+  ASSERT_LE(length, MAX_PATH);
+  const std::wstring unrelated = std::wstring(root, length) + L"\\unrelated.secure";
+  HANDLE handle = CreateFileW(unrelated.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+  CloseHandle(handle);
+
+  FlutterSecureStorageWindowsPlugin plugin;
+  plugin.SetEncryptionKeyProviderForTesting([](bool, const std::wstring&) -> PBYTE {
+    return static_cast<PBYTE>(HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 16));
+  });
+  plugin.SetLegacyEnumerationForTesting([] {});
+  plugin.SetLegacyDeleteAllForTesting([] {});
+  ASSERT_TRUE(Write(plugin, "dot.secure.inner", "synthetic one"));
+  ASSERT_TRUE(Write(plugin, "other", "synthetic two"));
+  EncodableValue result;
+  ASSERT_TRUE(Invoke(plugin, "readAll", {}, &result));
+  const auto* entries = std::get_if<EncodableMap>(&result);
+  ASSERT_NE(entries, nullptr);
+  EXPECT_EQ(entries->at(EncodableValue("dot.secure.inner")), EncodableValue("synthetic one"));
+  EXPECT_EQ(entries->at(EncodableValue("other")), EncodableValue("synthetic two"));
+  EXPECT_TRUE(DeleteAll(plugin));
+  EXPECT_NE(GetFileAttributesW(unrelated.c_str()), INVALID_FILE_ATTRIBUTES);
+  EXPECT_TRUE(DeleteFileW(unrelated.c_str()));
+}
+
 TEST_F(FlutterSecureStorageWindowsPluginTest, WriteAndReadRoundTrip) {
   ASSERT_TRUE(Write(plugin_, "key1", "value1"));
   EXPECT_EQ(Read(plugin_, "key1"), "value1");

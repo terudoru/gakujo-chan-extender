@@ -147,11 +147,9 @@ class FlutterSecureStorageWindows extends FlutterSecureStoragePlatform {
               // next.
               result = map[key] = compatible;
               await _storage.save(map, options);
+              await _backwardCompatible.delete(key: key, options: options);
             }
           }
-
-          // Clear old entry.
-          await _backwardCompatible.delete(key: key, options: options);
         }
 
         return result;
@@ -174,15 +172,27 @@ class FlutterSecureStorageWindows extends FlutterSecureStoragePlatform {
           return map;
         }
 
+        final migratedKeys = <String>[];
+        var changed = false;
         for (final entry in compatible.entries) {
-          map.putIfAbsent(entry.key, () => entry.value);
+          if (!map.containsKey(entry.key)) {
+            map[entry.key] = entry.value;
+            changed = true;
+            migratedKeys.add(entry.key);
+          } else if (map[entry.key] == entry.value) {
+            migratedKeys.add(entry.key);
+          }
         }
 
-        // Write back now, so the value should be retrieved from JSON file next.
-        await _storage.save(map, options);
+        if (changed) {
+          // Persist every recovered value before removing its legacy copy.
+          await _storage.save(map, options);
+        }
 
-        // Clear old entries.
-        await _backwardCompatible.deleteAll(options: options);
+        // Keep colliding legacy values that differ from the primary value.
+        for (final key in migratedKeys) {
+          await _backwardCompatible.delete(key: key, options: options);
+        }
 
         return map;
       });
