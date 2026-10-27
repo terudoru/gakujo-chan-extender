@@ -980,8 +980,12 @@ void main() {
       action: SnackBarAction(label: '開く', onPressed: () {}),
     );
 
-    expect(snackBar.duration, const Duration(seconds: 7));
+    expect(snackBar.duration, const Duration(seconds: 12));
     expect(snackBar.persist, isFalse);
+    expect(
+      buildTransientGakujoSnackBar('保存しました').duration,
+      const Duration(seconds: 7),
+    );
   });
 
   test('toolbar exposes every documented Gakujo quick jump', () {

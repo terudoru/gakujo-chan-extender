@@ -624,7 +624,8 @@ SnackBar buildTransientGakujoSnackBar(
   return SnackBar(
     content: Text(message),
     action: action,
-    duration: const Duration(seconds: 7),
+    // Leave time to reach the button; plain messages can go sooner.
+    duration: Duration(seconds: action == null ? 7 : 12),
     persist: false,
   );
 }
