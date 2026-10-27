@@ -734,17 +734,32 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   /// Injects pdf.js/pdf-lib or JSZip when the upload compression script
   /// meets an oversized PDF or Office file.
   Future<void> _handleUploadCompressionLibraryRequest(String message) async {
+    final kind = message.trim();
     if (!_canRunPageScripts ||
-        (message.trim() != 'preview' &&
+        (kind != 'preview' &&
             !_appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression))) {
       return;
     }
+    if (kind != 'preview' && kind != 'pdf' && kind != 'office') return;
+    final revision = _navigationRevision;
     try {
-      final script = await GakujoUploadCompressionLibraries.scriptFor(message);
-      if (script == null) {
-        return;
-      }
-      await _controller.runJavaScript(script);
+      await _uploadLibraryGate.run(
+        revision: revision,
+        kind: kind,
+        inject: () async {
+          final script = await GakujoUploadCompressionLibraries.scriptFor(kind);
+          if (script == null || !mounted || !_canRunPageScripts ||
+              revision != _navigationRevision) {
+            return false;
+          }
+          final result = await _controller.runJavaScriptReturningResult(
+            GakujoUploadCompressionLibraries.acknowledgedInjectionScript(kind, script),
+          );
+          return mounted &&
+              revision == _navigationRevision &&
+              _stringFromJavaScriptResult(result) == 'mbg-ready';
+        },
+      );
     } catch (error, stackTrace) {
       developer.log(
         'Failed to inject upload compression libraries',

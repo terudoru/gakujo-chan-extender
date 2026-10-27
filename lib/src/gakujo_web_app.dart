@@ -1217,6 +1217,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoCalendarOperationGate();
   final GakujoDownloadOperationGate _downloadOperationGate =
       GakujoDownloadOperationGate();
+  final GakujoUploadLibraryGate _uploadLibraryGate = GakujoUploadLibraryGate();
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   int? _pendingPageFinishedNavigationRevision;

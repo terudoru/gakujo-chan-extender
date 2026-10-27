@@ -15,7 +15,7 @@ ${GakujoImageBoundsScript.source}
     var pending = waiters.splice(0);
     pending.forEach(function(done) { done(); });
   };
-  function pdfLibrary() {
+  function pdfLibrary(setCancel) {
     if (window.pdfjsLib && window.__MBG_PDF_WORKER_URL) return Promise.resolve();
     return new Promise(function(resolve, reject) {
       var channel = window.MbgUploadCompression;
@@ -23,14 +23,22 @@ ${GakujoImageBoundsScript.source}
       var timer = window.setTimeout(function() {
         var index = waiters.indexOf(done);
         if (index >= 0) waiters.splice(index, 1);
+        setCancel(null);
         reject(new Error('PDFプレビューの読み込みがタイムアウトしました'));
       }, 30000);
       function done() {
         window.clearTimeout(timer);
+        setCancel(null);
         if (window.pdfjsLib && window.__MBG_PDF_WORKER_URL) resolve();
         else reject(new Error('PDFプレビューを読み込めません'));
       }
       waiters.push(done);
+      setCancel(function() {
+        window.clearTimeout(timer);
+        var index = waiters.indexOf(done);
+        if (index >= 0) waiters.splice(index, 1);
+        resolve();
+      });
       if (waiters.length === 1) channel.postMessage('preview');
     });
   }
@@ -44,6 +52,12 @@ ${GakujoImageBoundsScript.source}
     return result;
   }
   function show(input, file) {
+    var owner = window;
+    try {
+      if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
+    } catch (_) {}
+    var previousPreview = owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+    if (previousPreview && typeof previousPreview.close === 'function') previousPreview.close();
     var doc = input.ownerDocument;
     var overlay = doc.createElement('div');
     overlay.setAttribute('role', 'dialog');
@@ -65,9 +79,23 @@ ${GakujoImageBoundsScript.source}
     var status = doc.createElement('p'); status.textContent = '読み込み中…';
     body.appendChild(status); overlay.append(bar, body); doc.body.appendChild(overlay);
     var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, pageNumber = 1, objectUrl = null, render = null, visual = null, zoom = 100, watchdog = null;
+    var reader = null, cancelLibrary = null, rendering = false, renderRevision = 0;
+    var sourceWindow = doc.defaultView || window;
+    var detachWatcher = window.setInterval(function() {
+      var detached = input.isConnected === false;
+      try {
+        if (sourceWindow !== window && (!sourceWindow.frameElement || sourceWindow.frameElement.isConnected === false)) detached = true;
+      } catch (_) { detached = true; }
+      if (detached) cleanup();
+    }, 1000);
+    var preview = {close: cleanup};
+    owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
     function stopPdf() {
       pdfStopped = true;
+      renderRevision++;
       if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+      if (cancelLibrary) { cancelLibrary(); cancelLibrary = null; }
+      if (reader) { try { reader.abort(); } catch (e) {} reader = null; }
       if (render) { try { render.cancel(); } catch (e) {} render = null; }
       if (task) { try { Promise.resolve(task.destroy()).catch(function() {}); } catch (e) {} task = null; }
       if (worker) { worker.terminate(); worker = null; }
@@ -87,9 +115,15 @@ ${GakujoImageBoundsScript.source}
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       overlay.remove();
       input.removeEventListener('change', cleanup);
+      window.removeEventListener('pagehide', cleanup);
+      if (sourceWindow !== window) sourceWindow.removeEventListener('pagehide', cleanup);
+      window.clearInterval(detachWatcher);
+      if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) delete owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
     }
     close.addEventListener('click', cleanup);
     input.addEventListener('change', cleanup);
+    window.addEventListener('pagehide', cleanup);
+    if (sourceWindow !== window) sourceWindow.addEventListener('pagehide', cleanup);
     previous.hidden = next.hidden = true;
     function fail(error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
     var extension = (file.name.split('.').pop() || '').toLowerCase();
@@ -105,9 +139,15 @@ ${GakujoImageBoundsScript.source}
     } else if (file.type === 'application/pdf' || extension === 'pdf') {
       if (file.size > 64 * 1024 * 1024) { fail(new Error('PDFが大きすぎます')); return; }
       armWatchdog();
-      pdfLibrary().then(function() {
+      pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
-        return file.arrayBuffer();
+        return new Promise(function(resolve, reject) {
+          reader = new FileReader();
+          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result); };
+          reader.onerror = function() { reader = null; reject(new Error('PDFを読み込めません')); };
+          reader.onabort = function() { reader = null; resolve(null); };
+          reader.readAsArrayBuffer(file);
+        });
       }).then(function(bytes) {
         if (closed || pdfStopped || !bytes) return null;
         worker = new Worker(window.__MBG_PDF_WORKER_URL);
@@ -118,21 +158,31 @@ ${GakujoImageBoundsScript.source}
       }).then(function(result) {
         if (closed || pdfStopped || !result) return;
         pdf = result; previous.hidden = next.hidden = false;
-        return displayPage();
+        requestPage();
       }).catch(fail);
     } else {
       status.textContent = 'この形式のプレビューには対応していません。';
     }
+    function requestPage() {
+      if (closed || pdfStopped || !pdf) return;
+      renderRevision++;
+      if (render) { try { render.cancel(); } catch (e) {} }
+      if (!rendering) displayPage();
+    }
     function displayPage() {
-      if (closed || pdfStopped || !pdf) return Promise.resolve();
+      if (closed || pdfStopped || !pdf || rendering) return;
+      rendering = true;
       armWatchdog();
       previous.disabled = pageNumber <= 1; next.disabled = pageNumber >= pdf.numPages;
       count.textContent = pageNumber + ' / ' + pdf.numPages;
       status.textContent = 'ページを読み込み中…';
-      var current = pageNumber;
-      return pdf.getPage(current).then(function(page) {
-        if (closed || current !== pageNumber) return;
+      var current = pageNumber, revision = renderRevision, pageForCleanup = null;
+      Promise.resolve().then(function() { return pdf.getPage(current); }).then(function(page) {
+        pageForCleanup = page;
+        if (closed || pdfStopped || revision !== renderRevision) return;
         var viewport = page.getViewport({scale: 1.5});
+        if (!Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) ||
+            viewport.width <= 0 || viewport.height <= 0) throw new Error('PDFページのサイズが不正です');
         var scale = Math.min(1, Math.sqrt(16000000 / (viewport.width * viewport.height)));
         viewport = page.getViewport({scale: 1.5 * scale});
         var canvas = doc.createElement('canvas');
@@ -140,16 +190,23 @@ ${GakujoImageBoundsScript.source}
         canvas.style.cssText = 'width:' + zoom + '%;height:auto';
         render = page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
         return render.promise.then(function() {
-          if (closed || current !== pageNumber) return;
+          if (closed || pdfStopped || revision !== renderRevision) return;
           while (body.lastChild && body.lastChild !== status) body.removeChild(body.lastChild);
           status.textContent = '大きな画像は安全上表示されない場合があります。';
-          body.appendChild(canvas); visual = canvas; page.cleanup();
+          body.appendChild(canvas); visual = canvas;
           if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
         });
-      }).catch(fail);
+      }).catch(function(error) {
+        if (!closed && !pdfStopped && revision === renderRevision) fail(error);
+      }).finally(function() {
+        if (pageForCleanup) { try { pageForCleanup.cleanup(); } catch (e) {} }
+        render = null;
+        rendering = false;
+        if (!closed && !pdfStopped && revision !== renderRevision) displayPage();
+      });
     }
-    previous.addEventListener('click', function() { if (pageNumber > 1) { pageNumber--; displayPage(); } });
-    next.addEventListener('click', function() { if (pdf && pageNumber < pdf.numPages) { pageNumber++; displayPage(); } });
+    previous.addEventListener('click', function() { if (pageNumber > 1) { pageNumber--; requestPage(); } });
+    next.addEventListener('click', function() { if (pdf && pageNumber < pdf.numPages) { pageNumber++; requestPage(); } });
     function setZoom(value) { zoom = Math.max(100, Math.min(300, value)); if (visual) visual.style.width = zoom + '%'; }
     zoomOut.addEventListener('click', function() { setZoom(zoom - 50); });
     zoomIn.addEventListener('click', function() { setZoom(zoom + 50); });

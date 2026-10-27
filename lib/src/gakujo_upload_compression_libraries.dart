@@ -1,6 +1,47 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+
+/// Deduplicates library requests within a navigation while allowing retries
+/// after failures and ignoring completion from an older document.
+class GakujoUploadLibraryGate {
+  int? _revision;
+  final _loaded = <String>{};
+  final _pending = <String, Future<void>>{};
+
+  Future<void> run({
+    required int revision,
+    required String kind,
+    required Future<bool> Function() inject,
+  }) {
+    if (_revision != revision) {
+      _revision = revision;
+      _loaded.clear();
+      _pending.clear();
+    }
+    if (_loaded.contains(kind)) return Future.value();
+    final existing = _pending[kind];
+    if (existing != null) return existing;
+
+    final completer = Completer<void>();
+    final pending = completer.future;
+    _pending[kind] = pending;
+    unawaited(() async {
+      try {
+        if (await inject() && _revision == revision) _loaded.add(kind);
+        completer.complete();
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      } finally {
+        if (_revision == revision && identical(_pending[kind], pending)) {
+          unawaited(_pending.remove(kind));
+        }
+      }
+    }());
+    return pending;
+  }
+}
 
 /// Loads the bundled JavaScript libraries the upload compression script needs
 /// for PDF and Office files. They are injected only on request because they
@@ -22,6 +63,46 @@ class GakujoUploadCompressionLibraries {
   };
 
   static final Map<String, Future<String>> _cache = {};
+
+  /// A WebView may report script execution success even when JavaScript
+  /// throws. Return an explicit acknowledgement and undo partial Blob URLs.
+  static String acknowledgedInjectionScript(String kind, String script) {
+    final ready = switch (kind) {
+      'pdf' => 'window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL',
+      'preview' => 'window.pdfjsLib && window.__MBG_PDF_WORKER_URL',
+      'office' => 'window.JSZip',
+      _ => 'false',
+    };
+    final callback = kind == 'preview'
+        ? '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'
+        : '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED';
+    final marker = jsonEncode('__MBG_UPLOAD_LIBRARY_READY_$kind');
+    return '''
+(function() {
+  var keys = ['__MBG_QPDF_WORKER_URL', '__MBG_QPDF_MODULE_URL', '__MBG_QPDF_WASM_URL', '__MBG_PDF_WORKER_URL'];
+  var before = keys.map(function(key) { return window[key]; });
+  try {
+    if (window[$marker] && ($ready)) {
+      if (window.$callback) window.$callback(${jsonEncode(kind)});
+      return 'mbg-ready';
+    }
+    $script
+    if (!($ready)) throw new Error('library unavailable');
+    window[$marker] = true;
+    return 'mbg-ready';
+  } catch (_) {
+    keys.forEach(function(key, index) {
+      try {
+        if (window[key] && window[key] !== before[index]) URL.revokeObjectURL(window[key]);
+        if (before[index] === undefined) delete window[key]; else window[key] = before[index];
+      } catch (_) {}
+    });
+    try { if (window.$callback) window.$callback(${jsonEncode(kind)}); } catch (_) {}
+    return 'mbg-failed';
+  }
+})()
+''';
+  }
 
   /// Returns the script that defines the libraries for [kind] and then tells
   /// the page they are ready, or null for an unknown request.
