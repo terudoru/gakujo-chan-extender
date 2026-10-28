@@ -17,6 +17,10 @@ dependencies:
   synchronized: ^3.4.0
   material_ui: ^1.0.0
 
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true
   fonts:
