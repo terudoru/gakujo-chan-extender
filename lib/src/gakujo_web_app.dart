@@ -1804,7 +1804,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Offset delta, {
     required bool positiveIsBack,
   }) {
-    if (!_supportsDesktopZoom) {
+    if (defaultTargetPlatform != TargetPlatform.windows) {
       return;
     }
     final direction = _desktopHistorySwipe.add(
@@ -3936,7 +3936,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _beginNavigation({bool preservesPendingMessageOpen = false}) {
     if (_previewNavigationState != 'none' && mounted) {
-      setState(() => _previewNavigationState = 'none');
+      _handlePreviewNavigationState('none');
     }
     if (!preservesPendingMessageOpen) {
       _setPendingMessageUrl(null);
@@ -6628,9 +6628,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_previewNavigationState != state) {
       setState(() => _previewNavigationState = state);
     }
-    if (defaultTargetPlatform == TargetPlatform.macOS && state != 'none') {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
       unawaited(const MethodChannel('net.yoshida.morebettergakujo/pdf_preview')
-          .invokeMethod<void>('setVisible', state == 'visible')
+          .invokeMethod<void>('setPreviewState', state)
           .catchError((Object error, StackTrace stackTrace) {
         developer.log('Failed to change PDF preview visibility',
             name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);

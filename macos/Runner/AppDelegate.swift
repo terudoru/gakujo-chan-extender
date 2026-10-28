@@ -37,12 +37,16 @@ class AppDelegate: FlutterAppDelegate {
             result(FlutterError(code: "invalid_viewer", message: nil, details: nil))
             return
           }
-        case "setVisible":
-          guard let visible = call.arguments as? Bool else {
+        case "setPreviewState":
+          guard let state = call.arguments as? String,
+                ["visible", "hidden", "none"].contains(state) else {
             result(FlutterError(code: "invalid_visibility", message: nil, details: nil))
             return
           }
-          MacosPdfPreviewWindow.setVisible(visible, mainWindow: self?.mainFlutterWindow)
+          MacosWebViewMouseNavigation.setPreviewActive(state != "none", mainWindow: self?.mainFlutterWindow)
+          if state != "none" {
+            MacosPdfPreviewWindow.setVisible(state == "visible", mainWindow: self?.mainFlutterWindow)
+          }
         default:
           result(FlutterMethodNotImplemented)
           return
@@ -138,6 +142,21 @@ enum MacosWebViewMouseNavigation {
   private static let forwardButtonNumber = 4
   private static var monitor: Any?
   private static var keyMonitor: Any?
+  private static var scrollMonitor: Any?
+  private static let swipe = MacosHistorySwipeTracker()
+  private static weak var swipeWebView: WKWebView?
+  private static var previewActive = false
+
+  static func setPreviewActive(_ active: Bool, mainWindow: NSWindow?) {
+    if previewActive != active {
+      swipe.reset()
+      swipeWebView = nil
+    }
+    previewActive = active
+    if let mainWindow, let webView = webView(in: mainWindow) {
+      webView.allowsBackForwardNavigationGestures = !active
+    }
+  }
 
   static func install() {
     guard monitor == nil else { return }
@@ -161,6 +180,31 @@ enum MacosWebViewMouseNavigation {
       }
       Self.navigate(webView, back: event.buttonNumber == Self.backButtonNumber)
       return nil
+    }
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+      guard previewActive, event.hasPreciseScrollingDeltas,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+            let webView = Self.webView(under: event) else { return event }
+      let momentum = !event.momentumPhase.isEmpty
+      Self.handleScroll(webView, x: Double(event.scrollingDeltaX),
+                        y: Double(event.scrollingDeltaY), time: event.timestamp,
+                        beginsGesture: !momentum && event.phase.contains(.began),
+                        momentum: momentum)
+      return event
+    }
+  }
+
+  static func handleScroll(_ webView: WKWebView, x: Double, y: Double,
+                           time: TimeInterval, beginsGesture: Bool, momentum: Bool) {
+    guard previewActive else { return }
+    let owner = MacosPdfPreviewWindow.opener(for: webView) ?? webView
+    if swipeWebView !== owner {
+      swipe.reset()
+      swipeWebView = owner
+    }
+    if let back = swipe.add(x: x, y: y, time: time,
+                            beginsGesture: beginsGesture, momentum: momentum) {
+      navigate(webView, back: back)
     }
   }
 

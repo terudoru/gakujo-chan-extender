@@ -26,6 +26,7 @@ const workflow=new Element('a',child);workflow.textContent='確認';workflow.att
 const external=new Element('a',child);external.textContent='外部.pdf';external.attributes.href='https://example.invalid/file.pdf';child.body.appendChild(external);child.anchors.push(external);
 const download=new Element('button',child);download.textContent='ダウンロード';download.form={getAttribute:key=>({method:'POST',action:'campussquare.do'}[key]||null),fields:{_eventId:'download',fileId:'42'}};child.body.appendChild(download);child.anchors.push(download);
 const submit=new Element('button',child);submit.textContent='提出';submit.form={getAttribute:key=>({method:'POST',action:'campussquare.do'}[key]||null),fields:{_eventId:'submit',fileId:'42'}};child.body.appendChild(submit);child.anchors.push(submit);
+const ownPreview=new Element('button',child);ownPreview.textContent='プレビューを見る';ownPreview.form=download.form;ownPreview.attributes['data-mbg-submitted-preview']='true';child.body.appendChild(ownPreview);child.anchors.push(ownPreview);
 const frame={contentWindow:{document:child}};top.frames.push(frame);
 const grandchild=makeDoc('https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=nested');
 const nested=new Element('a',grandchild);nested.textContent='nested.pdf';nested.attributes.href='campussquare.do?_eventId=download&fileId=3';grandchild.body.appendChild(nested);grandchild.anchors.push(nested);
@@ -45,6 +46,7 @@ assert.equal(external.__mbgSubmittedPreviewButton,undefined,'external links do n
 assert.ok(download.__mbgSubmittedPreviewButton,'safe attachment forms get a preview button');
 assert.ok(nested.__mbgSubmittedPreviewButton,'nested frames also receive preview buttons');
 assert.equal(submit.__mbgSubmittedPreviewButton,undefined,'submission forms do not get a preview button');
+assert.equal(ownPreview.__mbgSubmittedPreviewButton,undefined,'preview controls in a download form do not create more controls');
 let requested;window.__MBG_OPEN_REMOTE_PREVIEW=req=>{requested=req;return true;};button.fire('click');
 assert.equal(requested.method,'GET');assert.equal(requested.fileName,'synthetic.pdf');
 const url=new URL(requested.url);assert.equal(url.origin,'https://gakujo.iess.niigata-u.ac.jp');
@@ -56,6 +58,6 @@ assert.equal(new URL(requested.url).searchParams.get('_eventId'),'download');
 assert.equal(requested.fileName,'通知の資料.pdf');
 download.__mbgSubmittedPreviewButton.fire('click');
 assert.equal(requested.method,'POST');assert.equal(requested.formFields.fileId,'42');
-window.attach();assert.equal(child.body.children.filter(x=>x.textContent==='プレビューを見る').length,4,'repeated attachment does not duplicate controls');
+window.attach();assert.equal(child.body.children.filter(x=>x.textContent==='プレビューを見る').length,5,'repeated attachment does not duplicate controls');
 child.location.href='https://evil.invalid/campusweb/campussquare.do?_flowExecutionKey=synthetic';requested=undefined;button.fire('click');assert.equal(requested,undefined,'navigated frames cannot issue a request');
 console.log('Submitted preview button opens only the matching safe request.');
