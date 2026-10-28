@@ -2,11 +2,32 @@ name: Check Android release signing
 
 on:
   workflow_dispatch:
+    inputs:
+      build_apk:
+        description: Rebuild the tagged Android APK for inspection
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  inspect-known-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect a previously published APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$RUNNER_TEMP/mbg-previous.apk"
+          trap 'rm -f "$apk"' EXIT
+          curl --fail --location --silent --show-error \
+            'https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.70.0/MoreBetterGakujo-v0.70.0.apk' \
+            --output "$apk"
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          echo "Android build tools: ${build_tools##*/}"
+          "$build_tools/apksigner" verify --verbose --print-certs "$apk"
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -61,6 +82,7 @@ jobs:
           java -cp "$RUNNER_TEMP" MbgSigningCheck "$keystore"
 
   inspect-apk:
+    if: ${{ inputs.build_apk }}
     needs: check
     runs-on: ubuntu-latest
     steps:
