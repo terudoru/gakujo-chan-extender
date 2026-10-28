@@ -99,6 +99,7 @@ void main() {
     final url = await server.start();
     for (final name in [
       'index.html',
+      'orientation.js',
       'flutter_bootstrap.js',
       'assets/packages/pdfrx/assets/pdfium.wasm',
       'assets/assets/NotoSansCJK-Regular.ttc',

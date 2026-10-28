@@ -15,7 +15,7 @@ CLIENT = WEB / 'assets' / 'packages' / 'pdfrx' / 'assets' / 'pdfium_client.js'
 WASM = WEB / 'assets' / 'packages' / 'pdfrx' / 'assets' / 'pdfium.wasm'
 OUTPUT = ROOT / 'assets' / 'pdf_preview' / 'web'
 FILES = (
-    'index.html', 'flutter_bootstrap.js', 'main.dart.js',
+    'index.html', 'orientation.js', 'flutter_bootstrap.js', 'main.dart.js',
     'canvaskit/canvaskit.js', 'canvaskit/canvaskit.wasm',
     'canvaskit/chromium/canvaskit.js', 'canvaskit/chromium/canvaskit.wasm',
     'canvaskit/webparagraph/canvaskit.js', 'canvaskit/webparagraph/canvaskit.wasm',

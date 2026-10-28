@@ -26,6 +26,7 @@ class GakujoPdfPreviewServer {
   // This allowlist intentionally cannot name files outside the viewer bundle.
   static const _resources = <String>{
     'index.html',
+    'orientation.js',
     'flutter_bootstrap.js',
     'popup_relay.js',
     'main.dart.js',
