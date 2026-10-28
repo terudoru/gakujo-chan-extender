@@ -27,6 +27,7 @@ class GakujoPdfPreviewServer {
   static const _resources = <String>{
     'index.html',
     'flutter_bootstrap.js',
+    'popup_relay.js',
     'main.dart.js',
     'canvaskit/canvaskit.js',
     'canvaskit/canvaskit.wasm',
@@ -99,21 +100,34 @@ class GakujoPdfPreviewServer {
         response.statusCode = HttpStatus.notFound;
         return;
       }
-      final asset = name.startsWith('assets/assets/')
-          ? 'tools/pdf_preview/${name.substring('assets/'.length)}'
-          : 'assets/pdf_preview/web/$name';
-      final bytes = await _bundle.load(asset);
-      List<int> data = bytes.buffer.asUint8List(
-        bytes.offsetInBytes,
-        bytes.lengthInBytes,
-      );
+      List<int> data;
+      if (name == 'popup_relay.js') {
+        data = utf8.encode(_popupRelay);
+      } else {
+        final asset = name.startsWith('assets/assets/')
+            ? 'tools/pdf_preview/${name.substring('assets/'.length)}'
+            : 'assets/pdf_preview/web/$name';
+        final bytes = await _bundle.load(asset);
+        data = bytes.buffer.asUint8List(
+          bytes.offsetInBytes,
+          bytes.lengthInBytes,
+        );
+      }
       if (name == 'index.html') {
         final html = utf8.decode(data);
         const base = '<base href="/">';
-        if (!html.contains(base)) {
+        const bootstrap = '<script src="flutter_bootstrap.js"';
+        if (!html.contains(base) || !html.contains(bootstrap)) {
           throw StateError('Invalid viewer entry point');
         }
-        data = utf8.encode(html.replaceFirst(base, '<base href="/$_token/">'));
+        data = utf8.encode(
+          html
+              .replaceFirst(base, '<base href="/$_token/">')
+              .replaceFirst(
+                bootstrap,
+                '<script src="popup_relay.js"></script><script src="flutter_bootstrap.js"',
+              ),
+        );
       }
       final origin = 'http://127.0.0.1:${server.port}';
       response.headers
@@ -140,6 +154,22 @@ class GakujoPdfPreviewServer {
       }
     }
   }
+
+  // The isolated viewer expects its PDF from its parent frame. A macOS
+  // top-level popup relays only messages from its opener into itself; no PDF
+  // bytes are served over HTTP or written to disk.
+  static const _popupRelay = r'''
+if (window.opener && window.parent === window) {
+  window.addEventListener('message', function(event) {
+    if (event.source === window.opener && event.data instanceof ArrayBuffer) {
+      window.postMessage(event.data, '*', [event.data]);
+    } else if (event.source === window && typeof event.data === 'string' &&
+               event.data.indexOf('mbg-preview-') === 0) {
+      window.opener.postMessage(event.data, '*');
+    }
+  });
+}
+''';
 
   static String _contentType(String name) {
     if (name.endsWith('.html')) return 'text/html; charset=utf-8';

@@ -13,7 +13,10 @@ class _ViewerBundle extends CachingAssetBundle {
     }
     return ByteData.sublistView(
       Uint8List.fromList(
-        utf8.encode('<html><head><base href="/"></head></html>'),
+        utf8.encode(
+          '<html><head><base href="/"></head><body>'
+          '<script src="flutter_bootstrap.js" async></script></body></html>',
+        ),
       ),
     );
   }
@@ -41,6 +44,7 @@ void main() {
     final html = await utf8.decoder.bind(response).join();
     expect(response.statusCode, HttpStatus.ok);
     expect(html, contains('<base href="/${url.pathSegments.first}/">'));
+    expect(html, contains('<script src="popup_relay.js"></script>'));
     expect(response.headers.value('access-control-allow-origin'), '*');
     expect(response.headers.value('cache-control'), contains('no-store'));
     expect(response.headers.value('x-frame-options'), isNull);
@@ -75,6 +79,14 @@ void main() {
     );
     expect(await status('GET', url, host: 'example.org'), HttpStatus.notFound);
     expect(await status('HEAD', url), HttpStatus.ok);
+    final relayUrl = url.replace(
+      path: '/${url.pathSegments.first}/popup_relay.js',
+    );
+    final relayResponse = await (await client.getUrl(relayUrl)).close();
+    final relay = await utf8.decoder.bind(relayResponse).join();
+    expect(relayResponse.statusCode, HttpStatus.ok);
+    expect(relay, contains('event.source === window.opener'));
+    expect(relay, contains('event.data instanceof ArrayBuffer'));
   });
 
   test('the viewer files and fallback fonts can be served', () async {

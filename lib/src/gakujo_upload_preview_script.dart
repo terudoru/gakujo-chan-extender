@@ -79,13 +79,27 @@ ${GakujoImageBoundsScript.source}
     bar.style.cssText = 'display:flex;gap:8px;align-items:center;padding:10px;flex-wrap:wrap;border-bottom:1px solid #ccc';
     // CampusSquare can use a desktop-sized layout viewport on a phone. Keep
     // controls readable even when the WebView scales that viewport down.
-    var viewport = window.visualViewport;
+    var sourceWindow = doc.defaultView || window;
+    var viewport = sourceWindow.visualViewport;
     function resizeToolbar() {
       var scale = viewport && Number(viewport.scale);
       bar.style.zoom = String(scale > 0 ? Math.min(3, Math.max(1, 1 / scale)) : 1);
+      // The layout viewport may be wider or taller than the visible area on
+      // Android. A fixed inset:0 overlay otherwise extends off-screen when
+      // the user has panned or the page has a desktop-sized layout viewport.
+      if (viewport && viewport.width > 0 && viewport.height > 0) {
+        overlay.style.left = (viewport.offsetLeft || 0) + 'px';
+        overlay.style.top = (viewport.offsetTop || 0) + 'px';
+        overlay.style.width = viewport.width + 'px';
+        overlay.style.height = viewport.height + 'px';
+        overlay.style.right = 'auto'; overlay.style.bottom = 'auto';
+      }
     }
     resizeToolbar();
-    if (viewport) viewport.addEventListener('resize', resizeToolbar);
+    if (viewport) {
+      viewport.addEventListener('resize', resizeToolbar);
+      viewport.addEventListener('scroll', resizeToolbar);
+    }
     var title = doc.createElement('strong'); title.textContent = file.name;
     title.style.cssText = 'flex:1 1 180px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     var close = doc.createElement('button'); close.type = 'button'; close.textContent = '閉じる';
@@ -106,7 +120,6 @@ ${GakujoImageBoundsScript.source}
     var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, objectUrl = null, visual = null, zoom = 100, watchdog = null;
     var reader = null, cancelLibrary = null, pdfViewerCleanup = null, imageGestureCleanup = null;
     var textZoom = false;
-    var sourceWindow = doc.defaultView || window;
     var detachWatcher = window.setInterval(function() {
       var detached = input.isConnected === false;
       try {
@@ -145,7 +158,10 @@ ${GakujoImageBoundsScript.source}
       overlay.remove();
       input.removeEventListener('change', cleanup);
       window.removeEventListener('pagehide', cleanup);
-      if (viewport) viewport.removeEventListener('resize', resizeToolbar);
+      if (viewport) {
+        viewport.removeEventListener('resize', resizeToolbar);
+        viewport.removeEventListener('scroll', resizeToolbar);
+      }
       if (sourceWindow !== window) sourceWindow.removeEventListener('pagehide', cleanup);
       window.clearInterval(detachWatcher);
       if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) delete owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
@@ -191,20 +207,24 @@ ${GakujoImageBoundsScript.source}
       }).then(function(bytes) {
         if (closed || pdfStopped || !bytes) return null;
         if (window.__MBG_PDF_PREVIEW_URL) {
-          var frame = doc.createElement('iframe');
+          var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
+          var frame = popup ? null : doc.createElement('iframe');
+          var viewer = null, popupTimer = null;
           var sent = false;
-          frame.setAttribute('title', 'PDFプレビュー');
-          frame.setAttribute('sandbox', 'allow-scripts');
-          frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
+          if (frame) {
+            frame.setAttribute('title', 'PDFプレビュー');
+            frame.setAttribute('sandbox', 'allow-scripts');
+            frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
+          }
           body.style.cssText = 'position:relative;overflow:hidden;flex:1;min-height:0;padding:0';
           status.style.cssText = 'position:absolute;z-index:1;top:0;left:0;right:0;text-align:center;pointer-events:none';
           zoomOut.hidden = zoomIn.hidden = true;
           function onViewerMessage(event) {
-            if (closed || pdfStopped || event.source !== frame.contentWindow) return;
+            if (closed || pdfStopped || event.source !== viewer) return;
             if (event.data === 'mbg-preview-ready' && !sent) {
               sent = true;
               armWatchdog();
-              frame.contentWindow.postMessage(bytes, '*', [bytes]);
+              viewer.postMessage(bytes, '*', [bytes]);
               bytes = null;
             } else if (event.data === 'mbg-preview-password-requested' && sent) {
               if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
@@ -213,7 +233,7 @@ ${GakujoImageBoundsScript.source}
               armWatchdog();
             } else if (event.data === 'mbg-preview-loaded' && sent) {
               if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
-              status.textContent = '';
+              status.textContent = popup ? 'PDFプレビューを別のウィンドウで表示中です' : '';
             } else if (event.data === 'mbg-preview-failed') {
               fail(new Error('PDFを開けません'));
             }
@@ -221,11 +241,22 @@ ${GakujoImageBoundsScript.source}
           sourceWindow.addEventListener('message', onViewerMessage);
           pdfViewerCleanup = function() {
             sourceWindow.removeEventListener('message', onViewerMessage);
-            frame.remove();
+            if (popupTimer) window.clearInterval(popupTimer);
+            if (frame) frame.remove();
+            else if (viewer) { try { viewer.close(); } catch (_) {} }
             bytes = null;
           };
-          frame.src = window.__MBG_PDF_PREVIEW_URL;
-          body.appendChild(frame);
+          if (popup) {
+            viewer = sourceWindow.open(window.__MBG_PDF_PREVIEW_URL, '_blank');
+            if (!viewer) { fail(new Error('PDFプレビューを開けません')); return null; }
+            popupTimer = window.setInterval(function() {
+              try { if (viewer.closed) cleanup(); } catch (_) { cleanup(); }
+            }, 500);
+          } else {
+            frame.src = window.__MBG_PDF_PREVIEW_URL;
+            body.appendChild(frame);
+            viewer = frame.contentWindow;
+          }
           return null;
         }
         worker = new Worker(window.__MBG_PDF_WORKER_URL);

@@ -26,6 +26,17 @@ class AppDelegate: FlutterAppDelegate {
         controller: controller,
         messenger: controller.engine.binaryMessenger
       )
+      FlutterMethodChannel(
+        name: "net.yoshida.morebettergakujo/pdf_preview",
+        binaryMessenger: controller.engine.binaryMessenger
+      ).setMethodCallHandler { call, result in
+        guard call.method == "setViewerURL", let url = call.arguments as? String,
+              MacosPdfPreviewWindow.setViewerURL(url) else {
+          result(FlutterError(code: "invalid_viewer", message: nil, details: nil))
+          return
+        }
+        result(nil)
+      }
     }
     super.applicationDidFinishLaunching(notification)
   }
@@ -68,6 +79,7 @@ enum MacosWebViewFileUploadSupport {
     let replacement: @convention(block) (AnyObject, AnyObject?) -> Void = { webView, delegate in
       if let delegate, let delegateClass = object_getClass(delegate) {
         Self.addOpenPanelHandlerIfNeeded(to: delegateClass)
+        MacosPdfPreviewWindow.install(on: delegateClass)
       }
       originalSetter(webView, setterSelector, delegate)
     }

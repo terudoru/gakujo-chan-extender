@@ -20,6 +20,9 @@ import 'dart:ui' as ui;
 import 'package:material_ui/material_ui.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import 'normalized_text_search.dart';
+import 'unicode_normalization.dart';
+
 /// Helper class to interactively search text in a PDF document.
 ///
 /// To be notified when the search status change, use [addListener].
@@ -218,10 +221,27 @@ class BoundedPdfTextSearcher extends Listenable {
           return;
         }
         textMatchesPageStartIndex.add(textMatches.length);
-        await for (final f in pageText.allMatches(
-          condition.pattern,
-          caseInsensitive: condition.caseInsensitive,
-        )) {
+        late final Stream<PdfPageTextRange> matches;
+        try {
+          matches = condition.pattern is String
+              ? Stream.fromIterable(normalizedTextMatches(
+                pageText.fullText,
+                condition.pattern as String,
+                normalize: normalizeSearchText,
+                caseInsensitive: condition.caseInsensitive,
+                maxMatches: maxMatches - textMatches.length,
+              ).map((range) => PdfPageTextRange(
+                pageText: pageText!, start: range.start, end: range.end,
+              )))
+              : pageText.allMatches(condition.pattern,
+                  caseInsensitive: condition.caseInsensitive);
+        } on NormalizedTextLimit {
+          limited = true;
+          _isSearching = false;
+          notifyListeners();
+          return;
+        }
+        await for (final f in matches) {
           if (searchSession != _searchSession) return;
           textMatches.add(f);
           if (textMatches.length >= maxMatches) {

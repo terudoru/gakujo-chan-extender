@@ -29,7 +29,7 @@ doc.querySelectorAll=selector=>selector==='input[type="file"]'?inputs:[];
 const windowListeners={};
 const viewportListeners=new Set();
 const window={document:doc,location:{origin:'https://example.invalid'},
- visualViewport:{scale:0.4,addEventListener(name,fn){viewportListeners.add(fn);},removeEventListener(name,fn){viewportListeners.delete(fn);}},
+ visualViewport:{scale:0.4,width:320,height:500,offsetLeft:95,offsetTop:12,addEventListener(name,fn){viewportListeners.add(fn);},removeEventListener(name,fn){viewportListeners.delete(fn);}},
  setTimeout(fn){const id=++timerId;timers.set(id,()=>{timers.delete(id);fn();});return id;},clearTimeout(id){timers.delete(id);},
  setInterval(fn){const id=++timerId;intervals.set(id,fn);return id;},clearInterval(id){intervals.delete(id);},
  addEventListener(name,fn){(windowListeners[name] ||= []).push(fn);},removeEventListener(name,fn){windowListeners[name]=(windowListeners[name]||[]).filter(x=>x!==fn);},
@@ -74,6 +74,10 @@ assert.deepEqual([...(await new lastOptions.StandardFontDataFactory().fetch({fil
 await assert.rejects(new lastOptions.CMapReaderFactory().fetch({name:'../unsafe'}));
 const overlay=doc.body.children.find(x=>x.attributes.role==='dialog');const bar=overlay.children[0];
 assert.equal(bar.style.zoom,'2.5','toolbar must stay usable on a scaled mobile viewport');
+assert.equal(overlay.style.left,'95px');assert.equal(overlay.style.top,'12px');
+assert.equal(overlay.style.width,'320px');assert.equal(overlay.style.height,'500px');
+window.visualViewport.offsetLeft=20; for(const listener of viewportListeners)listener();
+assert.equal(overlay.style.left,'20px','panning updates the visible preview bounds');
 bar.children.find(x=>x.textContent==='次へ').fire('click');assert.equal(lastViewer.currentPageNumber,2);
 const area=lastViewer.options.container;
 area.scrollLeft=0;area.scrollTop=0;
@@ -131,4 +135,33 @@ assert.equal(timers.size,0);
 inputs[0].fire('change');
 assert.equal((windowListeners.message||[]).length,0,'closing removes the message listener');
 assert.equal(iframe.isConnected,false);
+const popup={messages:[],closed:false,postMessage(...args){this.messages.push(args);},close(){this.closed=true;}};
+window.__MBG_PDF_PREVIEW_POPUP=true;
+window.open=(url,target)=>{assert.equal(url,window.__MBG_PDF_PREVIEW_URL);assert.equal(target,'_blank');return popup;};
+controls[0].fire('click');await ticks();currentReader.finish();await ticks();
+for(const fn of windowListeners.message||[])fn({source:{},data:'mbg-preview-ready'});
+assert.equal(popup.messages.length,0,'unrelated windows cannot receive the PDF');
+for(const fn of windowListeners.message||[])fn({source:popup,data:'mbg-preview-ready'});
+assert.equal(popup.messages.length,1);
+assert.equal(popup.messages[0][0].byteLength,4);
+for(const fn of windowListeners.message||[])fn({source:popup,data:'mbg-preview-loaded'});
+assert.equal(timers.size,0);
+inputs[0].fire('change');
+assert.equal(popup.closed,true,'closing the preview also closes its window');
+assert.equal((windowListeners.message||[]).length,0);
+const childDoc={createElement:tag=>new Element(tag,childDoc)};
+childDoc.body=new Element('body',childDoc);
+const childInput=new Element('input',childDoc);childInput.files=[file];childDoc.body.appendChild(childInput);
+childDoc.querySelectorAll=selector=>selector==='input[type="file"]'?[childInput]:[];
+const childViewport={scale:1,width:180,height:240,offsetLeft:7,offsetTop:9,addEventListener(){},removeEventListener(){}};
+const childWindow={document:childDoc,visualViewport:childViewport,frameElement:{isConnected:true},addEventListener(){},removeEventListener(){}};
+childDoc.defaultView=childWindow;
+const previousQuery=doc.querySelectorAll;
+doc.querySelectorAll=selector=>selector==='iframe,frame'?[{contentWindow:childWindow}]:previousQuery(selector);
+for(const tick of [...intervals.values()])tick();
+childInput.__mbgPreviewButton.fire('click');await ticks();
+const childOverlay=childDoc.body.children.find(x=>x.attributes.role==='dialog');
+assert.equal(childOverlay.style.width,'180px','an iframe uses its own visual viewport');
+assert.equal(childOverlay.style.left,'7px');
+childInput.fire('change');await ticks();
 console.log('Preview cancellation, PDF viewer lifecycle, search and local font loading are bounded.');

@@ -747,13 +747,19 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         revision: revision,
         kind: kind,
         inject: () async {
-          if (kind == 'preview' && (Platform.isWindows || Platform.isAndroid)) {
+          if (kind == 'preview' && (Platform.isWindows || Platform.isAndroid || Platform.isMacOS)) {
             final url = await _pdfPreviewServer.start();
             if (!mounted || !_canRunPageScripts || revision != _navigationRevision) {
               return false;
             }
+            if (Platform.isMacOS) {
+              await const MethodChannel('net.yoshida.morebettergakujo/pdf_preview')
+                  .invokeMethod<void>('setViewerURL', url.toString());
+              if (!mounted || !_canRunPageScripts || revision != _navigationRevision) return false;
+            }
             final result = await _controller.runJavaScriptReturningResult(
               'window.__MBG_PDF_PREVIEW_URL = ${jsonEncode(url.toString())};'
+              'window.__MBG_PDF_PREVIEW_POPUP = ${Platform.isMacOS};'
               'window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED(); "mbg-ready";',
             );
             return mounted && revision == _navigationRevision &&
