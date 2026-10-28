@@ -135,6 +135,7 @@ jobs:
             test/pdf_preview_worker_cleanup_test.dart \
             test/gakujo_qpdf_worker_test.dart
           python3 -m unittest discover -s test -p staged_release_test.py -v
+          python3 -m unittest discover -s test -p android_signing_output_test.py -v
 
       - name: Prepare Android release signing
         env:
@@ -178,13 +179,8 @@ jobs:
           set -euo pipefail
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           apk=build/app/outputs/flutter-apk/app-release.apk
-          signature="$("$build_tools/apksigner" verify --print-certs "$apk")"
-          count="$(printf '%s\n' "$signature" | grep -c '^Signer #[0-9][0-9]* certificate SHA-256 digest:' || true)"
-          actual="$(printf '%s\n' "$signature" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
-          if [[ "$count" != 1 || "$actual" != dda68ac39ed55cfc079eaaae33e37eb0a39eeea6a9652071a338cc87b4407e5b ]]; then
-            echo '::error::Android APK signing identity differs from the existing v0.70.0 and v0.70.1-beta.1 releases.'
-            exit 1
-          fi
+          "$build_tools/apksigner" verify --verbose --print-certs "$apk" |
+            python3 scripts/verify_android_signature.py
           package_info="$("$build_tools/aapt" dump badging "$apk" | sed -n '1p')"
           if [[ "$package_info" != "package: name='net.yoshida.morebettergakujo' versionCode='"* ]]; then
             echo '::error::Android package identity is unexpected.'
