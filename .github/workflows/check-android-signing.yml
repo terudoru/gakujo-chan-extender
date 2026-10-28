@@ -59,3 +59,52 @@ jobs:
           JAVA
           javac "$source"
           java -cp "$RUNNER_TEMP" MbgSigningCheck "$keystore"
+
+  inspect-apk:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: v0.70.4
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.8'
+          cache: false
+      - name: Prepare signing and build the release APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keystore="$GITHUB_WORKSPACE/android/upload-keystore.jks"
+          properties="$GITHUB_WORKSPACE/android/key.properties"
+          trap 'rm -f "$keystore" "$properties"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          printf '%s\n' "storeFile=$keystore" "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
+            "keyAlias=$ANDROID_KEY_ALIAS" "keyPassword=$ANDROID_KEY_PASSWORD" > "$properties"
+          flutter pub get
+          flutter build apk --release --no-pub
+      - name: Inspect the public APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          signature="$("$build_tools/apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk)"
+          count="$(printf '%s\n' "$signature" | grep -c '^Signer #[0-9][0-9]* certificate SHA-256 digest:' || true)"
+          actual="$(printf '%s\n' "$signature" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          printf 'Signer count: %s\nPublic certificate SHA-256: %s\n' "$count" "$actual"
+          if [[ "$count" != 1 || "$actual" != dda68ac39ed55cfc079eaaae33e37eb0a39eeea6a9652071a338cc87b4407e5b ]]; then
+            echo '::error::The built APK signature does not match the expected release certificate.'
+            exit 1
+          fi
