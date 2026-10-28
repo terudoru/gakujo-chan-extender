@@ -2,36 +2,6 @@
 
 part of 'gakujo_web_app.dart';
 
-enum GakujoDownloadAction { preview, save }
-
-@visibleForTesting
-Future<GakujoDownloadAction?> showGakujoDownloadActionDialog(
-  BuildContext context,
-  String fileName,
-) {
-  return showDialog<GakujoDownloadAction>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('ファイルを開く'),
-      content: Text(fileName.isEmpty ? 'ファイルの操作を選択してください。' : fileName),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('キャンセル'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, GakujoDownloadAction.save),
-          child: const Text('ダウンロード'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, GakujoDownloadAction.preview),
-          child: const Text('プレビュー'),
-        ),
-      ],
-    ),
-  );
-}
-
 @visibleForTesting
 Future<void> handleGakujoNativeDownload(
   GakujoWebViewDownload download, {
@@ -807,7 +777,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
     await handleGakujoNativeDownload(
       download,
-      onDownload: _chooseDownloadOrPreview,
+      onDownload: _handleDownloadRequest,
       showSnackBar: _showSnackBar,
     );
   }
@@ -832,45 +802,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
-    await _chooseDownloadOrPreview(request);
-  }
-
-  Future<void> _chooseDownloadOrPreview(GakujoDownloadRequest request) async {
-    if (!mounted || !AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
-      return;
-    }
-    if (!_canRunPageScripts) {
-      await _handleDownloadRequest(request);
-      return;
-    }
-    if (_downloadChoiceVisible) return;
-    final revision = _navigationRevision;
-    _downloadChoiceVisible = true;
-    GakujoDownloadAction? action;
-    try {
-      action = await showGakujoDownloadActionDialog(context, request.fileName);
-    } finally {
-      _downloadChoiceVisible = false;
-    }
-    if (!mounted || !_canRunPageScripts || revision != _navigationRevision) return;
-    if (action == GakujoDownloadAction.save) {
-      await _handleDownloadRequest(request);
-    } else if (action == GakujoDownloadAction.preview) {
-      try {
-        final result = await _controller.runJavaScriptReturningResult(
-          GakujoRemoteFilePreviewScript.open(request),
-        );
-        if (mounted && revision == _navigationRevision && result.toString() != 'true') {
-          _showSnackBar('このファイルはプレビューできません。ダウンロードをお試しください');
-        }
-      } on Object catch (error, stackTrace) {
-        developer.log('Failed to open file preview',
-            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
-        if (mounted && revision == _navigationRevision) {
-          _showSnackBar('プレビューを開けませんでした');
-        }
-      }
-    }
+    await _handleDownloadRequest(request);
   }
 
   Future<void> _handleDownloadRequest(

@@ -79,7 +79,10 @@ ${GakujoImageBoundsScript.source}
     bar.append(title, previous, count, next, zoomOut, zoomIn, close);
     var body = doc.createElement('div'); body.style.cssText = 'overflow:auto;flex:1;text-align:center;padding:12px';
     var status = doc.createElement('p'); status.textContent = '読み込み中…';
-    body.appendChild(status); overlay.append(bar, body); doc.body.appendChild(overlay);
+    body.appendChild(status); overlay.append(bar, body);
+    // CampusSquare scales its body with a CSS transform; a fixed descendant
+    // would cover only the scaled body instead of the viewport.
+    (doc.documentElement || doc.body).appendChild(overlay);
     var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, pageNumber = 1, objectUrl = null, render = null, visual = null, zoom = 100, watchdog = null;
     var reader = null, cancelLibrary = null, rendering = false, renderRevision = 0;
     var sourceWindow = doc.defaultView || window;
@@ -158,7 +161,20 @@ ${GakujoImageBoundsScript.source}
         if (closed || pdfStopped || !bytes) return null;
         worker = new Worker(window.__MBG_PDF_WORKER_URL);
         var pdfWorker = window.pdfjsLib.PDFWorker.fromPort({port: worker});
+        function CMapReaderFactory() {}
+        CMapReaderFactory.prototype.fetch = function(request) {
+          var name = request && request.name;
+          var maps = window.__MBG_PDF_CMAPS;
+          if (!name || !/^[A-Za-z0-9_-]{1,80}$/.test(name) || !maps ||
+              !Object.prototype.hasOwnProperty.call(maps, name)) {
+            return Promise.reject(new Error('PDF文字データを読み込めません'));
+          }
+          var raw = atob(maps[name]), data = new Uint8Array(raw.length);
+          for (var i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);
+          return Promise.resolve({cMapData: data, compressionType: 1});
+        };
         task = window.pdfjsLib.getDocument({data: new Uint8Array(bytes), worker: pdfWorker,
+          CMapReaderFactory: CMapReaderFactory, cMapPacked: true, useWorkerFetch: false,
           isEvalSupported: false, useSystemFonts: true, stopAtErrors: true, maxImageSize: 16000000});
         return task.promise;
       }).then(function(result) {
@@ -212,16 +228,27 @@ ${GakujoImageBoundsScript.source}
       if (file.size > 4 * 1024 * 1024) { fail(new Error('テキストが大きすぎます')); return; }
       reader = new FileReader();
       reader.onload = function() {
-        var text = reader && reader.result; reader = null;
+        var bytes = reader && reader.result; reader = null;
         if (closed || pdfStopped) return;
+        var text;
+        try {
+          var data = new Uint8Array(bytes), encoding = 'utf-8';
+          if (data.length >= 2 && data[0] === 255 && data[1] === 254) encoding = 'utf-16le';
+          else if (data.length >= 2 && data[0] === 254 && data[1] === 255) encoding = 'utf-16be';
+          try { text = new TextDecoder(encoding, {fatal: true}).decode(data); }
+          catch (error) {
+            if (encoding !== 'utf-8') throw error;
+            text = new TextDecoder('shift_jis', {fatal: true}).decode(data);
+          }
+        } catch (_) { fail(new Error('テキストの文字コードを読み取れません')); return; }
         var pre = doc.createElement('pre');
         pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
-        pre.textContent = typeof text === 'string' ? text : '';
+        pre.textContent = text;
         body.appendChild(pre); status.textContent = '';
       };
       reader.onerror = function() { reader = null; fail(new Error('テキストを読み込めません')); };
       reader.onabort = function() { reader = null; };
-      reader.readAsText(file);
+      reader.readAsArrayBuffer(file);
     } else {
       status.textContent = 'この形式のプレビューには対応していません。';
     }
@@ -242,11 +269,17 @@ ${GakujoImageBoundsScript.source}
       Promise.resolve().then(function() { return pdf.getPage(current); }).then(function(page) {
         pageForCleanup = page;
         if (closed || pdfStopped || revision !== renderRevision) return;
-        var viewport = page.getViewport({scale: 1.5});
+        var viewport = page.getViewport({scale: 1});
         if (!Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) ||
             viewport.width <= 0 || viewport.height <= 0) throw new Error('PDFページのサイズが不正です');
-        var scale = Math.min(1, Math.sqrt(16000000 / (viewport.width * viewport.height)));
-        viewport = page.getViewport({scale: 1.5 * scale});
+        // Render at the displayed width and screen pixel density. Merely
+        // stretching a fixed-resolution canvas makes enlarged pages blurry.
+        var displayWidth = Math.max(1, (body.clientWidth || viewport.width) - 24) * zoom / 100;
+        var density = Math.min(3, Math.max(1, Number(window.devicePixelRatio) || 1));
+        var desiredScale = Math.max(1, displayWidth * density / viewport.width);
+        var scale = Math.min(desiredScale, 10000 / viewport.width, 10000 / viewport.height,
+          Math.sqrt(15990000 / (viewport.width * viewport.height)));
+        viewport = page.getViewport({scale: scale});
         var canvas = doc.createElement('canvas');
         canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
         canvas.style.cssText = 'width:' + zoom + '%;height:auto';
@@ -269,7 +302,13 @@ ${GakujoImageBoundsScript.source}
     }
     previous.addEventListener('click', function() { if (pageNumber > 1) { pageNumber--; requestPage(); } });
     next.addEventListener('click', function() { if (pdf && pageNumber < pdf.numPages) { pageNumber++; requestPage(); } });
-    function setZoom(value) { zoom = Math.max(100, Math.min(300, value)); if (visual) visual.style.width = zoom + '%'; }
+    function setZoom(value) {
+      var nextZoom = Math.max(50, Math.min(300, value));
+      if (nextZoom === zoom) return;
+      zoom = nextZoom;
+      if (visual) visual.style.width = zoom + '%';
+      if (pdf) requestPage();
+    }
     zoomOut.addEventListener('click', function() { setZoom(zoom - 50); });
     zoomIn.addEventListener('click', function() { setZoom(zoom + 50); });
     close.focus();
@@ -308,6 +347,7 @@ ${GakujoImageBoundsScript.source}
           });
         })(input, button);
       }
+      mbgAttachSubmittedPreviews(doc);
     });
   }
 ''' '''

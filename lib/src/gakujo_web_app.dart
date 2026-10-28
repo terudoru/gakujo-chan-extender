@@ -52,7 +52,6 @@ import 'gakujo_offline_retry.dart';
 import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
-import 'gakujo_remote_file_preview_script.dart';
 import 'gakujo_session_extender_script.dart';
 import 'gakujo_timeout_popup_script.dart';
 import 'gakujo_upload_compression_libraries.dart';
@@ -1219,7 +1218,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final GakujoDownloadOperationGate _downloadOperationGate =
       GakujoDownloadOperationGate();
   final GakujoUploadLibraryGate _uploadLibraryGate = GakujoUploadLibraryGate();
-  bool _downloadChoiceVisible = false;
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   int? _pendingPageFinishedNavigationRevision;
@@ -1898,7 +1896,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
       final title = await _controller.getTitle();
       final courseName = await _estimateCourseNameFromPage(title);
-      await _chooseDownloadOrPreview(
+      await _handleDownloadRequest(
         GakujoDownloadRequest(
           url: request.url,
           method: 'GET',

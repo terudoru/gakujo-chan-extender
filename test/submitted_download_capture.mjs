@@ -1,0 +1,39 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+const source=await readFile(process.argv[2],'utf8');
+class Element {
+ constructor(tag,doc){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.attributes={};this.listeners={};this.style={};this.isConnected=true;}
+ appendChild(node){this.children.push(node);node.parentNode=this;return node;}
+ insertBefore(node,reference){let i=this.children.indexOf(reference);if(i<0)i=this.children.length;this.children.splice(i,0,node);node.parentNode=this;return node;}
+ get nextSibling(){const p=this.parentNode;if(!p)return null;return p.children[p.children.indexOf(this)+1]||null;}
+ getAttribute(k){return this.attributes[k]??null;}
+ setAttribute(k,v){this.attributes[k]=v;}
+ addEventListener(k,fn){(this.listeners[k]||=[]).push(fn);}
+ removeEventListener(k,fn){this.listeners[k]=(this.listeners[k]||[]).filter(x=>x!==fn);}
+ fire(k){for(const fn of this.listeners[k]||[])fn({target:this});}
+ remove(){this.isConnected=false;if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(x=>x!==this);}
+ focus(){}
+}
+function makeDoc(href){const d={location:{href},createElement:tag=>new Element(tag,d)};d.body=new Element('body',d);d.inputs=[];d.anchors=[];d.frames=[];d.querySelectorAll=selector=>selector==='input[type="file"]'?d.inputs:selector==='a[href]'?d.anchors:selector==='iframe,frame'?d.frames:[];return d;}
+const top=makeDoc('https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do');
+const child=makeDoc('https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=synthetic');
+const anchor=new Element('a',child);anchor.textContent='synthetic.pdf';anchor.attributes.href='javascript:void(0);';anchor.attributes.onclick="return callFileDownLoad('answerDownLoad', 1, 2, '')";child.body.appendChild(anchor);child.anchors.push(anchor);
+const unsafe=new Element('a',child);unsafe.textContent='other.pdf';unsafe.attributes.href='javascript:void(0);';unsafe.attributes.onclick="return submit('delete')";child.body.appendChild(unsafe);child.anchors.push(unsafe);
+const frame={contentWindow:{document:child}};top.frames.push(frame);
+const window={document:top,location:{origin:'https://gakujo.iess.niigata-u.ac.jp',href:top.location.href},setInterval(fn){this.attach=fn;return 1;},clearInterval(){},addEventListener(){},removeEventListener(){}};
+window.top=window;top.defaultView=window;child.defaultView={document:child,location:child.location,frameElement:{isConnected:true}};
+vm.runInNewContext(source,{window,document:top,URL,URLSearchParams,Uint8Array,DataView,ArrayBuffer,Promise,Math,Number,Error});
+const button=anchor.__mbgSubmittedPreviewButton;
+assert.ok(button,'submitted link gets a preview button');
+assert.equal(button.textContent,'プレビューを見る');
+assert.equal(unsafe.__mbgSubmittedPreviewButton,undefined,'other actions get no button');
+let requested;window.__MBG_OPEN_REMOTE_PREVIEW=req=>{requested=req;return true;};button.fire('click');
+assert.equal(requested.method,'GET');assert.equal(requested.fileName,'synthetic.pdf');
+const url=new URL(requested.url);assert.equal(url.origin,'https://gakujo.iess.niigata-u.ac.jp');
+assert.equal(url.pathname,'/campusweb/campussquare.do');
+for(const [k,v] of Object.entries({_flowExecutionKey:'synthetic',_eventId:'answerDownLoad',questionSort:'1',tempNo:'2',ansTempId:''}))assert.equal(url.searchParams.get(k),v);
+assert.equal(anchor.getAttribute('href'),'javascript:void(0);');assert.equal(anchor.listeners.click,undefined,'original link behavior stays untouched');
+window.attach();assert.equal(child.body.children.filter(x=>x.textContent==='プレビューを見る').length,1,'repeated attachment does not duplicate controls');
+child.location.href='https://evil.invalid/campusweb/campussquare.do?_flowExecutionKey=synthetic';requested=undefined;button.fire('click');assert.equal(requested,undefined,'navigated frames cannot issue a request');
+console.log('Submitted preview button opens only the matching safe request.');

@@ -58,7 +58,7 @@ class GakujoUploadCompressionLibraries {
   /// dedicated, terminable worker instead of blocking the page thread.
   static const _assets = {
     'pdf': ['qpdf-worker.js', 'qpdf.js'],
-    'preview': ['pdf.worker.min.js', 'pdf.min.js'],
+    'preview': ['pdf.worker.min.js', 'pdf.min.js', 'pdf-cmaps.json'],
     'preview-office': ['jszip.min.js'],
     'office': ['jszip.min.js'],
   };
@@ -166,12 +166,17 @@ class GakujoUploadCompressionLibraries {
         'window.__MBG_PDF_WORKER_URL = URL.createObjectURL('
         'new Blob([${jsonEncode(sources.first)}], {type: "text/javascript"}));',
       );
+      if (sources.length >= 3) {
+        buffer.writeln(
+          'window.__MBG_PDF_CMAPS = ${jsonEncode(jsonDecode(sources[2]))};',
+        );
+      }
     }
     for (final source
         in kind == 'pdf'
             ? <String>[]
             : kind == 'preview'
-            ? sources.skip(1)
+            ? sources.skip(1).take(1)
             : sources) {
       buffer
         ..writeln('(function(define, module, exports) {')

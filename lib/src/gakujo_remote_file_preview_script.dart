@@ -1,18 +1,59 @@
-import 'dart:convert';
-
-import 'gakujo_download_request.dart';
-
 /// Retrieves a selected attachment into memory and hands it to the local
 /// preview. It never writes the response to a download destination.
 class GakujoRemoteFilePreviewScript {
   const GakujoRemoteFilePreviewScript._();
 
-  static String open(GakujoDownloadRequest request) =>
-      'window.__MBG_OPEN_REMOTE_PREVIEW(${jsonEncode(request.toJson())});';
-
   // Inserted inside the preview closure so it can use the same renderer and
   // lifecycle as files selected locally.
   static const source = r'''
+  function mbgSubmittedFileRequest(anchor) {
+    try {
+      if (!anchor || !anchor.ownerDocument ||
+          !/^javascript:\s*void\s*\(\s*0\s*\)\s*;?$/i.test(anchor.getAttribute('href') || '')) return null;
+      var handler = anchor.getAttribute('onclick') || '';
+      // Only parse the known read-only handler; never evaluate page code or
+      // invoke its form submission when the user asks for a preview.
+      var match = /^\s*(?:return\s+)?callFileDownLoad\s*\(\s*(['"])answerDownLoad\1\s*,\s*(['"]?)(\d{1,9})\2\s*,\s*(['"]?)(\d{1,9})\4\s*,\s*(['"])([^'"\\\r\n]{0,256})\6\s*\)\s*;?\s*$/i.exec(handler);
+      if (!match) return null;
+      var page = new URL(anchor.ownerDocument.location.href);
+      if (page.origin !== 'https://gakujo.iess.niigata-u.ac.jp' || page.username || page.password ||
+          page.pathname.toLowerCase() !== '/campusweb/campussquare.do') return null;
+      var flow = page.searchParams.getAll('_flowExecutionKey');
+      if (flow.length !== 1 || !flow[0] || flow[0].length > 1024) return null;
+      var url = new URL('/campusweb/campussquare.do', page.origin);
+      url.searchParams.set('_flowExecutionKey', flow[0]);
+      url.searchParams.set('_eventId', 'answerDownLoad');
+      url.searchParams.set('questionSort', match[3]);
+      url.searchParams.set('tempNo', match[5]);
+      url.searchParams.set('ansTempId', match[7]);
+      var name = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+      return {url: url.href, method: 'GET', fileName: name.slice(0, 240), formFields: {}};
+    } catch (_) { return null; }
+  }
+  function mbgAttachSubmittedPreviews(doc) {
+    var anchors = doc.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length; i++) {
+      var anchor = anchors[i];
+      if (anchor.__mbgSubmittedPreviewButton && anchor.__mbgSubmittedPreviewButton.isConnected) continue;
+      if (!anchor.parentNode || !mbgSubmittedFileRequest(anchor)) continue;
+      var button = doc.createElement('button'); button.type = 'button';
+      button.textContent = 'プレビューを見る';
+      button.setAttribute('data-mbg-submitted-preview', 'true');
+      button.style.cssText = 'margin:4px 8px;padding:6px 10px';
+      anchor.parentNode.insertBefore(button, anchor.nextSibling);
+      anchor.__mbgSubmittedPreviewButton = button;
+      (function(target, control) {
+        control.addEventListener('click', function() {
+          var request = mbgSubmittedFileRequest(target);
+          if (!request || !window.__MBG_OPEN_REMOTE_PREVIEW(request)) {
+            control.textContent = 'プレビューできません';
+            return;
+          }
+          control.textContent = 'プレビューを見る';
+        });
+      })(anchor, button);
+    }
+  }
   window.__MBG_OPEN_REMOTE_PREVIEW = function(request) {
     if (window.location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') return false;
     var url;
@@ -53,7 +94,7 @@ class GakujoRemoteFilePreviewScript {
     overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;color:#111;padding:24px;font:16px sans-serif';
     var status = doc.createElement('p'); status.textContent = 'ファイルを読み込み中…';
     var close = doc.createElement('button'); close.type = 'button'; close.textContent = '閉じる';
-    overlay.append(status, close); doc.body.appendChild(overlay);
+    overlay.append(status, close); (doc.documentElement || doc.body).appendChild(overlay);
     var controller = new AbortController(), closed = false;
     var timeout = window.setTimeout(function() {
       controller.abort();
