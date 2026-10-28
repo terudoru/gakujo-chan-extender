@@ -115,6 +115,10 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Install PDF viewer dependencies for analysis
+        working-directory: tools/pdf_preview
+        run: flutter pub get
+
       - name: Analyze and test Windows and Android boundaries
         run: |
           flutter analyze --no-pub
