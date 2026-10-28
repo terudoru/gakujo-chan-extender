@@ -94,9 +94,43 @@ ${GakujoImageBoundsScript.source}
     // controls readable even when the WebView scales that viewport down.
     var sourceWindow = doc.defaultView || window;
     var viewport = sourceWindow.visualViewport;
-    function resizeToolbar() {
+    var rootViewport = window.visualViewport;
+    var previewFrame = null;
+    function displayedScale() {
       var scale = viewport && Number(viewport.scale);
+      if (!(scale > 0)) scale = 1;
+      if (sourceWindow === window) return scale;
+      try {
+        var rootScale = rootViewport && Number(rootViewport.scale);
+        if (rootScale > 0) scale *= rootScale;
+        var current = sourceWindow;
+        for (var depth = 0; current !== window && depth < 64; depth++) {
+          var element = current.frameElement;
+          if (!element) break;
+          if (element.offsetWidth && element.getBoundingClientRect) {
+            var ratio = element.getBoundingClientRect().width / element.offsetWidth;
+            if (ratio > 0 && isFinite(ratio)) scale *= ratio;
+          }
+          current = current.parent;
+          if (!current) break;
+        }
+      } catch (_) { /* A cross-origin ancestor is not accessible. */ }
+      return scale;
+    }
+    function resizeToolbar() {
+      var scale = displayedScale();
       bar.style.zoom = String(scale > 0 ? Math.min(3, Math.max(1, 1 / scale)) : 1);
+      if (visual && textZoom) visual.style.zoom = bar.style.zoom;
+      if (previewFrame) {
+        // A desktop-width page on a phone can be scaled below 100%. Give the
+        // embedded Flutter viewer the physical viewport size and scale its
+        // frame back up, so its toolbar and hit targets stay on screen.
+        var frameScale = scale > 0 ? Math.max(.1, Math.min(5, scale)) : 1;
+        previewFrame.style.width = (frameScale * 100) + '%';
+        previewFrame.style.height = (frameScale * 100) + '%';
+        previewFrame.style.transform = 'scale(' + (1 / frameScale) + ')';
+        previewFrame.style.transformOrigin = 'top left';
+      }
       // The layout viewport may be wider or taller than the visible area on
       // Android. A fixed inset:0 overlay otherwise extends off-screen when
       // the user has panned or the page has a desktop-sized layout viewport.
@@ -112,6 +146,10 @@ ${GakujoImageBoundsScript.source}
     if (viewport) {
       viewport.addEventListener('resize', resizeToolbar);
       viewport.addEventListener('scroll', resizeToolbar);
+    }
+    if (rootViewport && rootViewport !== viewport) {
+      rootViewport.addEventListener('resize', resizeToolbar);
+      rootViewport.addEventListener('scroll', resizeToolbar);
     }
     var title = doc.createElement('strong'); title.textContent = file.name;
     title.style.cssText = 'flex:1 1 180px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
@@ -185,6 +223,10 @@ ${GakujoImageBoundsScript.source}
         viewport.removeEventListener('resize', resizeToolbar);
         viewport.removeEventListener('scroll', resizeToolbar);
       }
+      if (rootViewport && rootViewport !== viewport) {
+        rootViewport.removeEventListener('resize', resizeToolbar);
+        rootViewport.removeEventListener('scroll', resizeToolbar);
+      }
       if (sourceWindow !== window) sourceWindow.removeEventListener('pagehide', cleanup);
       window.clearInterval(detachWatcher);
       if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) {
@@ -201,6 +243,7 @@ ${GakujoImageBoundsScript.source}
     function fail(error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
     function enableVisualZoom(element, isText) {
       visual = element; textZoom = isText;
+      resizeToolbar();
       imageZoomLabel.hidden = false; imageZoomLabel.textContent = '100%';
       imageGestureCleanup = mbgPreviewGestures(body, {
         min: .25, max: 5, getScale: function() { return zoom / 100; },
@@ -270,6 +313,7 @@ ${GakujoImageBoundsScript.source}
             if (popupTimer) window.clearInterval(popupTimer);
             if (frame) frame.remove();
             else if (viewer) { try { viewer.close(); } catch (_) {} }
+            previewFrame = null;
             bytes = null;
           };
           if (popup) {
@@ -280,6 +324,8 @@ ${GakujoImageBoundsScript.source}
               try { if (viewer.closed) cleanup(); } catch (_) { cleanup(); }
             }, 500);
           } else {
+            previewFrame = frame;
+            resizeToolbar();
             frame.src = window.__MBG_PDF_PREVIEW_URL;
             body.appendChild(frame);
             viewer = frame.contentWindow;

@@ -19,7 +19,9 @@ const doc = {createElement: tag => new Element(tag, doc)};
 doc.body = new Element('body', doc);
 const input = new Element('input', doc); doc.body.appendChild(input);
 doc.querySelectorAll = selector => selector === 'input[type="file"]' ? [input] : [];
+const viewportListeners = new Set();
 const window = {document: doc, location: {origin: 'https://example.invalid'},
+  visualViewport: {scale: 0.4, width: 320, height: 500, addEventListener(_, fn) {viewportListeners.add(fn);}, removeEventListener(_, fn) {viewportListeners.delete(fn);}},
   setInterval() {return 1;}, clearInterval() {}, addEventListener() {}, removeEventListener() {}};
 window.top = window; doc.defaultView = window;
 class FileReader {
@@ -41,6 +43,12 @@ for (const bytes of [
   const body = overlay.children[1];
   const pre = body.children.find(node => node.tagName === 'pre');
   assert.equal(pre.textContent, '日本語');
+  assert.equal(pre.style.zoom, '2.5', 'text remains readable on a scaled desktop-width page');
+  window.visualViewport.scale = 1;
+  for (const listener of viewportListeners) listener();
+  assert.equal(pre.style.zoom, '1', 'text adapts when the page scale changes');
+  window.visualViewport.scale = 0.4;
+  for (const listener of viewportListeners) listener();
   const bar = overlay.children[0];
   bar.children.find(node => node.textContent === '拡大').fire('click');
   assert.equal(pre.style.fontSize, '120%');
