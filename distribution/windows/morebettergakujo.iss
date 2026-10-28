@@ -67,6 +67,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Debug builds from older releases can leave these behind during an upgrade.
+; Files present in the new build are copied back by the [Files] section.
+Type: files; Name: "{app}\morebettergakujo_flutter.pdb"
+Type: files; Name: "{app}\data\flutter_assets\kernel_blob.bin"
+
 [Files]
 Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
