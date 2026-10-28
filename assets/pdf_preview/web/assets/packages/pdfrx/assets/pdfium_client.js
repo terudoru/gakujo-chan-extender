@@ -1,5 +1,6 @@
 globalThis.PdfiumWasmCommunicator = (function () {
   const worker = new Worker(globalThis.pdfiumWasmWorkerUrl);
+  let activeDocument = null;
   let requestId = 0;
   let callbackId = 0;
   const requestCallbacks = new Map();
@@ -19,6 +20,12 @@ globalThis.PdfiumWasmCommunicator = (function () {
       return;
     }
     
+    if (data.type === 'mbg-text-limited') {
+      if (data.docHandle === activeDocument) {
+        globalThis.dispatchEvent(new Event('mbg-pdf-text-limited'));
+      }
+      return;
+    }
     // Handle callback invocations from the worker
     if (data.type === 'callback') {
       const callback = registeredCallbacks.get(data.callbackId);
@@ -37,6 +44,9 @@ globalThis.PdfiumWasmCommunicator = (function () {
       const callback = requestCallbacks.get(data.id);
       if (callback) {
         if (data.status === 'success') {
+          if (callback.command === 'loadDocumentFromData' && data.result?.docHandle) {
+            activeDocument = data.result.docHandle;
+          }
           callback.resolve(data.result);
         } else {
           callback.reject(new Error(data.error, data.cause != null ? { cause: data.cause } : undefined));
@@ -54,7 +64,7 @@ globalThis.PdfiumWasmCommunicator = (function () {
     sendCommand: function (command, parameters = {}, transfer = []) {
       return new Promise((resolve, reject) => {
         const id = ++requestId;
-        requestCallbacks.set(id, { resolve, reject });
+        requestCallbacks.set(id, { resolve, reject, command });
         worker.postMessage({ id, command, parameters }, transfer);
       });
     },

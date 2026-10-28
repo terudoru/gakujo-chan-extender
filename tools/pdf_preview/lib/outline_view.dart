@@ -5,13 +5,25 @@ import 'package:material_ui/material_ui.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 class OutlineView extends StatelessWidget {
-  const OutlineView({required this.outline, required this.controller, super.key});
+  const OutlineView({
+    required this.outline,
+    required this.controller,
+    this.error = false,
+    super.key,
+  });
 
   final List<PdfOutlineNode>? outline;
   final PdfViewerController controller;
+  final bool error;
 
   @override
   Widget build(BuildContext context) {
+    if (error) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('目次が大きすぎるか、読み取れませんでした。'),
+      );
+    }
     final list = _getOutlineList(outline, 0).toList();
     return SizedBox(
       width: list.isEmpty ? 0 : 200,
@@ -22,7 +34,11 @@ class OutlineView extends StatelessWidget {
           return InkWell(
             onTap: () => controller.goToDest(item.node.dest),
             child: Container(
-              margin: EdgeInsets.only(left: item.level * 16.0 + 8, top: 8, bottom: 8),
+              margin: EdgeInsets.only(
+                left: item.level * 16.0 + 8,
+                top: 8,
+                bottom: 8,
+              ),
               child: Text(item.node.title, softWrap: false),
             ),
           );
@@ -32,7 +48,10 @@ class OutlineView extends StatelessWidget {
   }
 
   /// Recursively create outline indent structure
-  Iterable<({PdfOutlineNode node, int level})> _getOutlineList(List<PdfOutlineNode>? outline, int level) sync* {
+  Iterable<({PdfOutlineNode node, int level})> _getOutlineList(
+    List<PdfOutlineNode>? outline,
+    int level,
+  ) sync* {
     if (outline == null) return;
     for (var node in outline) {
       yield (node: node, level: level);

@@ -1620,6 +1620,7 @@ function _loadPageMetadata(docHandle, pageIndex) {
  * @param {{formHandle: number, formInfo: number, docHandle: number}} params
  */
 function closeDocument(params) {
+  previewTextBudgets.delete(params.docHandle);
   if (params.formHandle) {
     try {
       Pdfium.wasmExports.FPDFDOC_ExitFormFillEnvironment(params.formHandle);
@@ -1643,32 +1644,45 @@ function closeDocument(params) {
  * @return {OutlineNode[]}
  */
 function loadOutline(params) {
+  // Shared across all descendants, before posting data to the main isolate.
+  const budget = { nodes: 0, titleBytes: 0, seen: new Set() };
   return {
     outline: _getOutlineNodeSiblings(
       Pdfium.wasmExports.FPDFBookmark_GetFirstChild(params.docHandle, null),
-      params.docHandle
+      params.docHandle, budget, 0
     ),
   };
 }
 
-/**
- * @param {number} bookmark
- * @param {number} docHandle
- * @return {OutlineNode[]}
- */
-function _getOutlineNodeSiblings(bookmark, docHandle) {
-  /** @type {OutlineNode[]} */
+function _getOutlineNodeSiblings(bookmark, docHandle, budget, depth) {
   const siblings = [];
   while (bookmark) {
+    if (depth >= 32 || ++budget.nodes > 2000 || budget.seen.has(bookmark)) {
+      throw new Error('PDF outline exceeds preview limits');
+    }
+    budget.seen.add(bookmark);
     const titleBufSize = Pdfium.wasmExports.FPDFBookmark_GetTitle(bookmark, null, 0);
-    const titleBuf = Pdfium.wasmExports.malloc(titleBufSize);
-    Pdfium.wasmExports.FPDFBookmark_GetTitle(bookmark, titleBuf, titleBufSize);
-    const title = StringUtils.utf16BytesToString(new Uint8Array(Pdfium.memory.buffer, titleBuf, titleBufSize));
-    Pdfium.wasmExports.free(titleBuf);
+    if (!Number.isSafeInteger(titleBufSize) || titleBufSize < 0 ||
+        titleBufSize > 8192 || titleBufSize % 2 !== 0 ||
+        (budget.titleBytes += titleBufSize) > 1024 * 1024) {
+      throw new Error('PDF outline exceeds preview limits');
+    }
+    let title = '';
+    if (titleBufSize) {
+      const titleBuf = Pdfium.wasmExports.malloc(titleBufSize);
+      if (!titleBuf) throw new Error('PDF outline allocation failed');
+      try {
+        Pdfium.wasmExports.FPDFBookmark_GetTitle(bookmark, titleBuf, titleBufSize);
+        title = StringUtils.utf16BytesToString(new Uint8Array(Pdfium.memory.buffer, titleBuf, titleBufSize));
+      } finally {
+        Pdfium.wasmExports.free(titleBuf);
+      }
+    }
     siblings.push({
       title: title,
       dest: _pdfDestFromDest(Pdfium.wasmExports.FPDFBookmark_GetDest(docHandle, bookmark), docHandle),
-      children: _getOutlineNodeSiblings(Pdfium.wasmExports.FPDFBookmark_GetFirstChild(docHandle, bookmark), docHandle),
+      children: _getOutlineNodeSiblings(
+        Pdfium.wasmExports.FPDFBookmark_GetFirstChild(docHandle, bookmark), docHandle, budget, depth + 1),
     });
     bookmark = Pdfium.wasmExports.FPDFBookmark_GetNextSibling(docHandle, bookmark);
   }
@@ -1836,39 +1850,47 @@ function _memset(ptr, value, num) {
  * @param {{pageIndex: number, docHandle: number}} params
  * @returns {{fullText: string, charRects: number[][], missingFonts: FontQueries}}
  */
+// Bounds text retained by both search and the viewer's selection cache.
+const previewTextBudgets = new Map();
 async function loadText(params) {
   _resetMissingFonts();
   const { pageIndex, docHandle } = params;
   await _ensurePageAvailable(docHandle, pageIndex);
   const pageHandle = Pdfium.wasmExports.FPDF_LoadPage(docHandle, pageIndex);
-  const textPage = Pdfium.wasmExports.FPDFText_LoadPage(pageHandle);
-  if (textPage == null) return { fullText: '' };
-
-  const count = Pdfium.wasmExports.FPDFText_CountChars(textPage);
-  let fullText = '';
-
-  const rectBuffer = Pdfium.wasmExports.malloc(8 * 4); // double[4]
-  const rect = new Float64Array(Pdfium.memory.buffer, rectBuffer, 4);
-  let charRects = [];
-  for (let i = 0; i < count; i++) {
-    fullText += String.fromCodePoint(Pdfium.wasmExports.FPDFText_GetUnicode(textPage, i));
-    Pdfium.wasmExports.FPDFText_GetCharBox(
-      textPage,
-      i,
-      rectBuffer, // L
-      rectBuffer + 8 * 2, // R
-      rectBuffer + 8 * 3, // B
-      rectBuffer + 8 // T
-    );
-    charRects.push(Array.from(rect));
+  if (!pageHandle) throw new Error('PDF page unavailable');
+  let textPage = 0;
+  let rectBuffer = 0;
+  try {
+    textPage = Pdfium.wasmExports.FPDFText_LoadPage(pageHandle);
+    if (!textPage) return { fullText: '', charRects: [], missingFonts: missingFonts[docHandle] ?? {} };
+    const count = Pdfium.wasmExports.FPDFText_CountChars(textPage);
+    const budget = previewTextBudgets.get(docHandle) ?? { total: 0, pages: new Map() };
+    previewTextBudgets.set(docHandle, budget);
+    const existing = budget.pages.get(pageIndex);
+    if (!Number.isSafeInteger(count) || count < 0 || count > 100000 ||
+        budget.total - (existing ?? 0) + count > 500000) {
+      postMessage({ type: 'mbg-text-limited', docHandle });
+      return { fullText: '', charRects: [], missingFonts: missingFonts[docHandle] ?? {} };
+    }
+    let fullText = '';
+    rectBuffer = Pdfium.wasmExports.malloc(8 * 4);
+    if (!rectBuffer) throw new Error('PDF text allocation failed');
+    const rect = new Float64Array(Pdfium.memory.buffer, rectBuffer, 4);
+    const charRects = [];
+    for (let i = 0; i < count; i++) {
+      fullText += String.fromCodePoint(Pdfium.wasmExports.FPDFText_GetUnicode(textPage, i));
+      Pdfium.wasmExports.FPDFText_GetCharBox(textPage, i, rectBuffer, rectBuffer + 16, rectBuffer + 24, rectBuffer + 8);
+      charRects.push(Array.from(rect));
+    }
+    _updateMissingFonts(docHandle);
+    budget.pages.set(pageIndex, count);
+    budget.total += count - (existing ?? 0);
+    return { fullText, charRects, missingFonts: missingFonts[docHandle] };
+  } finally {
+    if (rectBuffer) Pdfium.wasmExports.free(rectBuffer);
+    if (textPage) Pdfium.wasmExports.FPDFText_ClosePage(textPage);
+    Pdfium.wasmExports.FPDF_ClosePage(pageHandle);
   }
-  Pdfium.wasmExports.free(rectBuffer);
-
-  Pdfium.wasmExports.FPDFText_ClosePage(textPage);
-  Pdfium.wasmExports.FPDF_ClosePage(pageHandle);
-
-  _updateMissingFonts(docHandle);
-  return { fullText, charRects, missingFonts: missingFonts[docHandle] };
 }
 
 /**

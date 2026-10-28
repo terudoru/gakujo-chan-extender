@@ -10,6 +10,7 @@ import 'package:pdfrx/pdfrx.dart';
 import 'package:synchronized/synchronized.dart';
 
 import 'outline_view.dart';
+import 'bounded_text_searcher.dart';
 import 'search_view.dart';
 import 'selection_menu.dart';
 import 'thumbnails_view.dart';
@@ -49,13 +50,18 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   final controller = PdfViewerController();
   final showLeftPane = ValueNotifier<bool>(false);
   final outline = ValueNotifier<List<PdfOutlineNode>?>(null);
-  final textSearcher = ValueNotifier<PdfTextSearcher?>(null);
+  final outlineError = ValueNotifier<bool>(false);
+  int _outlineRequest = 0;
+  bool _textLimitReached = false;
+  bool _receivedDocument = false;
+  final textSearcher = ValueNotifier<BoundedPdfTextSearcher?>(null);
   final _fontManager = SerialPdfFontManager();
   VoidCallback? _releaseDocument;
   Future<String?>? _pendingPassword;
   String? _lastPassword;
 
   late final JSFunction _previewListener;
+  late final JSFunction _textLimitListener;
 
   void _update() {
     if (mounted) {
@@ -102,13 +108,24 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _textLimitListener = ((web.Event event) {
+      if (mounted && !_textLimitReached) {
+        setState(() => _textLimitReached = true);
+      }
+    }).toJS;
+    web.window.addEventListener('mbg-pdf-text-limited', _textLimitListener);
     _previewListener = ((web.Event event) {
       final message = event as web.MessageEvent;
       if (!identical(message.source, web.window.parent)) return;
       final data = message.data;
       if (data == null || !data.isA<JSArrayBuffer>()) return;
       final bytes = (data as JSArrayBuffer).toDart.asUint8List();
-      if (bytes.isEmpty || bytes.lengthInBytes > 64 * 1024 * 1024) return;
+      if (_receivedDocument ||
+          bytes.isEmpty ||
+          bytes.lengthInBytes > 64 * 1024 * 1024)
+        return;
+      _receivedDocument = true;
+      if (_textLimitReached) setState(() => _textLimitReached = false);
       _lastPassword = null;
       final ref = PdfDocumentRefData(
         bytes,
@@ -129,11 +146,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     web.window.removeEventListener('message', _previewListener);
+    web.window.removeEventListener('mbg-pdf-text-limited', _textLimitListener);
     WidgetsBinding.instance.removeObserver(this);
     textSearcher.value?.dispose();
     textSearcher.dispose();
     showLeftPane.dispose();
     outline.dispose();
+    outlineError.dispose();
     _lastPassword = null;
     _releaseDocument?.call();
     documentRef.dispose();
@@ -157,6 +176,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        bottom: _textLimitReached
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(40),
+                child: Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Text('文書が大きいため、一部の文字の検索・選択を省略しています。'),
+                ),
+              )
+            : null,
         leading: IconButton(
           tooltip: '検索・目次・ページ一覧',
           icon: const Icon(Icons.menu),
@@ -245,6 +273,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                                   builder: (context, textSearcher, child) {
                                     if (textSearcher == null) return SizedBox();
                                     return TextSearchView(
+                                      key: ObjectKey(textSearcher),
                                       textSearcher: textSearcher,
                                     );
                                   },
@@ -252,9 +281,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                                 ValueListenableBuilder(
                                   valueListenable: outline,
                                   builder: (context, outline, child) =>
-                                      OutlineView(
-                                        outline: outline,
-                                        controller: controller,
+                                      ValueListenableBuilder(
+                                        valueListenable: outlineError,
+                                        builder: (context, error, child) =>
+                                            OutlineView(
+                                              outline: outline,
+                                              controller: controller,
+                                              error: error,
+                                            ),
                                       ),
                                 ),
                                 ValueListenableBuilder(
@@ -425,10 +459,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                             textSearcher.value!.pageTextMatchPaintCallback,
                         ],
                         onDocumentChanged: (document) async {
+                          if (!mounted) return;
+                          _outlineRequest++;
+                          outline.value = null;
+                          outlineError.value = false;
                           if (document == null) {
                             textSearcher.value?.dispose();
                             textSearcher.value = null;
-                            outline.value = null;
                           }
                         },
                         errorBannerBuilder: (context, error, stack, ref) {
@@ -443,18 +480,26 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                           return const Center(child: Text('PDFを開けませんでした。'));
                         },
                         onViewerReady: (document, controller) async {
+                          final outlineRequest = ++_outlineRequest;
+                          outline.value = null;
+                          outlineError.value = false;
                           web.window.parent?.postMessage(
                             'mbg-preview-loaded'.toJS,
                             '*'.toJS,
                           );
                           textSearcher.value?.dispose();
-                          textSearcher.value = PdfTextSearcher(controller)
-                            ..addListener(_update);
+                          textSearcher.value = BoundedPdfTextSearcher(
+                            controller,
+                          )..addListener(_update);
                           try {
                             final entries = await document.loadOutline();
-                            if (mounted) outline.value = entries;
+                            if (mounted && outlineRequest == _outlineRequest) {
+                              outline.value = entries;
+                            }
                           } catch (_) {
-                            // A document reload may invalidate a pending outline request.
+                            if (mounted && outlineRequest == _outlineRequest) {
+                              outlineError.value = true;
+                            }
                           }
                           if (!mounted) return;
                           controller.requestFocus();

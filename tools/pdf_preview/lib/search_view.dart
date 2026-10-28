@@ -1,9 +1,8 @@
 // ignore_for_file: public_member_api_docs, sort_constructors_first
-import 'dart:async';
-
 import 'package:material_ui/material_ui.dart';
 import 'package:pdfrx/pdfrx.dart';
-import 'package:synchronized/extension.dart';
+
+import 'bounded_text_searcher.dart';
 
 //
 // Simple Text Search View
@@ -11,7 +10,7 @@ import 'package:synchronized/extension.dart';
 class TextSearchView extends StatefulWidget {
   const TextSearchView({required this.textSearcher, super.key});
 
-  final PdfTextSearcher textSearcher;
+  final BoundedPdfTextSearcher textSearcher;
 
   @override
   State<TextSearchView> createState() => _TextSearchViewState();
@@ -20,9 +19,6 @@ class TextSearchView extends StatefulWidget {
 class _TextSearchViewState extends State<TextSearchView> {
   final focusNode = FocusNode();
   final searchTextController = TextEditingController();
-  late final pageTextStore = PdfPageTextCache(
-    textSearcher: widget.textSearcher,
-  );
   final scrollController = ScrollController();
 
   @override
@@ -159,6 +155,11 @@ class _TextSearchViewState extends State<TextSearchView> {
           ],
         ),
         const SizedBox(height: 4),
+        if (widget.textSearcher.limited)
+          const Padding(
+            padding: EdgeInsets.all(8),
+            child: Text('文書が大きいか読み取れないため、検索を途中で終了しました。'),
+          ),
         Expanded(
           child: ListView.builder(
             key: Key(searchTextController.text),
@@ -176,7 +177,6 @@ class _TextSearchViewState extends State<TextSearchView> {
                     await widget.textSearcher.goToMatchOfIndex(matchIndex);
                     if (mounted) setState(() {});
                   },
-                  pageTextStore: pageTextStore,
                   height: itemHeight,
                   isCurrent: matchIndex == widget.textSearcher.currentIndex,
                 );
@@ -227,7 +227,6 @@ class SearchResultTile extends StatefulWidget {
   const SearchResultTile({
     required this.match,
     required this.onTap,
-    required this.pageTextStore,
     required this.height,
     required this.isCurrent,
     super.key,
@@ -235,7 +234,6 @@ class SearchResultTile extends StatefulWidget {
 
   final PdfPageTextRange match;
   final void Function() onTap;
-  final PdfPageTextCache pageTextStore;
   final double height;
   final bool isCurrent;
 
@@ -244,37 +242,11 @@ class SearchResultTile extends StatefulWidget {
 }
 
 class _SearchResultTileState extends State<SearchResultTile> {
-  PdfPageText? pageText;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
-  }
-
-  void _release() {
-    if (pageText != null) {
-      widget.pageTextStore.releaseText(pageText!.pageNumber);
-    }
-  }
-
-  Future<void> _load() async {
-    _release();
-    pageText = await widget.pageTextStore.loadText(widget.match.pageNumber);
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  @override
-  void dispose() {
-    _release();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final text = Text.rich(createTextSpanForMatch(pageText, widget.match));
+    final text = Text.rich(
+      createTextSpanForMatch(widget.match.pageText, widget.match),
+    );
 
     return SizedBox(
       height: widget.height,
@@ -308,16 +280,16 @@ class _SearchResultTileState extends State<SearchResultTile> {
       return TextSpan(text: match.text, style: style);
     }
     final fullText = pageText.fullText;
-    int first = 0;
-    for (int i = match.start - 1; i >= 0;) {
+    int first = (match.start - 100).clamp(0, match.start);
+    for (int i = match.start - 1; i >= first;) {
       if (fullText[i] == '\n') {
         first = i + 1;
         break;
       }
       i--;
     }
-    int last = fullText.length;
-    for (int i = match.end; i < fullText.length; i++) {
+    int last = (match.end + 100).clamp(match.end, fullText.length);
+    for (int i = match.end; i < last; i++) {
       if (fullText[i] == '\n') {
         last = i;
         break;
@@ -340,45 +312,4 @@ class _SearchResultTileState extends State<SearchResultTile> {
       style: style,
     );
   }
-}
-
-/// A helper class to cache loaded page texts.
-class PdfPageTextCache {
-  final PdfTextSearcher textSearcher;
-  PdfPageTextCache({required this.textSearcher});
-
-  final _pageTextRefs = <int, _PdfPageTextRefCount>{};
-
-  /// load the text of the given page number.
-  Future<PdfPageText> loadText(int pageNumber) async {
-    final ref = _pageTextRefs[pageNumber];
-    if (ref != null) {
-      ref.refCount++;
-      return ref.pageText;
-    }
-    return await synchronized(() async {
-      var ref = _pageTextRefs[pageNumber];
-      if (ref == null) {
-        final pageText = await textSearcher.loadText(pageNumber: pageNumber);
-        ref = _pageTextRefs[pageNumber] = _PdfPageTextRefCount(pageText!);
-      }
-      ref.refCount++;
-      return ref.pageText;
-    });
-  }
-
-  /// Release the text of the given page number.
-  void releaseText(int pageNumber) {
-    final ref = _pageTextRefs[pageNumber]!;
-    ref.refCount--;
-    if (ref.refCount == 0) {
-      _pageTextRefs.remove(pageNumber);
-    }
-  }
-}
-
-class _PdfPageTextRefCount {
-  _PdfPageTextRefCount(this.pageText);
-  final PdfPageText pageText;
-  int refCount = 0;
 }
