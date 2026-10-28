@@ -110,6 +110,54 @@ class WindowsInstallerUpgradeTest(unittest.TestCase):
         self.assertFalse(manifest.exists(), 'uninstall removes the generated manifest')
         self.assertEqual((installed / 'personal.txt').read_text(), 'user file')
 
+    def test_declining_cleanup_preserves_files_for_a_later_upgrade(self):
+        scratch = ROOT / 'build' / 'installer-upgrade-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        case = Path(tempfile.mkdtemp(prefix='case-', dir=scratch)).resolve()
+        self.addCleanup(self._remove_case, case, scratch.resolve())
+        source, installed, output = (case / name for name in ('source', 'installed', 'output'))
+        source.mkdir()
+        output.mkdir()
+
+        (source / 'morebettergakujo_flutter.exe').write_text('synthetic executable')
+        (source / 'obsolete.txt').write_text('old release')
+        original = ROOT / 'distribution/windows/morebettergakujo.iss'
+        script = original.read_text(encoding='utf-8')
+        default_choice = '  RemoveOldFiles := True;'
+        self.assertEqual(script.count(default_choice), 1)
+        # In silent test mode there is no prompt. Override only its default
+        # choice in this disposable compiler input to exercise the No branch.
+        script = script.replace(default_choice, '  RemoveOldFiles := False;', 1)
+        script = script.replace(
+            r'SetupIconFile=..\..\windows\runner\resources\app_icon.ico',
+            'SetupIconFile=' + str(ROOT / 'windows/runner/resources/app_icon.ico'),
+        )
+        decline_script = case / 'decline.iss'
+        decline_script.write_text(script, encoding='utf-8')
+
+        def install(name, installer_script):
+            subprocess.run([
+                str(ISCC), '/Qp', '/DInstallerTestMode=1',
+                f'/DInstallerTestRoot={installed}', f'/DMyBuildDir={source}',
+                f'/DMyOutputDir={output}', f'/DMyOutputBaseFilename={name}',
+                str(installer_script),
+            ], check=True, capture_output=True, text=True, timeout=120)
+            subprocess.run([
+                str(output / (name + '.exe')), '/VERYSILENT', '/SUPPRESSMSGBOXES',
+                '/NORESTART', f'/DIR={installed}',
+            ], check=True, capture_output=True, timeout=120)
+
+        install('v1', original)
+        (source / 'obsolete.txt').unlink()
+        install('v2-decline', decline_script)
+        manifest = installed / '.mbg-installed-files.txt'
+        self.assertEqual((installed / 'obsolete.txt').read_text(), 'old release')
+        self.assertIn('obsolete.txt', manifest.read_text(encoding='utf-8-sig'))
+
+        install('v3-clean', original)
+        self.assertFalse((installed / 'obsolete.txt').exists())
+        self.assertNotIn('obsolete.txt', manifest.read_text(encoding='utf-8-sig'))
+
     @staticmethod
     def _remove_case(case, scratch):
         if case.parent != scratch or not case.name.startswith('case-'):
