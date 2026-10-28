@@ -1,3 +1,11 @@
+import 'dart:math' as math;
+
+/// Converts a wheel delta to a smooth multiplicative zoom, with bounded input.
+double desktopWheelZoom(double current, double deltaY) {
+  if (!current.isFinite || !deltaY.isFinite || deltaY == 0) return current;
+  return current * math.exp((-deltaY * .001).clamp(-.25, .25));
+}
+
 class DesktopPageZoomScript {
   const DesktopPageZoomScript._();
 
@@ -103,8 +111,8 @@ class DesktopPageZoomScript {
 
   function originFor(win) {
     var origin = window.__MBG_PAGE_ZOOM_ORIGIN || initialOrigin || {};
-    var x = Number(origin.x);
-    var y = Number(origin.y);
+    var x = origin.x == null ? NaN : Number(origin.x);
+    var y = origin.y == null ? NaN : Number(origin.y);
     if (!isFinite(x) || !isFinite(y)) {
       x = (win.innerWidth || 0) / 2;
       y = (win.innerHeight || 0) / 2;
@@ -131,12 +139,19 @@ class DesktopPageZoomScript {
       element.style.webkitTextSizeAdjust = '100%';
       element.style.textSizeAdjust = '100%';
 
+      // Measuring temporarily removes the transform and minimum dimensions.
+      // The browser can clamp the scroll position during that reflow, so the
+      // visible position must be captured before measurement starts.
+      var previousScrollX = win.scrollX || win.pageXOffset || 0;
+      var previousScrollY = win.scrollY || win.pageYOffset || 0;
+      var bounds = body.getBoundingClientRect ? body.getBoundingClientRect() : null;
+      var bodyOriginX = bounds ? bounds.left + previousScrollX : 0;
+      var bodyOriginY = bounds ? bounds.top + previousScrollY : 0;
       var size = measuredSize(win);
       var effectiveZoom = effectiveZoomFor(win, zoom, size);
       var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM;
+      if (!isFinite(previousZoom) || previousZoom <= 0) previousZoom = 1;
       var origin = originFor(win);
-      var previousScrollX = win.scrollX || win.pageXOffset || 0;
-      var previousScrollY = win.scrollY || win.pageYOffset || 0;
       if (Math.abs(effectiveZoom - 1) < 0.001) {
         body.style.transform = '';
         body.style.transformOrigin = '';
@@ -153,13 +168,15 @@ class DesktopPageZoomScript {
         body.style.overflow = 'auto';
       }
       win.__MBG_PAGE_EFFECTIVE_ZOOM = effectiveZoom;
-      if (isFinite(previousZoom) && previousZoom > 0 &&
-          Math.abs(previousZoom - effectiveZoom) > 0.0001) {
-        var contentX = (previousScrollX + origin.x) / previousZoom;
-        var contentY = (previousScrollY + origin.y) / previousZoom;
-        var nextScrollX = Math.max(0, contentX * effectiveZoom - origin.x);
-        var nextScrollY = Math.max(0, contentY * effectiveZoom - origin.y);
-        win.scrollTo(nextScrollX, nextScrollY);
+      if (isFinite(previousZoom) && previousZoom > 0) {
+        var contentX = (previousScrollX + origin.x - bodyOriginX) / previousZoom;
+        var contentY = (previousScrollY + origin.y - bodyOriginY) / previousZoom;
+        var nextScrollX = Math.max(0, bodyOriginX + contentX * effectiveZoom - origin.x);
+        var nextScrollY = Math.max(0, bodyOriginY + contentY * effectiveZoom - origin.y);
+        if (Math.abs((win.scrollX || 0) - nextScrollX) > 0.5 ||
+            Math.abs((win.scrollY || 0) - nextScrollY) > 0.5) {
+          win.scrollTo(nextScrollX, nextScrollY);
+        }
       }
     } catch (e) {}
   }
@@ -180,7 +197,8 @@ class DesktopPageZoomScript {
     try {
       win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
       win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(function() {
-        setZoom(window.__MBG_PAGE_ZOOM_VALUE || initialZoom);
+        var apply = window.__MBG_SET_PAGE_ZOOM || setZoom;
+        apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom);
       }, 150);
     } catch (e) {}
   }

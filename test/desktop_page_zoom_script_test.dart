@@ -5,6 +5,13 @@ import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('wheel zoom follows delta size and ignores horizontal-only input', () {
+    expect(desktopWheelZoom(1, 0), 1);
+    expect(desktopWheelZoom(1, -1), closeTo(1.001, .0001));
+    expect(desktopWheelZoom(1, -100), closeTo(1.105, .001));
+    expect(desktopWheelZoom(1, 100), closeTo(.905, .001));
+    expect(desktopWheelZoom(1, -10000), lessThan(1.3));
+  });
   test('uses visual transform zoom without relayout zoom CSS', () {
     final script = DesktopPageZoomScript.build(
       1.25,
@@ -105,15 +112,56 @@ void main() {
         script, contains('var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM'));
     expect(script, contains('win.__MBG_PAGE_EFFECTIVE_ZOOM = effectiveZoom'));
     expect(script,
-        contains('var contentX = (previousScrollX + origin.x) / previousZoom'));
+        contains('var contentX = (previousScrollX + origin.x - bodyOriginX) / previousZoom'));
     expect(
         script,
         contains(
-            'var nextScrollX = Math.max(0, contentX * effectiveZoom - origin.x)'));
+            'var nextScrollX = Math.max(0, bodyOriginX + contentX * effectiveZoom - origin.x)'));
     expect(script, contains('win.scrollTo(nextScrollX, nextScrollY)'));
     expect(script, contains('window.__MBG_PAGE_ZOOM_ORIGIN = initialOrigin'));
   });
+
+  test('restores position when measurement clamps the browser scroll', () async {
+    for (final zoom in [0.8, 1.4]) {
+      final result = await Process.run('node', [
+        '-e',
+        _scrollClampHarness,
+        DesktopPageZoomScript.build(zoom, originX: 400, originY: 300),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final position = jsonDecode(result.stdout as String) as num;
+      expect(position, closeTo(zoom == 0.8 ? 1700 : 3200, 0.01));
+    }
+  });
+
+  test('preserves the visible position on first zoom application', () async {
+    final result = await Process.run('node', [
+      '-e',
+      _scrollClampHarness,
+      DesktopPageZoomScript.build(1.0, originX: 400, originY: 300),
+      'first',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    expect(jsonDecode(result.stdout as String), closeTo(3200, 0.01));
+  });
 }
+
+const _scrollClampHarness = r'''
+const vm = require('node:vm');
+const win = {frames: [], innerWidth: 900, innerHeight: 700,
+  scrollX: 0, scrollY: 3200, __MBG_PAGE_EFFECTIVE_ZOOM: 1.4,
+  addEventListener() {}, clearTimeout() {}, setTimeout() {},
+  scrollTo(x,y) { this.scrollX=x; this.scrollY=y; }};
+if (process.argv[2] === 'first') delete win.__MBG_PAGE_EFFECTIVE_ZOOM;
+const style = new Proxy({}, {set(target,key,value) {
+  if (key === 'transform' && value === 'none') win.scrollY=Math.min(win.scrollY,2900);
+  target[key]=value; return true;
+}});
+win.document = {body:{style,scrollWidth:900,offsetWidth:900,scrollHeight:3600,offsetHeight:3600},
+  documentElement:{style:{},clientWidth:900,scrollWidth:900,offsetWidth:900,scrollHeight:3600,offsetHeight:3600}};
+vm.runInNewContext(process.argv[1], {window:win});
+process.stdout.write(JSON.stringify(win.scrollY));
+''';
 
 const _shortcutHarness = r'''
 const vm = require('node:vm');

@@ -1226,7 +1226,7 @@ class _WebviewState extends State<Webview> {
               _panScroll.reset();
             },
             onPointerPanZoomUpdate: (signal) {
-              final delta = _panScroll.add(signal.panDelta);
+              final delta = _panScroll.addPanZoom(signal.panDelta, signal.scale);
               if (delta != null) {
                 _controller._setScrollDelta(delta.dx, delta.dy);
               }

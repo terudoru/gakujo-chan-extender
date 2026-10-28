@@ -11,10 +11,23 @@ class WebviewPanScrollAccumulator {
   static const double unitsPerPixel = 1.5;
 
   Offset _remainder = Offset.zero;
+  bool _pinching = false;
 
   /// Forgets motion left over from a previous gesture.
   void reset() {
     _remainder = Offset.zero;
+    _pinching = false;
+  }
+
+  /// A pinch is handled by the app's zoom controller. Do not additionally
+  /// send its pan deltas to WebView2 as scroll, including near its end.
+  Offset? addPanZoom(Offset panDelta, double scale) {
+    if (_pinching || (scale - 1).abs() > 0.01) {
+      _pinching = true;
+      _remainder = Offset.zero;
+      return null;
+    }
+    return add(panDelta);
   }
 
   /// Returns the scroll delta to send for [panDelta], or null when the motion

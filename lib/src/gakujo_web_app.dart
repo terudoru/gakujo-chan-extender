@@ -54,6 +54,7 @@ import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
 import 'gakujo_session_extender_script.dart';
+import 'gakujo_starred_message_query.dart';
 import 'gakujo_timeout_popup_script.dart';
 import 'gakujo_upload_compression_libraries.dart';
 import 'gakujo_upload_compression_script.dart';
@@ -1700,10 +1701,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    final delta =
-        event.scrollDelta.dy < 0 ? _desktopZoomStep : -_desktopZoomStep;
+    if (event.scrollDelta.dy == 0) return;
     _desktopZoomOrigin = event.localPosition;
-    unawaited(_changeDesktopZoomBy(delta));
+    unawaited(_setDesktopZoomSmooth(
+      desktopWheelZoom(_desktopZoom, event.scrollDelta.dy),
+    ));
   }
 
   void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {

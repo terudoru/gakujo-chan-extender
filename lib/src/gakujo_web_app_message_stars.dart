@@ -11,11 +11,16 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
       if (!mounted || !_canRunPageScripts || !_messageStarsEnabled) return;
       await _controller.runJavaScript(
         GakujoMessageStarScript.build(
-            starredIds: entries.map((entry) => entry.id)),
+          starredIds: entries.map((entry) => entry.id),
+        ),
       );
     } on Object catch (error, stackTrace) {
-      developer.log('Failed to inject message stars',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      developer.log(
+        'Failed to inject message stars',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -28,8 +33,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         GakujoMessageStarScript.buildRefresh(entries.map((entry) => entry.id)),
       );
     } on Object catch (error, stackTrace) {
-      developer.log('Failed to refresh message star buttons',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      developer.log(
+        'Failed to refresh message star buttons',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -56,8 +65,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         await _refreshMessageStars();
       }
     } on Object catch (error, stackTrace) {
-      developer.log('Failed to save message star',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      developer.log(
+        'Failed to save message star',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (mounted && action == 'toggle') {
         _showSnackBar('スターを保存できませんでした。もう一度お試しください');
       }
@@ -67,84 +80,168 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   Future<void> _showStarredMessagesDialog() async {
     if (!_messageStarsEnabled) return;
     var entries = await _activityStore.loadStarredMessages();
+    var query = '';
+    var sort = GakujoStarredMessageSort.starredNewest;
     if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('スター付き連絡通知'),
-          content: SizedBox(
-            width: 560,
-            height: entries.isEmpty ? null : 420,
-            child: entries.isEmpty
-                ? const Text('学務の連絡通知一覧や詳細で、表題の前にある☆を押すと保存できます。')
-                : ListView.separated(
-                    itemCount: entries.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final entry = entries[index];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(entry.title),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text([entry.genre, entry.sender]
-                                .where((text) => text.isNotEmpty)
-                                .join('・')),
-                            if (entry.postedAt.isNotEmpty) Text(entry.postedAt),
-                            if (entry.body.isNotEmpty)
-                              Text(entry.body,
-                                  maxLines: 2, overflow: TextOverflow.ellipsis),
-                          ],
-                        ),
-                        onTap: () {
-                          Navigator.of(dialogContext).pop();
-                          unawaited(_openStarredMessage(entry));
-                        },
-                        trailing: PopupMenuButton<String>(
-                          tooltip: '連絡通知の操作',
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'open', child: Text('学務で開く')),
-                            PopupMenuItem(
-                                value: 'saved', child: Text('保存した内容を表示')),
-                            PopupMenuItem(
-                                value: 'remove', child: Text('スターを外す')),
-                          ],
-                          onSelected: (action) async {
-                            if (action == 'remove') {
-                              try {
-                                await _activityStore
-                                    .removeStarredMessage(entry.id);
-                                entries =
-                                    await _activityStore.loadStarredMessages();
-                                await _refreshMessageStars();
-                                if (!dialogContext.mounted) return;
-                                setDialogState(() {});
-                                _showSnackBar('スターを外しました');
-                              } on Object {
-                                if (mounted) _showSnackBar('スターを外せませんでした');
-                              }
-                              return;
-                            }
-                            Navigator.of(dialogContext).pop();
-                            if (action == 'saved') {
-                              await _showSavedMessage(entry);
-                            } else {
-                              await _openStarredMessage(entry);
-                            }
-                          },
-                        ),
-                      );
-                    },
+        builder: (context, setDialogState) {
+          final visible = queryStarredMessages(entries, query, sort);
+          final size = MediaQuery.sizeOf(context);
+          return AlertDialog(
+            title: const Text('スター付き連絡通知'),
+            content: SizedBox(
+              width: size.width < 650 ? size.width : 900,
+              height: size.height * .70,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: '保存した通知を検索',
+                      hintText: '表題・本文・差出人など',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => setDialogState(() => query = value),
                   ),
-          ),
-          actions: [
-            TextButton(
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 16,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('${visible.length} / ${entries.length} 件'),
+                      DropdownButton<GakujoStarredMessageSort>(
+                        value: sort,
+                        items: const [
+                          DropdownMenuItem(
+                            value: GakujoStarredMessageSort.starredNewest,
+                            child: Text('スターを付けた順'),
+                          ),
+                          DropdownMenuItem(
+                            value: GakujoStarredMessageSort.postedNewest,
+                            child: Text('掲載日の新しい順'),
+                          ),
+                          DropdownMenuItem(
+                            value: GakujoStarredMessageSort.postedOldest,
+                            child: Text('掲載日の古い順'),
+                          ),
+                          DropdownMenuItem(
+                            value: GakujoStarredMessageSort.title,
+                            child: Text('表題順'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) setDialogState(() => sort = value);
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  Expanded(
+                    child: entries.isEmpty
+                        ? const Center(
+                            child: Text('連絡通知の表題にある☆を押すと、ここに保存されます。'),
+                          )
+                        : visible.isEmpty
+                        ? const Center(child: Text('一致する通知はありません。'))
+                        : ListView.separated(
+                            itemCount: visible.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final entry = visible[index];
+                              return ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
+                                title: Text(
+                                  entry.title,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      [entry.genre, entry.sender]
+                                          .where((text) => text.isNotEmpty)
+                                          .join('・'),
+                                    ),
+                                    if (entry.postedAt.isNotEmpty)
+                                      Text(entry.postedAt),
+                                    if (entry.body.isNotEmpty)
+                                      Text(
+                                        entry.body,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                  ],
+                                ),
+                                onTap: () {
+                                  Navigator.of(dialogContext).pop();
+                                  unawaited(_openStarredMessage(entry));
+                                },
+                                trailing: PopupMenuButton<String>(
+                                  tooltip: '連絡通知の操作',
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: 'open',
+                                      child: Text('学務で開く'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'saved',
+                                      child: Text('保存した内容を表示'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'remove',
+                                      child: Text('スターを外す'),
+                                    ),
+                                  ],
+                                  onSelected: (action) async {
+                                    if (action == 'remove') {
+                                      try {
+                                        await _activityStore
+                                            .removeStarredMessage(entry.id);
+                                        entries = await _activityStore
+                                            .loadStarredMessages();
+                                        await _refreshMessageStars();
+                                        if (!dialogContext.mounted) return;
+                                        setDialogState(() {});
+                                        _showSnackBar('スターを外しました');
+                                      } on Object {
+                                        if (mounted) {
+                                          _showSnackBar('スターを外せませんでした');
+                                        }
+                                      }
+                                      return;
+                                    }
+                                    Navigator.of(dialogContext).pop();
+                                    if (action == 'saved') {
+                                      await _showSavedMessage(entry);
+                                    } else {
+                                      await _openStarredMessage(entry);
+                                    }
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('閉じる')),
-          ],
-        ),
+                child: const Text('閉じる'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -158,24 +255,27 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
-            child: SelectableText([
-              entry.title,
-              if (entry.genre.isNotEmpty) 'ジャンル: ${entry.genre}',
-              if (entry.sender.isNotEmpty) '連絡通知元: ${entry.sender}',
-              if (entry.period.isNotEmpty) '連絡通知期間: ${entry.period}',
-              if (entry.postedAt.isNotEmpty) '掲載・送信日時: ${entry.postedAt}',
-              'スターを付けた日時: ${entry.starredAt.toLocal()}',
-              '',
-              entry.body.isEmpty
-                  ? '本文は未保存です。学務で詳細を開くと、本文を最大4000文字保存します。'
-                  : entry.body,
-            ].join('\n')),
+            child: SelectableText(
+              [
+                entry.title,
+                if (entry.genre.isNotEmpty) 'ジャンル: ${entry.genre}',
+                if (entry.sender.isNotEmpty) '連絡通知元: ${entry.sender}',
+                if (entry.period.isNotEmpty) '連絡通知期間: ${entry.period}',
+                if (entry.postedAt.isNotEmpty) '掲載・送信日時: ${entry.postedAt}',
+                'スターを付けた日時: ${entry.starredAt.toLocal()}',
+                '',
+                entry.body.isEmpty
+                    ? '本文は未保存です。学務で詳細を開くと、本文を最大4000文字保存します。'
+                    : entry.body,
+              ].join('\n'),
+            ),
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('閉じる')),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('閉じる'),
+          ),
         ],
       ),
     );
@@ -231,8 +331,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
           _showSnackBar('学務で連絡通知を開けませんでした。もう一度お試しください');
       }
     } on Object catch (error, stackTrace) {
-      developer.log('Failed to open starred message',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      developer.log(
+        'Failed to open starred message',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
       if (_isCurrentPageCallback(url, navigationRevision)) {
         _showSnackBar('学務で連絡通知を開けませんでした');
       }

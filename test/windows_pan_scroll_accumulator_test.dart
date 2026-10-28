@@ -39,4 +39,13 @@ void main() {
     expect(vertical.dx, 0);
     expect(nativeUnits(vertical.dy), 15);
   });
+
+  test('pinch updates do not also scroll, and the next pan still works', () {
+    final accumulator = WebviewPanScrollAccumulator();
+    expect(accumulator.addPanZoom(const Offset(0, 4), 1), isNotNull);
+    expect(accumulator.addPanZoom(const Offset(0, 20), 1.03), isNull);
+    expect(accumulator.addPanZoom(const Offset(0, 20), 1), isNull);
+    accumulator.reset();
+    expect(accumulator.addPanZoom(const Offset(0, 4), 1), isNotNull);
+  });
 }

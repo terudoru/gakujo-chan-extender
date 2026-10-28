@@ -354,7 +354,14 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                                 math.sqrt(pixelLimit / area),
                               );
                             },
+                        // pdfrx's default is 0.2, which makes each wheel and
+                        // trackpad scroll move only one fifth of its delta.
+                        scrollByMouseWheel: 1.0,
                         scrollHorizontallyByMouseWheel: isHorizontalLayout,
+                        zoomStepsDelegateProvider:
+                            const PdfViewerZoomStepsDelegateProviderSmart(
+                              zoomStep: 1.2,
+                            ),
                         pageAnchor: isHorizontalLayout
                             ? PdfPageAnchor.left
                             : PdfPageAnchor.top,
@@ -380,7 +387,12 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                           //
                           PdfOverlayInteractionRegion(
                             onDoubleTap: (details) {
-                              unawaited(controller.zoomUp(loop: true));
+                              unawaited(
+                                controller.zoomUpOnLocalPosition(
+                                  localPosition: details.localPosition,
+                                  loop: true,
+                                ),
+                              );
                               return true;
                             },
                             child: SizedBox(

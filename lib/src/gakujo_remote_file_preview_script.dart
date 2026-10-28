@@ -31,11 +31,11 @@ class GakujoRemoteFilePreviewScript {
     } catch (_) { return null; }
   }
   function mbgAttachSubmittedPreviews(doc) {
-    var anchors = doc.querySelectorAll('a[href]');
+    var anchors = doc.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]');
     for (var i = 0; i < anchors.length; i++) {
       var anchor = anchors[i];
       if (anchor.__mbgSubmittedPreviewButton && anchor.__mbgSubmittedPreviewButton.isConnected) continue;
-      if (!anchor.parentNode || !mbgSubmittedFileRequest(anchor)) continue;
+      if (!anchor.parentNode || !mbgRemoteFileRequest(anchor)) continue;
       var button = doc.createElement('button'); button.type = 'button';
       button.textContent = 'プレビューを見る';
       button.setAttribute('data-mbg-submitted-preview', 'true');
@@ -44,7 +44,7 @@ class GakujoRemoteFilePreviewScript {
       anchor.__mbgSubmittedPreviewButton = button;
       (function(target, control) {
         control.addEventListener('click', function() {
-          var request = mbgSubmittedFileRequest(target);
+          var request = mbgRemoteFileRequest(target);
           if (!request || !window.__MBG_OPEN_REMOTE_PREVIEW(request)) {
             control.textContent = 'プレビューできません';
             return;
@@ -54,7 +54,38 @@ class GakujoRemoteFilePreviewScript {
       })(anchor, button);
     }
   }
-  window.__MBG_OPEN_REMOTE_PREVIEW = function(request) {
+  function mbgRemoteFileRequest(anchor) {
+    try {
+      var page = new URL(anchor.ownerDocument.location.href);
+      if (page.origin !== 'https://gakujo.iess.niigata-u.ac.jp' || page.username || page.password) return null;
+      if (String(anchor.tagName || '').toLowerCase() !== 'a') {
+        // Never run a page's onclick or replay a workflow action to preview.
+        if (anchor.getAttribute('onclick')) return null;
+        var form = anchor.form;
+        if (!form) return null;
+        var method = (anchor.getAttribute('formmethod') || form.getAttribute('method') || 'GET').toUpperCase();
+        var enctype = (anchor.getAttribute('formenctype') || form.getAttribute('enctype') || 'application/x-www-form-urlencoded').toLowerCase();
+        var target = anchor.getAttribute('formtarget') || form.getAttribute('target') || '_self';
+        if (!/^(GET|POST)$/.test(method) || (method === 'POST' && enctype !== 'application/x-www-form-urlencoded') || !/^_self$/i.test(target)) return null;
+        var action = anchor.getAttribute('formaction') || form.getAttribute('action') || page.href;
+        var fields = {}, unsafe = false, data = new FormData(form);
+        if (anchor.name) data.set(anchor.name, anchor.value || '');
+        data.forEach(function(value, key) { if (typeof value !== 'string' || /^(?:__proto__|constructor|prototype)$/.test(key) || Object.prototype.hasOwnProperty.call(fields, key)) unsafe = true; else fields[key] = value; });
+        if (unsafe) return null;
+        var formRequest = {url: new URL(action, page.href).href, method: method,
+          fileName: String(anchor.textContent || anchor.value || '').trim().slice(0, 240), formFields: fields};
+        return mbgValidateRemotePreviewRequest(formRequest) ? formRequest : null;
+      }
+      var submitted = mbgSubmittedFileRequest(anchor);
+      if (submitted) return submitted;
+      var href = (anchor.getAttribute('href') || '').trim();
+      if (!href || /^javascript:/i.test(href) || href.charAt(0) === '#') return null;
+      var request = {url: new URL(href, page.href).href, method: 'GET',
+        fileName: String(anchor.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240), formFields: {}};
+      return mbgValidateRemotePreviewRequest(request) ? request : null;
+    } catch (_) { return null; }
+  }
+  function mbgValidateRemotePreviewRequest(request) {
     if (window.location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') return false;
     var url;
     try { url = new URL(request.url, window.location.href); } catch (_) { return false; }
@@ -84,6 +115,13 @@ class GakujoRemoteFilePreviewScript {
     if (keys.length > 100 || keys.some(function(key) {
       return key.length > 1024 || String(fields[key]).length > 16384;
     })) return false;
+    return true;
+  }
+  window.__MBG_OPEN_REMOTE_PREVIEW = function(request) {
+    if (!mbgValidateRemotePreviewRequest(request)) return false;
+    var url = new URL(request.url, window.location.href);
+    var method = String(request.method || '').toUpperCase();
+    var fields = request.formFields || {}, keys = Object.keys(fields);
 
     var previous = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
     if (previous && typeof previous.close === 'function') previous.close();

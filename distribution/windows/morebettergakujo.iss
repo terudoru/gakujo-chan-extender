@@ -116,7 +116,8 @@ const
 
 var
   PreviousFiles, CurrentFiles: TArrayOfString;
-  TrackingOK: Boolean;
+  TrackingOK, RemoveOldFiles: Boolean;
+  PromptedInstallRoot: String;
 
 function GetFileAttributesW(Name: String): LongWord;
   external 'GetFileAttributesW@kernel32.dll stdcall';
@@ -169,7 +170,48 @@ end;
 
 function CanRemoveLegacy(RelativeName: String): Boolean;
 begin
-  Result := SafeFile(RelativeName);
+  Result := RemoveOldFiles and SafeFile(RelativeName);
+end;
+
+function ExistingInstall(Root: String): Boolean;
+var RootAttr, FileAttr: LongWord;
+begin
+  Root := ExpandFileName(Root);
+  RootAttr := GetFileAttributesW(Root);
+  FileAttr := GetFileAttributesW(AddBackslash(Root) + '{#MyAppExeName}');
+  Result := (RootAttr <> InvalidAttributes) and ((RootAttr and ReparsePoint) = 0) and
+    ((RootAttr and DirectoryAttribute) <> 0) and (FileAttr <> InvalidAttributes) and
+    ((FileAttr and ReparsePoint) = 0) and ((FileAttr and DirectoryAttribute) = 0);
+end;
+
+procedure AskAboutOldFiles(Root: String);
+begin
+  if WizardSilent or not ExistingInstall(Root) then exit;
+  PromptedInstallRoot := ExpandFileName(Root);
+  RemoveOldFiles := MsgBox(
+    '旧バージョンが見つかりました。不要になった旧バージョンのファイルを削除して更新しますか？' + #13#10 + #13#10 +
+    '「いいえ」でも上書き更新します。ユーザーが変更したファイルは削除しません。',
+    mbConfirmation, MB_YESNO) = IDYES;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := True;
+  RemoveOldFiles := True;
+#ifdef InstallerTestMode
+  AskAboutOldFiles('{#InstallerTestRoot}');
+#else
+  AskAboutOldFiles(ExpandConstant('{autopf}\{#MyAppName}'));
+#endif
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Root: String;
+begin
+  Result := '';
+  Root := ExpandFileName(ExpandConstant('{app}'));
+  if CompareText(Root, PromptedInstallRoot) <> 0 then
+    AskAboutOldFiles(Root);
 end;
 
 function RecordedPath(const Entry: String): String;
@@ -248,6 +290,10 @@ begin
   for I := 0 to GetArrayLength(PreviousFiles) - 1 do begin
     RelativeName := RecordedPath(PreviousFiles[I]);
     if (RelativeName <> '') and not IsCurrent(RelativeName) and SafeFile(RelativeName) then begin
+      if not RemoveOldFiles then begin
+        AddCurrent(PreviousFiles[I]);
+        continue;
+      end;
       FullName := AddBackslash(ExpandConstant('{app}')) + RelativeName;
       try
         if CompareText(GetSHA256OfFile(FullName), Copy(PreviousFiles[I], 1, 64)) = 0 then begin

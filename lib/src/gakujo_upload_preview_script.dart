@@ -49,12 +49,17 @@ ${GakujoImageBoundsScript.source}
     });
   }
   function documents() {
-    var result = [document];
-    var frames = document.querySelectorAll('iframe,frame');
-    for (var i = 0; i < frames.length; i++) {
-      try { if (frames[i].contentWindow.document) result.push(frames[i].contentWindow.document); }
-      catch (e) { /* Different origins are not accessible. */ }
+    var result = [], seen = new Set();
+    function visit(doc) {
+      if (!doc || seen.has(doc) || result.length >= 64) return;
+      seen.add(doc); result.push(doc);
+      var frames = doc.querySelectorAll('iframe,frame');
+      for (var i = 0; i < frames.length && result.length < 64; i++) {
+        try { visit(frames[i].contentWindow.document); }
+        catch (e) { /* Different origins are not accessible. */ }
+      }
     }
+    visit(document);
     return result;
   }
   function show(input, file, onClosed) {
@@ -88,8 +93,10 @@ ${GakujoImageBoundsScript.source}
     var next = doc.createElement('button'); next.type = 'button'; next.textContent = '次へ';
     var zoomOut = doc.createElement('button'); zoomOut.type = 'button'; zoomOut.textContent = '縮小';
     var zoomIn = doc.createElement('button'); zoomIn.type = 'button'; zoomIn.textContent = '拡大';
+    var imageZoomLabel = doc.createElement('span'); imageZoomLabel.hidden = true;
+    imageZoomLabel.setAttribute('aria-label', '表示倍率');
     var count = doc.createElement('span');
-    bar.append(title, previous, count, next, zoomOut, zoomIn, close);
+    bar.append(title, previous, count, next, zoomOut, imageZoomLabel, zoomIn, close);
     var body = doc.createElement('div'); body.style.cssText = 'overflow:auto;flex:1;text-align:center;padding:12px';
     var status = doc.createElement('p'); status.textContent = '読み込み中…';
     body.appendChild(status); overlay.append(bar, body);
@@ -97,7 +104,8 @@ ${GakujoImageBoundsScript.source}
     // would cover only the scaled body instead of the viewport.
     (doc.documentElement || doc.body).appendChild(overlay);
     var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, objectUrl = null, visual = null, zoom = 100, watchdog = null;
-    var reader = null, cancelLibrary = null, pdfViewerCleanup = null;
+    var reader = null, cancelLibrary = null, pdfViewerCleanup = null, imageGestureCleanup = null;
+    var textZoom = false;
     var sourceWindow = doc.defaultView || window;
     var detachWatcher = window.setInterval(function() {
       var detached = input.isConnected === false;
@@ -131,6 +139,7 @@ ${GakujoImageBoundsScript.source}
     function cleanup() {
       if (closed) return;
       closed = true;
+      if (imageGestureCleanup) { imageGestureCleanup(); imageGestureCleanup = null; }
       stopPdf();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       overlay.remove();
@@ -148,6 +157,14 @@ ${GakujoImageBoundsScript.source}
     if (sourceWindow !== window) sourceWindow.addEventListener('pagehide', cleanup);
     previous.hidden = next.hidden = true;
     function fail(error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
+    function enableVisualZoom(element, isText) {
+      visual = element; textZoom = isText;
+      imageZoomLabel.hidden = false; imageZoomLabel.textContent = '100%';
+      imageGestureCleanup = mbgPreviewGestures(body, {
+        min: .25, max: 5, getScale: function() { return zoom / 100; },
+        setScale: function(scale) { setZoom(scale * 100); }
+      });
+    }
     var extension = (file.name.split('.').pop() || '').toLowerCase();
     if (file.type.indexOf('image/') === 0 || /^(jpg|jpeg|png|webp)$/.test(extension)) {
       mbgValidateImage(file).then(function() {
@@ -156,7 +173,8 @@ ${GakujoImageBoundsScript.source}
         var image = doc.createElement('img'); image.alt = file.name;
         image.style.cssText = 'width:100%;height:auto';
         image.onerror = function() { fail(new Error('画像を開けません')); };
-        image.src = objectUrl; body.appendChild(image); visual = image; status.textContent = '';
+        image.src = objectUrl; body.appendChild(image); status.textContent = '';
+        enableVisualZoom(image, false);
       }).catch(fail);
     } else if (file.type === 'application/pdf' || extension === 'pdf') {
       if (file.size > 64 * 1024 * 1024) { fail(new Error('PDFが大きすぎます')); return; }
@@ -263,6 +281,7 @@ ${GakujoImageBoundsScript.source}
       };
       objectUrl = URL.createObjectURL(file); media.src = objectUrl;
       body.appendChild(media); visual = media; status.textContent = '';
+      zoomOut.hidden = zoomIn.hidden = true;
     } else if (/^(docx|docm|xlsx|xlsm|pptx|pptm)$/i.test(extension)) {
       if (file.size > 32 * 1024 * 1024) { fail(new Error('文書が大きすぎます')); return; }
       armWatchdog();
@@ -284,6 +303,7 @@ ${GakujoImageBoundsScript.source}
         pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
         pre.textContent = text;
         body.appendChild(pre);
+        enableVisualZoom(pre, true);
         status.textContent = 'テキストのみ表示しています。書式・画像・数式の表示は元の文書と異なります。';
         if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
       }).catch(fail);
@@ -310,6 +330,7 @@ ${GakujoImageBoundsScript.source}
         pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
         pre.textContent = text;
         body.appendChild(pre); status.textContent = '';
+        enableVisualZoom(pre, true);
       };
       reader.onerror = function() { reader = null; fail(new Error('テキストを読み込めません')); };
       reader.onabort = function() { reader = null; };
@@ -319,11 +340,15 @@ ${GakujoImageBoundsScript.source}
     }
     function setZoom(value) {
       if (pdf) return;
-      zoom = Math.max(50, Math.min(300, value));
-      if (visual) visual.style.width = zoom + '%';
+      zoom = Math.max(25, Math.min(500, value));
+      if (visual) {
+        if (textZoom) visual.style.fontSize = zoom + '%';
+        else visual.style.width = zoom + '%';
+        imageZoomLabel.textContent = Math.round(zoom) + '%';
+      }
     }
-    zoomOut.addEventListener('click', function() { setZoom(zoom - 50); });
-    zoomIn.addEventListener('click', function() { setZoom(zoom + 50); });
+    zoomOut.addEventListener('click', function() { setZoom(zoom / 1.2); });
+    zoomIn.addEventListener('click', function() { setZoom(zoom * 1.2); });
     close.focus();
   }
   function attach() {
