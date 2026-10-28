@@ -10,7 +10,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ISCC = Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe'
+ISCC = Path(os.environ.get('INNO_ISCC_PATH') or
+            Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6/ISCC.exe')
 
 
 @unittest.skipUnless(os.name == 'nt' and ISCC.is_file(), 'Inno Setup 6 is required')

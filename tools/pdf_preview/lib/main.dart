@@ -122,8 +122,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       final bytes = (data as JSArrayBuffer).toDart.asUint8List();
       if (_receivedDocument ||
           bytes.isEmpty ||
-          bytes.lengthInBytes > 64 * 1024 * 1024)
+          bytes.lengthInBytes > 64 * 1024 * 1024) {
         return;
+      }
       _receivedDocument = true;
       if (_textLimitReached) setState(() => _textLimitReached = false);
       _lastPassword = null;

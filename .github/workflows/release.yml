@@ -1,4 +1,4 @@
-name: Release All Platforms
+name: Release macOS Windows Android
 
 on:
   push:
@@ -11,15 +11,14 @@ on:
         required: true
         type: string
       release_scope:
-        description: "Publish macOS first, then add Windows/Android or iOS"
+        description: "Publish macOS, Windows and Android together, or add iOS later"
         required: true
         type: choice
-        default: macos
+        default: all
         options:
-          - macos
-          - windows_android
+          - all
           - ios
-      apple_commit:
+      platform_commit:
         description: "For a later iOS build: full, validated commit SHA already on main"
         required: false
         type: string
@@ -41,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit: ${{ steps.verify.outputs.commit }}
-      apple_commit: ${{ steps.verify.outputs.apple_commit }}
+      platform_commit: ${{ steps.verify.outputs.platform_commit }}
     steps:
       - name: Checkout main and tags
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -53,8 +52,8 @@ jobs:
         id: verify
         shell: bash
         env:
-          RELEASE_SCOPE: ${{ inputs.release_scope || 'macos' }}
-          APPLE_COMMIT: ${{ inputs.apple_commit }}
+          RELEASE_SCOPE: ${{ inputs.release_scope || 'all' }}
+          PLATFORM_COMMIT: ${{ inputs.platform_commit }}
         run: |
           set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -63,29 +62,35 @@ jobs:
           fi
           commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           git merge-base --is-ancestor "$commit" origin/main
+          tag_version="${RELEASE_TAG#v}"
+          tag_version="${tag_version%%-*}"
+          release_version="$(git show "${commit}:pubspec.yaml" | awk '/^version:/ { print $2; exit }')"
+          release_version="${release_version%%+*}"
+          if [[ "$release_version" != "$tag_version" ]]; then
+            echo '::error::The release tag does not match the app version.'
+            exit 1
+          fi
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
           if [[ "$RELEASE_SCOPE" == ios ]]; then
-            if [[ ! "$APPLE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-              echo '::error::iOS releases require a full validated commit SHA.'
+            if [[ ! "$PLATFORM_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo '::error::Later iOS releases require a full validated commit SHA.'
               exit 1
             fi
-            apple_commit="$(git rev-parse --verify "${APPLE_COMMIT}^{commit}")"
-            git merge-base --is-ancestor "$apple_commit" origin/main
-            git merge-base --is-ancestor "$commit" "$apple_commit"
-            version="$(git show "${apple_commit}:pubspec.yaml" | awk '/^version:/ { print $2; exit }')"
+            platform_commit="$(git rev-parse --verify "${PLATFORM_COMMIT}^{commit}")"
+            git merge-base --is-ancestor "$platform_commit" origin/main
+            git merge-base --is-ancestor "$commit" "$platform_commit"
+            version="$(git show "${platform_commit}:pubspec.yaml" | awk '/^version:/ { print $2; exit }')"
             version="${version%%+*}"
-            tag_version="${RELEASE_TAG#v}"
-            tag_version="${tag_version%%-*}"
             if [[ "$version" != "$tag_version" ]]; then
-              echo '::error::The iOS commit version does not match the release tag.'
+              echo '::error::The platform commit version does not match the release tag.'
               exit 1
             fi
-            printf 'apple_commit=%s\n' "$apple_commit" >> "$GITHUB_OUTPUT"
+            printf 'platform_commit=%s\n' "$platform_commit" >> "$GITHUB_OUTPUT"
           fi
 
   android:
     needs: [verify_release]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_scope == 'windows_android' }}
+    if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -109,6 +114,23 @@ jobs:
 
       - name: Install Flutter dependencies
         run: flutter pub get
+
+      - name: Analyze and test Windows and Android boundaries
+        run: |
+          flutter analyze --no-pub
+          flutter test --no-pub \
+            test/allowed_web_origins_test.dart \
+            test/android_upload_files_test.dart \
+            test/windows_web_message_bridge_test.dart \
+            test/windows_webview_authenticated_download_test.dart \
+            test/windows_webview_download_file_test.dart \
+            test/gakujo_pdf_preview_server_test.dart \
+            test/gakujo_remote_file_preview_test.dart \
+            test/gakujo_upload_preview_lifecycle_test.dart \
+            test/pdf_preview_outline_limits_test.dart \
+            test/pdf_preview_worker_cleanup_test.dart \
+            test/gakujo_qpdf_worker_test.dart
+          python3 -m unittest discover -s test -p staged_release_test.py -v
 
       - name: Prepare Android release signing
         env:
@@ -146,6 +168,30 @@ jobs:
       - name: Build Android APK
         run: flutter build apk --release
 
+      - name: Verify Android signing identity and upgrade version
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          signature="$("$build_tools/apksigner" verify --print-certs "$apk")"
+          count="$(printf '%s\n' "$signature" | grep -c '^Signer #[0-9][0-9]* certificate SHA-256 digest:' || true)"
+          actual="$(printf '%s\n' "$signature" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          if [[ "$count" != 1 || "$actual" != dda68ac39ed55cfc079eaaae33e37eb0a39eeea6a9652071a338cc87b4407e5b ]]; then
+            echo '::error::Android APK signing identity differs from the existing v0.70.0 and v0.70.1-beta.1 releases.'
+            exit 1
+          fi
+          package_info="$("$build_tools/aapt" dump badging "$apk" | sed -n '1p')"
+          if [[ "$package_info" != "package: name='net.yoshida.morebettergakujo' versionCode='"* ]]; then
+            echo '::error::Android package identity is unexpected.'
+            exit 1
+          fi
+          code="$(printf '%s\n' "$package_info" | sed -n "s/.*versionCode='\([0-9][0-9]*\)'.*/\1/p")"
+          if [[ -z "$code" || "$code" -le 71 ]]; then
+            echo '::error::Android versionCode must exceed the existing beta version 71.'
+            exit 1
+          fi
+
       - name: Stage APK
         run: |
           mkdir -p dist
@@ -168,7 +214,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.apple_commit }}
+          ref: ${{ needs.verify_release.outputs.platform_commit }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
@@ -197,7 +243,7 @@ jobs:
 
   macos:
     needs: [verify_release]
-    if: ${{ github.event_name == 'push' || inputs.release_scope == 'macos' }}
+    if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -218,6 +264,11 @@ jobs:
 
       - name: Install Flutter dependencies
         run: flutter pub get
+
+      - name: Test macOS security and Flutter behavior
+        run: |
+          bash scripts/test_darwin_secure_storage.sh
+          flutter test --no-pub
 
       - name: Build macOS app
         run: flutter build macos --release
@@ -254,7 +305,7 @@ jobs:
 
   windows:
     needs: [verify_release]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_scope == 'windows_android' }}
+    if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -279,6 +330,14 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
+
+      - name: Test Windows installer upgrades
+        shell: pwsh
+        run: |
+          $env:INNO_ISCC_PATH = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $env:INNO_ISCC_PATH)) { throw 'Inno Setup compiler was not found.' }
+          python -m unittest discover -s test -p windows_installer_upgrade_test.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer upgrade test failed.' }
 
       - name: Package Windows installer and portable zip
         shell: pwsh
@@ -325,10 +384,10 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-  publish_macos:
+  publish_all:
     permissions:
       contents: write
-    needs: [verify_release, macos]
+    needs: [verify_release, android, macos, windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release scripts
@@ -342,23 +401,6 @@ jobs:
           name: macos-dmg
           path: dist
 
-      - name: Publish macOS release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: python3 scripts/staged_release.py macos dist
-
-  publish_windows_android:
-    permissions:
-      contents: write
-    needs: [verify_release, android, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout release scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
       - name: Download Android artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -369,11 +411,11 @@ jobs:
         with:
           name: windows
           path: dist
-      - name: Add verified artifacts to the existing release
+      - name: Publish all verified artifacts together
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: python3 scripts/staged_release.py windows_android dist
+        run: python3 scripts/staged_release.py all dist
 
   publish_ios:
     permissions:
@@ -385,7 +427,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
+          ref: ${{ needs.verify_release.outputs.platform_commit }}
       - name: Download iOS artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -395,7 +437,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          APPLE_COMMIT: ${{ needs.verify_release.outputs.apple_commit }}
+          PLATFORM_COMMIT: ${{ needs.verify_release.outputs.platform_commit }}
         run: python3 scripts/staged_release.py ios dist
 
       - name: Checkout main for AltStore source update
@@ -410,7 +452,7 @@ jobs:
         if: ${{ !contains(env.RELEASE_TAG, '-') }}
         working-directory: repository
         env:
-          RELEASE_COMMIT: ${{ needs.verify_release.outputs.apple_commit }}
+          RELEASE_COMMIT: ${{ needs.verify_release.outputs.platform_commit }}
         run: |
           set -euo pipefail
           ipa_path="$(find ../dist -type f -name '*.ipa' -print -quit)"
