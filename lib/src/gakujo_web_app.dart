@@ -49,6 +49,7 @@ import 'gakujo_message_reader_script.dart';
 import 'gakujo_message_star_script.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_offline_retry.dart';
+import 'gakujo_pdf_preview_server.dart';
 import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
@@ -1218,6 +1219,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final GakujoDownloadOperationGate _downloadOperationGate =
       GakujoDownloadOperationGate();
   final GakujoUploadLibraryGate _uploadLibraryGate = GakujoUploadLibraryGate();
+  final GakujoPdfPreviewServer _pdfPreviewServer = GakujoPdfPreviewServer();
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   int? _pendingPageFinishedNavigationRevision;
@@ -1290,6 +1292,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    unawaited(_pdfPreviewServer.close());
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
     _pendingMessageOpenTimer?.cancel();
@@ -1850,6 +1853,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoNavigationDecision> _handleNavigationRequest(
     GakujoNavigationRequest request,
   ) async {
+    if (!request.isMainFrame && _pdfPreviewServer.isViewerUrl(request.url)) {
+      return GakujoNavigationDecision.navigate;
+    }
     if (_isInternalBlankUrl(request.url)) {
       return GakujoNavigationDecision.navigate;
     }

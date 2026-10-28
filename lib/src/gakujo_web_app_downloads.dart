@@ -747,6 +747,18 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         revision: revision,
         kind: kind,
         inject: () async {
+          if (kind == 'preview' && (Platform.isWindows || Platform.isAndroid)) {
+            final url = await _pdfPreviewServer.start();
+            if (!mounted || !_canRunPageScripts || revision != _navigationRevision) {
+              return false;
+            }
+            final result = await _controller.runJavaScriptReturningResult(
+              'window.__MBG_PDF_PREVIEW_URL = ${jsonEncode(url.toString())};'
+              'window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED(); "mbg-ready";',
+            );
+            return mounted && revision == _navigationRevision &&
+                _stringFromJavaScriptResult(result) == 'mbg-ready';
+          }
           final script = await GakujoUploadCompressionLibraries.scriptFor(kind);
           if (script == null || !mounted || !_canRunPageScripts ||
               revision != _navigationRevision) {

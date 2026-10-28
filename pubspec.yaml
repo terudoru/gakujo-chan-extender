@@ -42,3 +42,17 @@ flutter:
   assets:
     # pdf.js, pdf-lib and JSZip for compressing oversized uploads.
     - assets/js/upload_compression/
+    - tools/pdf_preview/assets/
+    - tools/pdf_preview/licenses/
+    - tools/pdf_preview/licenses/pdfium/
+    - assets/pdf_preview/web/
+    - assets/pdf_preview/web/canvaskit/
+    - assets/pdf_preview/web/canvaskit/chromium/
+    - assets/pdf_preview/web/canvaskit/webparagraph/
+    - assets/pdf_preview/web/assets/
+    - assets/pdf_preview/web/assets/fonts/
+    - assets/pdf_preview/web/assets/fonts/fallback/
+    - assets/pdf_preview/web/assets/packages/cupertino_icons/assets/
+    - assets/pdf_preview/web/assets/packages/material_ui/shaders/
+    - assets/pdf_preview/web/assets/packages/pdfrx/assets/
+    - assets/pdf_preview/web/assets/shaders/

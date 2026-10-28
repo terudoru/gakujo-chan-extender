@@ -19,6 +19,7 @@ ${GakujoImageBoundsScript.source}
     pending.forEach(function(done) { done(); });
   };
   function pdfLibrary(setCancel) {
+    if (window.__MBG_PDF_PREVIEW_URL) return Promise.resolve();
     if (window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL &&
         window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS) return Promise.resolve();
     return new Promise(function(resolve, reject) {
@@ -33,8 +34,8 @@ ${GakujoImageBoundsScript.source}
       function done() {
         window.clearTimeout(timer);
         setCancel(null);
-        if (window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL &&
-            window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS) resolve();
+        if (window.__MBG_PDF_PREVIEW_URL || (window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL &&
+            window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS)) resolve();
         else reject(new Error('PDFプレビューを読み込めません'));
       }
       waiters.push(done);
@@ -171,6 +172,44 @@ ${GakujoImageBoundsScript.source}
         });
       }).then(function(bytes) {
         if (closed || pdfStopped || !bytes) return null;
+        if (window.__MBG_PDF_PREVIEW_URL) {
+          var frame = doc.createElement('iframe');
+          var sent = false;
+          frame.setAttribute('title', 'PDFプレビュー');
+          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
+          body.style.cssText = 'position:relative;overflow:hidden;flex:1;min-height:0;padding:0';
+          status.style.cssText = 'position:absolute;z-index:1;top:0;left:0;right:0;text-align:center;pointer-events:none';
+          zoomOut.hidden = zoomIn.hidden = true;
+          function onViewerMessage(event) {
+            if (closed || pdfStopped || event.source !== frame.contentWindow) return;
+            if (event.data === 'mbg-preview-ready' && !sent) {
+              sent = true;
+              armWatchdog();
+              frame.contentWindow.postMessage(bytes, '*', [bytes]);
+              bytes = null;
+            } else if (event.data === 'mbg-preview-password-requested' && sent) {
+              if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+              status.textContent = '';
+            } else if (event.data === 'mbg-preview-password-finished' && sent) {
+              armWatchdog();
+            } else if (event.data === 'mbg-preview-loaded' && sent) {
+              if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+              status.textContent = '';
+            } else if (event.data === 'mbg-preview-failed') {
+              fail(new Error('PDFを開けません'));
+            }
+          }
+          sourceWindow.addEventListener('message', onViewerMessage);
+          pdfViewerCleanup = function() {
+            sourceWindow.removeEventListener('message', onViewerMessage);
+            frame.remove();
+            bytes = null;
+          };
+          frame.src = window.__MBG_PDF_PREVIEW_URL;
+          body.appendChild(frame);
+          return null;
+        }
         worker = new Worker(window.__MBG_PDF_WORKER_URL);
         var pdfWorker = window.pdfjsLib.PDFWorker.fromPort({port: worker});
         function CMapReaderFactory() {}

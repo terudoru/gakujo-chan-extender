@@ -1,0 +1,16 @@
+--- a/assets/packages/pdfrx/assets/pdfium_client.js
++++ b/assets/packages/pdfrx/assets/pdfium_client.js
+@@ -5,6 +5,13 @@ globalThis.PdfiumWasmCommunicator = (function () {
+   const requestCallbacks = new Map();
+   const registeredCallbacks = new Map();
+ 
++  // A removed preview iframe must not keep its PDFium heap alive.
++  globalThis.addEventListener('pagehide', () => {
++    worker.terminate();
++    requestCallbacks.clear();
++    registeredCallbacks.clear();
++  }, { once: true });
++
+   worker.onmessage = (event) => {
+     const data = event.data;
+     if (data.type === 'ready') {

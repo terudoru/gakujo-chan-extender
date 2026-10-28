@@ -6,7 +6,7 @@ const ticks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 let readers = 0, aborted = 0, workers = 0, activeViewers = 0, currentReader, lastViewer, lastOptions;
 const timers = new Map(), intervals = new Map(); let timerId = 0;
 class Element {
-  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.listeners={}; this.attributes={}; this.isConnected=true; }
+  constructor(tag, doc) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.listeners={}; this.attributes={}; this.isConnected=true; if(tag==='iframe') this.contentWindow={messages:[],postMessage(...args){this.messages.push(args);}}; }
   append(...children) { children.forEach(child => this.appendChild(child)); }
   appendChild(child) { this.children.push(child); child.parentNode=this; return child; }
   insertBefore(child) { return this.appendChild(child); }
@@ -110,4 +110,25 @@ inputs[0].files=[file,{...file,name:'second.pdf'}];controls[0].fire('click');
 const list=parent.children.find(node=>node.tagName==='div');assert.equal(list.children.length,2);
 list.children[1].fire('click');await ticks();assert.equal(readers,1);inputs[0].fire('change');assert.equal(readers,0);
 assert.equal(workers,0);assert.equal(activeViewers,0);
+inputs[0].files=[file];window.__MBG_PDF_PREVIEW_URL='http://127.0.0.1:1234/secret/index.html';
+controls[0].fire('click');await ticks();currentReader.finish();await ticks();
+const sandboxOverlay=doc.body.children.find(x=>x.attributes.role==='dialog');
+const iframe=sandboxOverlay.children[1].children.find(x=>x.tagName==='iframe');
+assert.equal(iframe.attributes.sandbox,'allow-scripts');
+assert.equal(iframe.src,window.__MBG_PDF_PREVIEW_URL);
+for(const fn of windowListeners.message||[])fn({source:{},data:'mbg-preview-ready'});
+assert.equal(iframe.contentWindow.messages.length,0,'another frame must not receive the document');
+for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-ready'});
+assert.equal(iframe.contentWindow.messages.length,1);
+assert.equal(iframe.contentWindow.messages[0][0].byteLength,4);
+assert.equal(iframe.contentWindow.messages[0][2][0],iframe.contentWindow.messages[0][0]);
+for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-password-requested'});
+assert.equal(timers.size,0,'a password prompt must not time out while the user is typing');
+for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-password-finished'});
+assert.equal(timers.size,1,'the watchdog resumes after the password prompt');
+for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-loaded'});
+assert.equal(timers.size,0);
+inputs[0].fire('change');
+assert.equal((windowListeners.message||[]).length,0,'closing removes the message listener');
+assert.equal(iframe.isConnected,false);
 console.log('Preview cancellation, PDF viewer lifecycle, search and local font loading are bounded.');

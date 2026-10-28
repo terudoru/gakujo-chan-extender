@@ -1,0 +1,119 @@
+--- a/assets/packages/pdfrx/assets/pdfium_worker.js
++++ b/assets/packages/pdfrx/assets/pdfium_worker.js
+@@ -567,6 +567,8 @@
+ const fileSystem = new FileSystemEmulator();
+ 
+ const emEnv = {
++  // PDFium diagnostics may contain document data; do not write them to logs.
++  emscripten_err: function(_ptr) {},
+   __assert_fail: function (condition, filename, line, func) {
+     throw new Error(`Assertion failed: ${condition} at ${filename}:${line} (${func})`);
+   },
+@@ -646,18 +648,13 @@
+     _notImplemented('emscripten_errn');
+   },
+   emscripten_resize_heap: function (requestedSizeInBytes) {
+-    const maxHeapSizeInBytes = 2 * 1024 * 1024 * 1024; // 2GB
+-    if (requestedSizeInBytes > maxHeapSizeInBytes) {
+-      console.error(
+-        `emscripten_resize_heap: Cannot enlarge memory, asked for ${requestedPageCount} bytes but limit is ${maxHeapSizeInBytes}`
+-      );
+-      return false;
+-    }
++    const maxHeapSizeInBytes = 256 * 1024 * 1024;
++    if (requestedSizeInBytes > maxHeapSizeInBytes) return false;
+ 
+     const pageSize = 65536;
+     const oldPageCount = ((Pdfium.memory.buffer.byteLength + pageSize - 1) / pageSize) | 0;
+     const requestedPageCount = ((requestedSizeInBytes + pageSize - 1) / pageSize) | 0;
+-    const newPageCount = Math.max(oldPageCount * 1.5, requestedPageCount) | 0;
++    const newPageCount = Math.min(maxHeapSizeInBytes / pageSize, Math.max(oldPageCount * 1.5, requestedPageCount)) | 0;
+     try {
+       Pdfium.memory.grow(newPageCount - oldPageCount);
+       console.log(`emscripten_resize_heap: ${oldPageCount} => ${newPageCount}`);
+@@ -1198,7 +1195,7 @@
+ 
+     return _loadDocument(docHandle, params.useProgressiveLoading, dispose);
+   } catch (e) {
+-    if (docHandle) {
++    if (docHandle && !disposed) {
+       try {
+         Pdfium.wasmExports.FPDF_CloseDocument(docHandle);
+       } catch (_) {}
+@@ -1390,6 +1387,9 @@
+     lastMissingFonts = {};
+ 
+     const pageCount = Pdfium.wasmExports.FPDF_GetPageCount(docHandle);
++    if (pageCount < 1 || pageCount > 2000) {
++      throw new Error('Document page count exceeds preview limit');
++    }
+     const permissions = Pdfium.wasmExports.FPDF_GetDocPermissions(docHandle);
+     const securityHandlerRevision = Pdfium.wasmExports.FPDF_GetSecurityHandlerRevision(docHandle);
+ 
+@@ -1432,6 +1432,7 @@
+     } catch (e) {}
+     Pdfium.wasmExports.free(formInfo);
+     delete disposers[docHandle];
++    if (docHandle) Pdfium.wasmExports.FPDF_CloseDocument(docHandle);
+     onDispose();
+     throw e;
+   }
+@@ -1736,6 +1737,13 @@
+     formHandle,
+   } = params;
+ 
++  const validSize = Number.isSafeInteger(width) && Number.isSafeInteger(height) &&
++    width > 0 && height > 0 && width <= 32768 && height <= 32768 &&
++    width * height <= 16000000;
++  const validFullSize = Number.isFinite(fullWidth) && Number.isFinite(fullHeight) &&
++    fullWidth > 0 && fullHeight > 0 && fullWidth <= 1000000 && fullHeight <= 1000000;
++  if (!validSize || !validFullSize) throw new Error('Page render exceeds preview limit');
++
+   let pageHandle = 0;
+   let bufferPtr = 0;
+   let bitmap = 0;
+@@ -2108,9 +2116,7 @@
+ }
+ 
+ async function _reloadFontCache() {
+-  for (const font of await PdfFontPersistentCache.instance.loadAll()) {
+-    pdfFontMapper?.addFontData(font);
+-  }
++  // Bundled fallback fonts are registered directly for this document session.
+ }
+ 
+ /**
+@@ -2275,11 +2281,12 @@
+ 
+   mapFont(_pThis, weight, bItalic, charset, pitchFamily, face, bExact) {
+     const faceName = StringUtils.utf8BytesToString(new Uint8Array(Pdfium.memory.buffer, face));
+-    const cachedFont = this.cachedFontsByFace[faceName] ?? this.cachedFontsByFace[this.aliases[faceName]];
++    const exactFont = this.cachedFontsByFace[faceName] ?? this.cachedFontsByFace[this.aliases[faceName]];
++    const cjk = charset === 128 || charset === 129 || charset === 134 || charset === 136;
++    const cachedFont = exactFont ?? this.cachedFontsByFace[cjk ? '__mbg_cjk' : '__mbg_default'];
+     if (cachedFont) {
+-      cachedFont.charset ??= charset;
+-      if (bExact) new Int32Array(Pdfium.memory.buffer, bExact, 1)[0] = 1;
+-      return this._createMappedFontHandle(cachedFont);
++      if (bExact) new Int32Array(Pdfium.memory.buffer, bExact, 1)[0] = exactFont ? 1 : 0;
++      return this._createMappedFontHandle({ ...cachedFont, charset });
+     }
+     if (!fontNamesToIgnore[faceName] && !this.missingFonts[faceName]) {
+       this.missingFonts[faceName] = {
+@@ -2377,14 +2384,14 @@
+   console.log(`Adding font data for face: ${params.face}`);
+   const { face, data, resolvedFace } = params;
+   pdfFontMapper?.addFontData({ face, data, resolvedFace });
+-  await PdfFontPersistentCache.instance.put({ face, data, resolvedFace });
++  // These bundled fallback fonts are scoped to this worker and never persisted.
+   return { message: `Font ${face} added`, face: face };
+ }
+ 
+ async function clearAllFontData() {
+   console.log(`Clearing all font data`);
+   pdfFontMapper?.clear();
+-  await PdfFontPersistentCache.instance.clear();
++  // No font data is persisted by the preview worker.
+   return { message: 'All font data cleared' };
+ }
+ 

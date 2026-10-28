@@ -1,0 +1,32 @@
+name: mbg_pdf_preview
+description: Offline PDF preview for More Better Gakujo.
+publish_to: none
+
+environment:
+  sdk: '>=3.13.7 <4.0.0'
+  flutter: '>=3.47.8'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  pdfrx: 2.10.1
+  cupertino_icons: ^1.0.9
+  web: ^1.1.1
+  synchronized: ^3.4.0
+  material_ui: ^1.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: MBGPreviewUI
+      fonts:
+        - asset: assets/MBGPreviewUI.otf
+    - family: Unifont
+      fonts:
+        - asset: assets/unifont.otf
+  assets:
+    - assets/NotoSansCJK-Regular.ttc
+    - assets/MBGPreviewUI.otf
+    - assets/unifont.otf
