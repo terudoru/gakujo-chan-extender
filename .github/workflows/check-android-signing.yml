@@ -1,0 +1,61 @@
+name: Check Android release signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the configured signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          keystore="$RUNNER_TEMP/mbg-signing-check.jks"
+          source="$RUNNER_TEMP/MbgSigningCheck.java"
+          class="$RUNNER_TEMP/MbgSigningCheck.class"
+          trap 'rm -f "$keystore" "$source" "$class"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          cat > "$source" <<'JAVA'
+          import java.io.FileInputStream;
+          import java.security.KeyStore;
+          import java.security.MessageDigest;
+          import java.util.HexFormat;
+
+          public class MbgSigningCheck {
+            public static void main(String[] args) {
+              try {
+                KeyStore store = KeyStore.getInstance("JKS");
+                try (FileInputStream input = new FileInputStream(args[0])) {
+                  store.load(input, System.getenv("ANDROID_KEYSTORE_PASSWORD").toCharArray());
+                }
+                String alias = System.getenv("ANDROID_KEY_ALIAS");
+                if (!store.isKeyEntry(alias) || store.getKey(alias,
+                    System.getenv("ANDROID_KEY_PASSWORD").toCharArray()) == null) {
+                  throw new IllegalStateException();
+                }
+                byte[] cert = store.getCertificate(alias).getEncoded();
+                String digest = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(cert));
+                if (!digest.equals("dda68ac39ed55cfc079eaaae33e37eb0a39eeea6a9652071a338cc87b4407e5b")) {
+                  throw new IllegalStateException();
+                }
+                System.out.println("Configured key matches the existing Android releases.");
+              } catch (Exception e) {
+                System.err.println("Android signing configuration verification failed.");
+                System.exit(1);
+              }
+            }
+          }
+          JAVA
+          javac "$source"
+          java -cp "$RUNNER_TEMP" MbgSigningCheck "$keystore"
