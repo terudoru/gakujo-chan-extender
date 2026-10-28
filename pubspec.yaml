@@ -2,7 +2,7 @@ name: morebettergakujo_flutter
 description: Flutter WebView app for More Better Gakujo with portable 2FA autofill.
 publish_to: "none"
 
-version: 0.70.3+73
+version: 0.70.4+74
 
 environment:
   sdk: ">=3.13.7 <4.0.0"
