@@ -418,6 +418,7 @@ ${GakujoImageBoundsScript.source}
         if (!input.parentNode) continue;
         var button = doc.createElement('button'); button.type = 'button';
         button.textContent = '選択したファイルをプレビュー';
+        button.setAttribute('data-mbg-upload-preview', 'true');
         button.style.cssText = 'margin:4px 8px;padding:6px 10px';
         input.parentNode.insertBefore(button, input.nextSibling);
         input.__mbgPreviewButton = button;
@@ -436,6 +437,7 @@ ${GakujoImageBoundsScript.source}
             list = doc.createElement('div');
             Array.prototype.forEach.call(files, function(file) {
               var choice = doc.createElement('button'); choice.type = 'button'; choice.textContent = file.name;
+              choice.setAttribute('data-mbg-upload-preview', 'true');
               choice.addEventListener('click', function() { list.remove(); show(target, file); });
               list.appendChild(choice);
             });

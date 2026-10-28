@@ -27,6 +27,7 @@ const external=new Element('a',child);external.textContent='外部.pdf';external
 const download=new Element('button',child);download.textContent='ダウンロード';download.form={getAttribute:key=>({method:'POST',action:'campussquare.do'}[key]||null),fields:{_eventId:'download',fileId:'42'}};child.body.appendChild(download);child.anchors.push(download);
 const submit=new Element('button',child);submit.textContent='提出';submit.form={getAttribute:key=>({method:'POST',action:'campussquare.do'}[key]||null),fields:{_eventId:'submit',fileId:'42'}};child.body.appendChild(submit);child.anchors.push(submit);
 const ownPreview=new Element('button',child);ownPreview.textContent='プレビューを見る';ownPreview.form=download.form;ownPreview.attributes['data-mbg-submitted-preview']='true';child.body.appendChild(ownPreview);child.anchors.push(ownPreview);
+const ownUpload=new Element('button',child);ownUpload.textContent='選択したファイルをプレビュー';ownUpload.form=download.form;ownUpload.attributes['data-mbg-upload-preview']='true';child.body.appendChild(ownUpload);child.anchors.push(ownUpload);
 const frame={contentWindow:{document:child}};top.frames.push(frame);
 const grandchild=makeDoc('https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=nested');
 const nested=new Element('a',grandchild);nested.textContent='nested.pdf';nested.attributes.href='campussquare.do?_eventId=download&fileId=3';grandchild.body.appendChild(nested);grandchild.anchors.push(nested);
@@ -47,6 +48,7 @@ assert.ok(download.__mbgSubmittedPreviewButton,'safe attachment forms get a prev
 assert.ok(nested.__mbgSubmittedPreviewButton,'nested frames also receive preview buttons');
 assert.equal(submit.__mbgSubmittedPreviewButton,undefined,'submission forms do not get a preview button');
 assert.equal(ownPreview.__mbgSubmittedPreviewButton,undefined,'preview controls in a download form do not create more controls');
+assert.equal(ownUpload.__mbgSubmittedPreviewButton,undefined,'upload preview controls are not treated as download forms');
 let requested;window.__MBG_OPEN_REMOTE_PREVIEW=req=>{requested=req;return true;};button.fire('click');
 assert.equal(requested.method,'GET');assert.equal(requested.fileName,'synthetic.pdf');
 const url=new URL(requested.url);assert.equal(url.origin,'https://gakujo.iess.niigata-u.ac.jp');

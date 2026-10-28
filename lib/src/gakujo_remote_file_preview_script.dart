@@ -58,7 +58,8 @@ class GakujoRemoteFilePreviewScript {
     try {
       // Preview buttons inside a download form inherit that form. Never treat
       // our own control as another download button on the next scan.
-      if (anchor.getAttribute('data-mbg-submitted-preview') !== null) return null;
+      if (anchor.getAttribute('data-mbg-submitted-preview') !== null ||
+          anchor.getAttribute('data-mbg-upload-preview') !== null) return null;
       var page = new URL(anchor.ownerDocument.location.href);
       if (page.origin !== 'https://gakujo.iess.niigata-u.ac.jp' || page.username || page.password) return null;
       if (String(anchor.tagName || '').toLowerCase() !== 'a') {
