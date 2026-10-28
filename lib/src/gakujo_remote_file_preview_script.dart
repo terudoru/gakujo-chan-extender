@@ -138,13 +138,23 @@ class GakujoRemoteFilePreviewScript {
       controller.abort();
       if (!closed) status.textContent = '読み込みがタイムアウトしました。';
     }, 30000);
-    var operation = {close: cleanup};
+    var operation = {close: cleanup, visible: true, setVisible: setVisible};
     window.__MBG_ACTIVE_UPLOAD_PREVIEW = operation;
-    function cleanup() {
+    function setVisible(visible) {
+      if (closed) return;
+      operation.visible = visible;
+      overlay.style.display = visible ? 'block' : 'none';
+      mbgPreviewReport(visible ? 'visible' : 'hidden');
+    }
+    setVisible(true);
+    function cleanup(preserveState) {
       if (closed) return;
       closed = true; controller.abort(); window.clearTimeout(timeout);
       window.removeEventListener('pagehide', cleanup); overlay.remove();
-      if (window.__MBG_ACTIVE_UPLOAD_PREVIEW === operation) delete window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      if (window.__MBG_ACTIVE_UPLOAD_PREVIEW === operation) {
+        delete window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+        if (preserveState !== true) mbgPreviewReport('none');
+      }
     }
     close.addEventListener('click', cleanup);
     window.addEventListener('pagehide', cleanup);
@@ -203,8 +213,9 @@ class GakujoRemoteFilePreviewScript {
       else if (prefix.slice(0, 4) === 'RIFF' && prefix.slice(8, 12) === 'WEBP') type = 'image/webp';
       var file = new File(result.parts, name, {type: type});
       var anchor = doc.createElement('input'); anchor.type = 'hidden'; doc.body.appendChild(anchor);
-      cleanup();
-      show(anchor, file, function() { anchor.remove(); });
+      var visible = operation.visible;
+      cleanup(true);
+      show(anchor, file, function() { anchor.remove(); }, visible);
     }).catch(function(error) {
       window.clearTimeout(timeout);
       if (!closed && error.name !== 'AbortError') status.textContent = 'プレビューできません: ' + (error.message || error);

@@ -15,6 +15,8 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
   private static var allowedURL: URL?
   private static var windows: [MacosPdfPreviewWindow] = []
   private var window: NSWindow?
+  private weak var opener: WKWebView?
+  private weak var viewer: WKWebView?
   private let url: URL
 
   private init(url: URL) { self.url = url }
@@ -47,7 +49,7 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
         guard origin.protocol == "https", origin.host == "gakujo.iess.niigata-u.ac.jp" else {
           return nil
         }
-        return open(url: allowed, configuration: configuration)
+        return open(url: allowed, configuration: configuration, opener: opener)
       }
       return original(delegate, selector, opener, configuration, action, features)?
         .takeUnretainedValue() as? WKWebView
@@ -58,13 +60,30 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
     }
   }
 
-  private static func open(url: URL, configuration: WKWebViewConfiguration) -> WKWebView {
+  static func setVisible(_ visible: Bool, mainWindow: NSWindow?) {
+    for owner in windows {
+      if visible {
+        owner.window?.makeKeyAndOrderFront(nil)
+      } else {
+        owner.window?.orderOut(nil)
+      }
+    }
+    if !visible { mainWindow?.makeKeyAndOrderFront(nil) }
+  }
+
+  static func opener(for viewer: WKWebView) -> WKWebView? {
+    windows.first { $0.viewer === viewer }?.opener
+  }
+
+  private static func open(url: URL, configuration: WKWebViewConfiguration, opener: WKWebView) -> WKWebView {
     let owner = MacosPdfPreviewWindow(url: url)
     let frame = NSRect(x: 0, y: 0, width: 1000, height: 760)
     // Do not expose the main page's native script-message channels to a PDF
     // viewer. WebKit still uses the supplied configuration for opener links.
     configuration.userContentController = WKUserContentController()
     let webView = WKWebView(frame: frame, configuration: configuration)
+    owner.opener = opener
+    owner.viewer = webView
     webView.uiDelegate = owner
     webView.navigationDelegate = owner
     let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)

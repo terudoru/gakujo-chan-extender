@@ -60,12 +60,17 @@ assert.equal(window.__MBG_OPEN_REMOTE_PREVIEW({...request, url:'https://gakujo.i
 assert.equal(calls.length, 0);
 body = [new TextEncoder().encode('safe content')];
 assert.equal(window.__MBG_OPEN_REMOTE_PREVIEW(request), true);
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('back'), true);
+assert.equal(doc.body.children.find(e => e.attributes.role === 'dialog').style.display, 'none');
 await flush();
 assert.equal(calls.length, 1);
 assert.equal(calls[0].options.credentials, 'same-origin');
 assert.equal(calls[0].options.redirect, 'error');
 const dialog = doc.body.children.find(e => e.attributes.role === 'dialog');
 assert.ok(dialog);
+assert.equal(dialog.style.display, 'none', 'fetch completion must not reopen a hidden preview');
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('forward'), true);
+assert.equal(dialog.style.display, 'flex');
 const pre = dialog.children[1].children.find(e => e.tagName === 'pre');
 assert.equal(pre.textContent, 'safe content');
 window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();

@@ -1126,9 +1126,10 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
           return;
         }
         unawaited(
-          (navigation == MouseHistoryNavigation.back
+          (windowsController.onMouseHistoryNavigation?.call(navigation) ??
+              (navigation == MouseHistoryNavigation.back
                   ? windowsController.goBack()
-                  : windowsController.goForward())
+                  : windowsController.goForward()))
               .catchError((Object error, StackTrace stackTrace) {
             // For example WebView2 failed to start; the page already says so.
             developer.log(
@@ -1193,6 +1194,7 @@ class WindowsGakujoWebViewService extends GakujoWebViewService {
 }
 
 class WindowsGakujoWebViewController implements GakujoWebViewController {
+  Future<void> Function(MouseHistoryNavigation)? onMouseHistoryNavigation;
   WindowsGakujoWebViewController(
     this._inner, {
     this._recoveryElapsed,

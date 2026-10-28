@@ -29,10 +29,22 @@ class AppDelegate: FlutterAppDelegate {
       FlutterMethodChannel(
         name: "net.yoshida.morebettergakujo/pdf_preview",
         binaryMessenger: controller.engine.binaryMessenger
-      ).setMethodCallHandler { call, result in
-        guard call.method == "setViewerURL", let url = call.arguments as? String,
-              MacosPdfPreviewWindow.setViewerURL(url) else {
-          result(FlutterError(code: "invalid_viewer", message: nil, details: nil))
+      ).setMethodCallHandler { [weak self] call, result in
+        switch call.method {
+        case "setViewerURL":
+          guard let url = call.arguments as? String,
+                MacosPdfPreviewWindow.setViewerURL(url) else {
+            result(FlutterError(code: "invalid_viewer", message: nil, details: nil))
+            return
+          }
+        case "setVisible":
+          guard let visible = call.arguments as? Bool else {
+            result(FlutterError(code: "invalid_visibility", message: nil, details: nil))
+            return
+          }
+          MacosPdfPreviewWindow.setVisible(visible, mainWindow: self?.mainFlutterWindow)
+        default:
+          result(FlutterMethodNotImplemented)
           return
         }
         result(nil)
@@ -138,13 +150,7 @@ enum MacosWebViewMouseNavigation {
             let webView = Self.webView(in: window) else {
         return event
       }
-      if key == "[" {
-        if webView.canGoBack {
-          webView.goBack()
-        }
-      } else if webView.canGoForward {
-        webView.goForward()
-      }
+      Self.navigate(webView, back: key == "[")
       return nil
     }
     monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { event in
@@ -153,14 +159,18 @@ enum MacosWebViewMouseNavigation {
             let webView = Self.webView(under: event) else {
         return event
       }
-      if event.buttonNumber == Self.backButtonNumber {
-        if webView.canGoBack {
-          webView.goBack()
-        }
-      } else if webView.canGoForward {
-        webView.goForward()
-      }
+      Self.navigate(webView, back: event.buttonNumber == Self.backButtonNumber)
       return nil
+    }
+  }
+
+  private static func navigate(_ webView: WKWebView, back: Bool) {
+    let target = MacosPdfPreviewWindow.opener(for: webView) ?? webView
+    let direction = back ? "back" : "forward"
+    target.evaluateJavaScript("window.__MBG_PREVIEW_NAVIGATE ? window.__MBG_PREVIEW_NAVIGATE('\(direction)') : false") { result, error in
+      guard error == nil, (result as? Bool) != true else { return }
+      if back && target.canGoBack { target.goBack() }
+      else if !back && target.canGoForward { target.goForward() }
     }
   }
 

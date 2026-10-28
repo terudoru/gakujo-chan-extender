@@ -73,6 +73,13 @@ assert.deepEqual([...((await new lastOptions.CMapReaderFactory().fetch({name:'sy
 assert.deepEqual([...(await new lastOptions.StandardFontDataFactory().fetch({filename:'sample.pfb'}))],[1,2]);
 await assert.rejects(new lastOptions.CMapReaderFactory().fetch({name:'../unsafe'}));
 const overlay=doc.body.children.find(x=>x.attributes.role==='dialog');const bar=overlay.children[0];
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('back'),true);
+assert.equal(overlay.style.display,'none','back reveals the underlying page');
+assert.equal(activeViewers,1,'back preserves the viewer');
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('back'),false,'a second back can use page history');
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('forward'),true);
+assert.equal(overlay.style.display,'flex','forward restores the same viewer');
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('forward'),true,'forward cannot skip an open preview');
 assert.equal(bar.style.zoom,'2.5','toolbar must stay usable on a scaled mobile viewport');
 assert.equal(overlay.style.left,'95px');assert.equal(overlay.style.top,'12px');
 assert.equal(overlay.style.width,'320px');assert.equal(overlay.style.height,'500px');
@@ -103,6 +110,7 @@ assert.equal(lastViewer.events.findEvents.at(-1).query,'ةيبرعلا');
 lastViewer.events.dispatch('updatefindcontrolstate',{state:1,rawQuery:'ةيبرعلا'});
 assert.equal(lastViewer.events.findEvents.at(-1).query,'العربیة');
 inputs[1].fire('change');await ticks();assert.equal(workers,0);assert.equal(activeViewers,0);assert.equal(timers.size,0);assert.equal(viewportListeners.size,0);
+assert.equal(window.__MBG_PREVIEW_NAVIGATE('forward'),false,'closing discards preview history');
 delete window.pdfjsLib;window.MbgUploadCompression={postMessage(){}};
 for(let i=0;i<10;i++){controls[0].fire('click');await ticks();inputs[0].fire('change');await ticks();}
 assert.equal(timers.size,0);assert.equal(workers,0);

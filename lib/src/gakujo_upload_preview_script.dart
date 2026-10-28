@@ -13,6 +13,19 @@ ${GakujoImageBoundsScript.source}
 ''' r'''
   if (window.__MBG_UPLOAD_PREVIEW_INSTALLED) return;
   window.__MBG_UPLOAD_PREVIEW_INSTALLED = true;
+  function mbgPreviewReport(state) {
+    var channel = window.MbgPreviewNavigation;
+    if (channel && channel.postMessage) channel.postMessage(state);
+  }
+  window.__MBG_PREVIEW_NAVIGATE = function(direction) {
+    var preview = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+    if (!preview || typeof preview.setVisible !== 'function') return false;
+    if (direction === 'back' && preview.visible) preview.setVisible(false);
+    else if (direction === 'forward' && !preview.visible) preview.setVisible(true);
+    else if (direction === 'forward' && preview.visible) return true;
+    else return false;
+    return true;
+  };
   var waiters = [];
   window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED = function() {
     var pending = waiters.splice(0);
@@ -62,7 +75,7 @@ ${GakujoImageBoundsScript.source}
     visit(document);
     return result;
   }
-  function show(input, file, onClosed) {
+  function show(input, file, onClosed, initiallyVisible) {
     var owner = window;
     try {
       if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
@@ -127,8 +140,18 @@ ${GakujoImageBoundsScript.source}
       } catch (_) { detached = true; }
       if (detached) cleanup();
     }, 1000);
-    var preview = {close: cleanup};
+    var preview = {close: cleanup, visible: initiallyVisible !== false, setVisible: setVisible};
     owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
+    function setVisible(visible) {
+      if (closed) return;
+      preview.visible = visible;
+      overlay.style.display = visible ? 'flex' : 'none';
+      if (!visible && visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || '')) {
+        try { visual.pause(); } catch (_) {}
+      }
+      mbgPreviewReport(visible ? 'visible' : 'hidden');
+    }
+    setVisible(preview.visible);
     function stopPdf() {
       pdfStopped = true;
       if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
@@ -164,7 +187,10 @@ ${GakujoImageBoundsScript.source}
       }
       if (sourceWindow !== window) sourceWindow.removeEventListener('pagehide', cleanup);
       window.clearInterval(detachWatcher);
-      if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) delete owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) {
+        delete owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+        mbgPreviewReport('none');
+      }
       if (onClosed) onClosed();
     }
     close.addEventListener('click', cleanup);
@@ -249,6 +275,7 @@ ${GakujoImageBoundsScript.source}
           if (popup) {
             viewer = sourceWindow.open(window.__MBG_PDF_PREVIEW_URL, '_blank');
             if (!viewer) { fail(new Error('PDFプレビューを開けません')); return null; }
+            if (!preview.visible) mbgPreviewReport('hidden');
             popupTimer = window.setInterval(function() {
               try { if (viewer.closed) cleanup(); } catch (_) { cleanup(); }
             }, 500);

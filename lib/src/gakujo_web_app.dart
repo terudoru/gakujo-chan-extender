@@ -597,6 +597,56 @@ enum GakujoHistoryNavigation {
 }
 
 @visibleForTesting
+class DesktopHistorySwipeTracker {
+  double _distance = 0;
+  bool _triggered = false;
+  Timer? _timer;
+
+  GakujoHistoryNavigation? add(Offset delta,
+      {required bool positiveIsBack,
+      required double threshold,
+      required double dominance}) {
+    if (_triggered) {
+      // Momentum can last longer than the idle interval; every event extends
+      // the latch so one continuous gesture cannot move several pages.
+      scheduleReset();
+      return null;
+    }
+    final horizontal = delta.dx.abs();
+    final vertical = delta.dy.abs();
+    if (horizontal <= vertical * dominance) {
+      if (vertical > horizontal) {
+        scheduleReset();
+      }
+      return null;
+    }
+    _distance += positiveIsBack ? delta.dx : -delta.dx;
+    scheduleReset();
+    if (_distance.abs() < threshold) {
+      return null;
+    }
+    _triggered = true;
+    return _distance > 0
+        ? GakujoHistoryNavigation.back
+        : GakujoHistoryNavigation.forward;
+  }
+
+  void scheduleReset() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(milliseconds: 250), reset);
+  }
+
+  void reset() {
+    _timer?.cancel();
+    _timer = null;
+    _distance = 0;
+    _triggered = false;
+  }
+
+  void dispose() => reset();
+}
+
+@visibleForTesting
 GakujoHistoryNavigation? gakujoEdgeSwipeNavigation({
   required double startX,
   required double viewportWidth,
@@ -1165,6 +1215,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String _status = '準備中';
   bool _canGoBack = false;
   bool _canGoForward = false;
+  String _previewNavigationState = 'none';
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
@@ -1200,14 +1251,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   double _desktopZoom = 1.0;
   double _desktopPanZoomStartZoom = 1.0;
   bool _desktopPanZoomIsPinching = false;
-  double _desktopHistorySwipeDistance = 0;
-  bool _desktopHistorySwipeTriggered = false;
+  final _desktopHistorySwipe = DesktopHistorySwipeTracker();
   int? _touchHistorySwipePointer;
   Offset? _touchHistorySwipeStart;
   double _touchHistorySwipeViewportWidth = 0;
   int _desktopZoomApplyRevision = 0;
   Offset? _desktopZoomOrigin;
-  Timer? _desktopHistorySwipeResetTimer;
   Timer? _autoBackupTimer;
   Timer? _autoBackupDebounce;
   bool _autoBackupWrittenThisLaunch = false;
@@ -1258,6 +1307,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
 
     _controller = _webViewService.createController();
+    final controller = _controller;
+    if (controller is WindowsGakujoWebViewController) {
+      controller.onMouseHistoryNavigation = (direction) async {
+        if (direction == MouseHistoryNavigation.back) {
+          await _goBackIfPossible();
+        } else {
+          await _goForwardIfPossible();
+        }
+      };
+    }
     _offlineRetry = GakujoOfflineRetry(
       probe: widget._gakujoReachable ?? probeGakujoReachability,
       onReachable: () => unawaited(_reloadAfterConnectivityRestored()),
@@ -1300,7 +1359,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
-    _desktopHistorySwipeResetTimer?.cancel();
+    _desktopHistorySwipe.dispose();
     _autoBackupTimer?.cancel();
     _autoBackupDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -1383,8 +1442,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           centerTitle: false,
           actions: [
             GakujoNavigationActions(
-              canGoBack: _canGoBack && !_calendarOperationGate.isRunning,
-              canGoForward: _canGoForward && !_calendarOperationGate.isRunning,
+              canGoBack: (_canGoBack || _previewNavigationState == 'visible') &&
+                  !_calendarOperationGate.isRunning,
+              canGoForward: (_previewNavigationState == 'hidden' ||
+                      (_previewNavigationState == 'none' && _canGoForward)) &&
+                  !_calendarOperationGate.isRunning,
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
             ),
@@ -1742,47 +1804,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Offset delta, {
     required bool positiveIsBack,
   }) {
-    if (!_supportsDesktopZoom || _desktopHistorySwipeTriggered) {
+    if (!_supportsDesktopZoom) {
       return;
     }
-
-    final horizontal = delta.dx.abs();
-    final vertical = delta.dy.abs();
-    if (horizontal <= vertical * _desktopHorizontalSwipeDominance) {
-      if (vertical > horizontal) {
-        _scheduleDesktopHistorySwipeReset();
-      }
-      return;
-    }
-
-    _desktopHistorySwipeDistance += positiveIsBack ? delta.dx : -delta.dx;
-    _scheduleDesktopHistorySwipeReset();
-
-    if (_desktopHistorySwipeDistance.abs() < _desktopHistorySwipeThreshold) {
-      return;
-    }
-
-    _desktopHistorySwipeTriggered = true;
-    if (_desktopHistorySwipeDistance > 0) {
+    final direction = _desktopHistorySwipe.add(
+      delta,
+      positiveIsBack: positiveIsBack,
+      threshold: _desktopHistorySwipeThreshold,
+      dominance: _desktopHorizontalSwipeDominance,
+    );
+    if (direction == GakujoHistoryNavigation.back) {
       unawaited(_goBackIfPossible());
-    } else {
+    } else if (direction == GakujoHistoryNavigation.forward) {
       unawaited(_goForwardIfPossible());
     }
   }
 
   void _scheduleDesktopHistorySwipeReset() {
-    _desktopHistorySwipeResetTimer?.cancel();
-    _desktopHistorySwipeResetTimer = Timer(
-      const Duration(milliseconds: 250),
-      _resetDesktopHistorySwipe,
-    );
+    _desktopHistorySwipe.scheduleReset();
   }
 
   void _resetDesktopHistorySwipe() {
-    _desktopHistorySwipeResetTimer?.cancel();
-    _desktopHistorySwipeResetTimer = null;
-    _desktopHistorySwipeDistance = 0;
-    _desktopHistorySwipeTriggered = false;
+    _desktopHistorySwipe.reset();
   }
 
   Future<void> _changeDesktopZoomBy(double delta) {
@@ -3892,6 +3935,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _beginNavigation({bool preservesPendingMessageOpen = false}) {
+    if (_previewNavigationState != 'none' && mounted) {
+      setState(() => _previewNavigationState = 'none');
+    }
     if (!preservesPendingMessageOpen) {
       _setPendingMessageUrl(null);
     }
@@ -5899,6 +5945,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       DesktopPageZoomScript.channelName,
       onMessageReceived: _handleDesktopZoomMessage,
     );
+    await _addGakujoJavaScriptChannel(
+      'MbgPreviewNavigation',
+      onMessageReceived: _handlePreviewNavigationState,
+    );
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
@@ -6525,6 +6575,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    if (await _navigatePreview('back')) {
+      return true;
+    }
     _setPendingMessageUrl(null);
     if (!await _controller.canGoBack()) {
       await _refreshNavigationState();
@@ -6550,6 +6603,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    if (await _navigatePreview('forward')) {
+      return true;
+    }
+    if (_previewNavigationState == 'visible') {
+      return false;
+    }
     _setPendingMessageUrl(null);
     if (!await _controller.canGoForward()) {
       await _refreshNavigationState();
@@ -6560,6 +6619,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.goForward();
     await _refreshNavigationState();
     return true;
+  }
+
+  void _handlePreviewNavigationState(String state) {
+    if (!mounted || !const {'visible', 'hidden', 'none'}.contains(state)) {
+      return;
+    }
+    if (_previewNavigationState != state) {
+      setState(() => _previewNavigationState = state);
+    }
+    if (defaultTargetPlatform == TargetPlatform.macOS && state != 'none') {
+      unawaited(const MethodChannel('net.yoshida.morebettergakujo/pdf_preview')
+          .invokeMethod<void>('setVisible', state == 'visible')
+          .catchError((Object error, StackTrace stackTrace) {
+        developer.log('Failed to change PDF preview visibility',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }));
+    }
+  }
+
+  Future<bool> _navigatePreview(String direction) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        "window.__MBG_PREVIEW_NAVIGATE ? window.__MBG_PREVIEW_NAVIGATE('$direction') : false",
+      );
+      return _boolFromJavaScriptResult(result);
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to navigate preview',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      // Do not navigate the underlying page when the preview could not be queried.
+      return (direction == 'back' && _previewNavigationState == 'visible') ||
+          (direction == 'forward' && _previewNavigationState == 'hidden');
+    }
   }
 
   Future<void> _refreshNavigationState() async {
