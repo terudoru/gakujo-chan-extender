@@ -7,6 +7,7 @@ let created = 0, callbacks = 0;
 const revoked = [];
 const window = {fail: true, pdfjsLib: {pageProvided: true},
   __MBG_PDF_WORKER_URL: 'blob:page-provided',
+  __MBG_PDF_VIEWER_CSS: 'page-provided',
   __MBG_UPLOAD_PREVIEW_LIBRARY_LOADED() { callbacks++; }};
 const context = vm.createContext({window, Blob, URL: {
   createObjectURL() { return `blob:synthetic-${++created}`; },
@@ -15,6 +16,7 @@ const context = vm.createContext({window, Blob, URL: {
 assert.equal(vm.runInContext(script, context), 'mbg-failed');
 assert.deepEqual(revoked, ['blob:synthetic-1']);
 assert.equal(window.__MBG_PDF_WORKER_URL, 'blob:page-provided');
+assert.equal(window.__MBG_PDF_VIEWER_CSS, 'page-provided');
 assert.equal(callbacks, 1, 'failure should wake waiting previews');
 window.fail = false;
 assert.equal(vm.runInContext(script, context), 'mbg-ready');

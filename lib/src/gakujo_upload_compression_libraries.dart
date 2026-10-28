@@ -58,7 +58,14 @@ class GakujoUploadCompressionLibraries {
   /// dedicated, terminable worker instead of blocking the page thread.
   static const _assets = {
     'pdf': ['qpdf-worker.js', 'qpdf.js'],
-    'preview': ['pdf.worker.min.js', 'pdf.min.js', 'pdf-cmaps.json'],
+    'preview': [
+      'pdf.worker.min.js',
+      'pdf.min.js',
+      'pdf_viewer.js',
+      'pdf_viewer.css',
+      'pdf-cmaps.json',
+      'pdf-standard-fonts.json',
+    ],
     'preview-office': ['jszip.min.js'],
     'office': ['jszip.min.js'],
   };
@@ -70,7 +77,7 @@ class GakujoUploadCompressionLibraries {
   static String acknowledgedInjectionScript(String kind, String script) {
     final ready = switch (kind) {
       'pdf' => 'window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL',
-      'preview' => 'window.pdfjsLib && window.__MBG_PDF_WORKER_URL',
+      'preview' => 'window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL && window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS',
       'preview-office' => 'window.JSZip',
       'office' => 'window.JSZip',
       _ => 'false',
@@ -88,6 +95,8 @@ class GakujoUploadCompressionLibraries {
 (function() {
   var keys = ['__MBG_QPDF_WORKER_URL', '__MBG_QPDF_MODULE_URL', '__MBG_QPDF_WASM_URL', '__MBG_PDF_WORKER_URL'];
   var before = keys.map(function(key) { return window[key]; });
+  var values = ['pdfjsLib', 'pdfjsViewer', '__MBG_PDF_VIEWER_CSS', '__MBG_PDF_CMAPS', '__MBG_PDF_STANDARD_FONTS'];
+  var valuesBefore = values.map(function(key) { return window[key]; });
   var markerBefore = window[$marker];
   try {
     if (window[$marker] && ($ready)) {
@@ -106,6 +115,9 @@ class GakujoUploadCompressionLibraries {
         if (window[key] && window[key] !== before[index]) URL.revokeObjectURL(window[key]);
         if (before[index] === undefined) delete window[key]; else window[key] = before[index];
       } catch (_) {}
+    });
+    values.forEach(function(key, index) {
+      if (valuesBefore[index] === undefined) delete window[key]; else window[key] = valuesBefore[index];
     });
     try { if (window.$callback) window.$callback(${jsonEncode(kind)}); } catch (_) {}
     return 'mbg-failed';
@@ -166,9 +178,15 @@ class GakujoUploadCompressionLibraries {
         'window.__MBG_PDF_WORKER_URL = URL.createObjectURL('
         'new Blob([${jsonEncode(sources.first)}], {type: "text/javascript"}));',
       );
-      if (sources.length >= 3) {
+      if (sources.length >= 6) {
         buffer.writeln(
-          'window.__MBG_PDF_CMAPS = ${jsonEncode(jsonDecode(sources[2]))};',
+          'window.__MBG_PDF_VIEWER_CSS = ${jsonEncode(sources[3])};',
+        );
+        buffer.writeln(
+          'window.__MBG_PDF_CMAPS = ${jsonEncode(jsonDecode(sources[4]))};',
+        );
+        buffer.writeln(
+          'window.__MBG_PDF_STANDARD_FONTS = ${jsonEncode(jsonDecode(sources[5]))};',
         );
       }
     }
@@ -176,7 +194,7 @@ class GakujoUploadCompressionLibraries {
         in kind == 'pdf'
             ? <String>[]
             : kind == 'preview'
-            ? sources.skip(1).take(1)
+            ? sources.skip(1).take(2)
             : sources) {
       buffer
         ..writeln('(function(define, module, exports) {')

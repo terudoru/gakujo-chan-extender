@@ -22,7 +22,9 @@ void main() {
     final script = await GakujoUploadCompressionLibraries.scriptFor('preview');
     expect(script, contains('__MBG_PDF_WORKER_URL'));
     expect(script, contains('pdfjsLib'));
+    expect(script, contains('pdfjsViewer'));
     expect(script, contains('__MBG_PDF_CMAPS'));
+    expect(script, contains('__MBG_PDF_STANDARD_FONTS'));
     expect(script, contains('UniJIS-UCS2-H'));
     expect(script, contains('__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'));
   });

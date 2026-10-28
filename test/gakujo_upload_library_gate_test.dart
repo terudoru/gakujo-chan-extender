@@ -45,8 +45,13 @@ void main() {
           'preview',
           '''
 window.__MBG_PDF_WORKER_URL = URL.createObjectURL(new Blob([]));
+window.__MBG_PDF_VIEWER_CSS = 'partial';
 if (window.fail) throw new Error('synthetic failure');
 window.pdfjsLib = {};
+window.pdfjsViewer = {};
+window.__MBG_PDF_VIEWER_CSS = 'synthetic';
+window.__MBG_PDF_CMAPS = {};
+window.__MBG_PDF_STANDARD_FONTS = {};
 ''',
         ),
       );
