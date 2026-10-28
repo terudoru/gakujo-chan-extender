@@ -7,8 +7,9 @@ import 'gakujo_remote_file_preview_script.dart';
 class GakujoUploadPreviewScript {
   const GakujoUploadPreviewScript._();
 
-  static String build() => '''
+  static String build({bool compactAndroid = false}) => '''
 (function() {
+var mbgCompactAndroid = $compactAndroid;
 ${GakujoImageBoundsScript.source}
 ''' r'''
   if (window.__MBG_UPLOAD_PREVIEW_INSTALLED) return;
@@ -120,6 +121,12 @@ ${GakujoImageBoundsScript.source}
     function resizeToolbar() {
       var scale = displayedScale();
       bar.style.zoom = String(scale > 0 ? Math.min(3, Math.max(1, 1 / scale)) : 1);
+      // In a landscape phone with the keyboard open, retain the viewer's
+      // search field instead of spending the remaining height on this header.
+      var screen = sourceWindow.screen;
+      var compact = !!(mbgCompactAndroid && previewFrame && viewport && screen && screen.width > screen.height &&
+        viewport.height * scale < 180);
+      bar.style.display = compact ? 'none' : 'flex';
       if (visual && textZoom) visual.style.zoom = bar.style.zoom;
       if (previewFrame) {
         // A desktop-width page on a phone can be scaled below 100%. Give the

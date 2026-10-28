@@ -1422,6 +1422,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   Widget build(BuildContext context) {
+    final compactPreviewForKeyboard = Platform.isAndroid &&
+        _previewNavigationState == 'visible' &&
+        MediaQuery.orientationOf(context) == Orientation.landscape &&
+        MediaQuery.viewInsetsOf(context).bottom > 0;
     return PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -1431,7 +1435,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         unawaited(_handleSystemBack());
       },
       child: Scaffold(
-        appBar: AppBar(
+        appBar: compactPreviewForKeyboard ? null : AppBar(
           toolbarHeight: _compactToolbarHeight,
           titleSpacing: 12,
           title: GakujoGpaTaunt(
@@ -1559,7 +1563,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
         body: Column(
           children: [
-            Material(
+            if (!compactPreviewForKeyboard) Material(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               child: SafeArea(
                 top: false,
@@ -1585,7 +1589,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               // Android 15+ draws edge to edge; without this the end of a
               // page (often a submit button) stays under the navigation bar.
               child: SafeArea(
-                top: false,
+                top: compactPreviewForKeyboard,
                 child: _isSettingsDialogOpen
                     ? const SizedBox.expand()
                     : _buildWebViewArea(),
@@ -5521,7 +5525,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await _controller.runJavaScript(GakujoUploadPreviewScript.build());
+      await _controller.runJavaScript(
+        GakujoUploadPreviewScript.build(compactAndroid: Platform.isAndroid),
+      );
     } catch (error, stackTrace) {
       developer.log('Failed to inject upload preview',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);

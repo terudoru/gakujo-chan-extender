@@ -62,6 +62,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   late final JSFunction _previewListener;
   late final JSFunction _textLimitListener;
+  late final JSFunction _viewportListener;
 
   void _update() {
     if (mounted) {
@@ -108,6 +109,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    showLeftPane.addListener(_update);
+    _viewportListener = ((web.Event event) => _update()).toJS;
+    web.window.addEventListener('resize', _viewportListener);
     _textLimitListener = ((web.Event event) {
       if (mounted && !_textLimitReached) {
         setState(() => _textLimitReached = true);
@@ -148,9 +152,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   void dispose() {
     web.window.removeEventListener('message', _previewListener);
     web.window.removeEventListener('mbg-pdf-text-limited', _textLimitListener);
+    web.window.removeEventListener('resize', _viewportListener);
     WidgetsBinding.instance.removeObserver(this);
     textSearcher.value?.dispose();
     textSearcher.dispose();
+    showLeftPane.removeListener(_update);
     showLeftPane.dispose();
     outline.dispose();
     outlineError.dispose();
@@ -175,8 +181,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // Flutter Web's MediaQuery can lag the embedded frame's actual height
+    // while Android's keyboard is animating. Use the frame's own viewport.
+    final width = web.window.innerWidth;
+    final height = web.window.innerHeight;
+    final compactSearch = web.window.navigator.userAgent.contains('Android') &&
+        showLeftPane.value &&
+        width > height && height < 180;
     return Scaffold(
-      appBar: AppBar(
+      appBar: compactSearch ? null : AppBar(
         bottom: _textLimitReached
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(40),
@@ -256,14 +269,17 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                       length: 3,
                       child: Column(
                         children: [
-                          ClipRect(
-                            // NOTE: without ClipRect, TabBar shown even if the width is 0
-                            child: const TabBar(
-                              tabs: [
-                                Tab(icon: Icon(Icons.search), text: '検索'),
-                                Tab(icon: Icon(Icons.menu_book), text: '目次'),
-                                Tab(icon: Icon(Icons.image), text: 'ページ'),
-                              ],
+                          SizedBox(
+                            height: compactSearch ? 0 : null,
+                            child: ClipRect(
+                              // NOTE: without ClipRect, TabBar shown even if the width is 0
+                              child: const TabBar(
+                                tabs: [
+                                  Tab(icon: Icon(Icons.search), text: '検索'),
+                                  Tab(icon: Icon(Icons.menu_book), text: '目次'),
+                                  Tab(icon: Icon(Icons.image), text: 'ページ'),
+                                ],
+                              ),
                             ),
                           ),
                           Expanded(
