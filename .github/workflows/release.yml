@@ -10,6 +10,19 @@ on:
         description: "Release tag, for example v0.68.0"
         required: true
         type: string
+      release_scope:
+        description: "Publish macOS first, then add Windows/Android or iOS"
+        required: true
+        type: choice
+        default: macos
+        options:
+          - macos
+          - windows_android
+          - ios
+      apple_commit:
+        description: "For a later iOS build: full, validated commit SHA already on main"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -28,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit: ${{ steps.verify.outputs.commit }}
+      apple_commit: ${{ steps.verify.outputs.apple_commit }}
     steps:
       - name: Checkout main and tags
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -38,6 +52,9 @@ jobs:
       - name: Verify release tag is part of main
         id: verify
         shell: bash
+        env:
+          RELEASE_SCOPE: ${{ inputs.release_scope || 'macos' }}
+          APPLE_COMMIT: ${{ inputs.apple_commit }}
         run: |
           set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -47,9 +64,28 @@ jobs:
           commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           git merge-base --is-ancestor "$commit" origin/main
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE_SCOPE" == ios ]]; then
+            if [[ ! "$APPLE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo '::error::iOS releases require a full validated commit SHA.'
+              exit 1
+            fi
+            apple_commit="$(git rev-parse --verify "${APPLE_COMMIT}^{commit}")"
+            git merge-base --is-ancestor "$apple_commit" origin/main
+            git merge-base --is-ancestor "$commit" "$apple_commit"
+            version="$(git show "${apple_commit}:pubspec.yaml" | awk '/^version:/ { print $2; exit }')"
+            version="${version%%+*}"
+            tag_version="${RELEASE_TAG#v}"
+            tag_version="${tag_version%%-*}"
+            if [[ "$version" != "$tag_version" ]]; then
+              echo '::error::The iOS commit version does not match the release tag.'
+              exit 1
+            fi
+            printf 'apple_commit=%s\n' "$apple_commit" >> "$GITHUB_OUTPUT"
+          fi
 
   android:
     needs: [verify_release]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_scope == 'windows_android' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -125,13 +161,14 @@ jobs:
 
   ios:
     needs: [verify_release]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_scope == 'ios' }}
     runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          ref: ${{ needs.verify_release.outputs.commit }}
+          ref: ${{ needs.verify_release.outputs.apple_commit }}
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
@@ -160,6 +197,7 @@ jobs:
 
   macos:
     needs: [verify_release]
+    if: ${{ github.event_name == 'push' || inputs.release_scope == 'macos' }}
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -216,6 +254,7 @@ jobs:
 
   windows:
     needs: [verify_release]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_scope == 'windows_android' }}
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -286,48 +325,78 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-  publish:
+  publish_macos:
     permissions:
       contents: write
-    needs: [verify_release, android, ios, macos, windows]
+    needs: [verify_release, macos]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Checkout release scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.verify_release.outputs.commit }}
+      - name: Download macOS artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: artifacts
+          name: macos-dmg
+          path: dist
 
-      - name: Flatten artifacts
-        run: |
-          mkdir -p dist
-          find artifacts -type f \( -name '*.apk' -o -name '*.ipa' -o -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) \
-            -exec cp {} dist/ \;
-          ls -la dist
+      - name: Publish macOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/staged_release.py macos dist
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+  publish_windows_android:
+    permissions:
+      contents: write
+    needs: [verify_release, android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          tag_name: ${{ inputs.tag_name || github.ref_name }}
-          name: ${{ inputs.tag_name || github.ref_name }}
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          fail_on_unmatched_files: true
-          files: |
-            dist/*.apk
-            dist/*.ipa
-            dist/*.dmg
-            dist/*.exe
-            dist/*.zip
-          body: |
-            More Better Gakujo ${{ inputs.tag_name || github.ref_name }}
+          persist-credentials: false
+          ref: ${{ needs.verify_release.outputs.commit }}
+      - name: Download Android artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android-apk
+          path: dist
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows
+          path: dist
+      - name: Add verified artifacts to the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/staged_release.py windows_android dist
 
-            ## ダウンロード
-            - **Android**: `*.apk`
-            - **Windows**: `*.exe`（インストーラー） / `*.zip`（ポータブル版）
-            - **macOS**: `*.dmg`（Developer ID未署名。初回は「プライバシーとセキュリティ」から「このまま開く」を選択）
-            - **iOS/iPadOS**: `*.ipa`（**未署名**。App Store版ではありません。AltStore / Sideloadly でのサイドロード用。無料Apple IDでは7日ごとに再署名が必要です）
-
-            ## Android署名鍵の変更
-            `v0.69.0`から正式なリリース署名鍵を使用します。`v0.68.0`以前のAPKからは上書き更新できないため、旧版をアンインストールしてからインストールしてください。アンインストールするとアプリ内データが削除されます。
+  publish_ios:
+    permissions:
+      contents: write
+    needs: [verify_release, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.verify_release.outputs.commit }}
+      - name: Download iOS artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ios-ipa
+          path: dist
+      - name: Add iOS to the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          APPLE_COMMIT: ${{ needs.verify_release.outputs.apple_commit }}
+        run: python3 scripts/staged_release.py ios dist
 
       - name: Checkout main for AltStore source update
         if: ${{ !contains(env.RELEASE_TAG, '-') }}
@@ -341,10 +410,10 @@ jobs:
         if: ${{ !contains(env.RELEASE_TAG, '-') }}
         working-directory: repository
         env:
-          RELEASE_COMMIT: ${{ needs.verify_release.outputs.commit }}
+          RELEASE_COMMIT: ${{ needs.verify_release.outputs.apple_commit }}
         run: |
           set -euo pipefail
-          ipa_path="$(find ../artifacts/ios-ipa -type f -name '*.ipa' -print -quit)"
+          ipa_path="$(find ../dist -type f -name '*.ipa' -print -quit)"
           if [ -z "$ipa_path" ]; then
             echo "::error::Downloaded ios-ipa artifact does not contain an IPA."
             exit 1
