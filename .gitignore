@@ -56,3 +56,8 @@ app.*.map.json
 
 # stray local db
 proxmox-jobs.sqlite3
+
+# Local maintainer notes
+/GITHUB_PUBLISHING.md
+/docs/TASKS.md
+/docs/private/

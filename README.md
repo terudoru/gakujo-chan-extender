@@ -137,7 +137,10 @@ Android は、同じ署名で作られたAPKだけを上書きインストール
 署名が違うAPKを入れる場合は、古いアプリをアンインストールしてから
 インストールする必要があります。
 
-## 注意
+## 関連資料
 
-開発者向けのビルド手順や公開メモは [DEVELOPER_NOTES.md](DEVELOPER_NOTES.md)
-を参照してください。(Codexで書いたのであまりアテにしないでください)
+- [開発者向けのセットアップ・ビルド手順](DEVELOPER_NOTES.md)
+- [授業カレンダー連携](docs/calendar-subscription.md)
+- [iOS/iPadOS 自己署名配布](docs/ios-sideloading.md)
+- [元のブラウザ拡張との機能対応](docs/original-extension-feature-status.md)
+- [ライセンス](LICENSE.md) / [上流プロジェクトと第三者ライセンス](NOTICE.md)
