@@ -59,6 +59,7 @@ class GakujoUploadCompressionLibraries {
   static const _assets = {
     'pdf': ['qpdf-worker.js', 'qpdf.js'],
     'preview': ['pdf.worker.min.js', 'pdf.min.js'],
+    'preview-office': ['jszip.min.js'],
     'office': ['jszip.min.js'],
   };
 
@@ -70,17 +71,24 @@ class GakujoUploadCompressionLibraries {
     final ready = switch (kind) {
       'pdf' => 'window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL',
       'preview' => 'window.pdfjsLib && window.__MBG_PDF_WORKER_URL',
+      'preview-office' => 'window.JSZip',
       'office' => 'window.JSZip',
       _ => 'false',
     };
-    final callback = kind == 'preview'
-        ? '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'
-        : '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED';
+    final callback = switch (kind) {
+      'preview' => '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED',
+      'preview-office' => '__MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED',
+      _ => '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED',
+    };
     final marker = jsonEncode('__MBG_UPLOAD_LIBRARY_READY_$kind');
+    final afterReady = kind == 'preview-office'
+        ? 'if (window.$callback) window.$callback(${jsonEncode(kind)});'
+        : '';
     return '''
 (function() {
   var keys = ['__MBG_QPDF_WORKER_URL', '__MBG_QPDF_MODULE_URL', '__MBG_QPDF_WASM_URL', '__MBG_PDF_WORKER_URL'];
   var before = keys.map(function(key) { return window[key]; });
+  var markerBefore = window[$marker];
   try {
     if (window[$marker] && ($ready)) {
       if (window.$callback) window.$callback(${jsonEncode(kind)});
@@ -89,8 +97,10 @@ class GakujoUploadCompressionLibraries {
     $script
     if (!($ready)) throw new Error('library unavailable');
     window[$marker] = true;
+    $afterReady
     return 'mbg-ready';
   } catch (_) {
+    if (markerBefore === undefined) delete window[$marker]; else window[$marker] = markerBefore;
     keys.forEach(function(key, index) {
       try {
         if (window[key] && window[key] !== before[index]) URL.revokeObjectURL(window[key]);
@@ -168,14 +178,18 @@ class GakujoUploadCompressionLibraries {
         ..writeln(source)
         ..writeln('}).call(window);');
     }
-    final callback = kind == 'preview'
-        ? '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED'
-        : '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED';
-    buffer.writeln(
-      'if (window.$callback) {'
-      ' window.$callback(${jsonEncode(kind)});'
-      ' }',
-    );
+    final callback = switch (kind) {
+      'preview' => '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED',
+      'preview-office' => '__MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED',
+      _ => '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED',
+    };
+    if (kind != 'preview-office') {
+      buffer.writeln(
+        'if (window.$callback) {'
+        ' window.$callback(${jsonEncode(kind)});'
+        ' }',
+      );
+    }
     return buffer.toString();
   }
 }

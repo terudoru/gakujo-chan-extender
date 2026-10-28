@@ -1,4 +1,6 @@
 import 'gakujo_image_bounds_script.dart';
+import 'gakujo_office_preview_script.dart';
+import 'gakujo_remote_file_preview_script.dart';
 
 /// Adds a local preview of the file currently selected for upload.
 class GakujoUploadPreviewScript {
@@ -51,7 +53,7 @@ ${GakujoImageBoundsScript.source}
     }
     return result;
   }
-  function show(input, file) {
+  function show(input, file, onClosed) {
     var owner = window;
     try {
       if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
@@ -96,6 +98,9 @@ ${GakujoImageBoundsScript.source}
       if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
       if (cancelLibrary) { cancelLibrary(); cancelLibrary = null; }
       if (reader) { try { reader.abort(); } catch (e) {} reader = null; }
+      if (visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || '')) {
+        try { visual.pause(); visual.removeAttribute('src'); visual.load(); } catch (e) {}
+      }
       if (render) { try { render.cancel(); } catch (e) {} render = null; }
       if (task) { try { Promise.resolve(task.destroy()).catch(function() {}); } catch (e) {} task = null; }
       if (worker) { worker.terminate(); worker = null; }
@@ -119,6 +124,7 @@ ${GakujoImageBoundsScript.source}
       if (sourceWindow !== window) sourceWindow.removeEventListener('pagehide', cleanup);
       window.clearInterval(detachWatcher);
       if (owner.__MBG_ACTIVE_UPLOAD_PREVIEW === preview) delete owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      if (onClosed) onClosed();
     }
     close.addEventListener('click', cleanup);
     input.addEventListener('change', cleanup);
@@ -160,6 +166,62 @@ ${GakujoImageBoundsScript.source}
         pdf = result; previous.hidden = next.hidden = false;
         requestPage();
       }).catch(fail);
+    } else if (/^(mp3|m4a|wav|ogg|opus|mp4|m4v|webm)$/i.test(extension) ||
+        /^(audio\/(mpeg|mp4|wav|ogg|opus)|video\/(mp4|webm))$/i.test(file.type)) {
+      if (file.size > 64 * 1024 * 1024) { fail(new Error('メディアファイルが大きすぎます')); return; }
+      var isVideo = /^(mp4|m4v|webm)$/i.test(extension) || /^video\//i.test(file.type);
+      var media = doc.createElement(isVideo ? 'video' : 'audio');
+      media.controls = true; media.preload = 'metadata';
+      media.style.cssText = 'max-width:100%;max-height:80vh';
+      media.onerror = function() { fail(new Error('このメディアを開けません')); };
+      media.onloadedmetadata = function() {
+        if (isVideo && (!media.videoWidth || !media.videoHeight || media.videoWidth > 10000 ||
+            media.videoHeight > 10000 || media.videoWidth * media.videoHeight > 16000000)) {
+          fail(new Error('動画のサイズが安全な範囲を超えています'));
+        }
+      };
+      objectUrl = URL.createObjectURL(file); media.src = objectUrl;
+      body.appendChild(media); visual = media; status.textContent = '';
+    } else if (/^(docx|docm|xlsx|xlsm|pptx|pptm)$/i.test(extension)) {
+      if (file.size > 32 * 1024 * 1024) { fail(new Error('文書が大きすぎます')); return; }
+      armWatchdog();
+      officeLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
+        if (closed || pdfStopped) return null;
+        return new Promise(function(resolve, reject) {
+          reader = new FileReader();
+          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result); };
+          reader.onerror = function() { reader = null; reject(new Error('文書を読み込めません')); };
+          reader.onabort = function() { reader = null; resolve(null); };
+          reader.readAsArrayBuffer(file);
+        });
+      }).then(function(bytes) {
+        if (closed || pdfStopped || !bytes) return null;
+        return mbgOfficeText(bytes, extension, function() { return closed || pdfStopped; });
+      }).then(function(text) {
+        if (closed || pdfStopped || text === null) return;
+        var pre = doc.createElement('pre');
+        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
+        pre.textContent = text;
+        body.appendChild(pre);
+        status.textContent = 'テキストのみ表示しています。書式・画像・数式の表示は元の文書と異なります。';
+        if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+      }).catch(fail);
+    } else if (/^(txt|csv|tsv|md|log|json|xml|yaml|yml)$/i.test(extension) ||
+        /^text\/(plain|csv|tab-separated-values)$/i.test(file.type) ||
+        /^application\/(json|xml)$/i.test(file.type)) {
+      if (file.size > 4 * 1024 * 1024) { fail(new Error('テキストが大きすぎます')); return; }
+      reader = new FileReader();
+      reader.onload = function() {
+        var text = reader && reader.result; reader = null;
+        if (closed || pdfStopped) return;
+        var pre = doc.createElement('pre');
+        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
+        pre.textContent = typeof text === 'string' ? text : '';
+        body.appendChild(pre); status.textContent = '';
+      };
+      reader.onerror = function() { reader = null; fail(new Error('テキストを読み込めません')); };
+      reader.onabort = function() { reader = null; };
+      reader.readAsText(file);
     } else {
       status.textContent = 'この形式のプレビューには対応していません。';
     }
@@ -248,6 +310,10 @@ ${GakujoImageBoundsScript.source}
       }
     });
   }
+''' '''
+${GakujoRemoteFilePreviewScript.source}
+${GakujoOfficePreviewScript.source}
+''' r'''
   attach();
   window.setInterval(attach, 1000);
 })();

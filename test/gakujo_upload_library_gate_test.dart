@@ -5,6 +5,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_libraries.dart';
 
 void main() {
+  test(
+    'office preview is acknowledged before waiting previews are notified',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('office-ack-');
+      try {
+        final script = File('${directory.path}/injection.js');
+        final library = GakujoUploadCompressionLibraries.buildInjectionScript(
+          'preview-office',
+          ['window.JSZip = {};'],
+        );
+        await script.writeAsString(
+          GakujoUploadCompressionLibraries.acknowledgedInjectionScript(
+            'preview-office',
+            library,
+          ),
+        );
+        final result = await Process.run('node', [
+          'test/upload_office_library_ack.mjs',
+          script.path,
+        ]);
+        expect(
+          result.exitCode,
+          0,
+          reason: '${result.stdout}\n${result.stderr}',
+        );
+      } finally {
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
   test('injection acknowledges success and rolls back partial failure', () async {
     final directory = await Directory.systemTemp.createTemp('library-ack-');
     try {
