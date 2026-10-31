@@ -22,10 +22,14 @@ void main() {
           googleAvailable: googleAvailable,
           isGoogleDrive: () => google,
           googleEmail: () => google ? 'user@example.com' : null,
-          onGoogleSignIn: onGoogleSignIn ?? () async => StarSyncPairingSetup.created,
+          onGoogleSignIn:
+              onGoogleSignIn ?? () async => StarSyncPairingSetup.created,
           onGoogleSignOut: () async {},
           onJoinWithCode: onJoin ?? (_) async {},
-          onPairingCode: () async => encodeStarSyncPairingCode('AAAAAAAAAAAAAAAAAAAAAA', List.filled(32, 1)),
+          onPairingCode: () async => encodeStarSyncPairingCode(
+            'AAAAAAAAAAAAAAAAAAAAAA',
+            List.filled(32, 1),
+          ),
           onRejoinWithCode: (_) async {},
           onResetWithPairing: () async => '',
           onSetUp: onSetUp ?? (_, _) async {},
@@ -130,16 +134,21 @@ void main() {
     addTearDown(status.dispose);
     String? joined;
     var mismatch = true;
-    final code = encodeStarSyncPairingCode('AAAAAAAAAAAAAAAAAAAAAA', List.filled(32, 1));
-    await tester.pumpWidget(section(
-      status,
-      googleAvailable: true,
-      onGoogleSignIn: () async => StarSyncPairingSetup.needsPairingCode,
-      onJoin: (value) async {
-        if (mismatch) throw const StarSyncPairingMismatchException();
-        joined = value;
-      },
-    ));
+    final code = encodeStarSyncPairingCode(
+      'AAAAAAAAAAAAAAAAAAAAAA',
+      List.filled(32, 1),
+    );
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onGoogleSignIn: () async => StarSyncPairingSetup.needsPairingCode,
+        onJoin: (value) async {
+          if (mismatch) throw const StarSyncPairingMismatchException();
+          joined = value;
+        },
+      ),
+    );
     await tester.tap(find.text('Google ドライブで同期'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('接続'));
@@ -156,7 +165,9 @@ void main() {
   });
 
   testWidgets('Google account and pairing QR are shown', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.ok));
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.ok),
+    );
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
     expect(find.text('user@example.com'), findsOneWidget);
@@ -168,7 +179,12 @@ void main() {
   });
 
   testWidgets('pairing reset requires a new code', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.needsPairingCode));
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsPairingCode,
+      ),
+    );
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
     expect(find.widgetWithText(TextField, '同期コード'), findsOneWidget);
