@@ -2681,6 +2681,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
                       onLocalStarCount: _starSyncEngine.localStarCount,
+                      onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
                       onRequireAccount: _starSyncEngine.requireAccount,
                       onAccountGeneration: () => _starSyncEngine.accountGeneration,
                       onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>

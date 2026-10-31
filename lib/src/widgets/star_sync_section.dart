@@ -104,6 +104,7 @@ class StarSyncSection extends StatefulWidget {
     required this.onGoogleSignOut,
     required this.onGoogleReSignIn,
     required this.onLocalStarCount,
+    required this.onSnapshotLocalStars,
     required this.onRequireAccount,
     required this.onAccountGeneration,
     required this.onSetUpWithPairing,
@@ -128,7 +129,7 @@ class StarSyncSection extends StatefulWidget {
   final bool Function() isGoogleDrive;
   final String? Function() googleEmail;
   final Future<StarSyncPairingSetup> Function({
-    required bool clearLocalStars,
+    required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })
@@ -136,18 +137,19 @@ class StarSyncSection extends StatefulWidget {
   final Future<void> Function() onGoogleSignOut;
   final Future<void> Function() onGoogleReSignIn;
   final Future<int> Function() onLocalStarCount;
+  final Future<Map<String, String>> Function() onSnapshotLocalStars;
   final String Function() onRequireAccount;
   final int Function() onAccountGeneration;
   final Future<StarSyncPairingSetup> Function({
     required bool resetExisting,
-    required bool clearLocalStars,
+    required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })
   onSetUpWithPairing;
   final Future<void> Function(
     String, {
-    required bool clearLocalStars,
+    required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })
@@ -159,7 +161,7 @@ class StarSyncSection extends StatefulWidget {
     StarSyncConfig,
     String, {
     required bool resetExisting,
-    required bool clearLocalStars,
+    required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })
@@ -203,11 +205,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     }
   }
 
-  Future<bool?> _chooseLocalStars() async {
+  Future<Map<String, String>?> _chooseLocalStars() async {
     final count = await widget.onLocalStarCount();
     if (!mounted) return null;
-    if (count == 0) return false;
-    return showDialog<bool>(
+    if (count == 0) return {};
+    Future<Map<String, String>>? snapshot;
+    final clear = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -221,7 +224,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             child: const Text('キャンセル'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              snapshot = widget.onSnapshotLocalStars();
+              Navigator.pop(context, true);
+            },
             child: const Text('空にして始める'),
           ),
           FilledButton(
@@ -231,6 +237,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         ],
       ),
     );
+    if (clear == null) return null;
+    return clear ? await snapshot! : {};
   }
 
   Future<void> _startAdvanced() async {
@@ -265,7 +273,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       if (mounted) setState(() => _error = _errorText(error));
       return;
     }
-    final clear = await _chooseLocalStars();
+    Map<String, String>? clear;
+    try {
+      clear = await _chooseLocalStars();
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+      return;
+    }
     if (clear == null || !mounted) return;
     setState(() {
       _busy = true;
@@ -831,14 +845,14 @@ class _SetupDialog extends StatefulWidget {
     required this.expectedAccount,
     required this.expectedGeneration,
   });
-  final bool clearLocalStars;
+  final Map<String, String> clearLocalStars;
   final String expectedAccount;
   final int expectedGeneration;
   final Future<void> Function(
     StarSyncConfig,
     String, {
     required bool resetExisting,
-    required bool clearLocalStars,
+    required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })

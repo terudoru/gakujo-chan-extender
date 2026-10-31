@@ -380,7 +380,7 @@ void main() {
         await engine.setUpWithPairing(
           config,
           resetExisting: true,
-          clearLocalStars: true,
+          clearLocalStars: await engine.snapshotLocalStars(),
         ),
         StarSyncPairingSetup.created,
       );
@@ -446,7 +446,7 @@ void main() {
     await b.joinWithPairingCode(
       config,
       await a.pairingCode(),
-      clearLocalStars: true,
+      clearLocalStars: await b.snapshotLocalStars(),
     );
     expect(b.status.value.enabled, isTrue);
   });

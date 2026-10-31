@@ -15,6 +15,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failStarWriteOnce = false;
+  bool failStateAfterStarWrite = false;
   String? failWriteKeyOnce;
   void Function()? onStarRead;
 
@@ -50,6 +51,11 @@ class _Storage extends FlutterSecureStorage {
     if (failStarWriteOnce && key == 'more_better_gakujo_starred_messages') {
       failStarWriteOnce = false;
       throw StateError('star write failed');
+    }
+    if (failStateAfterStarWrite &&
+        key == 'more_better_gakujo_starred_messages') {
+      failStateAfterStarWrite = false;
+      failWriteKeyOnce = starSyncStateKey;
     }
     if (value == null) {
       values.remove(key);
@@ -270,7 +276,7 @@ void main() {
               config,
               'pass',
               resetExisting: mode == 'passphrase reset',
-              clearLocalStars: true,
+              clearLocalStars: await engine.snapshotLocalStars(),
             );
           case 'pairing':
           case 'pairing reset':
@@ -278,14 +284,14 @@ void main() {
                 .setUpWithPairing(
                   config,
                   resetExisting: mode == 'pairing reset',
-                  clearLocalStars: true,
+                  clearLocalStars: await engine.snapshotLocalStars(),
                 )
                 .then((_) {});
           default:
             setup = engine.joinWithPairingCode(
               config,
               code!,
-              clearLocalStars: true,
+              clearLocalStars: await engine.snapshotLocalStars(),
             );
         }
         await expectLater(setup, throwsStateError);
@@ -298,6 +304,120 @@ void main() {
         engine.dispose();
       }
     }
+  });
+
+  test('setup clears only the stars captured at the choice', () async {
+    for (final mode in ['passphrase', 'pairing', 'join']) {
+      final remote = _Transport();
+      String? code;
+      if (mode == 'join') {
+        final firstStorage = _Storage();
+        final first = StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: firstStorage),
+          secureStorage: firstStorage,
+          transportFactory: (_) => remote,
+        );
+        await first.setUpWithPairing(config);
+        code = await first.pairingCode();
+        first.dispose();
+      }
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      GakujoStarredMessage star(String id) => GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: id,
+        title: id,
+        starredAt: DateTime.utc(2026),
+      );
+      await activity.upsertStarredMessage(star('3'));
+      final snapshot = await engine.snapshotLocalStars();
+      expect(snapshot, {'1|2|3': DateTime.utc(2026).toIso8601String()});
+      await activity.upsertStarredMessage(star('4'));
+      switch (mode) {
+        case 'passphrase':
+          await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+        case 'pairing':
+          await engine.setUpWithPairing(config, clearLocalStars: snapshot);
+        case 'join':
+          await engine.joinWithPairingCode(
+            config,
+            code!,
+            clearLocalStars: snapshot,
+          );
+      }
+      expect(
+        (await activity.loadStarredMessages()).map((star) => star.seqNo),
+        ['4'],
+      );
+      engine.dispose();
+    }
+  });
+
+  test('replayed clear preserves a star re-added after state save fails', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    GakujoStarredMessage star(DateTime time) => GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'star',
+      starredAt: time,
+    );
+    await activity.upsertStarredMessage(star(DateTime.utc(2026)));
+    final snapshot = await engine.snapshotLocalStars();
+    storage.failStateAfterStarWrite = true;
+    await expectLater(
+      engine.setUp(config, 'pass', clearLocalStars: snapshot),
+      throwsStateError,
+    );
+    expect(await activity.loadStarredMessages(), isEmpty);
+    expect(
+      StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      ).pendingLocalClear,
+      snapshot,
+    );
+    await activity.upsertStarredMessage(star(DateTime.utc(2026, 1, 2)));
+    await engine.syncNow();
+    expect(
+      (await activity.loadStarredMessages()).single.starredAt,
+      DateTime.utc(2026, 1, 2),
+    );
+    expect(
+      StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      ).pendingLocalClear,
+      isEmpty,
+    );
+    engine.dispose();
+  });
+
+  test('unreleased legacy clear fields are ignored', () async {
+    final state = StarSyncState(
+      deviceId: 'device',
+      dataKey: 'key',
+      keyId: 'key',
+    ).toJson();
+    state['pendingLocalClear'] = true;
+    state['pendingLocalClearIds'] = ['1|2|3'];
+    expect(StarSyncState.fromJson(state).pendingLocalClear, isEmpty);
   });
 
   test('failed setup clear is completed before the next upload', () async {
@@ -322,7 +442,11 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUp(config, 'pass', clearLocalStars: true),
+      engine.setUp(
+        config,
+        'pass',
+        clearLocalStars: await engine.snapshotLocalStars(),
+      ),
       throwsStateError,
     );
     expect(engine.status.value.status, StarSyncStatus.error);
@@ -330,7 +454,9 @@ void main() {
     var state = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    expect(state.pendingLocalClearIds, ['1|2|3']);
+    expect(state.pendingLocalClear, {
+      '1|2|3': DateTime.utc(2026).toIso8601String(),
+    });
     expect((await activity.loadStarredMessages()).single.title, 'old');
     await activity.upsertStarredMessage(
       GakujoStarredMessage(
@@ -345,7 +471,7 @@ void main() {
     state = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    expect(state.pendingLocalClearIds, isEmpty);
+    expect(state.pendingLocalClear, isEmpty);
     expect((await activity.loadStarredMessages()).single.title, 'new');
     final bytes = remote.files['stars/devices/${state.deviceId}']!;
     final plain = await decryptStarSyncFile(
@@ -389,8 +515,7 @@ void main() {
       );
       final json =
           jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
-      json.remove('pendingLocalClearIds');
-      json['pendingLocalClear'] = true;
+      json['pendingLocalClear'] = await first.snapshotLocalStars();
       storage.values[starSyncStateKey] = jsonEncode(json);
       final engine = makeEngine();
       final beforeFactories = factories;
@@ -403,8 +528,8 @@ void main() {
       expect(engine.status.value.lastError, '端末内のスターを消去できませんでした');
       expect(factories, beforeFactories);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
-        ['1|2|3'],
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
+        {'1|2|3': DateTime.utc(2026).toIso8601String()},
       );
       storage.failStarWriteOnce = true;
       await expectLater(engine.syncNow(), throwsStateError);
@@ -413,14 +538,14 @@ void main() {
       expect(remote.puts, beforePuts);
       expect(remote.gets, beforeGets);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
-        ['1|2|3'],
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
+        {'1|2|3': DateTime.utc(2026).toIso8601String()},
       );
       expect((await activity.loadStarredMessages()).single.title, 'old');
       await engine.load();
       expect(await activity.loadStarredMessages(), isEmpty);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
         isEmpty,
       );
       await engine.syncNow();
@@ -452,7 +577,11 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUp(config, 'pass', clearLocalStars: true),
+      engine.setUp(
+        config,
+        'pass',
+        clearLocalStars: await engine.snapshotLocalStars(),
+      ),
       throwsStateError,
     );
     await engine.runAccountChange(() async => account = 'B');
@@ -658,14 +787,14 @@ void main() {
           setup = engine.setUp(
             config,
             'pass',
-            clearLocalStars: true,
+            clearLocalStars: await engine.snapshotLocalStars(),
             expectedAccount: expectedAccount,
           );
         case 'pairing':
           setup = engine
               .setUpWithPairing(
                 config,
-                clearLocalStars: true,
+                clearLocalStars: await engine.snapshotLocalStars(),
                 expectedAccount: expectedAccount,
               )
               .then((_) {});
@@ -673,7 +802,7 @@ void main() {
           setup = engine.joinWithPairingCode(
             config,
             'invalid',
-            clearLocalStars: true,
+            clearLocalStars: await engine.snapshotLocalStars(),
             expectedAccount: expectedAccount,
           );
       }
@@ -719,13 +848,13 @@ void main() {
           ? engine.setUpWithPairing(
               config,
               resetExisting: true,
-              clearLocalStars: true,
+              clearLocalStars: await engine.snapshotLocalStars(),
             )
           : engine.setUp(
               config,
               'pass',
               resetExisting: true,
-              clearLocalStars: true,
+              clearLocalStars: await engine.snapshotLocalStars(),
             );
       await started.future;
       await engine.runAccountChange(() async {
@@ -775,7 +904,11 @@ void main() {
     remote.listRelease = Completer<void>();
     final started = remote.listStarted!;
     final release = remote.listRelease!;
-    final joining = b.joinWithPairingCode(config, code, clearLocalStars: true);
+    final joining = b.joinWithPairingCode(
+      config,
+      code,
+      clearLocalStars: await b.snapshotLocalStars(),
+    );
     await started.future;
     await b.runAccountChange(() async {
       account = 'other';
@@ -1068,7 +1201,7 @@ void main() {
     engine.dispose();
   });
 
-  test('discard keeps details only for the same id and title', () async {
+  test('discard drops details even for the same id and title', () async {
     final remote = _Transport();
     final storage = _Storage();
     final activity = GakujoActivityStore(secureStorage: storage);
@@ -1109,11 +1242,11 @@ void main() {
     final stars = {
       for (final item in await activity.loadStarredMessages()) item.seqNo: item,
     };
-    expect(stars['1']!.body, 'cached');
-    expect(stars['1']!.sender, 'sender');
-    expect(stars['1']!.genre, 'genre');
-    expect(stars['1']!.period, 'period');
-    expect(stars['1']!.postedAt, 'posted');
+    expect(stars['1']!.body, isEmpty);
+    expect(stars['1']!.sender, isEmpty);
+    expect(stars['1']!.genre, isEmpty);
+    expect(stars['1']!.period, isEmpty);
+    expect(stars['1']!.postedAt, isEmpty);
     expect(stars['2']!.title, 'original');
     expect(stars['2']!.body, isEmpty);
     expect(stars['2']!.sender, isEmpty);
@@ -2101,7 +2234,7 @@ void main() {
         config,
         'new',
         resetExisting: true,
-        clearLocalStars: true,
+        clearLocalStars: await engine.snapshotLocalStars(),
       );
       expect(await engine.localStarCount(), 0);
       expect(remote.files['stars/keyring.json'], isNot(oldKeyring));

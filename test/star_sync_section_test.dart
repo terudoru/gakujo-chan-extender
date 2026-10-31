@@ -14,7 +14,7 @@ void main() {
       StarSyncConfig,
       String, {
       required bool resetExisting,
-      required bool clearLocalStars,
+      required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
     })?
@@ -22,25 +22,26 @@ void main() {
     bool googleAvailable = false,
     bool google = false,
     Future<StarSyncPairingSetup> Function({
-      required bool clearLocalStars,
+      required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
     })?
     onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
+    Future<Map<String, String>> Function()? onSnapshotLocalStars,
     Future<void> Function()? onGoogleReSignIn,
     Future<void> Function()? onResumeKeepingLocal,
     Future<void> Function()? onResumeDiscardingLocal,
     Future<StarSyncPairingSetup> Function({
       required bool resetExisting,
-      required bool clearLocalStars,
+      required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
     })?
     onSetUpWithPairing,
     Future<void> Function(
       String, {
-      required bool clearLocalStars,
+      required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
     })?
@@ -63,6 +64,8 @@ void main() {
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onLocalStarCount: onLocalStarCount ?? () async => 0,
+          onSnapshotLocalStars:
+              onSnapshotLocalStars ?? () async => {'id': 'time'},
           onRequireAccount: () => 'account',
           onAccountGeneration: () => 7,
           onSetUpWithPairing:
@@ -430,12 +433,17 @@ void main() {
     testWidgets('local stars choice: $choice', (tester) async {
       final status = ValueNotifier(const StarSyncStatusSnapshot());
       addTearDown(status.dispose);
-      bool? selected;
+      Map<String, String>? selected;
+      var captures = 0;
       await tester.pumpWidget(
         section(
           status,
           googleAvailable: true,
           onLocalStarCount: () async => 3,
+          onSnapshotLocalStars: () async {
+            captures++;
+            return {'id': 'time'};
+          },
           onGoogleSignIn:
               ({
                 required clearLocalStars,
@@ -452,9 +460,18 @@ void main() {
       await tester.tap(find.text('Google ドライブで同期'));
       await tester.pumpAndSettle();
       expect(find.text('この端末のスター（3件）'), findsOneWidget);
+      expect(captures, 0);
       await tester.tap(find.text(choice));
       await tester.pumpAndSettle();
-      expect(selected, choice == 'キャンセル' ? null : choice == '空にして始める');
+      expect(captures, choice == '空にして始める' ? 1 : 0);
+      expect(
+        selected,
+        choice == 'キャンセル'
+            ? null
+            : choice == '空にして始める'
+            ? {'id': 'time'}
+            : isEmpty,
+      );
     });
   }
 
@@ -464,7 +481,7 @@ void main() {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     var resets = 0;
-    bool? cleared;
+    Map<String, String>? cleared;
     await tester.pumpWidget(
       section(
         status,
@@ -507,7 +524,7 @@ void main() {
     await tester.tap(find.text('リセット'));
     await tester.pumpAndSettle();
     expect(resets, 1);
-    expect(cleared, isTrue);
+    expect(cleared, {'id': 'time'});
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {

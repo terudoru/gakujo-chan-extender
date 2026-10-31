@@ -138,7 +138,7 @@ class StarSyncState {
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
-    List<String>? pendingLocalClearIds,
+    Map<String, String>? pendingLocalClear,
     this.keyringEtag,
     this.pendingLocalChange = false,
     this.localReviewRequired = false,
@@ -149,7 +149,7 @@ class StarSyncState {
   }) : records = records ?? {},
        remoteCache = remoteCache ?? {},
        retiredKeyIds = retiredKeyIds ?? {},
-       pendingLocalClearIds = pendingLocalClearIds ?? [];
+       pendingLocalClear = pendingLocalClear ?? {};
   final String deviceId;
   String dataKey;
   String keyId;
@@ -163,7 +163,7 @@ class StarSyncState {
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
-  List<String> pendingLocalClearIds;
+  Map<String, String> pendingLocalClear;
   String? keyringEtag;
   bool pendingLocalChange;
   bool localReviewRequired;
@@ -188,7 +188,7 @@ class StarSyncState {
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
-    'pendingLocalClearIds': pendingLocalClearIds,
+    'pendingLocalClear': pendingLocalClear,
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
     'localReviewRequired': localReviewRequired,
@@ -224,9 +224,12 @@ class StarSyncState {
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
-      pendingLocalClearIds: (json['pendingLocalClearIds'] as List? ?? [])
-          .cast<String>()
-          .toList(),
+      pendingLocalClear: {
+        if (json['pendingLocalClear'] is Map)
+          for (final entry in (json['pendingLocalClear'] as Map).entries)
+            if (entry.key is String && entry.value is String)
+              entry.key as String: entry.value as String,
+      },
       keyringEtag: json['keyringEtag'] as String?,
       pendingLocalChange: json['pendingLocalChange'] as bool? ?? false,
       localReviewRequired:
@@ -346,14 +349,6 @@ class StarSyncEngine {
       _config = parsedConfig;
       _state = parsedState;
       try {
-        if (stateJson['pendingLocalClear'] == true &&
-            !stateJson.containsKey('pendingLocalClearIds')) {
-          parsedState.pendingLocalClearIds =
-              (await activityStore.loadStarredMessages())
-                  .map((star) => star.id)
-                  .toList();
-          await _saveState();
-        }
         if (!await _accountMatches(parsedState)) return;
         await _finishPendingLocalClear();
       } on Object {
@@ -395,17 +390,21 @@ class StarSyncEngine {
 
   Future<void> _finishPendingLocalClear() async {
     final state = _state!;
-    if (state.pendingLocalClearIds.isEmpty) return;
-    final pendingIds = state.pendingLocalClearIds;
+    if (state.pendingLocalClear.isEmpty) return;
+    final pending = state.pendingLocalClear;
     try {
-      final ids = pendingIds.toSet();
       await activityStore.transformStarredMessages<void>(
         (current) async => (
-          next: current.where((star) => !ids.contains(star.id)).toList(),
+          next: current
+              .where(
+                (star) =>
+                    pending[star.id] != star.starredAt.toIso8601String(),
+              )
+              .toList(),
           result: null,
         ),
       );
-      state.pendingLocalClearIds = [];
+      state.pendingLocalClear = {};
       if (state.lastError == '端末内のスターを消去できませんでした') {
         state.status = StarSyncStatus.ok;
         state.lastError = null;
@@ -413,13 +412,13 @@ class StarSyncEngine {
       await _saveState();
       _publish();
     } on Object {
-      state.pendingLocalClearIds = pendingIds;
+      state.pendingLocalClear = pending;
       state.status = StarSyncStatus.error;
       state.lastError = '端末内のスターを消去できませんでした';
       try {
         await _saveState();
       } on Object {
-        // The persisted pending IDs remain set if saving fails.
+        // The persisted pending snapshot remains set if saving fails.
       }
       _publish();
       rethrow;
@@ -429,9 +428,9 @@ class StarSyncEngine {
   Future<void> _install(
     StarSyncConfig config,
     StarSyncState state, {
-    required List<String> pendingLocalClearIds,
+    required Map<String, String> pendingLocalClear,
   }) async {
-    state.pendingLocalClearIds = pendingLocalClearIds;
+    state.pendingLocalClear = Map.of(pendingLocalClear);
     try {
       await _storage.write(
         key: starSyncStateKey,
@@ -520,20 +519,20 @@ class StarSyncEngine {
     return account ?? (throw const StarSyncAccountRequiredException());
   }
 
+  Future<Map<String, String>> snapshotLocalStars() async => {
+    for (final star in await activityStore.loadStarredMessages())
+      star.id: star.starredAt.toIso8601String(),
+  };
+
   Future<void> setUp(
     StarSyncConfig config,
     String passphrase, {
     bool resetExisting = false,
-    bool clearLocalStars = false,
+    Map<String, String> clearLocalStars = const {},
     String? expectedAccount,
     int? expectedGeneration,
   }) async {
     final account = _setupAccount(expectedAccount, expectedGeneration);
-    final clearIds = clearLocalStars
-        ? (await activityStore.loadStarredMessages())
-              .map((star) => star.id)
-              .toList()
-        : <String>[];
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -584,7 +583,7 @@ class StarSyncEngine {
             boundAccount: account,
             retiredKeyIds: {?retiredKeyId: _now()},
           ),
-          pendingLocalClearIds: clearIds,
+          pendingLocalClear: clearLocalStars,
         );
       });
     } finally {
@@ -606,7 +605,7 @@ class StarSyncEngine {
     String keyId,
     List<int> keyBytes,
     String account, {
-    required List<String> pendingLocalClearIds,
+    required Map<String, String> pendingLocalClear,
     int? expectedGeneration,
     String? retiredKeyId,
   }) => _queue.run(() async {
@@ -628,23 +627,18 @@ class StarSyncEngine {
         boundAccount: account,
         retiredKeyIds: {?retiredKeyId: _now()},
       ),
-      pendingLocalClearIds: pendingLocalClearIds,
+      pendingLocalClear: pendingLocalClear,
     );
   });
 
   Future<StarSyncPairingSetup> setUpWithPairing(
     StarSyncConfig config, {
     bool resetExisting = false,
-    bool clearLocalStars = false,
+    Map<String, String> clearLocalStars = const {},
     String? expectedAccount,
     int? expectedGeneration,
   }) async {
     final account = _setupAccount(expectedAccount, expectedGeneration);
-    final clearIds = clearLocalStars
-        ? (await activityStore.loadStarredMessages())
-              .map((star) => star.id)
-              .toList()
-        : <String>[];
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -678,7 +672,7 @@ class StarSyncEngine {
         created.keyring.keyId,
         created.dataKey,
         account,
-        pendingLocalClearIds: clearIds,
+        pendingLocalClear: clearLocalStars,
         expectedGeneration: expectedGeneration,
         retiredKeyId: retiredKeyId,
       );
@@ -726,16 +720,11 @@ class StarSyncEngine {
   Future<void> joinWithPairingCode(
     StarSyncConfig config,
     String code, {
-    bool clearLocalStars = false,
+    Map<String, String> clearLocalStars = const {},
     String? expectedAccount,
     int? expectedGeneration,
   }) async {
     final account = _setupAccount(expectedAccount, expectedGeneration);
-    final clearIds = clearLocalStars
-        ? (await activityStore.loadStarredMessages())
-              .map((star) => star.id)
-              .toList()
-        : <String>[];
     final decoded = decodeStarSyncPairingCode(code);
     final transport = _transportFactory(config);
     try {
@@ -746,7 +735,7 @@ class StarSyncEngine {
         decoded.keyId,
         decoded.dataKey,
         account,
-        pendingLocalClearIds: clearIds,
+        pendingLocalClear: clearLocalStars,
         expectedGeneration: expectedGeneration,
       );
     } finally {
@@ -850,10 +839,7 @@ class StarSyncEngine {
           }
           final next = applyStarSyncStateToLocal(
             state: state.records,
-            local: current.where((item) {
-              final record = state.records[item.id];
-              return record != null && record.title == item.title;
-            }).toList(),
+            local: const [],
           );
           return (
             next: next,
