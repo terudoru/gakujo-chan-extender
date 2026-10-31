@@ -2693,7 +2693,9 @@ void main() {
     await engine.markBulkReplace(
       starIdsAfterRestore: {'old-star'},
       collections: const {'favorites': null},
-      collectionKeysAfterRestore: const {'favorites': {'old-favorite'}},
+      collectionKeysAfterRestore: const {
+        'favorites': {'old-favorite'},
+      },
     );
     final before = jsonDecode(storage.values[starSyncStateKey]!);
     await expectLater(
@@ -2713,7 +2715,9 @@ void main() {
         },
         starIdsAfterRestore: {'new-star'},
         collections: const {'favorites': null},
-        collectionKeysAfterRestore: const {'favorites': {'new-favorite'}},
+        collectionKeysAfterRestore: const {
+          'favorites': {'new-favorite'},
+        },
       ),
       throwsStateError,
     );
@@ -2726,39 +2730,44 @@ void main() {
     engine.dispose();
   });
 
-  test('restart after marker persistence preserves restored favorite deletion', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final favorites = _Collection('favorites');
-    StarSyncEngine make() => StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-      collections: [favorites],
-    );
-    final engine = make();
-    await engine.setUp(config, 'pass');
-    favorites.entries = {'deleted': 'value', 'omitted': 'keep'};
-    await engine.syncNow();
-    await engine.markBulkReplace(
-      stars: false,
-      collections: const {'favorites': null},
-      collectionKeysAfterRestore: const {'favorites': {'deleted'}},
-    );
-    favorites.entries = {};
-    engine.dispose();
-    final restarted = make();
-    await restarted.load();
-    await restarted.syncNow();
-    final state = jsonDecode(storage.values[starSyncStateKey]!);
-    final records = state['collectionStates']['favorites']['records'];
-    expect(records['deleted']['deleted'], isTrue);
-    expect(records['omitted']['deleted'], isFalse);
-    expect(favorites.entries, {'omitted': 'keep'});
-    restarted.dispose();
-  });
+  test(
+    'restart after marker persistence preserves restored favorite deletion',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final favorites = _Collection('favorites');
+      StarSyncEngine make() => StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [favorites],
+      );
+      final engine = make();
+      await engine.setUp(config, 'pass');
+      favorites.entries = {'deleted': 'value', 'omitted': 'keep'};
+      await engine.syncNow();
+      await engine.markBulkReplace(
+        stars: false,
+        collections: const {'favorites': null},
+        collectionKeysAfterRestore: const {
+          'favorites': {'deleted'},
+        },
+      );
+      favorites.entries = {};
+      engine.dispose();
+      final restarted = make();
+      await restarted.load();
+      await restarted.syncNow();
+      final state = jsonDecode(storage.values[starSyncStateKey]!);
+      final records = state['collectionStates']['favorites']['records'];
+      expect(records['deleted']['deleted'], isTrue);
+      expect(records['omitted']['deleted'], isFalse);
+      expect(favorites.entries, {'omitted': 'keep'});
+      restarted.dispose();
+    },
+  );
 
   test('legacy marker deletes only explicitly restored keys', () async {
     final remote = _Transport();
@@ -2777,7 +2786,9 @@ void main() {
     await engine.syncNow();
     await engine.markBulkReplace(
       stars: false,
-      collections: const {'settings': {'restored'}},
+      collections: const {
+        'settings': {'restored'},
+      },
     );
     settings.entries = {};
     await engine.syncNow();
@@ -2803,6 +2814,7 @@ void main() {
         collections: [drafts],
       );
     }
+
     final a = make(draftsA);
     final b = make(draftsB);
     await a.setUp(config, 'pass');
@@ -2818,10 +2830,7 @@ void main() {
     draftsA.entries = {'draft': List.filled(9 * 1024 * 1024, 'x').join()};
     await a.syncNow();
     expect(remote.files[path], before);
-    expect(
-      a.status.value.lastError,
-      '同期データが大きすぎるため、一部の項目を同期できませんでした',
-    );
+    expect(a.status.value.lastError, '同期データが大きすぎるため、一部の項目を同期できませんでした');
     a.dispose();
     b.dispose();
   });
