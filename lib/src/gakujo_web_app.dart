@@ -1299,6 +1299,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _starSyncEngine = StarSyncEngine(
       activityStore: _activityStore,
       loginId: () => _appSettings.loginCredentials?.loginId,
+      onLocalStarsChanged: () {
+        if (_canSyncStars) unawaited(_refreshMessageStars());
+      },
     );
     _notificationService = GakujoNotificationService();
     _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
@@ -1424,8 +1427,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       await _ensureStarSyncLoaded();
       if (!_canSyncStars) return;
-      final result = await _starSyncEngine.syncNow();
-      if (result.localChanged && _canSyncStars) await _refreshMessageStars();
+      await _starSyncEngine.syncNow();
     } on Object catch (error, stackTrace) {
       developer.log('Failed to sync message stars',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -1436,11 +1438,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!_canSyncStars) return;
     _starSyncEngine.scheduleSync(
       shouldSync: () => _canSyncStars,
-      onResult: (result) {
-        if (result.localChanged && _canSyncStars) {
-          unawaited(_refreshMessageStars());
-        }
-      },
     );
   }
 
@@ -2631,18 +2628,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       status: _starSyncEngine.status,
                       onSetUp: (config, passphrase) async {
                         await _ensureStarSyncLoaded();
-                        try {
-                          await _starSyncEngine.setUp(config, passphrase);
-                        } finally {
-                          if (_canSyncStars) await _refreshMessageStars();
-                        }
+                        await _starSyncEngine.setUp(config, passphrase);
                       },
                       onSyncNow: () async {
                         await _ensureStarSyncLoaded();
-                        final result = await _starSyncEngine.syncNow();
-                        if (result.localChanged && _canSyncStars) {
-                          await _refreshMessageStars();
-                        }
+                        await _starSyncEngine.syncNow();
                       },
                       onChangePassphrase: (current, next) async {
                         await _ensureStarSyncLoaded();
@@ -2664,19 +2654,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onReset: (passphrase) async {
                         await _ensureStarSyncLoaded();
-                        try {
-                          await _starSyncEngine.resetRemote(passphrase);
-                        } finally {
-                          if (_canSyncStars) await _refreshMessageStars();
-                        }
+                        await _starSyncEngine.resetRemote(passphrase);
                       },
                       onRejoin: (passphrase) async {
                         await _ensureStarSyncLoaded();
-                        try {
-                          await _starSyncEngine.rejoin(passphrase);
-                        } finally {
-                          if (_canSyncStars) await _refreshMessageStars();
-                        }
+                        await _starSyncEngine.rejoin(passphrase);
                       },
                     ),
                   ),

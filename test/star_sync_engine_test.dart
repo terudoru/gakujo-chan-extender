@@ -11,6 +11,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
+  bool failStarWriteOnce = false;
 
   @override
   Future<String?> read({
@@ -34,6 +35,10 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (failStarWriteOnce && key == 'more_better_gakujo_starred_messages') {
+      failStarWriteOnce = false;
+      throw StateError('star write failed');
+    }
     if (value == null) {
       values.remove(key);
     } else {
@@ -62,6 +67,7 @@ class _Transport implements StarSyncTransport {
   final gets = <String, int>{};
   Completer<void>? listStarted;
   Completer<void>? listRelease;
+  bool failDevicePutOnce = false;
   bool simulateKeyringRace = false;
   bool _racePending = false;
 
@@ -106,6 +112,10 @@ class _Transport implements StarSyncTransport {
     List<int> bytes, {
     bool createOnly = false,
   }) async {
+    if (failDevicePutOnce && path.startsWith('stars/devices/')) {
+      failDevicePutOnce = false;
+      throw StateError('device upload failed');
+    }
     if (_racePending && createOnly && path == 'stars/keyring.json') {
       _racePending = false;
       throw const StarSyncTransportException(
@@ -169,6 +179,85 @@ void main() {
     await a.syncNow();
     await b.syncNow();
     expect(await activityB.loadStarredMessages(), isEmpty);
+  });
+
+  test('failed star write preserves the baseline for a later import', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    final a = StarSyncEngine(
+      activityStore: activityA,
+      secureStorage: storageA,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    final b = StarSyncEngine(
+      activityStore: activityB,
+      secureStorage: storageB,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await a.setUp(config, 'correct horse');
+    await b.setUp(config, 'correct horse');
+    await activityA.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'Title',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
+    await a.syncNow();
+    storageB.failStarWriteOnce = true;
+    await expectLater(b.syncNow(), throwsStateError);
+    expect(await activityB.loadStarredMessages(), isEmpty);
+    final persisted = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
+    expect(persisted['records'], isEmpty);
+    expect((await b.syncNow()).localChanged, isTrue);
+    expect((await activityB.loadStarredMessages()).single.title, 'Title');
+    await a.syncNow();
+    expect((await activityA.loadStarredMessages()).single.title, 'Title');
+  });
+
+  test('local change callback runs once even when upload fails', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    var callbacks = 0;
+    final a = StarSyncEngine(
+      activityStore: activityA,
+      secureStorage: storageA,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    final b = StarSyncEngine(
+      activityStore: activityB,
+      secureStorage: storageB,
+      transportFactory: (_) => remote,
+      onLocalStarsChanged: () => callbacks++,
+      kdfParams: kdf,
+    );
+    await a.setUp(config, 'correct horse');
+    await b.setUp(config, 'correct horse');
+    await activityA.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'Title',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
+    await a.syncNow();
+    remote.failDevicePutOnce = true;
+    await expectLater(b.syncNow(), throwsStateError);
+    expect((await activityB.loadStarredMessages()).single.title, 'Title');
+    expect(callbacks, 1);
   });
 
   test('wrong passphrase does not persist configuration or state', () async {

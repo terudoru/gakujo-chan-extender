@@ -166,6 +166,7 @@ class StarSyncEngine {
     StarSyncTransport Function(StarSyncConfig)? transportFactory,
     DateTime Function()? now,
     this.loginId,
+    this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
   }) : _storage = secureStorage ?? SecureStorageFactory.create(),
        _transportFactory = transportFactory ?? _defaultTransport,
@@ -176,6 +177,7 @@ class StarSyncEngine {
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
   final DateTime Function() _now;
   final String? Function()? loginId;
+  final void Function()? onLocalStarsChanged;
   final StarSyncKdfParams kdfParams;
   final StorageOperationQueue _queue = StorageOperationQueue();
   final ValueNotifier<StarSyncStatusSnapshot> _status = ValueNotifier(
@@ -425,6 +427,7 @@ class StarSyncEngine {
         }
       }
       final now = _now().toUtc();
+      late Map<String, StarSyncRecord> mergedRecords;
       final changed = await activityStore.transformStarredMessages<bool>((
         current,
       ) async {
@@ -436,13 +439,13 @@ class StarSyncEngine {
           now: now,
           bulkReplace: state.pendingBulkReplace,
         );
-        state.records = mergeStarSyncRecords([
+        mergedRecords = mergeStarSyncRecords([
           reconciled.state,
           ...documents.map((e) => e.records),
         ], now: now);
         clock = reconciled.clock;
         final next = applyStarSyncStateToLocal(
-          state: state.records,
+          state: mergedRecords,
           local: current,
         );
         return (
@@ -452,10 +455,12 @@ class StarSyncEngine {
               jsonEncode(next.map((e) => e.toJson()).toList()),
         );
       });
-      for (final record in state.records.values) {
+      for (final record in mergedRecords.values) {
         clock = max(clock, record.clock);
       }
+      state.records = mergedRecords;
       state.clock = clock;
+      if (changed) onLocalStarsChanged?.call();
       state.remoteCache = caches;
       state.pendingBulkReplace = false;
       await _saveState();
