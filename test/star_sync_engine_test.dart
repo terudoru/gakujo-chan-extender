@@ -2919,7 +2919,9 @@ void main() {
                 as Map)['collectionStates'][name]
             as Map;
     final favoriteClock = state('favorites')['records']['f']['clock'];
-    final topicsClock = state('settings')['records']['notificationTopics']['clock'];
+    final topicsClock = state(
+      'settings',
+    )['records']['notificationTopics']['clock'];
     final otherClock = state('settings')['records']['other']['clock'];
     await engine.withBulkReplace(
       () async {},
@@ -2938,37 +2940,48 @@ void main() {
     engine.dispose();
   });
 
-  test('pending restore key sets accumulate and omissions are retained', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final settings = _Collection('settings');
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-      collections: [settings],
-    );
-    await engine.setUp(config, 'pass');
-    settings.entries = {'a': 1, 'b': 2, 'omitted': 3};
-    await engine.syncNow();
-    Map state() =>
-        (jsonDecode(storage.values[starSyncStateKey]!)
-                as Map)['collectionStates']['settings']
-            as Map;
-    final aClock = state()['records']['a']['clock'];
-    final bClock = state()['records']['b']['clock'];
-    await engine.markBulkReplace(collections: const {'settings': {'a'}});
-    await engine.markBulkReplace(collections: const {'settings': {'b'}});
-    expect(state()['pendingBulkReplaceKeys'], ['a', 'b']);
-    settings.entries = {'a': 1, 'b': 2};
-    await engine.syncNow();
-    expect(state()['records']['a']['clock'], greaterThan(aClock));
-    expect(state()['records']['b']['clock'], greaterThan(bClock));
-    expect(state()['records']['omitted']['deleted'], isFalse);
-    engine.dispose();
-  });
+  test(
+    'pending restore key sets accumulate and omissions are retained',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final settings = _Collection('settings');
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [settings],
+      );
+      await engine.setUp(config, 'pass');
+      settings.entries = {'a': 1, 'b': 2, 'omitted': 3};
+      await engine.syncNow();
+      Map state() =>
+          (jsonDecode(storage.values[starSyncStateKey]!)
+                  as Map)['collectionStates']['settings']
+              as Map;
+      final aClock = state()['records']['a']['clock'];
+      final bClock = state()['records']['b']['clock'];
+      await engine.markBulkReplace(
+        collections: const {
+          'settings': {'a'},
+        },
+      );
+      await engine.markBulkReplace(
+        collections: const {
+          'settings': {'b'},
+        },
+      );
+      expect(state()['pendingBulkReplaceKeys'], ['a', 'b']);
+      settings.entries = {'a': 1, 'b': 2};
+      await engine.syncNow();
+      expect(state()['records']['a']['clock'], greaterThan(aClock));
+      expect(state()['records']['b']['clock'], greaterThan(bClock));
+      expect(state()['records']['omitted']['deleted'], isFalse);
+      engine.dispose();
+    },
+  );
 
   test(
     'rejected collection apply saves nothing and retries without warning',

@@ -14,7 +14,10 @@ void main() {
     expect(restoredSyncCollections(backup, {'version', 'notificationTopics'}), {
       'settings': {'notificationTopics'},
     });
-    expect(restoredSyncCollections(const GakujoBackupImport(version: 2), {}), isEmpty);
+    expect(
+      restoredSyncCollections(const GakujoBackupImport(version: 2), {}),
+      isEmpty,
+    );
   });
 
   test('sync restore merges messageStars from the current settings', () {

@@ -1791,16 +1791,16 @@ class StarSyncEngine {
                 'pendingBulkReplaceKeys':
                     collections == null ||
                         collections[name] == null ||
-                        ((previousCollections[name] as Map?)?[
-                                    'pendingBulkReplace'] ==
+                        ((previousCollections[name]
+                                    as Map?)?['pendingBulkReplace'] ==
                                 true &&
-                            (previousCollections[name] as Map?)?[
-                                    'pendingBulkReplaceKeys'] ==
+                            (previousCollections[name]
+                                    as Map?)?['pendingBulkReplaceKeys'] ==
                                 null)
                     ? null
                     : ({
-                        ...?((previousCollections[name] as Map?)?[
-                                    'pendingBulkReplaceKeys']
+                        ...?((previousCollections[name]
+                                    as Map?)?['pendingBulkReplaceKeys']
                                 as List?)
                             ?.cast<String>(),
                         ...collections[name]!,
