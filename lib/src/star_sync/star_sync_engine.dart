@@ -24,6 +24,9 @@ const starSyncStateKey = 'more_better_gakujo_star_sync_state';
 const _keyringPath = 'stars/keyring.json';
 const _deviceDirectory = 'stars/devices';
 const _backupDirectory = 'backups';
+const _collectionMaxBytes = 8 * 1024 * 1024;
+
+class _CollectionTooLarge implements Exception {}
 
 Future<String> _createKeyringJson(
   String passphrase,
@@ -1368,6 +1371,7 @@ class StarSyncEngine {
       }
       var collectionFailures = 0;
       var collectionsChanged = false;
+      var collectionTooLarge = false;
       Object? collectionTransportFailure;
       for (final collection in _collections) {
         if (state.disabledCollections.contains(collection.name)) continue;
@@ -1377,6 +1381,9 @@ class StarSyncEngine {
           collectionsChanged = collectionsChanged || result.changed;
         } on _AccountChanged {
           rethrow;
+        } on _CollectionTooLarge {
+          collectionTooLarge = true;
+          collectionFailures++;
         } on StarSyncGoogleAuthException catch (error) {
           collectionTransportFailure ??= error;
           collectionFailures++;
@@ -1393,7 +1400,9 @@ class StarSyncEngine {
       if (!await _accountMatches(state)) return const StarSyncResult();
       if (collectionTransportFailure != null) throw collectionTransportFailure;
       state.status = StarSyncStatus.ok;
-      state.lastError = collectionFailures > 0
+      state.lastError = collectionTooLarge
+          ? '同期データが大きすぎるため、一部の項目を同期できませんでした'
+          : collectionFailures > 0
           ? 'Some collections could not be synced ($collectionFailures)'
           : skipped == 0
           ? null
@@ -1522,12 +1531,18 @@ class StarSyncEngine {
             etag == previous['etag']) {
           document = StarSyncCollectionDocument.fromJson(previous['document']);
         } else {
-          final object = await transport.get(entry.path);
+          final object = await transport.get(
+            entry.path,
+            maxBytes: _collectionMaxBytes,
+          );
           if (object == null) continue;
           final fileKeyId = starSyncFileKeyId(object.bytes);
           if (fileKeyId != null && fileKeyId != state.keyId) {
             if (state.retiredKeyIds.containsKey(fileKeyId)) {
-              final latest = await transport.get(entry.path);
+              final latest = await transport.get(
+                entry.path,
+                maxBytes: _collectionMaxBytes,
+              );
               if (latest != null &&
                   starSyncFileKeyId(latest.bytes) == fileKeyId) {
                 await transport.delete(entry.path);
@@ -1580,6 +1595,8 @@ class StarSyncEngine {
       ...previousRecords.keys,
       ...local.keys,
       if (snapshot is List) ...snapshot.whereType<String>(),
+      if (snapshot == null && pendingKeys is List)
+        ...pendingKeys.whereType<String>(),
     }.toList()..sort();
     for (final key in keys) {
       final old = previousRecords[key];
@@ -1603,8 +1620,10 @@ class StarSyncEngine {
         }
       } else if (!collection.growOnly &&
           ((stored['pendingBulkReplace'] == true &&
-                  snapshot is List &&
-                  snapshot.contains(key)) ||
+                  ((snapshot is List && snapshot.contains(key)) ||
+                      (snapshot == null &&
+                          pendingKeys is List &&
+                          pendingKeys.contains(key)))) ||
               (stored['pendingBulkReplace'] != true &&
                   old != null &&
                   !old.deleted))) {
@@ -1645,6 +1664,27 @@ class StarSyncEngine {
       for (final record in merged.values)
         if (!record.deleted) record.key: record.value,
     };
+    final document = StarSyncCollectionDocument(
+      collection: name,
+      deviceId: state.deviceId,
+      account: state.boundAccount,
+      clock: clock,
+      records: merged,
+    );
+    final json = starSyncCanonicalJson(document.toJson());
+    final hash = sha256.convert(utf8.encode(json)).toString();
+    final path = '$directory/${state.deviceId}';
+    List<int>? encrypted;
+    if (hash != stored['lastUploadedHash'] ||
+        !entries.any((entry) => entry.path == path)) {
+      encrypted = await encryptStarSyncFile(
+        dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+        keyId: state.keyId,
+        deviceId: state.deviceId,
+        plaintext: utf8.encode(json),
+      );
+      if (encrypted.length > _collectionMaxBytes) throw _CollectionTooLarge();
+    }
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
     if (!await collection.applyLocal(live, basedOn: local)) {
@@ -1668,25 +1708,8 @@ class StarSyncEngine {
       }
       rethrow;
     }
-    final document = StarSyncCollectionDocument(
-      collection: name,
-      deviceId: state.deviceId,
-      account: state.boundAccount,
-      clock: clock,
-      records: merged,
-    );
-    final json = starSyncCanonicalJson(document.toJson());
-    final hash = sha256.convert(utf8.encode(json)).toString();
-    final path = '$directory/${state.deviceId}';
-    if (hash != stored['lastUploadedHash'] ||
-        !entries.any((entry) => entry.path == path)) {
+    if (encrypted != null) {
       await transport.ensureDirectory(directory);
-      final encrypted = await encryptStarSyncFile(
-        dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
-        keyId: state.keyId,
-        deviceId: state.deviceId,
-        plaintext: utf8.encode(json),
-      );
       if (!await _accountMatches(state)) throw const _AccountChanged();
       await transport.put(path, encrypted);
       next['lastUploadedHash'] = hash;
@@ -1770,6 +1793,8 @@ class StarSyncEngine {
     Future<void> Function() replace, {
     bool stars = true,
     Map<String, Set<String>?>? collections,
+    Set<String>? starIdsAfterRestore,
+    Map<String, Set<String>>? collectionKeysAfterRestore,
   }) => _queue.runExclusive(() async {
     final state = _state;
     final previous = state?.pendingBulkReplace;
@@ -1777,7 +1802,12 @@ class StarSyncEngine {
     final previousCollections = state == null
         ? null
         : Map<String, dynamic>.from(state.collectionStates);
-    await markBulkReplace(stars: stars, collections: collections);
+    await markBulkReplace(
+      stars: stars,
+      collections: collections,
+      starIdsAfterRestore: starIdsAfterRestore,
+      collectionKeysAfterRestore: collectionKeysAfterRestore,
+    );
     try {
       await replace();
     } on Object {
@@ -1790,12 +1820,14 @@ class StarSyncEngine {
       rethrow;
     }
     if (state != null && identical(_state, state)) {
-      final restoredStars = stars
+      final restoredStars = stars && starIdsAfterRestore == null
           ? await activityStore.loadStarredMessages()
           : null;
       final snapshots = <String, List<String>?>{};
       for (final collection in _collections) {
-        if (collections == null || collections.containsKey(collection.name)) {
+        if ((collections == null || collections.containsKey(collection.name)) &&
+            !(collectionKeysAfterRestore?.containsKey(collection.name) ??
+                false)) {
           final local = await collection.readLocal();
           snapshots[collection.name] = local == null
               ? null
@@ -1834,6 +1866,8 @@ class StarSyncEngine {
   Future<void> markBulkReplace({
     bool stars = true,
     Map<String, Set<String>?>? collections,
+    Set<String>? starIdsAfterRestore,
+    Map<String, Set<String>>? collectionKeysAfterRestore,
   }) => _queue.run(() async {
     if (_state == null) {
       return;
@@ -1844,6 +1878,12 @@ class StarSyncEngine {
     if (stars) {
       _state!.pendingBulkReplace = true;
       if (!previous) _state!.pendingBulkReplaceStarIds = null;
+      if (starIdsAfterRestore != null) {
+        _state!.pendingBulkReplaceStarIds = {
+          ...?_state!.pendingBulkReplaceStarIds,
+          ...starIdsAfterRestore,
+        };
+      }
     }
     final nextCollections = Map<String, dynamic>.from(previousCollections);
     for (final name in _collectionNames()) {
@@ -1858,6 +1898,13 @@ class StarSyncEngine {
       // An earlier unsynced restore keeps its snapshot so the next one
       // can union into it.
       if (!pending) current['pendingBulkReplaceLocalKeys'] = null;
+      final snapshot = collectionKeysAfterRestore?[name];
+      if (snapshot != null) {
+        current['pendingBulkReplaceLocalKeys'] = {
+          ...?(current['pendingBulkReplaceLocalKeys'] as List?)?.cast<String>(),
+          ...snapshot,
+        }.toList()..sort();
+      }
       // null means "every key"; once any restore covered every key, the
       // union stays "every key" until the next sync.
       current['pendingBulkReplaceKeys'] =

@@ -5873,6 +5873,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _ensureStarSyncLoaded();
       final previousSettings = _appSettings;
       late GakujoAppSettings nextSettings;
+      final restoredCollections = restoredSyncCollections(backup, backupKeys);
       await _starSyncEngine.withBulkReplace(() => _settingsOperations.runExclusive(() async {
         final restoredFlags = fromSyncStorage
             ? syncRestoreFeatureFlags(backup.disabledFeatureFlags, _appSettings.disabledFeatureFlags)
@@ -5925,7 +5926,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
           _appSettings = nextSettings;
         });
-      }), stars: backup.starredMessages != null, collections: restoredSyncCollections(backup, backupKeys));
+      }), stars: backup.starredMessages != null, collections: restoredCollections,
+        starIdsAfterRestore: backup.starredMessages?.where((star) => star.isValid).map((star) => star.id).toSet(),
+        collectionKeysAfterRestore: {
+          if (backup.favorites != null) 'favorites': backup.favorites!.where((favorite) => _isAllowedBackupNavigationUrl(favorite.url)).map((favorite) => favorite.durableUrl).toSet(),
+          if (restoredCollections['settings'] != null) 'settings': restoredCollections['settings']!,
+        },
+      );
       if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(

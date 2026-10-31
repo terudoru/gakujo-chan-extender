@@ -2677,6 +2677,155 @@ void main() {
     }
   });
 
+  test('precomputed snapshots are durable before restore and roll back', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites],
+    );
+    await engine.setUp(config, 'pass');
+    await engine.markBulkReplace(
+      starIdsAfterRestore: {'old-star'},
+      collections: const {'favorites': null},
+      collectionKeysAfterRestore: const {'favorites': {'old-favorite'}},
+    );
+    final before = jsonDecode(storage.values[starSyncStateKey]!);
+    await expectLater(
+      engine.withBulkReplace(
+        () async {
+          final state = jsonDecode(storage.values[starSyncStateKey]!);
+          expect(
+            state['pendingBulkReplaceStarIds'],
+            containsAll(['old-star', 'new-star']),
+          );
+          expect(
+            state['collectionStates']['favorites']['pendingBulkReplaceLocalKeys'],
+            containsAll(['old-favorite', 'new-favorite']),
+          );
+          favorites.entries = {'new-favorite': 'written'};
+          throw StateError('failed');
+        },
+        starIdsAfterRestore: {'new-star'},
+        collections: const {'favorites': null},
+        collectionKeysAfterRestore: const {'favorites': {'new-favorite'}},
+      ),
+      throwsStateError,
+    );
+    final after = jsonDecode(storage.values[starSyncStateKey]!);
+    expect(
+      after['pendingBulkReplaceStarIds'],
+      before['pendingBulkReplaceStarIds'],
+    );
+    expect(after['collectionStates'], before['collectionStates']);
+    engine.dispose();
+  });
+
+  test('restart after marker persistence preserves restored favorite deletion', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites');
+    StarSyncEngine make() => StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites],
+    );
+    final engine = make();
+    await engine.setUp(config, 'pass');
+    favorites.entries = {'deleted': 'value', 'omitted': 'keep'};
+    await engine.syncNow();
+    await engine.markBulkReplace(
+      stars: false,
+      collections: const {'favorites': null},
+      collectionKeysAfterRestore: const {'favorites': {'deleted'}},
+    );
+    favorites.entries = {};
+    engine.dispose();
+    final restarted = make();
+    await restarted.load();
+    await restarted.syncNow();
+    final state = jsonDecode(storage.values[starSyncStateKey]!);
+    final records = state['collectionStates']['favorites']['records'];
+    expect(records['deleted']['deleted'], isTrue);
+    expect(records['omitted']['deleted'], isFalse);
+    expect(favorites.entries, {'omitted': 'keep'});
+    restarted.dispose();
+  });
+
+  test('legacy marker deletes only explicitly restored keys', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final settings = _Collection('settings');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [settings],
+    );
+    await engine.setUp(config, 'pass');
+    settings.entries = {'restored': 1, 'omitted': 2};
+    await engine.syncNow();
+    await engine.markBulkReplace(
+      stars: false,
+      collections: const {'settings': {'restored'}},
+    );
+    settings.entries = {};
+    await engine.syncNow();
+    final state = jsonDecode(storage.values[starSyncStateKey]!);
+    final records = state['collectionStates']['settings']['records'];
+    expect(records['restored']['deleted'], isTrue);
+    expect(records['omitted']['deleted'], isFalse);
+    engine.dispose();
+  });
+
+  test('large drafts download and oversized upload preserves remote', () async {
+    final remote = _Transport();
+    final draftsA = _Collection('drafts');
+    final draftsB = _Collection('drafts');
+    StarSyncEngine make(_Collection drafts) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [drafts],
+      );
+    }
+    final a = make(draftsA);
+    final b = make(draftsB);
+    await a.setUp(config, 'pass');
+    draftsA.entries = {'draft': List.filled(3 * 1024 * 1024, 'x').join()};
+    await a.syncNow();
+    final path = remote.files.keys.singleWhere(
+      (key) => key.startsWith('sync/drafts/'),
+    );
+    final before = List<int>.of(remote.files[path]!);
+    expect(before.length, greaterThan(starSyncDefaultMaxBytes));
+    await b.setUp(config, 'pass');
+    expect(draftsB.entries!['draft'], draftsA.entries!['draft']);
+    draftsA.entries = {'draft': List.filled(9 * 1024 * 1024, 'x').join()};
+    await a.syncNow();
+    expect(remote.files[path], before);
+    expect(
+      a.status.value.lastError,
+      '同期データが大きすぎるため、一部の項目を同期できませんでした',
+    );
+    a.dispose();
+    b.dispose();
+  });
+
   test('cooldown timer sends pending local change', () async {
     final remote = _Transport();
     final storage = _Storage();

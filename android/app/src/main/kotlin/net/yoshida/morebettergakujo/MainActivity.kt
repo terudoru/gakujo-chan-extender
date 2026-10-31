@@ -25,6 +25,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.FileInputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -618,9 +620,22 @@ class MainActivity : FlutterActivity() {
         }
         Thread {
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use {
-                    readContentChunk(it, offset, length)
-                } ?: throw IllegalStateException("Content URI is unavailable")
+                val descriptor = contentResolver.openFileDescriptor(uri, "r")
+                    ?: throw IllegalStateException("Content URI is unavailable")
+                val bytes = descriptor.use { pfd ->
+                    FileInputStream(pfd.fileDescriptor).use { input ->
+                        val seekable = try {
+                            input.channel.position(offset)
+                            true
+                        } catch (_: IOException) {
+                            false
+                        }
+                        if (seekable) readContentChunk(input, 0, length)
+                        else contentResolver.openInputStream(uri)?.use {
+                            readContentChunk(it, offset, length)
+                        } ?: throw IllegalStateException("Content URI is unavailable")
+                    }
+                }
                 runOnUiThread { result.success(bytes) }
             } catch (error: Throwable) {
                 runOnUiThread { result.error("read_failed", error.message, null) }
