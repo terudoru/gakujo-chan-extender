@@ -155,3 +155,23 @@ interface Window {
   __MBG_MESSAGE_FILTER_UPDATE?: () => boolean;
   __MBG_MESSAGE_FILTER_INTERVAL?: number;
 }
+
+interface Window {
+  __MBG_AUTHENTICATED_DOWNLOAD_RESULTS?: Record<string, MbgAuthenticatedDownloadEntry>;
+}
+
+interface MbgAuthenticatedDownloadEntry {
+  state: string;
+  chunks?: { state: string; index: number; bodyBase64: string }[];
+  resume?: (() => void) | null;
+  completion?: Record<string, unknown> | null;
+  cancel?: () => void;
+  payload?: Record<string, unknown>;
+  code?: unknown;
+  errorName?: unknown;
+  message?: string;
+}
+interface Window {
+  __MBG_MESSAGE_STARS_DISPOSE?: () => void;
+  chrome: { webview: { postMessage: (message: string) => void } };
+}

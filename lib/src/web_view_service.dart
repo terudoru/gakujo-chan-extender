@@ -15,6 +15,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
 
+import 'generated/channel_bridge.g.dart';
+import 'generated/channel_guard.g.dart';
+
 import 'allowed_web_origins.dart';
 import 'macos_input_focus_service.dart';
 
@@ -640,27 +643,8 @@ class GakujoJavaScriptChannelGuard {
     return null;
   }
 
-  String installScript() {
-    final mappings = jsonEncode(_names);
-    final capability = jsonEncode(_token);
-    return '''
-(function() {
-  if (window !== window.top) return;
-  const mappings = $mappings;
-  const capability = $capability;
-  Object.keys(mappings).forEach(function(name) {
-    const nativeChannel = window[mappings[name]];
-    if (!nativeChannel || !nativeChannel.postMessage) return;
-    Object.defineProperty(window, name, {
-      configurable: true,
-      value: Object.freeze({postMessage: function(message) {
-        nativeChannel.postMessage(JSON.stringify([capability, String(message)]));
-      }})
-    });
-  });
-})();
-''';
-  }
+  String installScript() =>
+      gakujoChannelGuardJs({'mappings': _names, 'capability': _token});
 }
 
 class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
@@ -1600,22 +1584,8 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
-  static String _channelBridgeScript(String name) {
-    final encodedName = jsonEncode(name);
-    return '''
-(function() {
-  var channelName = $encodedName;
-  window[channelName] = {
-    postMessage: function(message) {
-      window.chrome.webview.postMessage(JSON.stringify({
-        channel: channelName,
-        message: String(message)
-      }));
-    }
-  };
-})()
-''';
-  }
+  static String _channelBridgeScript(String name) =>
+      gakujoChannelBridgeJs({'channelName': name});
 }
 
 @visibleForTesting

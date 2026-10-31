@@ -41,6 +41,17 @@ const entries: { source: string; output: string; name: string; kind?: 'statement
   { source: 'web_scripts/src/two_factor_autofill/teardown.ts', output: 'lib/src/generated/two_factor_autofill_teardown.g.dart', name: 'gakujoTwoFactorAutofillTeardownJs' },
   { source: 'web_scripts/src/desktop_page_zoom/main.ts', output: 'lib/src/generated/desktop_page_zoom.g.dart', name: 'gakujoDesktopPageZoomJs', config: true },
   { source: 'web_scripts/src/quick_jump/main.ts', output: 'lib/src/generated/quick_jump.g.dart', name: 'gakujoQuickJumpJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/message_star/main.ts', output: 'lib/src/generated/message_star.g.dart', name: 'gakujoMessageStarJs', config: true },
+  { source: 'web_scripts/src/message_star/open.ts', output: 'lib/src/generated/message_star_open.g.dart', name: 'gakujoMessageStarOpenJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/message_star/teardown.ts', output: 'lib/src/generated/message_star_teardown.g.dart', name: 'gakujoMessageStarTeardownJs' },
+  { source: 'web_scripts/src/message_list_fetch/main.ts', output: 'lib/src/generated/message_list_fetch.g.dart', name: 'gakujoMessageListFetchJs', kind: 'expression' },
+  { source: 'web_scripts/src/page_text_activity/main.ts', output: 'lib/src/generated/page_text_activity.g.dart', name: 'gakujoPageTextActivityJs', kind: 'expression' },
+  { source: 'web_scripts/src/assignment_list_fetch/main.ts', output: 'lib/src/generated/assignment_list_fetch.g.dart', name: 'gakujoAssignmentListFetchJs', kind: 'expression' },
+  { source: 'web_scripts/src/channel_guard/main.ts', output: 'lib/src/generated/channel_guard.g.dart', name: 'gakujoChannelGuardJs', config: true },
+  { source: 'web_scripts/src/channel_bridge/main.ts', output: 'lib/src/generated/channel_bridge.g.dart', name: 'gakujoChannelBridgeJs', config: true },
+  { source: 'web_scripts/src/authenticated_download/start.ts', output: 'lib/src/generated/authenticated_download_start.g.dart', name: 'gakujoAuthenticatedDownloadStartJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/authenticated_download/poll.ts', output: 'lib/src/generated/authenticated_download_poll.g.dart', name: 'gakujoAuthenticatedDownloadPollJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/authenticated_download/cleanup.ts', output: 'lib/src/generated/authenticated_download_cleanup.g.dart', name: 'gakujoAuthenticatedDownloadCleanupJs', kind: 'expression', config: true },
 ];
 const check = process.argv.includes('--check');
 const stale: string[] = [];
@@ -70,13 +81,20 @@ for (const entry of entries) {
     ? `(function(__mbgConfig) {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})(`
     : `(function(__mbgConfig) {\n${outputJs}})(`;
   const suffix = entry.kind === 'expression' ? ')\n' : ');\n';
+  // dart format moves a raw string to the next line when its first line overflows.
+  const rawConst = (name: string, value: string) => {
+    const head = `const String ${name} = r'''`;
+    return (head + value.split('\n')[0]).length > 80
+      ? `const String ${name} =\n    r'''${value}''';`
+      : `${head}${value}''';`;
+  };
   // Match dart format: one line when it fits in 80 columns.
   const configLine = `    _${entry.name}Prefix + jsonEncode(config) + _${entry.name}Suffix;`;
   const configBody = configLine.length <= 80
     ? configLine
     : `    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;`;
   const content = entry.config
-    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n${configBody}\n\nconst String _${entry.name}Prefix = r'''${prefix}''';\nconst String _${entry.name}Suffix = r'''${suffix}''';\n`
+    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n${configBody}\n\n${rawConst(`_${entry.name}Prefix`, prefix)}\n${rawConst(`_${entry.name}Suffix`, suffix)}\n`
     : `${header}const String ${entry.name} = r'''\n${js}''';\n`;
   const output = resolve(root, entry.output);
   if (check) {
