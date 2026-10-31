@@ -26,11 +26,7 @@ void main() {
         GakujoFeatureFlag.messageStars.storageValue,
         'other',
       ],
-      'nested': {
-        'password': 'hidden',
-        'accessToken': 'hidden',
-        'safe': 'kept',
-      },
+      'nested': {'password': 'hidden', 'accessToken': 'hidden', 'safe': 'kept'},
     };
     final portable = portableSyncBackupPayload(payload);
     expect(portable, isNot(contains('downloadSaveMode')));

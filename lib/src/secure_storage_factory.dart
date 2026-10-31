@@ -32,6 +32,7 @@ class SecureStorageFactory {
     'more_better_gakujo_notification_preferences',
     'more_better_gakujo_notification_topics',
     'more_better_gakujo_notified_deadline_keys',
+    'more_better_gakujo_notified_deadline_times',
     'more_better_gakujo_page_mode',
     'more_better_gakujo_setup_completed',
     'more_better_gakujo_star_sync_config',

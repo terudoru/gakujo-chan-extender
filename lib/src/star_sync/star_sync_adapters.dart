@@ -93,9 +93,10 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
   @override
   int? get maxLive => 30;
   @override
-  Comparable Function(Object?)? get order => (value) =>
-      DateTime.tryParse((value as Map)['addedAt']?.toString() ?? '') ??
-      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  Comparable Function(Object?)? get order =>
+      (value) =>
+          DateTime.tryParse((value as Map)['addedAt']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
   @override
   Future<Map<String, Object?>> readLocal() async => {
@@ -111,17 +112,14 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
   }) async {
-    final applied = await store.compareAndReplaceFavorites(
-      [
-        for (final entry in entries.entries)
-          if (entry.value is Map)
-            GakujoFavoritePage.fromJson({
-              ...(entry.value as Map),
-              'url': entry.key,
-            }),
-      ],
-      basedOn: basedOn,
-    );
+    final applied = await store.compareAndReplaceFavorites([
+      for (final entry in entries.entries)
+        if (entry.value is Map)
+          GakujoFavoritePage.fromJson({
+            ...(entry.value as Map),
+            'url': entry.key,
+          }),
+    ], basedOn: basedOn);
     if (applied &&
         starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
       await onChanged?.call();
@@ -142,12 +140,13 @@ class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
   @override
   int? get maxLive => 1000;
   @override
-  Comparable Function(Object?)? get order => (value) =>
-      DateTime.parse(value as String);
+  Comparable Function(Object?)? get order =>
+      (value) => DateTime.parse(value as String);
 
   @override
   Future<Map<String, Object?>> readLocal() async => {
-    for (final entry in (await store.loadNotifiedDeadlineKeysWithTimes()).entries)
+    for (final entry
+        in (await store.loadNotifiedDeadlineKeysWithTimes()).entries)
       entry.key: entry.value.toUtc().toIso8601String(),
   };
 
@@ -155,13 +154,10 @@ class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
-  }) => store.compareAndReplaceNotifiedDeadlineKeysWithTimes(
-    {
-      for (final entry in entries.entries)
-        entry.key: DateTime.parse(entry.value as String),
-    },
-    basedOn: basedOn,
-  );
+  }) => store.compareAndReplaceNotifiedDeadlineKeysWithTimes({
+    for (final entry in entries.entries)
+      entry.key: DateTime.parse(entry.value as String),
+  }, basedOn: basedOn);
 }
 
 class StarSyncSettingsCollection implements StarSyncCollection {
@@ -171,7 +167,8 @@ class StarSyncSettingsCollection implements StarSyncCollection {
   final Future<bool> Function(
     Map<String, Object?>, {
     required Map<String, Object?> basedOn,
-  }) apply;
+  })
+  apply;
 
   @override
   String get name => 'settings';
@@ -202,7 +199,8 @@ class StarSyncReportDraftsCollection implements StarSyncCollection {
   final Future<bool> Function(
     Map<String, Object?>, {
     required Map<String, Object?> basedOn,
-  }) apply;
+  })
+  apply;
 
   @override
   String get name => 'report-drafts';

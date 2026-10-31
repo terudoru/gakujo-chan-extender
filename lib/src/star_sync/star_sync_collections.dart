@@ -8,6 +8,7 @@ abstract interface class StarSyncCollection {
   String get name;
   bool get growOnly;
   Future<Map<String, Object?>?> readLocal();
+
   /// Applies only if local data still equals basedOn in canonical JSON.
   /// Returns false on a concurrent edit; the engine retries on a later sync.
   Future<bool> applyLocal(
