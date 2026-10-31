@@ -3272,9 +3272,11 @@ void main() {
       collection.entries = {'edit': 'value'};
       collection.rejectApply = true;
       await engine.syncNow();
-      final refused = jsonDecode(
-        storage.values[starSyncStateKey]!,
-      )['collectionStates']['drafts'] as Map;
+      final refused =
+          jsonDecode(
+                storage.values[starSyncStateKey]!,
+              )['collectionStates']['drafts']
+              as Map;
       expect(refused['records'], before['records']);
       expect(refused['pendingApplyRetry'], isTrue);
       expect(refused['applyRefusals'], 1);
@@ -3322,7 +3324,10 @@ void main() {
     collection.rejectApply = true;
     for (var i = 0; i < 7; i++) {
       await engine.syncNow();
-      expect(delays.last, Duration(seconds: [30, 60, 120, 240, 480, 600, 600][i]));
+      expect(
+        delays.last,
+        Duration(seconds: [30, 60, 120, 240, 480, 600, 600][i]),
+      );
       expect(engine.status.value.lastError == null, i < 4);
       final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
       expect(state['pendingLocalChange'], isTrue);
@@ -3339,7 +3344,10 @@ void main() {
     expect(timers.last.isActive, isFalse);
     final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
     expect(state['pendingLocalChange'], isFalse);
-    expect(state['collectionStates']['drafts'].containsKey('pendingApplyRetry'), isFalse);
+    expect(
+      state['collectionStates']['drafts'].containsKey('pendingApplyRetry'),
+      isFalse,
+    );
     expect(engine.status.value.lastError, isNull);
     collection.rejectApply = true;
     await engine.syncNow();
@@ -3362,14 +3370,17 @@ void main() {
         transportFactory: (_) => remote,
         kdfParams: kdf,
         collections: [data],
-        timerFactory: timed ? (delay, callback) {
-          expect(delay, const Duration(seconds: 30));
-          final timer = _TestTimer(callback);
-          timers.add(timer);
-          return timer;
-        } : null,
+        timerFactory: timed
+            ? (delay, callback) {
+                expect(delay, const Duration(seconds: 30));
+                final timer = _TestTimer(callback);
+                timers.add(timer);
+                return timer;
+              }
+            : null,
       );
     }
+
     final first = make(firstData);
     final second = make(secondData, timed: true);
     await first.setUp(config, 'pass');
@@ -3389,6 +3400,7 @@ void main() {
         done.complete();
       }
     }
+
     second.status.addListener(listener);
     timers.single.fire();
     await done.future.timeout(const Duration(seconds: 5));

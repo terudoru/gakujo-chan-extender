@@ -1162,7 +1162,8 @@ class StarSyncEngine {
     if (_disposed || _config == null || !identical(_state, state)) return;
     var failures = 0;
     for (final entry in state.collectionStates.entries) {
-      if (state.disabledCollections.contains(entry.key) || entry.value is! Map) {
+      if (state.disabledCollections.contains(entry.key) ||
+          entry.value is! Map) {
         continue;
       }
       final collection = entry.value as Map;
@@ -1441,12 +1442,15 @@ class StarSyncEngine {
       }
       if (!await _accountMatches(state)) return const StarSyncResult();
       if (collectionTransportFailure != null) throw collectionTransportFailure;
-      final pendingRetries = state.collectionStates.entries.where((entry) =>
-          !state.disabledCollections.contains(entry.key) &&
-          entry.value is Map &&
-          (entry.value as Map)['pendingApplyRetry'] == true);
-      final retryWarning = pendingRetries.any((entry) =>
-          ((entry.value as Map)['applyRefusals'] as int? ?? 0) >= 5);
+      final pendingRetries = state.collectionStates.entries.where(
+        (entry) =>
+            !state.disabledCollections.contains(entry.key) &&
+            entry.value is Map &&
+            (entry.value as Map)['pendingApplyRetry'] == true,
+      );
+      final retryWarning = pendingRetries.any(
+        (entry) => ((entry.value as Map)['applyRefusals'] as int? ?? 0) >= 5,
+      );
       state.status = StarSyncStatus.ok;
       state.lastError = collectionTooLarge
           ? '同期データが大きすぎるため、一部の項目を同期できませんでした'
@@ -1456,7 +1460,8 @@ class StarSyncEngine {
           ? null
           : '一部の端末のデータを読めませんでした（$skipped台）';
       state.lastSyncAt = _now().toUtc();
-      state.pendingLocalChange = collectionFailures > 0 || pendingRetries.isNotEmpty;
+      state.pendingLocalChange =
+          collectionFailures > 0 || pendingRetries.isNotEmpty;
       state.serverFailures = 0;
       state.cooldownUntil = null;
       await _saveState();
@@ -1636,11 +1641,14 @@ class StarSyncEngine {
         ...documents.map((document) => document.records),
       ]);
       if (stored['pendingApplyRetry'] == true ||
-          starSyncCanonicalJson(remoteMerged.map(
-            (key, value) => MapEntry(key, value.toJson()),
-          )) != starSyncCanonicalJson(previousRecords.map(
-            (key, value) => MapEntry(key, value.toJson()),
-          ))) {
+          starSyncCanonicalJson(
+                remoteMerged.map((key, value) => MapEntry(key, value.toJson())),
+              ) !=
+              starSyncCanonicalJson(
+                previousRecords.map(
+                  (key, value) => MapEntry(key, value.toJson()),
+                ),
+              )) {
         _refuseCollection(state, name);
       }
       return (changed: false, skipped: skipped);
