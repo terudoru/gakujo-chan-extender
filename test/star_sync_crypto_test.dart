@@ -7,6 +7,22 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 const fast = StarSyncKdfParams(memoryKiB: 64, iterations: 1, parallelism: 1);
 
 void main() {
+  test('untrusted KDF parameters above resource limits are rejected', () async {
+    final created = await createStarSyncKeyring('pass', params: fast);
+    for (final entry in [
+      ('memoryKiB', 65537),
+      ('iterations', 11),
+      ('parallelism', 5),
+    ]) {
+      final json = created.keyring.toJson();
+      (json['kdf'] as Map<String, Object?>)[entry.$1] = entry.$2;
+      expect(
+        () => StarSyncKeyring.fromJson(json),
+        throwsA(isA<StarSyncFormatException>()),
+      );
+    }
+  });
+
   test('keyring and encrypted file round trip', () async {
     final created = await createStarSyncKeyring('password', params: fast);
     final parsed = StarSyncKeyring.fromJson(created.keyring.toJson());
@@ -33,6 +49,23 @@ void main() {
       await starSyncKeyBytes(key),
     );
     expect(() => starSyncKeyFromBytes([1]), throwsArgumentError);
+  });
+
+  test('file key id is read from a well formed header only', () async {
+    final created = createStarSyncPairingKeyring();
+    final bytes = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(created.dataKey),
+      keyId: created.keyring.keyId,
+      deviceId: 'device',
+      plaintext: [1],
+    );
+    expect(starSyncFileKeyId(bytes), created.keyring.keyId);
+    bytes[bytes.length - 1] ^= 1;
+    expect(starSyncFileKeyId(bytes), created.keyring.keyId);
+    expect(starSyncFileKeyId(bytes.sublist(0, 9)), isNull);
+    expect(starSyncFileKeyId([1, 2, 3]), isNull);
+    bytes[0] = 0;
+    expect(starSyncFileKeyId(bytes), isNull);
   });
 
   test('wrong passphrase is rejected and rewrap preserves the key', () async {
@@ -130,6 +163,40 @@ void main() {
     kdf['parallelism'] = 9;
     expect(
       () => StarSyncKeyring.fromJson(json),
+      throwsA(isA<StarSyncFormatException>()),
+    );
+  });
+
+  test('legacy keyrings and strict pairing keyrings', () async {
+    final created = await createStarSyncKeyring('password', params: fast);
+    final legacy = created.keyring.toJson()..remove('mode');
+    expect(StarSyncKeyring.fromJson(legacy).mode, 'passphrase');
+    final pairing = createStarSyncPairingKeyring();
+    final json = pairing.keyring.toJson();
+    expect(json.keys.toSet(), {'schema', 'keyId', 'mode'});
+    expect(StarSyncKeyring.fromJson(json).mode, 'pairing');
+    json['salt'] = 'unexpected';
+    expect(
+      () => StarSyncKeyring.fromJson(json),
+      throwsA(isA<StarSyncFormatException>()),
+    );
+  });
+
+  test('pairing code normalization and checksum', () {
+    final pairing = createStarSyncPairingKeyring();
+    final code = encodeStarSyncPairingCode(
+      pairing.keyring.keyId,
+      pairing.dataKey,
+    );
+    final decoded = decodeStarSyncPairingCode('mbgstar: ${code.toLowerCase()}');
+    expect(decoded.keyId, pairing.keyring.keyId);
+    expect(decoded.dataKey, pairing.dataKey);
+    final plain = code.replaceAll('-', '');
+    final last = plain[plain.length - 1];
+    final changed =
+        plain.substring(0, plain.length - 1) + (last == 'A' ? 'B' : 'A');
+    expect(
+      () => decodeStarSyncPairingCode(changed),
       throwsA(isA<StarSyncFormatException>()),
     );
   });

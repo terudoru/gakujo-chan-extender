@@ -1,9 +1,18 @@
 import 'star_sync_s3_transport.dart';
 import 'star_sync_webdav_transport.dart';
 
-enum StarSyncBackend { webDav, s3 }
+enum StarSyncBackend { webDav, s3, googleDrive }
 
-enum StarSyncStatus { disabled, ok, error, needsPassphrase }
+enum StarSyncStatus {
+  disabled,
+  ok,
+  error,
+  needsPassphrase,
+  needsPairingCode,
+  needsGoogleSignIn,
+  accountMismatch,
+  accountReturned,
+}
 
 class StarSyncConfig {
   const StarSyncConfig({required this.backend, this.webDav, this.s3});
@@ -14,22 +23,24 @@ class StarSyncConfig {
 
   Map<String, Object?> toJson() => {
     'backend': backend.name,
-    if (webDav case final value?)
-      'webDav': {
-        'baseUrl': value.baseUrl.toString(),
-        'username': value.username,
-        'password': value.password,
-      },
-    if (s3 case final value?)
-      's3': {
-        'endpoint': value.endpoint.toString(),
-        'region': value.region,
-        'bucket': value.bucket,
-        'prefix': value.prefix,
-        'accessKeyId': value.accessKeyId,
-        'secretAccessKey': value.secretAccessKey,
-        'pathStyle': value.pathStyle,
-      },
+    if (backend != StarSyncBackend.googleDrive)
+      if (webDav case final value?)
+        'webDav': {
+          'baseUrl': value.baseUrl.toString(),
+          'username': value.username,
+          'password': value.password,
+        },
+    if (backend != StarSyncBackend.googleDrive)
+      if (s3 case final value?)
+        's3': {
+          'endpoint': value.endpoint.toString(),
+          'region': value.region,
+          'bucket': value.bucket,
+          'prefix': value.prefix,
+          'accessKeyId': value.accessKeyId,
+          'secretAccessKey': value.secretAccessKey,
+          'pathStyle': value.pathStyle,
+        },
   };
 
   factory StarSyncConfig.fromJson(Map<String, dynamic> json) {

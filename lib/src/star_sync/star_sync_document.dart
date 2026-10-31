@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import '../gakujo_activity_store.dart';
 
-const starSyncTombstoneRetention = Duration(days: 180);
+const starSyncMaxTombstones = 1000;
 const starSyncMaxStars = 300;
 
 class StarSyncFormatException implements Exception {
@@ -25,7 +25,7 @@ class StarSyncRecord {
     required this.clock,
     required this.deviceId,
     required DateTime updatedAt,
-  }) : title = _title(title),
+  }) : title = starred ? _title(title) : '',
        starredAt = starredAt.toUtc(),
        updatedAt = updatedAt.toUtc();
 
@@ -108,7 +108,7 @@ class StarSyncRecord {
     final comparison = _compareEdits(a, b);
     final winner = comparison >= 0 ? a : b;
     final loser = comparison >= 0 ? b : a;
-    return winner.title.isEmpty && loser.title.isNotEmpty
+    return winner.starred && winner.title.isEmpty && loser.title.isNotEmpty
         ? winner.copyWith(title: loser.title)
         : winner;
   }
@@ -203,10 +203,15 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
     final candidates = groups[id]!;
     candidates.sort((a, b) {
       final edit = _compareEdits(b, a);
-      return edit != 0 ? edit : b.title.compareTo(a.title);
+      if (edit != 0) return edit;
+      final title = b.title.compareTo(a.title);
+      if (title != 0) return title;
+      if (a.starred != b.starred) return a.starred ? -1 : 1;
+      final starredAt = b.starredAt.compareTo(a.starredAt);
+      return starredAt != 0 ? starredAt : b.updatedAt.compareTo(a.updatedAt);
     });
     var winner = candidates.first;
-    if (winner.title.isEmpty) {
+    if (winner.starred && winner.title.isEmpty) {
       for (final candidate in candidates) {
         if (candidate.title.isNotEmpty) {
           winner = winner.copyWith(title: candidate.title);
@@ -214,17 +219,16 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
         }
       }
     }
-    if (winner.starred ||
-        !winner.updatedAt.isBefore(now.subtract(starSyncTombstoneRetention))) {
-      merged[id] = winner;
-    }
+    merged[id] = winner;
   }
-  final live = merged.values.where((record) => record.starred).toList()
+  final tombstones = merged.values.where((record) => !record.starred).toList()
     ..sort((a, b) {
-      final date = b.starredAt.compareTo(a.starredAt);
-      return date != 0 ? date : a.id.compareTo(b.id);
+      final clock = b.clock.compareTo(a.clock);
+      if (clock != 0) return clock;
+      final device = b.deviceId.compareTo(a.deviceId);
+      return device != 0 ? device : b.id.compareTo(a.id);
     });
-  for (final record in live.skip(starSyncMaxStars)) {
+  for (final record in tombstones.skip(starSyncMaxTombstones)) {
     merged.remove(record.id);
   }
   return merged;
@@ -233,6 +237,7 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
 ({Map<String, StarSyncRecord> state, int clock}) reconcileLocalStars({
   required List<GakujoStarredMessage> local,
   required Map<String, StarSyncRecord> state,
+  Map<String, StarSyncRecord> known = const {},
   required int clock,
   required String deviceId,
   required DateTime now,
@@ -244,19 +249,30 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
       if (item.isValid) item.id: item,
   };
   final ids = {...state.keys, ...localById.keys}.toList()..sort();
-  DateTime? oldest;
+  GakujoStarredMessage? lastKept;
   if (local.length >= starSyncMaxStars && local.isNotEmpty) {
-    oldest = local
-        .map((item) => item.starredAt)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
+    lastKept = local.reduce((a, b) {
+      final date = b.starredAt.compareTo(a.starredAt);
+      final order = date != 0 ? date : a.id.compareTo(b.id);
+      return order >= 0 ? a : b;
+    });
   }
   for (final id in ids) {
     final item = localById[id];
     final previous = state[id];
     if (item != null) {
-      if (previous == null ||
-          !previous.starred ||
-          !previous.starredAt.isAtSameMomentAs(item.starredAt)) {
+      final knownRecord = known[id];
+      final matchesPrevious =
+          previous != null &&
+          previous.starredAt.isAtSameMomentAs(item.starredAt);
+      final matchesKnown =
+          knownRecord != null &&
+          knownRecord.starredAt.isAtSameMomentAs(item.starredAt);
+      final restoresTombstone =
+          bulkReplace &&
+          ((matchesPrevious && !previous.starred) ||
+              (matchesKnown && !knownRecord.starred));
+      if ((!matchesPrevious && !matchesKnown) || restoresTombstone) {
         result[id] = StarSyncRecord(
           id: id,
           title: item.title,
@@ -266,13 +282,20 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
           deviceId: deviceId,
           updatedAt: now,
         );
-      } else if (item.title.isNotEmpty && item.title != previous.title) {
+      } else if (previous != null &&
+          matchesPrevious &&
+          previous.starred &&
+          item.title.isNotEmpty &&
+          item.title != previous.title) {
         result[id] = previous.copyWith(title: item.title);
       }
     } else if (previous != null &&
         previous.starred &&
         !bulkReplace &&
-        (oldest == null || previous.starredAt.isAfter(oldest))) {
+        (lastKept == null ||
+            previous.starredAt.isAfter(lastKept.starredAt) ||
+            (previous.starredAt.isAtSameMomentAs(lastKept.starredAt) &&
+                previous.id.compareTo(lastKept.id) < 0))) {
       result[id] = previous.copyWith(
         starred: false,
         clock: ++clock,

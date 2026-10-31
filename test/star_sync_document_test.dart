@@ -47,7 +47,7 @@ void main() {
     final a = record(1, clock: 3, title: 'old');
     final b = record(1, clock: 4, title: '', starred: false);
     expect(StarSyncRecord.pick(a, b).starred, false);
-    expect(StarSyncRecord.pick(a, b).title, 'old');
+    expect(StarSyncRecord.pick(a, b).title, isEmpty);
     expect(
       StarSyncRecord.pick(b, record(1, clock: 4, device: 'z')).deviceId,
       'z',
@@ -101,45 +101,39 @@ void main() {
     },
   );
 
-  test('tombstones win, can be replaced, and expire after 180 days', () {
-    final star = record(1);
+  test('tombstones retain no title and GC uses logical order', () {
     final deleted = record(1, clock: 2, starred: false);
+    final old = record(1, clock: 1, title: 'old');
+    final merged = mergeStarSyncRecords([
+      {old.id: old},
+      {deleted.id: deleted},
+    ], now: now.add(const Duration(days: 365)));
+    expect(merged[old.id]!.starred, isFalse);
+    expect(merged[old.id]!.title, isEmpty);
+    final records = {
+      for (var i = 0; i < 1005; i++)
+        record(i, clock: i, starred: false).id: record(
+          i,
+          clock: i,
+          starred: false,
+        ),
+    };
+    final kept = mergeStarSyncRecords([records], now: now);
+    expect(kept.length, 1000);
+    expect(kept.containsKey('1|2|4'), isFalse);
+    expect(kept.containsKey('1|2|5'), isTrue);
+    expect(kept.values.every((r) => r.title.isEmpty), isTrue);
     expect(
-      mergeStarSyncRecords([
-        {star.id: star},
-        {deleted.id: deleted},
-      ], now: now)[star.id]!.starred,
-      false,
-    );
-    final restar = record(1, clock: 3);
-    expect(
-      mergeStarSyncRecords([
-        {deleted.id: deleted},
-        {restar.id: restar},
-      ], now: now)[star.id]!.starred,
-      true,
-    );
-    final old = deleted.copyWith(
-      updatedAt: now.subtract(const Duration(days: 181)),
-    );
-    expect(
-      mergeStarSyncRecords([
-        {old.id: old},
-      ], now: now),
-      isEmpty,
-    );
-    final boundary = deleted.copyWith(
-      updatedAt: now.subtract(starSyncTombstoneRetention),
-    );
-    expect(
-      mergeStarSyncRecords([
-        {boundary.id: boundary},
-      ], now: now),
-      isNotEmpty,
+      jsonRecords(kept),
+      jsonRecords(
+        mergeStarSyncRecords([
+          Map.fromEntries(records.entries.toList().reversed),
+        ], now: now.add(const Duration(days: 180))),
+      ),
     );
   });
 
-  test('distinct device stars converge to the same capped set', () {
+  test('merge preserves all live records for causal cap eviction', () {
     final a = {
       for (var i = 0; i < 320; i++)
         record(i, at: now.add(Duration(seconds: i))).id: record(
@@ -156,14 +150,14 @@ void main() {
     };
     final first = mergeStarSyncRecords([a, b], now: now);
     final second = mergeStarSyncRecords([b, a], now: now);
-    expect(first.length, 300);
+    expect(first.length, 640);
     expect(jsonRecords(first), jsonRecords(second));
   });
 
   test('reconcile detects additions, restars, removals and title updates', () {
     final state = {
       for (final r in [
-        record(1, starred: false),
+        record(1, starred: false, at: now.subtract(const Duration(seconds: 1))),
         record(2),
         record(3),
         record(4),
@@ -203,9 +197,103 @@ void main() {
     expect(bulk.state['1|2|4']!.starred, true);
   });
 
+  test('known star instances do not create local edits', () {
+    final live = record(1, clock: 5);
+    final deleted = record(2, clock: 6, starred: false);
+    final previous = record(3, clock: 2, starred: false);
+    final remote = record(3, clock: 7, at: now.add(const Duration(days: 1)));
+    final result = reconcileLocalStars(
+      local: [local(1), local(2), local(3)],
+      state: {previous.id: previous},
+      known: {live.id: live, deleted.id: deleted, remote.id: remote},
+      clock: 7,
+      deviceId: 'local',
+      now: now,
+    );
+    expect(result.clock, 7);
+    expect(result.state.keys, [previous.id]);
+    expect(result.state[previous.id]!.starred, isFalse);
+    final merged = mergeStarSyncRecords([
+      result.state,
+      {live.id: live, deleted.id: deleted, remote.id: remote},
+    ], now: now);
+    expect(merged[deleted.id]!.starred, isFalse);
+    expect(merged[previous.id]!.clock, 7);
+  });
+
+  test('bulk restore revives matching tombstones in state or known', () {
+    final inState = record(1, clock: 4, starred: false);
+    final inKnown = record(2, clock: 5, starred: false);
+    final live = record(3, clock: 6);
+    final absent = record(4, clock: 7);
+    final result = reconcileLocalStars(
+      local: [
+        local(1, title: 'restored'),
+        local(2),
+        local(3),
+      ],
+      state: {inState.id: inState, live.id: live, absent.id: absent},
+      known: {inKnown.id: inKnown},
+      clock: 7,
+      deviceId: 'local',
+      now: now,
+      bulkReplace: true,
+    );
+    expect(result.clock, 9);
+    for (final id in [inState.id, inKnown.id]) {
+      final revived = result.state[id]!;
+      expect(revived.starred, isTrue);
+      expect(revived.starredAt, now);
+      expect(revived.deviceId, 'local');
+    }
+    expect(result.state[inState.id]!.clock, 8);
+    expect(result.state[inState.id]!.title, 'restored');
+    expect(result.state[inKnown.id]!.clock, 9);
+    expect(result.state[live.id]!.clock, 6);
+    expect(result.state[absent.id]!.starred, isTrue);
+  });
+
+  test('matching tombstones remove local copies without bulk restore', () {
+    final inState = record(1, clock: 4, starred: false);
+    final inKnown = record(2, clock: 5, starred: false);
+    final result = reconcileLocalStars(
+      local: [local(1), local(2)],
+      state: {inState.id: inState},
+      known: {inKnown.id: inKnown},
+      clock: 5,
+      deviceId: 'local',
+      now: now,
+    );
+    expect(result.clock, 5);
+    final merged = mergeStarSyncRecords([
+      result.state,
+      {inKnown.id: inKnown},
+    ], now: now);
+    expect(
+      applyStarSyncStateToLocal(state: merged, local: [local(1), local(2)]),
+      isEmpty,
+    );
+  });
+
+  test('a different starredAt creates a new edit even for a tombstone', () {
+    final deleted = record(1, clock: 4, starred: false);
+    final later = now.add(const Duration(seconds: 1));
+    final result = reconcileLocalStars(
+      local: [local(1, at: later)],
+      state: {deleted.id: deleted},
+      known: {deleted.id: deleted},
+      clock: 4,
+      deviceId: 'local',
+      now: later,
+    );
+    expect(result.clock, 5);
+    expect(result.state[deleted.id]!.starred, isTrue);
+    expect(result.state[deleted.id]!.starredAt, later);
+  });
+
   test('cap trimmed absences are retained, newer absences are deleted', () {
     final items = List.generate(300, (i) => local(i, at: now));
-    final old = record(900, at: now);
+    final old = record(900, at: now.subtract(const Duration(seconds: 1)));
     final newer = record(901, at: now.add(const Duration(seconds: 1)));
     final result = reconcileLocalStars(
       local: items,
@@ -216,6 +304,25 @@ void main() {
     );
     expect(result.state[old.id]!.starred, true);
     expect(result.state[newer.id]!.starred, false);
+  });
+
+  test('equal timestamps use id ordering to identify cap trimming', () {
+    final items = List.generate(301, (i) => local(i, at: now))
+      ..sort((a, b) => a.id.compareTo(b.id));
+    final removedByUser = items.removeAt(0);
+    final trimmed = items.removeLast();
+    items.add(local(-1, at: now));
+    final deletedRecord = record(int.parse(removedByUser.seqNo));
+    final trimmedRecord = record(int.parse(trimmed.seqNo));
+    final result = reconcileLocalStars(
+      local: items,
+      state: {deletedRecord.id: deletedRecord, trimmedRecord.id: trimmedRecord},
+      clock: 1,
+      deviceId: 'd',
+      now: now,
+    );
+    expect(result.state[deletedRecord.id]!.starred, isFalse);
+    expect(result.state[trimmedRecord.id]!.starred, isTrue);
   });
 
   test('applying state preserves local details and takes remote timestamp', () {

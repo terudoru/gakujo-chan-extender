@@ -63,6 +63,9 @@ import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
+import 'star_sync/star_sync_config.dart';
+import 'star_sync/star_sync_google_auth.dart';
+import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'macos_input_focus_service.dart';
@@ -1202,6 +1205,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoCalendarService _calendarService;
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
+  late final StarSyncGoogleAuth _starSyncGoogleAuth;
+  String? _starSyncGoogleEmail;
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
   late final GakujoNotificationService _notificationService;
@@ -1296,9 +1301,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
+    _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _starSyncEngine = StarSyncEngine(
+      googleDriveTransport: () => StarSyncGoogleDriveTransport(
+        accessToken: _starSyncGoogleAuth.accessToken,
+      ),
       activityStore: _activityStore,
       loginId: () => _appSettings.loginCredentials?.loginId,
+      canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
         if (_canSyncStars) unawaited(_refreshMessageStars());
       },
@@ -1392,7 +1402,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_resumeNotificationsAndRefresh());
-      unawaited(_syncStarsInBackground());
+      unawaited(_syncStarsInBackground(StarSyncTrigger.resume));
     }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
@@ -1415,19 +1425,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _ensureStarSyncLoaded() async {
     try {
-      await (_starSyncLoad ??= _starSyncEngine.load());
+      await (_starSyncLoad ??= () async {
+        await _starSyncEngine.load();
+        if (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive) {
+          try {
+            _starSyncGoogleEmail = await _starSyncGoogleAuth.restore();
+          } on Object catch (error, stackTrace) {
+            developer.log('Failed to restore Google sign-in',
+                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          }
+        }
+      }());
     } on Object {
       _starSyncLoad = null;
       rethrow;
     }
   }
 
-  Future<void> _syncStarsInBackground() async {
+  Future<void> _syncStarsInBackground([
+    StarSyncTrigger trigger = StarSyncTrigger.startup,
+  ]) async {
     if (!_appSettingsLoaded || !_secureStorageAccessAllowed) return;
     try {
       await _ensureStarSyncLoaded();
       if (!_canSyncStars) return;
-      await _starSyncEngine.syncNow();
+      await _starSyncEngine.syncNow(trigger: trigger);
     } on Object catch (error, stackTrace) {
       developer.log('Failed to sync message stars',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -1437,6 +1459,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _scheduleStarSync() {
     if (!_canSyncStars) return;
     _starSyncEngine.scheduleSync(
+      trigger: StarSyncTrigger.localChange,
       shouldSync: () => _canSyncStars,
     );
   }
@@ -2072,37 +2095,39 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String password,
   }) async {
     try {
-      final credentials = await saveGakujoLoginCredentials(
-        store: _appSettingsStore,
-        loginId: loginId,
-        password: password,
-      );
-      TextInput.finishAutofillContext(shouldSave: true);
-      if (!mounted) {
-        return false;
-      }
-      setState(() {
-        _startupPlaceholderFeatureFlags.remove(
+      return await _starSyncEngine.runAccountChange(() async {
+        final credentials = await saveGakujoLoginCredentials(
+          store: _appSettingsStore,
+          loginId: loginId,
+          password: password,
+        );
+        TextInput.finishAutofillContext(shouldSave: true);
+        if (!mounted) {
+          return false;
+        }
+        setState(() {
+          _startupPlaceholderFeatureFlags.remove(
+            GakujoFeatureFlag.loginAutofill,
+          );
+          _appSettings = _appSettings.copyWith(
+            loginCredentials: credentials,
+            disabledFeatureFlags: {
+              for (final flag in _appSettings.disabledFeatureFlags)
+                if (flag != GakujoFeatureFlag.loginAutofill) flag,
+            },
+          );
+        });
+        await _syncLocalSettingsMirror(_appSettings);
+        if (!mounted) {
+          return false;
+        }
+        _showSnackBar('ログイン情報を保存しました');
+        await _applyFeatureFlagRuntimeState(
           GakujoFeatureFlag.loginAutofill,
+          enabled: true,
         );
-        _appSettings = _appSettings.copyWith(
-          loginCredentials: credentials,
-          disabledFeatureFlags: {
-            for (final flag in _appSettings.disabledFeatureFlags)
-              if (flag != GakujoFeatureFlag.loginAutofill) flag,
-          },
-        );
+        return true;
       });
-      await _syncLocalSettingsMirror(_appSettings);
-      if (!mounted) {
-        return false;
-      }
-      _showSnackBar('ログイン情報を保存しました');
-      await _applyFeatureFlagRuntimeState(
-        GakujoFeatureFlag.loginAutofill,
-        enabled: true,
-      );
-      return true;
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to save login credentials',
@@ -2276,25 +2301,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         },
                         onClear: () async {
                           try {
-                            try {
-                              await _appSettingsStore.clearLoginCredentials();
-                            } finally {
+                            await _starSyncEngine.runAccountChange(() async {
                               try {
-                                await _applyFeatureFlagRuntimeState(
-                                  GakujoFeatureFlag.loginAutofill,
-                                  enabled: false,
-                                );
+                                await _appSettingsStore.clearLoginCredentials();
                               } finally {
-                                TextInput.finishAutofillContext(shouldSave: false);
-                                if (mounted) {
-                                  setState(() {
-                                    _appSettings = _appSettings.copyWith(
-                                      loginCredentials: null,
-                                    );
-                                  });
+                                try {
+                                  await _applyFeatureFlagRuntimeState(
+                                    GakujoFeatureFlag.loginAutofill,
+                                    enabled: false,
+                                  );
+                                } finally {
+                                  TextInput.finishAutofillContext(shouldSave: false);
+                                  if (mounted) {
+                                    setState(() {
+                                      _appSettings = _appSettings.copyWith(
+                                        loginCredentials: null,
+                                      );
+                                    });
+                                  }
                                 }
                               }
-                            }
+                            });
                             if (!mounted) return;
                             if (!dialogContext.mounted) {
                               return;
@@ -2626,14 +2653,59 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     icon: Icons.sync,
                     child: StarSyncSection(
                       status: _starSyncEngine.status,
-                      onSetUp: (config, passphrase) async {
+                      googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
+                      isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
+                      googleEmail: () => _starSyncGoogleEmail,
+                      onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                        _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
+                        try {
+                          return await _starSyncEngine.setUpWithPairing(
+                            const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+                            clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                          );
+                        } on Object {
+                          if (!_starSyncEngine.status.value.enabled) {
+                            await _starSyncGoogleAuth.signOut();
+                            _starSyncGoogleEmail = null;
+                          }
+                          rethrow;
+                        }
+                      },
+                      onGoogleSignOut: () async {
+                        await _starSyncGoogleAuth.signOut();
+                        _starSyncGoogleEmail = null;
+                      },
+                      onGoogleReSignIn: () async {
+                        _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
+                        if (mounted) setState(() {});
+                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                      },
+                      onLocalStarCount: _starSyncEngine.localStarCount,
+                      onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
+                      onRequireAccount: _starSyncEngine.requireAccount,
+                      onAccountGeneration: () => _starSyncEngine.accountGeneration,
+                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
+                          _starSyncEngine.setUpWithPairing(
+                            const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+                            resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                          ),
+                      onJoinWithCode: (code, {required clearLocalStars, required expectedAccount, required expectedGeneration}) => _starSyncEngine.joinWithPairingCode(
+                        const StarSyncConfig(backend: StarSyncBackend.googleDrive), code,
+                        clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                      ),
+                      onPairingCode: _starSyncEngine.pairingCode,
+                      onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
+                      onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
+                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         await _ensureStarSyncLoaded();
-                        await _starSyncEngine.setUp(config, passphrase);
+                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
                       },
                       onSyncNow: () async {
                         await _ensureStarSyncLoaded();
-                        await _starSyncEngine.syncNow();
+                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
+                      onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
+                      onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
                       onChangePassphrase: (current, next) async {
                         await _ensureStarSyncLoaded();
                         await _starSyncEngine.changePassphrase(current, next);
@@ -2648,9 +2720,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onDisable: ({deleteOwnRemoteFile = false}) async {
                         await _ensureStarSyncLoaded();
+                        final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
                         await _starSyncEngine.disable(
                           deleteOwnRemoteFile: deleteOwnRemoteFile,
                         );
+                        if (google) {
+                          await _starSyncGoogleAuth.signOut();
+                          _starSyncGoogleEmail = null;
+                        }
                       },
                       onReset: (passphrase) async {
                         await _ensureStarSyncLoaded();
@@ -3405,8 +3482,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     Future<void> clearAll() async {
-      if (_starSyncLoad != null) await _ensureStarSyncLoaded();
-      await _starSyncEngine.disable();
+      try {
+        await _ensureStarSyncLoaded();
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to load star sync before clearing data',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+      try {
+        await _starSyncEngine.disable();
+      } finally {
+        try {
+          await _starSyncGoogleAuth.signOut();
+          _starSyncGoogleEmail = null;
+        } on Object catch (error, stackTrace) {
+          developer.log('Failed to sign out of Google while clearing data',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        }
+      }
       await Future.wait([
         _downloadHistoryStore.clear(),
         _downloadHistoryStore.clearFailedDownloads(),
@@ -5648,6 +5740,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
+    if (!enabled && flag == GakujoFeatureFlag.messageStars) {
+      _starSyncEngine.pauseTimers();
+    }
     if (!enabled && flag == GakujoFeatureFlag.gpaDisplay && mounted) {
       setState(() {
         _reportedGpa = null;
@@ -6538,7 +6633,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await SecureStorageFactory.resetStorage();
+      await _starSyncEngine.runAccountChange(() async {
+        await _starSyncEngine.resetInMemory();
+        _starSyncLoad = null;
+        try {
+          await _starSyncGoogleAuth.signOut();
+        } on Object catch (error, stackTrace) {
+          developer.log('Failed to sign out of Google',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        }
+        await SecureStorageFactory.resetStorage();
+        _appSettings = _appSettings.copyWith(loginCredentials: null);
+        _starSyncLoad = null;
+      });
       await _localPrefsStore.clear();
       await _applyFeatureFlagRuntimeState(
         GakujoFeatureFlag.loginAutofill,
