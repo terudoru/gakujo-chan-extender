@@ -138,6 +138,7 @@ class StarSyncState {
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
+    this.pendingApply = false,
     Map<String, String>? pendingLocalClear,
     this.keyringEtag,
     this.pendingLocalChange = false,
@@ -163,6 +164,7 @@ class StarSyncState {
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
+  bool pendingApply;
   Map<String, String> pendingLocalClear;
   String? keyringEtag;
   bool pendingLocalChange;
@@ -188,6 +190,7 @@ class StarSyncState {
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
+    'pendingApply': pendingApply,
     'pendingLocalClear': pendingLocalClear,
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
@@ -224,6 +227,7 @@ class StarSyncState {
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
+      pendingApply: json['pendingApply'] as bool? ?? false,
       pendingLocalClear: {
         if (json['pendingLocalClear'] is Map)
           for (final entry in (json['pendingLocalClear'] as Map).entries)
@@ -310,16 +314,30 @@ class StarSyncEngine {
   Future<T> runAccountChange<T>(Future<T> Function() change) =>
       _queue.runExclusive(() async {
         _accountGeneration++;
+        final state = _config == null ? null : _state;
+        final wasReviewRequired = state?.localReviewRequired ?? false;
+        if (state != null) {
+          state.localReviewRequired = true;
+          try {
+            await _saveState();
+          } on Object {
+            state.localReviewRequired = wasReviewRequired;
+            rethrow;
+          }
+        }
         try {
           return await change();
         } finally {
-          final state = _state;
-          final account = _currentAccount();
-          if (_config != null &&
-              state != null &&
-              (account == null || account != state.boundAccount)) {
-            state.localReviewRequired = true;
-            await _saveState();
+          if (state != null &&
+              !wasReviewRequired &&
+              _currentAccount() != null &&
+              _currentAccount() == state.boundAccount) {
+            state.localReviewRequired = false;
+            try {
+              await _saveState();
+            } on Object {
+              state.localReviewRequired = true;
+            }
           }
         }
       });
@@ -1042,6 +1060,34 @@ class StarSyncEngine {
     _publish(syncing: true);
     final transport = _transportFactory(config);
     try {
+      var recoveredChange = false;
+      if (state.pendingApply) {
+        recoveredChange = await activityStore.transformStarredMessages<bool>((
+          current,
+        ) async {
+          if (_currentAccount() != state.boundAccount) {
+            throw const _AccountChanged();
+          }
+          final next = applyStarSyncStateToLocal(
+            state: state.records,
+            local: current,
+          );
+          return (
+            next: next,
+            result:
+                jsonEncode(current.map((e) => e.toJson()).toList()) !=
+                jsonEncode(next.map((e) => e.toJson()).toList()),
+          );
+        });
+        if (recoveredChange) onLocalStarsChanged?.call();
+        state.pendingApply = false;
+        try {
+          await _saveState();
+        } on Object {
+          state.pendingApply = true;
+          rethrow;
+        }
+      }
       final keyEntries = await transport.list('stars');
       final matches = keyEntries.where((entry) => entry.path == _keyringPath);
       if (matches.isEmpty) throw StateError('missing keyring');
@@ -1193,6 +1239,22 @@ class StarSyncEngine {
           state: mergedRecords,
           local: current,
         );
+        for (final record in mergedRecords.values) {
+          clock = max(clock, record.clock);
+        }
+        final previousRecords = state.records;
+        final previousClock = state.clock;
+        state.records = mergedRecords;
+        state.clock = clock;
+        state.pendingApply = true;
+        try {
+          await _saveState();
+        } on Object {
+          state.records = previousRecords;
+          state.clock = previousClock;
+          state.pendingApply = false;
+          rethrow;
+        }
         return (
           next: next,
           result:
@@ -1200,12 +1262,14 @@ class StarSyncEngine {
               jsonEncode(next.map((e) => e.toJson()).toList()),
         );
       });
-      for (final record in mergedRecords.values) {
-        clock = max(clock, record.clock);
-      }
-      state.records = mergedRecords;
-      state.clock = clock;
       if (changed) onLocalStarsChanged?.call();
+      state.pendingApply = false;
+      try {
+        await _saveState();
+      } on Object {
+        state.pendingApply = true;
+        rethrow;
+      }
       state.remoteCache = caches;
       state.pendingBulkReplace = false;
       await _saveState();
@@ -1240,7 +1304,7 @@ class StarSyncEngine {
       state.cooldownUntil = null;
       await _saveState();
       return StarSyncResult(
-        localChanged: changed,
+        localChanged: changed || recoveredChange,
         skippedFiles: skipped,
         devices: entries.length,
       );
