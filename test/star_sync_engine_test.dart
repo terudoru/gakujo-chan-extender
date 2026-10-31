@@ -993,46 +993,49 @@ void main() {
     expect(b.status.value.status, StarSyncStatus.ok);
   });
 
-  test('old-key files are removed only after a matching keyring check', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    );
-    await engine.setUp(config, 'pass');
-    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
-    final old = createStarSyncPairingKeyring();
-    const path = 'stars/devices/old';
-    remote.files[path] = await encryptStarSyncFile(
-      dataKey: starSyncKeyFromBytes(old.dataKey),
-      keyId: old.keyring.keyId,
-      deviceId: 'old',
-      plaintext: [],
-    );
-    final ownPath = 'stars/devices/${state['deviceId']}';
-    final oldOwnFile = await encryptStarSyncFile(
-      dataKey: starSyncKeyFromBytes(old.dataKey),
-      keyId: old.keyring.keyId,
-      deviceId: state['deviceId'] as String,
-      plaintext: [],
-    );
-    remote.files[ownPath] = oldOwnFile;
-    final currentKeyring = remote.files['stars/keyring.json']!;
-    remote.files['stars/keyring.json'] = utf8.encode(
-      jsonEncode(old.keyring.toJson()),
-    );
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
-    expect(remote.files.containsKey(path), isTrue);
-    remote.files['stars/keyring.json'] = currentKeyring;
-    expect((await engine.syncNow()).skippedFiles, 0);
-    expect(remote.files.containsKey(path), isFalse);
-    expect(remote.files[ownPath], oldOwnFile);
-  });
+  test(
+    'old-key files are removed only after a matching keyring check',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      await engine.setUp(config, 'pass');
+      final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+      final old = createStarSyncPairingKeyring();
+      const path = 'stars/devices/old';
+      remote.files[path] = await encryptStarSyncFile(
+        dataKey: starSyncKeyFromBytes(old.dataKey),
+        keyId: old.keyring.keyId,
+        deviceId: 'old',
+        plaintext: [],
+      );
+      final ownPath = 'stars/devices/${state['deviceId']}';
+      final oldOwnFile = await encryptStarSyncFile(
+        dataKey: starSyncKeyFromBytes(old.dataKey),
+        keyId: old.keyring.keyId,
+        deviceId: state['deviceId'] as String,
+        plaintext: [],
+      );
+      remote.files[ownPath] = oldOwnFile;
+      final currentKeyring = remote.files['stars/keyring.json']!;
+      remote.files['stars/keyring.json'] = utf8.encode(
+        jsonEncode(old.keyring.toJson()),
+      );
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
+      expect(remote.files.containsKey(path), isTrue);
+      remote.files['stars/keyring.json'] = currentKeyring;
+      expect((await engine.syncNow()).skippedFiles, 0);
+      expect(remote.files.containsKey(path), isFalse);
+      expect(remote.files[ownPath], oldOwnFile);
+    },
+  );
 
   test('partial sync keeps unreadable files and clears its warning', () async {
     final remote = _Transport();

@@ -199,7 +199,7 @@ void main() {
 
   test('cap trimmed absences are retained, newer absences are deleted', () {
     final items = List.generate(300, (i) => local(i, at: now));
-    final old = record(900, at: now);
+    final old = record(900, at: now.subtract(const Duration(seconds: 1)));
     final newer = record(901, at: now.add(const Duration(seconds: 1)));
     final result = reconcileLocalStars(
       local: items,

@@ -166,7 +166,10 @@ void main() {
 
       final first = make();
       remote.failDevicePutOnce = true;
-      expect(await first.setUpWithPairing(config), StarSyncPairingSetup.created);
+      expect(
+        await first.setUpWithPairing(config),
+        StarSyncPairingSetup.created,
+      );
       expect(first.status.value.enabled, isTrue);
       expect(first.status.value.status, StarSyncStatus.error);
       expect(first.status.value.lastError, isNotNull);
