@@ -202,7 +202,8 @@ void main() {
     await engine.syncNow(trigger: StarSyncTrigger.resume);
     expect(remote.lists, lists + 2);
     expect(delays.single.inMilliseconds, inInclusiveRange(0, 20000));
-    final saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    final saved =
+        jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     saved['backgroundDate'] = '2026-11-1';
     saved['backgroundCount'] = 120;
     storage.values[starSyncStateKey] = jsonEncode(saved);
@@ -216,34 +217,51 @@ void main() {
     expect(remote.lists, lists + 2);
   });
 
-  test('server cooldown doubles, preserves local work and resets on success', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    var now = DateTime(2026, 11, 1, 12);
-    final engine = StarSyncEngine(
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-      now: () => now,
-      delay: (_) async {},
-    );
-    await engine.setUp(config, 'correct horse');
-    remote.serverFailures = 2;
-    await expectLater(engine.syncNow(), throwsA(isA<StarSyncTransportException>()));
-    expect(engine.status.value.cooldownUntil, now.add(const Duration(minutes: 1)));
-    await engine.syncNow(trigger: StarSyncTrigger.localChange);
-    var saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
-    expect(saved['pendingLocalChange'], isTrue);
-    await expectLater(engine.syncNow(), throwsA(isA<StarSyncTransportException>()));
-    expect(engine.status.value.cooldownUntil, now.add(const Duration(minutes: 2)));
-    now = now.add(const Duration(minutes: 2));
-    await engine.syncNow(trigger: StarSyncTrigger.resume);
-    saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
-    expect(saved['pendingLocalChange'], isFalse);
-    expect(saved['serverFailures'], 0);
-    expect(engine.status.value.cooldownUntil, isNull);
-  });
+  test(
+    'server cooldown doubles, preserves local work and resets on success',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      var now = DateTime(2026, 11, 1, 12);
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        now: () => now,
+        delay: (_) async {},
+      );
+      await engine.setUp(config, 'correct horse');
+      remote.serverFailures = 2;
+      await expectLater(
+        engine.syncNow(),
+        throwsA(isA<StarSyncTransportException>()),
+      );
+      expect(
+        engine.status.value.cooldownUntil,
+        now.add(const Duration(minutes: 1)),
+      );
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      var saved =
+          jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+      expect(saved['pendingLocalChange'], isTrue);
+      await expectLater(
+        engine.syncNow(),
+        throwsA(isA<StarSyncTransportException>()),
+      );
+      expect(
+        engine.status.value.cooldownUntil,
+        now.add(const Duration(minutes: 2)),
+      );
+      now = now.add(const Duration(minutes: 2));
+      await engine.syncNow(trigger: StarSyncTrigger.resume);
+      saved =
+          jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+      expect(saved['pendingLocalChange'], isFalse);
+      expect(saved['serverFailures'], 0);
+      expect(engine.status.value.cooldownUntil, isNull);
+    },
+  );
 
   test('local change wakes a delayed startup sync', () async {
     final remote = _Transport();
