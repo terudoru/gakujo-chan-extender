@@ -75,6 +75,7 @@ import 'two_factor_autofill_script.dart';
 import 'two_factor_secret_store.dart';
 import 'web_view_service.dart';
 import 'windows_webview_authenticated_download.dart';
+import 'widgets/app_about_section.dart';
 import 'widgets/app_data_sections.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
@@ -2466,6 +2467,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     },
                     onCheckDownloadDestination: _checkDownloadDestinationHealth,
                     onCopyDiagnostics: _copyDiagnosticInfo,
+                  ),
+                ),
+                SettingsExpansionSection(
+                  title: 'このアプリについて',
+                  icon: Icons.info_outline,
+                  child: AppAboutSection(
+                    onOpenUrl: (url) => unawaited(
+                      launchUrl(url, mode: LaunchMode.externalApplication),
+                    ),
                   ),
                 ),
               ];

@@ -1,12 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'src/app_licenses.dart';
 import 'src/debug_launch_config.dart';
 import 'src/gakujo_web_app.dart';
 import 'src/web_view_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  registerBundledLicenses();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
     await configureWindowsWebViewEnvironment();
   }
