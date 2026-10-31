@@ -75,6 +75,7 @@ import 'widgets/app_data_sections.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/settings_sections.dart';
+import 'widgets/star_sync_section.dart';
 
 export 'widgets/app_data_sections.dart';
 export 'widgets/gakujo_toolbar_actions.dart';
@@ -2209,6 +2210,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     ModalRoute<void>? dialogRoute;
     try {
       await _prepareSettingsDialogInput();
+      if (_secureStorageAccessAllowed && _messageStarsEnabled) {
+        await _ensureStarSyncLoaded();
+      }
       if (!mounted) {
         return;
       }
@@ -2619,6 +2623,63 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     onScheduleIntegration: _showScheduleIntegrationDialog,
                   ),
                 ),
+                if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
+                  SettingsExpansionSection(
+                    title: 'スターの端末間同期',
+                    icon: Icons.sync,
+                    child: StarSyncSection(
+                      status: _starSyncEngine.status,
+                      onSetUp: (config, passphrase) async {
+                        await _ensureStarSyncLoaded();
+                        try {
+                          await _starSyncEngine.setUp(config, passphrase);
+                        } finally {
+                          if (_canSyncStars) await _refreshMessageStars();
+                        }
+                      },
+                      onSyncNow: () async {
+                        await _ensureStarSyncLoaded();
+                        final result = await _starSyncEngine.syncNow();
+                        if (result.localChanged && _canSyncStars) {
+                          await _refreshMessageStars();
+                        }
+                      },
+                      onChangePassphrase: (current, next) async {
+                        await _ensureStarSyncLoaded();
+                        await _starSyncEngine.changePassphrase(current, next);
+                      },
+                      onListDevices: () async {
+                        await _ensureStarSyncLoaded();
+                        return _starSyncEngine.listDevices();
+                      },
+                      onDeleteDevice: (id) async {
+                        await _ensureStarSyncLoaded();
+                        await _starSyncEngine.deleteDeviceFile(id);
+                      },
+                      onDisable: ({deleteOwnRemoteFile = false}) async {
+                        await _ensureStarSyncLoaded();
+                        await _starSyncEngine.disable(
+                          deleteOwnRemoteFile: deleteOwnRemoteFile,
+                        );
+                      },
+                      onReset: (passphrase) async {
+                        await _ensureStarSyncLoaded();
+                        try {
+                          await _starSyncEngine.resetRemote(passphrase);
+                        } finally {
+                          if (_canSyncStars) await _refreshMessageStars();
+                        }
+                      },
+                      onRejoin: (passphrase) async {
+                        await _ensureStarSyncLoaded();
+                        try {
+                          await _starSyncEngine.rejoin(passphrase);
+                        } finally {
+                          if (_canSyncStars) await _refreshMessageStars();
+                        }
+                      },
+                    ),
+                  ),
                 SettingsExpansionSection(
                   title: 'バックアップ/診断',
                   icon: Icons.health_and_safety_outlined,
