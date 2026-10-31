@@ -16,8 +16,10 @@ void main() {
     ]) {
       final json = created.keyring.toJson();
       (json['kdf'] as Map<String, Object?>)[entry.$1] = entry.$2;
-      expect(() => StarSyncKeyring.fromJson(json),
-          throwsA(isA<StarSyncFormatException>()));
+      expect(
+        () => StarSyncKeyring.fromJson(json),
+        throwsA(isA<StarSyncFormatException>()),
+      );
     }
   });
 

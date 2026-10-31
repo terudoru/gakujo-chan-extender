@@ -241,21 +241,40 @@ void main() {
         transportFactory: (_) => remote,
         kdfParams: kdf,
       );
-      await activity.upsertStarredMessage(GakujoStarredMessage(
-        keijitype: '1', genrecd: '2', seqNo: '3', title: 'kept',
-        starredAt: DateTime.utc(2026),
-      ));
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'kept',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
       remote.listStarted = Completer<void>();
       remote.listRelease = Completer<void>();
       final started = remote.listStarted!;
       final release = remote.listRelease!;
       final setup = pairing
-          ? engine.setUpWithPairing(config, resetExisting: true, clearLocalStars: true)
-          : engine.setUp(config, 'pass', resetExisting: true, clearLocalStars: true);
+          ? engine.setUpWithPairing(
+              config,
+              resetExisting: true,
+              clearLocalStars: true,
+            )
+          : engine.setUp(
+              config,
+              'pass',
+              resetExisting: true,
+              clearLocalStars: true,
+            );
       await started.future;
-      await engine.runAccountChange(() async { account = 'other'; });
+      await engine.runAccountChange(() async {
+        account = 'other';
+      });
       release.complete();
-      await expectLater(setup, throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(
+        setup,
+        throwsA(isA<StarSyncAccountMismatchException>()),
+      );
       expect((await activity.loadStarredMessages()).single.title, 'kept');
       expect(engine.status.value.enabled, isFalse);
       expect(storage.values.containsKey(starSyncStateKey), isFalse);
@@ -276,10 +295,15 @@ void main() {
     final code = await a.pairingCode();
     var account = 'student';
     final activity = GakujoActivityStore(secureStorage: second);
-    await activity.upsertStarredMessage(GakujoStarredMessage(
-      keijitype: '1', genrecd: '2', seqNo: '3', title: 'kept',
-      starredAt: DateTime.utc(2026),
-    ));
+    await activity.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'kept',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
     final b = StarSyncEngine(
       loginId: () => account,
       activityStore: activity,
@@ -292,9 +316,14 @@ void main() {
     final release = remote.listRelease!;
     final joining = b.joinWithPairingCode(config, code, clearLocalStars: true);
     await started.future;
-    await b.runAccountChange(() async { account = 'other'; });
+    await b.runAccountChange(() async {
+      account = 'other';
+    });
     release.complete();
-    await expectLater(joining, throwsA(isA<StarSyncAccountMismatchException>()));
+    await expectLater(
+      joining,
+      throwsA(isA<StarSyncAccountMismatchException>()),
+    );
     expect((await activity.loadStarredMessages()).single.title, 'kept');
     expect(b.status.value.enabled, isFalse);
   });
@@ -319,35 +348,42 @@ void main() {
     expect(storage.values.containsKey(starSyncConfigKey), isTrue);
   });
 
-  test('feature gate prevents cooldown retry and preserves pending change', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    var allowed = true;
-    var now = DateTime.utc(2026);
-    _TestTimer? timer;
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      canSync: () => allowed,
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-      now: () => now,
-      timerFactory: (_, callback) => timer = _TestTimer(callback),
-    );
-    await engine.setUp(config, 'pass');
-    remote.serverFailures = 1;
-    await expectLater(engine.syncNow(trigger: StarSyncTrigger.localChange),
-        throwsA(isA<StarSyncTransportException>()));
-    final lists = remote.lists;
-    allowed = false;
-    now = now.add(const Duration(minutes: 3));
-    timer!.fire();
-    await Future<void>.delayed(Duration.zero);
-    expect(remote.lists, lists);
-    final state = StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!));
-    expect(state.pendingLocalChange, isTrue);
-  });
+  test(
+    'feature gate prevents cooldown retry and preserves pending change',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      var allowed = true;
+      var now = DateTime.utc(2026);
+      _TestTimer? timer;
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        canSync: () => allowed,
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        now: () => now,
+        timerFactory: (_, callback) => timer = _TestTimer(callback),
+      );
+      await engine.setUp(config, 'pass');
+      remote.serverFailures = 1;
+      await expectLater(
+        engine.syncNow(trigger: StarSyncTrigger.localChange),
+        throwsA(isA<StarSyncTransportException>()),
+      );
+      final lists = remote.lists;
+      allowed = false;
+      now = now.add(const Duration(minutes: 3));
+      timer!.fire();
+      await Future<void>.delayed(Duration.zero);
+      expect(remote.lists, lists);
+      final state = StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      );
+      expect(state.pendingLocalChange, isTrue);
+    },
+  );
 
   test('cap eviction stays deleted when an old device returns', () async {
     final remote = _Transport();
@@ -361,7 +397,10 @@ void main() {
       kdfParams: kdf,
     );
     GakujoStarredMessage star(int id) => GakujoStarredMessage(
-      keijitype: '1', genrecd: '2', seqNo: '$id', title: 'star',
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '$id',
+      title: 'star',
       starredAt: DateTime.utc(2026).add(Duration(seconds: id)),
     );
     final a = make(first);
@@ -370,14 +409,21 @@ void main() {
     await a.activityStore.upsertStarredMessage(star(0));
     await a.syncNow();
     await b.setUp(config, 'pass');
-    await b.activityStore.replaceStarredMessages(List.generate(300, (i) => star(i + 1)));
+    await b.activityStore.replaceStarredMessages(
+      List.generate(300, (i) => star(i + 1)),
+    );
     await b.syncNow();
-    final state = StarSyncState.fromJson(jsonDecode(second.values[starSyncStateKey]!));
+    final state = StarSyncState.fromJson(
+      jsonDecode(second.values[starSyncStateKey]!),
+    );
     expect(state.records['1|2|0']!.starred, isFalse);
     expect(state.records['1|2|0']!.title, isEmpty);
     await b.activityStore.removeStarredMessage('1|2|300');
     await b.syncNow();
-    expect((await b.activityStore.loadStarredMessages()).any((s) => s.id == '1|2|0'), isFalse);
+    expect(
+      (await b.activityStore.loadStarredMessages()).any((s) => s.id == '1|2|0'),
+      isFalse,
+    );
   });
 
   test('all setup paths require an account before any work', () async {

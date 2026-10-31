@@ -713,7 +713,8 @@ class StarSyncEngine {
     if (_disposed || config == null || state == null) {
       return const StarSyncResult();
     }
-    if ((trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume) &&
+    if ((trigger == StarSyncTrigger.startup ||
+            trigger == StarSyncTrigger.resume) &&
         canSync?.call() == false) {
       return const StarSyncResult();
     }
@@ -934,11 +935,12 @@ class StarSyncEngine {
           ...documents.map((e) => e.records),
         ], now: now);
         clock = reconciled.clock;
-        final live = mergedRecords.values.where((record) => record.starred).toList()
-          ..sort((a, b) {
-            final date = b.starredAt.compareTo(a.starredAt);
-            return date != 0 ? date : a.id.compareTo(b.id);
-          });
+        final live =
+            mergedRecords.values.where((record) => record.starred).toList()
+              ..sort((a, b) {
+                final date = b.starredAt.compareTo(a.starredAt);
+                return date != 0 ? date : a.id.compareTo(b.id);
+              });
         for (final record in live.skip(starSyncMaxStars)) {
           mergedRecords[record.id] = record.copyWith(
             starred: false,
@@ -1067,15 +1069,21 @@ class StarSyncEngine {
       delay = Duration.zero;
     }
     if (trigger == StarSyncTrigger.localChange) {
-      unawaited(_queue.run(() async {
-        if (_state != null) {
-          _state!.pendingLocalChange = true;
-          await _saveState();
-        }
-      }).catchError((Object _) {}));
+      unawaited(
+        _queue
+            .run(() async {
+              if (_state != null) {
+                _state!.pendingLocalChange = true;
+                await _saveState();
+              }
+            })
+            .catchError((Object _) {}),
+      );
     }
     _timer = _timerFactory(delay, () {
-      if (canSync?.call() == false || (shouldSync != null && !shouldSync())) return;
+      if (canSync?.call() == false || (shouldSync != null && !shouldSync())) {
+        return;
+      }
       unawaited(
         syncNow(trigger: trigger)
             .then<void>((result) {

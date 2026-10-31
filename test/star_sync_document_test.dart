@@ -112,17 +112,25 @@ void main() {
     expect(merged[old.id]!.title, isEmpty);
     final records = {
       for (var i = 0; i < 1005; i++)
-        record(i, clock: i, starred: false).id:
-            record(i, clock: i, starred: false),
+        record(i, clock: i, starred: false).id: record(
+          i,
+          clock: i,
+          starred: false,
+        ),
     };
     final kept = mergeStarSyncRecords([records], now: now);
     expect(kept.length, 1000);
     expect(kept.containsKey('1|2|4'), isFalse);
     expect(kept.containsKey('1|2|5'), isTrue);
     expect(kept.values.every((r) => r.title.isEmpty), isTrue);
-    expect(jsonRecords(kept), jsonRecords(mergeStarSyncRecords([
-      Map.fromEntries(records.entries.toList().reversed),
-    ], now: now.add(const Duration(days: 180)))));
+    expect(
+      jsonRecords(kept),
+      jsonRecords(
+        mergeStarSyncRecords([
+          Map.fromEntries(records.entries.toList().reversed),
+        ], now: now.add(const Duration(days: 180))),
+      ),
+    );
   });
 
   test('merge preserves all live records for causal cap eviction', () {
