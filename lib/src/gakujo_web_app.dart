@@ -6803,8 +6803,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+              // The resume trigger keeps the 2-minute and daily throttles;
+              // draft syncs are scheduled only by real draft writes.
               _collectionSyncScheduler.pageLoaded();
-              _scheduleDraftSync();
             }
             await _applyDesktopZoomIfAllowed();
             if (!stillCurrent()) {
