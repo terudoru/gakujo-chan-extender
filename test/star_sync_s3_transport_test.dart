@@ -71,6 +71,8 @@ void main() {
           '<ListBucketResult><IsTruncated>${!second}</IsTruncated><Contents><Key>stars/${second ? 'two' : 'one'}</Key><ETag>&quot;tag&quot;</ETag><Size>2</Size></Contents>${second ? '' : '<NextContinuationToken>a+b</NextContinuationToken>'}</ListBucketResult>',
         );
       } else if (request.method == 'PUT') {
+        expect(request.headers.contentLength, 1);
+        expect(request.headers.value('transfer-encoding'), isNull);
         expect(request.headers.value('if-none-match'), '*');
         request.response.statusCode = 412;
       } else {

@@ -125,6 +125,7 @@ class StarSyncDocument {
     required DateTime writtenAt,
     required this.clock,
     required Map<String, StarSyncRecord> records,
+    this.account,
   }) : writtenAt = writtenAt.toUtc(),
        records = Map.unmodifiable(records);
   static const int schema = 1;
@@ -132,12 +133,14 @@ class StarSyncDocument {
   final DateTime writtenAt;
   final int clock;
   final Map<String, StarSyncRecord> records;
+  final String? account;
 
   Map<String, Object?> toJson() => {
     'schema': schema,
     'deviceId': deviceId,
     'writtenAt': writtenAt.toIso8601String(),
     'clock': clock,
+    if (account != null) 'account': account,
     'stars': records.map((id, record) => MapEntry(id, record.toJson())),
   };
 
@@ -149,7 +152,8 @@ class StarSyncDocument {
         value['writtenAt'] is! String ||
         value['clock'] is! int ||
         (value['clock'] as int) < 0 ||
-        value['stars'] is! Map) {
+        value['stars'] is! Map ||
+        (value['account'] != null && value['account'] is! String)) {
       throw const StarSyncFormatException();
     }
     final writtenAt = DateTime.tryParse(value['writtenAt'] as String);
@@ -168,6 +172,7 @@ class StarSyncDocument {
       writtenAt: writtenAt,
       clock: value['clock'] as int,
       records: records,
+      account: value['account'] as String?,
     );
   }
 

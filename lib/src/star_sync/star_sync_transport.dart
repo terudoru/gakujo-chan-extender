@@ -101,6 +101,7 @@ Future<StarSyncHttpResponse> starSyncRequest(
     final request = await client.openUrl(method, uri);
     request.followRedirects = false;
     headers.forEach((name, value) => request.headers.set(name, value));
+    request.contentLength = body.length;
     if (body.isNotEmpty) request.add(body);
     final response = await request.close();
     final bytes = <int>[];

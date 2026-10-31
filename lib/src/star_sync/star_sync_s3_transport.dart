@@ -189,7 +189,7 @@ class StarSyncS3Transport implements StarSyncTransport {
           'list-type': '2',
           'prefix': prefix,
           'delimiter': '/',
-          if (token != null) 'continuation-token': token,
+          'continuation-token': ?token,
         },
       );
       if (response.statusCode == 404) return result;

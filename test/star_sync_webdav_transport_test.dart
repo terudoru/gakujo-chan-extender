@@ -41,8 +41,10 @@ void main() {
               'Basic ${base64Encode(utf8.encode('u:p'))}') {
             request.response.statusCode = 401;
           } else if (request.method == 'MKCOL') {
+            expect(path, endsWith('/'));
             request.response.statusCode = 405;
           } else if (request.method == 'PROPFIND') {
+            expect(path, endsWith('/'));
             expect(request.headers.value('depth'), '1');
             final p = prefixed ? 'D:' : '';
             final ns = prefixed ? 'xmlns:D="DAV:"' : 'xmlns="DAV:"';
@@ -51,6 +53,8 @@ void main() {
               '<${p}multistatus $ns><${p}response><${p}href>$base/stars/</${p}href></${p}response><${p}response><${p}href>$base/stars/a%20b</${p}href><${p}propstat><${p}prop><${p}getetag>W/&quot;v1&quot;</${p}getetag><${p}getcontentlength>3</${p}getcontentlength><${p}resourcetype/></${p}prop><${p}status>HTTP/1.1 200 OK</${p}status></${p}propstat></${p}response></${p}multistatus>',
             );
           } else if (request.method == 'PUT') {
+            expect(request.headers.value('transfer-encoding'), isNull);
+            expect(request.headers.contentLength, anyOf(0, 2));
             if (request.headers.value('if-none-match') == '*' &&
                 files.containsKey(path)) {
               request.response.statusCode = 412;

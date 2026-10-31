@@ -694,6 +694,23 @@ class GakujoActivityStore {
     return _enqueue(() => _replaceStarredMessages(entries));
   }
 
+  /// Keeps a star toggled during the network phase.
+  Future<T> transformStarredMessages<T>(
+    Future<({List<GakujoStarredMessage> next, T result})> Function(
+      List<GakujoStarredMessage> current,
+    ) transform,
+  ) {
+    return _enqueue(() async {
+      final current = await _readForBackup(_starredMessagesKey, _readStarredMessages);
+      final transformed = await transform(current);
+      if (jsonEncode(current.map((e) => e.toJson()).toList()) !=
+          jsonEncode(transformed.next.map((e) => e.toJson()).toList())) {
+        await _replaceStarredMessages(transformed.next);
+      }
+      return transformed.result;
+    });
+  }
+
   Future<void> _replaceStarredMessages(List<GakujoStarredMessage> entries) {
     final byId = <String, GakujoStarredMessage>{};
     final sorted = entries.where((entry) => entry.isValid).toList()

@@ -43,10 +43,11 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     String path, {
     Map<String, String> headers = const {},
     List<int> body = const [],
+    bool collection = false,
   }) => starSyncRequest(
     _client,
     method,
-    _url(path),
+    collection ? Uri.parse('${_url(path)}/') : _url(path),
     headers: {..._auth, ...headers},
     body: body,
   );
@@ -55,7 +56,11 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     validateStarSyncPath(path);
     final segments = path.split('/');
     for (var i = 1; i <= segments.length; i++) {
-      final response = await _request('MKCOL', segments.take(i).join('/'));
+      final response = await _request(
+        'MKCOL',
+        segments.take(i).join('/'),
+        collection: true,
+      );
       if (response.statusCode != 405) checkStarSyncStatus(response.statusCode);
     }
   }
@@ -69,6 +74,7 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     final response = await _request(
       'PROPFIND',
       directory,
+      collection: true,
       headers: {'depth': '1', 'content-type': 'application/xml; charset=utf-8'},
       body: utf8.encode(body),
     );
@@ -76,10 +82,11 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     checkStarSyncStatus(response.statusCode);
     try {
       final root = XmlDocument.parse(utf8.decode(response.bytes)).rootElement;
-      if (root.name.local != 'multistatus' || root.name.namespaceUri != _dav)
+      if (root.name.local != 'multistatus' || root.name.namespaceUri != _dav) {
         throw const FormatException();
+      }
       final result = <StarSyncRemoteEntry>[];
-      final target = _url(directory);
+      final target = Uri.parse('${_url(directory)}/');
       final targetSegments = target.pathSegments
           .where((s) => s.isNotEmpty)
           .toList();
@@ -90,15 +97,17 @@ class StarSyncWebDavTransport implements StarSyncTransport {
         if (href.hasAuthority &&
             (href.scheme != target.scheme ||
                 href.host != target.host ||
-                href.port != target.port))
+                href.port != target.port)) {
           continue;
+        }
         final segments = href.pathSegments;
         if (segments.length != targetSegments.length + 1 ||
             !List.generate(
               targetSegments.length,
               (i) => segments[i] == targetSegments[i],
-            ).every((v) => v))
+            ).every((v) => v)) {
           continue;
+        }
         final name = segments.last;
         if (name.isEmpty || name.contains('/')) continue;
         try {
@@ -115,8 +124,9 @@ class StarSyncWebDavTransport implements StarSyncTransport {
           final statuses = _children(propstat, 'status');
           if (statuses.isEmpty ||
               !RegExp(r'^HTTP/\S+\s+200(?:\s|$)')
-                  .hasMatch(statuses.first.innerText.trim()))
+                  .hasMatch(statuses.first.innerText.trim())) {
             continue;
+          }
           for (final prop in _children(propstat, 'prop')) {
             valid = true;
             for (final e in prop.childElements.where(
@@ -139,7 +149,7 @@ class StarSyncWebDavTransport implements StarSyncTransport {
             }
           }
         }
-        if (valid && !collection)
+        if (valid && !collection) {
           result.add(
             StarSyncRemoteEntry(
               path: '$directory/$name',
@@ -148,6 +158,7 @@ class StarSyncWebDavTransport implements StarSyncTransport {
               size: size,
             ),
           );
+        }
       }
       return result;
     } on FormatException {
