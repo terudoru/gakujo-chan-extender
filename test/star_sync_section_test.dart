@@ -10,13 +10,24 @@ import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
 void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
-    Future<void> Function(StarSyncConfig, String, {required bool resetExisting, required bool clearLocalStars})? onSetUp,
+    Future<void> Function(
+      StarSyncConfig,
+      String, {
+      required bool resetExisting,
+      required bool clearLocalStars,
+    })?
+    onSetUp,
     bool googleAvailable = false,
     bool google = false,
-    Future<StarSyncPairingSetup> Function({required bool clearLocalStars})? onGoogleSignIn,
+    Future<StarSyncPairingSetup> Function({required bool clearLocalStars})?
+    onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
     Future<void> Function()? onGoogleReSignIn,
-    Future<StarSyncPairingSetup> Function({required bool resetExisting, required bool clearLocalStars})? onSetUpWithPairing,
+    Future<StarSyncPairingSetup> Function({
+      required bool resetExisting,
+      required bool clearLocalStars,
+    })?
+    onSetUpWithPairing,
     Future<void> Function(String, {required bool clearLocalStars})? onJoin,
   }) => MaterialApp(
     home: Scaffold(
@@ -27,11 +38,16 @@ void main() {
           isGoogleDrive: () => google,
           googleEmail: () => google ? 'user@example.com' : null,
           onGoogleSignIn:
-              onGoogleSignIn ?? ({required clearLocalStars}) async => StarSyncPairingSetup.created,
+              onGoogleSignIn ??
+              ({required clearLocalStars}) async =>
+                  StarSyncPairingSetup.created,
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onLocalStarCount: onLocalStarCount ?? () async => 0,
-          onSetUpWithPairing: onSetUpWithPairing ?? ({required resetExisting, required clearLocalStars}) async => StarSyncPairingSetup.created,
+          onSetUpWithPairing:
+              onSetUpWithPairing ??
+              ({required resetExisting, required clearLocalStars}) async =>
+                  StarSyncPairingSetup.created,
           onJoinWithCode: onJoin ?? (_, {required clearLocalStars}) async {},
           onPairingCode: () async => encodeStarSyncPairingCode(
             'AAAAAAAAAAAAAAAAAAAAAA',
@@ -39,7 +55,14 @@ void main() {
           ),
           onRejoinWithCode: (_) async {},
           onResetWithPairing: () async => '',
-          onSetUp: onSetUp ?? (_, _, {required resetExisting, required clearLocalStars}) async {},
+          onSetUp:
+              onSetUp ??
+              (
+                _,
+                _, {
+                required resetExisting,
+                required clearLocalStars,
+              }) async {},
           onSyncNow: () async {},
           onChangePassphrase: (_, _) async {},
           onListDevices: () async => <StarSyncDeviceInfo>[],
@@ -93,9 +116,10 @@ void main() {
     await tester.pumpWidget(
       section(
         status,
-        onSetUp: (_, _, {required resetExisting, required clearLocalStars}) async {
-          calls++;
-        },
+        onSetUp:
+            (_, _, {required resetExisting, required clearLocalStars}) async {
+              calls++;
+            },
       ),
     );
     await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
@@ -177,7 +201,8 @@ void main() {
       section(
         status,
         googleAvailable: true,
-        onGoogleSignIn: ({required clearLocalStars}) async => StarSyncPairingSetup.needsPairingCode,
+        onGoogleSignIn: ({required clearLocalStars}) async =>
+            StarSyncPairingSetup.needsPairingCode,
         onJoin: (value, {required clearLocalStars}) async {
           if (mismatch) throw const StarSyncPairingMismatchException();
           joined = value;
@@ -290,15 +315,17 @@ void main() {
       final status = ValueNotifier(const StarSyncStatusSnapshot());
       addTearDown(status.dispose);
       bool? selected;
-      await tester.pumpWidget(section(
-        status,
-        googleAvailable: true,
-        onLocalStarCount: () async => 3,
-        onGoogleSignIn: ({required clearLocalStars}) async {
-          selected = clearLocalStars;
-          return StarSyncPairingSetup.created;
-        },
-      ));
+      await tester.pumpWidget(
+        section(
+          status,
+          googleAvailable: true,
+          onLocalStarCount: () async => 3,
+          onGoogleSignIn: ({required clearLocalStars}) async {
+            selected = clearLocalStars;
+            return StarSyncPairingSetup.created;
+          },
+        ),
+      );
       await tester.tap(find.text('Google ドライブで同期'));
       await tester.pumpAndSettle();
       expect(find.text('この端末のスター（3件）'), findsOneWidget);
@@ -308,23 +335,29 @@ void main() {
     });
   }
 
-  testWidgets('join reset requires confirmation and keeps local choice', (tester) async {
+  testWidgets('join reset requires confirmation and keeps local choice', (
+    tester,
+  ) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     var resets = 0;
     bool? cleared;
-    await tester.pumpWidget(section(
-      status,
-      googleAvailable: true,
-      onLocalStarCount: () async => 1,
-      onGoogleSignIn: ({required clearLocalStars}) async => StarSyncPairingSetup.needsPairingCode,
-      onSetUpWithPairing: ({required resetExisting, required clearLocalStars}) async {
-        expect(resetExisting, isTrue);
-        cleared = clearLocalStars;
-        resets++;
-        return StarSyncPairingSetup.created;
-      },
-    ));
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onLocalStarCount: () async => 1,
+        onGoogleSignIn: ({required clearLocalStars}) async =>
+            StarSyncPairingSetup.needsPairingCode,
+        onSetUpWithPairing:
+            ({required resetExisting, required clearLocalStars}) async {
+              expect(resetExisting, isTrue);
+              cleared = clearLocalStars;
+              resets++;
+              return StarSyncPairingSetup.created;
+            },
+      ),
+    );
     await tester.tap(find.text('Google ドライブで同期'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('空にして始める'));
@@ -345,12 +378,23 @@ void main() {
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot(
-      enabled: true, status: StarSyncStatus.needsGoogleSignIn,
-    ));
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsGoogleSignIn,
+      ),
+    );
     addTearDown(status.dispose);
     var calls = 0;
-    await tester.pumpWidget(section(status, google: true, onGoogleReSignIn: () async { calls++; }));
+    await tester.pumpWidget(
+      section(
+        status,
+        google: true,
+        onGoogleReSignIn: () async {
+          calls++;
+        },
+      ),
+    );
     expect(find.text('Google へのログインが切れました。'), findsOneWidget);
     await tester.tap(find.text('Google に再ログイン'));
     await tester.pump();
@@ -364,5 +408,4 @@ void main() {
     await tester.pumpWidget(section(status));
     expect(find.text('別の端末を追加'), findsNothing);
   });
-
 }
