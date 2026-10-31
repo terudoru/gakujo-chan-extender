@@ -21,10 +21,21 @@ void main() {
       request.response.add(List.filled(5 * 1024 * 1024, 7));
       await request.response.close();
     });
-    final transport = StarSyncS3Transport(config(Uri.parse('http://127.0.0.1:${server.port}')));
+    final transport = StarSyncS3Transport(
+      config(Uri.parse('http://127.0.0.1:${server.port}')),
+    );
     try {
-      await expectLater(transport.get('backup/device'), throwsA(isA<StarSyncTransportException>()));
-      expect((await transport.get('backup/device', maxBytes: 32 * 1024 * 1024))!.bytes.length, 5 * 1024 * 1024);
+      await expectLater(
+        transport.get('backup/device'),
+        throwsA(isA<StarSyncTransportException>()),
+      );
+      expect(
+        (await transport.get(
+          'backup/device',
+          maxBytes: 32 * 1024 * 1024,
+        ))!.bytes.length,
+        5 * 1024 * 1024,
+      );
     } finally {
       transport.close();
       await subscription.cancel();

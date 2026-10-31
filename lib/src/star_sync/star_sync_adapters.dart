@@ -16,11 +16,15 @@ const starSyncPortableSettingKeys = <String>[
   'notificationPreferences',
 ];
 
-Map<String, Object?> exportStarSyncPortableSettings(GakujoAppSettings settings) => {
-  'disabledFeatureFlags': settings.disabledFeatureFlags
-      .where((flag) => flag != GakujoFeatureFlag.messageStars)
-      .map((flag) => flag.storageValue)
-      .toList()..sort(),
+Map<String, Object?> exportStarSyncPortableSettings(
+  GakujoAppSettings settings,
+) => {
+  'disabledFeatureFlags':
+      settings.disabledFeatureFlags
+          .where((flag) => flag != GakujoFeatureFlag.messageStars)
+          .map((flag) => flag.storageValue)
+          .toList()
+        ..sort(),
   'calendarImportSettings': settings.calendarImportSettings.toJson(),
   'messageExcludeKeywords': settings.messageExcludeKeywords,
   'notificationTopics': encodeNotificationTopics(settings.notificationTopics),
@@ -36,7 +40,8 @@ GakujoBackupImport importStarSyncPortableSettings(
   final changed = <String, Object?>{
     for (final key in starSyncPortableSettingKeys)
       if (incoming.containsKey(key) &&
-          starSyncCanonicalJson(incoming[key]) != starSyncCanonicalJson(before[key]))
+          starSyncCanonicalJson(incoming[key]) !=
+              starSyncCanonicalJson(before[key]))
         key: incoming[key],
   };
   if (changed.containsKey('disabledFeatureFlags')) {
@@ -51,7 +56,9 @@ GakujoBackupImport importStarSyncPortableSettings(
     } else {
       changed['disabledFeatureFlags'] = [
         ...portableFlags,
-        if (current.disabledFeatureFlags.contains(GakujoFeatureFlag.messageStars))
+        if (current.disabledFeatureFlags.contains(
+          GakujoFeatureFlag.messageStars,
+        ))
           GakujoFeatureFlag.messageStars.storageValue,
       ];
     }

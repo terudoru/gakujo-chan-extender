@@ -11,12 +11,18 @@ void main() {
 
   test('portable settings ignore credentials and non-portable fields', () {
     final current = GakujoAppSettings(
-      loginCredentials: const GakujoLoginCredentials(loginId: 'id', password: 'secret'),
+      loginCredentials: const GakujoLoginCredentials(
+        loginId: 'id',
+        password: 'secret',
+      ),
       disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
     );
     final exported = exportStarSyncPortableSettings(current);
     expect(exported.keys, isNot(contains('loginCredentials')));
-    expect(exported['disabledFeatureFlags'], isNot(contains(GakujoFeatureFlag.messageStars.storageValue)));
+    expect(
+      exported['disabledFeatureFlags'],
+      isNot(contains(GakujoFeatureFlag.messageStars.storageValue)),
+    );
     final imported = importStarSyncPortableSettings(current, {
       'loginCredentials': {'loginId': 'other', 'password': 'other'},
       'downloadSaveMode': 'other',

@@ -307,24 +307,25 @@ class StarSyncEngine {
   bool collectionEnabled(String name) =>
       !(_state?.disabledCollections.contains(name) ?? false);
 
-  Future<void> setCollectionEnabled(String name, bool enabled) => _queue.run(() async {
-    final state = _state;
-    if (state == null || !_collections.any((item) => item.name == name)) {
-      throw StateError('Collection is unavailable');
-    }
-    final previous = Set<String>.of(state.disabledCollections);
-    if (enabled) {
-      state.disabledCollections.remove(name);
-    } else {
-      state.disabledCollections.add(name);
-    }
-    try {
-      await _saveState();
-    } on Object {
-      state.disabledCollections = previous;
-      rethrow;
-    }
-  });
+  Future<void> setCollectionEnabled(String name, bool enabled) =>
+      _queue.run(() async {
+        final state = _state;
+        if (state == null || !_collections.any((item) => item.name == name)) {
+          throw StateError('Collection is unavailable');
+        }
+        final previous = Set<String>.of(state.disabledCollections);
+        if (enabled) {
+          state.disabledCollections.remove(name);
+        } else {
+          state.disabledCollections.add(name);
+        }
+        try {
+          await _saveState();
+        } on Object {
+          state.disabledCollections = previous;
+          rethrow;
+        }
+      });
 
   void registerCollection(StarSyncCollection collection) {
     if (!RegExp(r'^[a-z0-9-]+$').hasMatch(collection.name) ||

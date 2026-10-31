@@ -121,11 +121,15 @@ void main() {
   testWidgets('collection switches invoke the callback', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
     final enabled = <String, bool>{};
-    await tester.pumpWidget(section(
-      status,
-      collectionEnabled: (name) => enabled[name] ?? true,
-      onCollectionChanged: (name, value) async { enabled[name] = value; },
-    ));
+    await tester.pumpWidget(
+      section(
+        status,
+        collectionEnabled: (name) => enabled[name] ?? true,
+        onCollectionChanged: (name, value) async {
+          enabled[name] = value;
+        },
+      ),
+    );
     for (final entry in const {
       'favorites': '?????',
       'settings': '??',

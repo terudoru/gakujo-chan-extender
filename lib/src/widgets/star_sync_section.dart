@@ -569,7 +569,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               child: const Text('再接続'),
             ),
           ],
-          if (widget.collectionEnabled != null && widget.onCollectionChanged != null) ...[
+          if (widget.collectionEnabled != null &&
+              widget.onCollectionChanged != null) ...[
             const Text('??????'),
             for (final item in const {
               'favorites': '?????',
@@ -580,9 +581,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               SwitchListTile(
                 title: Text(item.value),
                 value: widget.collectionEnabled!(item.key),
-                onChanged: _busy || status.syncing ? null : (value) => _run(() async {
-                  await widget.onCollectionChanged!(item.key, value);
-                }),
+                onChanged: _busy || status.syncing
+                    ? null
+                    : (value) => _run(() async {
+                        await widget.onCollectionChanged!(item.key, value);
+                      }),
               ),
           ],
           if (_error != null) Text(_error!),
