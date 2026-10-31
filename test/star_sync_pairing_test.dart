@@ -131,7 +131,9 @@ class _Transport implements StarSyncTransport {
       );
     }
     files[path] = List.of(bytes);
-    if (createOnly && path == 'stars/keyring.json' && overwriteKeyring != null) {
+    if (createOnly &&
+        path == 'stars/keyring.json' &&
+        overwriteKeyring != null) {
       files[path] = overwriteKeyring!;
       overwriteKeyring = null;
     }
@@ -305,53 +307,87 @@ void main() {
     await engine.setUpWithPairing(config);
     await expectLater(engine.changePassphrase('old', 'new'), throwsStateError);
   });
-  test('disabled pairing reset replaces keyring and removes old devices', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final activity = GakujoActivityStore(secureStorage: storage);
-    final engine = StarSyncEngine(
-      loginId: () => 'student', activityStore: activity,
-      secureStorage: storage, googleDriveTransport: () => remote,
-    );
-    await engine.setUpWithPairing(config);
-    final code = await engine.pairingCode();
-    final oldDevices = remote.files.keys.where((p) => p.startsWith('stars/devices/')).toList();
-    await engine.disable();
-    await activity.upsertStarredMessage(GakujoStarredMessage(
-      keijitype: '1', genrecd: '2', seqNo: '3', title: 'old',
-      starredAt: DateTime.utc(2026),
-    ));
-    expect(await engine.setUpWithPairing(config, resetExisting: true, clearLocalStars: true), StarSyncPairingSetup.created);
-    expect(await engine.pairingCode(), isNot(code));
-    expect(await engine.localStarCount(), 0);
-    expect(oldDevices.where(remote.files.containsKey), isEmpty);
-    final state = StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!));
-    expect(state.records, isEmpty);
-  });
+  test(
+    'disabled pairing reset replaces keyring and removes old devices',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: activity,
+        secureStorage: storage,
+        googleDriveTransport: () => remote,
+      );
+      await engine.setUpWithPairing(config);
+      final code = await engine.pairingCode();
+      final oldDevices = remote.files.keys
+          .where((p) => p.startsWith('stars/devices/'))
+          .toList();
+      await engine.disable();
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'old',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
+      expect(
+        await engine.setUpWithPairing(
+          config,
+          resetExisting: true,
+          clearLocalStars: true,
+        ),
+        StarSyncPairingSetup.created,
+      );
+      expect(await engine.pairingCode(), isNot(code));
+      expect(await engine.localStarCount(), 0);
+      expect(oldDevices.where(remote.files.containsKey), isEmpty);
+      final state = StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      );
+      expect(state.records, isEmpty);
+    },
+  );
 
-  test('pairing detects overwrite after create and reset reports race', () async {
-    final remote = _Transport();
-    final foreign = createStarSyncPairingKeyring();
-    final bytes = utf8.encode(jsonEncode(foreign.keyring.toJson()));
-    final storage = _Storage();
-    final engine = StarSyncEngine(
-      loginId: () => 'student', activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage, googleDriveTransport: () => remote,
-    );
-    remote.overwriteKeyring = bytes;
-    expect(await engine.setUpWithPairing(config), StarSyncPairingSetup.needsPairingCode);
-    expect(storage.values, isEmpty);
-    remote.overwriteKeyring = bytes;
-    await expectLater(engine.setUpWithPairing(config, resetExisting: true), throwsA(isA<StarSyncSetupRaceException>()));
-    expect(storage.values, isEmpty);
-  });
+  test(
+    'pairing detects overwrite after create and reset reports race',
+    () async {
+      final remote = _Transport();
+      final foreign = createStarSyncPairingKeyring();
+      final bytes = utf8.encode(jsonEncode(foreign.keyring.toJson()));
+      final storage = _Storage();
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        googleDriveTransport: () => remote,
+      );
+      remote.overwriteKeyring = bytes;
+      expect(
+        await engine.setUpWithPairing(config),
+        StarSyncPairingSetup.needsPairingCode,
+      );
+      expect(storage.values, isEmpty);
+      remote.overwriteKeyring = bytes;
+      await expectLater(
+        engine.setUpWithPairing(config, resetExisting: true),
+        throwsA(isA<StarSyncSetupRaceException>()),
+      );
+      expect(storage.values, isEmpty);
+    },
+  );
 
   test('pairing accepts a valid device after a stale device file', () async {
     final remote = _Transport();
     final first = _Storage();
     final a = StarSyncEngine(
-      loginId: () => 'student', activityStore: GakujoActivityStore(secureStorage: first),
-      secureStorage: first, googleDriveTransport: () => remote,
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: first),
+      secureStorage: first,
+      googleDriveTransport: () => remote,
     );
     await a.setUpWithPairing(config);
     final own = Map<String, List<int>>.of(remote.files);
@@ -360,11 +396,16 @@ void main() {
     remote.files.addAll(own);
     final second = _Storage();
     final b = StarSyncEngine(
-      loginId: () => 'student', activityStore: GakujoActivityStore(secureStorage: second),
-      secureStorage: second, googleDriveTransport: () => remote,
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: second),
+      secureStorage: second,
+      googleDriveTransport: () => remote,
     );
-    await b.joinWithPairingCode(config, await a.pairingCode(), clearLocalStars: true);
+    await b.joinWithPairingCode(
+      config,
+      await a.pairingCode(),
+      clearLocalStars: true,
+    );
     expect(b.status.value.enabled, isTrue);
   });
-
 }

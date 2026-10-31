@@ -698,10 +698,13 @@ class StarSyncEngine {
     final now = _now();
     final background =
         trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume;
-    final inCooldown = state.cooldownUntil != null &&
-        now.isBefore(state.cooldownUntil!);
-    if (background && !inCooldown && !state.pendingLocalChange &&
-        _currentAccount() != null && _currentAccount() == state.boundAccount &&
+    final inCooldown =
+        state.cooldownUntil != null && now.isBefore(state.cooldownUntil!);
+    if (background &&
+        !inCooldown &&
+        !state.pendingLocalChange &&
+        _currentAccount() != null &&
+        _currentAccount() == state.boundAccount &&
         state.status != StarSyncStatus.accountMismatch) {
       final date = '${now.year}-${now.month}-${now.day}';
       final count = state.backgroundDate == date ? state.backgroundCount : 0;
@@ -723,7 +726,9 @@ class StarSyncEngine {
       }
     }
     return _queue.run(() async {
-      if (_disposed || !identical(_config, config) || !identical(_state, state)) {
+      if (_disposed ||
+          !identical(_config, config) ||
+          !identical(_state, state)) {
         return const StarSyncResult();
       }
       if (!await _accountMatches(state)) return const StarSyncResult();
@@ -763,12 +768,14 @@ class StarSyncEngine {
     final until = state.cooldownUntil;
     if (until == null || !state.pendingLocalChange) return;
     final remaining = until.difference(_now());
-    final delay = (remaining.isNegative ? Duration.zero : remaining) +
+    final delay =
+        (remaining.isNegative ? Duration.zero : remaining) +
         Duration(milliseconds: _random.nextInt(5001));
     _cooldownTimer = _timerFactory(delay, () {
-      unawaited(syncNow(trigger: StarSyncTrigger.localChange).catchError(
-        (Object _) => const StarSyncResult(),
-      ));
+      unawaited(
+        syncNow(trigger: StarSyncTrigger.localChange)
+            .catchError((Object _) => const StarSyncResult()),
+      );
     });
   }
 
