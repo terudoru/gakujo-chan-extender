@@ -13,6 +13,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'generated/portal_auth_state_probe.g.dart';
+import 'generated/authenticated_session_reset.g.dart';
+import 'generated/course_name_body_text.g.dart';
+import 'generated/course_name_tables.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
@@ -43,6 +47,7 @@ import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
 import 'gakujo_local_prefs_store.dart';
+import 'generated/page_text_activity.g.dart';
 import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
@@ -1045,143 +1050,10 @@ class GakujoCalendarOperationGate {
 }
 
 @visibleForTesting
-const gakujoPortalAuthStateProbeScript = r'''
-(function() {
-  var documents = [];
-  function collect(win) {
-    try {
-      if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-        return;
-      }
-      documents.push(win.document);
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (_) {}
-  }
-  function visible(element) {
-    if (!element) {
-      return false;
-    }
-    try {
-      var pageWindow = element.ownerDocument.defaultView || window;
-      var style = pageWindow.getComputedStyle(element);
-      return style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
-        style.opacity !== '0' &&
-        element.getClientRects().length > 0;
-    } catch (_) {
-      return false;
-    }
-  }
-  function normalizedIdentifiers(element) {
-    return [
-      element.getAttribute && element.getAttribute('name'),
-      element.getAttribute && element.getAttribute('id')
-    ].filter(Boolean).map(function(value) {
-      return String(value).toLowerCase().replace(/[\s_-]+/g, '');
-    });
-  }
-  function controlText(element) {
-    return [
-      element.innerText,
-      element.textContent,
-      element.value,
-      element.getAttribute && element.getAttribute('alt'),
-      element.getAttribute && element.getAttribute('aria-label'),
-      element.getAttribute && element.getAttribute('title')
-    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
-  }
-
-  collect(window);
-  var hasLoginFields = false;
-  var hasTwoFactorField = false;
-  var hasAuthenticatedMarker = false;
-  var knownUserIdentifiers = ['userid', 'loginid', 'username', 'jusername'];
-
-  for (var d = 0; d < documents.length; d += 1) {
-    var doc = documents[d];
-    var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
-    var hasKnownUsername = false;
-    var hasPassword = false;
-    for (var i = 0; i < inputs.length; i += 1) {
-      var input = inputs[i];
-      if (!visible(input)) {
-        continue;
-      }
-      var identifiers = normalizedIdentifiers(input);
-      var type = (input.getAttribute('type') || '').toLowerCase();
-      if (identifiers.indexOf('ninshocode') !== -1) {
-        hasTwoFactorField = true;
-      } else if (identifiers.some(function(identifier) {
-        return knownUserIdentifiers.indexOf(identifier) !== -1;
-      })) {
-        hasKnownUsername = true;
-      } else if (type === 'password') {
-        hasPassword = true;
-      }
-    }
-    if (hasKnownUsername && hasPassword) {
-      hasLoginFields = true;
-    }
-
-    // The PC portal's ログアウト is a list (ul#logout) of an unlabeled image
-    // and a span, not a link or button.
-    var controls = Array.prototype.slice.call(
-      doc.querySelectorAll('a, button, input, [role="button"], img, #logout')
-    );
-    for (var c = 0; c < controls.length; c += 1) {
-      if (!visible(controls[c])) {
-        continue;
-      }
-      if (/ログアウト|ログオフ|sign\s*out|log\s*out/.test(controlText(controls[c]))) {
-        hasAuthenticatedMarker = true;
-        break;
-      }
-    }
-  }
-
-  return JSON.stringify({
-    hasLoginFields: hasLoginFields,
-    hasTwoFactorField: hasTwoFactorField,
-    hasAuthenticatedMarker: hasAuthenticatedMarker
-  });
-})()
-''';
+const gakujoPortalAuthStateProbeScript = gakujoPortalAuthStateProbeJs;
 
 @visibleForTesting
-const gakujoAuthenticatedSessionResetScript = r'''
-(function() {
-  delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
-  delete window.__MBG_2FA_AUTO_SUBMITTED_KEY;
-  try {
-    if (!window.sessionStorage) {
-      return 0;
-    }
-    var prefixes = [
-      'MBG_LOGIN_AUTOFILL_ERROR:',
-      'MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:',
-      'MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL:',
-      'MBG_2FA_AUTOFILL_ERROR:',
-      'MBG_2FA_AUTOFILL_SUBMIT_COUNT:'
-    ];
-    var removed = 0;
-    for (var i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
-      var key = window.sessionStorage.key(i) || '';
-      for (var p = 0; p < prefixes.length; p += 1) {
-        if (key.indexOf(prefixes[p]) === 0) {
-          window.sessionStorage.removeItem(key);
-          removed += 1;
-          break;
-        }
-      }
-    }
-    return removed;
-  } catch (_) {
-    return 0;
-  }
-})()
-''';
+const gakujoAuthenticatedSessionResetScript = gakujoAuthenticatedSessionResetJs;
 
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
@@ -4475,237 +4347,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return null;
     }
     try {
-      final result = await _controller.runJavaScriptReturningResult(r'''
-(function() {
-''' +
-          gakujoSmartphoneMessageRowsScript +
-          r'''
-  var texts = [];
-  var messageItems = [];
-  var reportItems = [];
-  var seenMessageItems = {};
-  var datePattern = /((?:令和[0-9]{1,2}年|(?:20)?[0-9]{2}(?:[\/.\-]|年))[0-9]{1,2}(?:[\/.\-]|月)[0-9]{1,2}日?(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}[\/.][0-9]{1,2}(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?|[0-9]{1,2}月[0-9]{1,2}日(?:\s*[（(]?[月火水木金土日]?[）)]?)?(?:\s*[0-9]{1,2}:[0-9]{2})?)/;
-  function compactText(element) {
-    return (element && (element.innerText || element.textContent || element.value) || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-  function compactRawText(text) {
-    return String(text || '').replace(/\s+/g, ' ').trim();
-  }
-  function normalizeDateText(text) {
-    return String(text || '')
-      .replace(/[０-９]/g, function(ch) {
-        return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
-      })
-      .replace(/：/g, ':')
-      .replace(/／/g, '/')
-      .replace(/．/g, '.')
-      .replace(/[－−]/g, '-');
-  }
-  function isPortalNoiseText(text) {
-    var normalized = normalizeDateText(compactRawText(text));
-    if (!normalized) {
-      return true;
-    }
-    if (normalized.indexOf('MYスケジュール') >= 0 ||
-        normalized.indexOf('前回ログイン日時') >= 0 ||
-        normalized.indexOf('ログアウト') >= 0 ||
-        normalized.indexOf('残り約') >= 0 ||
-        /^Copyright/.test(normalized)) {
-      return true;
-    }
-    if (/^[0-9]{4}\/[0-9]{1,2}\/[0-9]{1,2}\([A-Za-z]+\)$/.test(normalized)) {
-      return true;
-    }
-    if (/^[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日\s*[0-9]{1,2}時[0-9]{1,2}分\s*(から|まで)?$/.test(normalized)) {
-      return true;
-    }
-    return false;
-  }
-  function hasDate(text) {
-    return datePattern.test(normalizeDateText(text));
-  }
-  function messageTable(doc) {
-    var direct = doc.querySelector('table.normal:nth-child(9)');
-    if (direct) {
-      return direct;
-    }
-    var tables = doc.querySelectorAll('table');
-    for (var i = 0; i < tables.length; i += 1) {
-      var text = compactText(tables[i]);
-      if ((text.indexOf('掲示') >= 0 || text.indexOf('連絡') >= 0) &&
-          tables[i].querySelector('a[href]')) {
-        return tables[i];
-      }
-    }
-    return null;
-  }
-  function messageUrl(doc, node) {
-    var link = node && node.closest && node.closest('a[href]');
-    if (!link && node && node.querySelector) {
-      link = node.querySelector('a[href]');
-    }
-    var href = link && link.href || '';
-    if (href && !/^javascript:/i.test(href)) {
-      return href;
-    }
-    try {
-      return doc.location.href || document.location.href;
-    } catch (e) {
-      return document.location.href;
-    }
-  }
-  function messageTitle(node, text) {
-    var link = node && node.querySelector && node.querySelector('a, button:not([data-mbg-message-star]), input');
-    var label = compactText(link || node);
-    if (!label || label.length > 120) {
-      label = text.split(/(?:\s{2,}| \/ |\n)/)[0] || text;
-    }
-    return label.length > 120 ? label.substring(0, 120) + '...' : label;
-  }
-  function addMessageData(doc, title, url, text) {
-    text = compactRawText(text);
-    title = compactRawText(title);
-    if (text.length < 6 || isPortalNoiseText(text) || !hasDate(text)) {
-      return;
-    }
-    if (!title || title.length > 120) {
-      title = text.split(/(?:\s{2,}| \/ |\n)/)[0] || text;
-    }
-    if (title.length > 120) {
-      title = title.substring(0, 120) + '...';
-    }
-    url = url || doc.location.href || document.location.href;
-    var key = title + '|' + url + '|' + text;
-    if (seenMessageItems[key]) {
-      return;
-    }
-    seenMessageItems[key] = true;
-    messageItems.push({
-      title: title,
-      url: url,
-      text: text
-    });
-  }
-  function addMessageItem(doc, node) {
-    var text = compactText(node);
-    addMessageData(doc, messageTitle(node, text), messageUrl(doc, node), text);
-  }
-  function collectNoticeDetail(doc) {
-    var raw = doc.body && (doc.body.innerText || doc.body.textContent) || '';
-    if (!raw || raw.indexOf('連絡通知元') < 0) {
-      return false;
-    }
-    var lines = raw.split(/\r?\n/)
-      .map(function(line) { return line.replace(/\s+/g, ' ').trim(); })
-      .filter(Boolean);
-    var start = -1;
-    for (var i = 0; i < lines.length; i += 1) {
-      if (lines[i] === '連絡通知') {
-        start = i + 1;
-        break;
-      }
-    }
-    if (start < 0) {
-      start = 0;
-    }
-    while (start < lines.length && (
-      lines[start] === '[image]' ||
-      lines[start] === '連絡通知' ||
-      lines[start].indexOf('指定した個数を既読') >= 0
-    )) {
-      start += 1;
-    }
-    if (start >= lines.length) {
-      return false;
-    }
-    var end = lines.findIndex(function(line, index) {
-      return index > start && (
-        line === '連絡通知元' ||
-        line === '連絡通知期間' ||
-        line === 'メール送信' ||
-        line === '送信日時' ||
-        line === '対象学生所属'
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoPageTextActivityJs,
       );
-    });
-    if (end < 0) {
-      end = lines.length;
-    }
-    var title = lines[start].replace(/\s*\[[^\]]+\]\s*$/g, '').trim();
-    var body = lines.slice(start, end).join(' ');
-    if (!hasDate(body)) {
-      return false;
-    }
-    addMessageData(doc, title, doc.location.href, body);
-    return true;
-  }
-  function collectMessageItems(doc) {
-    try {
-      var mobile = doc.querySelectorAll('div.button[onclick*="seqNo="]');
-      if (mobile.length && compactText(doc.body).indexOf('連絡通知') >= 0) {
-        for (var m = 0; m < mobile.length; m += 1) {
-          var item = readSmartphoneMessageRow(mobile[m], doc.baseURI || doc.location.href);
-          if (item) addMessageData(doc, item.title, item.url, item.text);
-        }
-        return;
-      }
-      if (collectNoticeDetail(doc)) {
-        return;
-      }
-      var table = messageTable(doc);
-      var candidates = table ?
-        table.querySelectorAll('tr') :
-        doc.querySelectorAll('tr, li, a, button:not([data-mbg-message-star])');
-      for (var i = 0; i < candidates.length; i += 1) {
-        addMessageItem(doc, candidates[i]);
-      }
-    } catch (e) {}
-  }
-''' +
-          gakujoAssignmentRowsScript +
-          r'''
-  function collectReportRows(doc) {
-    var rows = [];
-    try {
-      var items = readAssignmentRows(doc);
-      for (var i = 0; i < items.length; i += 1) {
-        var item = items[i];
-        reportItems.push(item);
-        rows.push(
-          'レポート課題: ' + item.title +
-          (item.code ? ' / 開講番号: ' + item.code : '') +
-          (item.status ? ' / 状態: ' + item.status : '') +
-          ' / 提出期間: ' + item.period
-        );
-      }
-    } catch (e) {}
-    return rows;
-  }
-  function collect(win) {
-    try {
-      if (win.document && win.document.body) {
-        texts.push(win.document.body.innerText || '');
-        collectMessageItems(win.document);
-        var reportRows = collectReportRows(win.document);
-        if (reportRows.length) {
-          texts.push(reportRows.join('\n'));
-        }
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
-  return JSON.stringify({
-    title: document.title || '',
-    text: texts.join('\n'),
-    messageItems: messageItems,
-    reportItems: reportItems
-  });
-})()
-''');
       final raw = _stringFromJavaScriptResult(result);
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) {
@@ -6859,23 +6503,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<String> _estimateCourseNameFromBodyText() async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        r'''
-(function() {
-  var texts = [];
-  function collect(win) {
-    try {
-      if (win.document && win.document.body) {
-        texts.push(win.document.body.innerText || '');
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
-  return texts.join('\n\n');
-})()
-''',
+        gakujoCourseNameBodyTextJs,
       );
       final bodyText = _stringFromJavaScriptResult(result);
       final candidates = _courseNameCandidatesFromBodyText(bodyText);
@@ -6903,67 +6531,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<String> _estimateCourseNameFromTables() async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        r'''
-(function() {
-  function textOf(element) {
-    return ((element && (element.innerText || element.textContent)) || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-  function collectDocuments() {
-    var documents = [];
-    function collect(win) {
-      try {
-        if (win.document) {
-          documents.push(win.document);
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collect(window);
-    return documents;
-  }
-  var documents = collectDocuments();
-  for (var d = 0; d < documents.length; d += 1) {
-    var tables = documents[d].querySelectorAll('table');
-    for (var t = 0; t < tables.length; t += 1) {
-      var rows = tables[t].querySelectorAll('tr');
-      for (var r = 0; r < rows.length; r += 1) {
-        var cells = rows[r].querySelectorAll('th,td');
-        var courseIndex = -1;
-        for (var c = 0; c < cells.length; c += 1) {
-          if (textOf(cells[c]) === '科目名') {
-            courseIndex = c;
-            break;
-          }
-        }
-        if (courseIndex < 0) {
-          continue;
-        }
-        for (var same = courseIndex + 1; same < cells.length; same += 1) {
-          var sameRowValue = textOf(cells[same]);
-          if (sameRowValue) {
-            return sameRowValue;
-          }
-        }
-        for (var next = r + 1; next < rows.length; next += 1) {
-          var nextCells = rows[next].querySelectorAll('th,td');
-          if (nextCells.length <= courseIndex) {
-            continue;
-          }
-          var value = textOf(nextCells[courseIndex]);
-          if (value) {
-            return value;
-          }
-        }
-      }
-    }
-  }
-  return '';
-})()
-''',
+        gakujoCourseNameTablesJs,
       );
       final rawEstimate = _stringFromJavaScriptResult(result).trim();
       final estimated = GakujoCourseNameEstimator.estimateFromCandidates([

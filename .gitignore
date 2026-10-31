@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /tools/pdf_preview/build/
+/web_scripts/node_modules/
 /android/build/
 /coverage/
 /dist/

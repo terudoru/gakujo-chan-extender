@@ -3,6 +3,9 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import 'generated/upload_library_ack.g.dart';
+import 'generated/upload_library_setup.g.dart';
+
 /// Deduplicates library requests within a navigation while allowing retries
 /// after failures and ignoring completion from an older document.
 class GakujoUploadLibraryGate {
@@ -75,55 +78,8 @@ class GakujoUploadCompressionLibraries {
   /// A WebView may report script execution success even when JavaScript
   /// throws. Return an explicit acknowledgement and undo partial Blob URLs.
   static String acknowledgedInjectionScript(String kind, String script) {
-    final ready = switch (kind) {
-      'pdf' => 'window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL',
-      'preview' => 'window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL && window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS',
-      'preview-office' => 'window.JSZip',
-      'office' => 'window.JSZip',
-      _ => 'false',
-    };
-    final callback = switch (kind) {
-      'preview' => '__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED',
-      'preview-office' => '__MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED',
-      _ => '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED',
-    };
-    final marker = jsonEncode('__MBG_UPLOAD_LIBRARY_READY_$kind');
-    final afterReady = kind == 'preview-office'
-        ? 'if (window.$callback) window.$callback(${jsonEncode(kind)});'
-        : '';
-    return '''
-(function() {
-  var keys = ['__MBG_QPDF_WORKER_URL', '__MBG_QPDF_MODULE_URL', '__MBG_QPDF_WASM_URL', '__MBG_PDF_WORKER_URL'];
-  var before = keys.map(function(key) { return window[key]; });
-  var values = ['pdfjsLib', 'pdfjsViewer', '__MBG_PDF_VIEWER_CSS', '__MBG_PDF_CMAPS', '__MBG_PDF_STANDARD_FONTS'];
-  var valuesBefore = values.map(function(key) { return window[key]; });
-  var markerBefore = window[$marker];
-  try {
-    if (window[$marker] && ($ready)) {
-      if (window.$callback) window.$callback(${jsonEncode(kind)});
-      return 'mbg-ready';
-    }
-    $script
-    if (!($ready)) throw new Error('library unavailable');
-    window[$marker] = true;
-    $afterReady
-    return 'mbg-ready';
-  } catch (_) {
-    if (markerBefore === undefined) delete window[$marker]; else window[$marker] = markerBefore;
-    keys.forEach(function(key, index) {
-      try {
-        if (window[key] && window[key] !== before[index]) URL.revokeObjectURL(window[key]);
-        if (before[index] === undefined) delete window[key]; else window[key] = before[index];
-      } catch (_) {}
-    });
-    values.forEach(function(key, index) {
-      if (valuesBefore[index] === undefined) delete window[key]; else window[key] = valuesBefore[index];
-    });
-    try { if (window.$callback) window.$callback(${jsonEncode(kind)}); } catch (_) {}
-    return 'mbg-failed';
-  }
-})()
-''';
+    return '${gakujoUploadLibraryAckJs.trimRight()}'
+        '(${jsonEncode(kind)}, function() {\n$script\n})';
   }
 
   /// Returns the script that defines the libraries for [kind] and then tells
@@ -157,38 +113,20 @@ class GakujoUploadCompressionLibraries {
   /// it, then signals the waiting compression script.
   static String buildInjectionScript(String kind, List<String> sources) {
     final buffer = StringBuffer();
-    if (kind == 'pdf' && sources.length == 3) {
-      buffer.writeln(
-        'window.__MBG_QPDF_WORKER_URL = URL.createObjectURL('
-        'new Blob([${jsonEncode(sources[0])}], {type: "text/javascript"}));',
-      );
-      buffer.writeln(
-        'window.__MBG_QPDF_MODULE_URL = URL.createObjectURL('
-        'new Blob([${jsonEncode(sources[1])}], {type: "text/javascript"}));',
-      );
-      buffer.writeln(
-        '(function() { var raw = atob(${jsonEncode(sources[2])});'
-        ' var bytes = new Uint8Array(raw.length);'
-        ' for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);'
-        ' window.__MBG_QPDF_WASM_URL = URL.createObjectURL('
-        'new Blob([bytes], {type: "application/wasm"})); })();',
-      );
-    } else if (kind == 'preview' && sources.isNotEmpty) {
-      buffer.writeln(
-        'window.__MBG_PDF_WORKER_URL = URL.createObjectURL('
-        'new Blob([${jsonEncode(sources.first)}], {type: "text/javascript"}));',
-      );
-      if (sources.length >= 6) {
-        buffer.writeln(
-          'window.__MBG_PDF_VIEWER_CSS = ${jsonEncode(sources[3])};',
-        );
-        buffer.writeln(
-          'window.__MBG_PDF_CMAPS = ${jsonEncode(jsonDecode(sources[4]))};',
-        );
-        buffer.writeln(
-          'window.__MBG_PDF_STANDARD_FONTS = ${jsonEncode(jsonDecode(sources[5]))};',
-        );
+    if ((kind == 'pdf' && sources.length == 3) ||
+        (kind == 'preview' && sources.isNotEmpty)) {
+      final setupSources = <Object?>[...sources];
+      if (kind == 'preview') {
+        if (setupSources.length > 1) setupSources[1] = '';
+        if (setupSources.length > 2) setupSources[2] = '';
       }
+      if (kind == 'preview' && sources.length >= 6) {
+        setupSources[4] = jsonDecode(sources[4]);
+        setupSources[5] = jsonDecode(sources[5]);
+      }
+      buffer.write(
+        gakujoUploadLibrarySetupJs({'kind': kind, 'sources': setupSources}),
+      );
     }
     for (final source
         in kind == 'pdf'
