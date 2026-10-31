@@ -180,3 +180,43 @@ interface Window {
   loadNextMonth?: () => void;
   loadBeforeMonth?: () => void;
 }
+
+interface MbgZipStream {
+  on(event: 'data', callback: (chunk: Uint8Array<ArrayBuffer>) => void): MbgZipStream;
+  on(event: 'error', callback: (error: unknown) => void): MbgZipStream;
+  on(event: 'end', callback: () => void): MbgZipStream;
+  pause(): void;
+  resume(): void;
+}
+interface MbgZipEntry {
+  dir: boolean;
+  _data: { uncompressedSize: number };
+  date: Date;
+  comment: string;
+  unixPermissions: number;
+  dosPermissions: number;
+  internalStream(type: 'uint8array'): MbgZipStream;
+}
+interface MbgZip {
+  files: Record<string, MbgZipEntry>;
+  file(name: string): MbgZipEntry;
+  file(name: string, data: Uint8Array<ArrayBuffer> | ArrayBuffer, options: object): MbgZip;
+  generateInternalStream(options: object): MbgZipStream;
+}
+interface Window {
+  JSZip?: { loadAsync(buffer: ArrayBuffer): Promise<MbgZip> };
+  __MBG_UPLOAD_COMPRESSION_VERSION?: number;
+  __MBG_UPLOAD_COMPRESSION_UPDATE?: () => void;
+  __MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED?: (kind: string) => void;
+  __MBG_UPLOAD_COMPRESSION_INTERVAL?: number;
+  __MBG_QPDF_WORKER_URL?: string;
+  __MBG_QPDF_MODULE_URL?: string;
+  __MBG_QPDF_WASM_URL?: string;
+  __MBG_ACTIVE_PDF_COMPRESSION?: object;
+}
+interface HTMLInputElement {
+  __mbgUploadCompressionStatus?: HTMLDivElement;
+  __mbgUploadCompressionReplaying?: boolean;
+  __mbgUploadCompressionSelection?: number;
+}
+interface Document { __mbgUploadCompressionAttached?: boolean; }

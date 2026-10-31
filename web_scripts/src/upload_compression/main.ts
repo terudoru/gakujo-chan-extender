@@ -1,6 +1,6 @@
-// @ts-nocheck
-// Verbatim port; typing is deferred to a later migration phase.
 import { mbgValidateImage } from '../shared/image_bounds.js';
+
+type MbgCompressionImage = CanvasImageSource & { width: number; height: number; naturalWidth?: number; naturalHeight?: number; close?: () => void };
 
 declare const __mbgConfig: { libraryChannelName: string };
 
@@ -26,22 +26,22 @@ function uploadCompression() {
   var libraryTimeoutMs = 30000;
   var compressionTimeoutMs = 120000;
   var replaying = typeof WeakSet === 'function' ? new WeakSet() : null;
-  var libraryWaiters = {};
+  var libraryWaiters: Record<string, (() => void)[]> = {};
 
-  var imageTypes = {
+  var imageTypes: Record<string, string> = {
     jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp'
   };
-  var officeTypes = {
+  var officeTypes: Record<string, string> = {
     docx: 'word', docm: 'word', pptx: 'ppt', pptm: 'ppt', xlsx: 'xl', xlsm: 'xl'
   };
 
   function documents() {
     var result = [document];
-    var frames = document.querySelectorAll('iframe,frame');
+    var frames = document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe,frame');
     for (var i = 0; i < frames.length; i += 1) {
       try {
-        if (frames[i].contentWindow && frames[i].contentWindow.document) {
-          result.push(frames[i].contentWindow.document);
+        if (frames[i].contentWindow && frames[i].contentWindow!.document) {
+          result.push(frames[i].contentWindow!.document);
         }
       } catch (e) {
         // Cross-origin frames cannot be inspected.
@@ -51,25 +51,25 @@ function uploadCompression() {
   }
 
   // Inputs inside the Gakujo iframe belong to that frame's realm.
-  function viewOf(input) {
+  function viewOf(input: HTMLInputElement) {
     return input.ownerDocument && input.ownerDocument.defaultView || window;
   }
 
-  function formatSize(bytes) {
+  function formatSize(bytes: number) {
     return (bytes / 1000000).toFixed(1) + 'MB';
   }
 
-  function isFileInput(element) {
+  function isFileInput(element: HTMLInputElement | null): element is HTMLInputElement {
     return !!element && element.tagName === 'INPUT' &&
       String(element.type || '').toLowerCase() === 'file';
   }
 
-  function extensionOf(file) {
+  function extensionOf(file: File) {
     var match = /\.([^./\\]+)$/.exec(String(file.name || ''));
     return match ? match[1].toLowerCase() : '';
   }
 
-  function kindOf(file) {
+  function kindOf(file: File) {
     var extension = extensionOf(file);
     var type = String(file.type || '').toLowerCase();
     if (imageTypes[extension] || /^image\/(jpeg|png|webp)$/.test(type)) {
@@ -84,7 +84,7 @@ function uploadCompression() {
     return null;
   }
 
-  function imageTypeOf(file) {
+  function imageTypeOf(file: File) {
     var type = String(file.type || '').toLowerCase();
     if (/^image\/(jpeg|png|webp)$/.test(type)) {
       return type;
@@ -92,7 +92,7 @@ function uploadCompression() {
     return imageTypes[extensionOf(file)] || 'image/jpeg';
   }
 
-  function makeFile(input, parts, file, type) {
+  function makeFile(input: HTMLInputElement, parts: BlobPart[], file: File, type?: string) {
     var FileCtor = viewOf(input).File || File;
     return new FileCtor(parts, file.name, {
       type: type || file.type || '',
@@ -100,13 +100,13 @@ function uploadCompression() {
     });
   }
 
-  function readBytes(blob) {
+  function readBytes(blob: Blob) {
     if (blob.arrayBuffer) {
       return blob.arrayBuffer();
     }
-    return new Promise(function(resolve, reject) {
+    return new Promise<ArrayBuffer>(function(resolve, reject) {
       var reader = new FileReader();
-      reader.onload = function() { resolve(reader.result); };
+      reader.onload = function() { resolve(reader.result as ArrayBuffer); };
       reader.onerror = function() { reject(reader.error); };
       reader.readAsArrayBuffer(blob);
     });
@@ -114,14 +114,14 @@ function uploadCompression() {
 
   // ---------------------------------------------------------------- libraries
 
-  function libraryReady(kind) {
+  function libraryReady(kind: string) {
     if (kind === 'pdf') {
       return !!(window.__MBG_QPDF_WORKER_URL && window.__MBG_QPDF_MODULE_URL && window.__MBG_QPDF_WASM_URL);
     }
     return !!window.JSZip;
   }
 
-  window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED = function(kind) {
+  window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED = function(kind: string) {
     var waiters = libraryWaiters[kind] || [];
     delete libraryWaiters[kind];
     for (var i = 0; i < waiters.length; i += 1) {
@@ -129,12 +129,12 @@ function uploadCompression() {
     }
   };
 
-  function requestLibrary(kind) {
+  function requestLibrary(kind: string) {
     if (libraryReady(kind)) {
       return Promise.resolve();
     }
-    return new Promise(function(resolve, reject) {
-      var channel = window[libraryChannelName];
+    return new Promise<void>(function(resolve, reject) {
+      var channel = window[libraryChannelName as keyof Window] as { postMessage: (message: string) => void };
       if (!channel || typeof channel.postMessage !== 'function') {
         reject(new Error('圧縮に必要な機能を読み込めませんでした'));
         return;
@@ -167,7 +167,7 @@ function uploadCompression() {
 
   // ------------------------------------------------------------------ images
 
-  function loadImage(blob, cancelled) {
+  function loadImage(blob: Blob, cancelled: () => boolean): Promise<MbgCompressionImage> {
     return mbgValidateImage(blob).then(function() {
       if (cancelled && cancelled()) throw new Error('圧縮を中止しました');
       if (typeof createImageBitmap === 'function') {
@@ -176,11 +176,11 @@ function uploadCompression() {
           .catch(function() { return loadImageElement(blob); });
       }
       return loadImageElement(blob);
-    });
+    }) as Promise<MbgCompressionImage>;
   }
 
-  function loadImageElement(blob) {
-    return new Promise(function(resolve, reject) {
+  function loadImageElement(blob: Blob) {
+    return new Promise<HTMLImageElement>(function(resolve, reject) {
       var url = URL.createObjectURL(blob);
       var image = new Image();
       image.onload = function() {
@@ -195,8 +195,8 @@ function uploadCompression() {
     });
   }
 
-  function canvasToBlob(canvas, type, quality) {
-    return new Promise(function(resolve, reject) {
+  function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number | undefined) {
+    return new Promise<Blob>(function(resolve, reject) {
       canvas.toBlob(function(blob) {
         if (blob) {
           resolve(blob);
@@ -207,25 +207,25 @@ function uploadCompression() {
     });
   }
 
-  function newCanvas(width, height) {
+  function newCanvas(width: number, height: number) {
     var canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     return canvas;
   }
 
-  function releaseCanvas(canvas) {
+  function releaseCanvas(canvas: HTMLCanvasElement) {
     canvas.width = 0;
     canvas.height = 0;
   }
 
   // Re-encodes an image in the same format, at most maxSide pixels on its
   // longer edge. Returns null when the browser cannot write that format.
-  function encodeImage(image, type, scale, quality) {
+  function encodeImage(image: MbgCompressionImage, type: string, scale: number, quality: number | undefined) {
     var width = image.width || image.naturalWidth;
     var height = image.height || image.naturalHeight;
-    var w = Math.max(1, Math.round(width * scale));
-    var h = Math.max(1, Math.round(height * scale));
+    var w = Math.max(1, Math.round(width! * scale));
+    var h = Math.max(1, Math.round(height! * scale));
     var canvas = newCanvas(w, h);
     var context = canvas.getContext('2d');
     if (!context) {
@@ -246,11 +246,11 @@ function uploadCompression() {
     });
   }
 
-  function qualitiesFor(type) {
+  function qualitiesFor(type: string) {
     return type === 'image/png' ? [undefined] : [0.85, 0.72, 0.6];
   }
 
-  function compressImage(input, file) {
+  function compressImage(input: HTMLInputElement, file: File) {
     var type = imageTypeOf(file);
     var token = input.__mbgUploadCompressionPending;
     function cancelled() {
@@ -267,7 +267,7 @@ function uploadCompression() {
       var qualities = qualitiesFor(type);
       var attempt = 0;
 
-      function tryNext() {
+      function tryNext(): Promise<File> {
         if (cancelled()) throw new Error('圧縮を中止しました');
         var quality = qualities[attempt % qualities.length];
         return encodeImage(image, type, scale, quality).then(function(blob) {
@@ -297,11 +297,11 @@ function uploadCompression() {
   // --------------------------------------------------------------------- PDF
   // qpdf rewrites the existing PDF instead of rasterizing pages. Each attempt
   // starts from the original bytes to avoid cumulative JPEG degradation.
-  function compressPdf(input, file, progress) {
+  function compressPdf(input: HTMLInputElement, file: File, progress: (message: string) => void) {
     if (file.size > 64 * 1024 * 1024) {
       return Promise.reject(new Error('PDFは64 MiB以下のファイルを選択してください'));
     }
-    var lockHost = window;
+    var lockHost: Window = window;
     try {
       if (window.top && window.top.location.origin === window.location.origin) {
         lockHost = window.top;
@@ -312,9 +312,9 @@ function uploadCompression() {
     }
     var lock = {};
     lockHost.__MBG_ACTIVE_PDF_COMPRESSION = lock;
-    var worker = null;
+    var worker: Worker | null = null;
     var cancelled = false;
-    var rejectPending = null;
+    var rejectPending: ((reason: Error) => void) | null = null;
     function releaseLock() {
       if (lockHost.__MBG_ACTIVE_PDF_COMPRESSION === lock) {
         delete lockHost.__MBG_ACTIVE_PDF_COMPRESSION;
@@ -334,9 +334,9 @@ function uploadCompression() {
       if (typeof window.Worker !== 'function') {
         throw new Error('このWebViewではPDFを安全に圧縮できません');
       }
-      return new Promise(function(resolve, reject) {
+      return new Promise<File>(function(resolve, reject) {
         rejectPending = reject;
-        worker = new window.Worker(window.__MBG_QPDF_WORKER_URL, {type: 'module'});
+        worker = new window.Worker(window.__MBG_QPDF_WORKER_URL!, {type: 'module'});
         worker.onmessage = function(event) {
           var result = event.data || {};
           if (result.type === 'progress') {
@@ -378,10 +378,10 @@ function uploadCompression() {
     { maxSide: 640, quality: 0.45 }
   ];
 
-  function compressOffice(input, file, progress) {
+  function compressOffice(input: HTMLInputElement, file: File, progress: (message: string) => void) {
     var folder = officeTypes[extensionOf(file)];
     var mediaPattern = new RegExp('^' + folder + '/media/[^/]+\\.(jpe?g|png)$', 'i');
-    var original;
+    var original: ArrayBuffer;
     var cancelled = false;
     function cancelOffice() { cancelled = true; }
     input.__mbgOfficeCompressionCancel = cancelOffice;
@@ -391,7 +391,7 @@ function uploadCompression() {
     }).then(function(buffer) {
       original = buffer;
       var step = 0;
-      function tryStep() {
+      function tryStep(): Promise<File> {
         if (cancelled) throw new Error('圧縮を中止しました');
         if (step >= officeSteps.length) {
           throw new Error('5MB以下まで小さくできませんでした');
@@ -415,7 +415,7 @@ function uploadCompression() {
   // Inspect the actual central directory before JSZip parses it synchronously.
   // Reject ZIP64: its extensible metadata has no bounded parser in the bundled
   // version and Office files accepted here are already limited to 128 MiB.
-  function validateOfficeDirectory(buffer) {
+  function validateOfficeDirectory(buffer: ArrayBuffer) {
     var bytes = new Uint8Array(buffer);
     var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     var end = -1;
@@ -452,9 +452,9 @@ function uploadCompression() {
     if (cursor !== limit) throw new Error('文書のZIP構造が不正です');
   }
 
-  function rebuildOffice(buffer, mediaPattern, settings, mimeType, cancelled) {
+  function rebuildOffice(buffer: ArrayBuffer, mediaPattern: RegExp, settings: {maxSide: number; quality: number}, mimeType: string, cancelled: () => boolean) {
     validateOfficeDirectory(buffer);
-    return window.JSZip.loadAsync(buffer).then(function(zip) {
+    return window.JSZip!.loadAsync(buffer).then(function(zip) {
       if (cancelled()) throw new Error('圧縮を中止しました');
       var entries = Object.keys(zip.files);
       if (entries.length > 5000) throw new Error('文書内のファイルが多すぎます');
@@ -475,7 +475,7 @@ function uploadCompression() {
         return mediaPattern.test(name) && !zip.files[name].dir;
       });
       var checkedIndex = 0, actualTotal = 0;
-      function checkNextEntry() {
+      function checkNextEntry(): Promise<Uint8Array<ArrayBuffer>> {
         if (cancelled()) throw new Error('圧縮を中止しました');
         if (checkedIndex >= entries.length) return nextImage();
         var name = entries[checkedIndex++];
@@ -495,7 +495,7 @@ function uploadCompression() {
         });
       }
       var index = 0;
-      function nextImage() {
+      function nextImage(): Promise<Uint8Array<ArrayBuffer>> {
         if (cancelled()) throw new Error('圧縮を中止しました');
         if (index >= names.length) {
           return readBoundedOfficeStream(zip.generateInternalStream({
@@ -513,7 +513,7 @@ function uploadCompression() {
           return loadImage(blob, cancelled).then(function(image) {
             var width = image.width || image.naturalWidth;
             var height = image.height || image.naturalHeight;
-            var scale = Math.min(1, settings.maxSide / Math.max(width, height));
+            var scale = Math.min(1, settings.maxSide / Math.max(width!, height!));
             // A PNG only shrinks by losing pixels; leave small ones untouched.
             if (type === 'image/png' && scale >= 1) {
               if (image.close) image.close();
@@ -543,13 +543,13 @@ function uploadCompression() {
     });
   }
 
-  function readBoundedOfficeEntry(entry, cancelled) {
+  function readBoundedOfficeEntry(entry: MbgZipEntry, cancelled: () => boolean) {
     return readBoundedOfficeStream(entry.internalStream('uint8array'), cancelled, maxOfficeEntryBytes);
   }
 
-  function readBoundedOfficeStream(stream, cancelled, limit) {
-    return new Promise(function(resolve, reject) {
-      var parts = [], length = 0, failed = false;
+  function readBoundedOfficeStream(stream: MbgZipStream, cancelled: () => boolean, limit: number) {
+    return new Promise<Uint8Array<ArrayBuffer>>(function(resolve, reject) {
+      var parts: Uint8Array<ArrayBuffer>[] = [], length = 0, failed = false;
       stream.on('data', function(chunk) {
         if (failed) return;
         length += chunk.length;
@@ -575,7 +575,7 @@ function uploadCompression() {
 
   // -------------------------------------------------------------- page glue
 
-  function statusFor(input) {
+  function statusFor(input: HTMLInputElement) {
     var doc = input.ownerDocument;
     var status = input.__mbgUploadCompressionStatus;
     if (status && status.isConnected) {
@@ -592,13 +592,13 @@ function uploadCompression() {
     return status;
   }
 
-  function showStatus(input, message, isError) {
+  function showStatus(input: HTMLInputElement, message: string, isError: boolean) {
     var status = statusFor(input);
     status.textContent = message;
     status.style.color = isError ? '#b00020' : '#1b5e20';
   }
 
-  function replayChange(input) {
+  function replayChange(input: HTMLInputElement) {
     if (replaying) {
       replaying.add(input);
     } else {
@@ -617,18 +617,18 @@ function uploadCompression() {
     }
   }
 
-  function isReplaying(input) {
+  function isReplaying(input: HTMLInputElement) {
     return replaying ? replaying.has(input) : !!input.__mbgUploadCompressionReplaying;
   }
 
-  function hasPendingCompression(form) {
+  function hasPendingCompression(form: HTMLFormElement) {
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
       return false;
     }
     var elements = form && form.elements || [];
     for (var i = 0; i < elements.length; i += 1) {
-      if (elements[i].__mbgUploadCompressionPending) {
-        showStatus(elements[i],
+      if ((elements[i] as HTMLInputElement).__mbgUploadCompressionPending) {
+        showStatus(elements[i] as HTMLInputElement,
           'ファイルを圧縮しています。完了してから提出してください', false);
         return true;
       }
@@ -636,28 +636,28 @@ function uploadCompression() {
     return false;
   }
 
-  function blockPendingSubmit(event) {
-    var target = event.target;
+  function blockPendingSubmit(event: Event) {
+    var target = event.target as (HTMLInputElement & HTMLFormElement) | null;
     if (event.type === 'click') {
       while (target && target.tagName !== 'BUTTON' && target.tagName !== 'INPUT') {
-        target = target.parentNode;
+        target = target.parentNode as (HTMLInputElement & HTMLFormElement) | null;
       }
       if (!target || !/^(submit|image)$/.test(String(target.type ||
           (target.tagName === 'BUTTON' ? 'submit' : '')).toLowerCase())) {
         return;
       }
-      target = target.form;
+      target = target.form as (HTMLInputElement & HTMLFormElement) | null;
     }
-    if (hasPendingCompression(target)) {
+    if (hasPendingCompression(target as HTMLFormElement)) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
   }
 
-  function wrapFormSubmits(doc) {
+  function wrapFormSubmits(doc: Document) {
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) return;
     var view = doc.defaultView;
-    var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype;
+    var prototype = view && view.HTMLFormElement && view.HTMLFormElement.prototype as HTMLFormElement & MbgCompressionHookOwner;
     if (!prototype) return;
     var live = documents().map(function(liveDoc) {
       var liveView = liveDoc.defaultView;
@@ -666,27 +666,27 @@ function uploadCompression() {
     // Replaced iframe documents leave their prototypes behind; drop those.
     var hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES =
       (window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || []).filter(function(entry) {
-        return live.indexOf(entry.prototype) >= 0;
+        return live.indexOf(entry.prototype as HTMLFormElement) >= 0;
       });
     ['submit', 'requestSubmit'].forEach(function(method) {
-      if (typeof prototype[method] !== 'function' || hooks.some(function(entry) {
+      if (typeof prototype![method as 'submit' | 'requestSubmit'] !== 'function' || hooks.some(function(entry) {
         return entry.prototype === prototype && entry.method === method;
       })) {
         return;
       }
-      var entry = { prototype: prototype, method: method, original: prototype[method] };
-      var wrapper = function() {
-        if (!hasPendingCompression(this)) return entry.original.apply(this, arguments);
-      };
+      var entry: { prototype: MbgCompressionHookOwner; method: 'submit' | 'requestSubmit'; original: MbgCompressionHookFunction; wrapper?: MbgCompressionHookFunction } = { prototype: prototype!, method: method as 'submit' | 'requestSubmit', original: prototype![method as 'submit' | 'requestSubmit'] };
+      var wrapper = function(this: HTMLFormElement) {
+        if (!hasPendingCompression(this)) return entry.original.apply(this, arguments as IArguments & unknown[]);
+      } as MbgCompressionHookFunction;
       // Both page scripts use this link to remove a hook beneath the other.
-      wrapper.__mbgFormSubmitHook = entry;
+      wrapper.__mbgFormSubmitHook = entry as MbgCompressionHook;
       entry.wrapper = wrapper;
-      prototype[method] = wrapper;
-      hooks.push(entry);
+      prototype![method as 'submit' | 'requestSubmit'] = wrapper;
+      hooks.push(entry as MbgCompressionHook);
     });
   }
 
-  function compress(input, file, progress) {
+  function compress(input: HTMLInputElement, file: File, progress: (message: string) => void) {
     switch (kindOf(file)) {
       case 'image':
         progress('5MBを超える画像を圧縮しています…');
@@ -701,8 +701,8 @@ function uploadCompression() {
     }
   }
 
-  function handleChange(event) {
-    var input = event.target;
+  function handleChange(event: Event) {
+    var input = event.target as HTMLInputElement;
     if (!isFileInput(input) || isReplaying(input)) {
       return;
     }
@@ -714,7 +714,7 @@ function uploadCompression() {
     if (!window.__MBG_UPLOAD_COMPRESSION_ENABLED) {
       return;
     }
-    var files = Array.prototype.slice.call(input.files || []);
+    var files = Array.prototype.slice.call(input.files || []) as File[];
     var generation = window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0;
     var finished = false;
     function isCurrentSelection() {
@@ -722,7 +722,7 @@ function uploadCompression() {
         (window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0) === generation &&
         input.__mbgUploadCompressionSelection === token &&
         input.files && input.files.length === files.length &&
-        files.every(function(file, index) { return input.files[index] === file; });
+        files.every(function(file, index) { return input.files![index] === file; });
     }
     if (input.__mbgUploadCompressionStatus) {
       input.__mbgUploadCompressionStatus.textContent = '';
@@ -760,14 +760,14 @@ function uploadCompression() {
     var originalTotal = oversized.reduce(function(sum, file) {
       return sum + file.size;
     }, 0);
-    function progress(message) {
+    function progress(message: string) {
       if (isCurrentSelection()) {
         showStatus(input, message, false);
       }
     }
 
     // One file at a time keeps memory use bounded on phones.
-    var results = [];
+    var results: File[] = [];
     var chain = Promise.resolve();
     files.forEach(function(file) {
       chain = chain.then(function() {
@@ -787,7 +787,7 @@ function uploadCompression() {
         delete input.__mbgUploadCompressionPending;
       }
     }
-    var timer;
+    var timer: number;
     var timeout = new Promise(function(resolve, reject) {
       timer = window.setTimeout(function() {
         if (input.__mbgUploadCompressionPending === token && input.__mbgPdfCompressionCancel) {
