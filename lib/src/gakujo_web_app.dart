@@ -5857,7 +5857,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
           _appSettings = nextSettings;
         });
-      }));
+      }), collections: const {'favorites', 'settings'});
       if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(

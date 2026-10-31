@@ -1743,51 +1743,59 @@ class StarSyncEngine {
     pauseTimers();
   }
 
-  Future<void> withBulkReplace(Future<void> Function() replace) =>
-      _queue.runExclusive(() async {
-        final state = _state;
-        final previous = state?.pendingBulkReplace;
-        final previousCollections = state == null
-            ? null
-            : Map<String, dynamic>.from(state.collectionStates);
-        await markBulkReplace();
-        try {
-          await replace();
-        } on Object {
-          if (state != null && identical(_state, state)) {
-            state.pendingBulkReplace = previous!;
-            state.collectionStates = previousCollections!;
-            await _saveState();
-          }
-          rethrow;
-        }
-      });
-
-  Future<void> markBulkReplace() => _queue.run(() async {
-    if (_state == null) {
-      return;
-    }
-    final previous = _state!.pendingBulkReplace;
-    final previousCollections = _state!.collectionStates;
-    _state!.pendingBulkReplace = true;
-    _state!.collectionStates = {
-      ...previousCollections,
-      for (final name in _collectionNames())
-        name: {
-          ...Map<String, dynamic>.from(previousCollections[name] as Map? ?? {}),
-          'pendingBulkReplace': true,
-        },
-    };
+  /// [collections] limits the collection restore marker to the collections
+  /// the restored data actually contains; null marks every collection.
+  Future<void> withBulkReplace(
+    Future<void> Function() replace, {
+    Iterable<String>? collections,
+  }) => _queue.runExclusive(() async {
+    final state = _state;
+    final previous = state?.pendingBulkReplace;
+    final previousCollections = state == null
+        ? null
+        : Map<String, dynamic>.from(state.collectionStates);
+    await markBulkReplace(collections: collections);
     try {
-      await _saveState();
+      await replace();
     } on Object {
-      // The restore aborts; a stale marker would turn a later unstar into
-      // a restore omission.
-      _state!.pendingBulkReplace = previous;
-      _state!.collectionStates = previousCollections;
+      if (state != null && identical(_state, state)) {
+        state.pendingBulkReplace = previous!;
+        state.collectionStates = previousCollections!;
+        await _saveState();
+      }
       rethrow;
     }
   });
+
+  Future<void> markBulkReplace({Iterable<String>? collections}) =>
+      _queue.run(() async {
+        if (_state == null) {
+          return;
+        }
+        final previous = _state!.pendingBulkReplace;
+        final previousCollections = _state!.collectionStates;
+        _state!.pendingBulkReplace = true;
+        _state!.collectionStates = {
+          ...previousCollections,
+          for (final name in _collectionNames())
+            if (collections == null || collections.contains(name))
+              name: {
+                ...Map<String, dynamic>.from(
+                  previousCollections[name] as Map? ?? {},
+                ),
+                'pendingBulkReplace': true,
+              },
+        };
+        try {
+          await _saveState();
+        } on Object {
+          // The restore aborts; a stale marker would turn a later unstar into
+          // a restore omission.
+          _state!.pendingBulkReplace = previous;
+          _state!.collectionStates = previousCollections;
+          rethrow;
+        }
+      });
 
   Future<StarSyncKeyring> _readKeyring(StarSyncTransport transport) async {
     final object = await transport.get(_keyringPath);

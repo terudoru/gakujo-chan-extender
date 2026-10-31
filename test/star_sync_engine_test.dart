@@ -2859,6 +2859,41 @@ void main() {
     },
   );
 
+  test('bulk restore marks only the collections it restored', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites');
+    final drafts = _Collection('drafts');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites, drafts],
+    );
+    await engine.setUp(config, 'pass');
+    favorites.entries = {'f': 'one'};
+    drafts.entries = {'d': 'old'};
+    await engine.syncNow();
+    Map state(String name) =>
+        (jsonDecode(storage.values[starSyncStateKey]!)
+                as Map)['collectionStates'][name]
+            as Map;
+    final favoriteClock = state('favorites')['records']['f']['clock'] as int;
+    final draftClock = state('drafts')['records']['d']['clock'] as int;
+    await engine.withBulkReplace(() async {}, collections: const {'favorites'});
+    await engine.syncNow();
+    // The restored collection's entries become new edits; drafts, which a
+    // backup does not contain, keep their clock so newer edits elsewhere win.
+    expect(
+      state('favorites')['records']['f']['clock'],
+      greaterThan(favoriteClock),
+    );
+    expect(state('drafts')['records']['d']['clock'], draftClock);
+    engine.dispose();
+  });
+
   test(
     'rejected collection apply saves nothing and retries without warning',
     () async {
