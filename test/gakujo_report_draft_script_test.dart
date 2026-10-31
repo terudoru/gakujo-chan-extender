@@ -125,6 +125,25 @@ void main() {
     expect(result['unchanged'], isTrue);
   });
 
+  test('saved touched form blocks import while untouched form permits it', () async {
+    final touched = await _evaluateDraftScenario('touchedImport');
+    expect(touched['matched'], isFalse);
+    expect(touched['unchanged'], isTrue);
+    expect(touched['dirty'], isFalse);
+    expect(touched['touched'], isTrue);
+    final untouched = await _evaluateDraftScenario('untouchedImport');
+    expect(untouched['matched'], isTrue);
+    expect(untouched['unchanged'], isFalse);
+  });
+
+  test('successful saves and deletes notify the app, failures do not', () async {
+    final result = await _evaluateDraftScenario('notifications');
+    expect(result['messages'], [
+      {'type': 'reportDraftSaved'},
+      {'type': 'reportDraftSaved'},
+    ]);
+  });
+
   test('export flushes pending edits through the draft save path', () async {
     final result = await _evaluateDraftScenario('pendingExport');
     expect(result['value'], 'pending edit');
@@ -1493,7 +1512,21 @@ if (extended) return process.stdout.write(JSON.stringify(extended));
 const storage = new FakeStorage();
 const savingPage = createPage(spec.initialHtml, spec.initialText, storage);
 runPage(savingPage);
-if (spec.scenario === 'dirtyImport' || spec.scenario === 'pendingExport') {
+if (spec.scenario === 'notifications') {
+  const messages = [];
+  savingPage.window.GakujoMessageStars = {postMessage(message) { messages.push(JSON.parse(message)); }};
+  storage.failWrite = true;
+  savingPage.field.textContent = 'draft';
+  savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  storage.failWrite = false;
+  savingPage.document.__MBG_REPORT_DRAFT_FLUSH();
+  storage.failRemove = true;
+  savingPage.document.insertedStatus.children.find(child => child.textContent === '\u4e0b\u66f8\u304d\u3092\u524a\u9664').listeners.click();
+  storage.failRemove = false;
+  savingPage.document.insertedStatus.children.find(child => child.textContent === '\u4e0b\u66f8\u304d\u3092\u524a\u9664').listeners.click();
+  return process.stdout.write(JSON.stringify({messages}));
+}
+if (['dirtyImport', 'pendingExport', 'touchedImport', 'untouchedImport'].includes(spec.scenario)) {
   savingPage.window.deferSaveTimer = true;
   const key = savingPage.document.__MBG_REPORT_DRAFT_IDENTITY.key;
   const original = {savedAt: 1234567890000, fields: []};
@@ -1501,8 +1534,14 @@ if (spec.scenario === 'dirtyImport' || spec.scenario === 'pendingExport') {
   original.savedAt = Date.now();
   storage.setItem(key, JSON.stringify(original));
   storage.setItem('mbg-report-draft:v2:other', JSON.stringify(original));
-  savingPage.field.textContent = 'pending edit';
-  savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  if (spec.scenario !== 'untouchedImport') {
+    savingPage.field.textContent = 'pending edit';
+    savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  }
+  if (spec.scenario === 'touchedImport') {
+    savingPage.document.__MBG_REPORT_DRAFT_FLUSH();
+    storage.setItem(key, JSON.stringify(original));
+  }
   if (spec.scenario === 'pendingExport') {
     const result = JSON.parse(runPage(savingPage, exportScript));
     return process.stdout.write(JSON.stringify({value: result[key].fields[0].value,
@@ -1518,6 +1557,8 @@ if (spec.scenario === 'dirtyImport' || spec.scenario === 'pendingExport') {
     'drafts["mbg-report-draft:v2:other"] = ' + JSON.stringify(replacement) + ';\n' +
     'var matched = true;'));
   return process.stdout.write(JSON.stringify({matched,
+    dirty: !!savingPage.field.__MBG_REPORT_DRAFT_DIRTY,
+    touched: !!savingPage.field.__MBG_REPORT_DRAFT_TOUCHED,
     unchanged: before === JSON.stringify(Array.from(storage.values.entries()))}));
 }
 if (spec.scenario === 'saveFailure') storage.failWrite = true;

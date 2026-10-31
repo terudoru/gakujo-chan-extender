@@ -529,12 +529,22 @@ class GakujoReportDraftScript {
     }
   }
 
+  function notifyDraftSaved() {
+    try {
+      var channel = window.GakujoMessageStars;
+      if (channel && channel.postMessage) {
+        channel.postMessage(JSON.stringify({type: 'reportDraftSaved'}));
+      }
+    } catch (_) {}
+  }
+
   function writeDraft(store, key, payload) {
     if (!store) {
       return false;
     }
     try {
       store.setItem(key, JSON.stringify(payload));
+      notifyDraftSaved();
       return true;
     } catch (e) {
       return false;
@@ -547,6 +557,7 @@ class GakujoReportDraftScript {
     }
     try {
       store.removeItem(key);
+      notifyDraftSaved();
       return true;
     } catch (e) {
       return false;
@@ -1171,10 +1182,10 @@ class GakujoReportDraftScript {
       }
       var pending = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
       var identity = doc.__MBG_REPORT_DRAFT_IDENTITY;
-      var dirty = pending && pending.key === key || identity && identity.key === key &&
-        identity.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_DIRTY; });
+      var touched = pending && pending.key === key || identity && identity.key === key &&
+        identity.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_TOUCHED || field.__MBG_REPORT_DRAFT_DIRTY; });
       var incoming = Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key] : undefined;
-      if (dirty && JSON.stringify(canonical(current)) !== JSON.stringify(canonical(incoming))) {
+      if (touched && JSON.stringify(canonical(current)) !== JSON.stringify(canonical(incoming))) {
         matched = false;
         return;
       }

@@ -3272,12 +3272,12 @@ void main() {
       collection.entries = {'edit': 'value'};
       collection.rejectApply = true;
       await engine.syncNow();
-      expect(
-        jsonDecode(
-          storage.values[starSyncStateKey]!,
-        )['collectionStates']['drafts'],
-        before,
-      );
+      final refused = jsonDecode(
+        storage.values[starSyncStateKey]!,
+      )['collectionStates']['drafts'] as Map;
+      expect(refused['records'], before['records']);
+      expect(refused['pendingApplyRetry'], isTrue);
+      expect(refused['applyRefusals'], 1);
       expect(engine.status.value.lastError, isNull);
       for (final path in files.keys.where(
         (p) => p.startsWith('sync/drafts/'),
@@ -3295,6 +3295,108 @@ void main() {
       engine.dispose();
     },
   );
+
+  test('refused applies back off, warn on the fifth, and reset', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final collection = _Collection('drafts');
+    final timers = <_TestTimer>[];
+    final delays = <Duration>[];
+    var allowed = true;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      canSync: () => allowed,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [collection],
+      timerFactory: (delay, callback) {
+        delays.add(delay);
+        final timer = _TestTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+    await engine.setUp(config, 'pass');
+    collection.rejectApply = true;
+    for (var i = 0; i < 7; i++) {
+      await engine.syncNow();
+      expect(delays.last, Duration(seconds: [30, 60, 120, 240, 480, 600, 600][i]));
+      expect(engine.status.value.lastError == null, i < 4);
+      final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+      expect(state['pendingLocalChange'], isTrue);
+      expect(state['collectionStates']['drafts']['applyRefusals'], i + 1);
+    }
+    allowed = false;
+    final lists = remote.lists;
+    timers.last.fire();
+    expect(remote.lists, lists);
+    expect(delays.last, const Duration(minutes: 10));
+    allowed = true;
+    collection.rejectApply = false;
+    await engine.syncNow();
+    expect(timers.last.isActive, isFalse);
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    expect(state['pendingLocalChange'], isFalse);
+    expect(state['collectionStates']['drafts'].containsKey('pendingApplyRetry'), isFalse);
+    expect(engine.status.value.lastError, isNull);
+    collection.rejectApply = true;
+    await engine.syncNow();
+    expect(delays.last, const Duration(seconds: 30));
+    engine.dispose();
+    expect(timers.last.isActive, isFalse);
+  });
+
+  test('unavailable drafts with remote changes are retried', () async {
+    final remote = _Transport();
+    final firstData = _Collection('report-drafts');
+    final secondData = _Collection('report-drafts');
+    final timers = <_TestTimer>[];
+    StarSyncEngine make(_Collection data, {bool timed = false}) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [data],
+        timerFactory: timed ? (delay, callback) {
+          expect(delay, const Duration(seconds: 30));
+          final timer = _TestTimer(callback);
+          timers.add(timer);
+          return timer;
+        } : null,
+      );
+    }
+    final first = make(firstData);
+    final second = make(secondData, timed: true);
+    await first.setUp(config, 'pass');
+    await second.setUp(config, 'pass');
+    firstData.entries = {'draft': 'remote'};
+    await first.syncNow();
+    secondData.entries = null;
+    await second.syncNow();
+    expect(timers, hasLength(1));
+    expect(second.status.value.lastError, isNull);
+    secondData.entries = {};
+    final done = Completer<void>();
+    var started = false;
+    void listener() {
+      if (second.status.value.syncing) started = true;
+      if (started && !second.status.value.syncing && !done.isCompleted) {
+        done.complete();
+      }
+    }
+    second.status.addListener(listener);
+    timers.single.fire();
+    await done.future.timeout(const Duration(seconds: 5));
+    second.status.removeListener(listener);
+    expect(secondData.entries, {'draft': 'remote'});
+    first.dispose();
+    second.dispose();
+  });
 
   test(
     'collection cap tombstones oldest entries with deterministic ties',

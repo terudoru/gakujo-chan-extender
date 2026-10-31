@@ -96,6 +96,18 @@ part 'gakujo_web_app_message_stars.dart';
 part 'gakujo_web_app_report_drafts.dart';
 
 @visibleForTesting
+bool handleReportDraftSavedMessage(String message, void Function() onSaved) {
+  try {
+    final data = jsonDecode(message);
+    if (data is! Map || data['type'] != 'reportDraftSaved') return false;
+    onSaved();
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+@visibleForTesting
 class GakujoCollectionSyncScheduler {
   GakujoCollectionSyncScheduler({
     required this.canSync,

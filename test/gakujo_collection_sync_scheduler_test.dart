@@ -57,9 +57,17 @@ void main() {
         return timer;
       },
     );
-    scheduler.draftChanged();
-    scheduler.draftChanged();
-    scheduler.draftChanged();
+    expect(handleReportDraftSavedMessage('invalid', scheduler.draftChanged), isFalse);
+    expect(handleReportDraftSavedMessage('{"type":"other"}', scheduler.draftChanged), isFalse);
+    for (var i = 0; i < 3; i++) {
+      expect(
+        handleReportDraftSavedMessage(
+          '{"type":"reportDraftSaved"}',
+          scheduler.draftChanged,
+        ),
+        isTrue,
+      );
+    }
     for (final timer in timers) {
       timer.fire();
     }

@@ -330,6 +330,7 @@ class StarSyncEngine {
         }
         try {
           await _saveState();
+          _scheduleApplyRetry(state);
         } on Object {
           state.disabledCollections = previous;
           rethrow;
@@ -369,6 +370,7 @@ class StarSyncEngine {
   bool _wakeForLocal = false;
   Timer? _timer;
   Timer? _cooldownTimer;
+  Timer? _applyRetryTimer;
   bool _disposed = false;
   int _accountGeneration = 0;
   int get accountGeneration => _accountGeneration;
@@ -464,6 +466,7 @@ class StarSyncEngine {
         transport.close();
       }
       _scheduleCooldown(parsedState);
+      _scheduleApplyRetry(parsedState);
       _publish();
     } catch (_) {
       _config = null;
@@ -1132,6 +1135,7 @@ class StarSyncEngine {
         await _saveState();
       }
       _cooldownTimer?.cancel();
+      _applyRetryTimer?.cancel();
       return _sync();
     });
   }
@@ -1151,6 +1155,44 @@ class StarSyncEngine {
             .catchError((Object _) => const StarSyncResult()),
       );
     });
+  }
+
+  void _scheduleApplyRetry(StarSyncState state) {
+    _applyRetryTimer?.cancel();
+    if (_disposed || _config == null || !identical(_state, state)) return;
+    var failures = 0;
+    for (final entry in state.collectionStates.entries) {
+      if (state.disabledCollections.contains(entry.key) || entry.value is! Map) {
+        continue;
+      }
+      final collection = entry.value as Map;
+      if (collection['pendingApplyRetry'] == true) {
+        failures = max(failures, collection['applyRefusals'] as int? ?? 1);
+      }
+    }
+    if (failures == 0) return;
+    final seconds = min(600, 30 * (1 << min(failures - 1, 5)));
+    _applyRetryTimer = _timerFactory(Duration(seconds: seconds), () {
+      if (_disposed || !identical(_state, state) || _config == null) return;
+      if (canSync?.call() == false) {
+        _scheduleApplyRetry(state);
+        return;
+      }
+      unawaited(
+        syncNow(trigger: StarSyncTrigger.localChange)
+            .catchError((Object _) => const StarSyncResult()),
+      );
+    });
+  }
+
+  void _refuseCollection(StarSyncState state, String name) {
+    final stored = Map<String, dynamic>.from(
+      state.collectionStates[name] as Map? ?? {},
+    );
+    stored['pendingApplyRetry'] = true;
+    stored['applyRefusals'] = (stored['applyRefusals'] as int? ?? 0) + 1;
+    state.collectionStates[name] = stored;
+    state.pendingLocalChange = true;
   }
 
   Future<StarSyncResult> _sync() async {
@@ -1399,16 +1441,22 @@ class StarSyncEngine {
       }
       if (!await _accountMatches(state)) return const StarSyncResult();
       if (collectionTransportFailure != null) throw collectionTransportFailure;
+      final pendingRetries = state.collectionStates.entries.where((entry) =>
+          !state.disabledCollections.contains(entry.key) &&
+          entry.value is Map &&
+          (entry.value as Map)['pendingApplyRetry'] == true);
+      final retryWarning = pendingRetries.any((entry) =>
+          ((entry.value as Map)['applyRefusals'] as int? ?? 0) >= 5);
       state.status = StarSyncStatus.ok;
       state.lastError = collectionTooLarge
           ? '同期データが大きすぎるため、一部の項目を同期できませんでした'
-          : collectionFailures > 0
-          ? 'Some collections could not be synced ($collectionFailures)'
+          : collectionFailures > 0 || retryWarning
+          ? 'Some collections could not be synced (${collectionFailures + (retryWarning ? 1 : 0)})'
           : skipped == 0
           ? null
           : '一部の端末のデータを読めませんでした（$skipped台）';
       state.lastSyncAt = _now().toUtc();
-      state.pendingLocalChange = collectionFailures > 0;
+      state.pendingLocalChange = collectionFailures > 0 || pendingRetries.isNotEmpty;
       state.serverFailures = 0;
       state.cooldownUntil = null;
       await _saveState();
@@ -1456,6 +1504,7 @@ class StarSyncEngine {
       rethrow;
     } finally {
       transport.close();
+      _scheduleApplyRetry(state);
       _publish();
     }
   }
@@ -1491,7 +1540,9 @@ class StarSyncEngine {
     }
     var local = await collection.readLocal();
     if (!await _accountMatches(state)) throw const _AccountChanged();
-    if (local == null) return (changed: false, skipped: 0);
+    if (local == null && name != 'report-drafts') {
+      return (changed: false, skipped: 0);
+    }
     final stored = Map<String, dynamic>.from(
       state.collectionStates[name] as Map? ?? {},
     );
@@ -1579,7 +1630,21 @@ class StarSyncEngine {
     }
     local = await collection.readLocal();
     if (!await _accountMatches(state)) throw const _AccountChanged();
-    if (local == null) return (changed: false, skipped: skipped);
+    if (local == null) {
+      final remoteMerged = mergeStarSyncCollectionRecords([
+        previousRecords,
+        ...documents.map((document) => document.records),
+      ]);
+      if (stored['pendingApplyRetry'] == true ||
+          starSyncCanonicalJson(remoteMerged.map(
+            (key, value) => MapEntry(key, value.toJson()),
+          )) != starSyncCanonicalJson(previousRecords.map(
+            (key, value) => MapEntry(key, value.toJson()),
+          ))) {
+        _refuseCollection(state, name);
+      }
+      return (changed: false, skipped: skipped);
+    }
     for (final document in documents) {
       clock = max(clock, document.clock);
       for (final record in document.records.values) {
@@ -1688,7 +1753,8 @@ class StarSyncEngine {
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
     if (!await collection.applyLocal(live, basedOn: local)) {
-      return (changed: false, skipped: 0);
+      _refuseCollection(state, name);
+      return (changed: false, skipped: skipped);
     }
     if (!await _accountMatches(state)) throw const _AccountChanged();
     final next = <String, dynamic>{
@@ -1776,6 +1842,7 @@ class StarSyncEngine {
   void pauseTimers() {
     _timer?.cancel();
     _cooldownTimer?.cancel();
+    _applyRetryTimer?.cancel();
     final wake = _backgroundWake;
     if (wake != null && !wake.isCompleted) wake.complete();
     _backgroundWake = null;
@@ -2249,6 +2316,7 @@ class StarSyncEngine {
       _queue.run(() async {
         _timer?.cancel();
         _cooldownTimer?.cancel();
+        _applyRetryTimer?.cancel();
         final wake = _backgroundWake;
         if (wake != null && !wake.isCompleted) wake.complete();
         _backgroundWake = null;

@@ -43,7 +43,9 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   }
 
   Future<void> _handleMessageStarMessage(String message) async {
-    if (!_canRunPageScripts || !_messageStarsEnabled) return;
+    if (!_canRunPageScripts) return;
+    if (handleReportDraftSavedMessage(message, _scheduleDraftSync)) return;
+    if (!_messageStarsEnabled) return;
     String? action;
     try {
       final data = jsonDecode(message);
