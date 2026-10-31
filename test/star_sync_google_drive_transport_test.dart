@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_drive_transport.dart';
@@ -97,7 +98,7 @@ class _FakeDrive {
         insertRace = false;
         add(file.name, [99], created: DateTime.utc(2020));
       }
-      response.write(jsonEncode({'id': file.id}));
+      response.write(jsonEncode(file.json));
     } else {
       final id = request.uri.pathSegments.last;
       final matches = files.where((file) => file.id == id).toList();
@@ -108,7 +109,7 @@ class _FakeDrive {
       } else if (request.method == 'PATCH') {
         matches.first.bytes = body;
         matches.first.version++;
-        response.write('{}');
+        response.write(jsonEncode(matches.first.json));
       } else if (request.method == 'DELETE') {
         files.remove(matches.first);
         response.statusCode = 204;
@@ -173,6 +174,30 @@ void main() {
     },
   );
 
+  test('shares one listing across reads and writes', () async {
+    drive.add('stars/keyring.json', [1]);
+    drive.add('stars/devices/other', [2]);
+    final own = drive.add('stars/devices/own', [3]);
+    await transport.list('stars');
+    await transport.list('stars/devices');
+    await transport.get('stars/keyring.json');
+    await transport.get('stars/devices/other');
+    await transport.put('stars/devices/own', [4]);
+    expect((await transport.get('stars/devices/own'))!.etag, '2');
+    expect(own.bytes, [4]);
+    expect(drive.counts['GET /drive/v3/files'], 1);
+  });
+
+  test('createOnly refreshes the listing for duplicate detection', () async {
+    await transport.list('stars');
+    drive.add('stars/keyring.json', [1]);
+    await expectLater(
+      transport.put('stars/keyring.json', [2], createOnly: true),
+      throwsA(isA<StarSyncTransportException>()),
+    );
+    expect(drive.counts['GET /drive/v3/files'], 2);
+  });
+
   test('createOnly rejects an existing file without uploading', () async {
     drive.add('stars/keyring.json', [1]);
     await expectLater(
@@ -228,12 +253,13 @@ void main() {
       apiBase: drive.base,
       accessToken: ({bool forceRefresh = false}) async => 'token',
       delay: (duration) async => delays.add(duration),
+      random: Random(42),
     );
     expect(await transport.list('stars'), isEmpty);
+    final random = Random(42);
     expect(delays, [
-      const Duration(seconds: 1),
-      const Duration(seconds: 2),
-      const Duration(seconds: 4),
+      for (final seconds in [1, 2, 4])
+        Duration(seconds: seconds, milliseconds: random.nextInt(1001)),
     ]);
   });
 

@@ -14,9 +14,11 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     HttpClient Function()? httpClientFactory,
     Uri? apiBase,
     Future<void> Function(Duration)? delay,
+    Random? random,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _apiBase = apiBase ?? Uri.parse('https://www.googleapis.com'),
-       _delay = delay ?? Future<void>.delayed {
+       _delay = delay ?? Future<void>.delayed,
+       _random = random ?? Random() {
     validateStarSyncEndpoint(_apiBase);
   }
 
@@ -25,6 +27,8 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   final Uri _apiBase;
   final Future<void> Function(Duration) _delay;
   final Map<String, List<_DriveFile>> _files = {};
+  final Random _random;
+  bool _loaded = false;
 
   Uri _uri(String path, [Map<String, String> query = const {}]) {
     final base = _apiBase.path.replaceFirst(RegExp(r'/+$'), '');
@@ -86,7 +90,9 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
             statusCode: response.statusCode,
           );
         }
-        await _delay(Duration(seconds: 1 << retries));
+        await _delay(
+          Duration(seconds: 1 << retries, milliseconds: _random.nextInt(1001)),
+        );
         retries++;
         continue;
       }
@@ -143,10 +149,11 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     _files
       ..clear()
       ..addAll(found);
+    _loaded = true;
   }
 
   Future<List<_DriveFile>> _lookup(String path) async {
-    if (!_files.containsKey(path)) await _refresh();
+    if (!_loaded) await _refresh();
     return _files[path] ?? [];
   }
 
@@ -158,7 +165,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
     validateStarSyncPath(directory);
-    await _refresh();
+    if (!_loaded) await _refresh();
     final prefix = '$directory/';
     final result = <StarSyncRemoteEntry>[];
     for (final entry in _files.entries) {
@@ -221,12 +228,13 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         'PATCH',
         _uri('/upload/drive/v3/files/${Uri.encodeComponent(files.first.id)}', {
           'uploadType': 'media',
+          'fields': 'id,name,version,md5Checksum,modifiedTime,size,createdTime',
         }),
         headers: {'content-type': 'application/octet-stream'},
         body: bytes,
       );
       checkStarSyncStatus(response.statusCode);
-      _files.remove(path);
+      _files[path]![0] = _updatedFile(response, path, files.first);
       return;
     }
     final random = Random.secure();
@@ -248,7 +256,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       'POST',
       _uri('/upload/drive/v3/files', {
         'uploadType': 'multipart',
-        'fields': 'id',
+        'fields': 'id,name,version,md5Checksum,modifiedTime,size,createdTime',
       }),
       headers: {'content-type': 'multipart/related; boundary=$boundary'},
       body: body,
@@ -272,7 +280,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         'Invalid Google Drive response',
       );
     }
-    _files.remove(path);
+    _files[path] = [_updatedFile(response, path, null)];
     if (createOnly) {
       await _refresh();
       final current = _files[path];
@@ -284,12 +292,40 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       }
       if (current.first.id != id) {
         await _deleteId(id);
-        _files.remove(path);
+        _files[path]?.removeWhere((file) => file.id == id);
         throw const StarSyncTransportException(
           StarSyncTransportErrorKind.alreadyExists,
           'File already exists',
         );
       }
+    }
+  }
+
+  _DriveFile _updatedFile(
+    StarSyncHttpResponse response,
+    String path,
+    _DriveFile? previous,
+  ) {
+    try {
+      final json =
+          jsonDecode(utf8.decode(response.bytes)) as Map<String, dynamic>;
+      return _DriveFile.fromJson({
+        'id': json['id'] ?? previous?.id,
+        'name': path,
+        'createdTime':
+            json['createdTime'] ??
+            previous?.created.toUtc().toIso8601String() ??
+            DateTime.now().toUtc().toIso8601String(),
+        'modifiedTime': json['modifiedTime'],
+        'size': json['size'],
+        'version': json['version'],
+        'md5Checksum': json['md5Checksum'],
+      });
+    } on Object {
+      throw const StarSyncTransportException(
+        StarSyncTransportErrorKind.invalidResponse,
+        'Invalid Google Drive response',
+      );
     }
   }
 
@@ -304,7 +340,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   @override
   Future<void> delete(String path) async {
     validateStarSyncPath(path);
-    await _refresh();
+    await _lookup(path);
     for (final file in _files[path] ?? <_DriveFile>[]) {
       await _deleteId(file.id);
     }

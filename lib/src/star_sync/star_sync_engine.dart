@@ -59,6 +59,8 @@ Future<String> _rewrapKeyringJson(
   return jsonEncode(result.toJson());
 });
 
+enum StarSyncTrigger { localChange, startup, resume, manual }
+
 enum StarSyncPairingSetup { created, needsPairingCode }
 
 class StarSyncPairingMismatchException implements Exception {
@@ -72,12 +74,14 @@ class StarSyncStatusSnapshot {
     this.lastSyncAt,
     this.lastError,
     this.syncing = false,
+    this.cooldownUntil,
   });
   final bool enabled;
   final StarSyncStatus status;
   final DateTime? lastSyncAt;
   final String? lastError;
   final bool syncing;
+  final DateTime? cooldownUntil;
 }
 
 class StarSyncResult {
@@ -115,6 +119,12 @@ class StarSyncState {
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
+    this.keyringEtag,
+    this.pendingLocalChange = false,
+    this.cooldownUntil,
+    this.serverFailures = 0,
+    this.backgroundDate,
+    this.backgroundCount = 0,
   }) : records = records ?? {},
        remoteCache = remoteCache ?? {};
   final String deviceId;
@@ -128,6 +138,12 @@ class StarSyncState {
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
+  String? keyringEtag;
+  bool pendingLocalChange;
+  DateTime? cooldownUntil;
+  int serverFailures;
+  String? backgroundDate;
+  int backgroundCount;
 
   Map<String, Object?> toJson() => {
     'deviceId': deviceId,
@@ -141,6 +157,12 @@ class StarSyncState {
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
+    'keyringEtag': keyringEtag,
+    'pendingLocalChange': pendingLocalChange,
+    'cooldownUntil': cooldownUntil?.toIso8601String(),
+    'serverFailures': serverFailures,
+    'backgroundDate': backgroundDate,
+    'backgroundCount': backgroundCount,
   };
 
   factory StarSyncState.fromJson(Map<String, dynamic> json) {
@@ -161,6 +183,12 @@ class StarSyncState {
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
+      keyringEtag: json['keyringEtag'] as String?,
+      pendingLocalChange: json['pendingLocalChange'] as bool? ?? false,
+      cooldownUntil: DateTime.tryParse(json['cooldownUntil'] as String? ?? ''),
+      serverFailures: json['serverFailures'] as int? ?? 0,
+      backgroundDate: json['backgroundDate'] as String?,
+      backgroundCount: json['backgroundCount'] as int? ?? 0,
     );
   }
 }
@@ -172,6 +200,8 @@ class StarSyncEngine {
     StarSyncTransport Function(StarSyncConfig)? transportFactory,
     StarSyncTransport Function()? googleDriveTransport,
     DateTime Function()? now,
+    Random? random,
+    Future<void> Function(Duration)? delay,
     this.loginId,
     this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
@@ -179,12 +209,17 @@ class StarSyncEngine {
        _transportFactory =
            transportFactory ??
            ((config) => _defaultTransport(config, googleDriveTransport)),
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now,
+       _random = random ?? Random(),
+       _delay = delay ?? Future<void>.delayed;
 
   final GakujoActivityStore activityStore;
   final FlutterSecureStorage _storage;
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
   final DateTime Function() _now;
+  final Random _random;
+  final Future<void> Function(Duration) _delay;
+  Completer<void>? _backgroundWake;
   final String? Function()? loginId;
   final void Function()? onLocalStarsChanged;
   final StarSyncKdfParams kdfParams;
@@ -198,6 +233,8 @@ class StarSyncEngine {
   StarSyncState? _state;
   Future<StarSyncResult>? _running;
   bool _followUp = false;
+  StarSyncTrigger _followUpTrigger = StarSyncTrigger.localChange;
+  bool _wakeForLocal = false;
   Timer? _timer;
 
   static StarSyncTransport _defaultTransport(
@@ -253,6 +290,7 @@ class StarSyncEngine {
       lastSyncAt: state?.lastSyncAt,
       lastError: state?.lastError,
       syncing: syncing,
+      cooldownUntil: state?.cooldownUntil,
     );
   }
 
@@ -420,6 +458,7 @@ class StarSyncEngine {
         state
           ..dataKey = base64Encode(decoded.dataKey)
           ..keyId = decoded.keyId
+          ..keyringEtag = null
           ..remoteCache = {}
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
@@ -451,6 +490,7 @@ class StarSyncEngine {
         state
           ..dataKey = base64Encode(created.dataKey)
           ..keyId = created.keyring.keyId
+          ..keyringEtag = null
           ..remoteCache = {}
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
@@ -467,31 +507,111 @@ class StarSyncEngine {
     return code;
   }
 
-  Future<StarSyncResult> syncNow() {
+  Future<StarSyncResult> syncNow({
+    StarSyncTrigger trigger = StarSyncTrigger.manual,
+  }) async {
     if (_running != null) {
-      _followUp = true;
+      if (trigger == StarSyncTrigger.localChange && _backgroundWake != null) {
+        _wakeForLocal = true;
+        _backgroundWake!.complete();
+        _backgroundWake = null;
+      } else if (trigger == StarSyncTrigger.localChange ||
+          trigger == StarSyncTrigger.manual) {
+        _followUp = true;
+        if (trigger == StarSyncTrigger.manual ||
+            _followUpTrigger != StarSyncTrigger.manual) {
+          _followUpTrigger = trigger;
+        }
+      }
       return _running!;
     }
-    final run = _runAndFollowUp();
+    final run = _runAndFollowUp(trigger);
     _running = run;
-    return run.whenComplete(() {
+    try {
+      return await run;
+    } finally {
       _running = null;
-    });
+    }
   }
 
-  Future<StarSyncResult> _runAndFollowUp() async {
+  Future<StarSyncResult> _runAndFollowUp(StarSyncTrigger trigger) async {
     var result = const StarSyncResult();
     var changed = false;
     do {
       _followUp = false;
-      result = await _queue.run(_sync);
+      try {
+        result = await _queue.run(() => _triggerSync(trigger));
+      } on Object {
+        if (_followUp && _followUpTrigger == StarSyncTrigger.localChange) {
+          await _queue.run(() async {
+            if (_state != null) {
+              _state!.pendingLocalChange = true;
+              await _saveState();
+            }
+          });
+        }
+        rethrow;
+      }
       changed = changed || result.localChanged;
+      trigger = _followUpTrigger;
+      _followUpTrigger = StarSyncTrigger.localChange;
     } while (_followUp);
     return StarSyncResult(
       localChanged: changed,
       skippedFiles: result.skippedFiles,
       devices: result.devices,
     );
+  }
+
+  Future<StarSyncResult> _triggerSync(StarSyncTrigger trigger) async {
+    final state = _state;
+    if (_config == null || state == null) return const StarSyncResult();
+    final now = _now();
+    final background =
+        trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume;
+    if (trigger != StarSyncTrigger.manual &&
+        state.cooldownUntil != null &&
+        now.isBefore(state.cooldownUntil!)) {
+      if (trigger == StarSyncTrigger.localChange) {
+        state.pendingLocalChange = true;
+        await _saveState();
+      }
+      return const StarSyncResult();
+    }
+    if (background && !state.pendingLocalChange) {
+      final date = '${now.year}-${now.month}-${now.day}';
+      if (state.backgroundDate != date) {
+        state.backgroundDate = date;
+        state.backgroundCount = 0;
+      }
+      if ((state.lastSyncAt != null &&
+              now.difference(state.lastSyncAt!) < const Duration(minutes: 2)) ||
+          state.backgroundCount >= 120) {
+        return const StarSyncResult();
+      }
+      final wake = Completer<void>();
+      _backgroundWake = wake;
+      await Future.any([
+        _delay(Duration(milliseconds: _random.nextInt(20001))),
+        wake.future,
+      ]);
+      if (identical(_backgroundWake, wake)) _backgroundWake = null;
+      if (_config == null || !identical(_state, state)) {
+        return const StarSyncResult();
+      }
+      if (_wakeForLocal) {
+        _wakeForLocal = false;
+        trigger = StarSyncTrigger.localChange;
+      } else {
+        state.backgroundCount++;
+        await _saveState();
+      }
+    }
+    if (trigger == StarSyncTrigger.localChange) {
+      state.pendingLocalChange = true;
+      await _saveState();
+    }
+    return _sync();
   }
 
   Future<StarSyncResult> _sync() async {
@@ -503,19 +623,25 @@ class StarSyncEngine {
     _publish(syncing: true);
     final transport = _transportFactory(config);
     try {
-      final keyObject = await transport.get(_keyringPath);
-      if (keyObject == null) {
-        throw StateError('missing keyring');
-      }
-      final keyring = StarSyncKeyring.fromJson(
-        jsonDecode(utf8.decode(keyObject.bytes)),
-      );
-      if (keyring.keyId != state.keyId) {
-        state.status = keyring.mode == 'pairing'
-            ? StarSyncStatus.needsPairingCode
-            : StarSyncStatus.needsPassphrase;
-        await _saveState();
-        return const StarSyncResult();
+      final keyEntries = await transport.list('stars');
+      final matches = keyEntries.where((entry) => entry.path == _keyringPath);
+      if (matches.isEmpty) throw StateError('missing keyring');
+      final etag = matches.first.etag;
+      if (etag == null || etag.isEmpty || etag != state.keyringEtag) {
+        final keyObject = await transport.get(_keyringPath);
+        if (keyObject == null) throw StateError('missing keyring');
+        final keyring = StarSyncKeyring.fromJson(
+          jsonDecode(utf8.decode(keyObject.bytes)),
+        );
+        if (keyring.keyId != state.keyId) {
+          state.status = keyring.mode == 'pairing'
+              ? StarSyncStatus.needsPairingCode
+              : StarSyncStatus.needsPassphrase;
+          state.keyringEtag = null;
+          await _saveState();
+          return const StarSyncResult();
+        }
+        state.keyringEtag = etag;
       }
       final id = loginId?.call()?.trim();
       final account = id == null || id.isEmpty
@@ -659,7 +785,10 @@ class StarSyncEngine {
       }
       state.status = StarSyncStatus.ok;
       state.lastError = null;
-      state.lastSyncAt = now;
+      state.lastSyncAt = _now().toUtc();
+      state.pendingLocalChange = false;
+      state.serverFailures = 0;
+      state.cooldownUntil = null;
       await _saveState();
       return StarSyncResult(
         localChanged: changed,
@@ -667,6 +796,12 @@ class StarSyncEngine {
         devices: entries.length,
       );
     } on Object catch (error) {
+      if (error is StarSyncTransportException &&
+          error.kind == StarSyncTransportErrorKind.server) {
+        state.serverFailures++;
+        final minutes = min(60, 1 << min(state.serverFailures - 1, 6));
+        state.cooldownUntil = _now().add(Duration(minutes: minutes));
+      }
       state.status = StarSyncStatus.error;
       state.lastError = _errorMessage(error);
       await _saveState();
@@ -695,6 +830,7 @@ class StarSyncEngine {
 
   void scheduleSync({
     Duration delay = const Duration(seconds: 5),
+    StarSyncTrigger trigger = StarSyncTrigger.localChange,
     bool Function()? shouldSync,
     void Function(StarSyncResult)? onResult,
   }) {
@@ -702,10 +838,13 @@ class StarSyncEngine {
       return;
     }
     _timer?.cancel();
+    if (trigger == StarSyncTrigger.localChange && _backgroundWake != null) {
+      delay = Duration.zero;
+    }
     _timer = Timer(delay, () {
       if (shouldSync != null && !shouldSync()) return;
       unawaited(
-        syncNow()
+        syncNow(trigger: trigger)
             .then<void>((result) {
               onResult?.call(result);
             })
@@ -767,6 +906,7 @@ class StarSyncEngine {
         _state!
           ..dataKey = base64Encode(bytes)
           ..keyId = keyring.keyId
+          ..keyringEtag = null
           ..remoteCache = {}
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
@@ -804,6 +944,7 @@ class StarSyncEngine {
         _state!
           ..dataKey = base64Encode(keyBytes)
           ..keyId = StarSyncKeyring.fromJson(jsonDecode(created)).keyId
+          ..keyringEtag = null
           ..remoteCache = {}
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -64,6 +65,8 @@ class _Transport implements StarSyncTransport {
   final files = <String, List<int>>{};
   int puts = 0;
   int deletes = 0;
+  int lists = 0;
+  int serverFailures = 0;
   final gets = <String, int>{};
   Completer<void>? listStarted;
   Completer<void>? listRelease;
@@ -79,6 +82,15 @@ class _Transport implements StarSyncTransport {
 
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
+    lists++;
+    if (serverFailures > 0) {
+      serverFailures--;
+      throw const StarSyncTransportException(
+        StarSyncTransportErrorKind.server,
+        'busy',
+        statusCode: 503,
+      );
+    }
     final started = listStarted;
     final release = listRelease;
     if (started != null && release != null) {
@@ -143,6 +155,122 @@ class _Transport implements StarSyncTransport {
 void main() {
   const config = StarSyncConfig(backend: StarSyncBackend.webDav);
   const kdf = StarSyncKdfParams(memoryKiB: 8, iterations: 1);
+
+  test('idle sync skips downloads and upload until keyring changes', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'correct horse');
+    final gets = Map<String, int>.from(remote.gets);
+    final puts = remote.puts;
+    await engine.syncNow();
+    expect(remote.gets, gets);
+    expect(remote.puts, puts);
+    remote.files['stars/keyring.json'] = [
+      ...remote.files['stars/keyring.json']!,
+      32,
+    ];
+    await engine.syncNow();
+    expect(remote.gets['stars/keyring.json'], gets['stars/keyring.json']! + 1);
+  });
+
+  test('resume is throttled, daily cap does not block manual sync', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime(2026, 11, 1, 12);
+    final delays = <Duration>[];
+    StarSyncEngine make() => StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      now: () => now,
+      random: Random(4),
+      delay: (duration) async => delays.add(duration),
+    );
+    var engine = make();
+    await engine.setUp(config, 'correct horse');
+    var lists = remote.lists;
+    await engine.syncNow(trigger: StarSyncTrigger.resume);
+    expect(remote.lists, lists);
+    now = now.add(const Duration(minutes: 2));
+    await engine.syncNow(trigger: StarSyncTrigger.resume);
+    expect(remote.lists, lists + 2);
+    expect(delays.single.inMilliseconds, inInclusiveRange(0, 20000));
+    final saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    saved['backgroundDate'] = '2026-11-1';
+    saved['backgroundCount'] = 120;
+    storage.values[starSyncStateKey] = jsonEncode(saved);
+    engine = make();
+    await engine.load();
+    now = now.add(const Duration(minutes: 2));
+    lists = remote.lists;
+    await engine.syncNow(trigger: StarSyncTrigger.startup);
+    expect(remote.lists, lists);
+    await engine.syncNow(trigger: StarSyncTrigger.manual);
+    expect(remote.lists, lists + 2);
+  });
+
+  test('server cooldown doubles, preserves local work and resets on success', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime(2026, 11, 1, 12);
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      now: () => now,
+      delay: (_) async {},
+    );
+    await engine.setUp(config, 'correct horse');
+    remote.serverFailures = 2;
+    await expectLater(engine.syncNow(), throwsA(isA<StarSyncTransportException>()));
+    expect(engine.status.value.cooldownUntil, now.add(const Duration(minutes: 1)));
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    var saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    expect(saved['pendingLocalChange'], isTrue);
+    await expectLater(engine.syncNow(), throwsA(isA<StarSyncTransportException>()));
+    expect(engine.status.value.cooldownUntil, now.add(const Duration(minutes: 2)));
+    now = now.add(const Duration(minutes: 2));
+    await engine.syncNow(trigger: StarSyncTrigger.resume);
+    saved = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    expect(saved['pendingLocalChange'], isFalse);
+    expect(saved['serverFailures'], 0);
+    expect(engine.status.value.cooldownUntil, isNull);
+  });
+
+  test('local change wakes a delayed startup sync', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime(2026, 11, 1, 12);
+    final waiting = Completer<void>();
+    final entered = Completer<Duration>();
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      now: () => now,
+      random: Random(3),
+      delay: (duration) {
+        entered.complete(duration);
+        return waiting.future;
+      },
+    );
+    await engine.setUp(config, 'correct horse');
+    now = now.add(const Duration(minutes: 2));
+    final startup = engine.syncNow(trigger: StarSyncTrigger.startup);
+    expect((await entered.future).inMilliseconds, inInclusiveRange(0, 20000));
+    final local = engine.syncNow(trigger: StarSyncTrigger.localChange);
+    await Future.wait([startup, local]);
+    expect(engine.status.value.lastSyncAt, now.toUtc());
+  });
 
   test('two devices share stars and propagate deletion', () async {
     final remote = _Transport();

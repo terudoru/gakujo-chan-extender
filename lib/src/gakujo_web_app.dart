@@ -1401,7 +1401,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_resumeNotificationsAndRefresh());
-      unawaited(_syncStarsInBackground());
+      unawaited(_syncStarsInBackground(StarSyncTrigger.resume));
     }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
@@ -1441,12 +1441,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _syncStarsInBackground() async {
+  Future<void> _syncStarsInBackground([
+    StarSyncTrigger trigger = StarSyncTrigger.startup,
+  ]) async {
     if (!_appSettingsLoaded || !_secureStorageAccessAllowed) return;
     try {
       await _ensureStarSyncLoaded();
       if (!_canSyncStars) return;
-      await _starSyncEngine.syncNow();
+      await _starSyncEngine.syncNow(trigger: trigger);
     } on Object catch (error, stackTrace) {
       developer.log('Failed to sync message stars',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -1456,6 +1458,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _scheduleStarSync() {
     if (!_canSyncStars) return;
     _starSyncEngine.scheduleSync(
+      trigger: StarSyncTrigger.localChange,
       shouldSync: () => _canSyncStars,
     );
   }
@@ -2678,7 +2681,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onSyncNow: () async {
                         await _ensureStarSyncLoaded();
-                        await _starSyncEngine.syncNow();
+                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
                       onChangePassphrase: (current, next) async {
                         await _ensureStarSyncLoaded();

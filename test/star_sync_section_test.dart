@@ -116,6 +116,18 @@ void main() {
     expect(find.text('最終同期: 2026/10/31 12:34'), findsOneWidget);
   });
 
+  testWidgets('enabled state shows cooldown', (tester) async {
+    final until = DateTime.now().add(const Duration(hours: 1));
+    final status = ValueNotifier(
+      StarSyncStatusSnapshot(enabled: true, cooldownUntil: until),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status));
+    final hour = until.hour.toString().padLeft(2, '0');
+    final minute = until.minute.toString().padLeft(2, '0');
+    expect(find.text('混雑のため、$hour:$minute まで同期を控えています'), findsOneWidget);
+  });
+
   testWidgets('needs passphrase offers rejoin', (tester) async {
     final status = ValueNotifier(
       const StarSyncStatusSnapshot(

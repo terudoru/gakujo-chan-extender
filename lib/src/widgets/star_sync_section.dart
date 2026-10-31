@@ -242,10 +242,15 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                 (status.lastSyncAt == null
                     ? 'まだ同期していません'
                     : '最終同期: ${_date(status.lastSyncAt!)}');
+      final cooldown = status.cooldownUntil?.toLocal();
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(line),
+          if (cooldown != null && cooldown.isAfter(DateTime.now()))
+            Text(
+              '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
+            ),
           if (widget.isGoogleDrive() && widget.googleEmail() != null)
             Text(widget.googleEmail()!),
           if (status.status == StarSyncStatus.needsPairingCode) ...[
