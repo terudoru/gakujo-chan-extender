@@ -47,13 +47,13 @@ void main() {
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
     expect(script, contains('var version = 9;'));
-    expect(script, contains("document.querySelectorAll('iframe,frame')"));
+    expect(script, contains('document.querySelectorAll("iframe,frame")'));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));
     expect(
         script,
         contains(
-            "doc.querySelectorAll('textarea,input,select,[contenteditable]')"));
+            'doc.querySelectorAll("textarea,input,select,[contenteditable]")'));
     expect(script, contains('hasDraftWorthyField'));
     expect(script, contains('function stablePageTextForKey'));
     expect(script, contains('残り約'));

@@ -105,3 +105,53 @@ interface Window {
   __MBG_LOGIN_AUTOFILL_SUBMITTED_KEY?: string;
   __MBG_2FA_AUTO_SUBMITTED_KEY?: string;
 }
+
+interface Window {
+  MoreBetterGakujoDesktopZoom: { postMessage: (message: string) => void };
+  __MBG_MESSAGE_FILTER_DISPOSE?: () => void;
+  __MBG_LOGIN_AUTOFILL_DISABLED?: boolean;
+  __MBG_LOGIN_AUTOFILL_TIMER?: number;
+  __MBG_LOGIN_AUTOFILL_SUBMIT_TIMER?: number;
+  __MBG_LOGIN_AUTOFILL_MONITOR?: number;
+  __MBG_LOGIN_AUTOFILL_LAST_REPORT?: string;
+  __MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE?: boolean;
+  __MBG_LOGIN_AUTOFILL_ASSIST_VERSION?: number;
+  __MBG_2FA_AUTOFILL_DISABLED?: boolean;
+  __MBG_2FA_AUTOFILL_TIMER?: number;
+}
+
+interface Window {
+  __MBG_REPORT_DRAFT_DELETED_KEYS?: Record<string, boolean>;
+  __MBG_REPORT_DRAFT_PENDING_CONTEXT?: { key: string };
+  __MBG_REPORT_DRAFT_SAVE_TIMER?: number;
+}
+interface HTMLElement {
+  __MBG_REPORT_DRAFT_KEY?: string;
+  __MBG_REPORT_DRAFT_RETRY?: (() => void) | null;
+  __MBG_REPORT_DRAFT_REPLACE?: (() => void) | null;
+}
+
+interface Window { MoreBetterGakujoLoginAutofill: { postMessage: (message: string) => void }; }
+
+interface Window { send?: () => void; }
+
+interface Window {
+  __MBG_PAGE_ZOOM_BASE_SCALE?: number;
+  __MBG_PAGE_ZOOM_ORIGIN?: { x: number | null; y: number | null };
+  __MBG_PAGE_EFFECTIVE_ZOOM?: number;
+  __MBG_PAGE_ZOOM_VALUE?: number;
+  __MBG_SET_PAGE_ZOOM?: (zoom: number) => number;
+  __MBG_PAGE_ZOOM_REAPPLY_TIMER?: number;
+  __MBG_NATIVE_ZOOM_BLOCKERS_ATTACHED?: boolean;
+  __MBG_PAGE_ZOOM_OBSERVER?: MutationObserver;
+  __MBG_PAGE_ZOOM_VERSION?: number;
+}
+
+interface CSSStyleDeclaration { textSizeAdjust: string; }
+
+interface Window {
+  __MBG_MESSAGE_FILTER_VERSION?: number;
+  __MBG_MESSAGE_FILTER_SIGNATURE?: string;
+  __MBG_MESSAGE_FILTER_UPDATE?: () => boolean;
+  __MBG_MESSAGE_FILTER_INTERVAL?: number;
+}

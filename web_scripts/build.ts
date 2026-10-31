@@ -30,6 +30,17 @@ const entries: { source: string; output: string; name: string; kind?: 'statement
   { source: 'web_scripts/src/upload_preview/main.ts', output: 'lib/src/generated/upload_preview.g.dart', name: 'gakujoUploadPreviewJs', config: true },
   { source: 'web_scripts/src/upload_compression/main.ts', output: 'lib/src/generated/upload_compression.g.dart', name: 'gakujoUploadCompressionJs', config: true },
   { source: 'web_scripts/src/upload_compression/teardown.ts', output: 'lib/src/generated/upload_compression_teardown.g.dart', name: 'gakujoUploadCompressionTeardownJs' },
+  { source: 'web_scripts/src/message_filter/main.ts', output: 'lib/src/generated/message_filter.g.dart', name: 'gakujoMessageFilterJs', config: true },
+  { source: 'web_scripts/src/message_filter/teardown.ts', output: 'lib/src/generated/message_filter_teardown.g.dart', name: 'gakujoMessageFilterTeardownJs' },
+  { source: 'web_scripts/src/report_draft/main.ts', output: 'lib/src/generated/report_draft.g.dart', name: 'gakujoReportDraftJs' },
+  { source: 'web_scripts/src/report_draft/list.ts', output: 'lib/src/generated/report_draft_list.g.dart', name: 'gakujoReportDraftListJs', kind: 'expression' },
+  { source: 'web_scripts/src/report_draft/delete.ts', output: 'lib/src/generated/report_draft_delete.g.dart', name: 'gakujoReportDraftDeleteJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/login_autofill_assist/main.ts', output: 'lib/src/generated/login_autofill_assist.g.dart', name: 'gakujoLoginAutofillAssistJs', config: true },
+  { source: 'web_scripts/src/login_autofill_assist/teardown.ts', output: 'lib/src/generated/login_autofill_assist_teardown.g.dart', name: 'gakujoLoginAutofillAssistTeardownJs' },
+  { source: 'web_scripts/src/two_factor_autofill/main.ts', output: 'lib/src/generated/two_factor_autofill.g.dart', name: 'gakujoTwoFactorAutofillJs', config: true },
+  { source: 'web_scripts/src/two_factor_autofill/teardown.ts', output: 'lib/src/generated/two_factor_autofill_teardown.g.dart', name: 'gakujoTwoFactorAutofillTeardownJs' },
+  { source: 'web_scripts/src/desktop_page_zoom/main.ts', output: 'lib/src/generated/desktop_page_zoom.g.dart', name: 'gakujoDesktopPageZoomJs', config: true },
+  { source: 'web_scripts/src/quick_jump/main.ts', output: 'lib/src/generated/quick_jump.g.dart', name: 'gakujoQuickJumpJs', kind: 'expression', config: true },
 ];
 const check = process.argv.includes('--check');
 const stale: string[] = [];
@@ -59,8 +70,13 @@ for (const entry of entries) {
     ? `(function(__mbgConfig) {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})(`
     : `(function(__mbgConfig) {\n${outputJs}})(`;
   const suffix = entry.kind === 'expression' ? ')\n' : ');\n';
+  // Match dart format: one line when it fits in 80 columns.
+  const configLine = `    _${entry.name}Prefix + jsonEncode(config) + _${entry.name}Suffix;`;
+  const configBody = configLine.length <= 80
+    ? configLine
+    : `    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;`;
   const content = entry.config
-    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;\n\nconst String _${entry.name}Prefix = r'''${prefix}''';\nconst String _${entry.name}Suffix = r'''${suffix}''';\n`
+    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n${configBody}\n\nconst String _${entry.name}Prefix = r'''${prefix}''';\nconst String _${entry.name}Suffix = r'''${suffix}''';\n`
     : `${header}const String ${entry.name} = r'''\n${js}''';\n`;
   const output = resolve(root, entry.output);
   if (check) {

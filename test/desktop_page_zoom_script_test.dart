@@ -22,13 +22,13 @@ void main() {
     expect(
         script,
         contains(
-          'body.style.transform = \'scale(\' + effectiveZoom + \')\'',
+          'body.style.transform = "scale(" + effectiveZoom + ")"',
         ));
     expect(script, contains('element.style.minWidth'));
     expect(script, contains('element.style.minHeight'));
     expect(script, isNot(contains('appendChild')));
     expect(script, isNot(contains('insertBefore')));
-    expect(script, contains("body.style.transformOrigin = '0 0'"));
+    expect(script, contains('body.style.transformOrigin = "0 0"'));
     expect(script, isNot(contains('style.zoom = Math.round')));
     expect(script, isNot(contains('__MBG_REFLOW_WEB_VIEW')));
     expect(script, isNot(contains('__MBG_STEP_PAGE_ZOOM')));
@@ -65,12 +65,12 @@ void main() {
   test('clears visual zoom state at 100 percent', () {
     final script = DesktopPageZoomScript.build(1);
 
-    expect(script, contains('if (Math.abs(effectiveZoom - 1) < 0.001)'));
-    expect(script, contains('body.style.transform = \'\''));
-    expect(script, contains('body.style.minWidth = \'\''));
-    expect(script, contains('body.style.minHeight = \'\''));
-    expect(script, contains('element.style.minWidth = \'\''));
-    expect(script, contains('element.style.minHeight = \'\''));
+    expect(script, contains('if (Math.abs(effectiveZoom - 1) < 1e-3)'));
+    expect(script, contains('body.style.transform = ""'));
+    expect(script, contains('body.style.minWidth = ""'));
+    expect(script, contains('body.style.minHeight = ""'));
+    expect(script, contains('element.style.minWidth = ""'));
+    expect(script, contains('element.style.minHeight = ""'));
   });
 
   test('fits the 100 percent baseline to the current desktop viewport', () {
@@ -85,7 +85,7 @@ void main() {
   test('reapplies baseline when the desktop page shape changes', () {
     final script = DesktopPageZoomScript.build(1);
 
-    expect(script, contains('addEventListener(\'resize\''));
+    expect(script, contains('addEventListener("resize"'));
     expect(script, contains('new win.MutationObserver'));
     expect(script, contains('scheduleReapply(win)'));
   });
@@ -105,8 +105,8 @@ void main() {
       originY: 567.8,
     );
 
-    expect(script, contains('x: 123.4'));
-    expect(script, contains('y: 567.8'));
+    expect(script, contains('"originX":123.4'));
+    expect(script, contains('"originY":567.8'));
     expect(script, contains('function originFor(win)'));
     expect(
         script, contains('var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM'));

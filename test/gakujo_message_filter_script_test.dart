@@ -12,8 +12,8 @@ void main() {
 
     expect(script, contains('__MBG_MESSAGE_FILTER_VERSION'));
     expect(script, contains('__MBG_MESSAGE_FILTER_SIGNATURE'));
-    expect(script, contains("document.getElementById('main-frame-if')"));
-    expect(script, contains("doc.querySelector('table.normal:nth-child(9)')"));
+    expect(script, contains('document.getElementById("main-frame-if")'));
+    expect(script, contains('doc.querySelector("table.normal:nth-child(9)")'));
     expect(script, contains('"アンケート"'));
     expect(script, contains('"集中 講義"'));
     expect(script, contains('data-mbg-message-filtered'));

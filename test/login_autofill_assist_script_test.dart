@@ -10,21 +10,21 @@ void main() {
 
     expect(script, contains('__MBG_LOGIN_AUTOFILL_ASSIST_VERSION'));
     expect(script, contains('var assistVersion = 9;'));
-    expect(script, contains('autocomplete\', \'username'));
-    expect(script, contains('autocomplete\', \'current-password'));
-    expect(script, contains('autocapitalize\', \'none'));
-    expect(script, contains('autocorrect\', \'off'));
-    expect(script, contains('spellcheck\', \'false'));
-    expect(script, contains('enterkeyhint\', \'next'));
-    expect(script, contains('enterkeyhint\', \'done'));
-    expect(script, contains('aria-label\', \'ログインID'));
-    expect(script, contains('aria-label\', \'パスワード'));
+    expect(script, contains('"autocomplete", "username'));
+    expect(script, contains('"autocomplete", "current-password'));
+    expect(script, contains('"autocapitalize", "none'));
+    expect(script, contains('"autocorrect", "off'));
+    expect(script, contains('"spellcheck", "false'));
+    expect(script, contains('"enterkeyhint", "next'));
+    expect(script, contains('"enterkeyhint", "done'));
+    expect(script, contains('"aria-label", "ログインID'));
+    expect(script, contains('"aria-label", "パスワード'));
     expect(script, contains('function enableCredentialAutofill(target)'));
     expect(script, contains('function collect(win)'));
     expect(script, contains('element.ownerDocument.defaultView || window'));
     expect(script, contains('ownerDocument.querySelector'));
     expect(script, contains('MBG_LOGIN_AUTOFILL_ASSIST_READY'));
-    expect(script, contains("reportState('skip', 'not-login-form')"));
+    expect(script, contains('reportState("skip", "not-login-form")'));
     expect(script, contains('__MBG_LOGIN_AUTOFILL_MONITOR'));
   });
 
@@ -34,7 +34,7 @@ void main() {
     expect(
       script,
       contains(
-          "(input.getAttribute('name') || '').toLowerCase() !== 'ninshocode'"),
+          '(input.getAttribute("name") || "").toLowerCase() !== "ninshocode"'),
     );
   });
 
@@ -62,11 +62,11 @@ void main() {
     );
 
     expect(script, contains('window.sessionStorage.getItem(key)'));
-    expect(script, contains("sessionKey('SUBMIT_COUNT')"));
+    expect(script, contains('sessionKey("SUBMIT_COUNT")'));
     expect(script, contains('attempts >= 1'));
     expect(script, contains('function hasLoginError()'));
-    expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
-    expect(script, contains("report('submit-blocked'"));
+    expect(script, contains('setSessionValue(sessionKey("ERROR"), "1")'));
+    expect(script, contains('report("submit-blocked"'));
   });
 
   test('fills and submits a positively identified login form', () async {
