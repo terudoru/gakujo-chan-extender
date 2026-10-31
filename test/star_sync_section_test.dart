@@ -136,12 +136,16 @@ void main() {
     await tester.pumpWidget(
       section(
         status,
-        onBackup: () async { uploads++; },
+        onBackup: () async {
+          uploads++;
+        },
         onListBackups: () async => [
           const StarSyncBackupInfo(deviceId: 'a', isThisDevice: true),
           const StarSyncBackupInfo(deviceId: 'b', isThisDevice: false),
         ],
-        onRestoreBackup: (id) async { selected = id; },
+        onRestoreBackup: (id) async {
+          selected = id;
+        },
       ),
     );
     await tester.ensureVisible(find.text('今すぐバックアップ'));
@@ -175,6 +179,7 @@ void main() {
     Future<void> change(bool value) async {
       requested = value;
     }
+
     await tester.pumpWidget(section(status, onDriveDownloadsChanged: change));
     expect(find.byType(SwitchListTile), findsNothing);
     await tester.pumpWidget(
