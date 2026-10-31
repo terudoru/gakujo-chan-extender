@@ -2651,12 +2651,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
-                      onGoogleSignIn: () async {
+                      onGoogleSignIn: ({required clearLocalStars}) async {
                         _starSyncEngine.requireAccount();
                         _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
                         try {
                           return await _starSyncEngine.setUpWithPairing(
                             const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+                            clearLocalStars: clearLocalStars,
                           );
                         } on Object {
                           if (!_starSyncEngine.status.value.enabled) {
@@ -2670,15 +2671,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         await _starSyncGoogleAuth.signOut();
                         _starSyncGoogleEmail = null;
                       },
-                      onJoinWithCode: (code) => _starSyncEngine.joinWithPairingCode(
+                      onGoogleReSignIn: () async {
+                        _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
+                        if (mounted) setState(() {});
+                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                      },
+                      onLocalStarCount: _starSyncEngine.localStarCount,
+                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars}) =>
+                          _starSyncEngine.setUpWithPairing(
+                            const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+                            resetExisting: resetExisting, clearLocalStars: clearLocalStars,
+                          ),
+                      onJoinWithCode: (code, {required clearLocalStars}) => _starSyncEngine.joinWithPairingCode(
                         const StarSyncConfig(backend: StarSyncBackend.googleDrive), code,
+                        clearLocalStars: clearLocalStars,
                       ),
                       onPairingCode: _starSyncEngine.pairingCode,
                       onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
                       onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
-                      onSetUp: (config, passphrase) async {
+                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars}) async {
                         await _ensureStarSyncLoaded();
-                        await _starSyncEngine.setUp(config, passphrase);
+                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars);
                       },
                       onSyncNow: () async {
                         await _ensureStarSyncLoaded();
@@ -3460,12 +3473,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     Future<void> clearAll() async {
-      if (_starSyncLoad != null) await _ensureStarSyncLoaded();
-      final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
-      await _starSyncEngine.disable();
-      if (google) {
-        await _starSyncGoogleAuth.signOut();
-        _starSyncGoogleEmail = null;
+      try {
+        await _ensureStarSyncLoaded();
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to load star sync before clearing data',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+      try {
+        await _starSyncEngine.disable();
+      } finally {
+        try {
+          await _starSyncGoogleAuth.signOut();
+          _starSyncGoogleEmail = null;
+        } on Object catch (error, stackTrace) {
+          developer.log('Failed to sign out of Google while clearing data',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        }
       }
       await Future.wait([
         _downloadHistoryStore.clear(),

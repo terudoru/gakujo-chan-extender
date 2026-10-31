@@ -44,6 +44,48 @@ String _date(DateTime date) {
   return '${d.year}/${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
 }
 
+class StarSyncClipboardGuard {
+  StarSyncClipboardGuard({
+    Future<String?> Function()? read,
+    Future<void> Function(String)? write,
+  }) : _read = read ?? _readClipboard,
+       _write = write ?? _writeClipboard;
+
+  static final instance = StarSyncClipboardGuard();
+  final Future<String?> Function() _read;
+  final Future<void> Function(String) _write;
+  Timer? _timer;
+  int _generation = 0;
+
+  static Future<String?> _readClipboard() async =>
+      (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+  static Future<void> _writeClipboard(String value) =>
+      Clipboard.setData(ClipboardData(text: value));
+
+  Future<void> copy(String code) async {
+    final generation = ++_generation;
+    _timer?.cancel();
+    await _write(code);
+    if (generation != _generation) return;
+    _timer = Timer(const Duration(seconds: 60), () async {
+      final contents = await _read();
+      if (generation == _generation && contents == code) await _write('');
+    });
+  }
+}
+
+Future<bool?> _confirmReset(BuildContext context, String message) => showDialog<bool>(
+  context: context,
+  builder: (context) => AlertDialog(
+    title: const Text('同期データをリセット'),
+    content: Text(message),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+      FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('リセット')),
+    ],
+  ),
+);
+
 class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
@@ -53,6 +95,9 @@ class StarSyncSection extends StatefulWidget {
     required this.googleEmail,
     required this.onGoogleSignIn,
     required this.onGoogleSignOut,
+    required this.onGoogleReSignIn,
+    required this.onLocalStarCount,
+    required this.onSetUpWithPairing,
     required this.onJoinWithCode,
     required this.onPairingCode,
     required this.onRejoinWithCode,
@@ -71,13 +116,16 @@ class StarSyncSection extends StatefulWidget {
   final bool googleAvailable;
   final bool Function() isGoogleDrive;
   final String? Function() googleEmail;
-  final Future<StarSyncPairingSetup> Function() onGoogleSignIn;
+  final Future<StarSyncPairingSetup> Function({required bool clearLocalStars}) onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
-  final Future<void> Function(String) onJoinWithCode;
+  final Future<void> Function() onGoogleReSignIn;
+  final Future<int> Function() onLocalStarCount;
+  final Future<StarSyncPairingSetup> Function({required bool resetExisting, required bool clearLocalStars}) onSetUpWithPairing;
+  final Future<void> Function(String, {required bool clearLocalStars}) onJoinWithCode;
   final Future<String> Function() onPairingCode;
   final Future<void> Function(String) onRejoinWithCode;
   final Future<String> Function() onResetWithPairing;
-  final Future<void> Function(StarSyncConfig, String) onSetUp;
+  final Future<void> Function(StarSyncConfig, String, {required bool resetExisting, required bool clearLocalStars}) onSetUp;
   final Future<void> Function() onSyncNow;
   final Future<void> Function(String, String) onChangePassphrase;
   final Future<List<StarSyncDeviceInfo>> Function() onListDevices;
@@ -94,11 +142,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   final _rejoin = TextEditingController();
   bool _busy = false;
   String? _error;
-  Timer? _clipboardTimer;
 
   @override
   void dispose() {
-    _clipboardTimer?.cancel();
     _rejoin.dispose();
     super.dispose();
   }
@@ -117,6 +163,39 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     }
   }
 
+  Future<bool?> _chooseLocalStars() async {
+    final count = await widget.onLocalStarCount();
+    if (!mounted) return null;
+    if (count == 0) return false;
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('この端末のスター（$count件）'),
+        content: const Text('この端末に残っているスターも同期されます。他の人が使っていた端末なら『空にして始める』を選んでください。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('空にして始める')),
+          FilledButton(onPressed: () => Navigator.pop(context, false), child: const Text('含めて同期する')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _startAdvanced() async {
+    try {
+      final clear = await _chooseLocalStars();
+      if (clear == null || !mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _SetupDialog(onSetUp: widget.onSetUp, clearLocalStars: clear),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    }
+  }
+
   Future<void> _startGoogle() async {
     setState(() {
       _busy = true;
@@ -124,7 +203,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     });
     var needsCleanup = false;
     try {
-      final result = await widget.onGoogleSignIn();
+      final clear = await _chooseLocalStars();
+      if (clear == null || !mounted) return;
+      final result = await widget.onGoogleSignIn(clearLocalStars: clear);
       needsCleanup = result == StarSyncPairingSetup.needsPairingCode;
       if (!mounted) return;
       if (result == StarSyncPairingSetup.needsPairingCode) {
@@ -133,7 +214,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         final joined = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
-          builder: (_) => _PairingJoinDialog(onJoin: widget.onJoinWithCode),
+          builder: (_) => _PairingJoinDialog(
+            onJoin: (code) => widget.onJoinWithCode(code, clearLocalStars: clear),
+            onReset: () => widget.onSetUpWithPairing(resetExisting: true, clearLocalStars: clear),
+          ),
         );
         if (joined != true) return;
       }
@@ -160,25 +244,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     }
   }
 
-  Future<void> _copyCode(String code) async {
-    await Clipboard.setData(ClipboardData(text: code));
-    if (!mounted) return;
-    _clipboardTimer?.cancel();
-    _clipboardTimer = Timer(const Duration(seconds: 60), () async {
-      final contents = await Clipboard.getData(Clipboard.kTextPlain);
-      if (contents?.text == code) {
-        await Clipboard.setData(const ClipboardData(text: ''));
-      }
-    });
-  }
-
   Future<void> _showCode([String? code]) async {
     try {
       final value = code ?? await widget.onPairingCode();
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (_) => _PairingCodeDialog(code: value, onCopy: _copyCode),
+        builder: (_) => _PairingCodeDialog(code: value, onCopy: StarSyncClipboardGuard.instance.copy),
       );
     } on Object catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
@@ -241,11 +313,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                 OutlinedButton(
                   onPressed: _busy
                       ? null
-                      : () => showDialog<void>(
-                          context: context,
-                          barrierDismissible: false,
-                          builder: (_) => _SetupDialog(onSetUp: widget.onSetUp),
-                        ),
+                      : _startAdvanced,
                   child: const Text('同期を設定'),
                 ),
               ],
@@ -267,6 +335,29 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       builder: (_) =>
                           _DisableDialog(onDisable: widget.onDisable),
                     ),
+              child: const Text('同期を無効にする'),
+            ),
+          ],
+        );
+      }
+      if (status.status == StarSyncStatus.needsGoogleSignIn) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Google へのログインが切れました。'),
+            if (widget.googleEmail() != null) Text(widget.googleEmail()!),
+            if (_error != null) Text(_error!),
+            if (_busy) const LinearProgressIndicator(),
+            OutlinedButton(
+              onPressed: _busy ? null : () => _run(widget.onGoogleReSignIn),
+              child: const Text('Google に再ログイン'),
+            ),
+            OutlinedButton(
+              onPressed: _busy ? null : () => showDialog<void>(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => _DisableDialog(onDisable: widget.onDisable),
+              ),
               child: const Text('同期を無効にする'),
             ),
           ],
@@ -326,10 +417,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     : () => _run(widget.onSyncNow),
                 child: const Text('今すぐ同期'),
               ),
-              OutlinedButton(
-                onPressed: _busy ? null : () => _showCode(),
-                child: const Text('別の端末を追加'),
-              ),
+              if (widget.isGoogleDrive())
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _showCode(),
+                  child: const Text('別の端末を追加'),
+                ),
               if (!widget.isGoogleDrive())
                 OutlinedButton(
                   onPressed: _busy
@@ -454,8 +546,9 @@ class _PairingScannerState extends State<_PairingScanner> {
 }
 
 class _PairingJoinDialog extends StatefulWidget {
-  const _PairingJoinDialog({required this.onJoin});
+  const _PairingJoinDialog({required this.onJoin, required this.onReset});
   final Future<void> Function(String) onJoin;
+  final Future<StarSyncPairingSetup> Function() onReset;
   @override
   State<_PairingJoinDialog> createState() => _PairingJoinDialogState();
 }
@@ -486,6 +579,23 @@ class _PairingJoinDialogState extends State<_PairingJoinDialog> {
     }
   }
 
+  Future<void> _reset() async {
+    final confirmed = await _confirmReset(context, '同期データをリセットすると、他の端末ではコードの入力し直しが必要になります。この端末のスターはそのまま残ります。');
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onReset();
+      if (mounted) Navigator.pop(context, true);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('同期コードを入力'),
@@ -498,6 +608,10 @@ class _PairingJoinDialogState extends State<_PairingJoinDialog> {
             'この Google アカウントには、すでに別の端末の同期データがあります。その端末の「別の端末を追加」に表示されるコードを入力してください。',
           ),
           _PairingInput(controller: _code, enabled: !_busy),
+          TextButton(
+            onPressed: _busy ? null : _reset,
+            child: const Text('コードがない場合：同期データをリセットして新しく始める'),
+          ),
           if (_error != null) Text(_error!),
           if (_busy) const LinearProgressIndicator(),
         ],
@@ -563,8 +677,9 @@ class _PairingCodeDialogState extends State<_PairingCodeDialog> {
 }
 
 class _SetupDialog extends StatefulWidget {
-  const _SetupDialog({required this.onSetUp});
-  final Future<void> Function(StarSyncConfig, String) onSetUp;
+  const _SetupDialog({required this.onSetUp, required this.clearLocalStars});
+  final bool clearLocalStars;
+  final Future<void> Function(StarSyncConfig, String, {required bool resetExisting, required bool clearLocalStars}) onSetUp;
   @override
   State<_SetupDialog> createState() => _SetupDialogState();
 }
@@ -582,6 +697,7 @@ class _SetupDialogState extends State<_SetupDialog> {
   final _confirm = TextEditingController();
   StarSyncBackend _backend = StarSyncBackend.webDav;
   bool _pathStyle = true;
+  bool _wrongPassphrase = false;
   bool _busy = false;
   String? _error;
 
@@ -604,7 +720,7 @@ class _SetupDialogState extends State<_SetupDialog> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  Future<void> _submit({bool resetExisting = false}) async {
     final validation = _validatePassphrase(_pass.text, _confirm.text);
     if (validation != null) {
       setState(() => _error = validation);
@@ -643,13 +759,21 @@ class _SetupDialogState extends State<_SetupDialog> {
                 pathStyle: _pathStyle,
               ),
             );
-      await widget.onSetUp(config, _pass.text);
+      await widget.onSetUp(config, _pass.text, resetExisting: resetExisting, clearLocalStars: widget.clearLocalStars);
       if (mounted) Navigator.pop(context);
     } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
+      if (mounted) setState(() {
+        _error = _errorText(error);
+        _wrongPassphrase = error is StarSyncWrongPassphraseException;
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _reset() async {
+    final confirmed = await _confirmReset(context, '同期データをリセットすると、他の端末ではパスフレーズの入力し直しが必要になります。この端末のスターはそのまま残ります。');
+    if (confirmed == true && mounted) await _submit(resetExisting: true);
   }
 
   Widget _field(
@@ -713,6 +837,11 @@ class _SetupDialogState extends State<_SetupDialog> {
             _field(_confirm, 'パスフレーズ（確認）', obscure: true),
             const SizedBox(height: 12),
             const Text('パスフレーズを忘れると同期データは復元できません。端末内のスターは残ります。'),
+            if (_wrongPassphrase)
+              TextButton(
+                onPressed: _busy ? null : _reset,
+                child: const Text('パスフレーズを忘れた場合：同期データをリセットして新しく始める'),
+              ),
             if (_error != null) Text(_error!),
             if (_busy) const LinearProgressIndicator(),
           ],
@@ -865,6 +994,7 @@ class _DisableDialogState extends State<_DisableDialog> {
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text('この端末のスターは残ります。同期を無効にしますか？'),
+        const Text('同期を無効にしている間に外したスターは、再び有効にしたときに他の端末から戻ることがあります。'),
         CheckboxListTile(
           value: _delete,
           onChanged: _busy
