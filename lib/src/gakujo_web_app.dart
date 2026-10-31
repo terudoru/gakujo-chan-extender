@@ -166,6 +166,38 @@ bool portableSyncSettingsMatch(
 ) => starSyncCanonicalJson(exportStarSyncPortableSettings(settings)) ==
     starSyncCanonicalJson(basedOn);
 
+@visibleForTesting
+Map<String, Set<String>?> restoredSyncCollections(
+  GakujoBackupImport backup,
+  Set<String> backupKeys,
+) {
+  final settings = <String>{
+    if (backup.disabledFeatureFlags != null) 'disabledFeatureFlags',
+    if (backup.calendarImportSettings != null) 'calendarImportSettings',
+    if (backup.messageExcludeKeywords != null) 'messageExcludeKeywords',
+    if (backup.notificationTopics != null) 'notificationTopics',
+    if (backup.messageNotification != null) 'messageNotification',
+    if (backup.notificationPreferences != null) 'notificationPreferences',
+  }..retainAll(backupKeys);
+  return {
+    if (backup.favorites != null) 'favorites': null,
+    if (settings.isNotEmpty) 'settings': settings,
+  };
+}
+
+@visibleForTesting
+Set<GakujoFeatureFlag>? syncRestoreFeatureFlags(
+  Set<GakujoFeatureFlag>? restored,
+  Set<GakujoFeatureFlag> current,
+) {
+  if (restored == null) return null;
+  return {
+    ...restored.where((flag) => flag != GakujoFeatureFlag.messageStars),
+    if (current.contains(GakujoFeatureFlag.messageStars))
+      GakujoFeatureFlag.messageStars,
+  };
+}
+
 Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
   Object? clean(Object? value) {
     if (value is List) return value.map(clean).toList();
@@ -5785,6 +5817,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     final GakujoBackupImport backup;
+    late Set<String> backupKeys;
     try {
       if (fromSyncStorage) {
         final decoded = jsonDecode(text);
@@ -5792,14 +5825,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final portable = portableSyncBackupPayload(Map<String, Object?>.from(decoded));
         // Download history holds device-specific file locations; a restore
         // from the sync storage keeps this device's history as it is. This
-        // also keeps the re-encoded payload below the restore size limit
-        // after the local messageStars flag is added back.
+        // also keeps the re-encoded payload below the restore size limit.
         portable.remove('downloadHistory');
         portable.remove('failedDownloads');
-        final flags = portable['disabledFeatureFlags'];
-        if (flags is List && _appSettings.disabledFeatureFlags.contains(GakujoFeatureFlag.messageStars)) {
-          portable['disabledFeatureFlags'] = [...flags, GakujoFeatureFlag.messageStars.storageValue];
-        }
         text = jsonEncode(portable);
       }
       backup = parseGakujoBackup(
@@ -5807,6 +5835,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         currentReminderOffsets:
             _appSettings.notificationPreferences.reminderOffsets,
       );
+      final decodedBackup = jsonDecode(text);
+      backupKeys = decodedBackup is Map
+          ? decodedBackup.keys.whereType<String>().toSet()
+          : <String>{};
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
       return;
@@ -5829,8 +5861,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final previousSettings = _appSettings;
       late GakujoAppSettings nextSettings;
       await _starSyncEngine.withBulkReplace(() => _settingsOperations.runExclusive(() async {
+        final restoredFlags = fromSyncStorage
+            ? syncRestoreFeatureFlags(backup.disabledFeatureFlags, _appSettings.disabledFeatureFlags)
+            : backup.disabledFeatureFlags;
+        final restoreBackup = GakujoBackupImport(
+          version: backup.version,
+          downloadSaveMode: backup.downloadSaveMode,
+          pageMode: backup.pageMode,
+          setupCompleted: backup.setupCompleted,
+          calendarImportSettings: backup.calendarImportSettings,
+          messageExcludeKeywords: backup.messageExcludeKeywords,
+          notificationTopics: backup.notificationTopics,
+          messageNotification: backupKeys.contains('messageNotification')
+              ? backup.messageNotification
+              : null,
+          notificationPreferences: backup.notificationPreferences,
+          disabledFeatureFlags: restoredFlags,
+          downloadHistory: backup.downloadHistory,
+          failedDownloads: backup.failedDownloads,
+          favorites: backup.favorites,
+          starredMessages: backup.starredMessages,
+          deadlines: backup.deadlines,
+          notifiedDeadlineKeys: backup.notifiedDeadlineKeys,
+          changes: backup.changes,
+          reportLists: backup.reportLists,
+        );
         await restoreGakujoBackup(
-          backup: backup,
+          backup: restoreBackup,
           settingsStore: _appSettingsStore,
           historyStore: _downloadHistoryStore,
           activityStore: _activityStore,
@@ -5840,12 +5897,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         nextSettings = _appSettings.copyWith(
           downloadSaveMode: backup.downloadSaveMode,
           pageMode: backup.pageMode,
-          disabledFeatureFlags: backup.disabledFeatureFlags,
+          disabledFeatureFlags: restoredFlags,
           setupCompleted: backup.setupCompleted,
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
           notificationTopics: backup.notificationTopics,
-          messageNotification: backup.messageNotification,
+          messageNotification: backupKeys.contains('messageNotification')
+              ? backup.messageNotification
+              : null,
           notificationPreferences: backup.notificationPreferences,
         );
         if (!mounted) {
@@ -5857,7 +5916,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
           _appSettings = nextSettings;
         });
-      }), collections: const {'favorites', 'settings'});
+      }), collections: restoredSyncCollections(backup, backupKeys));
       if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(

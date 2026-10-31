@@ -7,6 +7,25 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 
 void main() {
+  test('restore markers use only settings present in the backup', () {
+    final backup = parseGakujoBackup(
+      '{"version":2,"notificationTopics":["report"]}',
+    );
+    expect(restoredSyncCollections(backup, {'version', 'notificationTopics'}), {
+      'settings': {'notificationTopics'},
+    });
+    expect(restoredSyncCollections(const GakujoBackupImport(version: 2), {}), isEmpty);
+  });
+
+  test('sync restore merges messageStars from the current settings', () {
+    const star = GakujoFeatureFlag.messageStars;
+    const other = GakujoFeatureFlag.values;
+    final portable = other.where((flag) => flag != star).take(1).toSet();
+    expect(syncRestoreFeatureFlags(portable, {star}), {...portable, star});
+    expect(syncRestoreFeatureFlags({...portable, star}, {}), portable);
+    expect(syncRestoreFeatureFlags(null, {star}), isNull);
+  });
+
   test('portable settings compare against the current snapshot', () {
     final settings = GakujoAppSettings();
     final snapshot = exportStarSyncPortableSettings(settings);

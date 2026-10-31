@@ -1565,13 +1565,16 @@ class StarSyncEngine {
     final reconciled = Map<String, StarSyncCollectionRecord>.from(
       previousRecords,
     );
+    final pendingKeys = stored['pendingBulkReplaceKeys'];
     final keys = {...previousRecords.keys, ...local.keys}.toList()..sort();
     for (final key in keys) {
       final old = previousRecords[key];
       if (local.containsKey(key)) {
         final value = local[key];
         final hash = starSyncValueHash(value);
-        if (stored['pendingBulkReplace'] == true ||
+        if ((stored['pendingBulkReplace'] == true &&
+                (pendingKeys == null ||
+                    (pendingKeys is List && pendingKeys.contains(key)))) ||
             old == null ||
             old.deleted ||
             old.valueHash != hash) {
@@ -1745,9 +1748,10 @@ class StarSyncEngine {
 
   /// [collections] limits the collection restore marker to the collections
   /// the restored data actually contains; null marks every collection.
+  /// A null key set marks all present entries in that collection.
   Future<void> withBulkReplace(
     Future<void> Function() replace, {
-    Iterable<String>? collections,
+    Map<String, Set<String>?>? collections,
   }) => _queue.runExclusive(() async {
     final state = _state;
     final previous = state?.pendingBulkReplace;
@@ -1767,7 +1771,7 @@ class StarSyncEngine {
     }
   });
 
-  Future<void> markBulkReplace({Iterable<String>? collections}) =>
+  Future<void> markBulkReplace({Map<String, Set<String>?>? collections}) =>
       _queue.run(() async {
         if (_state == null) {
           return;
@@ -1778,12 +1782,29 @@ class StarSyncEngine {
         _state!.collectionStates = {
           ...previousCollections,
           for (final name in _collectionNames())
-            if (collections == null || collections.contains(name))
+            if (collections == null || collections.containsKey(name))
               name: {
                 ...Map<String, dynamic>.from(
                   previousCollections[name] as Map? ?? {},
                 ),
                 'pendingBulkReplace': true,
+                'pendingBulkReplaceKeys':
+                    collections == null ||
+                        collections[name] == null ||
+                        ((previousCollections[name] as Map?)?[
+                                    'pendingBulkReplace'] ==
+                                true &&
+                            (previousCollections[name] as Map?)?[
+                                    'pendingBulkReplaceKeys'] ==
+                                null)
+                    ? null
+                    : ({
+                        ...?((previousCollections[name] as Map?)?[
+                                    'pendingBulkReplaceKeys']
+                                as List?)
+                            ?.cast<String>(),
+                        ...collections[name]!,
+                      }.toList()..sort()),
               },
         };
         try {
