@@ -1,6 +1,10 @@
-// @ts-nocheck
-// Verbatim port; typing is deferred to a later migration phase.
 import { messageOnclickUrl, readSmartphoneMessageRow } from '../shared/smartphone_message_rows.js';
+
+type StarData = { keijitype: string; genrecd: string; seqNo: string; title?: string; genre?: string; sender?: string; period?: string; postedAt?: string; body?: string; [key: string]: string | undefined };
+type StarNode = { innerText?: string; textContent?: string | null } | null;
+type StarEntry = { button: HTMLButtonElement; target: Element; data: () => StarData | null; source?: string; id?: string | null };
+type MobileFields = Record<string, HTMLElement>;
+declare global { interface Window { __MBG_MESSAGE_STARS_VERSION?: number; __MBG_MESSAGE_STARS_REFRESH?: (ids: string[]) => void; GakujoMessageStars?: { postMessage(message: string): void } } }
 
 declare const __mbgConfig: { initialIds: string[] };
 
@@ -9,47 +13,47 @@ function messageStar() {
   var initialIds = __mbgConfig.initialIds;
   var version = 7;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
-    window.__MBG_MESSAGE_STARS_REFRESH(initialIds);
+    window.__MBG_MESSAGE_STARS_REFRESH!(initialIds);
     return;
   }
   if (window.__MBG_MESSAGE_STARS_DISPOSE) window.__MBG_MESSAGE_STARS_DISPOSE();
   window.__MBG_MESSAGE_STARS_VERSION = version;
   var disposed = false;
   var ids = new Set(initialIds);
-  var buttons = [];
+  var buttons: StarEntry[] = [];
   var buttonTargets = new WeakSet();
-  var styles = [];
+  var styles: HTMLStyleElement[] = [];
   var lastDetailSignatures = new WeakMap();
-  var listDocuments = [];
+  var listDocuments: Document[] = [];
   var openedMessageKey = '__MBG_MESSAGE_STARS_OPEN_MESSAGE';
 
   function candidateDocuments() {
     var docs = [];
     try {
-      var frame = document.getElementById('main-frame-if');
+      var frame = document.getElementById('main-frame-if') as HTMLIFrameElement | null;
       var frameDoc = frame && frame.contentWindow && frame.contentWindow.document;
       if (frameDoc) docs.push(frameDoc);
     } catch (e) {}
     if (docs.indexOf(document) < 0) docs.push(document);
     return docs;
   }
-  function text(node) {
+  function text(node: StarNode) {
     return String(node && (node.innerText || node.textContent) || '')
       .replace(/\s+/g, ' ').trim();
   }
-  function title(node) { return text(node).replace(/\s*\[新着\]\s*$/, ''); }
-  function remember(data) {
+  function title(node: StarNode) { return text(node).replace(/\s*\[新着\]\s*$/, ''); }
+  function remember(data: StarData) {
     try {
-      window.top.sessionStorage.setItem(openedMessageKey, JSON.stringify({
+      window.top!.sessionStorage.setItem(openedMessageKey, JSON.stringify({
         keijitype: data.keijitype, genrecd: data.genrecd,
         seqNo: data.seqNo, title: data.title
       }));
     } catch (e) {}
   }
-  function identity(href, doc) {
+  function identity(href: string | null, doc: Document): StarData | null {
     try {
-      var url = new URL(href, doc.baseURI || 'https://gakujo.iess.niigata-u.ac.jp/campusweb/');
-      var result = {};
+      var url = new URL(href as string, doc.baseURI || 'https://gakujo.iess.niigata-u.ac.jp/campusweb/');
+      var result = {} as StarData;
       for (var key of ['keijitype', 'genrecd', 'seqNo']) {
         var value = url.searchParams.get(key) || '';
         if (!/^[0-9]+$/.test(value)) return null;
@@ -58,15 +62,15 @@ function messageStar() {
       return result;
     } catch (e) { return null; }
   }
-  function id(data) { return data.keijitype + '|' + data.genrecd + '|' + data.seqNo; }
-  function send(action, data) {
+  function id(data: StarData) { return data.keijitype + '|' + data.genrecd + '|' + data.seqNo; }
+  function send(action: string, data: StarData) {
     if (disposed) return;
     var channel = window.GakujoMessageStars;
     if (channel && channel.postMessage) {
       channel.postMessage(JSON.stringify(Object.assign({action: action}, data)));
     }
   }
-  function paint(entry, message) {
+  function paint(entry: StarEntry, message?: StarData | null) {
     var source = entry.target.getAttribute('href') || entry.target.getAttribute('onclick') || '';
     if (source) source += '\n' + title(entry.target);
     if (message === undefined && (!source || source !== entry.source)) message = entry.data();
@@ -78,10 +82,10 @@ function messageStar() {
       entry.button.setAttribute('aria-label', label);
       entry.button.title = label;
     }
-    var starred = ids.has(entry.id);
+    var starred = ids.has(entry.id as string);
     entry.button.setAttribute('aria-pressed', String(starred));
   }
-  function ensureStyle(doc) {
+  function ensureStyle(doc: Document) {
     if (doc.getElementById('mbg-message-star-style')) return;
     var style = doc.createElement('style');
     style.id = 'mbg-message-star-style';
@@ -91,11 +95,11 @@ function messageStar() {
     (doc.head || doc.documentElement).appendChild(style);
     styles.push(style);
   }
-  function addButton(target, data, doc, initialData, inside) {
+  function addButton(target: Element, data: () => StarData | null, doc: Document, initialData?: StarData | null, inside?: boolean) {
     if (buttonTargets.has(target)) return;
     ensureStyle(doc);
     var message = initialData || data();
-    var label = 'スター: ' + message.title;
+    var label = 'スター: ' + message!.title;
     var button = doc.createElement('button');
     button.type = 'button';
     button.setAttribute('data-mbg-message-star', 'true');
@@ -111,19 +115,19 @@ function messageStar() {
       if (message) send('toggle', message);
     });
     if (inside) target.insertBefore(button, target.firstChild);
-    else target.parentNode.insertBefore(button, target);
-    var entry = {button: button, target: target, data: data};
+    else target.parentNode!.insertBefore(button, target);
+    var entry: StarEntry = {button: button, target: target, data: data};
     buttons.push(entry);
     buttonTargets.add(target);
     paint(entry, message);
   }
-  function rowData(link, doc, headersByTable) {
+  function rowData(link: Element, doc: Document, headersByTable?: Map<HTMLTableElement, string[]>) {
     var data = identity(link.getAttribute('href'), doc);
     var row = link.closest('tr');
     if (!data || !row || !row.cells) return null;
     var cells = row.cells;
     var table = row.closest('table');
-    var headers = [];
+    var headers: string[] | undefined = [];
     if (table) {
       headers = headersByTable && headersByTable.get(table);
       if (!headers) {
@@ -131,8 +135,8 @@ function messageStar() {
         if (headersByTable) headersByTable.set(table, headers);
       }
     }
-    function field(label) {
-      var index = headers.indexOf(label);
+    function field(label: string) {
+      var index = headers!.indexOf(label);
       return index >= 0 ? text(cells[index]) : '';
     }
     data.genre = field('ジャンル');
@@ -143,16 +147,16 @@ function messageStar() {
     data.body = '';
     return data;
   }
-  function rememberClickedMessage(event) {
-    var link = event.target && event.target.closest && event.target.closest('a[href*="seqNo="]');
-    var mobile = !link && event.target && event.target.closest &&
-      event.target.closest('div.button[onclick*="seqNo="]');
+  function rememberClickedMessage(event: Event) {
+    var link = event.target && (event.target as Element).closest && (event.target as Element).closest('a[href*="seqNo="]');
+    var mobile = !link && event.target && (event.target as Element).closest &&
+      (event.target as Element).closest('div.button[onclick*="seqNo="]');
     if (mobile) link = mobile;
     if (!link) return;
     var doc = link.ownerDocument;
     var href = mobile ? messageOnclickUrl(link) : link.getAttribute('href');
     if (!href) return;
-    var params = new URL(href, doc.baseURI).searchParams;
+    var params = new URL(href as string, doc.baseURI).searchParams;
     if (params.get('_eventId') !== 'displayMidoku' && params.get('_eventId') !== 'confirm') return;
     var data = identity(href, doc);
     if (data) {
@@ -160,7 +164,7 @@ function messageStar() {
       remember(data);
     }
   }
-  function smartphoneRowData(button, doc) {
+  function smartphoneRowData(button: Element, doc: Document) {
     var data = identity(messageOnclickUrl(button), doc);
     if (!data) return null;
     var row = readSmartphoneMessageRow(button, doc.baseURI);
@@ -173,15 +177,15 @@ function messageStar() {
     data.body = '';
     return data;
   }
-  function smartphoneDetailFields(doc) {
-    var fields = {};
+  function smartphoneDetailFields(doc: Document): MobileFields {
+    var fields: MobileFields = {};
     var headers = doc.querySelectorAll('#main-portlet-body ul.campussmart-list li.header');
     for (var i = 0; i < headers.length; i += 1) {
-      fields[text(headers[i])] = headers[i].nextElementSibling;
+      fields[text(headers[i])] = headers[i].nextElementSibling as HTMLElement;
     }
     return fields;
   }
-  function detailData(doc, heading, mobileFields) {
+  function detailData(doc: Document, heading: StarNode, mobileFields?: MobileFields | false | null) {
     var data = identity(doc.location && doc.location.href || doc.URL || '', doc);
     if (!data) {
       var attachments = doc.querySelectorAll('a[href*="_eventId=download"]');
@@ -191,7 +195,7 @@ function messageStar() {
     }
     if (!data) {
       try {
-        var remembered = JSON.parse(window.top.sessionStorage.getItem(openedMessageKey));
+        var remembered = JSON.parse(window.top!.sessionStorage.getItem(openedMessageKey) as string);
         if (remembered && typeof remembered.title === 'string' &&
             title({textContent: remembered.title}) === title(heading) &&
             ['keijitype', 'genrecd', 'seqNo'].every(function(key) {
@@ -215,12 +219,12 @@ function messageStar() {
     var genre = text(doc.querySelector('span.keiji-t-genre')).replace(/^\[|\]$/g, '').trim();
     var genres = genre.split(/\s+/);
     data.genre = genres.length === 2 && genres[0] === genres[1] ? genres[0] : genre;
-    data.body = String((doc.querySelector('div.keiji-naiyo') || {}).innerText ||
-                      (doc.querySelector('div.keiji-naiyo') || {}).textContent || '').trim().slice(0, 4000);
+    data.body = String((doc.querySelector<HTMLElement>('div.keiji-naiyo') || {} as HTMLElement).innerText ||
+                      (doc.querySelector<HTMLElement>('div.keiji-naiyo') || {} as HTMLElement).textContent || '').trim().slice(0, 4000);
     data.sender = '';
     data.period = '';
     data.postedAt = '';
-    var fields = {'連絡通知元': 'sender', '連絡通知期間': 'period', '送信日時': 'postedAt'};
+    var fields: Record<string, string> = {'連絡通知元': 'sender', '連絡通知期間': 'period', '送信日時': 'postedAt'};
     var tables = doc.querySelectorAll('table.keiji-normal');
     for (var j = 0; j < tables.length; j += 1) {
       var th = tables[j].querySelector('th');
@@ -231,16 +235,16 @@ function messageStar() {
     }
     return data;
   }
-  function updateDocument(doc) {
+  function updateDocument(doc: Document) {
     var links = doc.querySelectorAll('a[href*="seqNo="]');
     var headersByTable = new Map();
     for (var i = 0; i < links.length; i += 1) {
       if (buttonTargets.has(links[i])) continue;
-      var event = new URL(links[i].getAttribute('href'), doc.baseURI).searchParams.get('_eventId');
+      var event = new URL(links[i].getAttribute('href') as string, doc.baseURI).searchParams.get('_eventId');
       if (event !== 'displayMidoku' && event !== 'confirm') continue;
       var data = rowData(links[i], doc, headersByTable);
       if (data) {
-        (function(link) { addButton(link, function() { return rowData(link, doc); }, doc, data); })(links[i]);
+        (function(link: Element) { addButton(link, function() { return rowData(link, doc); }, doc, data); })(links[i]);
       }
     }
     var mobile = doc.querySelectorAll('div.button[onclick*="seqNo="]');
@@ -248,21 +252,21 @@ function messageStar() {
       if (buttonTargets.has(mobile[m])) continue;
       var href = messageOnclickUrl(mobile[m]);
       if (!href) continue;
-      var event = new URL(href, doc.baseURI).searchParams.get('_eventId');
+      var event = new URL(href as string, doc.baseURI).searchParams.get('_eventId');
       if (event !== 'displayMidoku' && event !== 'confirm') continue;
       var data = smartphoneRowData(mobile[m], doc);
       if (data) {
-        (function(button) {
+        (function(button: Element) {
           addButton(button, function() { return smartphoneRowData(button, doc); }, doc, data, true);
         })(mobile[m]);
       }
     }
-    var heading = doc.querySelector('span.keiji-title');
+    var heading = doc.querySelector<HTMLElement>('span.keiji-title');
     var mobileFields = !heading && smartphoneDetailFields(doc);
     if (mobileFields) heading = mobileFields['表題'];
     var detail = heading && detailData(doc, heading, mobileFields);
     if (detail) {
-      addButton(heading, function() {
+      addButton(heading!, function() {
         return detailData(doc, heading, mobileFields && smartphoneDetailFields(doc));
       }, doc, mobileFields ? detail : null, !!mobileFields);
       var signature = JSON.stringify(detail);

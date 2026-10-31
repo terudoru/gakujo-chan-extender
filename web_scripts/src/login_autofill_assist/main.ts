@@ -1,6 +1,7 @@
-// @ts-nocheck
-// Verbatim port; typing is deferred to a later migration phase.
 export {};
+
+type LoginTarget = { doc: Document; form: HTMLFormElement | null; username: HTMLInputElement; password: HTMLInputElement };
+type LogWindow = Window & typeof globalThis & Record<string, { postMessage?: (message: string) => void }>;
 
 declare const __mbgConfig: { debugLogging: boolean; savedUsername: string | null; savedPassword: string | null; savedCredentialKey: string | null; logChannelName: string };
 
@@ -21,7 +22,7 @@ function loginAutofillAssist() {
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
   window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
 
-  function report(event, detail) {
+  function report(event: string, detail: string) {
     var payload = {
       event: event,
       detail: detail || '',
@@ -29,8 +30,8 @@ function loginAutofillAssist() {
       url: location.origin + location.pathname.replace(/;jsessionid=[^;/]*/gi, '')
     };
     try {
-      if (window[logChannelName] && window[logChannelName].postMessage) {
-        window[logChannelName].postMessage(JSON.stringify(payload));
+      if ((window as LogWindow)[logChannelName] && (window as LogWindow)[logChannelName].postMessage) {
+        (window as LogWindow)[logChannelName].postMessage!(JSON.stringify(payload));
       }
     } catch (_) {
     }
@@ -42,7 +43,7 @@ function loginAutofillAssist() {
     }
   }
 
-  function reportState(event, detail) {
+  function reportState(event: string, detail: string) {
     var state = event + ':' + (detail || '');
     if (window.__MBG_LOGIN_AUTOFILL_LAST_REPORT === state) {
       return;
@@ -53,17 +54,17 @@ function loginAutofillAssist() {
 
   report('start', 'version=' + assistVersion);
 
-  function pageSessionKey(suffix) {
+  function pageSessionKey(suffix: string) {
     var normalizedUrl = location.origin + location.pathname.replace(/;[^/]*/g, '');
     return 'MBG_LOGIN_AUTOFILL_' + suffix + ':' + normalizedUrl;
   }
 
-  function sessionKey(suffix) {
+  function sessionKey(suffix: string) {
     return pageSessionKey(suffix) + ':' +
       (savedCredentialKey || 'no-credentials');
   }
 
-  function sessionValue(key) {
+  function sessionValue(key: string) {
     try {
       return window.sessionStorage && window.sessionStorage.getItem(key);
     } catch (_) {
@@ -71,7 +72,7 @@ function loginAutofillAssist() {
     }
   }
 
-  function setSessionValue(key, value) {
+  function setSessionValue(key: string, value: string) {
     try {
       if (window.sessionStorage) {
         window.sessionStorage.setItem(key, value);
@@ -80,7 +81,7 @@ function loginAutofillAssist() {
     }
   }
 
-  function removeSessionValue(key) {
+  function removeSessionValue(key: string) {
     try {
       if (window.sessionStorage) {
         window.sessionStorage.removeItem(key);
@@ -89,7 +90,7 @@ function loginAutofillAssist() {
     }
   }
 
-  function hasLoginMessage(pattern) {
+  function hasLoginMessage(pattern: RegExp) {
     var documents = allDocuments();
     for (var i = 0; i < documents.length; i += 1) {
       var text = '';
@@ -159,7 +160,7 @@ function loginAutofillAssist() {
     setSessionValue(key, String(attempts + 1));
   }
 
-  function visible(element) {
+  function visible(element: Element | null) {
     if (!element) {
       return false;
     }
@@ -172,8 +173,8 @@ function loginAutofillAssist() {
   }
 
   function allDocuments() {
-    var documents = [];
-    function collect(win) {
+    var documents: Document[] = [];
+    function collect(win: Window | null) {
       try {
         if (!win || !win.document || documents.indexOf(win.document) !== -1) {
           return;
@@ -236,7 +237,7 @@ function loginAutofillAssist() {
     reportState('authenticated', 'attempt-reset');
   }
 
-  function fieldLabelText(input) {
+  function fieldLabelText(input: HTMLInputElement) {
     var pieces = [
       input.getAttribute('name'),
       input.getAttribute('id'),
@@ -248,7 +249,7 @@ function loginAutofillAssist() {
     var ownerDocument = input.ownerDocument || document;
     var pageWindow = ownerDocument.defaultView || window;
     if (input.id && pageWindow.CSS && pageWindow.CSS.escape) {
-      var label = ownerDocument.querySelector('label[for="' + pageWindow.CSS.escape(input.id) + '"]');
+      var label = ownerDocument.querySelector<HTMLElement>('label[for="' + pageWindow.CSS.escape(input.id) + '"]');
       if (label) {
         pieces.push(label.innerText || label.textContent);
       }
@@ -261,7 +262,7 @@ function loginAutofillAssist() {
     return pieces.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
-  function isKnownUsernameField(input) {
+  function isKnownUsernameField(input: HTMLInputElement) {
     var type = (input.getAttribute('type') || 'text').toLowerCase();
     if (type !== 'text' && type !== 'email' && type !== 'tel' && type !== '') {
       return false;
@@ -273,7 +274,7 @@ function loginAutofillAssist() {
     ].filter(Boolean);
     var knownIdentifiers = ['userid', 'loginid', 'username', 'jusername'];
     for (var i = 0; i < identifiers.length; i += 1) {
-      var normalized = identifiers[i].toLowerCase().replace(/[\s_-]+/g, '');
+      var normalized = identifiers[i]!.toLowerCase().replace(/[\s_-]+/g, '');
       if (knownIdentifiers.indexOf(normalized) !== -1) {
         return true;
       }
@@ -281,13 +282,13 @@ function loginAutofillAssist() {
     return false;
   }
 
-  function isPasswordInput(input) {
+  function isPasswordInput(input: HTMLInputElement) {
     return (input.getAttribute('type') || '').toLowerCase() === 'password' &&
       (input.getAttribute('name') || '').toLowerCase() !== 'ninshocode' &&
       (input.getAttribute('id') || '').toLowerCase() !== 'ninshocode';
   }
 
-  function isPasswordChangeField(input) {
+  function isPasswordChangeField(input: HTMLInputElement) {
     var identifier = [
       input.getAttribute('name'),
       input.getAttribute('id')
@@ -305,7 +306,7 @@ function loginAutofillAssist() {
     return /パスワード.{0,8}(?:変更|確認|再入力)|(?:新しい|新規|現在|現行|旧|確認用|再入力).{0,8}パスワード|再入力/.test(text);
   }
 
-  function firstVisible(inputs, predicate) {
+  function firstVisible<T extends HTMLElement>(inputs: T[], predicate: (input: T) => boolean): T | null {
     for (var i = 0; i < inputs.length; i += 1) {
       if (visible(inputs[i]) && predicate(inputs[i])) {
         return inputs[i];
@@ -314,15 +315,15 @@ function loginAutofillAssist() {
     return null;
   }
 
-  function findLoginFields(doc) {
-    var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
+  function findLoginFields(doc: Document): LoginTarget | null {
+    var inputs: HTMLInputElement[] = Array.prototype.slice.call(doc.querySelectorAll('input'));
     var password = firstVisible(inputs, isPasswordInput);
     if (!password) {
       return null;
     }
 
     var form = password.form || password.closest('form');
-    var formInputs = form ?
+    var formInputs: HTMLInputElement[] = form ?
       Array.prototype.slice.call(form.querySelectorAll('input')) :
       inputs;
     var visiblePasswordInputs = formInputs.filter(function(input) {
@@ -358,7 +359,7 @@ function loginAutofillAssist() {
     return null;
   }
 
-  function setInputValue(input, value) {
+  function setInputValue(input: HTMLInputElement, value: string) {
     var pageWindow = input.ownerDocument.defaultView || window;
     var descriptor = pageWindow.HTMLInputElement &&
       Object.getOwnPropertyDescriptor(pageWindow.HTMLInputElement.prototype, 'value');
@@ -386,13 +387,13 @@ function loginAutofillAssist() {
     input.blur();
   }
 
-  function setIfMissing(element, name, value) {
+  function setIfMissing(element: Element, name: string, value: string) {
     if (!element.getAttribute(name)) {
       element.setAttribute(name, value);
     }
   }
 
-  function enableCredentialAutofill(target) {
+  function enableCredentialAutofill(target: LoginTarget) {
     if (target.form) {
       target.form.setAttribute('autocomplete', 'on');
     }
@@ -416,9 +417,9 @@ function loginAutofillAssist() {
     setIfMissing(target.password, 'aria-label', 'パスワード');
   }
 
-  function findSubmitControl(target) {
+  function findSubmitControl(target: LoginTarget) {
     var scope = target.form || target.doc;
-    var candidates = Array.prototype.slice.call(
+    var candidates: HTMLInputElement[] = Array.prototype.slice.call(
       scope.querySelectorAll('button, input, a, [role="button"]')
     );
     return firstVisible(candidates, function(element) {
@@ -446,7 +447,7 @@ function loginAutofillAssist() {
     });
   }
 
-  function hasAllowedAction(target, submitter) {
+  function hasAllowedAction(target: LoginTarget, submitter: HTMLElement | null) {
     if (!target.form) {
       return false;
     }
@@ -470,7 +471,7 @@ function loginAutofillAssist() {
     }
   }
 
-  function submitForm(target) {
+  function submitForm(target: LoginTarget) {
     if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
       return;
     }
@@ -560,7 +561,7 @@ function loginAutofillAssist() {
     setInputValue(target.username, savedUsername);
     setInputValue(target.password, savedPassword);
     window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
-      submitForm(target);
+      submitForm(target!);
     }, 250);
   }
 

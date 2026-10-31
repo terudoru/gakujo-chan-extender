@@ -1,6 +1,16 @@
-// @ts-nocheck
-// Verbatim port; typing is deferred to a later migration phase.
 export {};
+type DraftValue = string | boolean | string[] | null;
+type DraftItem = { key: string; value: DraftValue; kind: string };
+type Draft = { savedAt: number; title: string; url: string; heading?: string; fields: DraftItem[] };
+type DraftField = HTMLInputElement & HTMLSelectElement & { __MBG_REPORT_DRAFT_LAST_VALUE?: string; __MBG_REPORT_DRAFT_DIRTY?: boolean; __MBG_REPORT_DRAFT_TOUCHED?: boolean; __MBG_REPORT_DRAFT_BOUND?: boolean; __MBG_REPORT_DRAFT_CONFLICT?: DraftItem };
+type DraftContext = { fields: DraftField[]; store: Storage | null; key: string };
+type DraftWindow = Window & typeof globalThis;
+type DraftDocument = Document & { defaultView: DraftWindow };
+declare global {
+  interface Window { __MBG_REPORT_DRAFT_VERSION?: number; __MBG_REPORT_DRAFT_UPDATE?: () => boolean; __MBG_REPORT_DRAFT_INTERVAL?: number; __MBG_REPORT_DRAFT_DELETED_KEYS?: Record<string, boolean>; __MBG_REPORT_DRAFT_SAVE_TIMER?: number; __MBG_REPORT_DRAFT_BEFORE_UNLOAD_BOUND?: boolean }
+  interface Document { __MBG_REPORT_DRAFT_IDENTITY?: { signature: string; fields: DraftField[]; key: string }; __MBG_REPORT_DRAFT_LEGACY_CHECKED?: string; __MBG_REPORT_DRAFT_LEGACY_FOUND?: { key: string; legacyKey: string | null }; __MBG_REPORT_DRAFT_RESTORING?: boolean }
+  interface HTMLElement { __MBG_REPORT_DRAFT_STORE?: Storage | null; __MBG_REPORT_DRAFT_KEY?: string; __MBG_REPORT_DRAFT_RETRY?: (() => void) | null; __MBG_REPORT_DRAFT_REPLACE?: (() => void) | null }
+}
 
 function reportDraft() {
   var version = 9;
@@ -15,12 +25,12 @@ function reportDraft() {
   window.__MBG_REPORT_DRAFT_VERSION = version;
 
   function documents() {
-    var result = [document];
-    var frames = document.querySelectorAll('iframe,frame');
+    var result: DraftDocument[] = [document as DraftDocument];
+    var frames = document.querySelectorAll<HTMLIFrameElement>('iframe,frame');
     for (var i = 0; i < frames.length; i += 1) {
       try {
-        if (frames[i].contentWindow && frames[i].contentWindow.document) {
-          result.push(frames[i].contentWindow.document);
+        if (frames[i].contentWindow && frames[i].contentWindow!.document) {
+          result.push(frames[i].contentWindow!.document as DraftDocument);
         }
       } catch (e) {
         // Cross-origin frames cannot be inspected.
@@ -29,11 +39,11 @@ function reportDraft() {
     return result;
   }
 
-  function compactText(text) {
+  function compactText(text: unknown) {
     return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
-  function storageFor(doc) {
+  function storageFor(doc: DraftDocument) {
     try {
       return doc.defaultView.localStorage || window.localStorage;
     } catch (e) {
@@ -45,18 +55,18 @@ function reportDraft() {
     }
   }
 
-  function visible(element) {
+  function visible(element: DraftField) {
     if (!element || element.disabled || element.readOnly) {
       return false;
     }
-    var style = element.ownerDocument.defaultView.getComputedStyle(element);
+    var style = element.ownerDocument.defaultView!.getComputedStyle(element);
     if (style.display === 'none' || style.visibility === 'hidden') {
       return false;
     }
     return element.getClientRects().length > 0;
   }
 
-  function isIgnoredInput(input) {
+  function isIgnoredInput(input: DraftField) {
     var type = (input.getAttribute('type') || 'text').toLowerCase();
     if ([
       'button', 'color', 'file', 'hidden', 'image', 'password',
@@ -77,8 +87,8 @@ function reportDraft() {
       metadata.indexOf('ninshocode') >= 0;
   }
 
-  function saveableFields(doc) {
-    var fields = Array.prototype.slice.call(
+  function saveableFields(doc: DraftDocument) {
+    var fields: DraftField[] = Array.prototype.slice.call(
       doc.querySelectorAll('textarea,input,select,[contenteditable]')
     ).filter(function(field) {
       if (!visible(field)) {
@@ -96,13 +106,13 @@ function reportDraft() {
     return fields;
   }
 
-  function stripCounters(text) {
+  function stripCounters(text: unknown) {
     return compactText(String(text || '')
       .replace(/入力文字数[:：]?\s*[0-9０-９]+\s*\/\s*[0-9０-９]+\s*文字?/g, '')
       .replace(/[0-9０-９]+\s*\/\s*[0-9０-９]+\s*文字/g, ''));
   }
 
-  function removeCounterElements(root) {
+  function removeCounterElements(root: HTMLElement) {
     Array.prototype.slice.call(root.querySelectorAll('[id],[class]'))
       .forEach(function(node) {
         if (/count/i.test((node.getAttribute('id') || '') + ' ' +
@@ -110,11 +120,11 @@ function reportDraft() {
       });
   }
 
-  function pageTextWithoutFields(doc) {
+  function pageTextWithoutFields(doc: DraftDocument) {
     if (!doc.body) {
       return '';
     }
-    var clone = doc.body.cloneNode(true);
+    var clone = doc.body.cloneNode(true) as HTMLElement;
     Array.prototype.slice.call(
       clone.querySelectorAll(
         'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
@@ -126,7 +136,7 @@ function reportDraft() {
     return compactText(clone.innerText || clone.textContent || '');
   }
 
-  function stablePageTextForKey(doc) {
+  function stablePageTextForKey(doc: DraftDocument) {
     return stripCounters(pageTextWithoutFields(doc))
       .replace(/残り約\s*[0-9０-９]+\s*分/g, '')
       .replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
@@ -135,7 +145,7 @@ function reportDraft() {
       .trim();
   }
 
-  function looksLikeReportSubmission(doc, fields) {
+  function looksLikeReportSubmission(doc: DraftDocument, fields: DraftField[]) {
     if (!fields.length) {
       return false;
     }
@@ -178,8 +188,8 @@ function reportDraft() {
     return reportContext && submissionContext;
   }
 
-  function labelFor(field) {
-    var doc = field.ownerDocument;
+  function labelFor(field: DraftField) {
+    var doc = field.ownerDocument as DraftDocument;
     var labels = [
       field.getAttribute('name'),
       field.getAttribute('id'),
@@ -188,7 +198,7 @@ function reportDraft() {
       field.getAttribute('placeholder')
     ];
     if (field.id && doc.defaultView.CSS && doc.defaultView.CSS.escape) {
-      var label = doc.querySelector(
+      var label = doc.querySelector<HTMLElement>(
         'label[for="' + doc.defaultView.CSS.escape(field.id) + '"]'
       );
       if (label) {
@@ -197,7 +207,7 @@ function reportDraft() {
     }
     var row = field.closest('tr,div,p,li,section');
     if (row) {
-      var rowClone = row.cloneNode(true);
+      var rowClone = row.cloneNode(true) as HTMLElement;
       Array.prototype.slice.call(
         rowClone.querySelectorAll('textarea,input,select,button,[contenteditable]')
       ).forEach(function(node) {
@@ -209,19 +219,19 @@ function reportDraft() {
     return stripCounters(labels.filter(Boolean).join(' ')).substring(0, 120);
   }
 
-  function fieldKind(field) {
+  function fieldKind(field: DraftField) {
     if (field.tagName.toLowerCase() === 'select') return 'select';
     var type = (field.getAttribute('type') || '').toLowerCase();
     return type === 'radio' || type === 'checkbox' ? type : 'text';
   }
 
-  function fieldIdentity(field) {
+  function fieldIdentity(field: DraftField) {
     var identity = field.getAttribute('name') || field.id || labelFor(field);
     return fieldKind(field) === 'checkbox'
       ? identity + '=' + field.value : identity;
   }
 
-  function fieldKey(field, index, fields) {
+  function fieldKey(field: DraftField, index: number, fields: DraftField[]) {
     var identity = fieldIdentity(field);
     var occurrence = fields.slice(0, index).filter(function(other) {
       return fieldIdentity(other) === identity;
@@ -234,7 +244,7 @@ function reportDraft() {
     ].join('|');
   }
 
-  function radioGroup(field, fields) {
+  function radioGroup(field: DraftField, fields: DraftField[]) {
     var name = field.getAttribute('name');
     return name ? fields.filter(function(other) {
       return fieldKind(other) === 'radio' &&
@@ -242,7 +252,7 @@ function reportDraft() {
     }) : [field];
   }
 
-  function fieldValue(field) {
+  function fieldValue(field: DraftField) {
     if (field.matches('[contenteditable]')) {
       return typeof field.innerText === 'string'
         ? field.innerText
@@ -257,7 +267,7 @@ function reportDraft() {
     return field.value || '';
   }
 
-  function isDefaultChoice(field) {
+  function isDefaultChoice(field: DraftField) {
     if (fieldKind(field) === 'checkbox') {
       return field.checked === field.defaultChecked;
     }
@@ -273,12 +283,12 @@ function reportDraft() {
     });
   }
 
-  function observedFieldValue(field) {
+  function observedFieldValue(field: DraftField) {
     return JSON.stringify(fieldKind(field) === 'radio' ? field.checked : fieldValue(field));
   }
 
-  function setContentEditableText(field, value) {
-    var doc = field.ownerDocument;
+  function setContentEditableText(field: DraftField, value: DraftValue) {
+    var doc = field.ownerDocument as DraftDocument;
     var lines = String(value || '').split(/\r\n?|\n/);
     field.textContent = '';
     for (var i = 0; i < lines.length; i += 1) {
@@ -291,17 +301,17 @@ function reportDraft() {
     }
   }
 
-  function setFieldValue(field, value) {
+  function setFieldValue(field: DraftField, value: DraftValue) {
     var win = field.ownerDocument.defaultView || window;
     if (field.matches('[contenteditable]')) {
       setContentEditableText(field, value);
     } else if (fieldKind(field) === 'checkbox' || fieldKind(field) === 'radio') {
-      field.checked = value;
+      field.checked = value as boolean;
     } else if (fieldKind(field) === 'select') {
       Array.prototype.slice.call(field.options).forEach(function(option) {
-        option.selected = value.indexOf(option.value) >= 0;
+        option.selected = (value as string[]).indexOf(option.value) >= 0;
       });
-      if (!value.length) field.selectedIndex = -1;
+      if (!(value as string[]).length) field.selectedIndex = -1;
     } else {
       var proto = field.tagName.toLowerCase() === 'textarea'
         ? win.HTMLTextAreaElement.prototype
@@ -310,7 +320,7 @@ function reportDraft() {
       if (descriptor && descriptor.set) {
         descriptor.set.call(field, value);
       } else {
-        field.value = value;
+        field.value = value as string;
       }
     }
     try {
@@ -326,7 +336,7 @@ function reportDraft() {
     field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
   }
 
-  function hashString(text) {
+  function hashString(text: string) {
     var hash = 2166136261;
     for (var i = 0; i < text.length; i += 1) {
       hash ^= text.charCodeAt(i);
@@ -335,7 +345,7 @@ function reportDraft() {
     return (hash >>> 0).toString(36);
   }
 
-  function draftKey(doc, fields) {
+  function draftKey(doc: DraftDocument, fields: DraftField[]) {
     var identities = fields.map(function(field, index) {
       return fieldKey(field, index, fields);
     }).sort().join('\n');
@@ -368,7 +378,7 @@ function reportDraft() {
   var legacyDraft = (function() {
     var prefix = 'mbg-report-draft:v1:';
 
-    function isIgnoredInput(input) {
+    function isIgnoredInput(input: DraftField) {
       var type = (input.getAttribute('type') || 'text').toLowerCase();
       if ([
         'button', 'checkbox', 'color', 'file', 'hidden', 'image', 'password',
@@ -389,8 +399,8 @@ function reportDraft() {
         metadata.indexOf('ninshocode') >= 0;
     }
 
-    function saveableFields(doc) {
-      var fields = Array.prototype.slice.call(
+    function saveableFields(doc: DraftDocument) {
+      var fields: DraftField[] = Array.prototype.slice.call(
         doc.querySelectorAll('textarea,input,[contenteditable]')
       ).filter(function(field) {
         if (!visible(field)) {
@@ -407,11 +417,11 @@ function reportDraft() {
       return fields;
     }
 
-    function pageTextWithoutFields(doc) {
+    function pageTextWithoutFields(doc: DraftDocument) {
       if (!doc.body) {
         return '';
       }
-      var clone = doc.body.cloneNode(true);
+      var clone = doc.body.cloneNode(true) as HTMLElement;
       Array.prototype.slice.call(
         clone.querySelectorAll(
           'textarea,input,select,button,[contenteditable],#mbg-report-draft-status'
@@ -422,7 +432,7 @@ function reportDraft() {
       return compactText(clone.innerText || clone.textContent || '');
     }
 
-    function stablePageTextForKey(doc) {
+    function stablePageTextForKey(doc: DraftDocument) {
       return pageTextWithoutFields(doc)
         .replace(/残り約\s*[0-9０-９]+\s*分/g, '')
         .replace(/前回ログイン日時[:：]?\s*[0-9０-９]{4}年[0-9０-９]{1,2}月[0-9０-９]{1,2}日\s*[0-9０-９]{1,2}時[0-9０-９]{1,2}分/g, '')
@@ -431,8 +441,8 @@ function reportDraft() {
         .trim();
     }
 
-    function labelFor(field) {
-      var doc = field.ownerDocument;
+    function labelFor(field: DraftField) {
+      var doc = field.ownerDocument as DraftDocument;
       var labels = [
         field.getAttribute('name'),
         field.getAttribute('id'),
@@ -441,7 +451,7 @@ function reportDraft() {
         field.getAttribute('placeholder')
       ];
       if (field.id && doc.defaultView.CSS && doc.defaultView.CSS.escape) {
-        var label = doc.querySelector(
+        var label = doc.querySelector<HTMLElement>(
           'label[for="' + doc.defaultView.CSS.escape(field.id) + '"]'
         );
         if (label) {
@@ -450,7 +460,7 @@ function reportDraft() {
       }
       var row = field.closest('tr,div,p,li,section');
       if (row) {
-        var rowClone = row.cloneNode(true);
+        var rowClone = row.cloneNode(true) as HTMLElement;
         Array.prototype.slice.call(
           rowClone.querySelectorAll('textarea,input,select,button,[contenteditable]')
         ).forEach(function(node) {
@@ -461,7 +471,7 @@ function reportDraft() {
       return compactText(labels.filter(Boolean).join(' ')).substring(0, 120);
     }
 
-    function fieldKey(field, index) {
+    function fieldKey(field: DraftField, index: number) {
       return [
         field.tagName.toLowerCase(),
         (field.getAttribute('type') || '').toLowerCase(),
@@ -472,7 +482,7 @@ function reportDraft() {
 
     // v1 hashed the page with its character counters, which show the typed
     // length when the draft was saved but 0 once the form is reopened empty.
-    function zeroCounters(text) {
+    function zeroCounters(text: unknown) {
       return String(text || '')
         .replace(/(入力文字数[:：]?\s*)[0-9０-９]+(\s*\/)/g, '$10$2')
         .replace(/(^|[^0-9０-９\/])[0-9０-９]+(\s*\/\s*[0-9０-９]+\s*文字)/g, '$10$2');
@@ -480,7 +490,7 @@ function reportDraft() {
 
     // The saved key used the count shown while typing, so try each count up
     // to the counter's maximum (only when no v2 draft exists for this form).
-    function legacyDraftKeys(doc, fields) {
+    function legacyDraftKeys(doc: DraftDocument, fields: DraftField[]) {
       var path = '';
       try {
         path = doc.location.pathname || '';
@@ -514,7 +524,7 @@ function reportDraft() {
     };
   })();
 
-  function readDraft(store, key) {
+  function readDraft(store: Storage | null, key: string): Draft | null {
     if (!store) {
       return null;
     }
@@ -526,7 +536,7 @@ function reportDraft() {
     }
   }
 
-  function writeDraft(store, key, payload) {
+  function writeDraft(store: Storage | null, key: string, payload: Draft) {
     if (!store) {
       return false;
     }
@@ -538,19 +548,19 @@ function reportDraft() {
     }
   }
 
-  function removeDraft(store, key) {
+  function removeDraft(store: Storage | null | undefined, key: string | undefined) {
     if (!store) {
       return false;
     }
     try {
-      store.removeItem(key);
+      store.removeItem(key as string);
       return true;
     } catch (e) {
       return false;
     }
   }
 
-  function cleanup(store) {
+  function cleanup(store: Storage | null) {
     if (!store) {
       return;
     }
@@ -573,14 +583,14 @@ function reportDraft() {
     }
   }
 
-  function ensureStatus(doc, store, key) {
+  function ensureStatus(doc: DraftDocument, store: Storage | null, key: string) {
     var status = doc.getElementById('mbg-report-draft-status');
     if (status) {
-      if (status.__MBG_REPORT_DRAFT_KEY !== key) {
+      if (status!.__MBG_REPORT_DRAFT_KEY !== key) {
         updateStatus(doc, '入力すると下書きを保存します');
       }
-      status.__MBG_REPORT_DRAFT_STORE = store;
-      status.__MBG_REPORT_DRAFT_KEY = key;
+      status!.__MBG_REPORT_DRAFT_STORE = store;
+      status!.__MBG_REPORT_DRAFT_KEY = key;
       return status;
     }
     var firstField = saveableFields(doc)[0];
@@ -611,18 +621,18 @@ function reportDraft() {
     clearButton.style.fontSize = '12px';
     function clearStoredDraft() {
       var deleted = removeDraft(
-        status.__MBG_REPORT_DRAFT_STORE,
-        status.__MBG_REPORT_DRAFT_KEY
+        status!.__MBG_REPORT_DRAFT_STORE,
+        status!.__MBG_REPORT_DRAFT_KEY
       );
       if (!deleted) {
         updateStatus(doc, '下書きを削除できませんでした', clearStoredDraft);
         return;
       }
       var win = doc.defaultView;
-      var key = status.__MBG_REPORT_DRAFT_KEY;
+      var key = status!.__MBG_REPORT_DRAFT_KEY;
       var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS ||
         (win.__MBG_REPORT_DRAFT_DELETED_KEYS = Object.create(null));
-      suppressed[key] = true;
+      suppressed[key as string] = true;
       var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
       if (pending && pending.key === key) {
         win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
@@ -641,7 +651,7 @@ function reportDraft() {
     retryButton.textContent = '再試行';
     retryButton.style.display = 'none';
     retryButton.addEventListener('click', function() {
-      if (status.__MBG_REPORT_DRAFT_RETRY) status.__MBG_REPORT_DRAFT_RETRY();
+      if (status!.__MBG_REPORT_DRAFT_RETRY) status!.__MBG_REPORT_DRAFT_RETRY();
     });
     var replaceButton = doc.createElement('button');
     replaceButton.id = 'mbg-report-draft-replace';
@@ -649,28 +659,28 @@ function reportDraft() {
     replaceButton.textContent = '下書きで置き換える';
     replaceButton.style.display = 'none';
     replaceButton.addEventListener('click', function() {
-      if (status.__MBG_REPORT_DRAFT_REPLACE) status.__MBG_REPORT_DRAFT_REPLACE();
+      if (status!.__MBG_REPORT_DRAFT_REPLACE) status!.__MBG_REPORT_DRAFT_REPLACE();
     });
     status.appendChild(clearButton);
     status.appendChild(retryButton);
     status.appendChild(replaceButton);
-    status.__MBG_REPORT_DRAFT_STORE = store;
-    status.__MBG_REPORT_DRAFT_KEY = key;
+    status!.__MBG_REPORT_DRAFT_STORE = store;
+    status!.__MBG_REPORT_DRAFT_KEY = key;
 
     var form = firstField.closest('form');
     var anchor = form || firstField;
-    anchor.parentNode.insertBefore(status, anchor);
+    anchor.parentNode!.insertBefore(status, anchor);
     return status;
   }
 
-  function removeStatus(doc) {
+  function removeStatus(doc: DraftDocument) {
     var status = doc.getElementById('mbg-report-draft-status');
     if (status) {
       status.remove();
     }
   }
 
-  function updateStatus(doc, text, retry, replace) {
+  function updateStatus(doc: DraftDocument, text: string, retry?: (() => void) | null, replace?: (() => void) | null) {
     var label = doc.getElementById('mbg-report-draft-status-label');
     if (label) {
       label.textContent = text;
@@ -678,21 +688,21 @@ function reportDraft() {
     var status = doc.getElementById('mbg-report-draft-status');
     var retryButton = doc.getElementById('mbg-report-draft-retry');
     var replaceButton = doc.getElementById('mbg-report-draft-replace');
-    if (status) status.__MBG_REPORT_DRAFT_RETRY = retry || null;
-    if (status) status.__MBG_REPORT_DRAFT_REPLACE = replace || null;
+    if (status) status!.__MBG_REPORT_DRAFT_RETRY = retry || null;
+    if (status) status!.__MBG_REPORT_DRAFT_REPLACE = replace || null;
     if (retryButton) retryButton.style.display = retry ? '' : 'none';
     if (replaceButton) replaceButton.style.display = replace ? '' : 'none';
   }
 
-  function savedTime(savedAt, withDate) {
+  function savedTime(savedAt: number, withDate: boolean) {
     var date = new Date(savedAt);
     var time = ('0' + date.getHours()).slice(-2) + ':' +
       ('0' + date.getMinutes()).slice(-2);
     return withDate ? (date.getMonth() + 1) + '/' + date.getDate() + ' ' + time : time;
   }
 
-  function headingFor(doc) {
-    var values = {};
+  function headingFor(doc: DraftDocument) {
+    var values: Record<string, string> = {};
     Array.prototype.slice.call(doc.querySelectorAll('tr')).forEach(function(row) {
       var cells = Array.prototype.slice.call(row.children).filter(function(cell) {
         return /^(TH|TD)$/i.test(cell.tagName);
@@ -712,10 +722,10 @@ function reportDraft() {
       doc.title || '';
   }
 
-  function collectValues(fields) {
+  function collectValues(fields: DraftField[]) {
     return fields.map(function(field, index) {
       var kind = fieldKind(field);
-      var value = fieldValue(field);
+      var value: DraftValue = fieldValue(field);
       var group = kind === 'radio' ? radioGroup(field, fields) : [field];
       if (kind === 'radio' && group[0] !== field) return null;
       // An edit elsewhere must not replace an unresolved local answer.
@@ -732,10 +742,10 @@ function reportDraft() {
         value: value,
         kind: kind
       };
-    }).filter(Boolean);
+    }).filter(Boolean) as DraftItem[];
   }
 
-  function saveDraft(doc, store, key, fields) {
+  function saveDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[]) {
     var suppressed = doc.defaultView.__MBG_REPORT_DRAFT_DELETED_KEYS;
     if (suppressed && suppressed[key]) return true;
     store = store || storageFor(doc);
@@ -769,21 +779,21 @@ function reportDraft() {
     return true;
   }
 
-  function restoreDraft(doc, store, key, fields, force) {
+  function restoreDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[], force?: boolean) {
     var draft = readDraft(store, key);
     var legacyKey = null;
     // The v0.70 lookup hashes the page once per counter value; one search per
     // page is enough, since a found draft moves to the v2 key.
     if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {
       var legacyFields = legacyDraft.fields(doc);
-      var oldDraft = null;
+      var oldDraft: Draft | null = null;
       // Once found, retry only that key: the full search is expensive and a
       // failing migration write would otherwise repeat it every tick.
       var found = doc.__MBG_REPORT_DRAFT_LEGACY_FOUND;
       var candidates = found && found.key === key
         ? [found.legacyKey] : legacyDraft.keys(doc, legacyFields);
       candidates.some(function(candidate) {
-        oldDraft = readDraft(store, candidate);
+        oldDraft = readDraft(store, candidate as string);
         legacyKey = oldDraft ? candidate : null;
         return !!oldDraft;
       });
@@ -791,15 +801,15 @@ function reportDraft() {
       // once it has been moved to the v2 key below.
       if (!oldDraft) doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
       else doc.__MBG_REPORT_DRAFT_LEGACY_FOUND = { key: key, legacyKey: legacyKey };
-      if (oldDraft && Array.isArray(oldDraft.fields)) {
+      if ((oldDraft as Draft | null) && Array.isArray((oldDraft as unknown as Draft).fields)) {
         var oldByKey = Object.create(null);
-        oldDraft.fields.forEach(function(item) {
+        (oldDraft as unknown as Draft).fields.forEach(function(item) {
           if (item) oldByKey[legacyDraft.zeroCounters(item.key)] = item;
         });
         draft = {
-          savedAt: oldDraft.savedAt,
-          title: oldDraft.title,
-          url: oldDraft.url,
+          savedAt: (oldDraft as unknown as Draft).savedAt,
+          title: (oldDraft as unknown as Draft).title,
+          url: (oldDraft as unknown as Draft).url,
           heading: headingFor(doc),
           fields: legacyFields.map(function(field, index) {
             var item = oldByKey[
@@ -811,7 +821,7 @@ function reportDraft() {
               value: item.value,
               kind: 'text'
             } : null;
-          }).filter(Boolean)
+          }).filter(Boolean) as DraftItem[]
         };
       }
     }
@@ -903,7 +913,7 @@ function reportDraft() {
     }
   }
 
-  function currentDraftContext(doc) {
+  function currentDraftContext(doc: DraftDocument) {
     var fields = saveableFields(doc);
     if (!looksLikeReportSubmission(doc, fields)) {
       return null;
@@ -916,8 +926,8 @@ function reportDraft() {
     };
   }
 
-  function saveCurrentDraft(doc) {
-    var context = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT ||
+  function saveCurrentDraft(doc: DraftDocument) {
+    var context = (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT as DraftContext | undefined) ||
       currentDraftContext(doc);
     if (!context) {
       return;
@@ -935,7 +945,7 @@ function reportDraft() {
     }
   }
 
-  function bindDraft(doc) {
+  function bindDraft(doc: DraftDocument) {
     var context = currentDraftContext(doc);
     if (!context) {
       removeStatus(doc);
@@ -961,7 +971,7 @@ function reportDraft() {
     });
     restoreDraft(doc, store, key, fields);
 
-    function scheduleSave(field) {
+    function scheduleSave(field: DraftField) {
       if (doc.__MBG_REPORT_DRAFT_RESTORING) return;
       field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
       field.__MBG_REPORT_DRAFT_DIRTY = true;
