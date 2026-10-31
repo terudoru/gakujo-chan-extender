@@ -2902,6 +2902,15 @@ void main() {
     favoritesB.entries!.remove('new');
     await activityB.removeStarredMessage(star('1').id);
     await activityB.removeStarredMessage(star('3').id);
+    await b.withBulkReplace(
+      () async {},
+      stars: false,
+      collections: const {},
+    );
+    await b.withBulkReplace(() async {
+      favoritesB.entries = {'later': 'later'};
+      await activityB.replaceStarredMessages([star('4')]);
+    }, collections: const {'favorites': null});
     b.dispose();
     final restarted = make(storageB, activityB, favoritesB);
     await restarted.load();
@@ -2909,12 +2918,13 @@ void main() {
     await a.syncNow();
     await restarted.syncNow();
     for (final favorites in [favoritesA, favoritesB]) {
-      expect(favorites.entries, {'omitted': 'keep'});
+      expect(favorites.entries, {'omitted': 'keep', 'later': 'later'});
     }
     for (final activity in [activityA, activityB]) {
-      expect((await activity.loadStarredMessages()).map((star) => star.id), [
+      expect((await activity.loadStarredMessages()).map((star) => star.id).toSet(), {
         star('2').id,
-      ]);
+        star('4').id,
+      });
     }
     a.dispose();
     restarted.dispose();
@@ -2999,6 +3009,48 @@ void main() {
     );
     expect(state('settings')['records']['other']['clock'], otherClock);
     engine.dispose();
+  });
+
+  test('settings-only restore preserves an unsynced star deletion', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
+        StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: activity,
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+          collections: [_Collection('settings')],
+        );
+    final a = make(storageA, activityA);
+    final b = make(storageB, activityB);
+    final star = GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'Star',
+      starredAt: DateTime.utc(2026),
+    );
+    await a.setUp(config, 'pass');
+    await activityA.upsertStarredMessage(star);
+    await a.syncNow();
+    await b.setUp(config, 'pass');
+    await activityB.removeStarredMessage(star.id);
+    await b.withBulkReplace(
+      () async {},
+      stars: false,
+      collections: const {'settings': null},
+    );
+    await b.syncNow();
+    await a.syncNow();
+    expect(await activityA.loadStarredMessages(), isEmpty);
+    expect(await activityB.loadStarredMessages(), isEmpty);
+    a.dispose();
+    b.dispose();
   });
 
   test(

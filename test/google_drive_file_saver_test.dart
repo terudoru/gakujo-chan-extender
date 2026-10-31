@@ -19,9 +19,11 @@ void main() {
   var chunks = 0;
   var received = 0;
   var drop = false;
+  var dropFolder = false;
   var unauthorized = false;
   var refreshes = 0;
   String? uploadName;
+  String? uploadParent;
   void Function()? onRequest;
 
   setUp(() async {
@@ -31,9 +33,11 @@ void main() {
     chunks = 0;
     received = 0;
     drop = false;
+    dropFolder = false;
     unauthorized = false;
     refreshes = 0;
     uploadName = null;
+    uploadParent = null;
     onRequest = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     base = Uri.parse('http://127.0.0.1:${server.port}');
@@ -86,12 +90,20 @@ void main() {
           'name': data['name'],
           'parent': data['parents'][0],
           'mimeType': data['mimeType'],
+          'createdTime': '2026-01-01T00:00:00Z',
         });
+        if (dropFolder) {
+          dropFolder = false;
+          final socket = await response.detachSocket(writeHeaders: false);
+          socket.destroy();
+          return;
+        }
         response.write(jsonEncode({'id': id}));
       } else if (request.uri.path == '/upload/drive/v3/files') {
         final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
         uploads++;
         uploadName = data['name'] as String;
+        uploadParent = (data['parents'] as List).single as String;
         received = 0;
         response.headers.set('location', base.resolve('/session').toString());
       } else {
@@ -200,6 +212,38 @@ void main() {
     expect(await save('Course', 'large', 20 * 1024 * 1024), 'uploaded');
     expect(received, 20 * 1024 * 1024);
     expect(chunks, 3);
+  });
+
+  test('finds the folder when its creation response is lost', () async {
+    dropFolder = true;
+    expect(await save('Course', 'file', 1), 'uploaded');
+    final roots = files.where((f) => f['name'] == 'More Better Gakujo');
+    expect(roots, hasLength(1));
+    final course = files.singleWhere((f) => f['name'] == 'Course');
+    expect(course['parent'], roots.single['id']);
+    expect(uploadParent, course['id']);
+  });
+
+  test('chooses oldest duplicate folder, breaking ties by id', () async {
+    for (final id in ['z', 'b', 'a']) {
+      files.add({
+        'id': id,
+        'name': 'More Better Gakujo',
+        'parent': 'root',
+        'mimeType': 'application/vnd.google-apps.folder',
+        'createdTime': id == 'z' ? '2026-02-01T00:00:00Z' : '2026-01-01T00:00:00Z',
+      });
+    }
+    expect(await save('Course', 'file', 1), 'uploaded');
+    expect(files.singleWhere((f) => f['name'] == 'Course')['parent'], 'a');
+    saver = GoogleDriveFileSaver(
+      apiBase: base,
+      delay: (_) async {},
+      accessToken: ({bool forceRefresh = false}) async => 'token',
+    );
+    expect(await save('Course', 'another', 1), 'uploaded');
+    expect(files.where((f) => f['name'] == 'Course'), hasLength(1));
+    expect(uploadParent, files.singleWhere((f) => f['name'] == 'Course')['id']);
   });
 
   test('refreshes once on 401 and escapes course names', () async {

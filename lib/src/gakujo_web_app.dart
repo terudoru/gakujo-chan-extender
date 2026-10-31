@@ -5925,7 +5925,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
           _appSettings = nextSettings;
         });
-      }), collections: restoredSyncCollections(backup, backupKeys));
+      }), stars: backup.starredMessages != null, collections: restoredSyncCollections(backup, backupKeys));
       if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(

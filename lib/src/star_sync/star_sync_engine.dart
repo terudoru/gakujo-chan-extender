@@ -1768,6 +1768,7 @@ class StarSyncEngine {
   /// A null key set marks all present entries in that collection.
   Future<void> withBulkReplace(
     Future<void> Function() replace, {
+    bool stars = true,
     Map<String, Set<String>?>? collections,
   }) => _queue.runExclusive(() async {
     final state = _state;
@@ -1776,7 +1777,7 @@ class StarSyncEngine {
     final previousCollections = state == null
         ? null
         : Map<String, dynamic>.from(state.collectionStates);
-    await markBulkReplace(collections: collections);
+    await markBulkReplace(stars: stars, collections: collections);
     try {
       await replace();
     } on Object {
@@ -1789,7 +1790,9 @@ class StarSyncEngine {
       rethrow;
     }
     if (state != null && identical(_state, state)) {
-      final stars = await activityStore.loadStarredMessages();
+      final restoredStars = stars
+          ? await activityStore.loadStarredMessages()
+          : null;
       final snapshots = <String, List<String>?>{};
       for (final collection in _collections) {
         if (collections == null || collections.containsKey(collection.name)) {
@@ -1799,10 +1802,13 @@ class StarSyncEngine {
               : (local.keys.toList()..sort());
         }
       }
-      state.pendingBulkReplaceStarIds = {
-        for (final star in stars)
-          if (star.isValid) star.id,
-      };
+      if (restoredStars != null) {
+        state.pendingBulkReplaceStarIds = {
+          ...?state.pendingBulkReplaceStarIds,
+          for (final star in restoredStars)
+            if (star.isValid) star.id,
+        };
+      }
       state.collectionStates = {
         ...state.collectionStates,
         for (final entry in snapshots.entries)
@@ -1810,14 +1816,26 @@ class StarSyncEngine {
             ...Map<String, dynamic>.from(
               state.collectionStates[entry.key] as Map? ?? {},
             ),
-            'pendingBulkReplaceLocalKeys': entry.value,
+            'pendingBulkReplaceLocalKeys': entry.value == null
+                ? (state.collectionStates[entry.key]
+                      as Map?)?['pendingBulkReplaceLocalKeys']
+                : ({
+                    ...?((state.collectionStates[entry.key]
+                                as Map?)?['pendingBulkReplaceLocalKeys']
+                            as List?)
+                        ?.cast<String>(),
+                    ...entry.value!,
+                  }.toList()..sort()),
           },
       };
       await _saveState();
     }
   });
 
-  Future<void> markBulkReplace({Map<String, Set<String>?>? collections}) =>
+  Future<void> markBulkReplace({
+    bool stars = true,
+    Map<String, Set<String>?>? collections,
+  }) =>
       _queue.run(() async {
         if (_state == null) {
           return;
@@ -1825,8 +1843,10 @@ class StarSyncEngine {
         final previous = _state!.pendingBulkReplace;
         final previousStarIds = _state!.pendingBulkReplaceStarIds;
         final previousCollections = _state!.collectionStates;
-        _state!.pendingBulkReplace = true;
-        _state!.pendingBulkReplaceStarIds = null;
+        if (stars) {
+          _state!.pendingBulkReplace = true;
+          if (!previous) _state!.pendingBulkReplaceStarIds = null;
+        }
         _state!.collectionStates = {
           ...previousCollections,
           for (final name in _collectionNames())
@@ -1836,7 +1856,12 @@ class StarSyncEngine {
                   previousCollections[name] as Map? ?? {},
                 ),
                 'pendingBulkReplace': true,
-                'pendingBulkReplaceLocalKeys': null,
+                'pendingBulkReplaceLocalKeys':
+                    (previousCollections[name] as Map?)?['pendingBulkReplace'] ==
+                        true
+                    ? (previousCollections[name]
+                          as Map?)?['pendingBulkReplaceLocalKeys']
+                    : null,
                 'pendingBulkReplaceKeys':
                     collections == null ||
                         collections[name] == null ||

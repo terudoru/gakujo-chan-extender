@@ -40,6 +40,7 @@ class GoogleDriveFileSaver {
     Map<String, String> headers = const {},
     List<int> body = const [],
     bool retryNetwork = true,
+    bool retryStatus = true,
   }) async {
     var refreshed = false;
     var retries = 0;
@@ -68,7 +69,8 @@ class GoogleDriveFileSaver {
         refreshed = true;
         continue;
       }
-      if ((response.statusCode == 429 || response.statusCode >= 500) &&
+      if (retryStatus &&
+          (response.statusCode == 429 || response.statusCode >= 500) &&
           retries < 3) {
         await _backoff(retries++);
         continue;
@@ -105,7 +107,7 @@ class GoogleDriveFileSaver {
           'GET',
           _uri('/drive/v3/files', {
             'q': q,
-            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum)',
+            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime)',
             'pageSize': '1000',
             'pageToken': ?page,
           }),
@@ -129,23 +131,48 @@ class GoogleDriveFileSaver {
     final key = jsonEncode([parent, name]);
     final cached = _folders[key];
     if (cached != null) return cached;
-    final existing = await _list(name, parent, folder: true);
-    if (existing.isNotEmpty) return _folders[key] = _id(existing.first);
-    final created = _json(
-      await _request(
-        'POST',
-        _uri('/drive/v3/files', {'fields': 'id'}),
-        headers: {'content-type': 'application/json; charset=utf-8'},
-        body: utf8.encode(
-          jsonEncode({
-            'name': name,
-            'mimeType': _folderMime,
-            'parents': [parent],
-          }),
-        ),
-      ),
-    );
-    return _folders[key] = _id(created);
+    var retries = 0;
+    while (true) {
+      final existing = await _list(name, parent, folder: true);
+      if (existing.isNotEmpty) {
+        existing.sort((a, b) {
+          final time = DateTime.parse(a['createdTime'] as String).compareTo(
+            DateTime.parse(b['createdTime'] as String),
+          );
+          return time != 0 ? time : _id(a).compareTo(_id(b));
+        });
+        return _folders[key] = _id(existing.first);
+      }
+      StarSyncHttpResponse response;
+      try {
+        response = await _request(
+          'POST',
+          _uri('/drive/v3/files', {'fields': 'id'}),
+          headers: {'content-type': 'application/json; charset=utf-8'},
+          retryNetwork: false,
+          retryStatus: false,
+          body: utf8.encode(
+            jsonEncode({
+              'name': name,
+              'mimeType': _folderMime,
+              'parents': [parent],
+            }),
+          ),
+        );
+      } on StarSyncTransportException catch (error) {
+        if (error.kind != StarSyncTransportErrorKind.network || retries >= 3) {
+          rethrow;
+        }
+        await _backoff(retries++);
+        continue;
+      }
+      if ((response.statusCode == 429 || response.statusCode >= 500) &&
+          retries < 3) {
+        await _backoff(retries++);
+        continue;
+      }
+      return _folders[key] = _id(_json(response));
+    }
   }
 
   String _id(Map<String, dynamic> value) {
