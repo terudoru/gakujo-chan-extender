@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const entries = [
+const entries: { source: string; output: string; name: string; kind?: 'statement' | 'expression' }[] = [
   { source: 'web_scripts/src/session_extender/main.ts', output: 'lib/src/generated/session_extender.g.dart', name: 'gakujoSessionExtenderJs' },
   { source: 'web_scripts/src/session_extender/teardown.ts', output: 'lib/src/generated/session_extender_teardown.g.dart', name: 'gakujoSessionExtenderTeardownJs' },
   { source: 'web_scripts/src/download_capture/main.ts', output: 'lib/src/generated/download_capture.g.dart', name: 'gakujoDownloadCaptureJs' },
@@ -18,6 +18,14 @@ const entries = [
   { source: 'web_scripts/src/report_sorter/main.ts', output: 'lib/src/generated/report_sorter.g.dart', name: 'gakujoReportSorterJs' },
   { source: 'web_scripts/src/report_sorter/teardown.ts', output: 'lib/src/generated/report_sorter_teardown.g.dart', name: 'gakujoReportSorterTeardownJs' },
   { source: 'web_scripts/src/timeout_popup/main.ts', output: 'lib/src/generated/timeout_popup.g.dart', name: 'gakujoTimeoutPopupJs' },
+  { source: 'web_scripts/src/portal_auth_state_probe/main.ts', output: 'lib/src/generated/portal_auth_state_probe.g.dart', name: 'gakujoPortalAuthStateProbeJs', kind: 'expression' },
+  { source: 'web_scripts/src/authenticated_session_reset/main.ts', output: 'lib/src/generated/authenticated_session_reset.g.dart', name: 'gakujoAuthenticatedSessionResetJs' },
+  { source: 'web_scripts/src/course_name_body_text/main.ts', output: 'lib/src/generated/course_name_body_text.g.dart', name: 'gakujoCourseNameBodyTextJs', kind: 'expression' },
+  { source: 'web_scripts/src/course_name_tables/main.ts', output: 'lib/src/generated/course_name_tables.g.dart', name: 'gakujoCourseNameTablesJs', kind: 'expression' },
+  { source: 'web_scripts/src/calendar_registration_page_fetch/main.ts', output: 'lib/src/generated/calendar_registration_page_fetch.g.dart', name: 'gakujoCalendarRegistrationPageFetchJs', kind: 'expression' },
+  { source: 'web_scripts/src/calendar_extraction/main.ts', output: 'lib/src/generated/calendar_extraction.g.dart', name: 'gakujoCalendarExtractionJs', kind: 'expression' },
+  { source: 'web_scripts/src/calendar_schedule_month_view_activation/main.ts', output: 'lib/src/generated/calendar_schedule_month_view_activation.g.dart', name: 'gakujoCalendarScheduleMonthViewActivationJs', kind: 'expression' },
+  { source: 'web_scripts/src/popup_relay/main.ts', output: 'lib/src/generated/popup_relay.g.dart', name: 'gakujoPopupRelayJs' },
 ];
 const check = process.argv.includes('--check');
 const stale: string[] = [];
@@ -34,7 +42,11 @@ for (const entry of entries) {
     write: false,
     absWorkingDir: root,
   });
-  const js = result.outputFiles[0].text.replace(/\r\n/g, '\n');
+  const outputJs = result.outputFiles[0].text.replace(/\r\n/g, '\n');
+  // var is hoisted above the inner IIFE, keeping the assignment local and the strict directive first.
+  const js = entry.kind === 'expression'
+    ? `(function() {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})()\n`
+    : outputJs;
   if (js.includes("'''")) {
     throw new Error(`${entry.source}: generated JavaScript contains ''' and cannot be embedded in a Dart raw string`);
   }

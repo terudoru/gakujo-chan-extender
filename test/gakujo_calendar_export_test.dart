@@ -1239,8 +1239,8 @@ void main() {
     expect(script, contains('titleLooksUseful'));
     expect(script, contains('termRangeText'));
     expect(script, contains('JSON.stringify({'));
-    expect(script, contains("host === 'calendar.google.com'"));
-    expect(script, isNot(contains("host.indexOf('google.')")));
+    expect(script, contains('host === "calendar.google.com"'));
+    expect(script, isNot(contains('host.indexOf("google.")')));
     expect(script, isNot(contains('function scanUnsafeTable')));
     expect(script, isNot(contains('function splitCourse')));
     expect(script, isNot(contains('scanDailyScheduleLines')));

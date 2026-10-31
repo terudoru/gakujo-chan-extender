@@ -1,3 +1,6 @@
+// build.ts provides this variable locally for each expression entry.
+declare var __mbgEntryResult: unknown;
+
 interface MbgSubmitHookEntry {
   prototype: MbgSubmitHookOwner;
   original: MbgSubmitHookFunction;
@@ -49,4 +52,31 @@ interface Window {
   __MBG_SESSION_EXTENDER_INTERVAL?: number;
   __MBG_SESSION_EXTENDER_COUNT?: number;
   __MBG_SESSION_EXTENDER_URL?: string;
+}
+
+interface MbgCalendarCourse {
+  title: string;
+  weekday: number;
+  period: number;
+  location?: string;
+  teacher?: string;
+  officialTitle?: string;
+  officialLocation?: string;
+  officialDescription?: string;
+  sourceDate?: string;
+  termHint?: string;
+  courseCode?: string;
+  authoritativeTimetableCell?: boolean;
+}
+interface MbgCalendarHeaderMap {
+  code?: number;
+  title?: number;
+  weekday?: number;
+  period?: number;
+  location?: number;
+  teacher?: number;
+}
+interface Window {
+  __MBG_LOGIN_AUTOFILL_SUBMITTED_KEY?: string;
+  __MBG_2FA_AUTO_SUBMITTED_KEY?: string;
 }

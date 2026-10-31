@@ -13,6 +13,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'generated/portal_auth_state_probe.g.dart';
+import 'generated/authenticated_session_reset.g.dart';
+import 'generated/course_name_body_text.g.dart';
+import 'generated/course_name_tables.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
@@ -1045,143 +1049,10 @@ class GakujoCalendarOperationGate {
 }
 
 @visibleForTesting
-const gakujoPortalAuthStateProbeScript = r'''
-(function() {
-  var documents = [];
-  function collect(win) {
-    try {
-      if (!win || !win.document || documents.indexOf(win.document) !== -1) {
-        return;
-      }
-      documents.push(win.document);
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (_) {}
-  }
-  function visible(element) {
-    if (!element) {
-      return false;
-    }
-    try {
-      var pageWindow = element.ownerDocument.defaultView || window;
-      var style = pageWindow.getComputedStyle(element);
-      return style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
-        style.opacity !== '0' &&
-        element.getClientRects().length > 0;
-    } catch (_) {
-      return false;
-    }
-  }
-  function normalizedIdentifiers(element) {
-    return [
-      element.getAttribute && element.getAttribute('name'),
-      element.getAttribute && element.getAttribute('id')
-    ].filter(Boolean).map(function(value) {
-      return String(value).toLowerCase().replace(/[\s_-]+/g, '');
-    });
-  }
-  function controlText(element) {
-    return [
-      element.innerText,
-      element.textContent,
-      element.value,
-      element.getAttribute && element.getAttribute('alt'),
-      element.getAttribute && element.getAttribute('aria-label'),
-      element.getAttribute && element.getAttribute('title')
-    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
-  }
-
-  collect(window);
-  var hasLoginFields = false;
-  var hasTwoFactorField = false;
-  var hasAuthenticatedMarker = false;
-  var knownUserIdentifiers = ['userid', 'loginid', 'username', 'jusername'];
-
-  for (var d = 0; d < documents.length; d += 1) {
-    var doc = documents[d];
-    var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
-    var hasKnownUsername = false;
-    var hasPassword = false;
-    for (var i = 0; i < inputs.length; i += 1) {
-      var input = inputs[i];
-      if (!visible(input)) {
-        continue;
-      }
-      var identifiers = normalizedIdentifiers(input);
-      var type = (input.getAttribute('type') || '').toLowerCase();
-      if (identifiers.indexOf('ninshocode') !== -1) {
-        hasTwoFactorField = true;
-      } else if (identifiers.some(function(identifier) {
-        return knownUserIdentifiers.indexOf(identifier) !== -1;
-      })) {
-        hasKnownUsername = true;
-      } else if (type === 'password') {
-        hasPassword = true;
-      }
-    }
-    if (hasKnownUsername && hasPassword) {
-      hasLoginFields = true;
-    }
-
-    // The PC portal's ログアウト is a list (ul#logout) of an unlabeled image
-    // and a span, not a link or button.
-    var controls = Array.prototype.slice.call(
-      doc.querySelectorAll('a, button, input, [role="button"], img, #logout')
-    );
-    for (var c = 0; c < controls.length; c += 1) {
-      if (!visible(controls[c])) {
-        continue;
-      }
-      if (/ログアウト|ログオフ|sign\s*out|log\s*out/.test(controlText(controls[c]))) {
-        hasAuthenticatedMarker = true;
-        break;
-      }
-    }
-  }
-
-  return JSON.stringify({
-    hasLoginFields: hasLoginFields,
-    hasTwoFactorField: hasTwoFactorField,
-    hasAuthenticatedMarker: hasAuthenticatedMarker
-  });
-})()
-''';
+const gakujoPortalAuthStateProbeScript = gakujoPortalAuthStateProbeJs;
 
 @visibleForTesting
-const gakujoAuthenticatedSessionResetScript = r'''
-(function() {
-  delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
-  delete window.__MBG_2FA_AUTO_SUBMITTED_KEY;
-  try {
-    if (!window.sessionStorage) {
-      return 0;
-    }
-    var prefixes = [
-      'MBG_LOGIN_AUTOFILL_ERROR:',
-      'MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:',
-      'MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL:',
-      'MBG_2FA_AUTOFILL_ERROR:',
-      'MBG_2FA_AUTOFILL_SUBMIT_COUNT:'
-    ];
-    var removed = 0;
-    for (var i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
-      var key = window.sessionStorage.key(i) || '';
-      for (var p = 0; p < prefixes.length; p += 1) {
-        if (key.indexOf(prefixes[p]) === 0) {
-          window.sessionStorage.removeItem(key);
-          removed += 1;
-          break;
-        }
-      }
-    }
-    return removed;
-  } catch (_) {
-    return 0;
-  }
-})()
-''';
+const gakujoAuthenticatedSessionResetScript = gakujoAuthenticatedSessionResetJs;
 
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
@@ -6859,23 +6730,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<String> _estimateCourseNameFromBodyText() async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        r'''
-(function() {
-  var texts = [];
-  function collect(win) {
-    try {
-      if (win.document && win.document.body) {
-        texts.push(win.document.body.innerText || '');
-      }
-      for (var i = 0; i < win.frames.length; i += 1) {
-        collect(win.frames[i]);
-      }
-    } catch (e) {}
-  }
-  collect(window);
-  return texts.join('\n\n');
-})()
-''',
+        gakujoCourseNameBodyTextJs,
       );
       final bodyText = _stringFromJavaScriptResult(result);
       final candidates = _courseNameCandidatesFromBodyText(bodyText);
@@ -6903,67 +6758,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<String> _estimateCourseNameFromTables() async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        r'''
-(function() {
-  function textOf(element) {
-    return ((element && (element.innerText || element.textContent)) || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-  function collectDocuments() {
-    var documents = [];
-    function collect(win) {
-      try {
-        if (win.document) {
-          documents.push(win.document);
-        }
-        for (var i = 0; i < win.frames.length; i += 1) {
-          collect(win.frames[i]);
-        }
-      } catch (e) {}
-    }
-    collect(window);
-    return documents;
-  }
-  var documents = collectDocuments();
-  for (var d = 0; d < documents.length; d += 1) {
-    var tables = documents[d].querySelectorAll('table');
-    for (var t = 0; t < tables.length; t += 1) {
-      var rows = tables[t].querySelectorAll('tr');
-      for (var r = 0; r < rows.length; r += 1) {
-        var cells = rows[r].querySelectorAll('th,td');
-        var courseIndex = -1;
-        for (var c = 0; c < cells.length; c += 1) {
-          if (textOf(cells[c]) === '科目名') {
-            courseIndex = c;
-            break;
-          }
-        }
-        if (courseIndex < 0) {
-          continue;
-        }
-        for (var same = courseIndex + 1; same < cells.length; same += 1) {
-          var sameRowValue = textOf(cells[same]);
-          if (sameRowValue) {
-            return sameRowValue;
-          }
-        }
-        for (var next = r + 1; next < rows.length; next += 1) {
-          var nextCells = rows[next].querySelectorAll('th,td');
-          if (nextCells.length <= courseIndex) {
-            continue;
-          }
-          var value = textOf(nextCells[courseIndex]);
-          if (value) {
-            return value;
-          }
-        }
-      }
-    }
-  }
-  return '';
-})()
-''',
+        gakujoCourseNameTablesJs,
       );
       final rawEstimate = _stringFromJavaScriptResult(result).trim();
       final estimated = GakujoCourseNameEstimator.estimateFromCandidates([
