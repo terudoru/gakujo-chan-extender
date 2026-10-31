@@ -220,3 +220,43 @@ interface HTMLInputElement {
   __mbgUploadCompressionSelection?: number;
 }
 interface Document { __mbgUploadCompressionAttached?: boolean; }
+
+interface MbgPreviewRequest { url: string; method: string; fileName: string; formFields: Record<string, string>; }
+interface MbgPreviewAnchor extends HTMLElement { form: HTMLFormElement | null; name: string; value: string; __mbgSubmittedPreviewButton?: HTMLButtonElement; }
+interface MbgPreviewGestureCallbacks { min: number; max: number; getScale(): number; setScale(scale: number): void; previous?: () => void; next?: () => void; }
+interface MbgPdfDocument { numPages: number; }
+interface MbgPdfTask { promise: Promise<MbgPdfDocument>; destroy(): Promise<void>; }
+interface MbgPdfEvent { scale: number; error: Error; matchesCount: {current: number; total: number}; rawQuery: string; state: number; }
+interface MbgPdfEventBus { on(name: string, callback: (event: MbgPdfEvent) => void): void; dispatch(name: string, data: object): void; }
+interface MbgPdfLinkService { externalLinkEnabled: boolean; setViewer(viewer: MbgPdfViewer): void; setDocument(pdf: MbgPdfDocument | null, baseUrl: null): void; }
+interface MbgPdfFindController { setDocument(pdf: MbgPdfDocument): void; }
+interface MbgPdfViewer { currentPageNumber: number; currentScale: number; currentScaleValue: string; setDocument(pdf: MbgPdfDocument | null): void; }
+interface MbgPdfJsLib { PDFWorker: {fromPort(options: {port: Worker}): object}; getDocument(options: object): MbgPdfTask; AnnotationMode: {ENABLE: number}; }
+interface MbgPdfJsViewer { EventBus: new () => MbgPdfEventBus; PDFLinkService: new (options: object) => MbgPdfLinkService; PDFFindController: new (options: object) => MbgPdfFindController; PDFViewer: new (options: object) => MbgPdfViewer; }
+interface Window {
+  __MBG_UPLOAD_PREVIEW_INSTALLED?: boolean;
+  __MBG_UPLOAD_PREVIEW_LIBRARY_LOADED?: () => void;
+  __MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED?: () => void;
+  __MBG_PREVIEW_NAVIGATE?: (direction: string) => boolean;
+  __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void};
+  __MBG_OPEN_REMOTE_PREVIEW?: (request: MbgPreviewRequest) => boolean;
+  __MBG_PDF_PREVIEW_URL?: string;
+  __MBG_PDF_PREVIEW_POPUP?: boolean;
+  __MBG_PDF_WORKER_URL?: string;
+  __MBG_PDF_VIEWER_CSS?: string;
+  __MBG_PDF_CMAPS?: Record<string, string>;
+  __MBG_PDF_STANDARD_FONTS?: Record<string, string>;
+  '__MBG_UPLOAD_LIBRARY_READY_preview-office'?: boolean;
+  MbgPreviewNavigation?: {postMessage(state: string): void};
+  MbgUploadCompression?: {postMessage(state: string): void};
+  pdfjsLib?: MbgPdfJsLib;
+  pdfjsViewer?: MbgPdfJsViewer;
+}
+interface HTMLInputElement { __mbgPreviewButton?: HTMLButtonElement; }
+
+declare namespace Intl {
+  class Segmenter {
+    constructor(locales?: string | string[], options?: {granularity: 'grapheme'});
+    segment(input: string): Iterable<{segment: string}>;
+  }
+}

@@ -1,5 +1,3 @@
-// @ts-nocheck
-// Verbatim port; typing is deferred to a later migration phase.
 import { mbgValidateImage } from '../shared/image_bounds.js';
 
 declare const __mbgConfig: { compactAndroid: boolean };
@@ -8,7 +6,7 @@ function uploadPreview() {
 var mbgCompactAndroid = __mbgConfig.compactAndroid;
   if (window.__MBG_UPLOAD_PREVIEW_INSTALLED) return;
   window.__MBG_UPLOAD_PREVIEW_INSTALLED = true;
-  function mbgPreviewReport(state) {
+  function mbgPreviewReport(state: string) {
     var channel = window.MbgPreviewNavigation;
     if (channel && channel.postMessage) channel.postMessage(state);
   }
@@ -21,16 +19,16 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     else return false;
     return true;
   };
-  var waiters = [];
+  var waiters: (() => void)[] = [];
   window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED = function() {
     var pending = waiters.splice(0);
     pending.forEach(function(done) { done(); });
   };
-  function pdfLibrary(setCancel) {
+  function pdfLibrary(setCancel: (cancel: (() => void) | null) => void) {
     if (window.__MBG_PDF_PREVIEW_URL) return Promise.resolve();
     if (window.pdfjsLib && window.pdfjsViewer && window.__MBG_PDF_WORKER_URL &&
         window.__MBG_PDF_VIEWER_CSS && window.__MBG_PDF_CMAPS && window.__MBG_PDF_STANDARD_FONTS) return Promise.resolve();
-    return new Promise(function(resolve, reject) {
+    return new Promise<void>(function(resolve, reject) {
       var channel = window.MbgUploadCompression;
       if (!channel || !channel.postMessage) { reject(new Error('PDFプレビューを読み込めません')); return; }
       var timer = window.setTimeout(function() {
@@ -57,21 +55,21 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     });
   }
   function documents() {
-    var result = [], seen = new Set();
-    function visit(doc) {
+    var result: Document[] = [], seen = new Set<Document>();
+    function visit(doc: Document) {
       if (!doc || seen.has(doc) || result.length >= 64) return;
       seen.add(doc); result.push(doc);
       var frames = doc.querySelectorAll('iframe,frame');
       for (var i = 0; i < frames.length && result.length < 64; i++) {
-        try { visit(frames[i].contentWindow.document); }
+        try { visit((frames[i] as HTMLIFrameElement).contentWindow!.document); }
         catch (e) { /* Different origins are not accessible. */ }
       }
     }
     visit(document);
     return result;
   }
-  function show(input, file, onClosed, initiallyVisible) {
-    var owner = window;
+  function show(input: HTMLInputElement, file: File, onClosed?: () => void, initiallyVisible?: boolean) {
+    var owner: Window = window;
     try {
       if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
     } catch (_) {}
@@ -90,17 +88,17 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     var sourceWindow = doc.defaultView || window;
     var viewport = sourceWindow.visualViewport;
     var rootViewport = window.visualViewport;
-    var previewFrame = null;
+    var previewFrame: HTMLIFrameElement | null = null;
     function displayedScale() {
-      var scale = viewport && Number(viewport.scale);
+      var scale = (viewport && Number(viewport.scale)) as number;
       if (!(scale > 0)) scale = 1;
       if (sourceWindow === window) return scale;
       try {
         var rootScale = rootViewport && Number(rootViewport.scale);
-        if (rootScale > 0) scale *= rootScale;
-        var current = sourceWindow;
+        if (rootScale! > 0) scale *= rootScale!;
+        var current: Window = sourceWindow;
         for (var depth = 0; current !== window && depth < 64; depth++) {
-          var element = current.frameElement;
+          var element = current.frameElement as HTMLElement | null;
           if (!element) break;
           if (element.offsetWidth && element.getBoundingClientRect) {
             var ratio = element.getBoundingClientRect().width / element.offsetWidth;
@@ -169,8 +167,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     // CampusSquare scales its body with a CSS transform; a fixed descendant
     // would cover only the scaled body instead of the viewport.
     (doc.documentElement || doc.body).appendChild(overlay);
-    var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, objectUrl = null, visual = null, zoom = 100, watchdog = null;
-    var reader = null, cancelLibrary = null, pdfViewerCleanup = null, imageGestureCleanup = null;
+    var closed = false, pdfStopped = false, worker: Worker | null = null, task: MbgPdfTask | null = null, pdf: MbgPdfDocument | null = null, objectUrl: string | null = null, visual: (HTMLElement & Partial<HTMLMediaElement>) | null = null, zoom = 100, watchdog: number | null = null;
+    var reader: FileReader | null = null, cancelLibrary: (() => void) | null = null, pdfViewerCleanup: (() => void) | null = null, imageGestureCleanup: (() => void) | null = null;
     var textZoom = false;
     var detachWatcher = window.setInterval(function() {
       var detached = input.isConnected === false;
@@ -181,12 +179,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     }, 1000);
     var preview = {close: cleanup, visible: initiallyVisible !== false, setVisible: setVisible};
     owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
-    function setVisible(visible) {
+    function setVisible(visible: boolean) {
       if (closed) return;
       preview.visible = visible;
       overlay.style.display = visible ? 'flex' : 'none';
       if (!visible && visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || '')) {
-        try { visual.pause(); } catch (_) {}
+        try { visual.pause!(); } catch (_) {}
       }
       mbgPreviewReport(visible ? 'visible' : 'hidden');
     }
@@ -197,7 +195,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (cancelLibrary) { cancelLibrary(); cancelLibrary = null; }
       if (reader) { try { reader.abort(); } catch (e) {} reader = null; }
       if (visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || '')) {
-        try { visual.pause(); visual.removeAttribute('src'); visual.load(); } catch (e) {}
+        try { visual.pause!(); visual.removeAttribute('src'); visual.load!(); } catch (e) {}
       }
       if (pdfViewerCleanup) { try { pdfViewerCleanup(); } catch (_) {} pdfViewerCleanup = null; }
       if (task) { try { Promise.resolve(task.destroy()).catch(function() {}); } catch (e) {} task = null; }
@@ -241,8 +239,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     window.addEventListener('pagehide', cleanup);
     if (sourceWindow !== window) sourceWindow.addEventListener('pagehide', cleanup);
     previous.hidden = next.hidden = true;
-    function fail(error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
-    function enableVisualZoom(element, isText) {
+    function fail(error: Error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
+    function enableVisualZoom(element: HTMLElement, isText: boolean) {
       visual = element; textZoom = isText;
       resizeToolbar();
       imageZoomLabel.hidden = false; imageZoomLabel.textContent = '100%';
@@ -267,9 +265,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       armWatchdog();
       pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
-        return new Promise(function(resolve, reject) {
+        return new Promise<ArrayBuffer | null>(function(resolve, reject) {
           reader = new FileReader();
-          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result); };
+          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result as ArrayBuffer | null); };
           reader.onerror = function() { reader = null; reject(new Error('PDFを読み込めません')); };
           reader.onabort = function() { reader = null; resolve(null); };
           reader.readAsArrayBuffer(file);
@@ -279,7 +277,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         if (window.__MBG_PDF_PREVIEW_URL) {
           var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
           var frame = popup ? null : doc.createElement('iframe');
-          var viewer = null, popupTimer = null;
+          var viewer: Window | null = null, popupTimer: number | null = null;
           var sent = false;
           if (frame) {
             frame.setAttribute('title', 'PDFプレビュー');
@@ -289,12 +287,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           body.style.cssText = 'position:relative;overflow:hidden;flex:1;min-height:0;padding:0';
           status.style.cssText = 'position:absolute;z-index:1;top:0;left:0;right:0;text-align:center;pointer-events:none';
           zoomOut.hidden = zoomIn.hidden = true;
-          function onViewerMessage(event) {
+          function onViewerMessage(event: MessageEvent) {
             if (closed || pdfStopped || event.source !== viewer) return;
             if (event.data === 'mbg-preview-ready' && !sent) {
               sent = true;
               armWatchdog();
-              viewer.postMessage(bytes, '*', [bytes]);
+              viewer!.postMessage(bytes, '*', [bytes!]);
               bytes = null;
             } else if (event.data === 'mbg-preview-password-requested' && sent) {
               if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
@@ -322,21 +320,21 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
             if (!viewer) { fail(new Error('PDFプレビューを開けません')); return null; }
             if (!preview.visible) mbgPreviewReport('hidden');
             popupTimer = window.setInterval(function() {
-              try { if (viewer.closed) cleanup(); } catch (_) { cleanup(); }
+              try { if (viewer!.closed) cleanup(); } catch (_) { cleanup(); }
             }, 500);
           } else {
             previewFrame = frame;
             resizeToolbar();
-            frame.src = window.__MBG_PDF_PREVIEW_URL;
-            body.appendChild(frame);
-            viewer = frame.contentWindow;
+            frame!.src = window.__MBG_PDF_PREVIEW_URL;
+            body.appendChild(frame!);
+            viewer = frame!.contentWindow;
           }
           return null;
         }
-        worker = new Worker(window.__MBG_PDF_WORKER_URL);
-        var pdfWorker = window.pdfjsLib.PDFWorker.fromPort({port: worker});
+        worker = new Worker(window.__MBG_PDF_WORKER_URL!);
+        var pdfWorker = window.pdfjsLib!.PDFWorker.fromPort({port: worker});
         function CMapReaderFactory() {}
-        CMapReaderFactory.prototype.fetch = function(request) {
+        CMapReaderFactory.prototype.fetch = function(request: {name: string}) {
           var name = request && request.name;
           var maps = window.__MBG_PDF_CMAPS;
           if (!name || !/^[A-Za-z0-9_-]{1,80}$/.test(name) || !maps ||
@@ -348,7 +346,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           return Promise.resolve({cMapData: data, compressionType: 1});
         };
         function StandardFontDataFactory() {}
-        StandardFontDataFactory.prototype.fetch = function(request) {
+        StandardFontDataFactory.prototype.fetch = function(request: {filename: string}) {
           var name = request && request.filename, fonts = window.__MBG_PDF_STANDARD_FONTS;
           if (!name || !/^[A-Za-z0-9_.-]{1,80}$/.test(name) || !fonts ||
               !Object.prototype.hasOwnProperty.call(fonts, name)) {
@@ -358,7 +356,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           for (var i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);
           return Promise.resolve(data);
         };
-        task = window.pdfjsLib.getDocument({data: new Uint8Array(bytes), worker: pdfWorker,
+        task = window.pdfjsLib!.getDocument({data: new Uint8Array(bytes), worker: pdfWorker,
           CMapReaderFactory: CMapReaderFactory, StandardFontDataFactory: StandardFontDataFactory,
           cMapPacked: true, useWorkerFetch: false, enableXfa: false,
           isEvalSupported: false, useSystemFonts: true, stopAtErrors: true, maxImageSize: 16000000});
@@ -374,7 +372,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         /^(audio\/(mpeg|mp4|wav|ogg|opus)|video\/(mp4|webm))$/i.test(file.type)) {
       if (file.size > 64 * 1024 * 1024) { fail(new Error('メディアファイルが大きすぎます')); return; }
       var isVideo = /^(mp4|m4v|webm)$/i.test(extension) || /^video\//i.test(file.type);
-      var media = doc.createElement(isVideo ? 'video' : 'audio');
+      var media = doc.createElement(isVideo ? 'video' : 'audio') as HTMLVideoElement;
       media.controls = true; media.preload = 'metadata';
       media.style.cssText = 'max-width:100%;max-height:80vh';
       media.onerror = function() { fail(new Error('このメディアを開けません')); };
@@ -392,9 +390,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       armWatchdog();
       officeLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
-        return new Promise(function(resolve, reject) {
+        return new Promise<ArrayBuffer | null>(function(resolve, reject) {
           reader = new FileReader();
-          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result); };
+          reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result as ArrayBuffer | null); };
           reader.onerror = function() { reader = null; reject(new Error('文書を読み込めません')); };
           reader.onabort = function() { reader = null; resolve(null); };
           reader.readAsArrayBuffer(file);
@@ -422,7 +420,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         if (closed || pdfStopped) return;
         var text;
         try {
-          var data = new Uint8Array(bytes), encoding = 'utf-8';
+          var data = new Uint8Array(bytes as ArrayBuffer), encoding = 'utf-8';
           if (data.length >= 2 && data[0] === 255 && data[1] === 254) encoding = 'utf-16le';
           else if (data.length >= 2 && data[0] === 254 && data[1] === 255) encoding = 'utf-16be';
           try { text = new TextDecoder(encoding, {fatal: true}).decode(data); }
@@ -443,7 +441,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     } else {
       status.textContent = 'この形式のプレビューには対応していません。';
     }
-    function setZoom(value) {
+    function setZoom(value: number) {
       if (pdf) return;
       zoom = Math.max(25, Math.min(500, value));
       if (visual) {
@@ -458,7 +456,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
   }
   function attach() {
     documents().forEach(function(doc) {
-      var inputs = doc.querySelectorAll('input[type="file"]');
+      var inputs = doc.querySelectorAll<HTMLInputElement>('input[type="file"]');
       for (var i = 0; i < inputs.length; i++) {
         var input = inputs[i];
         if (input.__mbgPreviewButton && input.__mbgPreviewButton.isConnected) continue;
@@ -469,8 +467,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         button.style.cssText = 'margin:4px 8px;padding:6px 10px';
         input.parentNode.insertBefore(button, input.nextSibling);
         input.__mbgPreviewButton = button;
-        (function(target, control) {
-          var list = null;
+        (function(target: HTMLInputElement, control: HTMLButtonElement) {
+          var list: HTMLDivElement | null = null;
           target.addEventListener('change', function() { if (list) { list.remove(); list = null; } });
           control.addEventListener('click', function() {
             if (list) { list.remove(); list = null; }
@@ -482,11 +480,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
             if (files.length === 1) { show(target, files[0]); return; }
             var doc = target.ownerDocument;
             list = doc.createElement('div');
-            Array.prototype.forEach.call(files, function(file) {
+            Array.prototype.forEach.call(files, function(file: File) {
               var choice = doc.createElement('button'); choice.type = 'button'; choice.textContent = file.name;
               choice.setAttribute('data-mbg-upload-preview', 'true');
-              choice.addEventListener('click', function() { list.remove(); show(target, file); });
-              list.appendChild(choice);
+              choice.addEventListener('click', function() { list!.remove(); show(target, file); });
+              list!.appendChild(choice);
             });
             control.after(list);
           });
@@ -498,7 +496,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
 // GakujoRemoteFilePreviewScript
 // Retrieves a selected attachment into memory and hands it to the local
 // preview. It never writes the response to a download destination.
-  function mbgSubmittedFileRequest(anchor) {
+  function mbgSubmittedFileRequest(anchor: MbgPreviewAnchor) {
     try {
       if (!anchor || !anchor.ownerDocument ||
           !/^javascript:\s*void\s*\(\s*0\s*\)\s*;?$/i.test(anchor.getAttribute('href') || '')) return null;
@@ -522,8 +520,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       return {url: url.href, method: 'GET', fileName: name.slice(0, 240), formFields: {}};
     } catch (_) { return null; }
   }
-  function mbgAttachSubmittedPreviews(doc) {
-    var anchors = doc.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]');
+  function mbgAttachSubmittedPreviews(doc: Document) {
+    var anchors = doc.querySelectorAll<MbgPreviewAnchor>('a[href], button, input[type="submit"], input[type="button"]');
     for (var i = 0; i < anchors.length; i++) {
       var anchor = anchors[i];
       if (anchor.__mbgSubmittedPreviewButton && anchor.__mbgSubmittedPreviewButton.isConnected) continue;
@@ -534,10 +532,10 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       button.style.cssText = 'margin:4px 8px;padding:6px 10px';
       anchor.parentNode.insertBefore(button, anchor.nextSibling);
       anchor.__mbgSubmittedPreviewButton = button;
-      (function(target, control) {
+      (function(target: MbgPreviewAnchor, control: HTMLButtonElement) {
         control.addEventListener('click', function() {
           var request = mbgRemoteFileRequest(target);
-          if (!request || !window.__MBG_OPEN_REMOTE_PREVIEW(request)) {
+          if (!request || !window.__MBG_OPEN_REMOTE_PREVIEW!(request)) {
             control.textContent = 'プレビューできません';
             return;
           }
@@ -546,7 +544,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       })(anchor, button);
     }
   }
-  function mbgRemoteFileRequest(anchor) {
+  function mbgRemoteFileRequest(anchor: MbgPreviewAnchor) {
     try {
       // Preview buttons inside a download form inherit that form. Never treat
       // our own control as another download button on the next scan.
@@ -564,7 +562,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         var target = anchor.getAttribute('formtarget') || form.getAttribute('target') || '_self';
         if (!/^(GET|POST)$/.test(method) || (method === 'POST' && enctype !== 'application/x-www-form-urlencoded') || !/^_self$/i.test(target)) return null;
         var action = anchor.getAttribute('formaction') || form.getAttribute('action') || page.href;
-        var fields = {}, unsafe = false, data = new FormData(form);
+        var fields: Record<string, string> = {}, unsafe = false, data = new FormData(form);
         if (anchor.name) data.set(anchor.name, anchor.value || '');
         data.forEach(function(value, key) { if (typeof value !== 'string' || /^(?:__proto__|constructor|prototype)$/.test(key) || Object.prototype.hasOwnProperty.call(fields, key)) unsafe = true; else fields[key] = value; });
         if (unsafe) return null;
@@ -581,7 +579,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       return mbgValidateRemotePreviewRequest(request) ? request : null;
     } catch (_) { return null; }
   }
-  function mbgValidateRemotePreviewRequest(request) {
+  function mbgValidateRemotePreviewRequest(request: MbgPreviewRequest) {
     if (window.location.origin !== 'https://gakujo.iess.niigata-u.ac.jp') return false;
     var url;
     try { url = new URL(request.url, window.location.href); } catch (_) { return false; }
@@ -590,7 +588,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     if (method !== 'GET' && method !== 'POST') return false;
     var fields = request.formFields || {}, strong = false, workflow = false;
     var fileRefer = false, fileId = false;
-    function inspect(value, key) {
+    function inspect(value: string, key: string) {
       var named = /^_eventId_(.*)$/i.exec(key);
       if (/^_eventId$/i.test(key) || named) {
         var action = named ? named[1] : String(value);
@@ -636,14 +634,14 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     }, 30000);
     var operation = {close: cleanup, visible: true, setVisible: setVisible};
     window.__MBG_ACTIVE_UPLOAD_PREVIEW = operation;
-    function setVisible(visible) {
+    function setVisible(visible: boolean) {
       if (closed) return;
       operation.visible = visible;
       overlay.style.display = visible ? 'block' : 'none';
       mbgPreviewReport(visible ? 'visible' : 'hidden');
     }
     setVisible(true);
-    function cleanup(preserveState) {
+    function cleanup(preserveState?: boolean | Event) {
       if (closed) return;
       closed = true; controller.abort(); window.clearTimeout(timeout);
       window.removeEventListener('pagehide', cleanup); overlay.remove();
@@ -655,7 +653,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     close.addEventListener('click', cleanup);
     window.addEventListener('pagehide', cleanup);
     close.focus();
-    var options = {method: method, credentials: 'same-origin', redirect: 'error',
+    var options: RequestInit = {method: method, credentials: 'same-origin', redirect: 'error',
       cache: 'no-store', signal: controller.signal};
     if (method === 'GET') {
       keys.forEach(function(key) { url.searchParams.set(key, String(fields[key])); });
@@ -679,8 +677,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(disposition);
       var suggested = plain ? (plain[1] || plain[2] || '').trim() : '';
       if (extended) { try { suggested = decodeURIComponent(extended[1].trim()); } catch (_) {} }
-      var reader = response.body.getReader(), parts = [], size = 0;
-      function next() {
+      var reader = response.body.getReader(), parts: Uint8Array<ArrayBuffer>[] = [], size = 0;
+      function next(): Promise<{parts: Uint8Array<ArrayBuffer>[]; type: string; name: string} | null> {
         return reader.read().then(function(item) {
           if (closed) return null;
           if (item.done) return {parts: parts, type: type, name: suggested};
@@ -693,14 +691,14 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     }).then(function(result) {
       if (closed || !result) return;
       var name = String(result.name || request.fileName || '').trim() || 'ファイル';
-      var header = [], remaining = 1024;
+      var header: number[] = [], remaining = 1024;
       result.parts.some(function(part) {
         var take = Math.min(remaining, part.length);
         for (var i = 0; i < take; i++) header.push(part[i]);
         remaining -= take; return remaining === 0;
       });
       var first = new Uint8Array(header);
-      var prefix = String.fromCharCode.apply(null, first);
+      var prefix = String.fromCharCode.apply(null, first as never);
       if (/^(?:\xEF\xBB\xBF)?\s*(?:<!doctype\s+html|<html)(?:\s|>)/i.test(prefix)) throw new Error('ファイルではなくページが返されました');
       var type = result.type;
       if (prefix.indexOf('%PDF-') === 0) type = 'application/pdf';
@@ -721,14 +719,14 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
 // GakujoOfficePreviewScript
 // A bounded, text-only Office preview. Document content is inserted as text,
 // and macros, links, formulas and embedded objects are never executed.
-  var officeWaiters = [];
+  var officeWaiters: (() => void)[] = [];
   window.__MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED = function() {
     var pending = officeWaiters.splice(0);
     pending.forEach(function(done) { done(); });
   };
-  function officeLibrary(setCancel) {
+  function officeLibrary(setCancel: (cancel: (() => void) | null) => void) {
     if (window.JSZip && window['__MBG_UPLOAD_LIBRARY_READY_preview-office']) return Promise.resolve();
-    return new Promise(function(resolve, reject) {
+    return new Promise<void>(function(resolve, reject) {
       var channel = window.MbgUploadCompression;
       if (!channel || !channel.postMessage) { reject(new Error('文書プレビューを読み込めません')); return; }
       var timer = window.setTimeout(function() {
@@ -751,7 +749,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (officeWaiters.length === 1) channel.postMessage('preview-office');
     });
   }
-  function mbgCheckOfficeDirectory(buffer) {
+  function mbgCheckOfficeDirectory(buffer: ArrayBuffer) {
     var bytes = new Uint8Array(buffer), view = new DataView(buffer), end = -1;
     for (var i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
       if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
@@ -771,9 +769,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     }
     if (cursor !== limit) throw new Error('文書のZIP構造が不正です');
   }
-  function mbgOfficeEntry(entry, stopped) {
-    return new Promise(function(resolve, reject) {
-      var stream = entry.internalStream('uint8array'), parts = [], length = 0, failed = false;
+  function mbgOfficeEntry(entry: MbgZipEntry, stopped: () => boolean) {
+    return new Promise<Uint8Array<ArrayBuffer>>(function(resolve, reject) {
+      var stream = entry.internalStream('uint8array'), parts: Uint8Array<ArrayBuffer>[] = [], length = 0, failed = false;
       stream.on('data', function(chunk) {
         if (failed) return;
         length += chunk.length;
@@ -793,19 +791,19 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       stream.resume();
     });
   }
-  function mbgOfficeText(buffer, extension, stopped) {
+  function mbgOfficeText(buffer: ArrayBuffer, extension: string, stopped: () => boolean) {
     mbgCheckOfficeDirectory(buffer);
-    return window.JSZip.loadAsync(buffer).then(function(zip) {
+    return window.JSZip!.loadAsync(buffer).then(function(zip) {
       var entries = Object.keys(zip.files);
       if (entries.length > 5000) throw new Error('文書内のファイルが多すぎます');
-      var selected;
+      var selected: string[];
       if (/^doc[xm]$/i.test(extension)) selected = ['word/document.xml'];
       else if (/^ppt[xm]$/i.test(extension)) selected = entries.filter(function(n) { return /^ppt\/slides\/slide\d+\.xml$/i.test(n); });
       else selected = entries.filter(function(n) { return /^xl\/worksheets\/sheet\d+\.xml$/i.test(n); });
       selected.sort(function(a, b) { return a.localeCompare(b, undefined, {numeric: true}); });
       if (!selected.length || selected.length > 100 || selected.some(function(n) { return !zip.files[n]; })) throw new Error('文書の本文を確認できません');
-      var total = 0, output = [], shared = [];
-      function xml(name) {
+      var total = 0, output: string[] = [], shared: string[] = [];
+      function xml(name: string) {
         var entry = zip.files[name], size = entry && entry._data && entry._data.uncompressedSize;
         if (!entry || !Number.isSafeInteger(size) || size < 0 || size > 4 * 1024 * 1024) throw new Error('文書内のデータが大きすぎます');
         return mbgOfficeEntry(entry, stopped).then(function(bytes) {
@@ -818,8 +816,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           return result;
         });
       }
-      function elements(node, name) { return Array.prototype.slice.call(node.getElementsByTagNameNS('*', name)); }
-      function paragraphText(node) { return elements(node, 't').map(function(x) { return x.textContent; }).join(''); }
+      function elements(node: Document | Element, name: string): Element[] { return Array.prototype.slice.call(node.getElementsByTagNameNS('*', name)); }
+      function paragraphText(node: Document | Element) { return elements(node, 't').map(function(x) { return x.textContent; }).join(''); }
       var preparation = Promise.resolve();
       if (/^xls[xm]$/i.test(extension) && zip.files['xl/sharedStrings.xml']) {
         preparation = xml('xl/sharedStrings.xml').then(function(document) {
@@ -833,7 +831,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           return chain.then(function() {
             if (stopped()) throw new Error('プレビューを中止しました');
             return xml(name).then(function(document) {
-              var lines = [];
+              var lines: string[] = [];
               if (/^xls[xm]$/i.test(extension)) {
                 var rows = elements(document, 'row');
                 if (rows.length > 10000) throw new Error('行が多すぎます');
@@ -861,12 +859,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
   }
 // GakujoPdfViewerScript
 // Offline PDF.js viewer controls, kept inside the preview lifecycle.
-  function mbgPreviewGestures(node, callbacks) {
-    var start = null, pinch = null, pending = null, frame = null;
+  function mbgPreviewGestures(node: HTMLElement, callbacks: MbgPreviewGestureCallbacks) {
+    var start: {x: number; y: number; time: number} | null = null, pinch: {distance: number; scale: number} | null = null, pending: {scale: number; point: {x: number; y: number}} | null = null, frame: number | null = null;
     node.style.touchAction = 'pan-y';
-    function distance(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
-    function centre(a, b) { return {x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2}; }
-    function applyScale(value, point) {
+    function distance(a: Touch, b: Touch) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+    function centre(a: Touch, b: Touch) { return {x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2}; }
+    function applyScale(value: number, point: {x: number; y: number}) {
       var old = callbacks.getScale();
       if (!Number.isFinite(old) || old <= 0 || !Number.isFinite(value)) return;
       var next = Math.max(callbacks.min, Math.min(callbacks.max, value));
@@ -880,8 +878,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       frame = null;
       if (pending) { var value = pending; pending = null; applyScale(value.scale, value.point); }
     }
-    function onStart(event) {
-      if (event.target && event.target.closest && event.target.closest('a,button,input,textarea,select,audio,video')) return;
+    function onStart(event: TouchEvent) {
+      if (event.target && (event.target as Element).closest && (event.target as Element).closest('a,button,input,textarea,select,audio,video')) return;
       if (event.touches.length === 2) {
         var length = distance(event.touches[0], event.touches[1]);
         pinch = length > 0 ? {distance:length, scale:callbacks.getScale()} : null; start = null;
@@ -890,14 +888,14 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         start = {x:touch.clientX, y:touch.clientY, time:Date.now()}; pinch = null;
       }
     }
-    function onMove(event) {
+    function onMove(event: TouchEvent) {
       if (!pinch || event.touches.length !== 2) return;
       if (event.cancelable) event.preventDefault();
       pending = {scale:pinch.scale * distance(event.touches[0], event.touches[1]) / pinch.distance,
         point:centre(event.touches[0], event.touches[1])};
       if (frame === null) frame = window.requestAnimationFrame(flush);
     }
-    function onEnd(event) {
+    function onEnd(event: TouchEvent) {
       if (pinch) {
         if (frame !== null) { window.cancelAnimationFrame(frame); frame = null; }
         if (pending) flush();
@@ -916,7 +914,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       start = pinch = pending = null;
       if (frame !== null) { window.cancelAnimationFrame(frame); frame = null; }
     }
-    function onWheel(event) {
+    function onWheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
       if (event.cancelable) event.preventDefault();
       var multiplier = Math.max(0.75, Math.min(1.33, Math.exp(-event.deltaY * 0.01)));
@@ -934,11 +932,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       node.removeEventListener('wheel', onWheel);
     };
   }
-  function mbgCreatePdfViewer(doc, body, bar, status, pdf, previous, next, count, zoomOut, zoomIn, onFirstPage) {
+  function mbgCreatePdfViewer(doc: Document, body: HTMLElement, bar: HTMLElement, status: HTMLElement, pdf: MbgPdfDocument, previous: HTMLButtonElement, next: HTMLButtonElement, count: HTMLElement, zoomOut: HTMLButtonElement, zoomIn: HTMLButtonElement, onFirstPage: () => void) {
     var host = doc.createElement('div');
     host.style.cssText = 'position:absolute;inset:0';
     var root = host.attachShadow({mode:'closed'});
-    var style = doc.createElement('style'); style.textContent = window.__MBG_PDF_VIEWER_CSS;
+    var style = doc.createElement('style'); style.textContent = window.__MBG_PDF_VIEWER_CSS!;
     var container = doc.createElement('div');
     container.style.cssText = 'position:absolute;inset:0;overflow:auto;background:#e5e5e5';
     var pages = doc.createElement('div'); pages.className = 'pdfViewer';
@@ -961,16 +959,16 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     bar.insertBefore(search, zoomOut); bar.insertBefore(findPrevious, zoomOut);
     bar.insertBefore(findNext, zoomOut); bar.insertBefore(matches, zoomOut);
     bar.insertBefore(zoomLabel, zoomOut); bar.insertBefore(fit, zoomOut);
-    var events = new window.pdfjsViewer.EventBus();
-    var links = new window.pdfjsViewer.PDFLinkService({eventBus: events});
+    var events = new window.pdfjsViewer!.EventBus();
+    var links = new window.pdfjsViewer!.PDFLinkService({eventBus: events});
     links.externalLinkEnabled = false;
-    var finder = new window.pdfjsViewer.PDFFindController({eventBus: events, linkService: links});
-    var viewer = new window.pdfjsViewer.PDFViewer({container: container, viewer: pages,
+    var finder = new window.pdfjsViewer!.PDFFindController({eventBus: events, linkService: links});
+    var viewer = new window.pdfjsViewer!.PDFViewer({container: container, viewer: pages,
       eventBus: events, linkService: links, findController: finder,
       // Annotation icons must never resolve against the university page or an
       // address supplied by a PDF. The fragment absorbs PDF.js's icon name.
       imageResourcesPath: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="20" height="20"%3E%3Ccircle cx="10" cy="10" r="7" fill="%23555"/%3E%3C/svg%3E#',
-      annotationMode: window.pdfjsLib.AnnotationMode.ENABLE, maxCanvasPixels: 2000000});
+      annotationMode: window.pdfjsLib!.AnnotationMode.ENABLE, maxCanvasPixels: 2000000});
     links.setViewer(viewer); links.setDocument(pdf, null); finder.setDocument(pdf);
     function updatePage() {
       var current = viewer.currentPageNumber || 1;
@@ -988,11 +986,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       } else { status.textContent = '大きな画像は表示されない場合があります'; }
       onFirstPage();
     });
-    function updateMatches(event) {
+    function updateMatches(event: MbgPdfEvent) {
       var value = event.matchesCount || {};
       matches.textContent = search.value ? (value.current || 0) + ' / ' + (value.total || 0) : '';
     }
-    var alternatives = [], alternative = 0;
+    var alternatives: string[] = [], alternative = 0;
     events.on('updatefindmatchescount', updateMatches);
     events.on('updatefindcontrolstate', function(event) {
       // Some producers store right-to-left text in visual order or map Arabic
@@ -1003,11 +1001,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       }
       updateMatches(event);
     });
-    function searchAlternatives(query) {
+    function searchAlternatives(query: string) {
       if (!/[\u0590-\u08ff\ufb1d-\ufeff]/.test(query)) return [query];
       var forms = [query, query.replace(/[يى]/g, 'ی').replace(/ك/g, 'ک'),
         query.replace(/ی/g, 'ي').replace(/ک/g, 'ك')];
-      var result = [];
+      var result: string[] = [];
       forms.forEach(function(form) {
         var units;
         if (typeof Intl !== 'undefined' && Intl.Segmenter) {
@@ -1019,12 +1017,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       });
       return result;
     }
-    function dispatchFind(again, backwards) {
+    function dispatchFind(again: boolean, backwards: boolean) {
       events.dispatch('find', {source: search, type: again ? 'again' : '', query: alternatives[alternative],
         caseSensitive: false, entireWord: false, highlightAll: true,
         findPrevious: backwards, matchDiacritics: false});
     }
-    function find(again, backwards) {
+    function find(again: boolean, backwards: boolean) {
       if (!again || !alternatives.length) { alternatives = searchAlternatives(search.value); alternative = 0; }
       dispatchFind(again, backwards);
     }
@@ -1032,7 +1030,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     search.addEventListener('keydown', function(event) {
       if (event.key === 'Enter') { event.preventDefault(); find(true, !!event.shiftKey); }
     });
-    bar.parentNode.addEventListener('keydown', function(event) {
+    (bar.parentNode as HTMLElement).addEventListener('keydown', function(event) {
       if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 'f') {
         event.preventDefault(); search.focus();
       }
