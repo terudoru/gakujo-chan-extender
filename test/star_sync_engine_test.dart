@@ -339,72 +339,75 @@ void main() {
     engine.dispose();
   });
 
-  test('load and sync retry a persisted local clear before transport', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final activity = GakujoActivityStore(secureStorage: storage);
-    var factories = 0;
-    StarSyncEngine makeEngine() => StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activity,
-      secureStorage: storage,
-      transportFactory: (_) {
-        factories++;
-        return remote;
-      },
-      kdfParams: kdf,
-    );
-    final first = makeEngine();
-    await first.setUp(config, 'pass');
-    first.dispose();
-    await activity.upsertStarredMessage(
-      GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'old',
-        starredAt: DateTime.utc(2026),
-      ),
-    );
-    final json =
-        jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
-    json['pendingLocalClear'] = true;
-    storage.values[starSyncStateKey] = jsonEncode(json);
-    final engine = makeEngine();
-    final beforeFactories = factories;
-    final beforeLists = remote.lists;
-    final beforePuts = remote.puts;
-    final beforeGets = Map<String, int>.of(remote.gets);
-    storage.failStarWriteOnce = true;
-    await engine.load();
-    expect(engine.status.value.status, StarSyncStatus.error);
-    expect(engine.status.value.lastError, '端末内のスターを消去できませんでした');
-    expect(factories, beforeFactories);
-    expect(
-      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-      isTrue,
-    );
-    storage.failStarWriteOnce = true;
-    await expectLater(engine.syncNow(), throwsStateError);
-    expect(factories, beforeFactories);
-    expect(remote.lists, beforeLists);
-    expect(remote.puts, beforePuts);
-    expect(remote.gets, beforeGets);
-    expect(
-      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-      isTrue,
-    );
-    expect((await activity.loadStarredMessages()).single.title, 'old');
-    await engine.load();
-    expect(await activity.loadStarredMessages(), isEmpty);
-    expect(
-      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-      isFalse,
-    );
-    await engine.syncNow();
-    expect(await activity.loadStarredMessages(), isEmpty);
-    engine.dispose();
-  });
+  test(
+    'load and sync retry a persisted local clear before transport',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      var factories = 0;
+      StarSyncEngine makeEngine() => StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) {
+          factories++;
+          return remote;
+        },
+        kdfParams: kdf,
+      );
+      final first = makeEngine();
+      await first.setUp(config, 'pass');
+      first.dispose();
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'old',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
+      final json =
+          jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+      json['pendingLocalClear'] = true;
+      storage.values[starSyncStateKey] = jsonEncode(json);
+      final engine = makeEngine();
+      final beforeFactories = factories;
+      final beforeLists = remote.lists;
+      final beforePuts = remote.puts;
+      final beforeGets = Map<String, int>.of(remote.gets);
+      storage.failStarWriteOnce = true;
+      await engine.load();
+      expect(engine.status.value.status, StarSyncStatus.error);
+      expect(engine.status.value.lastError, '端末内のスターを消去できませんでした');
+      expect(factories, beforeFactories);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
+        isTrue,
+      );
+      storage.failStarWriteOnce = true;
+      await expectLater(engine.syncNow(), throwsStateError);
+      expect(factories, beforeFactories);
+      expect(remote.lists, beforeLists);
+      expect(remote.puts, beforePuts);
+      expect(remote.gets, beforeGets);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
+        isTrue,
+      );
+      expect((await activity.loadStarredMessages()).single.title, 'old');
+      await engine.load();
+      expect(await activity.loadStarredMessages(), isEmpty);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
+        isFalse,
+      );
+      await engine.syncNow();
+      expect(await activity.loadStarredMessages(), isEmpty);
+      engine.dispose();
+    },
+  );
 
   test('account change waits for the complete sync', () async {
     final remote = _Transport();

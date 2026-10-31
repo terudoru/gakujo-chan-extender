@@ -888,7 +888,9 @@ class StarSyncEngine {
       return const StarSyncResult();
     }
     await _queue.run(() async {
-      if (!_disposed && identical(_config, config) && identical(_state, state)) {
+      if (!_disposed &&
+          identical(_config, config) &&
+          identical(_state, state)) {
         await _finishPendingLocalClear();
       }
     });
