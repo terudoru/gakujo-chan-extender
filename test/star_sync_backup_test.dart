@@ -156,10 +156,12 @@ void main() {
     final saved = remote.files[backupPath]!;
     now = now.add(const Duration(days: 1));
     await expectLater(
-      a.uploadAutomaticBackupIfDue(() async => encodePortableSyncBackup({
-        'version': 2,
-        'data': 'a' * maxGakujoBackupBytes,
-      })),
+      a.uploadAutomaticBackupIfDue(
+        () async => encodePortableSyncBackup({
+          'version': 2,
+          'data': 'a' * maxGakujoBackupBytes,
+        }),
+      ),
       throwsA(isA<GakujoBackupImportException>()),
     );
     expect(remote.files[backupPath], saved);
