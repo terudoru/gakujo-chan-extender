@@ -1,4 +1,5 @@
 import { mbgValidateImage } from '../shared/image_bounds.js';
+import { MAX_PDF_BYTES, type QpdfWorkerRequest, type QpdfWorkerResponse } from '../shared/qpdf_worker_messages.js';
 
 type MbgCompressionImage = CanvasImageSource & { width: number; height: number; naturalWidth?: number; naturalHeight?: number; close?: () => void };
 
@@ -298,7 +299,7 @@ function uploadCompression() {
   // qpdf rewrites the existing PDF instead of rasterizing pages. Each attempt
   // starts from the original bytes to avoid cumulative JPEG degradation.
   function compressPdf(input: HTMLInputElement, file: File, progress: (message: string) => void) {
-    if (file.size > 64 * 1024 * 1024) {
+    if (file.size > MAX_PDF_BYTES) {
       return Promise.reject(new Error('PDFは64 MiB以下のファイルを選択してください'));
     }
     var lockHost: Window = window;
@@ -337,7 +338,7 @@ function uploadCompression() {
       return new Promise<File>(function(resolve, reject) {
         rejectPending = reject;
         worker = new window.Worker(window.__MBG_QPDF_WORKER_URL!, {type: 'module'});
-        worker.onmessage = function(event) {
+        worker.onmessage = function(event: MessageEvent<QpdfWorkerResponse>) {
           var result = event.data || {};
           if (result.type === 'progress') {
             progress(result.quality === null ? 'PDFを圧縮しています…' :
@@ -354,8 +355,9 @@ function uploadCompression() {
           rejectPending = null;
           reject(new Error('このWebViewではPDFを安全に圧縮できません'));
         };
-        worker.postMessage({bytes: buffer, target: targetBytes,
-          moduleUrl: window.__MBG_QPDF_MODULE_URL, wasmUrl: window.__MBG_QPDF_WASM_URL}, [buffer]);
+        var message: QpdfWorkerRequest = {bytes: buffer, target: targetBytes,
+          moduleUrl: window.__MBG_QPDF_MODULE_URL!, wasmUrl: window.__MBG_QPDF_WASM_URL!};
+        worker.postMessage(message, [buffer]);
       });
     }).finally(function() {
       if (worker) { worker.terminate(); worker = null; }

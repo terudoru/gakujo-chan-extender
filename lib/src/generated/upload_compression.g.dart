@@ -80,6 +80,9 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
     });
   }
 
+  // web_scripts/src/shared/qpdf_worker_messages.ts
+  var MAX_PDF_BYTES = 64 * 1024 * 1024;
+
   // web_scripts/src/upload_compression/main.ts
   function uploadCompression() {
     var version = 2;
@@ -350,7 +353,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       });
     }
     function compressPdf(input, file, progress) {
-      if (file.size > 64 * 1024 * 1024) {
+      if (file.size > MAX_PDF_BYTES) {
         return Promise.reject(new Error("PDFは64 MiB以下のファイルを選択してください"));
       }
       var lockHost = window;
@@ -412,12 +415,13 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
             rejectPending = null;
             reject(new Error("このWebViewではPDFを安全に圧縮できません"));
           };
-          worker.postMessage({
+          var message = {
             bytes: buffer,
             target: targetBytes,
             moduleUrl: window.__MBG_QPDF_MODULE_URL,
             wasmUrl: window.__MBG_QPDF_WASM_URL
-          }, [buffer]);
+          };
+          worker.postMessage(message, [buffer]);
         });
       }).finally(function() {
         if (worker) {

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "node build.ts",
-    "typecheck": "tsc -p .",
+    "typecheck": "tsc -p . && tsc -p tsconfig.worker.json",
     "check": "npm run typecheck && node build.ts --check"
   },
   "devDependencies": {

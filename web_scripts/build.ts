@@ -5,7 +5,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const entries: { source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true }[] = [
+const entries: ({ source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true; asset?: false } | { source: string; output: string; asset: true; name?: never; kind?: never; config?: never })[] = [
+  { source: 'web_scripts/src/qpdf_worker/main.ts', output: 'assets/js/upload_compression/qpdf-worker.js', asset: true },
+  { source: 'web_scripts/src/upload_library_ack/main.ts', output: 'lib/src/generated/upload_library_ack.g.dart', name: 'gakujoUploadLibraryAckJs', kind: 'expression' },
+  { source: 'web_scripts/src/upload_library_setup/main.ts', output: 'lib/src/generated/upload_library_setup.g.dart', name: 'gakujoUploadLibrarySetupJs', config: true },
   { source: 'web_scripts/src/session_extender/main.ts', output: 'lib/src/generated/session_extender.g.dart', name: 'gakujoSessionExtenderJs' },
   { source: 'web_scripts/src/session_extender/teardown.ts', output: 'lib/src/generated/session_extender_teardown.g.dart', name: 'gakujoSessionExtenderTeardownJs' },
   { source: 'web_scripts/src/download_capture/main.ts', output: 'lib/src/generated/download_capture.g.dart', name: 'gakujoDownloadCaptureJs' },
@@ -66,8 +69,8 @@ for (const entry of entries) {
   const result = await build({
     entryPoints: [resolve(root, entry.source)],
     bundle: true,
-    format: 'iife',
-    target: 'es2017',
+    format: entry.asset ? 'esm' : 'iife',
+    target: entry.asset ? 'es2020' : 'es2017',
     minify: false,
     charset: 'utf8',
     legalComments: 'none',
@@ -79,7 +82,7 @@ for (const entry of entries) {
   const js = entry.kind === 'expression'
     ? `(function() {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})()\n`
     : outputJs;
-  if ((entry.config ? outputJs : js).includes("'''")) {
+  if (!entry.asset && (entry.config ? outputJs : js).includes("'''")) {
     throw new Error(`${entry.source}: generated JavaScript contains ''' and cannot be embedded in a Dart raw string`);
   }
   const header = `// GENERATED FILE - DO NOT EDIT.\n// Source: ${entry.source}\n// Regenerate with: npm --prefix web_scripts run build\n\n`;
@@ -103,7 +106,7 @@ for (const entry of entries) {
   const configBody = configLine.length <= 80
     ? configLine
     : `    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;`;
-  const content = entry.config
+  const content = entry.asset ? header + outputJs : entry.config
     ? `${header}import 'dart:convert';\n\n${signature}\n${configBody}\n\n${rawConst(`_${entry.name}Prefix`, prefix)}\n${rawConst(`_${entry.name}Suffix`, suffix)}\n`
     : `${header}const String ${entry.name} = r'''\n${js}''';\n`;
   const output = resolve(root, entry.output);
