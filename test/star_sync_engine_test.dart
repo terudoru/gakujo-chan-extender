@@ -1686,15 +1686,15 @@ void main() {
     );
     await b.load();
     await b.syncNow();
-    expect(
-      (await activityB.loadStarredMessages()).map((e) => e.title),
-      ['B', 'X'],
-    );
+    expect((await activityB.loadStarredMessages()).map((e) => e.title), [
+      'B',
+      'X',
+    ]);
     await a.syncNow();
-    expect(
-      (await activityA.loadStarredMessages()).map((e) => e.title),
-      ['B', 'X'],
-    );
+    expect((await activityA.loadStarredMessages()).map((e) => e.title), [
+      'B',
+      'X',
+    ]);
   });
 
   test('a re-star after a failed state save is a new edit', () async {
