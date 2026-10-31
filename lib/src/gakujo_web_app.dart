@@ -2656,13 +2656,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
-                      onGoogleSignIn: ({required clearLocalStars}) async {
-                        _starSyncEngine.requireAccount();
+                      onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async {
                         _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
                         try {
                           return await _starSyncEngine.setUpWithPairing(
                             const StarSyncConfig(backend: StarSyncBackend.googleDrive),
-                            clearLocalStars: clearLocalStars,
+                            clearLocalStars: clearLocalStars, expectedAccount: expectedAccount,
                           );
                         } on Object {
                           if (!_starSyncEngine.status.value.enabled) {
@@ -2682,21 +2681,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
                       onLocalStarCount: _starSyncEngine.localStarCount,
-                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars}) =>
+                      onRequireAccount: _starSyncEngine.requireAccount,
+                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount}) =>
                           _starSyncEngine.setUpWithPairing(
                             const StarSyncConfig(backend: StarSyncBackend.googleDrive),
-                            resetExisting: resetExisting, clearLocalStars: clearLocalStars,
+                            resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount,
                           ),
-                      onJoinWithCode: (code, {required clearLocalStars}) => _starSyncEngine.joinWithPairingCode(
+                      onJoinWithCode: (code, {required clearLocalStars, required expectedAccount}) => _starSyncEngine.joinWithPairingCode(
                         const StarSyncConfig(backend: StarSyncBackend.googleDrive), code,
-                        clearLocalStars: clearLocalStars,
+                        clearLocalStars: clearLocalStars, expectedAccount: expectedAccount,
                       ),
                       onPairingCode: _starSyncEngine.pairingCode,
                       onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
                       onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
-                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars}) async {
+                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount}) async {
                         await _ensureStarSyncLoaded();
-                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars);
+                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount);
                       },
                       onSyncNow: () async {
                         await _ensureStarSyncLoaded();

@@ -83,6 +83,7 @@ class _Transport implements StarSyncTransport {
   bool revoked = false;
   bool authFailure = false;
   Completer<void>? devicePut;
+  void Function(String, int)? onGet;
 
   @override
   void close() {}
@@ -131,6 +132,7 @@ class _Transport implements StarSyncTransport {
   @override
   Future<StarSyncRemoteObject?> get(String path) async {
     gets[path] = (gets[path] ?? 0) + 1;
+    onGet?.call(path, gets[path]!);
     if (simulateKeyringRace && path == 'stars/keyring.json') {
       simulateKeyringRace = false;
       _racePending = true;
@@ -234,6 +236,90 @@ void main() {
     await engine.syncNow();
     expect(remote.puts, puts);
     expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+  });
+
+  test('failed account change still records the transition', () async {
+    final storage = _Storage();
+    var account = 'A';
+    final engine = StarSyncEngine(
+      loginId: () => account,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => _Transport(),
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    await expectLater(
+      engine.runAccountChange(() async {
+        account = 'B';
+        throw StateError('change failed');
+      }),
+      throwsStateError,
+    );
+    expect(
+      (jsonDecode(storage.values[starSyncStateKey]!) as Map)['localReviewRequired'],
+      isTrue,
+    );
+    engine.dispose();
+  });
+
+  test('setup rejects an account changed during sign-in', () async {
+    for (final mode in ['passphrase', 'pairing', 'join']) {
+      final storage = _Storage();
+      final remote = _Transport();
+      var account = 'A';
+      final activity = GakujoActivityStore(secureStorage: storage);
+      final engine = StarSyncEngine(
+        loginId: () => account,
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'kept',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
+      final expectedAccount = engine.requireAccount();
+      account = 'B';
+      final Future<void> setup;
+      switch (mode) {
+        case 'passphrase':
+          setup = engine.setUp(
+            config,
+            'pass',
+            clearLocalStars: true,
+            expectedAccount: expectedAccount,
+          );
+        case 'pairing':
+          setup = engine.setUpWithPairing(
+            config,
+            clearLocalStars: true,
+            expectedAccount: expectedAccount,
+          ).then((_) {});
+        default:
+          setup = engine.joinWithPairingCode(
+            config,
+            'invalid',
+            clearLocalStars: true,
+            expectedAccount: expectedAccount,
+          );
+      }
+      await expectLater(
+        setup,
+        throwsA(isA<StarSyncAccountMismatchException>()),
+      );
+      expect(engine.status.value.enabled, isFalse);
+      expect(storage.values.containsKey(starSyncStateKey), isFalse);
+      expect((await activity.loadStarredMessages()).single.title, 'kept');
+      expect(remote.files, isEmpty);
+      engine.dispose();
+    }
   });
 
   test('setup rechecks account before clearing or installing', () async {
@@ -612,6 +698,61 @@ void main() {
     final restored = (await activity.loadStarredMessages()).single;
     expect(restored.title, 'A title');
     expect(restored.body, isEmpty);
+    engine.dispose();
+  });
+
+  test('discard keeps details only for the same id and title', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    var account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    GakujoStarredMessage star(String id, String title, String body) =>
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: id,
+          title: title,
+          body: body,
+          sender: 'sender',
+          genre: 'genre',
+          period: 'period',
+          postedAt: 'posted',
+          starredAt: DateTime.utc(2026),
+        );
+    await engine.setUp(config, 'pass');
+    await activity.replaceStarredMessages([
+      star('1', 'same', 'original'),
+      star('2', 'original', 'original'),
+    ]);
+    await engine.syncNow();
+    await engine.runAccountChange(() async => account = 'B');
+    await activity.replaceStarredMessages([
+      star('1', 'same', 'cached'),
+      star('2', 'different', 'other'),
+    ]);
+    await engine.runAccountChange(() async => account = 'A');
+    await engine.resumeDiscardingLocal();
+    final stars = {
+      for (final item in await activity.loadStarredMessages()) item.seqNo: item,
+    };
+    expect(stars['1']!.body, 'cached');
+    expect(stars['1']!.sender, 'sender');
+    expect(stars['1']!.genre, 'genre');
+    expect(stars['1']!.period, 'period');
+    expect(stars['1']!.postedAt, 'posted');
+    expect(stars['2']!.title, 'original');
+    expect(stars['2']!.body, isEmpty);
+    expect(stars['2']!.sender, isEmpty);
+    expect(stars['2']!.genre, isEmpty);
+    expect(stars['2']!.period, isEmpty);
+    expect(stars['2']!.postedAt, isEmpty);
     engine.dispose();
   });
 
@@ -1206,6 +1347,77 @@ void main() {
       },
     );
   }
+
+  for (final mode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
+    test('reset $mode recovers from a malformed keyring', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      await engine.setUp(config, 'old');
+      remote.files['stars/keyring.json'] = utf8.encode('{broken');
+      switch (mode) {
+        case 'passphrase':
+          await engine.resetRemote('new');
+        case 'pairing':
+          await engine.resetRemoteWithPairing();
+        case 'setup':
+          await engine.setUp(config, 'new', resetExisting: true);
+        case 'setupPairing':
+          await engine.setUpWithPairing(config, resetExisting: true);
+      }
+      final keyring = StarSyncKeyring.fromJson(
+        jsonDecode(utf8.decode(remote.files['stars/keyring.json']!)),
+      );
+      final state = StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      );
+      expect(state.keyId, keyring.keyId);
+      expect(state.retiredKeyIds, isEmpty);
+      engine.dispose();
+    });
+  }
+
+  test('retired key sweep rechecks a file before deletion', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'old');
+    final old = StarSyncState.fromJson(
+      jsonDecode(storage.values[starSyncStateKey]!),
+    );
+    await engine.resetRemoteWithPairing();
+    final current = StarSyncState.fromJson(
+      jsonDecode(storage.values[starSyncStateKey]!),
+    );
+    const path = 'stars/devices/rejoined';
+    Future<List<int>> file(StarSyncState state) => encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+      keyId: state.keyId,
+      deviceId: 'rejoined',
+      plaintext: [],
+    );
+    remote.files[path] = await file(old);
+    final rejoined = await file(current);
+    remote.onGet = (name, count) {
+      if (name == path && count == 2) remote.files[path] = rejoined;
+    };
+    await engine.syncNow();
+    expect(remote.files[path], rejoined);
+    expect(remote.gets[path], 2);
+    engine.dispose();
+  });
 
   test('different-key files are kept without a partial sync warning', () async {
     final remote = _Transport();

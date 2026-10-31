@@ -297,16 +297,18 @@ class StarSyncEngine {
 
   Future<T> runAccountChange<T>(Future<T> Function() change) =>
       _queue.runExclusive(() async {
-        final result = await change();
-        final state = _state;
-        final account = _currentAccount();
-        if (_config != null &&
-            state != null &&
-            (account == null || account != state.boundAccount)) {
-          state.localReviewRequired = true;
-          await _saveState();
+        try {
+          return await change();
+        } finally {
+          final state = _state;
+          final account = _currentAccount();
+          if (_config != null &&
+              state != null &&
+              (account == null || account != state.boundAccount)) {
+            state.localReviewRequired = true;
+            await _saveState();
+          }
         }
-        return result;
       });
 
   Future<void> resetInMemory() => _queue.run(() async {
@@ -406,11 +408,17 @@ class StarSyncEngine {
 
   /// Read the retired key before an explicit reset removes remote data.
   Future<String?> _deleteRemoteData(StarSyncTransport transport) async {
-    final keyring = await transport.get(_keyringPath);
-    final retiredKeyId = keyring == null
-        ? null
-        : StarSyncKeyring.fromJson(jsonDecode(utf8.decode(keyring.bytes)))
-              .keyId;
+    String? retiredKeyId;
+    try {
+      final keyring = await transport.get(_keyringPath);
+      if (keyring != null) {
+        retiredKeyId = StarSyncKeyring.fromJson(
+          jsonDecode(utf8.decode(keyring.bytes)),
+        ).keyId;
+      }
+    } on Object {
+      // An explicit reset must also recover from an unreadable keyring.
+    }
     for (final entry in await transport.list(_deviceDirectory)) {
       await transport.delete(entry.path);
     }
@@ -418,13 +426,22 @@ class StarSyncEngine {
     return retiredKeyId;
   }
 
+  String _setupAccount(String? expectedAccount) {
+    final account = _currentAccount();
+    if (expectedAccount != null && account != expectedAccount) {
+      throw const StarSyncAccountMismatchException();
+    }
+    return account ?? (throw const StarSyncAccountRequiredException());
+  }
+
   Future<void> setUp(
     StarSyncConfig config,
     String passphrase, {
     bool resetExisting = false,
     bool clearLocalStars = false,
+    String? expectedAccount,
   }) async {
-    final account = requireAccount();
+    final account = _setupAccount(expectedAccount);
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -527,8 +544,9 @@ class StarSyncEngine {
     StarSyncConfig config, {
     bool resetExisting = false,
     bool clearLocalStars = false,
+    String? expectedAccount,
   }) async {
-    final account = requireAccount();
+    final account = _setupAccount(expectedAccount);
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -609,8 +627,9 @@ class StarSyncEngine {
     StarSyncConfig config,
     String code, {
     bool clearLocalStars = false,
+    String? expectedAccount,
   }) async {
-    final account = requireAccount();
+    final account = _setupAccount(expectedAccount);
     final decoded = decodeStarSyncPairingCode(code);
     final transport = _transportFactory(config);
     try {
@@ -724,7 +743,10 @@ class StarSyncEngine {
           }
           final next = applyStarSyncStateToLocal(
             state: state.records,
-            local: const [],
+            local: current.where((item) {
+              final record = state.records[item.id];
+              return record != null && record.title == item.title;
+            }).toList(),
           );
           return (
             next: next,
@@ -976,7 +998,11 @@ class StarSyncEngine {
             final fileKeyId = starSyncFileKeyId(object.bytes);
             if (fileKeyId != null && fileKeyId != state.keyId) {
               if (state.retiredKeyIds.containsKey(fileKeyId)) {
-                await transport.delete(entry.path);
+                final latest = await transport.get(entry.path);
+                if (latest != null &&
+                    starSyncFileKeyId(latest.bytes) == fileKeyId) {
+                  await transport.delete(entry.path);
+                }
               }
               continue;
             }

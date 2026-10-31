@@ -15,11 +15,15 @@ void main() {
       String, {
       required bool resetExisting,
       required bool clearLocalStars,
+      required String expectedAccount,
     })?
     onSetUp,
     bool googleAvailable = false,
     bool google = false,
-    Future<StarSyncPairingSetup> Function({required bool clearLocalStars})?
+    Future<StarSyncPairingSetup> Function({
+      required bool clearLocalStars,
+      required String expectedAccount,
+    })?
     onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
     Future<void> Function()? onGoogleReSignIn,
@@ -28,9 +32,14 @@ void main() {
     Future<StarSyncPairingSetup> Function({
       required bool resetExisting,
       required bool clearLocalStars,
+      required String expectedAccount,
     })?
     onSetUpWithPairing,
-    Future<void> Function(String, {required bool clearLocalStars})? onJoin,
+    Future<void> Function(
+      String, {
+      required bool clearLocalStars,
+      required String expectedAccount,
+    })? onJoin,
   }) => MaterialApp(
     home: Scaffold(
       body: SingleChildScrollView(
@@ -41,16 +50,22 @@ void main() {
           googleEmail: () => google ? 'user@example.com' : null,
           onGoogleSignIn:
               onGoogleSignIn ??
-              ({required clearLocalStars}) async =>
+              ({required clearLocalStars, required expectedAccount}) async =>
                   StarSyncPairingSetup.created,
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onLocalStarCount: onLocalStarCount ?? () async => 0,
+          onRequireAccount: () => 'account',
           onSetUpWithPairing:
               onSetUpWithPairing ??
-              ({required resetExisting, required clearLocalStars}) async =>
-                  StarSyncPairingSetup.created,
-          onJoinWithCode: onJoin ?? (_, {required clearLocalStars}) async {},
+              ({
+                required resetExisting,
+                required clearLocalStars,
+                required expectedAccount,
+              }) async => StarSyncPairingSetup.created,
+          onJoinWithCode:
+              onJoin ??
+              (_, {required clearLocalStars, required expectedAccount}) async {},
           onPairingCode: () async => encodeStarSyncPairingCode(
             'AAAAAAAAAAAAAAAAAAAAAA',
             List.filled(32, 1),
@@ -64,6 +79,7 @@ void main() {
                 _, {
                 required resetExisting,
                 required clearLocalStars,
+                required expectedAccount,
               }) async {},
           onSyncNow: () async {},
           onResumeKeepingLocal: onResumeKeepingLocal ?? () async {},
@@ -157,7 +173,7 @@ void main() {
       section(
         status,
         googleAvailable: true,
-        onGoogleSignIn: ({required clearLocalStars}) async =>
+        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
             throw const StarSyncAccountRequiredException(),
       ),
     );
@@ -180,7 +196,7 @@ void main() {
       section(
         status,
         onSetUp:
-            (_, _, {required resetExisting, required clearLocalStars}) async {
+            (_, _, {required resetExisting, required clearLocalStars, required expectedAccount}) async {
               calls++;
             },
       ),
@@ -264,9 +280,10 @@ void main() {
       section(
         status,
         googleAvailable: true,
-        onGoogleSignIn: ({required clearLocalStars}) async =>
+        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
             StarSyncPairingSetup.needsPairingCode,
-        onJoin: (value, {required clearLocalStars}) async {
+        onJoin: (value, {required clearLocalStars, required expectedAccount}) async {
+          expect(expectedAccount, 'account');
           if (mismatch) throw const StarSyncPairingMismatchException();
           joined = value;
         },
@@ -383,8 +400,9 @@ void main() {
           status,
           googleAvailable: true,
           onLocalStarCount: () async => 3,
-          onGoogleSignIn: ({required clearLocalStars}) async {
+          onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async {
             selected = clearLocalStars;
+            expect(expectedAccount, 'account');
             return StarSyncPairingSetup.created;
           },
         ),
@@ -410,10 +428,11 @@ void main() {
         status,
         googleAvailable: true,
         onLocalStarCount: () async => 1,
-        onGoogleSignIn: ({required clearLocalStars}) async =>
+        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
             StarSyncPairingSetup.needsPairingCode,
         onSetUpWithPairing:
-            ({required resetExisting, required clearLocalStars}) async {
+            ({required resetExisting, required clearLocalStars, required expectedAccount}) async {
+              expect(expectedAccount, 'account');
               expect(resetExisting, isTrue);
               cleared = clearLocalStars;
               resets++;
