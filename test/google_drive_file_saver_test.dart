@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 
@@ -133,19 +134,23 @@ void main() {
     },
   );
 
-  test('folders reused, same size skipped, collision gets suffix', () async {
+  test('matching checksum skipped, same size different content gets suffix', () async {
     expect(await save('Course', 'file.pdf', 3), 'uploaded');
     files.add({
       'id': 'existing',
       'name': 'file.pdf',
       'parent': 'folder1',
       'size': '3',
+      'md5Checksum': md5.convert([0, 0, 0]).toString(),
     });
     expect(await save('Course', 'file.pdf', 3), 'existing');
+    files.last['md5Checksum'] = md5.convert([1, 2, 3]).toString();
+    expect(await save('Course', 'file.pdf', 3), 'uploaded');
+    expect(uploadName, 'file (2).pdf');
     expect(await save('Course', 'file.pdf', 4), 'uploaded');
     expect(uploadName, 'file (2).pdf');
     expect(files.where((f) => f['mimeType'] != null).length, 2);
-    expect(uploads, 2);
+    expect(uploads, 3);
   });
 
   test('20 MiB upload uses three chunks', () async {

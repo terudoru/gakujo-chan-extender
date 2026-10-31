@@ -125,14 +125,20 @@ void main() {
     final code = await a.pairingCode();
     await b.joinWithPairingCode(config, code);
     await other.joinWithPairingCode(config, code);
-    expect(a.shouldUploadAutomaticBackup(now), isTrue);
     final payload = List<int>.generate(5 * 1024 * 1024, (i) => i % 256);
-    await a.uploadBackup(payload);
-    expect(a.shouldUploadAutomaticBackup(now), isFalse);
-    expect(
-      a.shouldUploadAutomaticBackup(now.add(const Duration(hours: 24))),
-      isTrue,
-    );
+    var builds = 0;
+    final uploads = await Future.wait([
+      a.uploadAutomaticBackupIfDue(() async {
+        builds++;
+        return payload;
+      }),
+      a.uploadAutomaticBackupIfDue(() async {
+        builds++;
+        return payload;
+      }),
+    ]);
+    expect(uploads, [true, false]);
+    expect(builds, 1);
     final own = (await a.listBackups()).single;
     expect(own.isThisDevice, isTrue);
     final listed = (await b.listBackups()).single;
@@ -155,7 +161,7 @@ void main() {
     await a.uploadBackup([1, 2, 3]);
     await a.resetRemoteWithPairing();
     expect(await a.listBackups(), isEmpty);
-    expect(a.shouldUploadAutomaticBackup(now), isTrue);
+    expect(await a.uploadAutomaticBackupIfDue(() async => [4]), isTrue);
     a.dispose();
     b.dispose();
     other.dispose();

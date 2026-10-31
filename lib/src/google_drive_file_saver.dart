@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
+
 import 'star_sync/star_sync_transport.dart';
 
 class GoogleDriveFileSaver {
@@ -103,7 +105,7 @@ class GoogleDriveFileSaver {
           'GET',
           _uri('/drive/v3/files', {
             'q': q,
-            'fields': 'nextPageToken,files(id,name,size,mimeType)',
+            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum)',
             'pageSize': '1000',
             'pageToken': ?page,
           }),
@@ -169,10 +171,16 @@ class GoogleDriveFileSaver {
     final parent = await _folder(course.isEmpty ? 'その他' : course, root);
     var name = fileName;
     var suffix = 2;
+    String? checksum;
     while (true) {
       final existing = await _list(name, parent);
+      if (existing.isNotEmpty && checksum == null) {
+        checksum = (await md5.bind(open()).first).toString();
+      }
       for (final file in existing) {
-        if (int.tryParse('${file['size']}') == length) return _id(file);
+        if (file['name'] == name && file['md5Checksum'] == checksum) {
+          return _id(file);
+        }
       }
       if (existing.isEmpty) break;
       final dot = fileName.lastIndexOf('.');
