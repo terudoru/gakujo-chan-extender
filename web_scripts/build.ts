@@ -23,6 +23,12 @@ const entries: { source: string; output: string; name: string; kind?: 'statement
   { source: 'web_scripts/src/course_name_body_text/main.ts', output: 'lib/src/generated/course_name_body_text.g.dart', name: 'gakujoCourseNameBodyTextJs', kind: 'expression' },
   { source: 'web_scripts/src/course_name_tables/main.ts', output: 'lib/src/generated/course_name_tables.g.dart', name: 'gakujoCourseNameTablesJs', kind: 'expression' },
   { source: 'web_scripts/src/calendar_registration_page_fetch/main.ts', output: 'lib/src/generated/calendar_registration_page_fetch.g.dart', name: 'gakujoCalendarRegistrationPageFetchJs', kind: 'expression' },
+  { source: 'web_scripts/src/calendar_class_changes_fetch/main.ts', output: 'lib/src/generated/calendar_class_changes_fetch.g.dart', name: 'gakujoCalendarClassChangesFetchJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/calendar_official_google_schedule_integration/main.ts', output: 'lib/src/generated/calendar_official_google_schedule_integration.g.dart', name: 'gakujoCalendarOfficialGoogleScheduleIntegrationJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/calendar_official_schedule_export_execution/main.ts', output: 'lib/src/generated/calendar_official_schedule_export_execution.g.dart', name: 'gakujoCalendarOfficialScheduleExportExecutionJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/calendar_official_schedule_export_fetch/main.ts', output: 'lib/src/generated/calendar_official_schedule_export_fetch.g.dart', name: 'gakujoCalendarOfficialScheduleExportFetchJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/calendar_schedule_month_navigation/main.ts', output: 'lib/src/generated/calendar_schedule_month_navigation.g.dart', name: 'gakujoCalendarScheduleMonthNavigationJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/calendar_schedule_day_selection/main.ts', output: 'lib/src/generated/calendar_schedule_day_selection.g.dart', name: 'gakujoCalendarScheduleDaySelectionJs', kind: 'expression', config: true },
   { source: 'web_scripts/src/calendar_extraction/main.ts', output: 'lib/src/generated/calendar_extraction.g.dart', name: 'gakujoCalendarExtractionJs', kind: 'expression' },
   { source: 'web_scripts/src/calendar_schedule_month_view_activation/main.ts', output: 'lib/src/generated/calendar_schedule_month_view_activation.g.dart', name: 'gakujoCalendarScheduleMonthViewActivationJs', kind: 'expression' },
   { source: 'web_scripts/src/popup_relay/main.ts', output: 'lib/src/generated/popup_relay.g.dart', name: 'gakujoPopupRelayJs' },
@@ -88,13 +94,17 @@ for (const entry of entries) {
       ? `const String ${name} =\n    r'''${value}''';`
       : `${head}${value}''';`;
   };
+  const signatureLine = `String ${entry.name}(Map<String, Object?> config) =>`;
+  const signature = signatureLine.length <= 80
+    ? signatureLine
+    : `String ${entry.name}(\n  Map<String, Object?> config,\n) =>`;
   // Match dart format: one line when it fits in 80 columns.
   const configLine = `    _${entry.name}Prefix + jsonEncode(config) + _${entry.name}Suffix;`;
   const configBody = configLine.length <= 80
     ? configLine
     : `    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;`;
   const content = entry.config
-    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n${configBody}\n\n${rawConst(`_${entry.name}Prefix`, prefix)}\n${rawConst(`_${entry.name}Suffix`, suffix)}\n`
+    ? `${header}import 'dart:convert';\n\n${signature}\n${configBody}\n\n${rawConst(`_${entry.name}Prefix`, prefix)}\n${rawConst(`_${entry.name}Suffix`, suffix)}\n`
     : `${header}const String ${entry.name} = r'''\n${js}''';\n`;
   const output = resolve(root, entry.output);
   if (check) {

@@ -175,3 +175,8 @@ interface Window {
   __MBG_MESSAGE_STARS_DISPOSE?: () => void;
   chrome: { webview: { postMessage: (message: string) => void } };
 }
+
+interface Window {
+  loadNextMonth?: () => void;
+  loadBeforeMonth?: () => void;
+}
