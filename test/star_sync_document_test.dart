@@ -47,7 +47,7 @@ void main() {
     final a = record(1, clock: 3, title: 'old');
     final b = record(1, clock: 4, title: '', starred: false);
     expect(StarSyncRecord.pick(a, b).starred, false);
-    expect(StarSyncRecord.pick(a, b).title, 'old');
+    expect(StarSyncRecord.pick(a, b).title, isEmpty);
     expect(
       StarSyncRecord.pick(b, record(1, clock: 4, device: 'z')).deviceId,
       'z',
@@ -101,45 +101,31 @@ void main() {
     },
   );
 
-  test('tombstones win, can be replaced, and expire after 180 days', () {
-    final star = record(1);
+  test('tombstones retain no title and GC uses logical order', () {
     final deleted = record(1, clock: 2, starred: false);
-    expect(
-      mergeStarSyncRecords([
-        {star.id: star},
-        {deleted.id: deleted},
-      ], now: now)[star.id]!.starred,
-      false,
-    );
-    final restar = record(1, clock: 3);
-    expect(
-      mergeStarSyncRecords([
-        {deleted.id: deleted},
-        {restar.id: restar},
-      ], now: now)[star.id]!.starred,
-      true,
-    );
-    final old = deleted.copyWith(
-      updatedAt: now.subtract(const Duration(days: 181)),
-    );
-    expect(
-      mergeStarSyncRecords([
-        {old.id: old},
-      ], now: now),
-      isEmpty,
-    );
-    final boundary = deleted.copyWith(
-      updatedAt: now.subtract(starSyncTombstoneRetention),
-    );
-    expect(
-      mergeStarSyncRecords([
-        {boundary.id: boundary},
-      ], now: now),
-      isNotEmpty,
-    );
+    final old = record(1, clock: 1, title: 'old');
+    final merged = mergeStarSyncRecords([
+      {old.id: old},
+      {deleted.id: deleted},
+    ], now: now.add(const Duration(days: 365)));
+    expect(merged[old.id]!.starred, isFalse);
+    expect(merged[old.id]!.title, isEmpty);
+    final records = {
+      for (var i = 0; i < 1005; i++)
+        record(i, clock: i, starred: false).id:
+            record(i, clock: i, starred: false),
+    };
+    final kept = mergeStarSyncRecords([records], now: now);
+    expect(kept.length, 1000);
+    expect(kept.containsKey('1|2|4'), isFalse);
+    expect(kept.containsKey('1|2|5'), isTrue);
+    expect(kept.values.every((r) => r.title.isEmpty), isTrue);
+    expect(jsonRecords(kept), jsonRecords(mergeStarSyncRecords([
+      Map.fromEntries(records.entries.toList().reversed),
+    ], now: now.add(const Duration(days: 180)))));
   });
 
-  test('distinct device stars converge to the same capped set', () {
+  test('merge preserves all live records for causal cap eviction', () {
     final a = {
       for (var i = 0; i < 320; i++)
         record(i, at: now.add(Duration(seconds: i))).id: record(
@@ -156,7 +142,7 @@ void main() {
     };
     final first = mergeStarSyncRecords([a, b], now: now);
     final second = mergeStarSyncRecords([b, a], now: now);
-    expect(first.length, 300);
+    expect(first.length, 640);
     expect(jsonRecords(first), jsonRecords(second));
   });
 

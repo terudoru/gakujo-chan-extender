@@ -225,6 +225,7 @@ class StarSyncEngine {
     Future<void> Function(Duration)? delay,
     Timer Function(Duration, void Function())? timerFactory,
     this.loginId,
+    this.canSync,
     this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
   }) : _storage = secureStorage ?? SecureStorageFactory.create(),
@@ -245,6 +246,7 @@ class StarSyncEngine {
   final Timer Function(Duration, void Function()) _timerFactory;
   Completer<void>? _backgroundWake;
   final String? Function()? loginId;
+  final bool Function()? canSync;
   final void Function()? onLocalStarsChanged;
   final StarSyncKdfParams kdfParams;
   final StorageOperationQueue _queue = StorageOperationQueue();
@@ -273,6 +275,16 @@ class StarSyncEngine {
       googleDriveTransport?.call() ??
           (throw StateError('Google Drive transport is not configured')),
   };
+
+  Future<T> runAccountChange<T>(Future<T> Function() change) =>
+      _queue.runExclusive(change);
+
+  Future<void> resetInMemory() => _queue.run(() async {
+    pauseTimers();
+    _config = null;
+    _state = null;
+    _publish();
+  });
 
   Future<void> load() => _queue.run(() async {
     final config = await _storage.read(key: starSyncConfigKey);
@@ -408,6 +420,9 @@ class StarSyncEngine {
         List<int>.generate(16, (_) => random.nextInt(256)),
       ).replaceAll('=', '');
       await _queue.run(() async {
+        if (_currentAccount() != account) {
+          throw const StarSyncAccountMismatchException();
+        }
         if (clearLocalStars) {
           await activityStore.replaceStarredMessages(const []);
         }
@@ -435,6 +450,9 @@ class StarSyncEngine {
     String account, {
     bool clearLocalStars = false,
   }) => _queue.run(() async {
+    if (_currentAccount() != account) {
+      throw const StarSyncAccountMismatchException();
+    }
     if (clearLocalStars) {
       await activityStore.replaceStarredMessages(const []);
     }
@@ -695,6 +713,10 @@ class StarSyncEngine {
     if (_disposed || config == null || state == null) {
       return const StarSyncResult();
     }
+    if ((trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume) &&
+        canSync?.call() == false) {
+      return const StarSyncResult();
+    }
     final now = _now();
     final background =
         trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume;
@@ -729,6 +751,13 @@ class StarSyncEngine {
       if (_disposed ||
           !identical(_config, config) ||
           !identical(_state, state)) {
+        return const StarSyncResult();
+      }
+      if (trigger != StarSyncTrigger.manual && canSync?.call() == false) {
+        if (trigger == StarSyncTrigger.localChange) {
+          state.pendingLocalChange = true;
+          await _saveState();
+        }
         return const StarSyncResult();
       }
       if (!await _accountMatches(state)) return const StarSyncResult();
@@ -772,6 +801,7 @@ class StarSyncEngine {
         (remaining.isNegative ? Duration.zero : remaining) +
         Duration(milliseconds: _random.nextInt(5001));
     _cooldownTimer = _timerFactory(delay, () {
+      if (canSync?.call() == false) return;
       unawaited(
         syncNow(trigger: StarSyncTrigger.localChange)
             .catchError((Object _) => const StarSyncResult()),
@@ -904,6 +934,20 @@ class StarSyncEngine {
           ...documents.map((e) => e.records),
         ], now: now);
         clock = reconciled.clock;
+        final live = mergedRecords.values.where((record) => record.starred).toList()
+          ..sort((a, b) {
+            final date = b.starredAt.compareTo(a.starredAt);
+            return date != 0 ? date : a.id.compareTo(b.id);
+          });
+        for (final record in live.skip(starSyncMaxStars)) {
+          mergedRecords[record.id] = record.copyWith(
+            starred: false,
+            clock: ++clock,
+            deviceId: state.deviceId,
+            updatedAt: now,
+          );
+        }
+        mergedRecords = mergeStarSyncRecords([mergedRecords], now: now);
         final next = applyStarSyncStateToLocal(
           state: mergedRecords,
           local: current,
@@ -1022,8 +1066,16 @@ class StarSyncEngine {
     if (trigger == StarSyncTrigger.localChange && _backgroundWake != null) {
       delay = Duration.zero;
     }
-    _timer = Timer(delay, () {
-      if (shouldSync != null && !shouldSync()) return;
+    if (trigger == StarSyncTrigger.localChange) {
+      unawaited(_queue.run(() async {
+        if (_state != null) {
+          _state!.pendingLocalChange = true;
+          await _saveState();
+        }
+      }).catchError((Object _) {}));
+    }
+    _timer = _timerFactory(delay, () {
+      if (canSync?.call() == false || (shouldSync != null && !shouldSync())) return;
       unawaited(
         syncNow(trigger: trigger)
             .then<void>((result) {
@@ -1034,13 +1086,17 @@ class StarSyncEngine {
     });
   }
 
-  void dispose() {
-    _disposed = true;
+  void pauseTimers() {
     _timer?.cancel();
     _cooldownTimer?.cancel();
     final wake = _backgroundWake;
     if (wake != null && !wake.isCompleted) wake.complete();
     _backgroundWake = null;
+  }
+
+  void dispose() {
+    _disposed = true;
+    pauseTimers();
   }
 
   Future<void> withBulkReplace(Future<void> Function() replace) =>

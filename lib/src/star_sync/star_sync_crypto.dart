@@ -28,9 +28,9 @@ class StarSyncKdfParams {
   final int parallelism;
 
   void _validate() {
-    if (memoryKiB > 1048576 ||
-        iterations > 20 ||
-        parallelism > 8 ||
+    if (memoryKiB > 65536 ||
+        iterations > 10 ||
+        parallelism > 4 ||
         parallelism < 1 ||
         iterations < 1 ||
         memoryKiB < 8 * parallelism) {

@@ -1308,6 +1308,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
       activityStore: _activityStore,
       loginId: () => _appSettings.loginCredentials?.loginId,
+      canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
         if (_canSyncStars) unawaited(_refreshMessageStars());
       },
@@ -2094,37 +2095,39 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String password,
   }) async {
     try {
-      final credentials = await saveGakujoLoginCredentials(
-        store: _appSettingsStore,
-        loginId: loginId,
-        password: password,
-      );
-      TextInput.finishAutofillContext(shouldSave: true);
-      if (!mounted) {
-        return false;
-      }
-      setState(() {
-        _startupPlaceholderFeatureFlags.remove(
+      return await _starSyncEngine.runAccountChange(() async {
+        final credentials = await saveGakujoLoginCredentials(
+          store: _appSettingsStore,
+          loginId: loginId,
+          password: password,
+        );
+        TextInput.finishAutofillContext(shouldSave: true);
+        if (!mounted) {
+          return false;
+        }
+        setState(() {
+          _startupPlaceholderFeatureFlags.remove(
+            GakujoFeatureFlag.loginAutofill,
+          );
+          _appSettings = _appSettings.copyWith(
+            loginCredentials: credentials,
+            disabledFeatureFlags: {
+              for (final flag in _appSettings.disabledFeatureFlags)
+                if (flag != GakujoFeatureFlag.loginAutofill) flag,
+            },
+          );
+        });
+        await _syncLocalSettingsMirror(_appSettings);
+        if (!mounted) {
+          return false;
+        }
+        _showSnackBar('ログイン情報を保存しました');
+        await _applyFeatureFlagRuntimeState(
           GakujoFeatureFlag.loginAutofill,
+          enabled: true,
         );
-        _appSettings = _appSettings.copyWith(
-          loginCredentials: credentials,
-          disabledFeatureFlags: {
-            for (final flag in _appSettings.disabledFeatureFlags)
-              if (flag != GakujoFeatureFlag.loginAutofill) flag,
-          },
-        );
+        return true;
       });
-      await _syncLocalSettingsMirror(_appSettings);
-      if (!mounted) {
-        return false;
-      }
-      _showSnackBar('ログイン情報を保存しました');
-      await _applyFeatureFlagRuntimeState(
-        GakujoFeatureFlag.loginAutofill,
-        enabled: true,
-      );
-      return true;
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to save login credentials',
@@ -2298,25 +2301,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         },
                         onClear: () async {
                           try {
-                            try {
-                              await _appSettingsStore.clearLoginCredentials();
-                            } finally {
+                            await _starSyncEngine.runAccountChange(() async {
                               try {
-                                await _applyFeatureFlagRuntimeState(
-                                  GakujoFeatureFlag.loginAutofill,
-                                  enabled: false,
-                                );
+                                await _appSettingsStore.clearLoginCredentials();
                               } finally {
-                                TextInput.finishAutofillContext(shouldSave: false);
-                                if (mounted) {
-                                  setState(() {
-                                    _appSettings = _appSettings.copyWith(
-                                      loginCredentials: null,
-                                    );
-                                  });
+                                try {
+                                  await _applyFeatureFlagRuntimeState(
+                                    GakujoFeatureFlag.loginAutofill,
+                                    enabled: false,
+                                  );
+                                } finally {
+                                  TextInput.finishAutofillContext(shouldSave: false);
+                                  if (mounted) {
+                                    setState(() {
+                                      _appSettings = _appSettings.copyWith(
+                                        loginCredentials: null,
+                                      );
+                                    });
+                                  }
                                 }
                               }
-                            }
+                            });
                             if (!mounted) return;
                             if (!dialogContext.mounted) {
                               return;
@@ -5731,6 +5736,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
+    if (!enabled && flag == GakujoFeatureFlag.messageStars) {
+      _starSyncEngine.pauseTimers();
+    }
     if (!enabled && flag == GakujoFeatureFlag.gpaDisplay && mounted) {
       setState(() {
         _reportedGpa = null;
@@ -6621,7 +6629,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      await SecureStorageFactory.resetStorage();
+      await _starSyncEngine.runAccountChange(() async {
+        await _starSyncEngine.resetInMemory();
+        _starSyncLoad = null;
+        try {
+          await _starSyncGoogleAuth.signOut();
+        } on Object catch (error, stackTrace) {
+          developer.log('Failed to sign out of Google',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        }
+        await SecureStorageFactory.resetStorage();
+        _appSettings = _appSettings.copyWith(loginCredentials: null);
+        _starSyncLoad = null;
+      });
       await _localPrefsStore.clear();
       await _applyFeatureFlagRuntimeState(
         GakujoFeatureFlag.loginAutofill,

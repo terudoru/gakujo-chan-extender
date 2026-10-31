@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import '../gakujo_activity_store.dart';
 
-const starSyncTombstoneRetention = Duration(days: 180);
+const starSyncMaxTombstones = 1000;
 const starSyncMaxStars = 300;
 
 class StarSyncFormatException implements Exception {
@@ -25,7 +25,7 @@ class StarSyncRecord {
     required this.clock,
     required this.deviceId,
     required DateTime updatedAt,
-  }) : title = _title(title),
+  }) : title = starred ? _title(title) : '',
        starredAt = starredAt.toUtc(),
        updatedAt = updatedAt.toUtc();
 
@@ -108,7 +108,7 @@ class StarSyncRecord {
     final comparison = _compareEdits(a, b);
     final winner = comparison >= 0 ? a : b;
     final loser = comparison >= 0 ? b : a;
-    return winner.title.isEmpty && loser.title.isNotEmpty
+    return winner.starred && winner.title.isEmpty && loser.title.isNotEmpty
         ? winner.copyWith(title: loser.title)
         : winner;
   }
@@ -203,10 +203,15 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
     final candidates = groups[id]!;
     candidates.sort((a, b) {
       final edit = _compareEdits(b, a);
-      return edit != 0 ? edit : b.title.compareTo(a.title);
+      if (edit != 0) return edit;
+      final title = b.title.compareTo(a.title);
+      if (title != 0) return title;
+      if (a.starred != b.starred) return a.starred ? -1 : 1;
+      final starredAt = b.starredAt.compareTo(a.starredAt);
+      return starredAt != 0 ? starredAt : b.updatedAt.compareTo(a.updatedAt);
     });
     var winner = candidates.first;
-    if (winner.title.isEmpty) {
+    if (winner.starred && winner.title.isEmpty) {
       for (final candidate in candidates) {
         if (candidate.title.isNotEmpty) {
           winner = winner.copyWith(title: candidate.title);
@@ -214,17 +219,16 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
         }
       }
     }
-    if (winner.starred ||
-        !winner.updatedAt.isBefore(now.subtract(starSyncTombstoneRetention))) {
-      merged[id] = winner;
-    }
+    merged[id] = winner;
   }
-  final live = merged.values.where((record) => record.starred).toList()
+  final tombstones = merged.values.where((record) => !record.starred).toList()
     ..sort((a, b) {
-      final date = b.starredAt.compareTo(a.starredAt);
-      return date != 0 ? date : a.id.compareTo(b.id);
+      final clock = b.clock.compareTo(a.clock);
+      if (clock != 0) return clock;
+      final device = b.deviceId.compareTo(a.deviceId);
+      return device != 0 ? device : b.id.compareTo(a.id);
     });
-  for (final record in live.skip(starSyncMaxStars)) {
+  for (final record in tombstones.skip(starSyncMaxTombstones)) {
     merged.remove(record.id);
   }
   return merged;

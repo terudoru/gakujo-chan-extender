@@ -7,6 +7,20 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 const fast = StarSyncKdfParams(memoryKiB: 64, iterations: 1, parallelism: 1);
 
 void main() {
+  test('untrusted KDF parameters above resource limits are rejected', () async {
+    final created = await createStarSyncKeyring('pass', params: fast);
+    for (final entry in [
+      ('memoryKiB', 65537),
+      ('iterations', 11),
+      ('parallelism', 5),
+    ]) {
+      final json = created.keyring.toJson();
+      (json['kdf'] as Map<String, Object?>)[entry.$1] = entry.$2;
+      expect(() => StarSyncKeyring.fromJson(json),
+          throwsA(isA<StarSyncFormatException>()));
+    }
+  });
+
   test('keyring and encrypted file round trip', () async {
     final created = await createStarSyncKeyring('password', params: fast);
     final parsed = StarSyncKeyring.fromJson(created.keyring.toJson());
