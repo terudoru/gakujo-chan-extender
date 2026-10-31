@@ -257,7 +257,8 @@ void main() {
       throwsStateError,
     );
     expect(
-      (jsonDecode(storage.values[starSyncStateKey]!) as Map)['localReviewRequired'],
+      (jsonDecode(storage.values[starSyncStateKey]!)
+          as Map)['localReviewRequired'],
       isTrue,
     );
     engine.dispose();
@@ -297,11 +298,13 @@ void main() {
             expectedAccount: expectedAccount,
           );
         case 'pairing':
-          setup = engine.setUpWithPairing(
-            config,
-            clearLocalStars: true,
-            expectedAccount: expectedAccount,
-          ).then((_) {});
+          setup = engine
+              .setUpWithPairing(
+                config,
+                clearLocalStars: true,
+                expectedAccount: expectedAccount,
+              )
+              .then((_) {});
         default:
           setup = engine.joinWithPairingCode(
             config,

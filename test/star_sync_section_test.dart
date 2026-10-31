@@ -39,7 +39,8 @@ void main() {
       String, {
       required bool clearLocalStars,
       required String expectedAccount,
-    })? onJoin,
+    })?
+    onJoin,
   }) => MaterialApp(
     home: Scaffold(
       body: SingleChildScrollView(
@@ -65,7 +66,11 @@ void main() {
               }) async => StarSyncPairingSetup.created,
           onJoinWithCode:
               onJoin ??
-              (_, {required clearLocalStars, required expectedAccount}) async {},
+              (
+                _, {
+                required clearLocalStars,
+                required expectedAccount,
+              }) async {},
           onPairingCode: () async => encodeStarSyncPairingCode(
             'AAAAAAAAAAAAAAAAAAAAAA',
             List.filled(32, 1),
@@ -173,8 +178,10 @@ void main() {
       section(
         status,
         googleAvailable: true,
-        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
-            throw const StarSyncAccountRequiredException(),
+        onGoogleSignIn: ({
+          required clearLocalStars,
+          required expectedAccount,
+        }) async => throw const StarSyncAccountRequiredException(),
       ),
     );
     await tester.tap(find.text('Google ドライブで同期'));
@@ -196,7 +203,13 @@ void main() {
       section(
         status,
         onSetUp:
-            (_, _, {required resetExisting, required clearLocalStars, required expectedAccount}) async {
+            (
+              _,
+              _, {
+              required resetExisting,
+              required clearLocalStars,
+              required expectedAccount,
+            }) async {
               calls++;
             },
       ),
@@ -280,13 +293,20 @@ void main() {
       section(
         status,
         googleAvailable: true,
-        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
-            StarSyncPairingSetup.needsPairingCode,
-        onJoin: (value, {required clearLocalStars, required expectedAccount}) async {
-          expect(expectedAccount, 'account');
-          if (mismatch) throw const StarSyncPairingMismatchException();
-          joined = value;
-        },
+        onGoogleSignIn: ({
+          required clearLocalStars,
+          required expectedAccount,
+        }) async => StarSyncPairingSetup.needsPairingCode,
+        onJoin:
+            (
+              value, {
+              required clearLocalStars,
+              required expectedAccount,
+            }) async {
+              expect(expectedAccount, 'account');
+              if (mismatch) throw const StarSyncPairingMismatchException();
+              joined = value;
+            },
       ),
     );
     await tester.tap(find.text('Google ドライブで同期'));
@@ -400,11 +420,12 @@ void main() {
           status,
           googleAvailable: true,
           onLocalStarCount: () async => 3,
-          onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async {
-            selected = clearLocalStars;
-            expect(expectedAccount, 'account');
-            return StarSyncPairingSetup.created;
-          },
+          onGoogleSignIn:
+              ({required clearLocalStars, required expectedAccount}) async {
+                selected = clearLocalStars;
+                expect(expectedAccount, 'account');
+                return StarSyncPairingSetup.created;
+              },
         ),
       );
       await tester.tap(find.text('Google ドライブで同期'));
@@ -428,10 +449,16 @@ void main() {
         status,
         googleAvailable: true,
         onLocalStarCount: () async => 1,
-        onGoogleSignIn: ({required clearLocalStars, required expectedAccount}) async =>
-            StarSyncPairingSetup.needsPairingCode,
+        onGoogleSignIn: ({
+          required clearLocalStars,
+          required expectedAccount,
+        }) async => StarSyncPairingSetup.needsPairingCode,
         onSetUpWithPairing:
-            ({required resetExisting, required clearLocalStars, required expectedAccount}) async {
+            ({
+              required resetExisting,
+              required clearLocalStars,
+              required expectedAccount,
+            }) async {
               expect(expectedAccount, 'account');
               expect(resetExisting, isTrue);
               cleared = clearLocalStars;

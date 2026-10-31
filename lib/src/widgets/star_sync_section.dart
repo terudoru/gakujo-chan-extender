@@ -235,12 +235,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) =>
-            _SetupDialog(
-              onSetUp: widget.onSetUp,
-              clearLocalStars: clear,
-              expectedAccount: expectedAccount,
-            ),
+        builder: (_) => _SetupDialog(
+          onSetUp: widget.onSetUp,
+          clearLocalStars: clear,
+          expectedAccount: expectedAccount,
+        ),
       );
     } on Object catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
@@ -277,12 +276,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           context: context,
           barrierDismissible: false,
           builder: (_) => _PairingJoinDialog(
-            onJoin: (code) =>
-                widget.onJoinWithCode(
-                  code,
-                  clearLocalStars: clear,
-                  expectedAccount: expectedAccount,
-                ),
+            onJoin: (code) => widget.onJoinWithCode(
+              code,
+              clearLocalStars: clear,
+              expectedAccount: expectedAccount,
+            ),
             onReset: () => widget.onSetUpWithPairing(
               resetExisting: true,
               clearLocalStars: clear,
