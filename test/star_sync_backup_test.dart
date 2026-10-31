@@ -1,6 +1,8 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
@@ -152,6 +154,15 @@ void main() {
 
     final backupPath = 'backups/${own.deviceId}';
     final saved = remote.files[backupPath]!;
+    now = now.add(const Duration(days: 1));
+    await expectLater(
+      a.uploadAutomaticBackupIfDue(() async => encodePortableSyncBackup({
+        'version': 2,
+        'data': 'a' * maxGakujoBackupBytes,
+      })),
+      throwsA(isA<GakujoBackupImportException>()),
+    );
+    expect(remote.files[backupPath], saved);
     remote.files[backupPath] = remote.files['stars/devices/${own.deviceId}']!;
     await expectLater(b.downloadBackup(own.deviceId), throwsFormatException);
     remote.files[backupPath] = saved;

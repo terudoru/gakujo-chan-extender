@@ -174,6 +174,8 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
         for (final entry in value.entries)
           if (entry.key is String &&
               !RegExp(r'password|passwd|secret|credential|token|api.?key|private.?key|login.?id', caseSensitive: false)
+                  .hasMatch(entry.key as String) &&
+              !RegExp(r'^(location|.*path|.*uri)$', caseSensitive: false)
                   .hasMatch(entry.key as String))
             entry.key as String: clean(entry.value),
       };
@@ -190,6 +192,15 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
         .toList();
   }
   return result;
+}
+
+@visibleForTesting
+List<int> encodePortableSyncBackup(Map<String, Object?> payload) {
+  final bytes = utf8.encode(jsonEncode(portableSyncBackupPayload(payload)));
+  if (bytes.length > maxGakujoBackupBytes) {
+    throw const GakujoBackupImportException('バックアップが大きすぎるため、同期先に保存できませんでした');
+  }
+  return bytes;
 }
 
 @visibleForTesting
@@ -5606,8 +5617,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _uploadSyncBackup() async {
     await _ensureStarSyncLoaded();
-    final payload = portableSyncBackupPayload(await _backupPayload());
-    await _starSyncEngine.uploadBackup(utf8.encode(jsonEncode(payload)));
+    try {
+      await _starSyncEngine.uploadBackup(encodePortableSyncBackup(await _backupPayload()));
+    } on GakujoBackupImportException catch (error) {
+      _showSnackBar(error.message);
+    }
   }
 
   Future<void> _uploadAutomaticSyncBackup() async {
@@ -5615,7 +5629,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (!_secureStorageAccessAllowed) return;
       await _ensureStarSyncLoaded();
       await _starSyncEngine.uploadAutomaticBackupIfDue(() async =>
-          utf8.encode(jsonEncode(portableSyncBackupPayload(await _backupPayload()))));
+          encodePortableSyncBackup(await _backupPayload()));
+    } on GakujoBackupImportException catch (error) {
+      _showSnackBar(error.message);
     } on Object catch (error, stackTrace) {
       developer.log('Failed to upload automatic backup',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);

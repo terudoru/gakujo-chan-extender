@@ -58,7 +58,7 @@ void main() {
     expect(storage['unrelated'], 'keep');
   });
 
-  test('import ignores expired and malformed stored drafts', () async {
+  test('import replaces expired and malformed stored drafts', () async {
     const expired = 'mbg-report-draft:v2:expired';
     const broken = 'mbg-report-draft:v2:broken';
     const incoming = 'mbg-report-draft:v2:incoming';
@@ -77,9 +77,26 @@ void main() {
     );
     expect(result['result'], isTrue);
     final storage = result['storage'] as Map<String, dynamic>;
-    expect(storage[expired], old);
-    expect(storage[broken], '{');
+    expect(jsonDecode(storage[expired] as String), draft);
+    expect(jsonDecode(storage[broken] as String), draft);
     expect(jsonDecode(storage[incoming] as String), draft);
+  });
+
+  test('import leaves invalid local drafts untouched when absent remotely', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final original = {
+      'mbg-report-draft:v2:broken': '{',
+      'mbg-report-draft:v2:expired': jsonEncode({
+        'savedAt': now - const Duration(days: 15).inMilliseconds,
+        'fields': [],
+      }),
+    };
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildImportAll({}, {}),
+      original,
+    );
+    expect(result['result'], isTrue);
+    expect(result['storage'], original);
   });
 
   test('import preserves drafts changed since the snapshot', () async {

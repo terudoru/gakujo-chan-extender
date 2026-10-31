@@ -1152,15 +1152,15 @@ class GakujoReportDraftScript {
       var raw = store.getItem(key);
       var current;
       try { current = raw === null ? undefined : JSON.parse(raw); }
-      catch (_) { return; }
-      if (raw !== null && !isRetainedDraft(current, now)) return;
+      catch (_) { current = undefined; }
+      if (!isRetainedDraft(current, now)) current = undefined;
       var expected = Object.prototype.hasOwnProperty.call(basedOn, key) ? basedOn[key] : undefined;
       if (JSON.stringify(canonical(current)) !== JSON.stringify(canonical(expected))) {
         matched = false;
         return;
       }
       if (!Object.prototype.hasOwnProperty.call(drafts, key)) {
-        writes.push({store: store, key: key, before: raw, value: null});
+        if (current !== undefined) writes.push({store: store, key: key, before: raw, value: null});
         return;
       }
       var draft = drafts[key];
