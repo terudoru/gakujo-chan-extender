@@ -43,6 +43,7 @@ import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
 import 'gakujo_local_prefs_store.dart';
+import 'google_drive_file_saver.dart';
 import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
@@ -1208,7 +1209,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
   late final StarSyncGoogleAuth _starSyncGoogleAuth;
+  late GoogleDriveFileSaver _googleDriveFileSaver;
   String? _starSyncGoogleEmail;
+  int? _draftReadRevision;
+  bool _driveDownloadsEnabled = false;
+  late final Future<void> _driveDownloadsLoad;
+  final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
   late final GakujoNotificationService _notificationService;
@@ -1304,6 +1310,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
     _starSyncGoogleAuth = createStarSyncGoogleAuth();
+    _googleDriveFileSaver = GoogleDriveFileSaver(
+      accessToken: _starSyncGoogleAuth.accessToken,
+    );
+    _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
       googleDriveTransport: () => StarSyncGoogleDriveTransport(
         accessToken: _starSyncGoogleAuth.accessToken,
@@ -2663,12 +2673,45 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     onScheduleIntegration: _showScheduleIntegrationDialog,
                   ),
                 ),
+                if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars) &&
+                    const StarSyncGoogleAuthConfig().isAvailable)
+                  SettingsExpansionSection(
+                    title: 'Google ドライブ',
+                    icon: Icons.cloud_upload_outlined,
+                    child: SwitchListTile(
+                      title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+                      value: _driveDownloadsEnabled,
+                      onChanged: (enabled) async {
+                        try {
+                          await _setDriveDownloadsEnabled(enabled);
+                          if (dialogContext.mounted) setDialogState(() {});
+                        } on Object {
+                          _showSnackBar('Google ドライブの設定を変更できませんでした');
+                        }
+                      },
+                    ),
+                  ),
                 if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
                   SettingsExpansionSection(
                     title: 'スターの端末間同期',
                     icon: Icons.sync,
                     child: StarSyncSection(
                       status: _starSyncEngine.status,
+                      driveDownloadsEnabled: _driveDownloadsEnabled,
+                      onDriveDownloadsChanged: (enabled) async {
+                        await _setDriveDownloadsEnabled(enabled);
+                        if (dialogContext.mounted) setDialogState(() {});
+                      },
+                      onBackup: _uploadSyncBackup,
+                      onListBackups: _starSyncEngine.listBackups,
+                      onRestoreBackup: (id) => _importSettings(() async {
+                        final bytes = await _starSyncEngine.downloadBackup(id);
+                        await _restoreSettingsFromText(
+                          utf8.decode(bytes),
+                          emptyMessage: 'バックアップが空です',
+                          alreadyConfirmed: true,
+                        );
+                      }),
                       collectionEnabled: _starSyncEngine.collectionEnabled,
                       onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
@@ -2683,6 +2726,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           );
                         } on Object {
                           if (!_starSyncEngine.status.value.enabled) {
+                            await _setDriveDownloadsEnabled(false);
                             await _starSyncGoogleAuth.signOut();
                             _starSyncGoogleEmail = null;
                           }
@@ -2690,6 +2734,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         }
                       },
                       onGoogleSignOut: () async {
+                        await _setDriveDownloadsEnabled(false);
                         await _starSyncGoogleAuth.signOut();
                         _starSyncGoogleEmail = null;
                       },
@@ -2743,6 +2788,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           deleteOwnRemoteFile: deleteOwnRemoteFile,
                         );
                         if (google) {
+                          await _setDriveDownloadsEnabled(false);
                           await _starSyncGoogleAuth.signOut();
                           _starSyncGoogleEmail = null;
                         }
@@ -3510,6 +3556,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _starSyncEngine.disable();
       } finally {
         try {
+          await _setDriveDownloadsEnabled(false);
           await _starSyncGoogleAuth.signOut();
           _starSyncGoogleEmail = null;
         } on Object catch (error, stackTrace) {
@@ -3740,7 +3787,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<File?> _writeAutomaticBackup() async {
     _lastAutomaticBackupAt = DateTime.now();
     try {
-      return await _writeBackupFile(prefix: 'auto');
+      final file = await _writeBackupFile(prefix: 'auto');
+      unawaited(_uploadAutomaticSyncBackup());
+      return file;
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to write automatic backup',
@@ -5437,6 +5486,62 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
       );
 
+  Future<File> _driveDownloadsPreferenceFile() async {
+    final directory = await getApplicationSupportDirectory();
+    return File(_joinLocalPath(directory.path, 'drive_downloads_enabled'));
+  }
+
+  Future<void> _loadDriveDownloadsPreference() async {
+    try {
+      final file = await _driveDownloadsPreferenceFile();
+      final enabled = await file.exists() && await file.readAsString() == 'true';
+      if (mounted) setState(() => _driveDownloadsEnabled = enabled);
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to load Drive download preference',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> _setDriveDownloadsEnabled(bool enabled) async {
+    await _driveDownloadsLoad;
+    if (enabled) {
+      _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
+      _starSyncGoogleEmail ??= await _starSyncGoogleAuth.signIn();
+      await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
+      if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+        throw StateError('Google Drive permission was not granted');
+      }
+    }
+    final file = await _driveDownloadsPreferenceFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(enabled ? 'true' : 'false', flush: true);
+    if (!enabled) {
+      _googleDriveFileSaver = GoogleDriveFileSaver(
+        accessToken: _starSyncGoogleAuth.accessToken,
+      );
+    }
+    if (mounted) setState(() => _driveDownloadsEnabled = enabled);
+  }
+
+  Future<void> _uploadSyncBackup() async {
+    await _ensureStarSyncLoaded();
+    final payload = await _backupPayload();
+    await _starSyncEngine.uploadBackup(utf8.encode(jsonEncode(payload)));
+  }
+
+  Future<void> _uploadAutomaticSyncBackup() async {
+    try {
+      if (!_secureStorageAccessAllowed) return;
+      await _ensureStarSyncLoaded();
+      if (_starSyncEngine.shouldUploadAutomaticBackup(DateTime.now())) {
+        await _uploadSyncBackup();
+      }
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to upload automatic backup',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+
   Future<void> _importSettingsFromClipboard() =>
       _importSettings(_restoreSettingsFromClipboard);
 
@@ -5529,23 +5634,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       AllowedWebOrigins.canLoad(await _controller.currentUrl(), debugAllowed: _debugAllowed);
 
   Future<Map<String, Object?>?> _readSyncedReportDrafts() async {
+    final revision = _navigationRevision;
     if (!await _canSyncReportDrafts()) return null;
     final result = await _controller.runJavaScriptReturningResult(
       GakujoReportDraftScript.buildExportAll(),
     );
     final decoded = jsonDecode(_stringFromJavaScriptResult(result));
     if (decoded is! Map) throw const FormatException('Invalid report drafts');
+    if (revision != _navigationRevision) throw StateError('Draft page changed');
+    _draftReadRevision = revision;
     return Map<String, Object?>.from(decoded);
   }
 
   Future<void> _applySyncedReportDrafts(Map<String, Object?> drafts) async {
-    if (!await _canSyncReportDrafts()) return;
-    await _controller.runJavaScript(GakujoReportDraftScript.buildImportAll(drafts));
+    final revision = _navigationRevision;
+    if (revision != _draftReadRevision || !await _canSyncReportDrafts()) {
+      throw StateError('Draft page unavailable');
+    }
+    final script = GakujoReportDraftScript.buildImportAll(drafts);
+    final result = await _controller.runJavaScriptReturningResult(
+      '(function() { try { $script return "ok"; } catch (e) { return "error"; } })()',
+    );
+    if (_stringFromJavaScriptResult(result) != 'ok' ||
+        revision != _navigationRevision || !await _canSyncReportDrafts()) {
+      throw StateError('Draft write failed');
+    }
   }
 
   Future<void> _restoreSettingsFromText(
     String text, {
     required String emptyMessage,
+    bool alreadyConfirmed = false,
   }) async {
     if (text.trim().isEmpty) {
       _showSnackBar(emptyMessage);
@@ -5570,7 +5689,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
-    final confirmed = await showGakujoBackupRestoreConfirmation(context);
+    final confirmed = alreadyConfirmed ||
+        await showGakujoBackupRestoreConfirmation(context) == true;
     if (confirmed != true || !mounted) {
       return;
     }
@@ -6705,6 +6825,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _starSyncEngine.resetInMemory();
         _starSyncLoad = null;
         try {
+          await _setDriveDownloadsEnabled(false);
           await _starSyncGoogleAuth.signOut();
         } on Object catch (error, stackTrace) {
           developer.log('Failed to sign out of Google',

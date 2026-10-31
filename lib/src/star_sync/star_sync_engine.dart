@@ -1925,7 +1925,15 @@ class StarSyncEngine {
       await _requireBackupAccount();
       await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
       state.lastBackupUploadAt = _now().toUtc();
+      if (state.lastError == 'バックアップを保存できませんでした') {
+        state.lastError = null;
+      }
       await _saveState();
+      _publish();
+    } on Object {
+      state.lastError ??= 'バックアップを保存できませんでした';
+      _publish();
+      rethrow;
     } finally {
       transport.close();
     }

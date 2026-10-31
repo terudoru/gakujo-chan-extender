@@ -942,6 +942,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                 ? '保存しました: $savedPath'
                 : '保存しました（履歴は更新できませんでした）: $savedPath',
       );
+      _queueDriveDownload(result);
       _showDownloadSavedSnackBar(
         result,
         historyRecorded: historyRecorded,
@@ -1104,6 +1105,34 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         stackTrace: stackTrace,
       );
     }
+  }
+
+  void _queueDriveDownload(GakujoDownloadResult result) {
+    if (!_driveDownloadsEnabled) return;
+    final location = result.location;
+    if (location == null || location.isEmpty || location.startsWith('content:')) {
+      debugPrint('Drive upload skipped: local file is unavailable');
+      return;
+    }
+    unawaited(_driveDownloadQueue.run(() async {
+      if (!_driveDownloadsEnabled) return;
+      try {
+        final uri = Uri.tryParse(location);
+        final file = uri?.scheme == 'file' ? File.fromUri(uri!) : File(location);
+        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
+        await _googleDriveFileSaver.saveFile(
+          courseName: result.courseName,
+          fileName: result.fileName,
+          open: file.openRead,
+          length: await file.length(),
+        );
+        if (mounted) _showSnackBar('Google ドライブに保存しました');
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to save download to Google Drive',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        if (mounted) _showSnackBar('Google ドライブに保存できませんでした');
+      }
+    }));
   }
 
   void _showDownloadSavedSnackBar(

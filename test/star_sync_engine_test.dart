@@ -240,6 +240,7 @@ class _Collection implements StarSyncCollection {
   final bool growOnly;
   Map<String, Object?>? entries = {};
   bool fail = false;
+  bool failApply = false;
 
   @override
   Future<Map<String, Object?>?> readLocal() async {
@@ -249,6 +250,7 @@ class _Collection implements StarSyncCollection {
 
   @override
   Future<void> applyLocal(Map<String, Object?> values) async {
+    if (failApply) throw StateError('write failed');
     entries = Map.of(values);
   }
 }
@@ -2756,6 +2758,44 @@ void main() {
       expect(localB.entries, isEmpty);
     },
   );
+
+  test('failed collection apply does not create remote tombstones', () async {
+    final remote = _Transport();
+    final aData = _Collection('drafts');
+    final bData = _Collection('drafts');
+    StarSyncEngine make(_Collection collection) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [collection],
+      );
+    }
+
+    final a = make(aData);
+    final b = make(bData);
+    await a.setUp(config, 'pass');
+    await b.setUp(config, 'pass');
+    aData.entries!['draft'] = 'remote';
+    await a.syncNow();
+    final before = Map<String, List<int>>.from(remote.files);
+    bData.failApply = true;
+    await b.syncNow();
+    expect(b.status.value.lastError, contains('collections'));
+    for (final path in before.keys.where((p) => p.startsWith('sync/drafts/'))) {
+      expect(remote.files[path], before[path]);
+    }
+    bData.failApply = false;
+    await b.syncNow();
+    await a.syncNow();
+    expect(aData.entries, {'draft': 'remote'});
+    expect(bData.entries, {'draft': 'remote'});
+    a.dispose();
+    b.dispose();
+  });
 
   test('concurrent collection edits converge and cache remote files', () async {
     final remote = _Transport();

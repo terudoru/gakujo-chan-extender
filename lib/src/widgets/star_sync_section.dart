@@ -97,6 +97,11 @@ class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
     required this.status,
+    this.driveDownloadsEnabled = false,
+    this.onDriveDownloadsChanged,
+    this.onBackup,
+    this.onListBackups,
+    this.onRestoreBackup,
     this.collectionEnabled,
     this.onCollectionChanged,
     required this.googleAvailable,
@@ -127,6 +132,11 @@ class StarSyncSection extends StatefulWidget {
   });
 
   final ValueListenable<StarSyncStatusSnapshot> status;
+  final bool driveDownloadsEnabled;
+  final Future<void> Function(bool)? onDriveDownloadsChanged;
+  final Future<void> Function()? onBackup;
+  final Future<List<StarSyncBackupInfo>> Function()? onListBackups;
+  final Future<void> Function(String)? onRestoreBackup;
   final bool Function(String)? collectionEnabled;
   final Future<void> Function(String, bool)? onCollectionChanged;
   final bool googleAvailable;
@@ -188,6 +198,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   final _rejoin = TextEditingController();
   bool _busy = false;
   String? _error;
+  List<StarSyncBackupInfo>? _backups;
 
   @override
   void dispose() {
@@ -388,6 +399,37 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     });
   }
 
+  Widget _driveDownloadsSwitch() => SwitchListTile(
+    title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+    value: widget.driveDownloadsEnabled,
+    onChanged: _busy ? null : (value) => _run(
+      () => widget.onDriveDownloadsChanged!(value),
+    ),
+  );
+
+  Future<void> _restoreBackup(StarSyncBackupInfo backup) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('バックアップから復元しますか？'),
+        content: const Text('現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('復元する'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _run(() => widget.onRestoreBackup!(backup.deviceId));
+    }
+  }
+
   @override
   Widget build(
     BuildContext context,
@@ -398,6 +440,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (widget.googleAvailable && widget.onDriveDownloadsChanged != null)
+              _driveDownloadsSwitch(),
             if (widget.googleAvailable) ...[
               const Text(
                 'スター（IDと件名のみ）を、あなたの Google ドライブのアプリ専用領域に暗号化して保存し、端末間で共有します。',
@@ -579,6 +623,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               'notified-deadlines': '???????',
             }.entries)
               SwitchListTile(
+                key: ValueKey(item.key),
                 title: Text(item.value),
                 value: widget.collectionEnabled!(item.key),
                 onChanged: _busy || status.syncing
@@ -586,6 +631,40 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     : (value) => _run(() async {
                         await widget.onCollectionChanged!(item.key, value);
                       }),
+              ),
+          ],
+          if (widget.googleAvailable && widget.onDriveDownloadsChanged != null)
+            _driveDownloadsSwitch(),
+          if (widget.onBackup != null && widget.onListBackups != null &&
+              widget.onRestoreBackup != null) ...[
+            const Text('バックアップ'),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _run(widget.onBackup!),
+                  child: const Text('今すぐバックアップ'),
+                ),
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _run(() async {
+                    final backups = await widget.onListBackups!();
+                    if (mounted) setState(() => _backups = backups);
+                  }),
+                  child: const Text('バックアップから復元'),
+                ),
+              ],
+            ),
+            if (widget.isGoogleDrive())
+              const Text('バックアップは同期の鍵で暗号化されます。すべての端末を失った場合に備えて、『別の端末を追加』のコードを安全な場所に保管してください。'),
+            if (_backups != null && _backups!.isEmpty)
+              const Text('バックアップはありません'),
+            for (final backup in _backups ?? <StarSyncBackupInfo>[])
+              ListTile(
+                title: Text(backup.isThisDevice ? 'この端末' : '他の端末'),
+                subtitle: Text(backup.lastModified == null
+                    ? '日時不明'
+                    : _date(backup.lastModified!)),
+                onTap: _busy ? null : () => _restoreBackup(backup),
               ),
           ],
           if (_error != null) Text(_error!),

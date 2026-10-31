@@ -23,6 +23,11 @@ void main() {
     Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
     bool google = false,
+    bool driveDownloadsEnabled = false,
+    Future<void> Function(bool)? onDriveDownloadsChanged,
+    Future<void> Function()? onBackup,
+    Future<List<StarSyncBackupInfo>> Function()? onListBackups,
+    Future<void> Function(String)? onRestoreBackup,
     Future<StarSyncPairingSetup> Function({
       required Map<String, String> clearLocalStars,
       required String expectedAccount,
@@ -53,6 +58,11 @@ void main() {
       body: SingleChildScrollView(
         child: StarSyncSection(
           status: status,
+          driveDownloadsEnabled: driveDownloadsEnabled,
+          onDriveDownloadsChanged: onDriveDownloadsChanged,
+          onBackup: onBackup,
+          onListBackups: onListBackups,
+          onRestoreBackup: onRestoreBackup,
           collectionEnabled: collectionEnabled,
           onCollectionChanged: onCollectionChanged,
           googleAvailable: googleAvailable,
@@ -118,6 +128,75 @@ void main() {
     ),
   );
 
+  testWidgets('backup actions list and select backups', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    addTearDown(status.dispose);
+    var uploads = 0;
+    String? selected;
+    await tester.pumpWidget(
+      section(
+        status,
+        onBackup: () async { uploads++; },
+        onListBackups: () async => [
+          const StarSyncBackupInfo(deviceId: 'a', isThisDevice: true),
+          const StarSyncBackupInfo(deviceId: 'b', isThisDevice: false),
+        ],
+        onRestoreBackup: (id) async { selected = id; },
+      ),
+    );
+    await tester.ensureVisible(find.text('今すぐバックアップ'));
+    await tester.tap(find.text('今すぐバックアップ'));
+    await tester.pumpAndSettle();
+    expect(uploads, 1);
+    await tester.tap(find.text('バックアップから復元'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('他の端末'));
+    expect(find.text('この端末'), findsOneWidget);
+    await tester.tap(find.text('他の端末'));
+    await tester.pumpAndSettle();
+    expect(selected, isNull);
+    expect(find.text('バックアップから復元しますか？'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pumpAndSettle();
+    expect(selected, isNull);
+    await tester.tap(find.text('他の端末'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('復元する'));
+    await tester.pumpAndSettle();
+    expect(selected, 'b');
+  });
+
+  testWidgets('Drive download switch follows availability and granted state', (
+    tester,
+  ) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    bool? requested;
+    Future<void> change(bool value) async {
+      requested = value;
+    }
+    await tester.pumpWidget(section(status, onDriveDownloadsChanged: change));
+    expect(find.byType(SwitchListTile), findsNothing);
+    await tester.pumpWidget(
+      section(status, googleAvailable: true, onDriveDownloadsChanged: change),
+    );
+    await tester.tap(find.byType(SwitchListTile));
+    await tester.pumpAndSettle();
+    expect(requested, isTrue);
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        driveDownloadsEnabled: true,
+        onDriveDownloadsChanged: change,
+      ),
+    );
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
+  });
+
   testWidgets('collection switches invoke the callback', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
     final enabled = <String, bool>{};
@@ -136,8 +215,8 @@ void main() {
       'report-drafts': '???????',
       'notified-deadlines': '???????',
     }.entries) {
-      await tester.ensureVisible(find.text(entry.value));
-      await tester.tap(find.text(entry.value));
+      await tester.ensureVisible(find.byKey(ValueKey(entry.key)));
+      await tester.tap(find.byKey(ValueKey(entry.key)));
       await tester.pumpAndSettle();
       expect(enabled[entry.key], isFalse);
     }
