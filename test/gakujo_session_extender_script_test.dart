@@ -8,11 +8,11 @@ void main() {
     final script = GakujoSessionExtenderScript.build();
 
     expect(script, contains('__MBG_SESSION_EXTENDER_VERSION'));
-    expect(script, contains("document.getElementById('timeout-timer')"));
-    expect(script, contains("document.getElementById('portaltimerimg')"));
+    expect(script, contains('document.getElementById("timeout-timer")'));
+    expect(script, contains('document.getElementById("portaltimerimg")'));
     expect(script, contains('minutes > 11'));
     expect(script, contains('__MBG_SESSION_EXTENDER_COUNT >= 10'));
-    expect(script, contains('window.setInterval(extendIfNeeded, 60000)'));
+    expect(script, contains('window.setInterval(extendIfNeeded, 6e4)'));
   });
 
   test('teardown stops the interval and is safe before injection', () async {

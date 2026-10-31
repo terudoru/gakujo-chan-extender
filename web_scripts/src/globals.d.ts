@@ -1,0 +1,6 @@
+interface Window {
+  __MBG_SESSION_EXTENDER_VERSION?: number;
+  __MBG_SESSION_EXTENDER_INTERVAL?: number;
+  __MBG_SESSION_EXTENDER_COUNT?: number;
+  __MBG_SESSION_EXTENDER_URL?: string;
+}
