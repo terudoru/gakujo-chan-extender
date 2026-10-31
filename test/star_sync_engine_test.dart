@@ -15,6 +15,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failStarWriteOnce = false;
+  String? failWriteKeyOnce;
   void Function()? onStarRead;
 
   @override
@@ -42,6 +43,10 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (key == failWriteKeyOnce) {
+      failWriteKeyOnce = null;
+      throw StateError('sync write failed');
+    }
     if (failStarWriteOnce && key == 'more_better_gakujo_starred_messages') {
       failStarWriteOnce = false;
       throw StateError('star write failed');
@@ -203,6 +208,87 @@ class _TestTimer implements Timer {
 void main() {
   const config = StarSyncConfig(backend: StarSyncBackend.webDav);
   const kdf = StarSyncKdfParams(memoryKiB: 8, iterations: 1);
+
+  test('failed installation removes both keys and keeps local stars', () async {
+    for (final mode in [
+      'passphrase',
+      'passphrase reset',
+      'pairing',
+      'pairing reset',
+      'join',
+    ]) {
+      for (final failedKey in [starSyncStateKey, starSyncConfigKey]) {
+        final remote = _Transport();
+        String? code;
+        if (mode == 'join') {
+          final firstStorage = _Storage();
+          final first = StarSyncEngine(
+            loginId: () => 'student',
+            activityStore: GakujoActivityStore(secureStorage: firstStorage),
+            secureStorage: firstStorage,
+            transportFactory: (_) => remote,
+          );
+          await first.setUpWithPairing(config);
+          code = await first.pairingCode();
+          first.dispose();
+        }
+        final storage = _Storage();
+        final activity = GakujoActivityStore(secureStorage: storage);
+        await activity.upsertStarredMessage(
+          GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '3',
+            title: 'kept',
+            starredAt: DateTime.utc(2026),
+          ),
+        );
+        final stars = storage.values['more_better_gakujo_starred_messages'];
+        final engine = StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: activity,
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+        );
+        storage.failWriteKeyOnce = failedKey;
+        final Future<void> setup;
+        switch (mode) {
+          case 'passphrase':
+          case 'passphrase reset':
+            setup = engine.setUp(
+              config,
+              'pass',
+              resetExisting: mode == 'passphrase reset',
+              clearLocalStars: true,
+            );
+          case 'pairing':
+          case 'pairing reset':
+            setup = engine
+                .setUpWithPairing(
+                  config,
+                  resetExisting: mode == 'pairing reset',
+                  clearLocalStars: true,
+                )
+                .then((_) {});
+          default:
+            setup = engine.joinWithPairingCode(
+              config,
+              code!,
+              clearLocalStars: true,
+            );
+        }
+        await expectLater(setup, throwsStateError);
+        expect(engine.status.value.enabled, isFalse);
+        expect(engine.config, isNull);
+        expect(storage.values.containsKey(starSyncStateKey), isFalse);
+        expect(storage.values.containsKey(starSyncConfigKey), isFalse);
+        expect(storage.values['more_better_gakujo_starred_messages'], stars);
+        expect((await activity.loadStarredMessages()).single.title, 'kept');
+        engine.dispose();
+      }
+    }
+  });
 
   test('account change waits for the complete sync', () async {
     final remote = _Transport();

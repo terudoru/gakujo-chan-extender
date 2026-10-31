@@ -369,10 +369,39 @@ class StarSyncEngine {
     key: starSyncStateKey,
     value: jsonEncode(_state!.toJson()),
   );
-  Future<void> _saveConfig() => _storage.write(
-    key: starSyncConfigKey,
-    value: jsonEncode(_config!.toJson()),
-  );
+
+  Future<void> _install(
+    StarSyncConfig config,
+    StarSyncState state, {
+    required bool clearLocalStars,
+  }) async {
+    try {
+      await _storage.write(
+        key: starSyncStateKey,
+        value: jsonEncode(state.toJson()),
+      );
+      await _storage.write(
+        key: starSyncConfigKey,
+        value: jsonEncode(config.toJson()),
+      );
+    } on Object {
+      for (final key in [starSyncStateKey, starSyncConfigKey]) {
+        try {
+          await _storage.delete(key: key);
+        } on Object {
+          // Cleanup is best effort; preserve the original write error.
+        }
+      }
+      _publish();
+      rethrow;
+    }
+    _config = config;
+    _state = state;
+    _publish();
+    if (clearLocalStars) {
+      await activityStore.replaceStarredMessages(const []);
+    }
+  }
 
   String? _currentAccount() {
     final id = loginId?.call()?.trim();
@@ -480,20 +509,17 @@ class StarSyncEngine {
         if (_currentAccount() != account) {
           throw const StarSyncAccountMismatchException();
         }
-        if (clearLocalStars) {
-          await activityStore.replaceStarredMessages(const []);
-        }
-        _config = config;
-        _state = StarSyncState(
-          deviceId: deviceId,
-          dataKey: base64Encode(keyBytes),
-          keyId: keyring.keyId,
-          boundAccount: account,
-          retiredKeyIds: {?retiredKeyId: _now()},
+        await _install(
+          config,
+          StarSyncState(
+            deviceId: deviceId,
+            dataKey: base64Encode(keyBytes),
+            keyId: keyring.keyId,
+            boundAccount: account,
+            retiredKeyIds: {?retiredKeyId: _now()},
+          ),
+          clearLocalStars: clearLocalStars,
         );
-        await _saveState();
-        await _saveConfig();
-        _publish();
       });
     } finally {
       transport.close();
@@ -520,24 +546,21 @@ class StarSyncEngine {
     if (_currentAccount() != account) {
       throw const StarSyncAccountMismatchException();
     }
-    if (clearLocalStars) {
-      await activityStore.replaceStarredMessages(const []);
-    }
     final random = Random.secure();
     final deviceId = base64UrlEncode(
       List<int>.generate(16, (_) => random.nextInt(256)),
     ).replaceAll('=', '');
-    _config = config;
-    _state = StarSyncState(
-      deviceId: deviceId,
-      dataKey: base64Encode(keyBytes),
-      keyId: keyId,
-      boundAccount: account,
-      retiredKeyIds: {?retiredKeyId: _now()},
+    await _install(
+      config,
+      StarSyncState(
+        deviceId: deviceId,
+        dataKey: base64Encode(keyBytes),
+        keyId: keyId,
+        boundAccount: account,
+        retiredKeyIds: {?retiredKeyId: _now()},
+      ),
+      clearLocalStars: clearLocalStars,
     );
-    await _saveState();
-    await _saveConfig();
-    _publish();
   });
 
   Future<StarSyncPairingSetup> setUpWithPairing(
