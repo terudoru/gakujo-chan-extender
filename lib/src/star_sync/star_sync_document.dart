@@ -270,8 +270,8 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
           knownRecord.starredAt.isAtSameMomentAs(item.starredAt);
       final restoresTombstone =
           bulkReplace &&
-          ((matchesPrevious && previous?.starred == false) ||
-              (matchesKnown && knownRecord?.starred == false));
+          ((matchesPrevious && !previous.starred) ||
+              (matchesKnown && !knownRecord.starred));
       if ((!matchesPrevious && !matchesKnown) || restoresTombstone) {
         result[id] = StarSyncRecord(
           id: id,

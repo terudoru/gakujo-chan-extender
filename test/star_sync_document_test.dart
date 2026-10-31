@@ -227,7 +227,11 @@ void main() {
     final live = record(3, clock: 6);
     final absent = record(4, clock: 7);
     final result = reconcileLocalStars(
-      local: [local(1, title: 'restored'), local(2), local(3)],
+      local: [
+        local(1, title: 'restored'),
+        local(2),
+        local(3),
+      ],
       state: {inState.id: inState, live.id: live, absent.id: absent},
       known: {inKnown.id: inKnown},
       clock: 7,
