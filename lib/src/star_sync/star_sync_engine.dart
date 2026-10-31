@@ -13,6 +13,7 @@ import '../secure_storage_transaction.dart';
 import 'star_sync_config.dart';
 import 'star_sync_crypto.dart';
 import 'star_sync_document.dart';
+import 'star_sync_google_auth.dart';
 import 'star_sync_s3_transport.dart';
 import 'star_sync_transport.dart';
 import 'star_sync_webdav_transport.dart';
@@ -69,6 +70,14 @@ class StarSyncAccountRequiredException implements Exception {
 
 class StarSyncAccountMismatchException implements Exception {
   const StarSyncAccountMismatchException();
+}
+
+class StarSyncSetupRaceException extends StateError {
+  StarSyncSetupRaceException() : super('Keyring changed during reset');
+}
+
+class _AccountChanged implements Exception {
+  const _AccountChanged();
 }
 
 class StarSyncPairingMismatchException implements Exception {
@@ -214,6 +223,7 @@ class StarSyncEngine {
     DateTime Function()? now,
     Random? random,
     Future<void> Function(Duration)? delay,
+    Timer Function(Duration, void Function())? timerFactory,
     this.loginId,
     this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
@@ -223,7 +233,8 @@ class StarSyncEngine {
            ((config) => _defaultTransport(config, googleDriveTransport)),
        _now = now ?? DateTime.now,
        _random = random ?? Random(),
-       _delay = delay ?? Future<void>.delayed;
+       _delay = delay ?? Future<void>.delayed,
+       _timerFactory = timerFactory ?? Timer.new;
 
   final GakujoActivityStore activityStore;
   final FlutterSecureStorage _storage;
@@ -231,6 +242,7 @@ class StarSyncEngine {
   final DateTime Function() _now;
   final Random _random;
   final Future<void> Function(Duration) _delay;
+  final Timer Function(Duration, void Function()) _timerFactory;
   Completer<void>? _backgroundWake;
   final String? Function()? loginId;
   final void Function()? onLocalStarsChanged;
@@ -248,6 +260,8 @@ class StarSyncEngine {
   StarSyncTrigger _followUpTrigger = StarSyncTrigger.localChange;
   bool _wakeForLocal = false;
   Timer? _timer;
+  Timer? _cooldownTimer;
+  bool _disposed = false;
 
   static StarSyncTransport _defaultTransport(
     StarSyncConfig config,
@@ -282,6 +296,7 @@ class StarSyncEngine {
       }
       _config = parsedConfig;
       _state = parsedState;
+      _scheduleCooldown(parsedState);
       _publish();
     } catch (_) {
       _config = null;
@@ -343,11 +358,27 @@ class StarSyncEngine {
     }
   }
 
-  Future<void> setUp(StarSyncConfig config, String passphrase) async {
+  Future<int> localStarCount() async =>
+      (await activityStore.loadStarredMessages()).length;
+
+  Future<void> _deleteRemoteData(StarSyncTransport transport) async {
+    for (final entry in await transport.list(_deviceDirectory)) {
+      await transport.delete(entry.path);
+    }
+    await transport.delete(_keyringPath);
+  }
+
+  Future<void> setUp(
+    StarSyncConfig config,
+    String passphrase, {
+    bool resetExisting = false,
+    bool clearLocalStars = false,
+  }) async {
     final account = requireAccount();
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
+      if (resetExisting) await _deleteRemoteData(transport);
       var remote = await transport.get(_keyringPath);
       if (remote == null) {
         final memory = kdfParams.memoryKiB;
@@ -358,7 +389,7 @@ class StarSyncEngine {
         );
         try {
           await transport.put(_keyringPath, data, createOnly: true);
-          remote = StarSyncRemoteObject(bytes: data);
+          remote = await transport.get(_keyringPath);
         } on StarSyncTransportException catch (error) {
           if (error.kind != StarSyncTransportErrorKind.alreadyExists) {
             rethrow;
@@ -377,6 +408,9 @@ class StarSyncEngine {
         List<int>.generate(16, (_) => random.nextInt(256)),
       ).replaceAll('=', '');
       await _queue.run(() async {
+        if (clearLocalStars) {
+          await activityStore.replaceStarredMessages(const []);
+        }
         _config = config;
         _state = StarSyncState(
           deviceId: deviceId,
@@ -398,8 +432,12 @@ class StarSyncEngine {
     StarSyncConfig config,
     String keyId,
     List<int> keyBytes,
-    String account,
-  ) => _queue.run(() async {
+    String account, {
+    bool clearLocalStars = false,
+  }) => _queue.run(() async {
+    if (clearLocalStars) {
+      await activityStore.replaceStarredMessages(const []);
+    }
     final random = Random.secure();
     final deviceId = base64UrlEncode(
       List<int>.generate(16, (_) => random.nextInt(256)),
@@ -416,12 +454,18 @@ class StarSyncEngine {
     _publish();
   });
 
-  Future<StarSyncPairingSetup> setUpWithPairing(StarSyncConfig config) async {
+  Future<StarSyncPairingSetup> setUpWithPairing(
+    StarSyncConfig config, {
+    bool resetExisting = false,
+    bool clearLocalStars = false,
+  }) async {
     final account = requireAccount();
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
+      if (resetExisting) await _deleteRemoteData(transport);
       if (await transport.get(_keyringPath) != null) {
+        if (resetExisting) throw StarSyncSetupRaceException();
         return StarSyncPairingSetup.needsPairingCode;
       }
       final created = createStarSyncPairingKeyring();
@@ -433,6 +477,12 @@ class StarSyncEngine {
         );
       } on StarSyncTransportException catch (error) {
         if (error.kind != StarSyncTransportErrorKind.alreadyExists) rethrow;
+        if (resetExisting) throw StarSyncSetupRaceException();
+        return StarSyncPairingSetup.needsPairingCode;
+      }
+      final stored = await _readKeyring(transport);
+      if (stored.keyId != created.keyring.keyId) {
+        if (resetExisting) throw StarSyncSetupRaceException();
         return StarSyncPairingSetup.needsPairingCode;
       }
       await _installPairing(
@@ -440,6 +490,7 @@ class StarSyncEngine {
         created.keyring.keyId,
         created.dataKey,
         account,
+        clearLocalStars: clearLocalStars,
       );
     } finally {
       transport.close();
@@ -457,10 +508,14 @@ class StarSyncEngine {
       throw const StarSyncPairingMismatchException();
     }
     final entries = await transport.list(_deviceDirectory);
-    if (entries.isNotEmpty) {
-      final entry = entries.first;
-      final object = await transport.get(entry.path);
-      if (object == null) throw const StarSyncPairingMismatchException();
+    for (final entry in entries) {
+      StarSyncRemoteObject? object;
+      try {
+        object = await transport.get(entry.path);
+      } on Object {
+        continue;
+      }
+      if (object == null) continue;
       try {
         await decryptStarSyncFile(
           dataKey: starSyncKeyFromBytes(code.dataKey),
@@ -468,22 +523,34 @@ class StarSyncEngine {
           bytes: object.bytes,
           expectedDeviceId: entry.path.split('/').last,
         );
+        return;
       } on StarSyncDecryptException {
-        throw const StarSyncPairingMismatchException();
+        continue;
       } on StarSyncFormatException {
-        throw const StarSyncPairingMismatchException();
+        continue;
       }
     }
+    if (entries.isNotEmpty) throw const StarSyncPairingMismatchException();
   }
 
-  Future<void> joinWithPairingCode(StarSyncConfig config, String code) async {
+  Future<void> joinWithPairingCode(
+    StarSyncConfig config,
+    String code, {
+    bool clearLocalStars = false,
+  }) async {
     final account = requireAccount();
     final decoded = decodeStarSyncPairingCode(code);
     final transport = _transportFactory(config);
     try {
       final keyring = await _readKeyring(transport);
       await _verifyPairing(transport, keyring, decoded);
-      await _installPairing(config, decoded.keyId, decoded.dataKey, account);
+      await _installPairing(
+        config,
+        decoded.keyId,
+        decoded.dataKey,
+        account,
+        clearLocalStars: clearLocalStars,
+      );
     } finally {
       transport.close();
     }
@@ -541,6 +608,10 @@ class StarSyncEngine {
           utf8.encode(jsonEncode(created.keyring.toJson())),
           createOnly: true,
         );
+        final stored = await _readKeyring(transport);
+        if (stored.keyId != created.keyring.keyId) {
+          throw StarSyncSetupRaceException();
+        }
         state
           ..dataKey = base64Encode(created.dataKey)
           ..keyId = created.keyring.keyId
@@ -594,13 +665,14 @@ class StarSyncEngine {
     do {
       _followUp = false;
       try {
-        result = await _queue.run(() => _triggerSync(trigger));
+        result = await _triggerSync(trigger);
       } on Object {
         if (_followUp && _followUpTrigger == StarSyncTrigger.localChange) {
           await _queue.run(() async {
             if (_state != null) {
               _state!.pendingLocalChange = true;
               await _saveState();
+              _scheduleCooldown(_state!);
             }
           });
         }
@@ -618,33 +690,24 @@ class StarSyncEngine {
   }
 
   Future<StarSyncResult> _triggerSync(StarSyncTrigger trigger) async {
+    final config = _config;
     final state = _state;
-    if (_config == null || state == null) return const StarSyncResult();
-    if (!await _accountMatches(state)) return const StarSyncResult();
-    if (state.status == StarSyncStatus.accountMismatch) {
-      trigger = StarSyncTrigger.manual;
+    if (_disposed || config == null || state == null) {
+      return const StarSyncResult();
     }
     final now = _now();
     final background =
         trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume;
-    if (trigger != StarSyncTrigger.manual &&
-        state.cooldownUntil != null &&
-        now.isBefore(state.cooldownUntil!)) {
-      if (trigger == StarSyncTrigger.localChange) {
-        state.pendingLocalChange = true;
-        await _saveState();
-      }
-      return const StarSyncResult();
-    }
-    if (background && !state.pendingLocalChange) {
+    final inCooldown = state.cooldownUntil != null &&
+        now.isBefore(state.cooldownUntil!);
+    if (background && !inCooldown && !state.pendingLocalChange &&
+        _currentAccount() != null && _currentAccount() == state.boundAccount &&
+        state.status != StarSyncStatus.accountMismatch) {
       final date = '${now.year}-${now.month}-${now.day}';
-      if (state.backgroundDate != date) {
-        state.backgroundDate = date;
-        state.backgroundCount = 0;
-      }
+      final count = state.backgroundDate == date ? state.backgroundCount : 0;
       if ((state.lastSyncAt != null &&
               now.difference(state.lastSyncAt!) < const Duration(minutes: 2)) ||
-          state.backgroundCount >= 120) {
+          count >= 120) {
         return const StarSyncResult();
       }
       final wake = Completer<void>();
@@ -654,22 +717,59 @@ class StarSyncEngine {
         wake.future,
       ]);
       if (identical(_backgroundWake, wake)) _backgroundWake = null;
-      if (_config == null || !identical(_state, state)) {
-        return const StarSyncResult();
-      }
       if (_wakeForLocal) {
         _wakeForLocal = false;
         trigger = StarSyncTrigger.localChange;
-      } else {
-        state.backgroundCount++;
-        await _saveState();
       }
     }
-    if (trigger == StarSyncTrigger.localChange) {
-      state.pendingLocalChange = true;
-      await _saveState();
-    }
-    return _sync();
+    return _queue.run(() async {
+      if (_disposed || !identical(_config, config) || !identical(_state, state)) {
+        return const StarSyncResult();
+      }
+      if (!await _accountMatches(state)) return const StarSyncResult();
+      if (state.status == StarSyncStatus.accountMismatch) {
+        trigger = StarSyncTrigger.manual;
+      }
+      final current = _now();
+      if (trigger != StarSyncTrigger.manual &&
+          state.cooldownUntil != null &&
+          current.isBefore(state.cooldownUntil!)) {
+        if (trigger == StarSyncTrigger.localChange) {
+          state.pendingLocalChange = true;
+          await _saveState();
+          _scheduleCooldown(state);
+        }
+        return const StarSyncResult();
+      }
+      if (background && trigger != StarSyncTrigger.localChange) {
+        final date = '${current.year}-${current.month}-${current.day}';
+        if (state.backgroundDate != date) {
+          state.backgroundDate = date;
+          state.backgroundCount = 0;
+        }
+        state.backgroundCount++;
+      }
+      if (trigger == StarSyncTrigger.localChange) {
+        state.pendingLocalChange = true;
+        await _saveState();
+      }
+      _cooldownTimer?.cancel();
+      return _sync();
+    });
+  }
+
+  void _scheduleCooldown(StarSyncState state) {
+    _cooldownTimer?.cancel();
+    final until = state.cooldownUntil;
+    if (until == null || !state.pendingLocalChange) return;
+    final remaining = until.difference(_now());
+    final delay = (remaining.isNegative ? Duration.zero : remaining) +
+        Duration(milliseconds: _random.nextInt(5001));
+    _cooldownTimer = _timerFactory(delay, () {
+      unawaited(syncNow(trigger: StarSyncTrigger.localChange).catchError(
+        (Object _) => const StarSyncResult(),
+      ));
+    });
   }
 
   Future<StarSyncResult> _sync() async {
@@ -781,6 +881,9 @@ class StarSyncEngine {
       final changed = await activityStore.transformStarredMessages<bool>((
         current,
       ) async {
+        if (_currentAccount() != state.boundAccount) {
+          throw const _AccountChanged();
+        }
         final reconciled = reconcileLocalStars(
           local: current,
           state: state.records,
@@ -833,6 +936,7 @@ class StarSyncEngine {
           deviceId: state.deviceId,
           plaintext: document.toBytes(),
         );
+        if (!await _accountMatches(state)) return const StarSyncResult();
         await transport.put(ownPath, encrypted);
         state.lastUploadedHash = hash;
       }
@@ -848,6 +952,22 @@ class StarSyncEngine {
         skippedFiles: skipped,
         devices: entries.length,
       );
+    } on _AccountChanged {
+      await _accountMatches(state);
+      return const StarSyncResult();
+    } on StarSyncGoogleAuthException catch (error) {
+      if (error.kind == StarSyncGoogleAuthErrorKind.notSignedIn ||
+          error.kind == StarSyncGoogleAuthErrorKind.revoked) {
+        state.status = StarSyncStatus.needsGoogleSignIn;
+        state.lastError = 'Google へのログインが必要です';
+        state.cooldownUntil = null;
+        await _saveState();
+        return const StarSyncResult();
+      }
+      state.status = StarSyncStatus.error;
+      state.lastError = 'Google に接続できませんでした';
+      await _saveState();
+      rethrow;
     } on Object catch (error) {
       if (error is StarSyncTransportException &&
           error.kind == StarSyncTransportErrorKind.server) {
@@ -858,6 +978,7 @@ class StarSyncEngine {
       state.status = StarSyncStatus.error;
       state.lastError = _errorMessage(error);
       await _saveState();
+      _scheduleCooldown(state);
       rethrow;
     } finally {
       transport.close();
@@ -906,12 +1027,29 @@ class StarSyncEngine {
     });
   }
 
-  void dispose() => _timer?.cancel();
+  void dispose() {
+    _disposed = true;
+    _timer?.cancel();
+    _cooldownTimer?.cancel();
+    final wake = _backgroundWake;
+    if (wake != null && !wake.isCompleted) wake.complete();
+    _backgroundWake = null;
+  }
 
   Future<void> withBulkReplace(Future<void> Function() replace) =>
       _queue.runExclusive(() async {
+        final state = _state;
+        final previous = state?.pendingBulkReplace;
         await markBulkReplace();
-        await replace();
+        try {
+          await replace();
+        } on Object {
+          if (state != null && identical(_state, state)) {
+            state.pendingBulkReplace = previous!;
+            await _saveState();
+          }
+          rethrow;
+        }
       });
 
   Future<void> markBulkReplace() => _queue.run(() async {
@@ -991,15 +1129,18 @@ class StarSyncEngine {
           iterations,
           parallelism,
         );
-        final keyBytes = await _unwrapKeyBytes(created, newPassphrase);
         await transport.put(
           _keyringPath,
           utf8.encode(created),
           createOnly: true,
         );
+        final stored = await transport.get(_keyringPath);
+        if (stored == null) throw StateError('missing keyring');
+        final encoded = utf8.decode(stored.bytes);
+        final keyBytes = await _unwrapKeyBytes(encoded, newPassphrase);
         _state!
           ..dataKey = base64Encode(keyBytes)
-          ..keyId = StarSyncKeyring.fromJson(jsonDecode(created)).keyId
+          ..keyId = StarSyncKeyring.fromJson(jsonDecode(encoded)).keyId
           ..keyringEtag = null
           ..remoteCache = {}
           ..lastUploadedHash = null
@@ -1047,6 +1188,10 @@ class StarSyncEngine {
   Future<void> disable({bool deleteOwnRemoteFile = false}) =>
       _queue.run(() async {
         _timer?.cancel();
+        _cooldownTimer?.cancel();
+        final wake = _backgroundWake;
+        if (wake != null && !wake.isCompleted) wake.complete();
+        _backgroundWake = null;
         if (deleteOwnRemoteFile && _config != null && _state != null) {
           final transport = _transportFactory(_config!);
           try {

@@ -9,6 +9,7 @@ enum StarSyncStatus {
   error,
   needsPassphrase,
   needsPairingCode,
+  needsGoogleSignIn,
   accountMismatch,
 }
 
