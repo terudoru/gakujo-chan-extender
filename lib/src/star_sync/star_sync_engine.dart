@@ -435,7 +435,12 @@ class StarSyncEngine {
         if (error.kind != StarSyncTransportErrorKind.alreadyExists) rethrow;
         return StarSyncPairingSetup.needsPairingCode;
       }
-      await _installPairing(config, created.keyring.keyId, created.dataKey, account);
+      await _installPairing(
+        config,
+        created.keyring.keyId,
+        created.dataKey,
+        account,
+      );
     } finally {
       transport.close();
     }

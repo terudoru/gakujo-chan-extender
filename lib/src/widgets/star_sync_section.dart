@@ -264,7 +264,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                   : () => showDialog<void>(
                       context: context,
                       barrierDismissible: false,
-                      builder: (_) => _DisableDialog(onDisable: widget.onDisable),
+                      builder: (_) =>
+                          _DisableDialog(onDisable: widget.onDisable),
                     ),
               child: const Text('同期を無効にする'),
             ),

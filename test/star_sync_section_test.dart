@@ -61,11 +61,14 @@ void main() {
   testWidgets('Google setup shows the account requirement', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
-    await tester.pumpWidget(section(
-      status,
-      googleAvailable: true,
-      onGoogleSignIn: () async => throw const StarSyncAccountRequiredException(),
-    ));
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onGoogleSignIn: () async =>
+            throw const StarSyncAccountRequiredException(),
+      ),
+    );
     await tester.tap(find.text('Google ドライブで同期'));
     await tester.pump();
     expect(find.text('同期を使うには、設定の『ログイン』でログインIDを保存してください。'), findsOneWidget);
@@ -206,7 +209,10 @@ void main() {
 
   testWidgets('account mismatch offers only disable', (tester) async {
     final status = ValueNotifier(
-      const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.accountMismatch),
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.accountMismatch,
+      ),
     );
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
@@ -218,34 +224,46 @@ void main() {
   });
 
   for (final replaceClipboard in [false, true]) {
-    testWidgets('pairing clipboard is cleared only if unchanged: $replaceClipboard', (tester) async {
-      String? clipboard;
-      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'Clipboard.setData') {
-          clipboard = (call.arguments as Map)['text'] as String?;
-        } else if (call.method == 'Clipboard.getData') {
-          return <String, dynamic>{'text': clipboard};
-        }
-        return null;
-      });
-      addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform, null));
-      final status = ValueNotifier(
-        const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.ok),
-      );
-      addTearDown(status.dispose);
-      await tester.pumpWidget(section(status, google: true));
-      await tester.tap(find.text('別の端末を追加'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('コピー'));
-      await tester.pump();
-      expect(clipboard, isNotEmpty);
-      expect(find.text('コピーしました。60秒後にクリップボードから消去します。'), findsOneWidget);
-      if (replaceClipboard) clipboard = 'something else';
-      await tester.pump(const Duration(seconds: 60));
-      await tester.pump();
-      expect(clipboard, replaceClipboard ? 'something else' : '');
-    });
+    testWidgets(
+      'pairing clipboard is cleared only if unchanged: $replaceClipboard',
+      (tester) async {
+        String? clipboard;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboard = (call.arguments as Map)['text'] as String?;
+          } else if (call.method == 'Clipboard.getData') {
+            return <String, dynamic>{'text': clipboard};
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+        final status = ValueNotifier(
+          const StarSyncStatusSnapshot(
+            enabled: true,
+            status: StarSyncStatus.ok,
+          ),
+        );
+        addTearDown(status.dispose);
+        await tester.pumpWidget(section(status, google: true));
+        await tester.tap(find.text('別の端末を追加'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('コピー'));
+        await tester.pump();
+        expect(clipboard, isNotEmpty);
+        expect(find.text('コピーしました。60秒後にクリップボードから消去します。'), findsOneWidget);
+        if (replaceClipboard) clipboard = 'something else';
+        await tester.pump(const Duration(seconds: 60));
+        await tester.pump();
+        expect(clipboard, replaceClipboard ? 'something else' : '');
+      },
+    );
   }
 
   testWidgets('pairing reset requires a new code', (tester) async {

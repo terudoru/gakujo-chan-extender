@@ -134,16 +134,15 @@ void main() {
       expect(p['prompt'], 'consent');
       expect(p['state'], isNotEmpty);
       challenge = p['code_challenge'];
-      final redirect = Uri.parse(p['redirect_uri']!).replace(
-        queryParameters: {
-          'code': 'test-code',
-          'state': p['state']!,
-        },
-      );
+      final redirect = Uri.parse(
+        p['redirect_uri']!,
+      ).replace(queryParameters: {'code': 'test-code', 'state': p['state']!});
       final client = HttpClient();
       try {
         if (strayRequests) {
-          final wrong = redirect.replace(queryParameters: {'state': 'wrong', 'code': 'test-code'});
+          final wrong = redirect.replace(
+            queryParameters: {'state': 'wrong', 'code': 'test-code'},
+          );
           final favicon = redirect.replace(path: '/favicon.ico');
           for (final uri in [wrong, favicon]) {
             final response = await (await client.getUrl(uri)).close();

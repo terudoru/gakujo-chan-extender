@@ -168,7 +168,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         );
         request.response.statusCode = request.uri.path != '/'
             ? 404
-            : valid ? 200 : 400;
+            : valid
+            ? 200
+            : 400;
         request.response.write(
           valid
               ? '<!doctype html><meta charset="utf-8">接続しました。このタブを閉じてアプリに戻ってください。'

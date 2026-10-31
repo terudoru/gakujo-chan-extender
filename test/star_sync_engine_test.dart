@@ -187,56 +187,86 @@ void main() {
     }
   });
 
-  test('account changes stop all sync work until the account returns', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final activity = GakujoActivityStore(secureStorage: storage);
-    String? id = 'student';
-    var transports = 0;
-    final engine = StarSyncEngine(
-      activityStore: activity,
-      secureStorage: storage,
-      loginId: () => id,
-      transportFactory: (_) {
-        transports++;
-        return remote;
-      },
-      kdfParams: kdf,
-    );
-    await engine.setUp(config, 'correct horse');
-    await activity.upsertStarredMessage(
-      GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'Local',
-        starredAt: DateTime.utc(2026),
-      ),
-    );
-    final before = jsonEncode((await activity.loadStarredMessages()).map((e) => e.toJson()).toList());
-    final calls = transports;
-    final puts = remote.puts;
-    for (final changedId in <String?>['other', null, '']) {
-      id = changedId;
-      await engine.syncNow();
-      expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+  test(
+    'account changes stop all sync work until the account returns',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      String? id = 'student';
+      var transports = 0;
+      final engine = StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => id,
+        transportFactory: (_) {
+          transports++;
+          return remote;
+        },
+        kdfParams: kdf,
+      );
+      await engine.setUp(config, 'correct horse');
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'Local',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
+      final before = jsonEncode(
+        (await activity.loadStarredMessages()).map((e) => e.toJson()).toList(),
+      );
+      final calls = transports;
+      final puts = remote.puts;
+      for (final changedId in <String?>['other', null, '']) {
+        id = changedId;
+        await engine.syncNow();
+        expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+        expect(transports, calls);
+        expect(remote.puts, puts);
+        expect(
+          jsonEncode(
+            (await activity.loadStarredMessages())
+                .map((e) => e.toJson())
+                .toList(),
+          ),
+          before,
+        );
+        await expectLater(
+          engine.pairingCode(),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        await expectLater(
+          engine.rejoinWithPairingCode('invalid'),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        await expectLater(
+          engine.rejoin('passphrase'),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        await expectLater(
+          engine.changePassphrase('old', 'new'),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        await expectLater(
+          engine.resetRemote('passphrase'),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        await expectLater(
+          engine.resetRemoteWithPairing(),
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+      }
       expect(transports, calls);
-      expect(remote.puts, puts);
-      expect(jsonEncode((await activity.loadStarredMessages()).map((e) => e.toJson()).toList()), before);
-      await expectLater(engine.pairingCode(), throwsA(isA<StarSyncAccountMismatchException>()));
-      await expectLater(engine.rejoinWithPairingCode('invalid'), throwsA(isA<StarSyncAccountMismatchException>()));
-      await expectLater(engine.rejoin('passphrase'), throwsA(isA<StarSyncAccountMismatchException>()));
-      await expectLater(engine.changePassphrase('old', 'new'), throwsA(isA<StarSyncAccountMismatchException>()));
-      await expectLater(engine.resetRemote('passphrase'), throwsA(isA<StarSyncAccountMismatchException>()));
-      await expectLater(engine.resetRemoteWithPairing(), throwsA(isA<StarSyncAccountMismatchException>()));
-    }
-    expect(transports, calls);
-    id = 'student';
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.ok);
-    expect(transports, greaterThan(calls));
-    expect(remote.puts, greaterThan(puts));
-  });
+      id = 'student';
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.ok);
+      expect(transports, greaterThan(calls));
+      expect(remote.puts, greaterThan(puts));
+    },
+  );
 
   test('old state without a bound account stops before transport', () async {
     final remote = _Transport();
@@ -253,7 +283,8 @@ void main() {
       kdfParams: kdf,
     );
     await make().setUp(config, 'correct horse');
-    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    final state =
+        jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     state.remove('boundAccount');
     storage.values[starSyncStateKey] = jsonEncode(state);
     final engine = make();
@@ -276,7 +307,8 @@ void main() {
       kdfParams: kdf,
     );
     await engine.setUp(config, 'correct horse');
-    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    final state =
+        jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     final document = StarSyncDocument(
       deviceId: 'other',
       writtenAt: DateTime.utc(2026),
