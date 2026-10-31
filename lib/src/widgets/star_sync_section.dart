@@ -670,7 +670,9 @@ class _PairingInput extends StatelessWidget {
                   final value = await Navigator.of(context).push<String>(
                     MaterialPageRoute(builder: (_) => const _PairingScanner()),
                   );
-                  if (value != null) controller.text = value;
+                  if (value != null && context.mounted) {
+                    controller.text = value;
+                  }
                 },
           child: const Text('QRコードを読み取る'),
         ),

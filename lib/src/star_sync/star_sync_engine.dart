@@ -1403,8 +1403,16 @@ class StarSyncEngine {
     if (_state == null) {
       return;
     }
+    final previous = _state!.pendingBulkReplace;
     _state!.pendingBulkReplace = true;
-    await _saveState();
+    try {
+      await _saveState();
+    } on Object {
+      // The restore aborts; a stale marker would turn a later unstar into
+      // a restore omission.
+      _state!.pendingBulkReplace = previous;
+      rethrow;
+    }
   });
 
   Future<StarSyncKeyring> _readKeyring(StarSyncTransport transport) async {
