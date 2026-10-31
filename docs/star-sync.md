@@ -114,3 +114,10 @@
 - [CoreWeave conditional requests](https://docs.coreweave.com/products/storage/object-storage/buckets/conditional-requests.md)
 - [Cloudflare R2 runtime APIs](https://cloudflare-docs-siq.pages.dev/r2/runtime-apis)
 - [multistore issue #120](https://github.com/developmentseed/multistore/issues/120)（S3互換の経路で `If-Match` が無視された事例）
+
+## Google ドライブ同期のための OAuth クライアント設定
+
+- Google Cloud で External の同意画面を作成し、`drive.appdata`、`openid`、`email` を設定して本番公開します。`drive.appdata` は非機密スコープです。
+- Desktop クライアントを作成し、Windows/macOS のビルド時に ID とシークレットをそれぞれ `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...`、`--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` で渡します。
+- Android クライアントはパッケージ `net.yoshida.morebettergakujo` と、リリース用・デバッグ用それぞれの署名鍵の SHA-1 で登録します。
+- iOS クライアントはバンドル ID `net.yoshida.morebettergakujo` で作成し、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...`、逆順 ID をビルド設定 `GOOGLE_REVERSED_CLIENT_ID` に指定します。

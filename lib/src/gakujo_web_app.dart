@@ -63,6 +63,9 @@ import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
+import 'star_sync/star_sync_config.dart';
+import 'star_sync/star_sync_google_auth.dart';
+import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'macos_input_focus_service.dart';
@@ -1202,6 +1205,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoCalendarService _calendarService;
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
+  late final StarSyncGoogleAuth _starSyncGoogleAuth;
+  String? _starSyncGoogleEmail;
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
   late final GakujoNotificationService _notificationService;
@@ -1296,7 +1301,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
+    _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _starSyncEngine = StarSyncEngine(
+      googleDriveTransport: () => StarSyncGoogleDriveTransport(
+        accessToken: _starSyncGoogleAuth.accessToken,
+      ),
       activityStore: _activityStore,
       loginId: () => _appSettings.loginCredentials?.loginId,
       onLocalStarsChanged: () {
@@ -1415,7 +1424,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _ensureStarSyncLoaded() async {
     try {
-      await (_starSyncLoad ??= _starSyncEngine.load());
+      await (_starSyncLoad ??= () async {
+        await _starSyncEngine.load();
+        if (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive) {
+          try {
+            _starSyncGoogleEmail = await _starSyncGoogleAuth.restore();
+          } on Object catch (error, stackTrace) {
+            developer.log('Failed to restore Google sign-in',
+                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          }
+        }
+      }());
     } on Object {
       _starSyncLoad = null;
       rethrow;
@@ -2626,6 +2645,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     icon: Icons.sync,
                     child: StarSyncSection(
                       status: _starSyncEngine.status,
+                      googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
+                      isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
+                      googleEmail: () => _starSyncGoogleEmail,
+                      onGoogleSignIn: () async {
+                        _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
+                        try {
+                          return await _starSyncEngine.setUpWithPairing(
+                            const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+                          );
+                        } on Object {
+                          if (!_starSyncEngine.status.value.enabled) {
+                            await _starSyncGoogleAuth.signOut();
+                            _starSyncGoogleEmail = null;
+                          }
+                          rethrow;
+                        }
+                      },
+                      onGoogleSignOut: () async {
+                        await _starSyncGoogleAuth.signOut();
+                        _starSyncGoogleEmail = null;
+                      },
+                      onJoinWithCode: (code) => _starSyncEngine.joinWithPairingCode(
+                        const StarSyncConfig(backend: StarSyncBackend.googleDrive), code,
+                      ),
+                      onPairingCode: _starSyncEngine.pairingCode,
+                      onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
+                      onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
                       onSetUp: (config, passphrase) async {
                         await _ensureStarSyncLoaded();
                         await _starSyncEngine.setUp(config, passphrase);
@@ -2648,9 +2694,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onDisable: ({deleteOwnRemoteFile = false}) async {
                         await _ensureStarSyncLoaded();
+                        final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
                         await _starSyncEngine.disable(
                           deleteOwnRemoteFile: deleteOwnRemoteFile,
                         );
+                        if (google) {
+                          await _starSyncGoogleAuth.signOut();
+                          _starSyncGoogleEmail = null;
+                        }
                       },
                       onReset: (passphrase) async {
                         await _ensureStarSyncLoaded();
@@ -3406,7 +3457,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     Future<void> clearAll() async {
       if (_starSyncLoad != null) await _ensureStarSyncLoaded();
+      final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
       await _starSyncEngine.disable();
+      if (google) {
+        await _starSyncGoogleAuth.signOut();
+        _starSyncGoogleEmail = null;
+      }
       await Future.wait([
         _downloadHistoryStore.clear(),
         _downloadHistoryStore.clearFailedDownloads(),

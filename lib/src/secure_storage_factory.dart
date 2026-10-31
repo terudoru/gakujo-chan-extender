@@ -35,6 +35,7 @@ class SecureStorageFactory {
     'more_better_gakujo_page_mode',
     'more_better_gakujo_setup_completed',
     'more_better_gakujo_star_sync_config',
+    'more_better_gakujo_star_sync_google_token',
     'more_better_gakujo_star_sync_state',
     'more_better_gakujo_starred_messages',
     'more_better_gakujo_whole_assignment_list',

@@ -154,7 +154,7 @@ class _FakeServer {
 }
 
 void main() {
-  for (final backend in StarSyncBackend.values) {
+  for (final backend in [StarSyncBackend.webDav, StarSyncBackend.s3]) {
     test('${backend.name} syncs stars between two devices', () async {
       final server = _FakeServer(backend == StarSyncBackend.s3);
       await server.start();

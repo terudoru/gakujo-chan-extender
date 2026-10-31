@@ -133,4 +133,38 @@ void main() {
       throwsA(isA<StarSyncFormatException>()),
     );
   });
+
+  test('legacy keyrings and strict pairing keyrings', () async {
+    final created = await createStarSyncKeyring('password', params: fast);
+    final legacy = created.keyring.toJson()..remove('mode');
+    expect(StarSyncKeyring.fromJson(legacy).mode, 'passphrase');
+    final pairing = createStarSyncPairingKeyring();
+    final json = pairing.keyring.toJson();
+    expect(json.keys.toSet(), {'schema', 'keyId', 'mode'});
+    expect(StarSyncKeyring.fromJson(json).mode, 'pairing');
+    json['salt'] = 'unexpected';
+    expect(
+      () => StarSyncKeyring.fromJson(json),
+      throwsA(isA<StarSyncFormatException>()),
+    );
+  });
+
+  test('pairing code normalization and checksum', () {
+    final pairing = createStarSyncPairingKeyring();
+    final code = encodeStarSyncPairingCode(
+      pairing.keyring.keyId,
+      pairing.dataKey,
+    );
+    final decoded = decodeStarSyncPairingCode('mbgstar: ${code.toLowerCase()}');
+    expect(decoded.keyId, pairing.keyring.keyId);
+    expect(decoded.dataKey, pairing.dataKey);
+    final plain = code.replaceAll('-', '');
+    final last = plain[plain.length - 1];
+    final changed =
+        plain.substring(0, plain.length - 1) + (last == 'A' ? 'B' : 'A');
+    expect(
+      () => decodeStarSyncPairingCode(changed),
+      throwsA(isA<StarSyncFormatException>()),
+    );
+  });
 }

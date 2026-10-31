@@ -59,6 +59,12 @@ Future<String> _rewrapKeyringJson(
   return jsonEncode(result.toJson());
 });
 
+enum StarSyncPairingSetup { created, needsPairingCode }
+
+class StarSyncPairingMismatchException implements Exception {
+  const StarSyncPairingMismatchException();
+}
+
 class StarSyncStatusSnapshot {
   const StarSyncStatusSnapshot({
     this.enabled = false,
@@ -164,12 +170,15 @@ class StarSyncEngine {
     required this.activityStore,
     FlutterSecureStorage? secureStorage,
     StarSyncTransport Function(StarSyncConfig)? transportFactory,
+    StarSyncTransport Function()? googleDriveTransport,
     DateTime Function()? now,
     this.loginId,
     this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
   }) : _storage = secureStorage ?? SecureStorageFactory.create(),
-       _transportFactory = transportFactory ?? _defaultTransport,
+       _transportFactory =
+           transportFactory ??
+           ((config) => _defaultTransport(config, googleDriveTransport)),
        _now = now ?? DateTime.now;
 
   final GakujoActivityStore activityStore;
@@ -185,16 +194,22 @@ class StarSyncEngine {
   );
   ValueListenable<StarSyncStatusSnapshot> get status => _status;
   StarSyncConfig? _config;
+  StarSyncConfig? get config => _config;
   StarSyncState? _state;
   Future<StarSyncResult>? _running;
   bool _followUp = false;
   Timer? _timer;
 
-  static StarSyncTransport _defaultTransport(StarSyncConfig config) =>
-      switch (config.backend) {
-        StarSyncBackend.webDav => StarSyncWebDavTransport(config.webDav!),
-        StarSyncBackend.s3 => StarSyncS3Transport(config.s3!),
-      };
+  static StarSyncTransport _defaultTransport(
+    StarSyncConfig config,
+    StarSyncTransport Function()? googleDriveTransport,
+  ) => switch (config.backend) {
+    StarSyncBackend.webDav => StarSyncWebDavTransport(config.webDav!),
+    StarSyncBackend.s3 => StarSyncS3Transport(config.s3!),
+    StarSyncBackend.googleDrive =>
+      googleDriveTransport?.call() ??
+          (throw StateError('Google Drive transport is not configured')),
+  };
 
   Future<void> load() => _queue.run(() async {
     final config = await _storage.read(key: starSyncConfigKey);
@@ -212,8 +227,10 @@ class StarSyncEngine {
       final parsedState = StarSyncState.fromJson(
         jsonDecode(state) as Map<String, dynamic>,
       );
-      final transport = _transportFactory(parsedConfig);
-      transport.close();
+      if (parsedConfig.backend != StarSyncBackend.googleDrive) {
+        final transport = _transportFactory(parsedConfig);
+        transport.close();
+      }
       _config = parsedConfig;
       _state = parsedState;
       _publish();
@@ -297,6 +314,159 @@ class StarSyncEngine {
     await syncNow();
   }
 
+  Future<void> _installPairing(
+    StarSyncConfig config,
+    String keyId,
+    List<int> keyBytes,
+  ) => _queue.run(() async {
+    final random = Random.secure();
+    final deviceId = base64UrlEncode(
+      List<int>.generate(16, (_) => random.nextInt(256)),
+    ).replaceAll('=', '');
+    _config = config;
+    _state = StarSyncState(
+      deviceId: deviceId,
+      dataKey: base64Encode(keyBytes),
+      keyId: keyId,
+    );
+    await _saveState();
+    await _saveConfig();
+    _publish();
+  });
+
+  Future<StarSyncPairingSetup> setUpWithPairing(StarSyncConfig config) async {
+    final transport = _transportFactory(config);
+    try {
+      await transport.ensureDirectory(_deviceDirectory);
+      if (await transport.get(_keyringPath) != null) {
+        return StarSyncPairingSetup.needsPairingCode;
+      }
+      final created = createStarSyncPairingKeyring();
+      try {
+        await transport.put(
+          _keyringPath,
+          utf8.encode(jsonEncode(created.keyring.toJson())),
+          createOnly: true,
+        );
+      } on StarSyncTransportException catch (error) {
+        if (error.kind != StarSyncTransportErrorKind.alreadyExists) rethrow;
+        return StarSyncPairingSetup.needsPairingCode;
+      }
+      await _installPairing(config, created.keyring.keyId, created.dataKey);
+    } finally {
+      transport.close();
+    }
+    await syncNow();
+    return StarSyncPairingSetup.created;
+  }
+
+  Future<void> _verifyPairing(
+    StarSyncTransport transport,
+    StarSyncKeyring keyring,
+    ({String keyId, List<int> dataKey}) code,
+  ) async {
+    if (code.keyId != keyring.keyId) {
+      throw const StarSyncPairingMismatchException();
+    }
+    final entries = await transport.list(_deviceDirectory);
+    if (entries.isNotEmpty) {
+      final entry = entries.first;
+      final object = await transport.get(entry.path);
+      if (object == null) throw const StarSyncPairingMismatchException();
+      try {
+        await decryptStarSyncFile(
+          dataKey: starSyncKeyFromBytes(code.dataKey),
+          keyId: code.keyId,
+          bytes: object.bytes,
+          expectedDeviceId: entry.path.split('/').last,
+        );
+      } on StarSyncDecryptException {
+        throw const StarSyncPairingMismatchException();
+      } on StarSyncFormatException {
+        throw const StarSyncPairingMismatchException();
+      }
+    }
+  }
+
+  Future<void> joinWithPairingCode(StarSyncConfig config, String code) async {
+    final decoded = decodeStarSyncPairingCode(code);
+    final transport = _transportFactory(config);
+    try {
+      final keyring = await _readKeyring(transport);
+      await _verifyPairing(transport, keyring, decoded);
+      await _installPairing(config, decoded.keyId, decoded.dataKey);
+    } finally {
+      transport.close();
+    }
+    await syncNow();
+  }
+
+  Future<String> pairingCode() => _queue.run(() async {
+    final state = _state;
+    if (_config == null || state == null) throw StateError('Sync is disabled');
+    return encodeStarSyncPairingCode(state.keyId, base64Decode(state.dataKey));
+  });
+
+  Future<void> rejoinWithPairingCode(String code) async {
+    final decoded = decodeStarSyncPairingCode(code);
+    await _queue.run(() async {
+      final config = _config;
+      final state = _state;
+      if (config == null || state == null) throw StateError('Sync is disabled');
+      final transport = _transportFactory(config);
+      try {
+        final keyring = await _readKeyring(transport);
+        await _verifyPairing(transport, keyring, decoded);
+        state
+          ..dataKey = base64Encode(decoded.dataKey)
+          ..keyId = decoded.keyId
+          ..remoteCache = {}
+          ..lastUploadedHash = null
+          ..status = StarSyncStatus.ok;
+        await _saveState();
+      } finally {
+        transport.close();
+      }
+    });
+    await syncNow();
+  }
+
+  Future<String> resetRemoteWithPairing() async {
+    final code = await _queue.run(() async {
+      final config = _config;
+      final state = _state;
+      if (config == null || state == null) throw StateError('Sync is disabled');
+      final transport = _transportFactory(config);
+      try {
+        for (final entry in await transport.list(_deviceDirectory)) {
+          await transport.delete(entry.path);
+        }
+        await transport.delete(_keyringPath);
+        final created = createStarSyncPairingKeyring();
+        await transport.put(
+          _keyringPath,
+          utf8.encode(jsonEncode(created.keyring.toJson())),
+          createOnly: true,
+        );
+        state
+          ..dataKey = base64Encode(created.dataKey)
+          ..keyId = created.keyring.keyId
+          ..remoteCache = {}
+          ..lastUploadedHash = null
+          ..status = StarSyncStatus.ok;
+        await _saveState();
+        return encodeStarSyncPairingCode(
+          created.keyring.keyId,
+          created.dataKey,
+        );
+      } finally {
+        transport.close();
+      }
+    });
+    await syncNow();
+    return code;
+  }
+
   Future<StarSyncResult> syncNow() {
     if (_running != null) {
       _followUp = true;
@@ -341,7 +511,9 @@ class StarSyncEngine {
         jsonDecode(utf8.decode(keyObject.bytes)),
       );
       if (keyring.keyId != state.keyId) {
-        state.status = StarSyncStatus.needsPassphrase;
+        state.status = keyring.mode == 'pairing'
+            ? StarSyncStatus.needsPairingCode
+            : StarSyncStatus.needsPassphrase;
         await _saveState();
         return const StarSyncResult();
       }
@@ -574,6 +746,7 @@ class StarSyncEngine {
         final transport = _transportFactory(_config!);
         try {
           final keyring = await _readKeyring(transport);
+          if (keyring.mode == 'pairing') throw StateError('Pairing keyring');
           final bytes = await _unwrap(keyring, current);
           final encoded = jsonEncode(keyring.toJson());
           final wrapped = utf8.encode(

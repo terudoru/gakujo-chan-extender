@@ -22,12 +22,21 @@
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(GOOGLE_REVERSED_CLIENT_ID)</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>課題などに添付する写真や動画をその場で撮影するために使用します。</string>
+	<string>課題などに添付する写真や動画をその場で撮影するため、また別の端末に表示された同期用QRコードを読み取るために使用します。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>課題などに添付する写真を選ぶために使用します。</string>
 	<key>NSMicrophoneUsageDescription</key>

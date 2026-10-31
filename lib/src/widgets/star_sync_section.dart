@@ -2,16 +2,24 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../star_sync/star_sync_config.dart';
 import '../star_sync/star_sync_crypto.dart';
 import '../star_sync/star_sync_engine.dart';
+import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_s3_transport.dart';
 import '../star_sync/star_sync_transport.dart';
 import '../star_sync/star_sync_webdav_transport.dart';
 import 'settings_sections.dart';
 
 String _errorText(Object error) {
+  if (error is StarSyncPairingMismatchException) return 'コードが一致しません';
+  if (error is FormatException || error is StarSyncFormatException) {
+    return 'コードの形式が正しくありません';
+  }
   if (error is StarSyncWrongPassphraseException) return 'パスフレーズが違います';
   if (error is ArgumentError) {
     return 'URLを確認してください（https のみ使えます）';
@@ -37,6 +45,15 @@ class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
     required this.status,
+    required this.googleAvailable,
+    required this.isGoogleDrive,
+    required this.googleEmail,
+    required this.onGoogleSignIn,
+    required this.onGoogleSignOut,
+    required this.onJoinWithCode,
+    required this.onPairingCode,
+    required this.onRejoinWithCode,
+    required this.onResetWithPairing,
     required this.onSetUp,
     required this.onSyncNow,
     required this.onChangePassphrase,
@@ -48,6 +65,15 @@ class StarSyncSection extends StatefulWidget {
   });
 
   final ValueListenable<StarSyncStatusSnapshot> status;
+  final bool googleAvailable;
+  final bool Function() isGoogleDrive;
+  final String? Function() googleEmail;
+  final Future<StarSyncPairingSetup> Function() onGoogleSignIn;
+  final Future<void> Function() onGoogleSignOut;
+  final Future<void> Function(String) onJoinWithCode;
+  final Future<String> Function() onPairingCode;
+  final Future<void> Function(String) onRejoinWithCode;
+  final Future<String> Function() onResetWithPairing;
   final Future<void> Function(StarSyncConfig, String) onSetUp;
   final Future<void> Function() onSyncNow;
   final Future<void> Function(String, String) onChangePassphrase;
@@ -86,6 +112,80 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     }
   }
 
+  Future<void> _startGoogle() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    var needsCleanup = false;
+    try {
+      final result = await widget.onGoogleSignIn();
+      needsCleanup = result == StarSyncPairingSetup.needsPairingCode;
+      if (!mounted) return;
+      if (result == StarSyncPairingSetup.needsPairingCode) {
+        final joined = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _PairingJoinDialog(onJoin: widget.onJoinWithCode),
+        );
+        if (joined != true) return;
+      }
+      needsCleanup = false;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('同期を開始しました')),
+        );
+      }
+    } on StarSyncGoogleAuthException catch (error) {
+      if (error.kind != StarSyncGoogleAuthErrorKind.cancelled && mounted) {
+        setState(() => _error = _errorText(error));
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    } finally {
+      if (needsCleanup && !widget.status.value.enabled) {
+        try {
+          await widget.onGoogleSignOut();
+        } on Object catch (error) {
+          if (mounted) setState(() => _error = _errorText(error));
+        }
+      }
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _showCode([String? code]) async {
+    try {
+      final value = code ?? await widget.onPairingCode();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _PairingCodeDialog(code: value),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    }
+  }
+
+  Future<void> _resetPairing() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('同期データをリセット'),
+        content: const Text('同期先のデータを削除して作り直します。他の端末では新しいコードが必要です。端末内のスターは残ります。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('リセット')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _run(() async {
+      final code = await widget.onResetWithPairing();
+      await _showCode(code);
+    });
+  }
+
   @override
   Widget build(BuildContext context) =>
       ValueListenableBuilder<StarSyncStatusSnapshot>(
@@ -95,18 +195,29 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'スター（IDと件名のみ）を、自分で用意したWebDAVまたはS3互換ストレージを通して端末間で共有します。内容はパスフレーズで暗号化され、保存先からは読めません。',
-                ),
-                if (status.lastError != null) Text(status.lastError!),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (_) => _SetupDialog(onSetUp: widget.onSetUp),
+                if (widget.googleAvailable) ...[
+                  const Text('スター（IDと件名のみ）を、あなたの Google ドライブのアプリ専用領域に暗号化して保存し、端末間で共有します。'),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    onPressed: _busy ? null : _startGoogle,
+                    child: const Text('Google ドライブで同期'),
                   ),
-                  child: const Text('同期を設定'),
+                ],
+                if (_error != null) Text(_error!),
+                if (_busy) const LinearProgressIndicator(),
+                if (status.lastError != null) Text(status.lastError!),
+                ExpansionTile(
+                  title: const Text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'),
+                  children: [
+                    OutlinedButton(
+                      onPressed: _busy ? null : () => showDialog<void>(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => _SetupDialog(onSetUp: widget.onSetUp),
+                      ),
+                      child: const Text('同期を設定'),
+                    ),
+                  ],
                 ),
               ],
             );
@@ -121,6 +232,16 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(line),
+              if (widget.isGoogleDrive() && widget.googleEmail() != null)
+                Text(widget.googleEmail()!),
+              if (status.status == StarSyncStatus.needsPairingCode) ...[
+                const Text('別の端末で同期データがリセットされました。新しいコードを入力してください。'),
+                _PairingInput(controller: _rejoin, enabled: !_busy),
+                OutlinedButton(
+                  onPressed: _busy ? null : () => _run(() => widget.onRejoinWithCode(_rejoin.text)),
+                  child: const Text('再接続'),
+                ),
+              ],
               if (status.status == StarSyncStatus.needsPassphrase) ...[
                 const Text('別の端末で同期データがリセットされたか、鍵が変更されました。'),
                 TextField(
@@ -149,6 +270,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     child: const Text('今すぐ同期'),
                   ),
                   OutlinedButton(
+                    onPressed: _busy ? null : () => _showCode(),
+                    child: const Text('別の端末を追加'),
+                  ),
+                  if (!widget.isGoogleDrive()) OutlinedButton(
                     onPressed: _busy
                         ? null
                         : () => showDialog<void>(
@@ -190,7 +315,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                   OutlinedButton(
                     onPressed: _busy
                         ? null
-                        : () => showDialog<void>(
+                        : widget.isGoogleDrive() ? _resetPairing : () => showDialog<void>(
                             context: context,
                             barrierDismissible: false,
                             builder: (_) => _PassphraseDialog(
@@ -207,6 +332,142 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           );
         },
       );
+}
+
+class _PairingInput extends StatelessWidget {
+  const _PairingInput({required this.controller, required this.enabled});
+  final TextEditingController controller;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      TextField(
+        controller: controller,
+        enabled: enabled,
+        style: const TextStyle(fontFamily: 'monospace'),
+        decoration: const InputDecoration(labelText: '同期コード'),
+      ),
+      if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS))
+        TextButton(
+          onPressed: !enabled ? null : () async {
+            final value = await Navigator.of(context).push<String>(
+              MaterialPageRoute(builder: (_) => const _PairingScanner()),
+            );
+            if (value != null) controller.text = value;
+          },
+          child: const Text('QRコードを読み取る'),
+        ),
+    ],
+  );
+}
+
+class _PairingScanner extends StatefulWidget {
+  const _PairingScanner();
+  @override
+  State<_PairingScanner> createState() => _PairingScannerState();
+}
+
+class _PairingScannerState extends State<_PairingScanner> {
+  bool _found = false;
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('QRコードを読み取る')),
+    body: MobileScanner(
+      onDetect: (capture) {
+        if (_found) return;
+        for (final barcode in capture.barcodes) {
+          final value = barcode.rawValue;
+          if (value != null && value.startsWith('mbgstar:')) {
+            _found = true;
+            Navigator.pop(context, value);
+            break;
+          }
+        }
+      },
+    ),
+  );
+}
+
+class _PairingJoinDialog extends StatefulWidget {
+  const _PairingJoinDialog({required this.onJoin});
+  final Future<void> Function(String) onJoin;
+  @override
+  State<_PairingJoinDialog> createState() => _PairingJoinDialogState();
+}
+
+class _PairingJoinDialogState extends State<_PairingJoinDialog> {
+  final _code = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() { _busy = true; _error = null; });
+    try {
+      decodeStarSyncPairingCode(_code.text);
+      await widget.onJoin(_code.text);
+      if (mounted) Navigator.pop(context, true);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = _errorText(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('同期コードを入力'),
+    content: SizedBox(
+      width: 480,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('この Google アカウントには、すでに別の端末の同期データがあります。その端末の「別の端末を追加」に表示されるコードを入力してください。'),
+          _PairingInput(controller: _code, enabled: !_busy),
+          if (_error != null) Text(_error!),
+          if (_busy) const LinearProgressIndicator(),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(onPressed: _busy ? null : () => Navigator.pop(context, false), child: const Text('キャンセル')),
+      FilledButton(onPressed: _busy ? null : _submit, child: const Text('接続')),
+    ],
+  );
+}
+
+class _PairingCodeDialog extends StatelessWidget {
+  const _PairingCodeDialog({required this.code});
+  final String code;
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('別の端末を追加'),
+    content: SizedBox(
+      width: 420,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            QrImageView(data: 'mbgstar:$code', size: 220),
+            SelectableText(code, style: const TextStyle(fontFamily: 'monospace')),
+            TextButton.icon(
+              onPressed: () => Clipboard.setData(ClipboardData(text: code)),
+              icon: const Icon(Icons.copy),
+              label: const Text('コピー'),
+            ),
+            const Text('このコードを知っている人は同期データを読めます。共有しないでください。'),
+          ],
+        ),
+      ),
+    ),
+    actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('閉じる'))],
+  );
 }
 
 class _SetupDialog extends StatefulWidget {
@@ -325,7 +586,7 @@ class _SetupDialogState extends State<_SetupDialog> {
               ignoring: _busy,
               child: SettingsRadioGroup<StarSyncBackend>(
                 groupValue: _backend,
-                values: StarSyncBackend.values,
+                values: const [StarSyncBackend.webDav, StarSyncBackend.s3],
                 labelFor: (value) =>
                     value == StarSyncBackend.webDav ? 'WebDAV' : 'S3互換',
                 onChanged: (value) {

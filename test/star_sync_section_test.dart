@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
 
@@ -8,11 +10,24 @@ void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
     Future<void> Function(StarSyncConfig, String)? onSetUp,
+    bool googleAvailable = false,
+    bool google = false,
+    Future<StarSyncPairingSetup> Function()? onGoogleSignIn,
+    Future<void> Function(String)? onJoin,
   }) => MaterialApp(
     home: Scaffold(
       body: SingleChildScrollView(
         child: StarSyncSection(
           status: status,
+          googleAvailable: googleAvailable,
+          isGoogleDrive: () => google,
+          googleEmail: () => google ? 'user@example.com' : null,
+          onGoogleSignIn: onGoogleSignIn ?? () async => StarSyncPairingSetup.created,
+          onGoogleSignOut: () async {},
+          onJoinWithCode: onJoin ?? (_) async {},
+          onPairingCode: () async => encodeStarSyncPairingCode('AAAAAAAAAAAAAAAAAAAAAA', List.filled(32, 1)),
+          onRejoinWithCode: (_) async {},
+          onResetWithPairing: () async => '',
           onSetUp: onSetUp ?? (_, _) async {},
           onSyncNow: () async {},
           onChangePassphrase: (_, _) async {},
@@ -30,7 +45,12 @@ void main() {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status));
+    expect(find.text('Google ドライブで同期'), findsNothing);
+    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
+    await tester.pumpAndSettle();
     expect(find.text('同期を設定'), findsOneWidget);
+    await tester.pumpWidget(section(status, googleAvailable: true));
+    expect(find.text('Google ドライブで同期'), findsOneWidget);
   });
 
   testWidgets('setup validates passphrases and switches backend', (
@@ -51,6 +71,8 @@ void main() {
         },
       ),
     );
+    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('同期を設定'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('接続'));
@@ -100,6 +122,56 @@ void main() {
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status));
     expect(find.widgetWithText(TextField, 'パスフレーズ'), findsOneWidget);
+    expect(find.text('再接続'), findsOneWidget);
+  });
+
+  testWidgets('Google join validates and submits pairing code', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    String? joined;
+    var mismatch = true;
+    final code = encodeStarSyncPairingCode('AAAAAAAAAAAAAAAAAAAAAA', List.filled(32, 1));
+    await tester.pumpWidget(section(
+      status,
+      googleAvailable: true,
+      onGoogleSignIn: () async => StarSyncPairingSetup.needsPairingCode,
+      onJoin: (value) async {
+        if (mismatch) throw const StarSyncPairingMismatchException();
+        joined = value;
+      },
+    ));
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('接続'));
+    await tester.pump();
+    expect(find.text('コードの形式が正しくありません'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, '同期コード'), code);
+    await tester.tap(find.text('接続'));
+    await tester.pump();
+    expect(find.text('コードが一致しません'), findsOneWidget);
+    mismatch = false;
+    await tester.tap(find.text('接続'));
+    await tester.pumpAndSettle();
+    expect(joined, code);
+  });
+
+  testWidgets('Google account and pairing QR are shown', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.ok));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.text('user@example.com'), findsOneWidget);
+    expect(find.text('パスフレーズを変更'), findsNothing);
+    await tester.tap(find.text('別の端末を追加'));
+    await tester.pumpAndSettle();
+    expect(find.byType(QrImageView), findsOneWidget);
+    expect(find.byType(SelectableText), findsOneWidget);
+  });
+
+  testWidgets('pairing reset requires a new code', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.needsPairingCode));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.widgetWithText(TextField, '同期コード'), findsOneWidget);
     expect(find.text('再接続'), findsOneWidget);
   });
 }
