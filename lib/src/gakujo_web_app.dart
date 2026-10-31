@@ -3187,7 +3187,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   });
                   if (saveError == null && !portableSyncSettingsMatch(
                     previousSettings, exportStarSyncPortableSettings(nextSettings),
-                  )) _scheduleStarSync();
+                  )) {
+                    _scheduleStarSync();
+                  }
                   _scheduleAutoBackup();
                   await _applyChangedRuntimeFeatureFlags(
                     previousSettings,
