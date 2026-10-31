@@ -119,6 +119,18 @@ void main() {
     expect(jsonDecode(storage[unchanged] as String), expected);
   });
 
+  test('import leaves all drafts unchanged while the open form is dirty', () async {
+    final result = await _evaluateDraftScenario('dirtyImport');
+    expect(result['matched'], isFalse);
+    expect(result['unchanged'], isTrue);
+  });
+
+  test('export flushes pending edits through the draft save path', () async {
+    final result = await _evaluateDraftScenario('pendingExport');
+    expect(result['value'], 'pending edit');
+    expect(result['pending'], isFalse);
+  });
+
   test('import rolls back earlier writes when storage fails', () async {
     const first = 'mbg-report-draft:v2:first';
     const second = 'mbg-report-draft:v2:second';
@@ -613,6 +625,14 @@ Future<Map<String, dynamic>> _evaluateDraft(Map<String, dynamic> spec) async {
       'generatedScript': GakujoReportDraftScript.build(),
       'spec': spec,
       'listScript': GakujoReportDraftScript.buildList(),
+      'exportScript': GakujoReportDraftScript.buildExportAll(),
+      'importScript': GakujoReportDraftScript.buildImportAll({
+        'mbg-report-draft:v2:placeholder-key': {'savedAt': 1234567890000, 'fields': []},
+        'mbg-report-draft:v2:other': {'savedAt': 1234567890000, 'fields': []},
+      }, {
+        'mbg-report-draft:v2:placeholder-key': {'savedAt': 1234567890000, 'fields': []},
+        'mbg-report-draft:v2:other': {'savedAt': 1234567890000, 'fields': []},
+      }),
       'deleteScript': GakujoReportDraftScript.buildDelete(
           'mbg-report-draft:v2:delete"\\key'),
     }));
@@ -663,7 +683,7 @@ process.stdout.write(JSON.stringify({result, storage: Object.fromEntries(values)
 
 const _nodeDomHarness = r'''
 const vm = require('node:vm');
-const {generatedScript, spec, listScript, deleteScript} = JSON.parse(
+const {generatedScript, spec, listScript, deleteScript, exportScript, importScript} = JSON.parse(
   require('node:fs').readFileSync(process.argv[2], 'utf8')
 );
 const storageValues = new Map();
@@ -1473,6 +1493,33 @@ if (extended) return process.stdout.write(JSON.stringify(extended));
 const storage = new FakeStorage();
 const savingPage = createPage(spec.initialHtml, spec.initialText, storage);
 runPage(savingPage);
+if (spec.scenario === 'dirtyImport' || spec.scenario === 'pendingExport') {
+  savingPage.window.deferSaveTimer = true;
+  const key = savingPage.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+  const original = {savedAt: 1234567890000, fields: []};
+  // Use a current timestamp so both records pass retention validation.
+  original.savedAt = Date.now();
+  storage.setItem(key, JSON.stringify(original));
+  storage.setItem('mbg-report-draft:v2:other', JSON.stringify(original));
+  savingPage.field.textContent = 'pending edit';
+  savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  if (spec.scenario === 'pendingExport') {
+    const result = JSON.parse(runPage(savingPage, exportScript));
+    return process.stdout.write(JSON.stringify({value: result[key].fields[0].value,
+      pending: !!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT}));
+  }
+  const replacement = {...original, fields: [{key: 'remote', value: 'remote', kind: 'text'}]};
+  const script = importScript.replaceAll('placeholder-key', key.slice('mbg-report-draft:v2:'.length))
+    .replaceAll('1234567890000', String(original.savedAt));
+  // Change both records so the failed import must be atomic.
+  const before = JSON.stringify(Array.from(storage.values.entries()));
+  const matched = runPage(savingPage, script.replace('var matched = true;',
+    'drafts[' + JSON.stringify(key) + '] = ' + JSON.stringify(replacement) + ';\n' +
+    'drafts["mbg-report-draft:v2:other"] = ' + JSON.stringify(replacement) + ';\n' +
+    'var matched = true;'));
+  return process.stdout.write(JSON.stringify({matched,
+    unchanged: before === JSON.stringify(Array.from(storage.values.entries()))}));
+}
 if (spec.scenario === 'saveFailure') storage.failWrite = true;
 savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
 function statusText() { return savingPage.document.getElementById('mbg-report-draft-status-label').textContent; }

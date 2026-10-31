@@ -135,6 +135,7 @@ extension _GakujoWebAppReportDrafts on _GakujoWebAppState {
                                               'Report draft deletion failed',
                                             );
                                           }
+                                          _scheduleDraftSync();
                                           final refreshed =
                                               await _loadReportDrafts();
                                           if (!dialogContext.mounted) return;

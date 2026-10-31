@@ -923,11 +923,11 @@ class GakujoReportDraftScript {
     var context = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT ||
       currentDraftContext(doc);
     if (!context) {
-      return;
+      return true;
     }
     if (!doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT &&
         !context.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_TOUCHED; })) {
-      return;
+      return true;
     }
     if (saveDraft(doc, context.store, context.key, context.fields)) {
       if (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT === context) {
@@ -935,7 +935,9 @@ class GakujoReportDraftScript {
       }
     } else {
       doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT = context;
+      return false;
     }
+    return true;
   }
 
   function bindDraft(doc) {
@@ -946,6 +948,7 @@ class GakujoReportDraftScript {
     }
     var fields = context.fields;
     var store = context.store;
+    doc.__MBG_REPORT_DRAFT_FLUSH = function() { return saveCurrentDraft(doc); };
     cleanup(store);
     var key = context.key;
     ensureStatus(doc, store, key);
@@ -1112,6 +1115,13 @@ class GakujoReportDraftScript {
   var entries = Object.create(null);
   var now = Date.now();
   draftDocuments().forEach(function(doc) {
+    var pending = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+    var identity = doc.__MBG_REPORT_DRAFT_IDENTITY;
+    if ((pending || (identity && identity.fields.some(function(field) {
+      return field.__MBG_REPORT_DRAFT_DIRTY;
+    }))) && (!doc.__MBG_REPORT_DRAFT_FLUSH || !doc.__MBG_REPORT_DRAFT_FLUSH())) {
+      throw new Error('Pending draft could not be saved');
+    }
     var store = doc.defaultView.localStorage;
     for (var i = 0; i < store.length; i += 1) {
       var key = store.key(i);
@@ -1156,6 +1166,15 @@ class GakujoReportDraftScript {
       if (!isRetainedDraft(current, now)) current = undefined;
       var expected = Object.prototype.hasOwnProperty.call(basedOn, key) ? basedOn[key] : undefined;
       if (JSON.stringify(canonical(current)) !== JSON.stringify(canonical(expected))) {
+        matched = false;
+        return;
+      }
+      var pending = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+      var identity = doc.__MBG_REPORT_DRAFT_IDENTITY;
+      var dirty = pending && pending.key === key || identity && identity.key === key &&
+        identity.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_DIRTY; });
+      var incoming = Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key] : undefined;
+      if (dirty && JSON.stringify(canonical(current)) !== JSON.stringify(canonical(incoming))) {
         matched = false;
         return;
       }

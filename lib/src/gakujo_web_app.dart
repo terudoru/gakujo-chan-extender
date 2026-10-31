@@ -95,6 +95,58 @@ part 'gakujo_web_app_models.dart';
 part 'gakujo_web_app_message_stars.dart';
 part 'gakujo_web_app_report_drafts.dart';
 
+@visibleForTesting
+class GakujoCollectionSyncScheduler {
+  GakujoCollectionSyncScheduler({
+    required this.canSync,
+    required this.schedule,
+    Timer Function(Duration, void Function())? timerFactory,
+  }) : _timerFactory = timerFactory ?? Timer.new;
+
+  final bool Function() canSync;
+  final void Function(StarSyncTrigger, Duration) schedule;
+  final Timer Function(Duration, void Function()) _timerFactory;
+  Timer? _draftTimer;
+
+  void localChange() {
+    if (canSync()) {
+      schedule(StarSyncTrigger.localChange, const Duration(seconds: 5));
+    }
+  }
+
+  void pageLoaded() {
+    if (canSync()) {
+      schedule(StarSyncTrigger.resume, const Duration(seconds: 5));
+    }
+  }
+
+  void draftChanged() {
+    if (!canSync()) return;
+    _draftTimer?.cancel();
+    _draftTimer = _timerFactory(const Duration(seconds: 60), () {
+      if (canSync()) schedule(StarSyncTrigger.localChange, Duration.zero);
+    });
+  }
+
+  void dispose() => _draftTimer?.cancel();
+}
+
+class _SyncActivityStore extends GakujoActivityStore {
+  _SyncActivityStore(this.onNotifiedKeysChanged);
+
+  final void Function() onNotifiedKeysChanged;
+
+  @override
+  Future<void> addNotifiedDeadlineKeys(Iterable<String> deadlineKeys) async {
+    final keys = deadlineKeys.toSet();
+    if (keys.isEmpty) return;
+    final before = await loadNotifiedDeadlineKeys();
+    await super.addNotifiedDeadlineKeys(keys);
+    final after = await loadNotifiedDeadlineKeys();
+    if (after.difference(before).isNotEmpty) onNotifiedKeysChanged();
+  }
+}
+
 extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
   String get label {
     return switch (this) {
@@ -1362,6 +1414,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   VoidCallback? _refreshSetupWizard;
   DateTime? _lastAssignmentRefresh;
   Timer? _backgroundRefreshTimer;
+  late final GakujoCollectionSyncScheduler _collectionSyncScheduler;
   bool _isImportingSettings = false;
   final _backupOperations = StorageOperationQueue();
   final _settingsOperations = StorageOperationQueue();
@@ -1414,7 +1467,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _webViewService = platformService.createWebViewService();
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
-    _activityStore = GakujoActivityStore();
+    _activityStore = _SyncActivityStore(_scheduleStarSync);
     _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
@@ -1441,6 +1494,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       onLocalStarsChanged: () {
         if (_canSyncStars) unawaited(_refreshMessageStars());
       },
+    );
+    _collectionSyncScheduler = GakujoCollectionSyncScheduler(
+      canSync: () => _canSyncStars,
+      schedule: (trigger, delay) => _starSyncEngine.scheduleSync(
+        trigger: trigger,
+        delay: delay,
+        shouldSync: () => _canSyncStars,
+      ),
     );
     _notificationService = GakujoNotificationService();
     _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
@@ -1505,6 +1566,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_pdfPreviewServer.close());
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
+    _collectionSyncScheduler.dispose();
     _starSyncEngine.dispose();
     _pendingMessageOpenTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
@@ -1587,13 +1649,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  void _scheduleStarSync() {
-    if (!_canSyncStars) return;
-    _starSyncEngine.scheduleSync(
-      trigger: StarSyncTrigger.localChange,
-      shouldSync: () => _canSyncStars,
-    );
-  }
+  void _scheduleStarSync() => _collectionSyncScheduler.localChange();
+
+  void _scheduleDraftSync() => _collectionSyncScheduler.draftChanged();
 
   Future<void> _resumeNotificationsAndRefresh() async {
     try {
@@ -2640,6 +2698,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (!mounted) {
                         return;
                       }
+                      if (flag != GakujoFeatureFlag.messageStars) {
+                        _scheduleStarSync();
+                      }
                       if (flag == GakujoFeatureFlag.messageStars && enabled) {
                         unawaited(_syncStarsInBackground());
                       }
@@ -3124,6 +3185,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   setState(() {
                     _appSettings = nextSettings;
                   });
+                  if (saveError == null && !portableSyncSettingsMatch(
+                    previousSettings, exportStarSyncPortableSettings(nextSettings),
+                  )) _scheduleStarSync();
                   _scheduleAutoBackup();
                   await _applyChangedRuntimeFeatureFlags(
                     previousSettings,
@@ -4001,6 +4065,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                 await _activityStore.removeFavorite(
                                   favorite.url,
                                 );
+                                _scheduleStarSync();
                                 favorites =
                                     await _activityStore.loadFavorites();
                                 if (!dialogContext.mounted) {
@@ -4080,6 +4145,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               addedAt: DateTime.now(),
             ),
           );
+          _scheduleStarSync();
         } on Object {
           _showSnackBar('お気に入りに追加できませんでした');
           return;
@@ -4140,6 +4206,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = _appSettings.copyWith(calendarImportSettings: settings);
     });
+    _scheduleStarSync();
   });
 
   GakujoAppSettings _settingsForPersistence(GakujoAppSettings settings) {
@@ -4192,6 +4259,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = _appSettings.copyWith(messageNotification: messages);
     });
+    _scheduleStarSync();
   });
 
   Future<void> _saveNotificationTopics(
@@ -4222,6 +4290,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       },
       mirror: _syncLocalSettingsMirror,
     );
+    _scheduleStarSync();
     if (mounted) unawaited(_syncReminders());
   }
 
@@ -4274,6 +4343,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (mounted) _showSnackBar(_settingsSaveFailureMessage);
         return;
       }
+      _scheduleStarSync();
       if (mounted) {
         unawaited(_syncReminders());
       }
@@ -4312,6 +4382,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = _appSettings.copyWith(messageExcludeKeywords: normalized);
     });
+    _scheduleStarSync();
     await _injectMessageFilterIfAllowed();
   });
 
@@ -6716,6 +6787,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             await _injectReportDraftIfAllowed();
             if (!stillCurrent()) {
               return;
+            }
+            if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+              _collectionSyncScheduler.pageLoaded();
+              _scheduleDraftSync();
             }
             await _applyDesktopZoomIfAllowed();
             if (!stillCurrent()) {
