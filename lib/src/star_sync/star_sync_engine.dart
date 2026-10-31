@@ -154,6 +154,7 @@ class StarSyncState {
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
+    this.pendingBulkReplaceStarIds,
     Map<String, String>? pendingLocalClear,
     this.keyringEtag,
     this.pendingLocalChange = false,
@@ -184,6 +185,7 @@ class StarSyncState {
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
+  Set<String>? pendingBulkReplaceStarIds;
   Map<String, String> pendingLocalClear;
   String? keyringEtag;
   bool pendingLocalChange;
@@ -212,6 +214,7 @@ class StarSyncState {
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
+    'pendingBulkReplaceStarIds': pendingBulkReplaceStarIds?.toList(),
     'pendingLocalClear': pendingLocalClear,
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
@@ -257,6 +260,9 @@ class StarSyncState {
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
+      pendingBulkReplaceStarIds: (json['pendingBulkReplaceStarIds'] as List?)
+          ?.whereType<String>()
+          .toSet(),
       pendingLocalClear: {
         if (json['pendingLocalClear'] is Map)
           for (final entry in (json['pendingLocalClear'] as Map).entries)
@@ -960,6 +966,7 @@ class StarSyncEngine {
         });
         if (changed) onLocalStarsChanged?.call();
         state.pendingBulkReplace = false;
+        state.pendingBulkReplaceStarIds = null;
       }
       state.localReviewRequired = false;
       state.status = StarSyncStatus.ok;
@@ -1284,6 +1291,7 @@ class StarSyncEngine {
           deviceId: state.deviceId,
           now: now,
           bulkReplace: state.pendingBulkReplace,
+          bulkReplaceStarIds: state.pendingBulkReplaceStarIds,
         );
         mergedRecords = mergeStarSyncRecords([
           reconciled.state,
@@ -1333,6 +1341,7 @@ class StarSyncEngine {
       }
       state.remoteCache = caches;
       state.pendingBulkReplace = false;
+      state.pendingBulkReplaceStarIds = null;
       await _saveState();
       final document = StarSyncDocument(
         deviceId: state.deviceId,
@@ -1566,7 +1575,12 @@ class StarSyncEngine {
       previousRecords,
     );
     final pendingKeys = stored['pendingBulkReplaceKeys'];
-    final keys = {...previousRecords.keys, ...local.keys}.toList()..sort();
+    final snapshot = stored['pendingBulkReplaceLocalKeys'];
+    final keys = {
+      ...previousRecords.keys,
+      ...local.keys,
+      if (snapshot is List) ...snapshot.whereType<String>(),
+    }.toList()..sort();
     for (final key in keys) {
       final old = previousRecords[key];
       if (local.containsKey(key)) {
@@ -1587,10 +1601,13 @@ class StarSyncEngine {
             valueHash: hash,
           );
         }
-      } else if (stored['pendingBulkReplace'] != true &&
-          !collection.growOnly &&
-          old != null &&
-          !old.deleted) {
+      } else if (!collection.growOnly &&
+          ((stored['pendingBulkReplace'] == true &&
+                  snapshot is List &&
+                  snapshot.contains(key)) ||
+              (stored['pendingBulkReplace'] != true &&
+                  old != null &&
+                  !old.deleted))) {
         reconciled[key] = StarSyncCollectionRecord(
           key: key,
           value: null,
@@ -1755,6 +1772,7 @@ class StarSyncEngine {
   }) => _queue.runExclusive(() async {
     final state = _state;
     final previous = state?.pendingBulkReplace;
+    final previousStarIds = state?.pendingBulkReplaceStarIds;
     final previousCollections = state == null
         ? null
         : Map<String, dynamic>.from(state.collectionStates);
@@ -1764,10 +1782,38 @@ class StarSyncEngine {
     } on Object {
       if (state != null && identical(_state, state)) {
         state.pendingBulkReplace = previous!;
+        state.pendingBulkReplaceStarIds = previousStarIds;
         state.collectionStates = previousCollections!;
         await _saveState();
       }
       rethrow;
+    }
+    if (state != null && identical(_state, state)) {
+      final stars = await activityStore.loadStarredMessages();
+      final snapshots = <String, List<String>?>{};
+      for (final collection in _collections) {
+        if (collections == null || collections.containsKey(collection.name)) {
+          final local = await collection.readLocal();
+          snapshots[collection.name] = local == null
+              ? null
+              : (local.keys.toList()..sort());
+        }
+      }
+      state.pendingBulkReplaceStarIds = {
+        for (final star in stars)
+          if (star.isValid) star.id,
+      };
+      state.collectionStates = {
+        ...state.collectionStates,
+        for (final entry in snapshots.entries)
+          entry.key: {
+            ...Map<String, dynamic>.from(
+              state.collectionStates[entry.key] as Map? ?? {},
+            ),
+            'pendingBulkReplaceLocalKeys': entry.value,
+          },
+      };
+      await _saveState();
     }
   });
 
@@ -1777,8 +1823,10 @@ class StarSyncEngine {
           return;
         }
         final previous = _state!.pendingBulkReplace;
+        final previousStarIds = _state!.pendingBulkReplaceStarIds;
         final previousCollections = _state!.collectionStates;
         _state!.pendingBulkReplace = true;
+        _state!.pendingBulkReplaceStarIds = null;
         _state!.collectionStates = {
           ...previousCollections,
           for (final name in _collectionNames())
@@ -1788,6 +1836,7 @@ class StarSyncEngine {
                   previousCollections[name] as Map? ?? {},
                 ),
                 'pendingBulkReplace': true,
+                'pendingBulkReplaceLocalKeys': null,
                 'pendingBulkReplaceKeys':
                     collections == null ||
                         collections[name] == null ||
@@ -1813,6 +1862,7 @@ class StarSyncEngine {
           // The restore aborts; a stale marker would turn a later unstar into
           // a restore omission.
           _state!.pendingBulkReplace = previous;
+          _state!.pendingBulkReplaceStarIds = previousStarIds;
           _state!.collectionStates = previousCollections;
           rethrow;
         }

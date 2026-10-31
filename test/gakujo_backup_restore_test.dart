@@ -10,6 +10,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 const _modeKey = 'more_better_gakujo_download_save_mode';
@@ -63,6 +64,35 @@ void main() {
       },
     ],
   };
+
+  test('legacy notification topic restores the message choice', () async {
+    final storage = _Storage({});
+    final settings = GakujoAppSettingsStore(secureStorage: storage);
+    final backup = parseGakujoBackup(
+      '{"version":2,"notificationTopics":["message"]}',
+    );
+    final keys = {'version', 'notificationTopics'};
+    await restoreGakujoBackup(
+      backup: GakujoBackupImport(
+        version: backup.version,
+        notificationTopics: backup.notificationTopics,
+        messageNotification: restoredMessageNotification(backup, keys),
+      ),
+      settingsStore: settings,
+      historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      isAllowedUrl: (_) => true,
+      isAllowedNavigationUrl: (_) => true,
+    );
+    expect(
+      (await settings.load()).messageNotification.mode,
+      GakujoMessageNotificationMode.deadlines,
+    );
+    expect(
+      restoredSyncCollections(backup, keys)['settings'],
+      contains('messageNotification'),
+    );
+  });
 
   test('star replacement hook surrounds the restore and skips absent stars',
       () async {

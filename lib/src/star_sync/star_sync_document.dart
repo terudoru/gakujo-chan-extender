@@ -242,13 +242,18 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
   required String deviceId,
   required DateTime now,
   bool bulkReplace = false,
+  Set<String>? bulkReplaceStarIds,
 }) {
   final result = Map<String, StarSyncRecord>.from(state);
   final localById = {
     for (final item in local)
       if (item.isValid) item.id: item,
   };
-  final ids = {...state.keys, ...localById.keys}.toList()..sort();
+  final ids = {
+    ...state.keys,
+    ...localById.keys,
+    ...?bulkReplaceStarIds,
+  }.toList()..sort();
   GakujoStarredMessage? lastKept;
   if (local.length >= starSyncMaxStars && local.isNotEmpty) {
     lastKept = local.reduce((a, b) {
@@ -289,6 +294,17 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
           item.title != previous.title) {
         result[id] = previous.copyWith(title: item.title);
       }
+    } else if (bulkReplace && (bulkReplaceStarIds?.contains(id) ?? false)) {
+      final record = previous ?? known[id];
+      result[id] = StarSyncRecord(
+        id: id,
+        title: '',
+        starred: false,
+        starredAt: record?.starredAt ?? now,
+        clock: ++clock,
+        deviceId: deviceId,
+        updatedAt: now,
+      );
     } else if (previous != null &&
         previous.starred &&
         !bulkReplace &&

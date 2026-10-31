@@ -167,6 +167,15 @@ bool portableSyncSettingsMatch(
     starSyncCanonicalJson(basedOn);
 
 @visibleForTesting
+GakujoMessageNotificationSettings? restoredMessageNotification(
+  GakujoBackupImport backup,
+  Set<String> backupKeys,
+) => backupKeys.contains('messageNotification') ||
+        backupKeys.contains('notificationTopics')
+    ? backup.messageNotification
+    : null;
+
+@visibleForTesting
 Map<String, Set<String>?> restoredSyncCollections(
   GakujoBackupImport backup,
   Set<String> backupKeys,
@@ -179,6 +188,10 @@ Map<String, Set<String>?> restoredSyncCollections(
     if (backup.messageNotification != null) 'messageNotification',
     if (backup.notificationPreferences != null) 'notificationPreferences',
   }..retainAll(backupKeys);
+  if (backup.messageNotification != null &&
+      backupKeys.contains('notificationTopics')) {
+    settings.add('messageNotification');
+  }
   return {
     if (backup.favorites != null) 'favorites': null,
     if (settings.isNotEmpty) 'settings': settings,
@@ -5872,9 +5885,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
           notificationTopics: backup.notificationTopics,
-          messageNotification: backupKeys.contains('messageNotification')
-              ? backup.messageNotification
-              : null,
+          messageNotification: restoredMessageNotification(backup, backupKeys),
           notificationPreferences: backup.notificationPreferences,
           disabledFeatureFlags: restoredFlags,
           downloadHistory: backup.downloadHistory,
@@ -5902,9 +5913,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
           notificationTopics: backup.notificationTopics,
-          messageNotification: backupKeys.contains('messageNotification')
-              ? backup.messageNotification
-              : null,
+          messageNotification: restoredMessageNotification(backup, backupKeys),
           notificationPreferences: backup.notificationPreferences,
         );
         if (!mounted) {

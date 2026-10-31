@@ -12,12 +12,30 @@ void main() {
       '{"version":2,"notificationTopics":["report"]}',
     );
     expect(restoredSyncCollections(backup, {'version', 'notificationTopics'}), {
-      'settings': {'notificationTopics'},
+      'settings': {'notificationTopics', 'messageNotification'},
     });
     expect(
       restoredSyncCollections(const GakujoBackupImport(version: 2), {}),
       isEmpty,
     );
+  });
+
+  test('legacy notification choice is selected for restore', () {
+    final backup = parseGakujoBackup(
+      '{"version":2,"notificationTopics":["message"]}',
+    );
+    final restored = restoredMessageNotification(backup, {
+      'version',
+      'notificationTopics',
+    });
+    expect(restored?.mode, GakujoMessageNotificationMode.deadlines);
+    expect(
+      restoredSyncCollections(backup, {'version', 'notificationTopics'}),
+      {
+        'settings': {'notificationTopics', 'messageNotification'},
+      },
+    );
+    expect(restoredMessageNotification(backup, {'version'}), isNull);
   });
 
   test('sync restore merges messageStars from the current settings', () {

@@ -2859,6 +2859,67 @@ void main() {
     },
   );
 
+  test('deletions after restore sync while omissions survive', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    final favoritesA = _Collection('favorites');
+    final favoritesB = _Collection('favorites');
+    StarSyncEngine make(
+      _Storage storage,
+      GakujoActivityStore activity,
+      _Collection favorites,
+    ) => StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites],
+    );
+
+    GakujoStarredMessage star(String seqNo) => GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: seqNo,
+      title: seqNo,
+      starredAt: DateTime.utc(2026),
+    );
+    final a = make(storageA, activityA, favoritesA);
+    final b = make(storageB, activityB, favoritesB);
+    await a.setUp(config, 'pass');
+    favoritesA.entries = {'deleted': 'delete', 'omitted': 'keep'};
+    await activityA.replaceStarredMessages([star('1'), star('2')]);
+    await a.syncNow();
+    await b.setUp(config, 'pass');
+    await b.withBulkReplace(() async {
+      favoritesB.entries = {'deleted': 'delete', 'new': 'new'};
+      await activityB.replaceStarredMessages([star('1'), star('3')]);
+    }, collections: const {'favorites': null});
+    favoritesB.entries!.remove('deleted');
+    favoritesB.entries!.remove('new');
+    await activityB.removeStarredMessage(star('1').id);
+    await activityB.removeStarredMessage(star('3').id);
+    b.dispose();
+    final restarted = make(storageB, activityB, favoritesB);
+    await restarted.load();
+    await restarted.syncNow();
+    await a.syncNow();
+    await restarted.syncNow();
+    for (final favorites in [favoritesA, favoritesB]) {
+      expect(favorites.entries, {'omitted': 'keep'});
+    }
+    for (final activity in [activityA, activityB]) {
+      expect((await activity.loadStarredMessages()).map((star) => star.id), [
+        star('2').id,
+      ]);
+    }
+    a.dispose();
+    restarted.dispose();
+  });
+
   test('bulk restore marks only the collections it restored', () async {
     final remote = _Transport();
     final storage = _Storage();
