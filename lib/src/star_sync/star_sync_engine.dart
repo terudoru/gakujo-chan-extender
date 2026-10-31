@@ -138,6 +138,7 @@ class StarSyncState {
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
+    this.pendingLocalClear = false,
     this.keyringEtag,
     this.pendingLocalChange = false,
     this.localReviewRequired = false,
@@ -161,6 +162,7 @@ class StarSyncState {
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
+  bool pendingLocalClear;
   String? keyringEtag;
   bool pendingLocalChange;
   bool localReviewRequired;
@@ -185,6 +187,7 @@ class StarSyncState {
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
+    'pendingLocalClear': pendingLocalClear,
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
     'localReviewRequired': localReviewRequired,
@@ -220,6 +223,7 @@ class StarSyncState {
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
+      pendingLocalClear: json['pendingLocalClear'] as bool? ?? false,
       keyringEtag: json['keyringEtag'] as String?,
       pendingLocalChange: json['pendingLocalChange'] as bool? ?? false,
       localReviewRequired:
@@ -334,12 +338,17 @@ class StarSyncEngine {
       final parsedState = StarSyncState.fromJson(
         jsonDecode(state) as Map<String, dynamic>,
       );
+      _config = parsedConfig;
+      _state = parsedState;
+      try {
+        await _finishPendingLocalClear();
+      } on Object {
+        return;
+      }
       if (parsedConfig.backend != StarSyncBackend.googleDrive) {
         final transport = _transportFactory(parsedConfig);
         transport.close();
       }
-      _config = parsedConfig;
-      _state = parsedState;
       _scheduleCooldown(parsedState);
       _publish();
     } catch (_) {
@@ -370,11 +379,38 @@ class StarSyncEngine {
     value: jsonEncode(_state!.toJson()),
   );
 
+  Future<void> _finishPendingLocalClear() async {
+    final state = _state!;
+    if (!state.pendingLocalClear) return;
+    try {
+      await activityStore.replaceStarredMessages(const []);
+      state.pendingLocalClear = false;
+      if (state.lastError == '端末内のスターを消去できませんでした') {
+        state.status = StarSyncStatus.ok;
+        state.lastError = null;
+      }
+      await _saveState();
+      _publish();
+    } on Object {
+      state.pendingLocalClear = true;
+      state.status = StarSyncStatus.error;
+      state.lastError = '端末内のスターを消去できませんでした';
+      try {
+        await _saveState();
+      } on Object {
+        // The persisted pending flag remains set if saving fails.
+      }
+      _publish();
+      rethrow;
+    }
+  }
+
   Future<void> _install(
     StarSyncConfig config,
     StarSyncState state, {
     required bool clearLocalStars,
   }) async {
+    state.pendingLocalClear = clearLocalStars;
     try {
       await _storage.write(
         key: starSyncStateKey,
@@ -398,9 +434,7 @@ class StarSyncEngine {
     _config = config;
     _state = state;
     _publish();
-    if (clearLocalStars) {
-      await activityStore.replaceStarredMessages(const []);
-    }
+    await _finishPendingLocalClear();
   }
 
   String? _currentAccount() {
@@ -853,6 +887,11 @@ class StarSyncEngine {
     if (_disposed || config == null || state == null) {
       return const StarSyncResult();
     }
+    await _queue.run(() async {
+      if (!_disposed && identical(_config, config) && identical(_state, state)) {
+        await _finishPendingLocalClear();
+      }
+    });
     if ((trigger == StarSyncTrigger.startup ||
             trigger == StarSyncTrigger.resume) &&
         canSync?.call() == false) {
@@ -895,6 +934,7 @@ class StarSyncEngine {
           !identical(_state, state)) {
         return const StarSyncResult();
       }
+      await _finishPendingLocalClear();
       if (trigger != StarSyncTrigger.manual && canSync?.call() == false) {
         if (trigger == StarSyncTrigger.localChange) {
           state.pendingLocalChange = true;
