@@ -397,8 +397,7 @@ class StarSyncEngine {
         (current) async => (
           next: current
               .where(
-                (star) =>
-                    pending[star.id] != star.starredAt.toIso8601String(),
+                (star) => pending[star.id] != star.starredAt.toIso8601String(),
               )
               .toList(),
           result: null,

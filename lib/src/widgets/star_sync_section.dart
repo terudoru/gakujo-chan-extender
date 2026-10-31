@@ -273,14 +273,15 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       if (mounted) setState(() => _error = _errorText(error));
       return;
     }
-    Map<String, String>? clear;
+    Map<String, String>? choice;
     try {
-      clear = await _chooseLocalStars();
+      choice = await _chooseLocalStars();
     } on Object catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
       return;
     }
-    if (clear == null || !mounted) return;
+    if (choice == null || !mounted) return;
+    final clear = choice;
     setState(() {
       _busy = true;
       _error = null;

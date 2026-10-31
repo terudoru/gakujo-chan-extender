@@ -354,60 +354,60 @@ void main() {
             clearLocalStars: snapshot,
           );
       }
-      expect(
-        (await activity.loadStarredMessages()).map((star) => star.seqNo),
-        ['4'],
-      );
+      expect((await activity.loadStarredMessages()).map((star) => star.seqNo), [
+        '4',
+      ]);
       engine.dispose();
     }
   });
 
-  test('replayed clear preserves a star re-added after state save fails', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final activity = GakujoActivityStore(secureStorage: storage);
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activity,
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    );
-    GakujoStarredMessage star(DateTime time) => GakujoStarredMessage(
-      keijitype: '1',
-      genrecd: '2',
-      seqNo: '3',
-      title: 'star',
-      starredAt: time,
-    );
-    await activity.upsertStarredMessage(star(DateTime.utc(2026)));
-    final snapshot = await engine.snapshotLocalStars();
-    storage.failStateAfterStarWrite = true;
-    await expectLater(
-      engine.setUp(config, 'pass', clearLocalStars: snapshot),
-      throwsStateError,
-    );
-    expect(await activity.loadStarredMessages(), isEmpty);
-    expect(
-      StarSyncState.fromJson(
-        jsonDecode(storage.values[starSyncStateKey]!),
-      ).pendingLocalClear,
-      snapshot,
-    );
-    await activity.upsertStarredMessage(star(DateTime.utc(2026, 1, 2)));
-    await engine.syncNow();
-    expect(
-      (await activity.loadStarredMessages()).single.starredAt,
-      DateTime.utc(2026, 1, 2),
-    );
-    expect(
-      StarSyncState.fromJson(
-        jsonDecode(storage.values[starSyncStateKey]!),
-      ).pendingLocalClear,
-      isEmpty,
-    );
-    engine.dispose();
-  });
+  test(
+    'replayed clear preserves a star re-added after state save fails',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      GakujoStarredMessage star(DateTime time) => GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'star',
+        starredAt: time,
+      );
+      await activity.upsertStarredMessage(star(DateTime.utc(2026)));
+      final snapshot = await engine.snapshotLocalStars();
+      storage.failStateAfterStarWrite = true;
+      await expectLater(
+        engine.setUp(config, 'pass', clearLocalStars: snapshot),
+        throwsStateError,
+      );
+      expect(await activity.loadStarredMessages(), isEmpty);
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .pendingLocalClear,
+        snapshot,
+      );
+      await activity.upsertStarredMessage(star(DateTime.utc(2026, 1, 2)));
+      await engine.syncNow();
+      expect(
+        (await activity.loadStarredMessages()).single.starredAt,
+        DateTime.utc(2026, 1, 2),
+      );
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .pendingLocalClear,
+        isEmpty,
+      );
+      engine.dispose();
+    },
+  );
 
   test('unreleased legacy clear fields are ignored', () async {
     final state = StarSyncState(
