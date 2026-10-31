@@ -29,12 +29,9 @@ void main() {
       'notificationTopics',
     });
     expect(restored?.mode, GakujoMessageNotificationMode.deadlines);
-    expect(
-      restoredSyncCollections(backup, {'version', 'notificationTopics'}),
-      {
-        'settings': {'notificationTopics', 'messageNotification'},
-      },
-    );
+    expect(restoredSyncCollections(backup, {'version', 'notificationTopics'}), {
+      'settings': {'notificationTopics', 'messageNotification'},
+    });
     expect(restoredMessageNotification(backup, {'version'}), isNull);
   });
 
