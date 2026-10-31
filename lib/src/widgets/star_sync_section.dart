@@ -111,6 +111,8 @@ class StarSyncSection extends StatefulWidget {
     required this.onResetWithPairing,
     required this.onSetUp,
     required this.onSyncNow,
+    required this.onResumeKeepingLocal,
+    required this.onResumeDiscardingLocal,
     required this.onChangePassphrase,
     required this.onListDevices,
     required this.onDeleteDevice,
@@ -146,6 +148,8 @@ class StarSyncSection extends StatefulWidget {
   })
   onSetUp;
   final Future<void> Function() onSyncNow;
+  final Future<void> Function() onResumeKeepingLocal;
+  final Future<void> Function() onResumeDiscardingLocal;
   final Future<void> Function(String, String) onChangePassphrase;
   final Future<List<StarSyncDeviceInfo>> Function() onListDevices;
   final Future<void> Function(String) onDeleteDevice;
@@ -371,6 +375,54 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       barrierDismissible: false,
                       builder: (_) =>
                           _DisableDialog(onDisable: widget.onDisable),
+                    ),
+              child: const Text('同期を無効にする'),
+            ),
+          ],
+        );
+      }
+      if (status.status == StarSyncStatus.accountReturned) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+            if (_error != null) Text(_error!),
+            if (_busy) const LinearProgressIndicator(),
+            FilledButton(
+              onPressed: _busy ? null : () => _run(widget.onResumeKeepingLocal),
+              child: const Text('含めて再開'),
+            ),
+            OutlinedButton(
+              onPressed: _busy ? null : () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    content: const Text('この端末で、その間に付け外ししたスターは元に戻ります。'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('キャンセル'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('戻して再開'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true && mounted) {
+                  await _run(widget.onResumeDiscardingLocal);
+                }
+              },
+              child: const Text('同期データの状態に戻して再開'),
+            ),
+            OutlinedButton(
+              onPressed: _busy
+                  ? null
+                  : () => showDialog<void>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => _DisableDialog(onDisable: widget.onDisable),
                     ),
               child: const Text('同期を無効にする'),
             ),

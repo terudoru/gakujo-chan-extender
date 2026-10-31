@@ -2702,6 +2702,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         await _ensureStarSyncLoaded();
                         await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
+                      onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
+                      onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
                       onChangePassphrase: (current, next) async {
                         await _ensureStarSyncLoaded();
                         await _starSyncEngine.changePassphrase(current, next);

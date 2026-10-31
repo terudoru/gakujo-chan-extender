@@ -81,6 +81,7 @@ class _Transport implements StarSyncTransport {
   bool _racePending = false;
   List<int>? overwriteKeyring;
   bool revoked = false;
+  bool authFailure = false;
   Completer<void>? devicePut;
 
   @override
@@ -92,6 +93,13 @@ class _Transport implements StarSyncTransport {
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
     lists++;
+    if (authFailure) {
+      throw const StarSyncTransportException(
+        StarSyncTransportErrorKind.auth,
+        'unauthorized',
+        statusCode: 401,
+      );
+    }
     if (revoked) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.revoked,
@@ -531,11 +539,67 @@ void main() {
       expect(transports, calls);
       id = 'student';
       await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(transports, calls);
+      expect(remote.puts, puts);
+      await engine.resumeKeepingLocal();
       expect(engine.status.value.status, StarSyncStatus.ok);
       expect(transports, greaterThan(calls));
       expect(remote.puts, greaterThan(puts));
     },
   );
+
+  for (final discard in [true, false]) {
+    test('account return requires a choice (discard: $discard)', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      var account = 'A';
+      StarSyncEngine make() => StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      GakujoStarredMessage star(String id) => GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: id,
+        title: id,
+        starredAt: DateTime.utc(2026),
+      );
+      var engine = make();
+      await engine.setUp(config, 'pass');
+      await activity.upsertStarredMessage(star('1'));
+      await engine.syncNow();
+      account = 'B';
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+      expect((jsonDecode(storage.values[starSyncStateKey]!) as Map)['localReviewRequired'], isTrue);
+      await activity.replaceStarredMessages([star('2')]);
+      final puts = remote.puts;
+      engine.dispose();
+      engine = make();
+      await engine.load();
+      account = 'A';
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(remote.puts, puts);
+      if (discard) {
+        await engine.resumeDiscardingLocal();
+      } else {
+        await engine.resumeKeepingLocal();
+      }
+      final ids = (await activity.loadStarredMessages()).map((e) => e.seqNo).toSet();
+      expect(ids, discard ? {'1'} : {'2'});
+      expect(remote.puts, discard ? puts : greaterThan(puts));
+      final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+      expect(state['localReviewRequired'], isFalse);
+      expect((state['records'] as Map).containsKey('1|2|2'), !discard);
+      engine.dispose();
+    });
+  }
 
   test('old state without a bound account stops before transport', () async {
     final remote = _Transport();
@@ -986,7 +1050,11 @@ void main() {
     final b = make();
     await a.setUp(config, 'correct horse');
     await b.setUp(config, 'correct horse');
+    final otherFiles = remote.files.keys
+        .where((path) => path.startsWith('stars/devices/'))
+        .toSet();
     await a.resetRemote('new passphrase');
+    expect(otherFiles.every(remote.files.containsKey), isTrue);
     await b.syncNow();
     expect(b.status.value.status, StarSyncStatus.needsPassphrase);
     await b.rejoin('new passphrase');
@@ -994,7 +1062,7 @@ void main() {
   });
 
   test(
-    'old-key files are removed only after a matching keyring check',
+    'different-key files are kept without a partial sync warning',
     () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -1032,7 +1100,9 @@ void main() {
       expect(remote.files.containsKey(path), isTrue);
       remote.files['stars/keyring.json'] = currentKeyring;
       expect((await engine.syncNow()).skippedFiles, 0);
-      expect(remote.files.containsKey(path), isFalse);
+      expect(remote.files.containsKey(path), isTrue);
+      expect(engine.status.value.lastError, isNull);
+      expect(remote.deletes, 0);
       expect(remote.files[ownPath], oldOwnFile);
     },
   );
@@ -1277,7 +1347,7 @@ void main() {
     expect(remote.deletes, 1);
   });
   test(
-    'disabled setup reset removes old files and clears local stars',
+    'disabled setup reset retains old device files and clears local stars',
     () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -1313,7 +1383,7 @@ void main() {
       );
       expect(await engine.localStarCount(), 0);
       expect(remote.files['stars/keyring.json'], isNot(oldKeyring));
-      expect(oldDevices.where(remote.files.containsKey), isEmpty);
+      expect(oldDevices.where(remote.files.containsKey), hasLength(oldDevices.length));
       final state = StarSyncState.fromJson(
         jsonDecode(storage.values[starSyncStateKey]!),
       );
@@ -1499,6 +1569,25 @@ void main() {
       expect(remote.puts, puts);
     },
   );
+
+  test('Drive transport auth failure requests sign in without cooldown', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithPairing(
+      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    );
+    remote.authFailure = true;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
+    expect(engine.status.value.lastError, 'Google へのログインが必要です');
+    expect(engine.status.value.cooldownUntil, isNull);
+  });
 
   test('revoked Google credentials request sign in without cooldown', () async {
     final remote = _Transport();

@@ -11,6 +11,7 @@ enum StarSyncStatus {
   needsPairingCode,
   needsGoogleSignIn,
   accountMismatch,
+  accountReturned,
 }
 
 class StarSyncConfig {

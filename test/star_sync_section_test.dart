@@ -23,6 +23,8 @@ void main() {
     onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
     Future<void> Function()? onGoogleReSignIn,
+    Future<void> Function()? onResumeKeepingLocal,
+    Future<void> Function()? onResumeDiscardingLocal,
     Future<StarSyncPairingSetup> Function({
       required bool resetExisting,
       required bool clearLocalStars,
@@ -64,6 +66,8 @@ void main() {
                 required clearLocalStars,
               }) async {},
           onSyncNow: () async {},
+          onResumeKeepingLocal: onResumeKeepingLocal ?? () async {},
+          onResumeDiscardingLocal: onResumeDiscardingLocal ?? () async {},
           onChangePassphrase: (_, _) async {},
           onListDevices: () async => <StarSyncDeviceInfo>[],
           onDeleteDevice: (_) async {},
@@ -74,6 +78,34 @@ void main() {
       ),
     ),
   );
+
+  testWidgets('account return asks before discarding local changes', (tester) async {
+    var kept = 0;
+    var discarded = 0;
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.accountReturned,
+      ),
+    );
+    await tester.pumpWidget(section(
+      status,
+      onResumeKeepingLocal: () async { kept++; },
+      onResumeDiscardingLocal: () async { discarded++; },
+    ));
+    expect(find.text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'), findsOneWidget);
+    await tester.tap(find.text('含めて再開'));
+    await tester.pumpAndSettle();
+    expect(kept, 1);
+    await tester.tap(find.text('同期データの状態に戻して再開'));
+    await tester.pumpAndSettle();
+    expect(find.text('この端末で、その間に付け外ししたスターは元に戻ります。'), findsOneWidget);
+    expect(discarded, 0);
+    await tester.tap(find.text('戻して再開'));
+    await tester.pumpAndSettle();
+    expect(discarded, 1);
+    expect(find.text('同期を無効にする'), findsOneWidget);
+  });
 
   testWidgets('enabled state shows partial sync as a warning', (tester) async {
     final status = ValueNotifier(
