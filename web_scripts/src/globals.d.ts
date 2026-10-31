@@ -1,5 +1,27 @@
 // build.ts provides this variable locally for each expression entry.
 declare var __mbgEntryResult: unknown;
+declare var mbgValidateImage: (blob: Blob) => Promise<{ width: number; height: number }>;
+
+interface MbgCompressionHookFunction {
+  (this: HTMLFormElement, ...args: unknown[]): void;
+  __mbgFormSubmitHook?: MbgCompressionHook;
+}
+interface MbgCompressionHookOwner {
+  submit?: MbgCompressionHookFunction;
+  requestSubmit?: MbgCompressionHookFunction;
+  original?: MbgCompressionHookFunction;
+}
+interface MbgCompressionHook {
+  prototype: MbgCompressionHookOwner;
+  method: 'submit' | 'requestSubmit';
+  wrapper: MbgCompressionHookFunction;
+  original: MbgCompressionHookFunction;
+}
+interface HTMLInputElement {
+  __mbgPdfCompressionCancel?: () => void;
+  __mbgOfficeCompressionCancel?: () => void;
+  __mbgUploadCompressionPending?: number;
+}
 
 interface MbgSubmitHookEntry {
   prototype: MbgSubmitHookOwner;
@@ -15,6 +37,9 @@ interface MbgSubmitHookOwner {
   original?: MbgSubmitHookFunction;
 }
 interface Window {
+  __MBG_UPLOAD_COMPRESSION_ENABLED?: boolean;
+  __MBG_UPLOAD_COMPRESSION_GENERATION?: number;
+  __MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES?: MbgCompressionHook[];
   __MBG_DOWNLOAD_CAPTURE_VERSION?: number | null;
   __MBG_DOWNLOAD_CAPTURE_ATTACH?: (() => void) | null;
   __MBG_DOWNLOAD_CAPTURE_HANDLER?: EventListener | null;

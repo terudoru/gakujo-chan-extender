@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const entries: { source: string; output: string; name: string; kind?: 'statement' | 'expression' }[] = [
+const entries: { source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true }[] = [
   { source: 'web_scripts/src/session_extender/main.ts', output: 'lib/src/generated/session_extender.g.dart', name: 'gakujoSessionExtenderJs' },
   { source: 'web_scripts/src/session_extender/teardown.ts', output: 'lib/src/generated/session_extender_teardown.g.dart', name: 'gakujoSessionExtenderTeardownJs' },
   { source: 'web_scripts/src/download_capture/main.ts', output: 'lib/src/generated/download_capture.g.dart', name: 'gakujoDownloadCaptureJs' },
@@ -26,6 +26,10 @@ const entries: { source: string; output: string; name: string; kind?: 'statement
   { source: 'web_scripts/src/calendar_extraction/main.ts', output: 'lib/src/generated/calendar_extraction.g.dart', name: 'gakujoCalendarExtractionJs', kind: 'expression' },
   { source: 'web_scripts/src/calendar_schedule_month_view_activation/main.ts', output: 'lib/src/generated/calendar_schedule_month_view_activation.g.dart', name: 'gakujoCalendarScheduleMonthViewActivationJs', kind: 'expression' },
   { source: 'web_scripts/src/popup_relay/main.ts', output: 'lib/src/generated/popup_relay.g.dart', name: 'gakujoPopupRelayJs' },
+  { source: 'web_scripts/src/image_bounds/main.ts', output: 'lib/src/generated/image_bounds.g.dart', name: 'gakujoImageBoundsJs' },
+  { source: 'web_scripts/src/upload_preview/main.ts', output: 'lib/src/generated/upload_preview.g.dart', name: 'gakujoUploadPreviewJs', config: true },
+  { source: 'web_scripts/src/upload_compression/main.ts', output: 'lib/src/generated/upload_compression.g.dart', name: 'gakujoUploadCompressionJs', config: true },
+  { source: 'web_scripts/src/upload_compression/teardown.ts', output: 'lib/src/generated/upload_compression_teardown.g.dart', name: 'gakujoUploadCompressionTeardownJs' },
 ];
 const check = process.argv.includes('--check');
 const stale: string[] = [];
@@ -47,10 +51,17 @@ for (const entry of entries) {
   const js = entry.kind === 'expression'
     ? `(function() {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})()\n`
     : outputJs;
-  if (js.includes("'''")) {
+  if ((entry.config ? outputJs : js).includes("'''")) {
     throw new Error(`${entry.source}: generated JavaScript contains ''' and cannot be embedded in a Dart raw string`);
   }
-  const content = `// GENERATED FILE - DO NOT EDIT.\n// Source: ${entry.source}\n// Regenerate with: npm --prefix web_scripts run build\n\nconst String ${entry.name} = r'''\n${js}''';\n`;
+  const header = `// GENERATED FILE - DO NOT EDIT.\n// Source: ${entry.source}\n// Regenerate with: npm --prefix web_scripts run build\n\n`;
+  const prefix = entry.kind === 'expression'
+    ? `(function(__mbgConfig) {\n${outputJs}var __mbgEntryResult;\nreturn __mbgEntryResult;\n})(`
+    : `(function(__mbgConfig) {\n${outputJs}})(`;
+  const suffix = entry.kind === 'expression' ? ')\n' : ');\n';
+  const content = entry.config
+    ? `${header}import 'dart:convert';\n\nString ${entry.name}(Map<String, Object?> config) =>\n    _${entry.name}Prefix +\n    jsonEncode(config) +\n    _${entry.name}Suffix;\n\nconst String _${entry.name}Prefix = r'''${prefix}''';\nconst String _${entry.name}Suffix = r'''${suffix}''';\n`
+    : `${header}const String ${entry.name} = r'''\n${js}''';\n`;
   const output = resolve(root, entry.output);
   if (check) {
     let existing: string | undefined;
