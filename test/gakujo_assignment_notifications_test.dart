@@ -714,8 +714,18 @@ void main() {
     final withdrawn = _assignment(
       _row('小テスト', '取り下げ', '未提出', '2099/10/21 17:01 ～2099/10/29 16:31'),
     );
+    // Closed recently enough to stay within the store's retention.
+    String gakujoTime(Duration ago) {
+      final t =
+          DateTime.now().toUtc().add(const Duration(hours: 9)).subtract(ago);
+      String two(int n) => n.toString().padLeft(2, '0');
+      return '${t.year}/${two(t.month)}/${two(t.day)} '
+          '${two(t.hour)}:${two(t.minute)}';
+    }
+
     final past = _assignment(
-      _row('レポート', '終わった課題', '提出済', '2026/10/01 00:00 ～2026/10/02 00:00'),
+      _row('レポート', '終わった課題', '提出済',
+          '${gakujoTime(const Duration(days: 3))} ～${gakujoTime(const Duration(days: 2))}'),
     );
     await store.mergeAssignments([kept, withdrawn, past]);
 
