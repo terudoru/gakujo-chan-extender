@@ -59,10 +59,27 @@ class MethodChannelGakujoDownloadService extends GakujoDownloadService {
     'net.yoshida.morebettergakujo/downloads',
   );
 
-  Future<Uint8List> readContentUri(String uri) async {
-    final bytes = await _channel.invokeMethod<Uint8List>('readContentUri', {'uri': uri});
-    if (bytes == null) throw StateError('Content URI returned no data');
-    return bytes;
+  Future<int> contentUriSize(String uri) async {
+    final size = await _channel.invokeMethod<int>('contentUriSize', {'uri': uri});
+    if (size == null || size < 0) throw StateError('Content URI size unavailable');
+    return size;
+  }
+
+  Stream<List<int>> openContentUri(String uri, int size) async* {
+    const chunkSize = 8 * 1024 * 1024;
+    var offset = 0;
+    while (offset < size) {
+      final length = size - offset < chunkSize ? size - offset : chunkSize;
+      final bytes = await _channel.invokeMethod<Uint8List>(
+        'readContentUriChunk',
+        {'uri': uri, 'offset': offset, 'length': length},
+      );
+      if (bytes == null || bytes.length != length) {
+        throw StateError('Content URI changed or returned incomplete data');
+      }
+      offset += bytes.length;
+      yield bytes;
+    }
   }
 
   @override

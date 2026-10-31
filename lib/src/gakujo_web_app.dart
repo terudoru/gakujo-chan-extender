@@ -1292,7 +1292,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Timer? _backgroundRefreshTimer;
   bool _isImportingSettings = false;
   final _backupOperations = StorageOperationQueue();
-  final _notificationPreferenceOperations = StorageOperationQueue();
+  final _settingsOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
   final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
@@ -2155,7 +2155,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String password,
   }) async {
     try {
-      return await _starSyncEngine.runAccountChange(() async {
+      return await _starSyncEngine.runAccountChange(() => _settingsOperations.runExclusive(() async {
         final credentials = await saveGakujoLoginCredentials(
           store: _appSettingsStore,
           loginId: loginId,
@@ -2187,7 +2187,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           enabled: true,
         );
         return true;
-      });
+      }));
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to save login credentials',
@@ -2534,6 +2534,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     onChanged: (flag, enabled) async {
                       if (!await _trySaveSettings(() =>
                           saveGakujoSettingsChange(
+                            operations: _settingsOperations,
                             save: () => _appSettingsStore.saveFeatureEnabled(
                               flag,
                               enabled: enabled,
@@ -4048,7 +4049,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _saveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
-  ) async {
+  ) => _settingsOperations.runExclusive(() async {
     await _appSettingsStore.saveCalendarImportSettings(settings);
     final nextSettings = _appSettings.copyWith(
       calendarImportSettings: settings,
@@ -4060,7 +4061,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = nextSettings;
     });
-  }
+  });
 
   GakujoAppSettings _settingsForPersistence(GakujoAppSettings settings) {
     return gakujoSettingsForPersistence(
@@ -4086,7 +4087,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _saveMessageNotification(
     GakujoMessageNotificationSettings messages,
-  ) async {
+  ) => _settingsOperations.runExclusive(() async {
     // Only messages posted from now on follow the new rule.
     messages = messages.copyWith(since: DateTime.now());
     final nextSettings = _appSettings.copyWith(messageNotification: messages);
@@ -4112,13 +4113,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     setState(() {
       _appSettings = nextSettings;
     });
-  }
+  });
 
   Future<void> _saveNotificationTopics(
     Set<GakujoNotificationTopic> topics,
   ) async {
     await saveGakujoSettingsChange(
-      operations: _notificationPreferenceOperations,
+      operations: _settingsOperations,
       save: () async {
         if (!Platform.isMacOS || _secureStorageAccessAllowed) {
           try {
@@ -4148,7 +4149,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _saveNotificationPreferences(
     NotificationPreferencesUpdate update,
   ) {
-    return _notificationPreferenceOperations.run(() async {
+    return _settingsOperations.runExclusive(() async {
       final preferences = update(_appSettings.notificationPreferences);
       try {
         await saveGakujoSettingsChange(
@@ -4200,7 +4201,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
-  Future<void> _saveMessageExcludeKeywords(List<String> keywords) async {
+  Future<void> _saveMessageExcludeKeywords(List<String> keywords) => _settingsOperations.runExclusive(() async {
     final normalized = normalizeMessageExcludeKeywords(keywords);
     final nextSettings = _appSettings.copyWith(
       messageExcludeKeywords: normalized,
@@ -4233,7 +4234,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _appSettings = nextSettings;
     });
     await _injectMessageFilterIfAllowed();
-  }
+  });
 
   void _beginNavigation({bool preservesPendingMessageOpen = false}) {
     if (_previewNavigationState != 'none' && mounted) {
@@ -5644,7 +5645,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _applySyncedSettings(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
-  }) async {
+  }) => _settingsOperations.runExclusive(() async {
     final previousSettings = _appSettings;
     if (!portableSyncSettingsMatch(previousSettings, basedOn)) return false;
     final backup = importStarSyncPortableSettings(previousSettings, entries);
@@ -5656,8 +5657,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       isAllowedUrl: _isAllowedBackupUrl,
       isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
     );
-    final nextSettings = previousSettings.copyWith(
-      disabledFeatureFlags: backup.disabledFeatureFlags,
+    final currentSettings = _appSettings;
+    if (!portableSyncSettingsMatch(currentSettings, basedOn)) return false;
+    final currentBackup = importStarSyncPortableSettings(currentSettings, entries);
+    final nextSettings = currentSettings.copyWith(
+      disabledFeatureFlags: currentBackup.disabledFeatureFlags,
       calendarImportSettings: backup.calendarImportSettings,
       messageExcludeKeywords: backup.messageExcludeKeywords,
       notificationTopics: backup.notificationTopics,
@@ -5675,7 +5679,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_syncReminders());
     _scheduleAutoBackup();
     return true;
-  }
+  });
 
   Future<bool> _canSyncReportDrafts() async => mounted &&
       AllowedWebOrigins.canLoad(await _controller.currentUrl(), debugAllowed: _debugAllowed);
@@ -5762,7 +5766,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _ensureStarSyncLoaded();
       final previousSettings = _appSettings;
       late GakujoAppSettings nextSettings;
-      await _starSyncEngine.withBulkReplace(() async {
+      await _starSyncEngine.withBulkReplace(() => _settingsOperations.runExclusive(() async {
         await restoreGakujoBackup(
           backup: backup,
           settingsStore: _appSettingsStore,
@@ -5791,7 +5795,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
           _appSettings = nextSettings;
         });
-      });
+      }));
       if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(

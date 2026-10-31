@@ -1161,18 +1161,35 @@ class GakujoReportDraftScript {
         return;
       }
       if (!Object.prototype.hasOwnProperty.call(drafts, key)) {
-        writes.push(function() { store.removeItem(key); });
+        writes.push({store: store, key: key, before: raw, value: null});
         return;
       }
       var draft = drafts[key];
       if (!draft || typeof draft !== 'object' || Array.isArray(draft) ||
           typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
           !Array.isArray(draft.fields)) return;
-      writes.push(function() { store.setItem(key, JSON.stringify(draft)); });
+      writes.push({store: store, key: key, before: raw, value: JSON.stringify(draft)});
     });
   });
-  writes.forEach(function(write) { write(); });
-  return matched;
+  if (!matched) return false;
+  var written = [];
+  try {
+    writes.forEach(function(write) {
+      written.push(write);
+      if (write.value === null) write.store.removeItem(write.key);
+      else write.store.setItem(write.key, write.value);
+    });
+  } catch (_) {
+    for (var i = written.length - 1; i >= 0; i -= 1) {
+      try {
+        var write = written[i];
+        if (write.before === null) write.store.removeItem(write.key);
+        else write.store.setItem(write.key, write.before);
+      } catch (_) { throw new Error('Draft rollback failed'); }
+    }
+    return false;
+  }
+  return true;
 ''';
     return _buildStorageAction(
       'var drafts = JSON.parse(${jsonEncode(jsonEncode(drafts))});\n'

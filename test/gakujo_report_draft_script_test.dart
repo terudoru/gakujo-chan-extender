@@ -73,7 +73,26 @@ void main() {
     expect(result['result'], isFalse);
     final storage = result['storage'] as Map<String, dynamic>;
     expect(jsonDecode(storage[key] as String), edited);
-    expect(jsonDecode(storage[unchanged] as String), replacement);
+    expect(jsonDecode(storage[unchanged] as String), expected);
+  });
+
+  test('import rolls back earlier writes when storage fails', () async {
+    const first = 'mbg-report-draft:v2:first';
+    const second = 'mbg-report-draft:v2:second';
+    final original = {'savedAt': 1, 'fields': []};
+    final replacement = {'savedAt': 2, 'fields': []};
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildImportAll(
+        {first: replacement, second: replacement},
+        {first: original, second: original},
+      ),
+      {first: jsonEncode(original), second: jsonEncode(original)},
+      failKey: second,
+    );
+    expect(result['result'], isFalse);
+    final storage = result['storage'] as Map<String, dynamic>;
+    expect(jsonDecode(storage[first] as String), original);
+    expect(jsonDecode(storage[second] as String), original);
   });
 
   test('failed storage keeps pending text and reports failure until retry',
@@ -568,8 +587,9 @@ Future<Map<String, dynamic>> _evaluateDraft(Map<String, dynamic> spec) async {
 
 Future<Map<String, dynamic>> _evaluateSyncStorage(
   String script,
-  Map<String, String> initial,
-) async {
+  Map<String, String> initial, {
+  String? failKey,
+}) async {
   const harness = r'''
 const vm = require('node:vm');
 const input = JSON.parse(process.argv[1]);
@@ -578,7 +598,10 @@ const storage = {
   get length() { return values.size; },
   key(i) { return Array.from(values.keys())[i] ?? null; },
   getItem(key) { return values.has(key) ? values.get(key) : null; },
-  setItem(key, value) { values.set(key, String(value)); },
+  setItem(key, value) {
+    if (input.failKey === key) { input.failKey = null; throw Error('write failed'); }
+    values.set(key, String(value));
+  },
   removeItem(key) { values.delete(key); }
 };
 const document = {defaultView: {localStorage: storage}, querySelector() { return null; }};
@@ -588,7 +611,7 @@ process.stdout.write(JSON.stringify({result, storage: Object.fromEntries(values)
   final process = await Process.run('node', [
     '-e',
     harness,
-    jsonEncode({'script': script, 'initial': initial}),
+    jsonEncode({'script': script, 'initial': initial, 'failKey': failKey}),
   ]);
   expect(process.exitCode, 0, reason: process.stderr.toString());
   return jsonDecode(process.stdout as String) as Map<String, dynamic>;

@@ -249,8 +249,12 @@ void main() {
       stored['scopes'],
       containsAll([...starSyncGoogleScopes, googleDriveFileScope]),
     );
-    expect(await makeAuth().restore(), 'user@example.com');
-    expect(await auth.accessToken(forceRefresh: true), 'refresh1');
+    final restarted = makeAuth();
+    expect(await restarted.restore(), 'user@example.com');
+    expect(await restarted.hasScope(googleDriveFileScope), isTrue);
+    await restarted.requestScopes([googleDriveFileScope]);
+    expect(await restarted.accessToken(), 'refresh1');
+    expect(await auth.accessToken(forceRefresh: true), 'refresh2');
 
     changedAccount = true;
     await expectLater(
@@ -267,7 +271,7 @@ void main() {
       jsonDecode(storage.values[starSyncGoogleTokenKey]!)['refreshToken'],
       'new-refresh-secret',
     );
-    expect(await auth.accessToken(forceRefresh: true), 'refresh2');
+    expect(await auth.accessToken(forceRefresh: true), 'refresh3');
   });
 
   test('sign out deletes credentials', () async {

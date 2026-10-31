@@ -31,16 +31,23 @@ import java.net.URLEncoder
 import java.util.Locale
 import java.util.TimeZone
 
-internal fun readContentBytes(input: java.io.InputStream, limit: Int = 200 * 1024 * 1024): ByteArray {
-    val output = java.io.ByteArrayOutputStream()
-    val buffer = ByteArray(64 * 1024)
-    while (true) {
-        val count = input.read(buffer)
-        if (count == -1) break
-        if (count > limit - output.size()) throw IllegalArgumentException("Content is too large")
-        output.write(buffer, 0, count)
+internal fun readContentChunk(input: java.io.InputStream, offset: Long, length: Int): ByteArray {
+    require(offset >= 0 && length in 1..(8 * 1024 * 1024))
+    var remaining = offset
+    while (remaining > 0) {
+        val skipped = input.skip(remaining)
+        if (skipped > 0) remaining -= skipped
+        else if (input.read() == -1) throw java.io.EOFException()
+        else remaining--
     }
-    return output.toByteArray()
+    val bytes = ByteArray(length)
+    var read = 0
+    while (read < length) {
+        val count = input.read(bytes, read, length - read)
+        if (count == -1) throw java.io.EOFException()
+        if (count > 0) read += count
+    }
+    return bytes
 }
 
 internal data class GakujoCalendarEventData(
@@ -498,7 +505,8 @@ class MainActivity : FlutterActivity() {
                 "downloadToPickedFile" -> downloadToPickedFile(call, result)
                 "exportDownloadedFile" -> exportDownloadedFile(call, result)
                 "openDownloadedFile" -> openDownloadedFile(call, result)
-                "readContentUri" -> readContentUri(call, result)
+                "readContentUriChunk" -> readContentUriChunk(call, result)
+                "contentUriSize" -> contentUriSize(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -599,20 +607,41 @@ class MainActivity : FlutterActivity() {
             pendingExportResult != null
     }
 
-    private fun readContentUri(call: MethodCall, result: MethodChannel.Result) {
-        val value = call.argument<String>("uri")
-        val uri = value?.let { Uri.parse(it) }
-        if (uri == null || uri.scheme != "content") {
+    private fun readContentUriChunk(call: MethodCall, result: MethodChannel.Result) {
+        val uri = call.argument<String>("uri")?.let(Uri::parse)
+        val offset = call.argument<Number>("offset")?.toLong()
+        val length = call.argument<Number>("length")?.toInt()
+        if (uri?.scheme != "content" || offset == null || offset < 0 ||
+            length == null || length !in 1..(8 * 1024 * 1024)) {
+            result.error("invalid_arguments", "Invalid content URI or range", null)
+            return
+        }
+        Thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.use {
+                    readContentChunk(it, offset, length)
+                } ?: throw IllegalStateException("Content URI is unavailable")
+                runOnUiThread { result.success(bytes) }
+            } catch (error: Throwable) {
+                runOnUiThread { result.error("read_failed", error.message, null) }
+            }
+        }.start()
+    }
+
+    private fun contentUriSize(call: MethodCall, result: MethodChannel.Result) {
+        val uri = call.argument<String>("uri")?.let(Uri::parse)
+        if (uri?.scheme != "content") {
             result.error("invalid_uri", "Invalid content URI", null)
             return
         }
         Thread {
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                    readContentBytes(input)
-                } ?: throw IllegalStateException("Content URI is unavailable")
-                runOnUiThread { result.success(bytes) }
-            } catch (error: Exception) {
+                val size = contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
+                    if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else -1L
+                } ?: -1L
+                if (size < 0) throw IllegalStateException("Content URI size unavailable")
+                runOnUiThread { result.success(size) }
+            } catch (error: Throwable) {
                 runOnUiThread { result.error("read_failed", error.message, null) }
             }
         }.start()

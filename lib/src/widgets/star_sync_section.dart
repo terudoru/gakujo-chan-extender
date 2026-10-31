@@ -412,7 +412,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('バックアップから復元しますか？'),
-        content: const Text('現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。'),
+        content: const Text('バックアップの内容で上書き・追加します。バックアップ後に他の端末で追加したものは残ります。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),

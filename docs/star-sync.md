@@ -176,4 +176,6 @@ Drive API の上限（2026年5月1日以降に作成したプロジェクト）�
 
 ## Sync storage backups and restore
 
-Encrypted sync-storage backups omit download save mode, page mode, the messageStars disabled flag, and credential-like fields. Restore from sync storage ignores those fields and retains their local values. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs with a 200 MiB limit.
+Encrypted sync-storage backups omit download save mode, page mode, the messageStars disabled flag, and credential-like fields. Restore from sync storage ignores those fields and retains their local values. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs in chunks of at most 8 MiB.
+
+バックアップ復元時、同期対象のコレクションはバックアップの値で上書き・追加し、省略されたキーは削除しません。バックアップ後に他の端末で追加された項目も残ります。
