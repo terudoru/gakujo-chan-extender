@@ -1,6 +1,6 @@
 # スターの複数端末共有（設計メモ）
 
-状態: `star-sync` ブランチで実装済み（未リリース）。実装は `lib/src/star_sync/` と設定画面の「スターの端末間同期」です。S3 互換は SeaweedFS 3.80（SigV4 認証あり）で動作を確認済みです。実際の WebDAV サーバーでの確認はまだ行っていません。
+状態: `star-sync` ブランチで実装済み（未リリース）。実装は `lib/src/star_sync/` と設定画面の「スターの端末間同期」です。S3 互換は SeaweedFS 3.80（SigV4 認証あり）、WebDAV は Apache httpd 2.4.62 の mod_dav（Basic 認証あり）で動作を確認済みです。
 
 連絡通知のスターを、同じユーザーの複数端末で共有します。同期先のストレージは各ユーザーが用意し、More Better Gakujo 側ではサーバーを運用しません。アプリは利用者が入力した WebDAV または S3 互換ストレージへ、端末ごとに暗号化したファイルを置き、他端末のファイルを読み込んでマージします。
 
@@ -96,7 +96,7 @@
 ## 未決事項
 
 - **削除マーカーの保持期間**: 180日は暫定値です。
-- **実サービスでの確認**: S3 互換は、ローカルの SeaweedFS 3.80 を相手に `test/star_sync_live_s3_test.dart` の5シナリオ（2台での追加・削除・付け直し、誤ったパスフレーズ、パスフレーズ変更、リセット後の再接続、保存ファイルの暗号化）が通りました。このテストは `STAR_SYNC_LIVE_S3_ENDPOINT` などの環境変数を設定したときだけ動きます。WebDAV（Nextcloud・InfiniCLOUD など）と、Cloudflare R2・AWS S3 などのクラウドサービスでは未確認です。MinIO はコミュニティ版のコンテナイメージを取得できず、試せませんでした。
+- **実サービスでの確認**: S3 互換は、ローカルの SeaweedFS 3.80 を相手に `test/star_sync_live_s3_test.dart` の5シナリオ（2台での追加・削除・付け直し、誤ったパスフレーズ、パスフレーズ変更、リセット後の再接続、保存ファイルの暗号化）が通りました。WebDAV は、ローカルの Apache httpd 2.4.62（mod_dav）を相手に `test/star_sync_live_webdav_test.dart` の同じ5シナリオと、誤ったパスワードでの設定失敗が通りました。末尾に `/` のないコレクションURLに 301 を返すサーバーでも、一覧取得とフォルダ作成が動くことを確かめています。どちらのテストも `STAR_SYNC_LIVE_S3_ENDPOINT` や `STAR_SYNC_LIVE_WEBDAV_URL` などの環境変数を設定したときだけ動きます。Nextcloud・InfiniCLOUD などの WebDAV サービスや、Cloudflare R2・AWS S3 などのクラウドサービスでは未確認です。MinIO はコミュニティ版のコンテナイメージを取得できず、試せませんでした。
 
 ## 検証方針
 
