@@ -121,6 +121,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
+  String? get currentEmail => _email;
+
+  @override
   Future<String?> restore() async {
     final stored = await storage.read(key: starSyncGoogleTokenKey);
     if (stored == null) {

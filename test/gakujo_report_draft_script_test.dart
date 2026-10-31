@@ -27,7 +27,8 @@ void main() {
   });
 
   test('imports valid drafts and removes absent v2 keys', () async {
-    final draft = <String, Object?>{'savedAt': 123, 'fields': []};
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final draft = <String, Object?>{'savedAt': now, 'fields': []};
     final result = await _evaluateSyncStorage(
       GakujoReportDraftScript.buildImportAll({
         'mbg-report-draft:v2:valid"\\key': draft,
@@ -36,10 +37,10 @@ void main() {
         'mbg-report-draft:v2:array': [],
         'unrelated': draft,
       }, {
-        'mbg-report-draft:v2:absent': {'savedAt': 12, 'fields': []},
+        'mbg-report-draft:v2:absent': {'savedAt': now, 'fields': []},
       }),
       {
-        'mbg-report-draft:v2:absent': jsonEncode({'savedAt': 12, 'fields': []}),
+        'mbg-report-draft:v2:absent': jsonEncode({'savedAt': now, 'fields': []}),
         'mbg-report-draft:v1:old': 'keep',
         'unrelated': 'keep',
       },
@@ -57,12 +58,37 @@ void main() {
     expect(storage['unrelated'], 'keep');
   });
 
+  test('import ignores expired and malformed stored drafts', () async {
+    const expired = 'mbg-report-draft:v2:expired';
+    const broken = 'mbg-report-draft:v2:broken';
+    const incoming = 'mbg-report-draft:v2:incoming';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final old = jsonEncode({
+      'savedAt': now - const Duration(days: 15).inMilliseconds,
+      'fields': [],
+    });
+    final draft = {'savedAt': now, 'fields': []};
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildImportAll(
+        {expired: draft, broken: draft, incoming: draft},
+        {},
+      ),
+      {expired: old, broken: '{'},
+    );
+    expect(result['result'], isTrue);
+    final storage = result['storage'] as Map<String, dynamic>;
+    expect(storage[expired], old);
+    expect(storage[broken], '{');
+    expect(jsonDecode(storage[incoming] as String), draft);
+  });
+
   test('import preserves drafts changed since the snapshot', () async {
     const key = 'mbg-report-draft:v2:changed';
     const unchanged = 'mbg-report-draft:v2:unchanged';
-    final expected = {'savedAt': 1, 'fields': []};
-    final edited = {'savedAt': 2, 'fields': []};
-    final replacement = {'savedAt': 3, 'fields': []};
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final expected = {'savedAt': now, 'fields': []};
+    final edited = {'savedAt': now + 1, 'fields': []};
+    final replacement = {'savedAt': now + 2, 'fields': []};
     final result = await _evaluateSyncStorage(
       GakujoReportDraftScript.buildImportAll(
         {key: replacement, unchanged: replacement},
@@ -79,8 +105,9 @@ void main() {
   test('import rolls back earlier writes when storage fails', () async {
     const first = 'mbg-report-draft:v2:first';
     const second = 'mbg-report-draft:v2:second';
-    final original = {'savedAt': 1, 'fields': []};
-    final replacement = {'savedAt': 2, 'fields': []};
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final original = {'savedAt': now, 'fields': []};
+    final replacement = {'savedAt': now + 1, 'fields': []};
     final result = await _evaluateSyncStorage(
       GakujoReportDraftScript.buildImportAll(
         {first: replacement, second: replacement},

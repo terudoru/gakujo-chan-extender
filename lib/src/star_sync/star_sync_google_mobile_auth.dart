@@ -37,6 +37,9 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   }
 
   @override
+  String? get currentEmail => _account?.email;
+
+  @override
   Future<String?> restore() => _guard(() async {
     await _initialize();
     final attempt = GoogleSignIn.instance.attemptLightweightAuthentication();

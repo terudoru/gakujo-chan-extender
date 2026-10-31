@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -5,6 +6,8 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 
 void main() {
   late HttpServer server;
@@ -19,6 +22,7 @@ void main() {
   var unauthorized = false;
   var refreshes = 0;
   String? uploadName;
+  void Function()? onRequest;
 
   setUp(() async {
     files = [];
@@ -30,6 +34,7 @@ void main() {
     unauthorized = false;
     refreshes = 0;
     uploadName = null;
+    onRequest = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     base = Uri.parse('http://127.0.0.1:${server.port}');
     saver = GoogleDriveFileSaver(
@@ -42,6 +47,7 @@ void main() {
     );
     server.listen((request) async {
       final body = await request.fold<List<int>>([], (a, b) => a..addAll(b));
+      onRequest?.call();
       final response = request.response;
       response.headers.contentType = ContentType.json;
       if (unauthorized &&
@@ -156,6 +162,34 @@ void main() {
     },
   );
 
+  test('account change during a job prevents further requests', () async {
+    final auth = _FakeGoogleAuth();
+    final email = auth.currentEmail!;
+    saver = GoogleDriveFileSaver(
+      apiBase: base,
+      accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
+        auth, email, forceRefresh: forceRefresh,
+      ),
+    );
+    onRequest = () {
+      auth.email = 'other@example.test';
+      onRequest = null;
+    };
+    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDriveAccountChanged>()));
+    expect(queries, hasLength(1));
+    expect(uploads, 0);
+    expect(chunks, 0);
+  });
+
+  test('account change while obtaining a token aborts the request', () async {
+    final auth = _FakeGoogleAuth();
+    auth.pendingToken = Completer<String>();
+    final token = googleDriveTokenForAccount(auth, auth.currentEmail!);
+    auth.email = 'other@example.test';
+    auth.pendingToken!.complete('token');
+    await expectLater(token, throwsA(isA<GoogleDriveAccountChanged>()));
+  });
+
   test('20 MiB upload uses three chunks', () async {
     expect(await save('Course', 'large', 20 * 1024 * 1024), 'uploaded');
     expect(chunks, 3);
@@ -174,4 +208,27 @@ void main() {
     expect(refreshes, 1);
     expect(queries.any((q) => q.contains(r"Teacher\'s")), isTrue);
   });
+}
+
+class _FakeGoogleAuth implements StarSyncGoogleAuth {
+  String? email = 'first@example.test';
+  Completer<String>? pendingToken;
+
+  @override
+  String? get currentEmail => email;
+  @override
+  Future<String> accessToken({bool forceRefresh = false}) async =>
+      pendingToken == null ? 'token' : await pendingToken!.future;
+  @override
+  Future<bool> hasScope(String scope) async => true;
+  @override
+  Future<void> requestScopes(List<String> scopes) async {}
+  @override
+  Future<String?> restore() async => email;
+  @override
+  Future<String> signIn() async => email!;
+  @override
+  Future<void> signOut() async {
+    email = null;
+  }
 }

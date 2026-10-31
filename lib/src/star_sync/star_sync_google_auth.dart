@@ -57,6 +57,7 @@ class StarSyncGoogleAuthException implements Exception {
 }
 
 abstract interface class StarSyncGoogleAuth {
+  String? get currentEmail;
   Future<String?> restore();
   Future<String> signIn();
   Future<String> accessToken({bool forceRefresh = false});

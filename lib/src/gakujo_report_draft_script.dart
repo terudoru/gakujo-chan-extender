@@ -1118,10 +1118,7 @@ class GakujoReportDraftScript {
       if (!/^mbg-report-draft:v2:/.test(key)) continue;
       var draft;
       try { draft = JSON.parse(store.getItem(key)); } catch (_) { continue; }
-      if (!draft || typeof draft !== 'object' || Array.isArray(draft) ||
-          typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
-          !draft.savedAt || !Array.isArray(draft.fields) ||
-          now - draft.savedAt > retentionMs) continue;
+      if (!isRetainedDraft(draft, now)) continue;
       if (!entries[key] || entries[key].savedAt < draft.savedAt) entries[key] = draft;
     }
   });
@@ -1144,6 +1141,7 @@ class GakujoReportDraftScript {
     return value;
   }
   var matched = true;
+  var now = Date.now();
   var writes = [];
   draftDocuments().forEach(function(doc) {
     var store = doc.defaultView.localStorage;
@@ -1154,7 +1152,8 @@ class GakujoReportDraftScript {
       var raw = store.getItem(key);
       var current;
       try { current = raw === null ? undefined : JSON.parse(raw); }
-      catch (_) { matched = false; return; }
+      catch (_) { return; }
+      if (raw !== null && !isRetainedDraft(current, now)) return;
       var expected = Object.prototype.hasOwnProperty.call(basedOn, key) ? basedOn[key] : undefined;
       if (JSON.stringify(canonical(current)) !== JSON.stringify(canonical(expected))) {
         matched = false;
@@ -1250,6 +1249,12 @@ $action
 
   static const _storageHelpers = r'''
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
+  function isRetainedDraft(draft, now) {
+    return !!draft && typeof draft === 'object' && !Array.isArray(draft) &&
+      typeof draft.savedAt === 'number' && isFinite(draft.savedAt) &&
+      !!draft.savedAt && Array.isArray(draft.fields) &&
+      now - draft.savedAt <= retentionMs;
+  }
   function isDraftKey(key) {
     return typeof key === 'string' && /^mbg-report-draft:v[12]:/.test(key);
   }

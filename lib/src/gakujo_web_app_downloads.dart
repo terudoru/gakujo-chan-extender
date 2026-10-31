@@ -1110,6 +1110,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   void _queueDriveDownload(GakujoDownloadResult result) {
     if (!_driveDownloadsEnabled) return;
     final location = result.location;
+    final email = _starSyncGoogleAuth.currentEmail;
     unawaited(_driveDownloadQueue.run(() async {
       if (!_driveDownloadsEnabled) return;
       try {
@@ -1125,9 +1126,22 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         final length = isContent
             ? await contentService.contentUriSize(location)
             : await file!.length();
-        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
+        if (email == null || _starSyncGoogleAuth.currentEmail != email) {
+          throw const GoogleDriveAccountChanged();
+        }
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
-        await _googleDriveFileSaver.saveFile(
+        if (_starSyncGoogleAuth.currentEmail != email) {
+          throw const GoogleDriveAccountChanged();
+        }
+        if (_googleDriveFileSaver == null || _driveSaverEmail != email) {
+          _driveSaverEmail = email;
+          _googleDriveFileSaver = GoogleDriveFileSaver(
+            accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
+              _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
+            ),
+          );
+        }
+        await _googleDriveFileSaver!.saveFile(
           courseName: result.courseName,
           fileName: result.fileName,
           open: isContent
@@ -1136,6 +1150,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           length: length,
         );
         if (mounted) _showSnackBar('Google ドライブに保存しました');
+      } on GoogleDriveAccountChanged {
+        if (mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on Object catch (error, stackTrace) {
         developer.log('Failed to save download to Google Drive',
             name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
