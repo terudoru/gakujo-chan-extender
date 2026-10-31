@@ -132,6 +132,7 @@ class StarSyncState {
     this.clock = 0,
     Map<String, StarSyncRecord>? records,
     Map<String, dynamic>? remoteCache,
+    Map<String, DateTime>? retiredKeyIds,
     this.lastUploadedHash,
     this.lastSyncAt,
     this.lastError,
@@ -145,7 +146,8 @@ class StarSyncState {
     this.backgroundDate,
     this.backgroundCount = 0,
   }) : records = records ?? {},
-       remoteCache = remoteCache ?? {};
+       remoteCache = remoteCache ?? {},
+       retiredKeyIds = retiredKeyIds ?? {};
   final String deviceId;
   String dataKey;
   String keyId;
@@ -153,6 +155,7 @@ class StarSyncState {
   int clock;
   Map<String, StarSyncRecord> records;
   Map<String, dynamic> remoteCache;
+  Map<String, DateTime> retiredKeyIds;
   String? lastUploadedHash;
   DateTime? lastSyncAt;
   String? lastError;
@@ -174,6 +177,9 @@ class StarSyncState {
     'clock': clock,
     'records': records.map((key, value) => MapEntry(key, value.toJson())),
     'remoteCache': remoteCache,
+    'retiredKeyIds': retiredKeyIds.map(
+      (key, value) => MapEntry(key, value.toIso8601String()),
+    ),
     'lastUploadedHash': lastUploadedHash,
     'lastSyncAt': lastSyncAt?.toIso8601String(),
     'lastError': lastError,
@@ -202,6 +208,13 @@ class StarSyncState {
       clock: json['clock'] as int,
       records: records,
       remoteCache: Map<String, dynamic>.from(json['remoteCache'] as Map),
+      retiredKeyIds: {
+        for (final entry in (json['retiredKeyIds'] as Map? ?? {}).entries)
+          if (entry.key is String &&
+              entry.value is String &&
+              DateTime.tryParse(entry.value as String) != null)
+            entry.key as String: DateTime.parse(entry.value as String),
+      },
       lastUploadedHash: json['lastUploadedHash'] as String?,
       lastSyncAt: DateTime.tryParse(json['lastSyncAt'] as String? ?? ''),
       lastError: json['lastError'] as String?,
@@ -283,7 +296,18 @@ class StarSyncEngine {
   };
 
   Future<T> runAccountChange<T>(Future<T> Function() change) =>
-      _queue.runExclusive(change);
+      _queue.runExclusive(() async {
+        final result = await change();
+        final state = _state;
+        final account = _currentAccount();
+        if (_config != null &&
+            state != null &&
+            (account == null || account != state.boundAccount)) {
+          state.localReviewRequired = true;
+          await _saveState();
+        }
+        return result;
+      });
 
   Future<void> resetInMemory() => _queue.run(() async {
     pauseTimers();
@@ -380,13 +404,17 @@ class StarSyncEngine {
   Future<int> localStarCount() async =>
       (await activityStore.loadStarredMessages()).length;
 
-  /// An explicit reset erases every device file, so data under the old key
-  /// does not outlive it. Only automatic sync must leave other files alone.
-  Future<void> _deleteRemoteData(StarSyncTransport transport) async {
+  /// Read the retired key before an explicit reset removes remote data.
+  Future<String?> _deleteRemoteData(StarSyncTransport transport) async {
+    final keyring = await transport.get(_keyringPath);
+    final retiredKeyId = keyring == null
+        ? null
+        : StarSyncKeyring.fromJson(jsonDecode(utf8.decode(keyring.bytes))).keyId;
     for (final entry in await transport.list(_deviceDirectory)) {
       await transport.delete(entry.path);
     }
     await transport.delete(_keyringPath);
+    return retiredKeyId;
   }
 
   Future<void> setUp(
@@ -399,7 +427,9 @@ class StarSyncEngine {
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
-      if (resetExisting) await _deleteRemoteData(transport);
+      final retiredKeyId = resetExisting
+          ? await _deleteRemoteData(transport)
+          : null;
       var remote = await transport.get(_keyringPath);
       if (remote == null) {
         final memory = kdfParams.memoryKiB;
@@ -441,6 +471,7 @@ class StarSyncEngine {
           dataKey: base64Encode(keyBytes),
           keyId: keyring.keyId,
           boundAccount: account,
+          retiredKeyIds: {if (retiredKeyId != null) retiredKeyId: _now()},
         );
         await _saveState();
         await _saveConfig();
@@ -466,6 +497,7 @@ class StarSyncEngine {
     List<int> keyBytes,
     String account, {
     bool clearLocalStars = false,
+    String? retiredKeyId,
   }) => _queue.run(() async {
     if (_currentAccount() != account) {
       throw const StarSyncAccountMismatchException();
@@ -483,6 +515,7 @@ class StarSyncEngine {
       dataKey: base64Encode(keyBytes),
       keyId: keyId,
       boundAccount: account,
+      retiredKeyIds: {if (retiredKeyId != null) retiredKeyId: _now()},
     );
     await _saveState();
     await _saveConfig();
@@ -498,7 +531,9 @@ class StarSyncEngine {
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
-      if (resetExisting) await _deleteRemoteData(transport);
+      final retiredKeyId = resetExisting
+          ? await _deleteRemoteData(transport)
+          : null;
       if (await transport.get(_keyringPath) != null) {
         if (resetExisting) throw StarSyncSetupRaceException();
         return StarSyncPairingSetup.needsPairingCode;
@@ -526,6 +561,7 @@ class StarSyncEngine {
         created.dataKey,
         account,
         clearLocalStars: clearLocalStars,
+        retiredKeyId: retiredKeyId,
       );
     } finally {
       transport.close();
@@ -633,7 +669,8 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
-        await _deleteRemoteData(transport);
+        final retiredKeyId = await _deleteRemoteData(transport);
+        if (retiredKeyId != null) state.retiredKeyIds[retiredKeyId] = _now();
         final created = createStarSyncPairingKeyring();
         await transport.put(
           _keyringPath,
@@ -686,7 +723,7 @@ class StarSyncEngine {
           }
           final next = applyStarSyncStateToLocal(
             state: state.records,
-            local: current,
+            local: const [],
           );
           return (
             next: next,
@@ -901,6 +938,10 @@ class StarSyncEngine {
         }
         state.keyringEtag = etag;
       }
+      state.retiredKeyIds.removeWhere(
+        (_, retiredAt) => _now().difference(retiredAt) > const Duration(days: 7),
+      );
+      await _saveState();
       final entries = await transport.list(_deviceDirectory);
       final caches = <String, dynamic>{};
       final documents = <StarSyncDocument>[];
@@ -913,6 +954,7 @@ class StarSyncEngine {
         final previous = state.remoteCache[deviceId] as Map<String, dynamic>?;
         StarSyncDocument? document;
         final unchanged =
+            state.retiredKeyIds.isEmpty &&
             previous != null &&
             ((entry.etag != null && entry.etag == previous['etag']) ||
                 (entry.etag == null &&
@@ -931,6 +973,9 @@ class StarSyncEngine {
             }
             final fileKeyId = starSyncFileKeyId(object.bytes);
             if (fileKeyId != null && fileKeyId != state.keyId) {
+              if (state.retiredKeyIds.containsKey(fileKeyId)) {
+                await transport.delete(entry.path);
+              }
               continue;
             }
             final plain = await decryptStarSyncFile(
@@ -1261,7 +1306,8 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
-        await _deleteRemoteData(transport);
+        final retiredKeyId = await _deleteRemoteData(transport);
+        if (retiredKeyId != null) _state!.retiredKeyIds[retiredKeyId] = _now();
         final memory = kdfParams.memoryKiB;
         final iterations = kdfParams.iterations;
         final parallelism = kdfParams.parallelism;
