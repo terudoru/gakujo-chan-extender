@@ -5790,6 +5790,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final decoded = jsonDecode(text);
         if (decoded is! Map) throw const FormatException('Invalid backup');
         final portable = portableSyncBackupPayload(Map<String, Object?>.from(decoded));
+        // Download history holds device-specific file locations; a restore
+        // from the sync storage keeps this device's history as it is. This
+        // also keeps the re-encoded payload below the restore size limit
+        // after the local messageStars flag is added back.
+        portable.remove('downloadHistory');
+        portable.remove('failedDownloads');
         final flags = portable['disabledFeatureFlags'];
         if (flags is List && _appSettings.disabledFeatureFlags.contains(GakujoFeatureFlag.messageStars)) {
           portable['disabledFeatureFlags'] = [...flags, GakujoFeatureFlag.messageStars.storageValue];
