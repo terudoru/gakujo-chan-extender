@@ -10,6 +10,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   static Future<void>? _initialization;
   GoogleSignInAccount? _account;
   String? _token;
+  final Set<String> _scopes = {...starSyncGoogleScopes};
 
   Future<void> _initialize() => _initialization ??= GoogleSignIn.instance
       .initialize(clientId: Platform.isIOS ? config.iosClientId : null);
@@ -41,6 +42,9 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     final attempt = GoogleSignIn.instance.attemptLightweightAuthentication();
     _account = attempt == null ? null : await attempt;
     _token = null;
+    _scopes
+      ..clear()
+      ..addAll(starSyncGoogleScopes);
     return _account?.email;
   });
 
@@ -51,6 +55,9 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       scopeHint: starSyncGoogleScopes,
     );
     _token = null;
+    _scopes
+      ..clear()
+      ..addAll(starSyncGoogleScopes);
     return _account!.email;
   });
 
@@ -66,17 +73,43 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     if (forceRefresh) {
       final token =
           _token ??
-          (await client.authorizationForScopes(starSyncGoogleScopes))
-              ?.accessToken;
+          (await client.authorizationForScopes(_scopes.toList()))?.accessToken;
       if (token != null) {
         await client.clearAuthorizationToken(accessToken: token);
       }
       _token = null;
     }
     final authorization =
-        await client.authorizationForScopes(starSyncGoogleScopes) ??
-        await client.authorizeScopes(starSyncGoogleScopes);
+        await client.authorizationForScopes(_scopes.toList()) ??
+        await client.authorizeScopes(_scopes.toList());
     return _token = authorization.accessToken;
+  });
+
+  @override
+  Future<bool> hasScope(String scope) => _guard(() async {
+    final account = _account;
+    if (account == null) return false;
+    final authorization = await account.authorizationClient
+        .authorizationForScopes([scope]);
+    if (authorization != null) _scopes.add(scope);
+    return authorization != null;
+  });
+
+  @override
+  Future<void> requestScopes(List<String> scopes) => _guard(() async {
+    final account = _account;
+    if (account == null) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
+    final requested = {..._scopes, ...scopes}.toList();
+    final client = account.authorizationClient;
+    final authorization =
+        await client.authorizationForScopes(requested) ??
+        await client.authorizeScopes(requested);
+    _scopes.addAll(scopes);
+    _token = authorization.accessToken;
   });
 
   @override

@@ -11,6 +11,7 @@ const starSyncGoogleScopes = [
   'openid',
   'email',
 ];
+const googleDriveFileScope = 'https://www.googleapis.com/auth/drive.file';
 
 class StarSyncGoogleAuthConfig {
   const StarSyncGoogleAuthConfig({
@@ -59,6 +60,8 @@ abstract interface class StarSyncGoogleAuth {
   Future<String?> restore();
   Future<String> signIn();
   Future<String> accessToken({bool forceRefresh = false});
+  Future<bool> hasScope(String scope);
+  Future<void> requestScopes(List<String> scopes);
   Future<void> signOut();
 }
 

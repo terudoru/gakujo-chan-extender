@@ -62,6 +62,8 @@ void main() {
   var strayRequests = false;
   String? verifier;
   String? challenge;
+  var incremental = false;
+  var changedAccount = false;
 
   setUp(() async {
     storage = _Storage();
@@ -71,6 +73,8 @@ void main() {
     strayRequests = false;
     verifier = null;
     challenge = null;
+    incremental = false;
+    changedAccount = false;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     endpoint = Uri.parse('http://127.0.0.1:${server.port}');
     server.listen((request) async {
@@ -81,6 +85,10 @@ void main() {
         request.response.write('{}');
       } else if (fields['grant_type'] == 'refresh_token') {
         refreshes++;
+        expect(
+          fields['refresh_token'],
+          incremental ? 'new-refresh-secret' : 'refresh-secret',
+        );
         if (revoked) {
           request.response.statusCode = 400;
           request.response.write(jsonEncode({'error': 'invalid_grant'}));
@@ -97,13 +105,27 @@ void main() {
         expect(fields['client_secret'], 'secret');
         expect(fields['code'], 'test-code');
         final payload = base64Url
-            .encode(utf8.encode(jsonEncode({'email': 'user@example.com'})))
+            .encode(
+              utf8.encode(
+                jsonEncode({
+                  'email': changedAccount
+                      ? 'other@example.com'
+                      : 'user@example.com',
+                }),
+              ),
+            )
             .replaceAll('=', '');
         request.response.write(
           jsonEncode({
             'access_token': 'initial',
             'expires_in': 3600,
-            'refresh_token': 'refresh-secret',
+            'refresh_token': incremental
+                ? 'new-refresh-secret'
+                : 'refresh-secret',
+            'scope': [
+              ...starSyncGoogleScopes,
+              if (incremental) googleDriveFileScope,
+            ].join(' '),
             'id_token': 'header.$payload.signature',
           }),
         );
@@ -128,7 +150,14 @@ void main() {
       final p = url.queryParameters;
       expect(p['client_id'], 'client');
       expect(p['response_type'], 'code');
-      expect(p['scope'], starSyncGoogleScopes.join(' '));
+      expect(
+        p['scope']!.split(' '),
+        containsAll([
+          ...starSyncGoogleScopes,
+          if (incremental) googleDriveFileScope,
+        ]),
+      );
+      if (incremental) expect(p['include_granted_scopes'], 'true');
       expect(p['code_challenge_method'], 'S256');
       expect(p['access_type'], 'offline');
       expect(p['prompt'], 'consent');
@@ -165,6 +194,7 @@ void main() {
     expect(jsonDecode(storage.values[starSyncGoogleTokenKey]!), {
       'refreshToken': 'refresh-secret',
       'email': 'user@example.com',
+      'scopes': starSyncGoogleScopes,
     });
     expect(verifier, isNotEmpty);
     expect(
@@ -205,6 +235,39 @@ void main() {
       ),
     );
     expect(storage.values, isEmpty);
+  });
+
+  test('incremental scopes persist and reject another account', () async {
+    final auth = makeAuth();
+    await auth.signIn();
+    incremental = true;
+    await auth.requestScopes([googleDriveFileScope]);
+    expect(await auth.hasScope(googleDriveFileScope), isTrue);
+    final stored = jsonDecode(storage.values[starSyncGoogleTokenKey]!);
+    expect(stored['refreshToken'], 'new-refresh-secret');
+    expect(
+      stored['scopes'],
+      containsAll([...starSyncGoogleScopes, googleDriveFileScope]),
+    );
+    expect(await makeAuth().restore(), 'user@example.com');
+    expect(await auth.accessToken(forceRefresh: true), 'refresh1');
+
+    changedAccount = true;
+    await expectLater(
+      auth.requestScopes(['another-scope']),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.message,
+          'message',
+          'account changed',
+        ),
+      ),
+    );
+    expect(
+      jsonDecode(storage.values[starSyncGoogleTokenKey]!)['refreshToken'],
+      'new-refresh-secret',
+    );
+    expect(await auth.accessToken(forceRefresh: true), 'refresh2');
   });
 
   test('sign out deletes credentials', () async {

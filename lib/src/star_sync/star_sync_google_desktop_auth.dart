@@ -46,6 +46,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   String? _email;
   String? _accessToken;
   DateTime? _expiresAt;
+  Set<String> _scopes = {};
 
   static Future<bool> _launch(Uri uri) =>
       launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -58,8 +59,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   Future<Map<String, dynamic>> _post(
     Uri uri,
-    Map<String, String> fields,
-  ) async {
+    Map<String, String> fields, {
+    bool clearOnInvalidGrant = true,
+  }) async {
     final client = HttpClient();
     try {
       final response = await starSyncRequest(
@@ -72,7 +74,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       final decoded = jsonDecode(utf8.decode(response.bytes));
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        if (decoded['error'] == 'invalid_grant') {
+        if (decoded['error'] == 'invalid_grant' && clearOnInvalidGrant) {
           await storage.delete(key: starSyncGoogleTokenKey);
           _clear();
           throw const StarSyncGoogleAuthException(
@@ -102,6 +104,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     _email = null;
     _accessToken = null;
     _expiresAt = null;
+    _scopes = {};
   }
 
   void _setAccess(Map<String, dynamic> data) {
@@ -136,6 +139,15 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       _clear();
       _refreshToken = data['refreshToken'] as String;
       _email = data['email'] as String;
+      final scopes = data['scopes'];
+      if (scopes != null &&
+          (scopes is! List || scopes.any((scope) => scope is! String))) {
+        _clear();
+        throw const FormatException();
+      }
+      _scopes = scopes == null
+          ? starSyncGoogleScopes.toSet()
+          : (scopes as List).cast<String>().toSet();
       return _email;
     } on FormatException {
       throw const StarSyncGoogleAuthException(
@@ -146,7 +158,29 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
-  Future<String> signIn() async {
+  Future<String> signIn() => _authorize(starSyncGoogleScopes);
+
+  @override
+  Future<bool> hasScope(String scope) async => _scopes.contains(scope);
+
+  @override
+  Future<void> requestScopes(List<String> scopes) async {
+    if (_refreshToken == null || _email == null) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
+    if (_scopes.containsAll(scopes)) return;
+    await _authorize(
+      {...starSyncGoogleScopes, ..._scopes, ...scopes}.toList(),
+      expectedEmail: _email,
+    );
+  }
+
+  Future<String> _authorize(
+    List<String> scopes, {
+    String? expectedEmail,
+  }) async {
     final verifier = _random();
     final state = _random();
     final challenge = base64Url
@@ -196,7 +230,8 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'client_id': config.desktopClientId,
           'redirect_uri': redirect,
           'response_type': 'code',
-          'scope': starSyncGoogleScopes.join(' '),
+          'scope': scopes.join(' '),
+          if (expectedEmail != null) 'include_granted_scopes': 'true',
           'code_challenge': challenge,
           'code_challenge_method': 'S256',
           'state': state,
@@ -224,7 +259,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         'redirect_uri': redirect,
         'code_verifier': verifier,
         'grant_type': 'authorization_code',
-      });
+      }, clearOnInvalidGrant: false);
       final refresh = data['refresh_token'];
       final idToken = data['id_token'];
       if (refresh is! String || refresh.isEmpty || idToken is! String) {
@@ -240,13 +275,43 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           (payload['email'] as String).isEmpty) {
         throw const FormatException();
       }
-      _setAccess(data);
+      if (expectedEmail != null && payload['email'] != expectedEmail) {
+        throw const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.failed,
+          'account changed',
+        );
+      }
+      final scopeField = data['scope'];
+      if (expectedEmail != null && scopeField == null) {
+        throw const FormatException();
+      }
+      if (scopeField != null && scopeField is! String) {
+        throw const FormatException();
+      }
+      final granted = scopeField is String
+          ? scopeField.split(' ').where((s) => s.isNotEmpty).toSet()
+          : scopes.toSet();
+      if (!granted.containsAll(scopes)) throw const FormatException();
+      final token = data['access_token'];
+      final expires = data['expires_in'];
+      if (token is! String ||
+          token.isEmpty ||
+          expires is! num ||
+          expires <= 0) {
+        throw const FormatException();
+      }
       await storage.write(
         key: starSyncGoogleTokenKey,
-        value: jsonEncode({'refreshToken': refresh, 'email': payload['email']}),
+        value: jsonEncode({
+          'refreshToken': refresh,
+          'email': payload['email'],
+          'scopes': granted.toList(),
+        }),
       );
+      _setAccess(data);
       _refreshToken = refresh;
       _email = payload['email'] as String;
+      _scopes = granted;
       return _email!;
     } on TimeoutException {
       throw const StarSyncGoogleAuthException(

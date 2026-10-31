@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../gakujo_activity_store.dart';
 import '../secure_storage_factory.dart';
 import '../secure_storage_transaction.dart';
+import 'star_sync_collections.dart';
 import 'star_sync_config.dart';
 import 'star_sync_crypto.dart';
 import 'star_sync_document.dart';
@@ -132,6 +133,7 @@ class StarSyncState {
     this.clock = 0,
     Map<String, StarSyncRecord>? records,
     Map<String, dynamic>? remoteCache,
+    Map<String, dynamic>? collectionStates,
     Map<String, DateTime>? retiredKeyIds,
     this.lastUploadedHash,
     this.lastSyncAt,
@@ -148,6 +150,7 @@ class StarSyncState {
     this.backgroundCount = 0,
   }) : records = records ?? {},
        remoteCache = remoteCache ?? {},
+       collectionStates = collectionStates ?? {},
        retiredKeyIds = retiredKeyIds ?? {},
        pendingLocalClear = pendingLocalClear ?? {};
   final String deviceId;
@@ -157,6 +160,7 @@ class StarSyncState {
   int clock;
   Map<String, StarSyncRecord> records;
   Map<String, dynamic> remoteCache;
+  Map<String, dynamic> collectionStates;
   Map<String, DateTime> retiredKeyIds;
   String? lastUploadedHash;
   DateTime? lastSyncAt;
@@ -180,6 +184,7 @@ class StarSyncState {
     'clock': clock,
     'records': records.map((key, value) => MapEntry(key, value.toJson())),
     'remoteCache': remoteCache,
+    'collectionStates': collectionStates,
     'retiredKeyIds': retiredKeyIds.map(
       (key, value) => MapEntry(key, value.toIso8601String()),
     ),
@@ -212,6 +217,9 @@ class StarSyncState {
       clock: json['clock'] as int,
       records: records,
       remoteCache: Map<String, dynamic>.from(json['remoteCache'] as Map),
+      collectionStates: Map<String, dynamic>.from(
+        json['collectionStates'] as Map? ?? {},
+      ),
       retiredKeyIds: {
         for (final entry in (json['retiredKeyIds'] as Map? ?? {}).entries)
           if (entry.key is String &&
@@ -257,7 +265,9 @@ class StarSyncEngine {
     this.canSync,
     this.onLocalStarsChanged,
     this.kdfParams = const StarSyncKdfParams(),
-  }) : _storage = secureStorage ?? SecureStorageFactory.create(),
+    List<StarSyncCollection> collections = const [],
+  }) : _collections = List.of(collections),
+       _storage = secureStorage ?? SecureStorageFactory.create(),
        _transportFactory =
            transportFactory ??
            ((config) => _defaultTransport(config, googleDriveTransport)),
@@ -267,6 +277,16 @@ class StarSyncEngine {
        _timerFactory = timerFactory ?? Timer.new;
 
   final GakujoActivityStore activityStore;
+  final List<StarSyncCollection> _collections;
+
+  void registerCollection(StarSyncCollection collection) {
+    if (!RegExp(r'^[a-z0-9-]+$').hasMatch(collection.name) ||
+        _collections.any((item) => item.name == collection.name)) {
+      throw ArgumentError('Invalid or duplicate collection name');
+    }
+    _collections.add(collection);
+  }
+
   final FlutterSecureStorage _storage;
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
   final DateTime Function() _now;
@@ -517,6 +537,11 @@ class StarSyncEngine {
     }
     for (final entry in await transport.list(_deviceDirectory)) {
       await transport.delete(entry.path);
+    }
+    for (final name in _collectionNames()) {
+      for (final entry in await transport.list('sync/$name')) {
+        await transport.delete(entry.path);
+      }
     }
     await transport.delete(_keyringPath);
     return retiredKeyId;
@@ -780,6 +805,9 @@ class StarSyncEngine {
           ..keyId = decoded.keyId
           ..keyringEtag = null
           ..remoteCache = {}
+          ..collectionStates = _invalidateCollectionCaches(
+            state.collectionStates,
+          )
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
         await _saveState();
@@ -815,6 +843,9 @@ class StarSyncEngine {
           ..keyId = created.keyring.keyId
           ..keyringEtag = null
           ..remoteCache = {}
+          ..collectionStates = _invalidateCollectionCaches(
+            state.collectionStates,
+          )
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
         await _saveState();
@@ -1260,15 +1291,44 @@ class StarSyncEngine {
         await transport.put(ownPath, encrypted);
         state.lastUploadedHash = hash;
       }
+      var collectionFailures = 0;
+      var collectionsChanged = false;
+      Object? collectionTransportFailure;
+      for (final collection in _collections) {
+        try {
+          final result = await _syncCollection(collection, transport, state);
+          skipped += result.skipped;
+          collectionsChanged = collectionsChanged || result.changed;
+        } on _AccountChanged {
+          rethrow;
+        } on StarSyncGoogleAuthException catch (error) {
+          collectionTransportFailure ??= error;
+          collectionFailures++;
+        } on StarSyncTransportException catch (error) {
+          if (error.kind == StarSyncTransportErrorKind.auth ||
+              error.kind == StarSyncTransportErrorKind.server) {
+            collectionTransportFailure ??= error;
+          }
+          collectionFailures++;
+        } on Object {
+          collectionFailures++;
+        }
+      }
+      if (!await _accountMatches(state)) return const StarSyncResult();
+      if (collectionTransportFailure != null) throw collectionTransportFailure;
       state.status = StarSyncStatus.ok;
-      state.lastError = skipped == 0 ? null : '一部の端末のデータを読めませんでした（$skipped台）';
+      state.lastError = collectionFailures > 0
+          ? 'Some collections could not be synced ($collectionFailures)'
+          : skipped == 0
+          ? null
+          : '一部の端末のデータを読めませんでした（$skipped台）';
       state.lastSyncAt = _now().toUtc();
-      state.pendingLocalChange = false;
+      state.pendingLocalChange = collectionFailures > 0;
       state.serverFailures = 0;
       state.cooldownUntil = null;
       await _saveState();
       return StarSyncResult(
-        localChanged: changed,
+        localChanged: changed || collectionsChanged,
         skippedFiles: skipped,
         devices: entries.length,
       );
@@ -1313,6 +1373,212 @@ class StarSyncEngine {
       transport.close();
       _publish();
     }
+  }
+
+  Set<String> _collectionNames() => {
+    for (final collection in _collections)
+      if (RegExp(r'^[a-z0-9-]+$').hasMatch(collection.name)) collection.name,
+    for (final name in _state?.collectionStates.keys ?? <String>[])
+      if (RegExp(r'^[a-z0-9-]+$').hasMatch(name)) name,
+  };
+
+  Map<String, dynamic> _invalidateCollectionCaches(
+    Map<String, dynamic> states,
+  ) => {
+    for (final entry in states.entries)
+      if (entry.value is Map)
+        entry.key: {
+          ...Map<String, dynamic>.from(entry.value as Map),
+          'remoteCache': <String, dynamic>{},
+          'lastUploadedHash': null,
+        },
+  };
+
+  Future<({bool changed, int skipped})> _syncCollection(
+    StarSyncCollection collection,
+    StarSyncTransport transport,
+    StarSyncState state,
+  ) async {
+    final name = collection.name;
+    if (!RegExp(r'^[a-z0-9-]+$').hasMatch(name) ||
+        _collections.where((item) => item.name == name).length != 1) {
+      throw ArgumentError('Invalid or duplicate collection name');
+    }
+    var local = await collection.readLocal();
+    if (!await _accountMatches(state)) throw const _AccountChanged();
+    if (local == null) return (changed: false, skipped: 0);
+    final stored = Map<String, dynamic>.from(
+      state.collectionStates[name] as Map? ?? {},
+    );
+    final previousRecords = <String, StarSyncCollectionRecord>{};
+    for (final entry in (stored['records'] as Map? ?? {}).entries) {
+      if (entry.key is String) {
+        previousRecords[entry.key as String] =
+            StarSyncCollectionRecord.fromJson(entry.value, entry.key as String);
+      }
+    }
+    var clock = stored['clock'] as int? ?? 0;
+    final oldCache = Map<String, dynamic>.from(
+      stored['remoteCache'] as Map? ?? {},
+    );
+    final cache = <String, dynamic>{};
+    final documents = <StarSyncCollectionDocument>[];
+    var skipped = 0;
+    final directory = 'sync/$name';
+    final entries = await transport.list(directory);
+    for (final entry in entries) {
+      final prefix = '$directory/';
+      if (!entry.path.startsWith(prefix)) continue;
+      final deviceId = entry.path.substring(prefix.length);
+      if (deviceId.isEmpty ||
+          deviceId.contains('/') ||
+          deviceId == state.deviceId) {
+        continue;
+      }
+      final previous = oldCache[deviceId] as Map?;
+      final etag = entry.etag;
+      StarSyncCollectionDocument? document;
+      try {
+        if (state.retiredKeyIds.isEmpty &&
+            previous != null &&
+            etag != null &&
+            etag.isNotEmpty &&
+            etag == previous['etag']) {
+          document = StarSyncCollectionDocument.fromJson(previous['document']);
+        } else {
+          final object = await transport.get(entry.path);
+          if (object == null) continue;
+          final fileKeyId = starSyncFileKeyId(object.bytes);
+          if (fileKeyId != null && fileKeyId != state.keyId) {
+            if (state.retiredKeyIds.containsKey(fileKeyId)) {
+              final latest = await transport.get(entry.path);
+              if (latest != null &&
+                  starSyncFileKeyId(latest.bytes) == fileKeyId) {
+                await transport.delete(entry.path);
+              }
+            }
+            continue;
+          }
+          final plain = await decryptStarSyncFile(
+            dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+            keyId: state.keyId,
+            expectedDeviceId: deviceId,
+            bytes: object.bytes,
+          );
+          document = StarSyncCollectionDocument.fromJson(
+            jsonDecode(utf8.decode(plain)),
+          );
+        }
+        if (document.collection != name ||
+            document.deviceId != deviceId ||
+            document.account != state.boundAccount) {
+          throw const StarSyncFormatException();
+        }
+        documents.add(document);
+        cache[deviceId] = {'etag': entry.etag, 'document': document.toJson()};
+      } on StarSyncDecryptException {
+        skipped++;
+      } on StarSyncFormatException {
+        skipped++;
+      } on FormatException {
+        skipped++;
+      } on TypeError {
+        skipped++;
+      }
+    }
+    local = await collection.readLocal();
+    if (!await _accountMatches(state)) throw const _AccountChanged();
+    if (local == null) return (changed: false, skipped: skipped);
+    for (final document in documents) {
+      clock = max(clock, document.clock);
+      for (final record in document.records.values) {
+        clock = max(clock, record.clock);
+      }
+    }
+    final reconciled = Map<String, StarSyncCollectionRecord>.from(
+      previousRecords,
+    );
+    final keys = {...previousRecords.keys, ...local.keys}.toList()..sort();
+    for (final key in keys) {
+      final old = previousRecords[key];
+      if (local.containsKey(key)) {
+        final value = local[key];
+        final hash = starSyncValueHash(value);
+        if (old == null || old.deleted || old.valueHash != hash) {
+          reconciled[key] = StarSyncCollectionRecord(
+            key: key,
+            value: value,
+            deleted: false,
+            clock: ++clock,
+            deviceId: state.deviceId,
+            valueHash: hash,
+          );
+        }
+      } else if (!collection.growOnly && old != null && !old.deleted) {
+        reconciled[key] = StarSyncCollectionRecord(
+          key: key,
+          value: null,
+          deleted: true,
+          clock: ++clock,
+          deviceId: state.deviceId,
+          valueHash: starSyncValueHash(null),
+        );
+      }
+    }
+    final merged = mergeStarSyncCollectionRecords([
+      reconciled,
+      ...documents.map((document) => document.records),
+    ]);
+    final live = <String, Object?>{
+      for (final record in merged.values)
+        if (!record.deleted) record.key: record.value,
+    };
+    final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
+    if (!await _accountMatches(state)) throw const _AccountChanged();
+    if (changed) await collection.applyLocal(live);
+    if (!await _accountMatches(state)) throw const _AccountChanged();
+    final next = <String, dynamic>{
+      'clock': clock,
+      'records': merged.map((key, value) => MapEntry(key, value.toJson())),
+      'remoteCache': cache,
+      'lastUploadedHash': stored['lastUploadedHash'],
+    };
+    state.collectionStates[name] = next;
+    try {
+      await _saveState();
+    } on Object {
+      if (stored.isEmpty) {
+        state.collectionStates.remove(name);
+      } else {
+        state.collectionStates[name] = stored;
+      }
+      rethrow;
+    }
+    final document = StarSyncCollectionDocument(
+      collection: name,
+      deviceId: state.deviceId,
+      account: state.boundAccount,
+      clock: clock,
+      records: merged,
+    );
+    final json = starSyncCanonicalJson(document.toJson());
+    final hash = sha256.convert(utf8.encode(json)).toString();
+    final path = '$directory/${state.deviceId}';
+    if (hash != stored['lastUploadedHash'] ||
+        !entries.any((entry) => entry.path == path)) {
+      await transport.ensureDirectory(directory);
+      final encrypted = await encryptStarSyncFile(
+        dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+        keyId: state.keyId,
+        deviceId: state.deviceId,
+        plaintext: utf8.encode(json),
+      );
+      if (!await _accountMatches(state)) throw const _AccountChanged();
+      await transport.put(path, encrypted);
+      next['lastUploadedHash'] = hash;
+      await _saveState();
+    }
+    return (changed: changed, skipped: skipped);
   }
 
   String _errorMessage(Object error) {
@@ -1456,6 +1722,9 @@ class StarSyncEngine {
           ..keyId = keyring.keyId
           ..keyringEtag = null
           ..remoteCache = {}
+          ..collectionStates = _invalidateCollectionCaches(
+            _state!.collectionStates,
+          )
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
         await _saveState();
@@ -1496,6 +1765,9 @@ class StarSyncEngine {
           ..keyId = StarSyncKeyring.fromJson(jsonDecode(encoded)).keyId
           ..keyringEtag = null
           ..remoteCache = {}
+          ..collectionStates = _invalidateCollectionCaches(
+            _state!.collectionStates,
+          )
           ..lastUploadedHash = null
           ..status = StarSyncStatus.ok;
         await _saveState();
@@ -1511,14 +1783,35 @@ class StarSyncEngine {
     final transport = _transportFactory(_config!);
     try {
       final entries = await transport.list(_deviceDirectory);
-      return entries.map((entry) {
-        final id = entry.path.split('/').last;
-        return StarSyncDeviceInfo(
+      final devices = <String, StarSyncDeviceInfo>{};
+      void addEntry(StarSyncRemoteEntry entry, String directory) {
+        final prefix = '$directory/';
+        if (!entry.path.startsWith(prefix)) return;
+        final id = entry.path.substring(prefix.length);
+        if (id.isEmpty || id.contains('/')) return;
+        final previous = devices[id]?.lastModified;
+        final modified = entry.lastModified;
+        devices[id] = StarSyncDeviceInfo(
           deviceId: id,
-          lastModified: entry.lastModified,
+          lastModified:
+              previous == null ||
+                  (modified != null && modified.isAfter(previous))
+              ? modified
+              : previous,
           isThisDevice: id == _state!.deviceId,
         );
-      }).toList();
+      }
+
+      for (final entry in entries) {
+        addEntry(entry, _deviceDirectory);
+      }
+      for (final name in _collectionNames()) {
+        final directory = 'sync/$name';
+        for (final entry in await transport.list(directory)) {
+          addEntry(entry, directory);
+        }
+      }
+      return devices.values.toList();
     } finally {
       transport.close();
     }
@@ -1533,6 +1826,9 @@ class StarSyncEngine {
     final transport = _transportFactory(_config!);
     try {
       await transport.delete('$_deviceDirectory/$deviceId');
+      for (final name in _collectionNames()) {
+        await transport.delete('sync/$name/$deviceId');
+      }
     } finally {
       transport.close();
     }
@@ -1549,6 +1845,9 @@ class StarSyncEngine {
           final transport = _transportFactory(_config!);
           try {
             await transport.delete('$_deviceDirectory/${_state!.deviceId}');
+            for (final name in _collectionNames()) {
+              await transport.delete('sync/$name/${_state!.deviceId}');
+            }
           } finally {
             transport.close();
           }

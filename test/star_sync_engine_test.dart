@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_collections.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
@@ -218,6 +219,28 @@ class _TestTimer implements Timer {
     if (!active) return;
     active = false;
     callback();
+  }
+}
+
+class _Collection implements StarSyncCollection {
+  _Collection(this.name, {this.growOnly = false});
+
+  @override
+  final String name;
+  @override
+  final bool growOnly;
+  Map<String, Object?>? entries = {};
+  bool fail = false;
+
+  @override
+  Future<Map<String, Object?>?> readLocal() async {
+    if (fail) throw StateError('unavailable');
+    return entries == null ? null : Map.of(entries!);
+  }
+
+  @override
+  Future<void> applyLocal(Map<String, Object?> values) async {
+    entries = Map.of(values);
   }
 }
 
@@ -2680,5 +2703,161 @@ void main() {
     expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
     expect(engine.status.value.lastError, 'Google へのログインが必要です');
     expect(engine.status.value.cooldownUntil, isNull);
+  });
+  test(
+    'collections sync edits, tombstones, pruning and unavailable data',
+    () async {
+      final remote = _Transport();
+      final localA = _Collection('drafts');
+      final localB = _Collection('drafts');
+      final growA = _Collection('seen', growOnly: true);
+      final growB = _Collection('seen', growOnly: true);
+      StarSyncEngine make(_Collection drafts, _Collection seen) {
+        final storage = _Storage();
+        return StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+          collections: [drafts, seen],
+        );
+      }
+
+      final a = make(localA, growA);
+      final b = make(localB, growB);
+      await a.setUp(config, 'pass');
+      localA.entries!['one'] = {'b': 2, 'a': 1};
+      growA.entries!['seen'] = true;
+      await a.syncNow();
+      await b.setUp(config, 'pass');
+      expect(localB.entries, {
+        'one': {'a': 1, 'b': 2},
+      });
+      expect(growB.entries, {'seen': true});
+      localA.entries = null;
+      growA.entries!.clear();
+      await a.syncNow();
+      await b.syncNow();
+      expect(localB.entries!.containsKey('one'), isTrue);
+      expect(growB.entries!.containsKey('seen'), isTrue);
+      localA.entries = {};
+      await a.syncNow();
+      await b.syncNow();
+      expect(localB.entries, isEmpty);
+    },
+  );
+
+  test('concurrent collection edits converge and cache remote files', () async {
+    final remote = _Transport();
+    final ca = _Collection('drafts');
+    final cb = _Collection('drafts');
+    StarSyncEngine make(_Collection collection) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [collection],
+      );
+    }
+
+    final a = make(ca);
+    final b = make(cb);
+    await a.setUp(config, 'pass');
+    await b.setUp(config, 'pass');
+    ca.entries!['key'] = 'A';
+    cb.entries!['key'] = 'B';
+    await a.syncNow();
+    await b.syncNow();
+    await a.syncNow();
+    await b.syncNow();
+    expect(ca.entries, cb.entries);
+    final gets = Map<String, int>.of(remote.gets);
+    await b.syncNow();
+    for (final path in gets.keys.where(
+      (path) => path.startsWith('sync/drafts/'),
+    )) {
+      expect(remote.gets[path], gets[path]);
+    }
+  });
+
+  test(
+    'collection failure leaves star sync and other collections working',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final broken = _Collection('broken')..fail = true;
+      final good = _Collection('good')..entries!['key'] = true;
+      final activity = GakujoActivityStore(secureStorage: storage);
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [broken, good],
+      );
+      await engine.setUp(config, 'pass');
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'star',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
+      await engine.syncNow();
+      expect(engine.status.value.lastError, isNotNull);
+      expect(
+        remote.files.keys.any((path) => path.startsWith('sync/good/')),
+        isTrue,
+      );
+      expect((await activity.loadStarredMessages()).single.title, 'star');
+    },
+  );
+
+  test('reset removes registered collection files', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final collection = _Collection('drafts');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [collection],
+    );
+    await engine.setUp(config, 'pass');
+    remote.files['sync/drafts/old-device'] = [1];
+    await engine.resetRemote('new-pass');
+    expect(remote.files.containsKey('sync/drafts/old-device'), isFalse);
+  });
+
+  test('collection documents from another account are skipped', () async {
+    final remote = _Transport();
+    final ca = _Collection('drafts')..entries!['secret'] = 'value';
+    final cb = _Collection('drafts');
+    StarSyncEngine make(String account, _Collection collection) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => account,
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [collection],
+      );
+    }
+
+    await make('first', ca).setUp(config, 'pass');
+    final b = make('second', cb);
+    await b.setUp(config, 'pass');
+    expect((await b.syncNow()).skippedFiles, 2);
+    expect(cb.entries, isEmpty);
   });
 }
