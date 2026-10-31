@@ -5,6 +5,56 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('exports only valid, retained v2 drafts', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final draft = {'savedAt': now, 'fields': []};
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildExportAll(),
+      {
+        'mbg-report-draft:v2:valid': jsonEncode(draft),
+        'mbg-report-draft:v2:broken': '{',
+        'mbg-report-draft:v2:expired': jsonEncode({
+          'savedAt': now - const Duration(days: 15).inMilliseconds,
+          'fields': [],
+        }),
+        'mbg-report-draft:v1:old': jsonEncode(draft),
+        'unrelated': jsonEncode(draft),
+      },
+    );
+    expect(jsonDecode(result['result'] as String), {
+      'mbg-report-draft:v2:valid': draft,
+    });
+  });
+
+  test('imports valid drafts and removes absent v2 keys', () async {
+    final draft = <String, Object?>{'savedAt': 123, 'fields': []};
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildImportAll({
+        'mbg-report-draft:v2:valid"\\key': draft,
+        'mbg-report-draft:v2:bad-time': {'savedAt': 'bad', 'fields': []},
+        'mbg-report-draft:v2:bad-fields': {'savedAt': 123, 'fields': {}},
+        'mbg-report-draft:v2:array': [],
+        'unrelated': draft,
+      }),
+      {
+        'mbg-report-draft:v2:absent': 'old',
+        'mbg-report-draft:v1:old': 'keep',
+        'unrelated': 'keep',
+      },
+    );
+    final storage = result['storage'] as Map<String, dynamic>;
+    expect(
+      jsonDecode(storage['mbg-report-draft:v2:valid"\\key'] as String),
+      draft,
+    );
+    expect(storage, isNot(contains('mbg-report-draft:v2:absent')));
+    expect(storage, isNot(contains('mbg-report-draft:v2:bad-time')));
+    expect(storage, isNot(contains('mbg-report-draft:v2:bad-fields')));
+    expect(storage, isNot(contains('mbg-report-draft:v2:array')));
+    expect(storage['mbg-report-draft:v1:old'], 'keep');
+    expect(storage['unrelated'], 'keep');
+  });
+
   test('failed storage keeps pending text and reports failure until retry',
       () async {
     final result = await _evaluateContentEditableDraft(
@@ -493,6 +543,34 @@ Future<Map<String, dynamic>> _evaluateDraft(Map<String, dynamic> spec) async {
   } finally {
     await directory.delete(recursive: true);
   }
+}
+
+Future<Map<String, dynamic>> _evaluateSyncStorage(
+  String script,
+  Map<String, String> initial,
+) async {
+  const harness = r'''
+const vm = require('node:vm');
+const input = JSON.parse(process.argv[1]);
+const values = new Map(Object.entries(input.initial));
+const storage = {
+  get length() { return values.size; },
+  key(i) { return Array.from(values.keys())[i] ?? null; },
+  getItem(key) { return values.has(key) ? values.get(key) : null; },
+  setItem(key, value) { values.set(key, String(value)); },
+  removeItem(key) { values.delete(key); }
+};
+const document = {defaultView: {localStorage: storage}, querySelector() { return null; }};
+const result = vm.runInNewContext(input.script, {document});
+process.stdout.write(JSON.stringify({result, storage: Object.fromEntries(values)}));
+''';
+  final process = await Process.run('node', [
+    '-e',
+    harness,
+    jsonEncode({'script': script, 'initial': initial}),
+  ]);
+  expect(process.exitCode, 0, reason: process.stderr.toString());
+  return jsonDecode(process.stdout as String) as Map<String, dynamic>;
 }
 
 const _nodeDomHarness = r'''

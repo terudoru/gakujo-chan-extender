@@ -1107,6 +1107,52 @@ class GakujoReportDraftScript {
 ''');
   }
 
+  static String buildExportAll() {
+    return _buildStorageAction(r'''
+  var entries = Object.create(null);
+  var now = Date.now();
+  draftDocuments().forEach(function(doc) {
+    var store = doc.defaultView.localStorage;
+    for (var i = 0; i < store.length; i += 1) {
+      var key = store.key(i);
+      if (!/^mbg-report-draft:v2:/.test(key)) continue;
+      var draft;
+      try { draft = JSON.parse(store.getItem(key)); } catch (_) { continue; }
+      if (!draft || typeof draft !== 'object' || Array.isArray(draft) ||
+          typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
+          !draft.savedAt || !Array.isArray(draft.fields) ||
+          now - draft.savedAt > retentionMs) continue;
+      if (!entries[key] || entries[key].savedAt < draft.savedAt) entries[key] = draft;
+    }
+  });
+  return JSON.stringify(entries);
+''');
+  }
+
+  static String buildImportAll(Map<String, Object?> drafts) {
+    const action = r'''
+  draftDocuments().forEach(function(doc) {
+    var store = doc.defaultView.localStorage;
+    for (var i = store.length - 1; i >= 0; i -= 1) {
+      var key = store.key(i);
+      if (/^mbg-report-draft:v2:/.test(key) &&
+          !Object.prototype.hasOwnProperty.call(drafts, key)) store.removeItem(key);
+    }
+    Object.keys(drafts).forEach(function(key) {
+      var draft = drafts[key];
+      if (!/^mbg-report-draft:v2:/.test(key) || !draft ||
+          typeof draft !== 'object' || Array.isArray(draft) ||
+          typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
+          !Array.isArray(draft.fields)) return;
+      store.setItem(key, JSON.stringify(draft));
+    });
+  });
+''';
+    return _buildStorageAction(
+      'var drafts = JSON.parse(${jsonEncode(jsonEncode(drafts))});\n$action',
+    );
+  }
+
   static String buildDelete(String key) {
     const action = r'''
   if (!isDraftKey(key)) return false;

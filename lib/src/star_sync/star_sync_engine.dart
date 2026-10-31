@@ -23,6 +23,7 @@ const starSyncConfigKey = 'more_better_gakujo_star_sync_config';
 const starSyncStateKey = 'more_better_gakujo_star_sync_state';
 const _keyringPath = 'stars/keyring.json';
 const _deviceDirectory = 'stars/devices';
+const _backupDirectory = 'backups';
 
 Future<String> _createKeyringJson(
   String passphrase,
@@ -124,6 +125,17 @@ class StarSyncDeviceInfo {
   final bool isThisDevice;
 }
 
+class StarSyncBackupInfo {
+  const StarSyncBackupInfo({
+    required this.deviceId,
+    this.lastModified,
+    required this.isThisDevice,
+  });
+  final String deviceId;
+  final DateTime? lastModified;
+  final bool isThisDevice;
+}
+
 class StarSyncState {
   StarSyncState({
     required this.deviceId,
@@ -137,6 +149,7 @@ class StarSyncState {
     Map<String, DateTime>? retiredKeyIds,
     this.lastUploadedHash,
     this.lastSyncAt,
+    this.lastBackupUploadAt,
     this.lastError,
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
@@ -164,6 +177,7 @@ class StarSyncState {
   Map<String, DateTime> retiredKeyIds;
   String? lastUploadedHash;
   DateTime? lastSyncAt;
+  DateTime? lastBackupUploadAt;
   String? lastError;
   StarSyncStatus status;
   bool pendingBulkReplace;
@@ -190,6 +204,7 @@ class StarSyncState {
     ),
     'lastUploadedHash': lastUploadedHash,
     'lastSyncAt': lastSyncAt?.toIso8601String(),
+    'lastBackupUploadAt': lastBackupUploadAt?.toIso8601String(),
     'lastError': lastError,
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
@@ -229,6 +244,9 @@ class StarSyncState {
       },
       lastUploadedHash: json['lastUploadedHash'] as String?,
       lastSyncAt: DateTime.tryParse(json['lastSyncAt'] as String? ?? ''),
+      lastBackupUploadAt: DateTime.tryParse(
+        json['lastBackupUploadAt'] as String? ?? '',
+      ),
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(json['status'] as String),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
@@ -536,6 +554,9 @@ class StarSyncEngine {
       // An explicit reset must also recover from an unreadable keyring.
     }
     for (final entry in await transport.list(_deviceDirectory)) {
+      await transport.delete(entry.path);
+    }
+    for (final entry in await transport.list(_backupDirectory)) {
       await transport.delete(entry.path);
     }
     for (final name in _collectionNames()) {
@@ -847,6 +868,7 @@ class StarSyncEngine {
             state.collectionStates,
           )
           ..lastUploadedHash = null
+          ..lastBackupUploadAt = null
           ..status = StarSyncStatus.ok;
         await _saveState();
         return encodeStarSyncPairingCode(
@@ -1769,6 +1791,7 @@ class StarSyncEngine {
             _state!.collectionStates,
           )
           ..lastUploadedHash = null
+          ..lastBackupUploadAt = null
           ..status = StarSyncStatus.ok;
         await _saveState();
       } finally {
@@ -1817,6 +1840,148 @@ class StarSyncEngine {
     }
   });
 
+  Future<void> _requireBackupAccount() async {
+    await _requireBoundAccount();
+    if (_state!.localReviewRequired) {
+      throw StateError('Account review required');
+    }
+  }
+
+  void _validateBackupDevice(String deviceId) {
+    validateStarSyncPath(deviceId);
+    if (deviceId.contains('/')) throw ArgumentError('Invalid device');
+  }
+
+  bool shouldUploadAutomaticBackup(DateTime now) {
+    final state = _state;
+    if (_config == null ||
+        state == null ||
+        state.localReviewRequired ||
+        _currentAccount() != state.boundAccount ||
+        _currentAccount() == null) {
+      return false;
+    }
+    final last = state.lastBackupUploadAt;
+    return last == null || now.difference(last) >= const Duration(hours: 24);
+  }
+
+  Future<void> uploadBackup(List<int> bytes) => _queue.run(() async {
+    await _requireBackupAccount();
+    final state = _state!;
+    final transport = _transportFactory(_config!);
+    try {
+      final keyring = await _readKeyring(transport);
+      if (keyring.keyId != state.keyId) {
+        throw StateError('Sync key has changed');
+      }
+      final createdAt = _now().toUtc();
+      final encrypted = await encryptStarSyncFile(
+        dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+        keyId: state.keyId,
+        deviceId: state.deviceId,
+        kind: 'backup',
+        plaintext: utf8.encode(
+          jsonEncode({
+            'schema': 1,
+            'account': state.boundAccount,
+            'deviceId': state.deviceId,
+            'createdAt': createdAt.toIso8601String(),
+            'payload': base64Encode(bytes),
+          }),
+        ),
+      );
+      await transport.ensureDirectory(_backupDirectory);
+      await _requireBackupAccount();
+      await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
+      state.lastBackupUploadAt = _now().toUtc();
+      await _saveState();
+    } finally {
+      transport.close();
+    }
+  });
+
+  Future<List<StarSyncBackupInfo>> listBackups() => _queue.run(() async {
+    await _requireBackupAccount();
+    final transport = _transportFactory(_config!);
+    try {
+      final entries = await transport.list(_backupDirectory);
+      final result = <StarSyncBackupInfo>[];
+      for (final entry in entries) {
+        const prefix = '$_backupDirectory/';
+        if (!entry.path.startsWith(prefix)) continue;
+        final id = entry.path.substring(prefix.length);
+        try {
+          _validateBackupDevice(id);
+        } on ArgumentError {
+          continue;
+        }
+        result.add(
+          StarSyncBackupInfo(
+            deviceId: id,
+            lastModified: entry.lastModified,
+            isThisDevice: id == _state!.deviceId,
+          ),
+        );
+      }
+      await _requireBackupAccount();
+      return result;
+    } finally {
+      transport.close();
+    }
+  });
+
+  Future<List<int>> downloadBackup(String deviceId) => _queue.run(() async {
+    await _requireBackupAccount();
+    _validateBackupDevice(deviceId);
+    final state = _state!;
+    final transport = _transportFactory(_config!);
+    try {
+      final remote = await transport.get('$_backupDirectory/$deviceId');
+      if (remote == null) throw StateError('Backup not found');
+      List<int> plaintext;
+      try {
+        plaintext = await decryptStarSyncFile(
+          dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+          keyId: state.keyId,
+          expectedDeviceId: deviceId,
+          kind: 'backup',
+          bytes: remote.bytes,
+        );
+      } on StarSyncFormatException {
+        throw const FormatException('Invalid backup kind, device, or key');
+      } on StarSyncDecryptException {
+        throw const FormatException('Cannot decrypt backup with this key');
+      }
+      final Object? data = jsonDecode(utf8.decode(plaintext));
+      if (data is! Map ||
+          data['schema'] != 1 ||
+          data['deviceId'] != deviceId ||
+          data['createdAt'] is! String ||
+          DateTime.tryParse(data['createdAt'] as String) == null ||
+          data['payload'] is! String) {
+        throw const FormatException('Invalid backup contents');
+      }
+      if (data['account'] != state.boundAccount) {
+        throw const FormatException('Backup account does not match');
+      }
+      await _requireBackupAccount();
+      return base64Decode(data['payload'] as String);
+    } finally {
+      transport.close();
+    }
+  });
+
+  Future<void> deleteBackup(String deviceId) => _queue.run(() async {
+    await _requireBackupAccount();
+    _validateBackupDevice(deviceId);
+    final transport = _transportFactory(_config!);
+    try {
+      await transport.delete('$_backupDirectory/$deviceId');
+    } finally {
+      transport.close();
+    }
+  });
+
   Future<void> deleteDeviceFile(String deviceId) => _queue.run(() async {
     await _requireBoundAccount();
     validateStarSyncPath(deviceId);
@@ -1826,6 +1991,7 @@ class StarSyncEngine {
     final transport = _transportFactory(_config!);
     try {
       await transport.delete('$_deviceDirectory/$deviceId');
+      await transport.delete('$_backupDirectory/$deviceId');
       for (final name in _collectionNames()) {
         await transport.delete('sync/$name/$deviceId');
       }

@@ -351,11 +351,17 @@ Future<Uint8List> encryptStarSyncFile({
   required String keyId,
   required String deviceId,
   required List<int> plaintext,
+  String? kind,
 }) async {
   await starSyncKeyBytes(dataKey);
   final nonce = _randomBytes(12);
   final header = utf8.encode(
-    jsonEncode({'keyId': keyId, 'deviceId': deviceId, 'nonce': _encode(nonce)}),
+    jsonEncode({
+      'keyId': keyId,
+      'deviceId': deviceId,
+      'nonce': _encode(nonce),
+      'kind': ?kind,
+    }),
   );
   if (header.length > 4096 || keyId.isEmpty || deviceId.isEmpty) {
     throw const StarSyncFormatException();
@@ -413,6 +419,7 @@ Future<List<int>> decryptStarSyncFile({
   required String keyId,
   required List<int> bytes,
   required String expectedDeviceId,
+  String? kind,
 }) async {
   if (bytes.length < 25 ||
       bytes.any((byte) => byte < 0 || byte > 255) ||
@@ -437,6 +444,7 @@ Future<List<int>> decryptStarSyncFile({
   if (header is! Map ||
       header['keyId'] != keyId ||
       header['deviceId'] != expectedDeviceId ||
+      header['kind'] != kind ||
       keyId.isEmpty ||
       expectedDeviceId.isEmpty) {
     throw const StarSyncFormatException();
