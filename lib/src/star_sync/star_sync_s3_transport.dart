@@ -157,6 +157,7 @@ class StarSyncS3Transport implements StarSyncTransport {
     Map<String, String> query = const {},
     Map<String, String> headers = const {},
     List<int> body = const [],
+    int maxBytes = starSyncDefaultMaxBytes,
   }) {
     final uri = buildStarSyncS3Url(config, key: key, query: query);
     final signed = signStarSyncS3Request(
@@ -169,7 +170,14 @@ class StarSyncS3Transport implements StarSyncTransport {
       payload: body,
       headers: headers,
     );
-    return starSyncRequest(_client, method, uri, headers: signed, body: body);
+    return starSyncRequest(
+      _client,
+      method,
+      uri,
+      headers: signed,
+      body: body,
+      maxBytes: maxBytes,
+    );
   }
 
   @override
@@ -253,9 +261,16 @@ class StarSyncS3Transport implements StarSyncTransport {
   }
 
   @override
-  Future<StarSyncRemoteObject?> get(String path) async {
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async {
     validateStarSyncPath(path);
-    final response = await _request('GET', '${config.prefix}$path');
+    final response = await _request(
+      'GET',
+      '${config.prefix}$path',
+      maxBytes: maxBytes,
+    );
     if (response.statusCode == 404) return null;
     checkStarSyncStatus(response.statusCode);
     return StarSyncRemoteObject(

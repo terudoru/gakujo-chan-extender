@@ -19,6 +19,8 @@ void main() {
       required int expectedGeneration,
     })?
     onSetUp,
+    bool Function(String)? collectionEnabled,
+    Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
     bool google = false,
     Future<StarSyncPairingSetup> Function({
@@ -51,6 +53,8 @@ void main() {
       body: SingleChildScrollView(
         child: StarSyncSection(
           status: status,
+          collectionEnabled: collectionEnabled,
+          onCollectionChanged: onCollectionChanged,
           googleAvailable: googleAvailable,
           isGoogleDrive: () => google,
           googleEmail: () => google ? 'user@example.com' : null,
@@ -113,6 +117,28 @@ void main() {
       ),
     ),
   );
+
+  testWidgets('collection switches invoke the callback', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    final enabled = <String, bool>{};
+    await tester.pumpWidget(section(
+      status,
+      collectionEnabled: (name) => enabled[name] ?? true,
+      onCollectionChanged: (name, value) async { enabled[name] = value; },
+    ));
+    for (final entry in const {
+      'favorites': '?????',
+      'settings': '??',
+      'report-drafts': '???????',
+      'notified-deadlines': '???????',
+    }.entries) {
+      await tester.ensureVisible(find.text(entry.value));
+      await tester.tap(find.text(entry.value));
+      await tester.pumpAndSettle();
+      expect(enabled[entry.key], isFalse);
+    }
+    status.dispose();
+  });
 
   testWidgets('account return asks before discarding local changes', (
     tester,

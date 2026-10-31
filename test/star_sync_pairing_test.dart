@@ -96,7 +96,10 @@ class _Transport implements StarSyncTransport {
   }
 
   @override
-  Future<StarSyncRemoteObject?> get(String path) async {
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async {
     gets[path] = (gets[path] ?? 0) + 1;
     if (simulateKeyringRace && path == 'stars/keyring.json') {
       simulateKeyringRace = false;
@@ -104,6 +107,12 @@ class _Transport implements StarSyncTransport {
       return null;
     }
     final bytes = files[path];
+    if (bytes != null && bytes.length > maxBytes) {
+      throw const StarSyncTransportException(
+        StarSyncTransportErrorKind.invalidResponse,
+        'Response is too large',
+      );
+    }
     return bytes == null ? null : StarSyncRemoteObject(bytes: bytes);
   }
 

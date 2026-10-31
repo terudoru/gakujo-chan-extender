@@ -67,8 +67,17 @@ class _Transport implements StarSyncTransport {
   ];
 
   @override
-  Future<StarSyncRemoteObject?> get(String path) async {
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async {
     final bytes = files[path];
+    if (bytes != null && bytes.length > maxBytes) {
+      throw const StarSyncTransportException(
+        StarSyncTransportErrorKind.invalidResponse,
+        'Response is too large',
+      );
+    }
     return bytes == null ? null : StarSyncRemoteObject(bytes: bytes);
   }
 

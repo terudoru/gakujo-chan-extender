@@ -139,6 +139,12 @@ void main() {
     await drive.server.close(force: true);
   });
 
+  test('large object requires an increased response limit', () async {
+    drive.add('backup/device', List.filled(5 * 1024 * 1024, 7));
+    await expectLater(transport.get('backup/device'), throwsA(isA<StarSyncTransportException>()));
+    expect((await transport.get('backup/device', maxBytes: 32 * 1024 * 1024))!.bytes.length, 5 * 1024 * 1024);
+  });
+
   test('create, update, get and delete', () async {
     await transport.ensureDirectory('stars/devices');
     await transport.put('stars/devices/a', [0, 255, 1]);

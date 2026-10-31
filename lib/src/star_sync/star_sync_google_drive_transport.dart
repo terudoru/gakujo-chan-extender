@@ -61,6 +61,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     Uri uri, {
     Map<String, String> headers = const {},
     List<int> body = const [],
+    int maxBytes = starSyncDefaultMaxBytes,
   }) async {
     var token = await accessToken();
     var refreshed = false;
@@ -72,6 +73,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         uri,
         headers: {...headers, 'authorization': 'Bearer $token'},
         body: body,
+        maxBytes: maxBytes,
       );
       if (response.statusCode == 401 && !refreshed) {
         token = await accessToken(forceRefresh: true);
@@ -191,7 +193,10 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   }
 
   @override
-  Future<StarSyncRemoteObject?> get(String path) async {
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async {
     validateStarSyncPath(path);
     final files = await _lookup(path);
     if (files.isEmpty) return null;
@@ -199,6 +204,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     final response = await _request(
       'GET',
       _uri('/drive/v3/files/${Uri.encodeComponent(file.id)}', {'alt': 'media'}),
+      maxBytes: maxBytes,
     );
     if (response.statusCode == 404) {
       _files.remove(path);

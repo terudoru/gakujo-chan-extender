@@ -6,6 +6,24 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart'
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_webdav_transport.dart';
 
 void main() {
+  test('large object requires an increased response limit', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      request.response.add(List.filled(5 * 1024 * 1024, 7));
+      await request.response.close();
+    });
+    final transport = StarSyncWebDavTransport(StarSyncWebDavConfig(
+      baseUrl: Uri.parse('http://127.0.0.1:${server.port}'), username: 'u', password: 'p'));
+    try {
+      await expectLater(transport.get('backup/device'), throwsA(isA<StarSyncTransportException>()));
+      expect((await transport.get('backup/device', maxBytes: 32 * 1024 * 1024))!.bytes.length, 5 * 1024 * 1024);
+    } finally {
+      transport.close();
+      await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
   test('endpoint validation and traversal', () {
     for (final url in [
       'https://example.com/',

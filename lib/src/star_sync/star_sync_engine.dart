@@ -146,6 +146,7 @@ class StarSyncState {
     Map<String, StarSyncRecord>? records,
     Map<String, dynamic>? remoteCache,
     Map<String, dynamic>? collectionStates,
+    Set<String>? disabledCollections,
     Map<String, DateTime>? retiredKeyIds,
     this.lastUploadedHash,
     this.lastSyncAt,
@@ -164,6 +165,7 @@ class StarSyncState {
   }) : records = records ?? {},
        remoteCache = remoteCache ?? {},
        collectionStates = collectionStates ?? {},
+       disabledCollections = disabledCollections ?? {},
        retiredKeyIds = retiredKeyIds ?? {},
        pendingLocalClear = pendingLocalClear ?? {};
   final String deviceId;
@@ -174,6 +176,7 @@ class StarSyncState {
   Map<String, StarSyncRecord> records;
   Map<String, dynamic> remoteCache;
   Map<String, dynamic> collectionStates;
+  Set<String> disabledCollections;
   Map<String, DateTime> retiredKeyIds;
   String? lastUploadedHash;
   DateTime? lastSyncAt;
@@ -199,6 +202,7 @@ class StarSyncState {
     'records': records.map((key, value) => MapEntry(key, value.toJson())),
     'remoteCache': remoteCache,
     'collectionStates': collectionStates,
+    'disabledCollections': disabledCollections.toList(),
     'retiredKeyIds': retiredKeyIds.map(
       (key, value) => MapEntry(key, value.toIso8601String()),
     ),
@@ -235,6 +239,9 @@ class StarSyncState {
       collectionStates: Map<String, dynamic>.from(
         json['collectionStates'] as Map? ?? {},
       ),
+      disabledCollections: (json['disabledCollections'] as List? ?? [])
+          .whereType<String>()
+          .toSet(),
       retiredKeyIds: {
         for (final entry in (json['retiredKeyIds'] as Map? ?? {}).entries)
           if (entry.key is String &&
@@ -296,6 +303,28 @@ class StarSyncEngine {
 
   final GakujoActivityStore activityStore;
   final List<StarSyncCollection> _collections;
+
+  bool collectionEnabled(String name) =>
+      !(_state?.disabledCollections.contains(name) ?? false);
+
+  Future<void> setCollectionEnabled(String name, bool enabled) => _queue.run(() async {
+    final state = _state;
+    if (state == null || !_collections.any((item) => item.name == name)) {
+      throw StateError('Collection is unavailable');
+    }
+    final previous = Set<String>.of(state.disabledCollections);
+    if (enabled) {
+      state.disabledCollections.remove(name);
+    } else {
+      state.disabledCollections.add(name);
+    }
+    try {
+      await _saveState();
+    } on Object {
+      state.disabledCollections = previous;
+      rethrow;
+    }
+  });
 
   void registerCollection(StarSyncCollection collection) {
     if (!RegExp(r'^[a-z0-9-]+$').hasMatch(collection.name) ||
@@ -1317,6 +1346,7 @@ class StarSyncEngine {
       var collectionsChanged = false;
       Object? collectionTransportFailure;
       for (final collection in _collections) {
+        if (state.disabledCollections.contains(collection.name)) continue;
         try {
           final result = await _syncCollection(collection, transport, state);
           skipped += result.skipped;
@@ -1936,7 +1966,10 @@ class StarSyncEngine {
     final state = _state!;
     final transport = _transportFactory(_config!);
     try {
-      final remote = await transport.get('$_backupDirectory/$deviceId');
+      final remote = await transport.get(
+        '$_backupDirectory/$deviceId',
+        maxBytes: 32 * 1024 * 1024,
+      );
       if (remote == null) throw StateError('Backup not found');
       List<int> plaintext;
       try {

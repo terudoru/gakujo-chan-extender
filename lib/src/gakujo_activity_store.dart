@@ -553,6 +553,21 @@ class GakujoActivityStore {
     return _enqueue(() => _addNotifiedDeadlineKeys(keys));
   }
 
+  Future<void> mergeNotifiedDeadlineKeys(Iterable<String> keys) {
+    final remote = keys
+        .map((key) => key.trim())
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    return _enqueue(() async {
+      final local = await _readNotifiedDeadlineKeys();
+      if (!local.isSuccessful) return;
+      await _writeNotifiedDeadlineKeys([
+        ...remote.where((key) => !local.value.contains(key)),
+        ...local.value,
+      ]);
+    });
+  }
+
   Future<void> replaceNotifiedDeadlineKeys(Iterable<String> deadlineKeys) {
     final keys = deadlineKeys
         .map((key) => key.trim())

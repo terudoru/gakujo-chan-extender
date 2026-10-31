@@ -43,6 +43,7 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     String path, {
     Map<String, String> headers = const {},
     List<int> body = const [],
+    int maxBytes = starSyncDefaultMaxBytes,
     bool collection = false,
   }) => starSyncRequest(
     _client,
@@ -50,6 +51,7 @@ class StarSyncWebDavTransport implements StarSyncTransport {
     collection ? Uri.parse('${_url(path)}/') : _url(path),
     headers: {..._auth, ...headers},
     body: body,
+    maxBytes: maxBytes,
   );
   @override
   Future<void> ensureDirectory(String path) async {
@@ -175,8 +177,11 @@ class StarSyncWebDavTransport implements StarSyncTransport {
   }
 
   @override
-  Future<StarSyncRemoteObject?> get(String path) async {
-    final response = await _request('GET', path);
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async {
+    final response = await _request('GET', path, maxBytes: maxBytes);
     if (response.statusCode == 404) return null;
     checkStarSyncStatus(response.statusCode);
     return StarSyncRemoteObject(

@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import '../gakujo_activity_store.dart';
+import '../gakujo_app_settings.dart';
+import '../gakujo_backup_import.dart';
 import 'star_sync_collections.dart';
 
 // The exporter must exclude messageStars from disabledFeatureFlags. Credentials,
@@ -12,10 +16,68 @@ const starSyncPortableSettingKeys = <String>[
   'notificationPreferences',
 ];
 
+Map<String, Object?> exportStarSyncPortableSettings(GakujoAppSettings settings) => {
+  'disabledFeatureFlags': settings.disabledFeatureFlags
+      .where((flag) => flag != GakujoFeatureFlag.messageStars)
+      .map((flag) => flag.storageValue)
+      .toList()..sort(),
+  'calendarImportSettings': settings.calendarImportSettings.toJson(),
+  'messageExcludeKeywords': settings.messageExcludeKeywords,
+  'notificationTopics': encodeNotificationTopics(settings.notificationTopics),
+  'messageNotification': settings.messageNotification.toJson(),
+  'notificationPreferences': settings.notificationPreferences.toJson(),
+};
+
+GakujoBackupImport importStarSyncPortableSettings(
+  GakujoAppSettings current,
+  Map<String, Object?> incoming,
+) {
+  final before = exportStarSyncPortableSettings(current);
+  final changed = <String, Object?>{
+    for (final key in starSyncPortableSettingKeys)
+      if (incoming.containsKey(key) &&
+          starSyncCanonicalJson(incoming[key]) != starSyncCanonicalJson(before[key]))
+        key: incoming[key],
+  };
+  if (changed.containsKey('disabledFeatureFlags')) {
+    final flags = changed['disabledFeatureFlags'];
+    if (flags is! List) throw const FormatException('Invalid feature flags');
+    final portableFlags = flags
+        .where((value) => value != GakujoFeatureFlag.messageStars.storageValue)
+        .toList();
+    if (starSyncCanonicalJson(portableFlags) ==
+        starSyncCanonicalJson(before['disabledFeatureFlags'])) {
+      changed.remove('disabledFeatureFlags');
+    } else {
+      changed['disabledFeatureFlags'] = [
+        ...portableFlags,
+        if (current.disabledFeatureFlags.contains(GakujoFeatureFlag.messageStars))
+          GakujoFeatureFlag.messageStars.storageValue,
+      ];
+    }
+  }
+  final parsed = parseGakujoBackup(
+    jsonEncode({'version': 2, ...changed}),
+    currentReminderOffsets: current.notificationPreferences.reminderOffsets,
+  );
+  return GakujoBackupImport(
+    version: 2,
+    disabledFeatureFlags: parsed.disabledFeatureFlags,
+    calendarImportSettings: parsed.calendarImportSettings,
+    messageExcludeKeywords: parsed.messageExcludeKeywords,
+    notificationTopics: parsed.notificationTopics,
+    messageNotification: changed.containsKey('messageNotification')
+        ? parsed.messageNotification
+        : null,
+    notificationPreferences: parsed.notificationPreferences,
+  );
+}
+
 class StarSyncFavoritesCollection implements StarSyncCollection {
-  StarSyncFavoritesCollection(this.store);
+  StarSyncFavoritesCollection(this.store, {this.onChanged});
 
   final GakujoActivityStore store;
+  final Future<void> Function()? onChanged;
 
   @override
   String get name => 'favorites';
@@ -32,8 +94,8 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
   };
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) {
-    return store.replaceFavorites([
+  Future<void> applyLocal(Map<String, Object?> entries) async {
+    await store.replaceFavorites([
       for (final entry in entries.entries)
         if (entry.value is Map)
           GakujoFavoritePage.fromJson({
@@ -41,6 +103,7 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
             'url': entry.key,
           }),
     ]);
+    await onChanged?.call();
   }
 }
 
@@ -61,13 +124,8 @@ class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
   };
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) async {
-    final local = await store.loadNotifiedDeadlineKeysForBackup();
-    await store.replaceNotifiedDeadlineKeys({
-      ...entries.keys.where((key) => !local.contains(key)),
-      ...local,
-    });
-  }
+  Future<void> applyLocal(Map<String, Object?> entries) =>
+      store.mergeNotifiedDeadlineKeys(entries.keys);
 }
 
 class StarSyncSettingsCollection implements StarSyncCollection {

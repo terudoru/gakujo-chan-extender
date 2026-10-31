@@ -1,11 +1,34 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 import 'package:test/test.dart';
 
 void main() {
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
+  });
+
+  test('portable settings ignore credentials and non-portable fields', () {
+    final current = GakujoAppSettings(
+      loginCredentials: const GakujoLoginCredentials(loginId: 'id', password: 'secret'),
+      disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+    );
+    final exported = exportStarSyncPortableSettings(current);
+    expect(exported.keys, isNot(contains('loginCredentials')));
+    expect(exported['disabledFeatureFlags'], isNot(contains(GakujoFeatureFlag.messageStars.storageValue)));
+    final imported = importStarSyncPortableSettings(current, {
+      'loginCredentials': {'loginId': 'other', 'password': 'other'},
+      'downloadSaveMode': 'other',
+      'pageMode': 'other',
+      'disabledFeatureFlags': [],
+      'messageExcludeKeywords': ['exam'],
+    });
+    expect(imported.downloadSaveMode, isNull);
+    expect(imported.pageMode, isNull);
+    expect(imported.disabledFeatureFlags, isNull);
+    expect(imported.messageExcludeKeywords, ['exam']);
+    expect(current.loginCredentials!.password, 'secret');
   });
 
   test('favorites round trip and retain the store limit', () async {

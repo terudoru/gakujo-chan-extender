@@ -10,6 +10,16 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('queued deadline union retains concurrently added keys', () async {
+    final store = GakujoActivityStore();
+    await store.addNotifiedDeadlineKeys(['old']);
+    await Future.wait([
+      store.addNotifiedDeadlineKeys(['concurrent']),
+      store.mergeNotifiedDeadlineKeys(['remote']),
+    ]);
+    expect(await store.loadNotifiedDeadlineKeys(), {'old', 'concurrent', 'remote'});
+  });
+
   test('activity snapshot round-trips through json', () {
     final updatedAt = DateTime.utc(2026, 6, 26, 10);
     final snapshot = GakujoActivitySnapshot(

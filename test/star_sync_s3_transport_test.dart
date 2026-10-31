@@ -15,6 +15,23 @@ void main() {
         secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
         pathStyle: pathStyle,
       );
+  test('large object requires an increased response limit', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      request.response.add(List.filled(5 * 1024 * 1024, 7));
+      await request.response.close();
+    });
+    final transport = StarSyncS3Transport(config(Uri.parse('http://127.0.0.1:${server.port}')));
+    try {
+      await expectLater(transport.get('backup/device'), throwsA(isA<StarSyncTransportException>()));
+      expect((await transport.get('backup/device', maxBytes: 32 * 1024 * 1024))!.bytes.length, 5 * 1024 * 1024);
+    } finally {
+      transport.close();
+      await subscription.cancel();
+      await server.close(force: true);
+    }
+  });
+
   test('S3 URL styles and segment encoding', () {
     final endpoint = Uri.parse('https://s3.amazonaws.com');
     expect(

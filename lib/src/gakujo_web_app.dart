@@ -63,6 +63,7 @@ import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
+import 'star_sync/star_sync_adapters.dart';
 import 'star_sync/star_sync_config.dart';
 import 'star_sync/star_sync_google_auth.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
@@ -1191,6 +1192,7 @@ const gakujoAuthenticatedSessionResetScript = r'''
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
+  Future<void> Function()? _refreshOpenFavorites;
   late final GakujoOfflineRetry _offlineRetry;
   bool _offlineRetryPausedInBackground = false;
   // Reloads since the last successful Gakujo page. The probe can reach the
@@ -1307,6 +1309,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         accessToken: _starSyncGoogleAuth.accessToken,
       ),
       activityStore: _activityStore,
+      collections: [
+        StarSyncFavoritesCollection(_activityStore, onChanged: () async {
+          await _refreshOpenFavorites?.call();
+        }),
+        StarSyncNotifiedDeadlinesCollection(_activityStore),
+        StarSyncSettingsCollection(
+          read: () async => exportStarSyncPortableSettings(_appSettings),
+          apply: _applySyncedSettings,
+        ),
+        StarSyncReportDraftsCollection(
+          read: _readSyncedReportDrafts,
+          apply: _applySyncedReportDrafts,
+        ),
+      ],
       loginId: () => _appSettings.loginCredentials?.loginId,
       canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
@@ -2653,6 +2669,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     icon: Icons.sync,
                     child: StarSyncSection(
                       status: _starSyncEngine.status,
+                      collectionEnabled: _starSyncEngine.collectionEnabled,
+                      onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
@@ -3838,6 +3856,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+    _refreshOpenFavorites = null;
   }
 
   Future<void> _handleToolbarSelection(Object selection) async {
@@ -5473,6 +5492,55 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       text,
       emptyMessage: 'ファイルに設定JSONがありません',
     );
+  }
+
+  Future<void> _applySyncedSettings(Map<String, Object?> entries) async {
+    final previousSettings = _appSettings;
+    final backup = importStarSyncPortableSettings(previousSettings, entries);
+    await restoreGakujoBackup(
+      backup: backup,
+      settingsStore: _appSettingsStore,
+      historyStore: _downloadHistoryStore,
+      activityStore: _activityStore,
+      isAllowedUrl: _isAllowedBackupUrl,
+      isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
+    );
+    final nextSettings = previousSettings.copyWith(
+      disabledFeatureFlags: backup.disabledFeatureFlags,
+      calendarImportSettings: backup.calendarImportSettings,
+      messageExcludeKeywords: backup.messageExcludeKeywords,
+      notificationTopics: backup.notificationTopics,
+      messageNotification: backup.messageNotification,
+      notificationPreferences: backup.notificationPreferences,
+    );
+    if (!mounted) return;
+    setState(() {
+      if (backup.disabledFeatureFlags != null) _startupPlaceholderFeatureFlags.clear();
+      _appSettings = nextSettings;
+    });
+    await _syncLocalSettingsMirror(nextSettings);
+    await _applyChangedRuntimeFeatureFlags(previousSettings, nextSettings);
+    await _injectMessageFilterIfAllowed();
+    unawaited(_syncReminders());
+    _scheduleAutoBackup();
+  }
+
+  Future<bool> _canSyncReportDrafts() async => mounted &&
+      AllowedWebOrigins.canLoad(await _controller.currentUrl(), debugAllowed: _debugAllowed);
+
+  Future<Map<String, Object?>?> _readSyncedReportDrafts() async {
+    if (!await _canSyncReportDrafts()) return null;
+    final result = await _controller.runJavaScriptReturningResult(
+      GakujoReportDraftScript.buildExportAll(),
+    );
+    final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+    if (decoded is! Map) throw const FormatException('Invalid report drafts');
+    return Map<String, Object?>.from(decoded);
+  }
+
+  Future<void> _applySyncedReportDrafts(Map<String, Object?> drafts) async {
+    if (!await _canSyncReportDrafts()) return;
+    await _controller.runJavaScript(GakujoReportDraftScript.buildImportAll(drafts));
   }
 
   Future<void> _restoreSettingsFromText(

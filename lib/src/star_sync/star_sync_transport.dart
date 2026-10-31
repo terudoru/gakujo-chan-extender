@@ -4,7 +4,10 @@ import 'dart:io';
 abstract interface class StarSyncTransport {
   Future<void> ensureDirectory(String path);
   Future<List<StarSyncRemoteEntry>> list(String directory);
-  Future<StarSyncRemoteObject?> get(String path);
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  });
   Future<void> put(String path, List<int> bytes, {bool createOnly = false});
   Future<void> delete(String path);
   void close();
@@ -81,6 +84,8 @@ String? normalizeStarSyncEtag(String? value) {
   return result;
 }
 
+const starSyncDefaultMaxBytes = 2 * 1024 * 1024;
+
 const starSyncRequestTimeout = Duration(seconds: 20);
 
 class StarSyncHttpResponse {
@@ -96,6 +101,7 @@ Future<StarSyncHttpResponse> starSyncRequest(
   Uri uri, {
   Map<String, String> headers = const {},
   List<int> body = const [],
+  int maxBytes = starSyncDefaultMaxBytes,
 }) async {
   Future<StarSyncHttpResponse> send() async {
     final request = await client.openUrl(method, uri);
@@ -106,7 +112,7 @@ Future<StarSyncHttpResponse> starSyncRequest(
     final response = await request.close();
     final bytes = <int>[];
     await for (final chunk in response) {
-      if (bytes.length + chunk.length > 2 * 1024 * 1024) {
+      if (bytes.length + chunk.length > maxBytes) {
         throw const StarSyncTransportException(
           StarSyncTransportErrorKind.invalidResponse,
           'Response is too large',

@@ -97,6 +97,8 @@ class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
     required this.status,
+    this.collectionEnabled,
+    this.onCollectionChanged,
     required this.googleAvailable,
     required this.isGoogleDrive,
     required this.googleEmail,
@@ -125,6 +127,8 @@ class StarSyncSection extends StatefulWidget {
   });
 
   final ValueListenable<StarSyncStatusSnapshot> status;
+  final bool Function(String)? collectionEnabled;
+  final Future<void> Function(String, bool)? onCollectionChanged;
   final bool googleAvailable;
   final bool Function() isGoogleDrive;
   final String? Function() googleEmail;
@@ -564,6 +568,22 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                   : () => _run(() => widget.onRejoin(_rejoin.text)),
               child: const Text('再接続'),
             ),
+          ],
+          if (widget.collectionEnabled != null && widget.onCollectionChanged != null) ...[
+            const Text('??????'),
+            for (final item in const {
+              'favorites': '?????',
+              'settings': '??',
+              'report-drafts': '???????',
+              'notified-deadlines': '???????',
+            }.entries)
+              SwitchListTile(
+                title: Text(item.value),
+                value: widget.collectionEnabled!(item.key),
+                onChanged: _busy || status.syncing ? null : (value) => _run(() async {
+                  await widget.onCollectionChanged!(item.key, value);
+                }),
+              ),
           ],
           if (_error != null) Text(_error!),
           if (_busy) const LinearProgressIndicator(),
