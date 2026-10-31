@@ -79,6 +79,8 @@ class _Transport implements StarSyncTransport {
   int lists = 0;
   int serverFailures = 0;
   final gets = <String, int>{};
+  Completer<void>? getStarted;
+  Completer<void>? getRelease;
   Completer<void>? listStarted;
   Completer<void>? listRelease;
   bool failDevicePutOnce = false;
@@ -136,6 +138,14 @@ class _Transport implements StarSyncTransport {
 
   @override
   Future<StarSyncRemoteObject?> get(String path) async {
+    final started = getStarted;
+    final release = getRelease;
+    if (started != null && release != null) {
+      getStarted = null;
+      getRelease = null;
+      started.complete();
+      await release.future;
+    }
     gets[path] = (gets[path] ?? 0) + 1;
     onGet?.call(path, gets[path]!);
     if (simulateKeyringRace && path == 'stars/keyring.json') {
@@ -320,14 +330,23 @@ void main() {
     var state = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    expect(state.pendingLocalClear, isTrue);
+    expect(state.pendingLocalClearIds, ['1|2|3']);
     expect((await activity.loadStarredMessages()).single.title, 'old');
+    await activity.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '4',
+        title: 'new',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
     await engine.syncNow();
     state = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    expect(state.pendingLocalClear, isFalse);
-    expect(await activity.loadStarredMessages(), isEmpty);
+    expect(state.pendingLocalClearIds, isEmpty);
+    expect((await activity.loadStarredMessages()).single.title, 'new');
     final bytes = remote.files['stars/devices/${state.deviceId}']!;
     final plain = await decryptStarSyncFile(
       dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
@@ -335,7 +354,7 @@ void main() {
       bytes: bytes,
       expectedDeviceId: state.deviceId,
     );
-    expect(StarSyncDocument.fromBytes(plain).records, isEmpty);
+    expect(StarSyncDocument.fromBytes(plain).records.keys, ['1|2|4']);
     engine.dispose();
   });
 
@@ -370,6 +389,7 @@ void main() {
       );
       final json =
           jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+      json.remove('pendingLocalClearIds');
       json['pendingLocalClear'] = true;
       storage.values[starSyncStateKey] = jsonEncode(json);
       final engine = makeEngine();
@@ -383,8 +403,8 @@ void main() {
       expect(engine.status.value.lastError, '端末内のスターを消去できませんでした');
       expect(factories, beforeFactories);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-        isTrue,
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
+        ['1|2|3'],
       );
       storage.failStarWriteOnce = true;
       await expectLater(engine.syncNow(), throwsStateError);
@@ -393,21 +413,146 @@ void main() {
       expect(remote.puts, beforePuts);
       expect(remote.gets, beforeGets);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-        isTrue,
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
+        ['1|2|3'],
       );
       expect((await activity.loadStarredMessages()).single.title, 'old');
       await engine.load();
       expect(await activity.loadStarredMessages(), isEmpty);
       expect(
-        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClear'],
-        isFalse,
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalClearIds'],
+        isEmpty,
       );
       await engine.syncNow();
       expect(await activity.loadStarredMessages(), isEmpty);
       engine.dispose();
     },
   );
+
+  test('pending clear waits for the bound account', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    var account = 'A';
+    final engine = StarSyncEngine(
+      loginId: () => account,
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await activity.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1', genrecd: '2', seqNo: '3',
+        title: 'old', starredAt: DateTime.utc(2026),
+      ),
+    );
+    storage.failStarWriteOnce = true;
+    await expectLater(
+      engine.setUp(config, 'pass', clearLocalStars: true),
+      throwsStateError,
+    );
+    await engine.runAccountChange(() async => account = 'B');
+    final lists = remote.lists;
+    final puts = remote.puts;
+    final gets = Map<String, int>.of(remote.gets);
+    await engine.syncNow();
+    expect((await activity.loadStarredMessages()).single.title, 'old');
+    expect(remote.lists, lists);
+    expect(remote.puts, puts);
+    expect(remote.gets, gets);
+    await engine.load();
+    expect((await activity.loadStarredMessages()).single.title, 'old');
+    expect(remote.lists, lists);
+    expect(remote.puts, puts);
+    expect(remote.gets, gets);
+    engine.dispose();
+  });
+
+  test('setup generation rejects an account that changed and returned', () async {
+    for (final pairing in [false, true]) {
+      final storage = _Storage();
+      final remote = _Transport();
+      var account = 'A';
+      final engine = StarSyncEngine(
+        loginId: () => account,
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+      final expectedAccount = engine.requireAccount();
+      final generation = engine.accountGeneration;
+      final started = Completer<void>();
+      final release = Completer<void>();
+      remote.getStarted = started;
+      remote.getRelease = release;
+      final Future<void> setup = pairing
+          ? engine.setUpWithPairing(
+              config, expectedAccount: expectedAccount,
+              expectedGeneration: generation,
+            ).then((_) {})
+          : engine.setUp(
+              config, 'pass', expectedAccount: expectedAccount,
+              expectedGeneration: generation,
+            );
+      await started.future;
+      await engine.runAccountChange(() async => account = 'B');
+      await engine.runAccountChange(() async => account = 'A');
+      release.complete();
+      await expectLater(setup, throwsA(isA<StarSyncAccountMismatchException>()));
+      expect(engine.accountGeneration, generation + 2);
+      expect(engine.status.value.enabled, isFalse);
+      expect(storage.values.containsKey(starSyncStateKey), isFalse);
+      expect(remote.puts, 0);
+      expect(remote.files, isEmpty);
+      engine.dispose();
+    }
+  });
+
+  test('installation rejects a returned account generation', () async {
+    final storage = _Storage();
+    final remote = _Transport();
+    final firstStorage = _Storage();
+    final first = StarSyncEngine(
+      loginId: () => 'A',
+      activityStore: GakujoActivityStore(secureStorage: firstStorage),
+      secureStorage: firstStorage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await first.setUp(config, 'pass');
+    first.dispose();
+    var account = 'A';
+    final engine = StarSyncEngine(
+      loginId: () => account,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    final expectedAccount = engine.requireAccount();
+    final generation = engine.accountGeneration;
+    final started = Completer<void>();
+    final release = Completer<void>();
+    remote.getStarted = started;
+    remote.getRelease = release;
+    final puts = remote.puts;
+    final setup = engine.setUp(
+      config,
+      'pass',
+      expectedAccount: expectedAccount,
+      expectedGeneration: generation,
+    );
+    await started.future;
+    await engine.runAccountChange(() async => account = 'B');
+    await engine.runAccountChange(() async => account = 'A');
+    release.complete();
+    await expectLater(setup, throwsA(isA<StarSyncAccountMismatchException>()));
+    expect(remote.puts, puts);
+    expect(storage.values.containsKey(starSyncStateKey), isFalse);
+    engine.dispose();
+  });
 
   test('account change waits for the complete sync', () async {
     final remote = _Transport();

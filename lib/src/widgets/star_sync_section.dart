@@ -105,6 +105,7 @@ class StarSyncSection extends StatefulWidget {
     required this.onGoogleReSignIn,
     required this.onLocalStarCount,
     required this.onRequireAccount,
+    required this.onAccountGeneration,
     required this.onSetUpWithPairing,
     required this.onJoinWithCode,
     required this.onPairingCode,
@@ -129,22 +130,26 @@ class StarSyncSection extends StatefulWidget {
   final Future<StarSyncPairingSetup> Function({
     required bool clearLocalStars,
     required String expectedAccount,
+    required int expectedGeneration,
   })
   onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
   final Future<void> Function() onGoogleReSignIn;
   final Future<int> Function() onLocalStarCount;
   final String Function() onRequireAccount;
+  final int Function() onAccountGeneration;
   final Future<StarSyncPairingSetup> Function({
     required bool resetExisting,
     required bool clearLocalStars,
     required String expectedAccount,
+    required int expectedGeneration,
   })
   onSetUpWithPairing;
   final Future<void> Function(
     String, {
     required bool clearLocalStars,
     required String expectedAccount,
+    required int expectedGeneration,
   })
   onJoinWithCode;
   final Future<String> Function() onPairingCode;
@@ -156,6 +161,7 @@ class StarSyncSection extends StatefulWidget {
     required bool resetExisting,
     required bool clearLocalStars,
     required String expectedAccount,
+    required int expectedGeneration,
   })
   onSetUp;
   final Future<void> Function() onSyncNow;
@@ -230,6 +236,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   Future<void> _startAdvanced() async {
     try {
       final expectedAccount = widget.onRequireAccount();
+      final expectedGeneration = widget.onAccountGeneration();
       final clear = await _chooseLocalStars();
       if (clear == null || !mounted) return;
       await showDialog<void>(
@@ -239,6 +246,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           onSetUp: widget.onSetUp,
           clearLocalStars: clear,
           expectedAccount: expectedAccount,
+          expectedGeneration: expectedGeneration,
         ),
       );
     } on Object catch (error) {
@@ -249,8 +257,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   Future<void> _startGoogle() async {
     // Ask before showing progress, or the bar keeps animating behind it.
     String expectedAccount;
+    int expectedGeneration;
     try {
       expectedAccount = widget.onRequireAccount();
+      expectedGeneration = widget.onAccountGeneration();
     } on Object catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
       return;
@@ -266,6 +276,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       final result = await widget.onGoogleSignIn(
         clearLocalStars: clear,
         expectedAccount: expectedAccount,
+        expectedGeneration: expectedGeneration,
       );
       needsCleanup = result == StarSyncPairingSetup.needsPairingCode;
       if (!mounted) return;
@@ -280,11 +291,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               code,
               clearLocalStars: clear,
               expectedAccount: expectedAccount,
+              expectedGeneration: expectedGeneration,
             ),
             onReset: () => widget.onSetUpWithPairing(
               resetExisting: true,
               clearLocalStars: clear,
               expectedAccount: expectedAccount,
+              expectedGeneration: expectedGeneration,
             ),
           ),
         );
@@ -816,15 +829,18 @@ class _SetupDialog extends StatefulWidget {
     required this.onSetUp,
     required this.clearLocalStars,
     required this.expectedAccount,
+    required this.expectedGeneration,
   });
   final bool clearLocalStars;
   final String expectedAccount;
+  final int expectedGeneration;
   final Future<void> Function(
     StarSyncConfig,
     String, {
     required bool resetExisting,
     required bool clearLocalStars,
     required String expectedAccount,
+    required int expectedGeneration,
   })
   onSetUp;
   @override
@@ -912,6 +928,7 @@ class _SetupDialogState extends State<_SetupDialog> {
         resetExisting: resetExisting,
         clearLocalStars: widget.clearLocalStars,
         expectedAccount: widget.expectedAccount,
+        expectedGeneration: widget.expectedGeneration,
       );
       if (mounted) Navigator.pop(context);
     } on Object catch (error) {
