@@ -64,6 +64,36 @@ void main() {
     ],
   };
 
+  test('star replacement hook surrounds the restore and skips absent stars',
+      () async {
+    final storage = _Storage({});
+    final activity = GakujoActivityStore(secureStorage: storage);
+    final events = <String>[];
+    Future<void> restore(String json) => restoreGakujoBackup(
+          backup: parseGakujoBackup(json),
+          settingsStore: GakujoAppSettingsStore(secureStorage: storage),
+          historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+          activityStore: activity,
+          isAllowedUrl: (_) => true,
+          isAllowedNavigationUrl: (_) => true,
+          withStarredMessagesReplacement: (replace) async {
+            final before = await activity.loadStarredMessages();
+            events.add('before:${before.length}');
+            await replace();
+            final after = await activity.loadStarredMessages();
+            events.add('after:${after.length}');
+          },
+        );
+
+    await restore(jsonEncode({
+      'version': 2,
+      'starredMessages': validCollections['starredMessages'],
+    }));
+    expect(events, ['before:0', 'after:1']);
+    await restore('{"version":2}');
+    expect(events, ['before:0', 'after:1']);
+  });
+
   for (final key in [
     'failedDownloads',
     'favorites',

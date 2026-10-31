@@ -9,6 +9,7 @@ Future<void> restoreGakujoBackup({
   required GakujoAppSettingsStore settingsStore,
   required GakujoDownloadHistoryStore historyStore,
   required GakujoActivityStore activityStore,
+  Future<void> Function(Future<void> Function())? withStarredMessagesReplacement,
   required bool Function(String) isAllowedUrl,
   required bool Function(String) isAllowedNavigationUrl,
 }) async {
@@ -56,7 +57,7 @@ Future<void> restoreGakujoBackup({
     backup.reportLists,
     retain: (entry) => isAllowedUrl(entry.url),
   );
-  await runBackupStorageTransaction([
+  Future<void> restore() => runBackupStorageTransaction([
     settingsStore.backupStorage,
     historyStore.backupStorage,
     activityStore.backupStorage,
@@ -125,4 +126,9 @@ Future<void> restoreGakujoBackup({
       await activityStore.replaceReportLists(reportLists);
     }
   });
+  if (starredMessages != null && withStarredMessagesReplacement != null) {
+    await withStarredMessagesReplacement(restore);
+  } else {
+    await restore();
+  }
 }

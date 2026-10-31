@@ -22,6 +22,8 @@ dependencies:
     path: third_party/webview_flutter_windows
   package_info_plus: ^10.1.0
   image_picker: ^1.2.4
+  cryptography: ^2.9.0
+  xml: ^7.1.0
 
 dependency_overrides:
   # 0.3.2 with a macOS keychain readAll fix; see third_party/flutter_secure_storage_darwin.
