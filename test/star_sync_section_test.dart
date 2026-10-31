@@ -55,8 +55,11 @@ void main() {
           googleEmail: () => google ? 'user@example.com' : null,
           onGoogleSignIn:
               onGoogleSignIn ??
-              ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async =>
-                  StarSyncPairingSetup.created,
+              ({
+                required clearLocalStars,
+                required expectedAccount,
+                required expectedGeneration,
+              }) async => StarSyncPairingSetup.created,
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onLocalStarCount: onLocalStarCount ?? () async => 0,
@@ -434,7 +437,11 @@ void main() {
           googleAvailable: true,
           onLocalStarCount: () async => 3,
           onGoogleSignIn:
-              ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+              ({
+                required clearLocalStars,
+                required expectedAccount,
+                required expectedGeneration,
+              }) async {
                 selected = clearLocalStars;
                 expect(expectedAccount, 'account');
                 expect(expectedGeneration, 7);

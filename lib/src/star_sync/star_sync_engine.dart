@@ -348,10 +348,10 @@ class StarSyncEngine {
       try {
         if (stateJson['pendingLocalClear'] == true &&
             !stateJson.containsKey('pendingLocalClearIds')) {
-          parsedState.pendingLocalClearIds = (await activityStore
-                  .loadStarredMessages())
-              .map((star) => star.id)
-              .toList();
+          parsedState.pendingLocalClearIds =
+              (await activityStore.loadStarredMessages())
+                  .map((star) => star.id)
+                  .toList();
           await _saveState();
         }
         if (!await _accountMatches(parsedState)) return;
@@ -399,10 +399,12 @@ class StarSyncEngine {
     final pendingIds = state.pendingLocalClearIds;
     try {
       final ids = pendingIds.toSet();
-      await activityStore.transformStarredMessages<void>((current) async => (
-        next: current.where((star) => !ids.contains(star.id)).toList(),
-        result: null,
-      ));
+      await activityStore.transformStarredMessages<void>(
+        (current) async => (
+          next: current.where((star) => !ids.contains(star.id)).toList(),
+          result: null,
+        ),
+      );
       state.pendingLocalClearIds = [];
       if (state.lastError == '端末内のスターを消去できませんでした') {
         state.status = StarSyncStatus.ok;

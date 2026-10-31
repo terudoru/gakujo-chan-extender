@@ -443,8 +443,11 @@ void main() {
     );
     await activity.upsertStarredMessage(
       GakujoStarredMessage(
-        keijitype: '1', genrecd: '2', seqNo: '3',
-        title: 'old', starredAt: DateTime.utc(2026),
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'old',
+        starredAt: DateTime.utc(2026),
       ),
     );
     storage.failStarWriteOnce = true;
@@ -469,46 +472,57 @@ void main() {
     engine.dispose();
   });
 
-  test('setup generation rejects an account that changed and returned', () async {
-    for (final pairing in [false, true]) {
-      final storage = _Storage();
-      final remote = _Transport();
-      var account = 'A';
-      final engine = StarSyncEngine(
-        loginId: () => account,
-        activityStore: GakujoActivityStore(secureStorage: storage),
-        secureStorage: storage,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-      );
-      final expectedAccount = engine.requireAccount();
-      final generation = engine.accountGeneration;
-      final started = Completer<void>();
-      final release = Completer<void>();
-      remote.getStarted = started;
-      remote.getRelease = release;
-      final Future<void> setup = pairing
-          ? engine.setUpWithPairing(
-              config, expectedAccount: expectedAccount,
-              expectedGeneration: generation,
-            ).then((_) {})
-          : engine.setUp(
-              config, 'pass', expectedAccount: expectedAccount,
-              expectedGeneration: generation,
-            );
-      await started.future;
-      await engine.runAccountChange(() async => account = 'B');
-      await engine.runAccountChange(() async => account = 'A');
-      release.complete();
-      await expectLater(setup, throwsA(isA<StarSyncAccountMismatchException>()));
-      expect(engine.accountGeneration, generation + 2);
-      expect(engine.status.value.enabled, isFalse);
-      expect(storage.values.containsKey(starSyncStateKey), isFalse);
-      expect(remote.puts, 0);
-      expect(remote.files, isEmpty);
-      engine.dispose();
-    }
-  });
+  test(
+    'setup generation rejects an account that changed and returned',
+    () async {
+      for (final pairing in [false, true]) {
+        final storage = _Storage();
+        final remote = _Transport();
+        var account = 'A';
+        final engine = StarSyncEngine(
+          loginId: () => account,
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+        );
+        final expectedAccount = engine.requireAccount();
+        final generation = engine.accountGeneration;
+        final started = Completer<void>();
+        final release = Completer<void>();
+        remote.getStarted = started;
+        remote.getRelease = release;
+        final Future<void> setup = pairing
+            ? engine
+                  .setUpWithPairing(
+                    config,
+                    expectedAccount: expectedAccount,
+                    expectedGeneration: generation,
+                  )
+                  .then((_) {})
+            : engine.setUp(
+                config,
+                'pass',
+                expectedAccount: expectedAccount,
+                expectedGeneration: generation,
+              );
+        await started.future;
+        await engine.runAccountChange(() async => account = 'B');
+        await engine.runAccountChange(() async => account = 'A');
+        release.complete();
+        await expectLater(
+          setup,
+          throwsA(isA<StarSyncAccountMismatchException>()),
+        );
+        expect(engine.accountGeneration, generation + 2);
+        expect(engine.status.value.enabled, isFalse);
+        expect(storage.values.containsKey(starSyncStateKey), isFalse);
+        expect(remote.puts, 0);
+        expect(remote.files, isEmpty);
+        engine.dispose();
+      }
+    },
+  );
 
   test('installation rejects a returned account generation', () async {
     final storage = _Storage();
