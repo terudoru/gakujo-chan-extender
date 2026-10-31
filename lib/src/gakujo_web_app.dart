@@ -5657,8 +5657,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       isAllowedUrl: _isAllowedBackupUrl,
       isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
     );
+    // The values are persisted now, so returning false here would leave the
+    // store and the sync state disagreeing. Build from the latest in-memory
+    // settings instead: non-portable fields are never overwritten, and a
+    // concurrent edit of the same portable key loses like any other LWW edit.
     final currentSettings = _appSettings;
-    if (!portableSyncSettingsMatch(currentSettings, basedOn)) return false;
     final currentBackup = importStarSyncPortableSettings(currentSettings, entries);
     final nextSettings = currentSettings.copyWith(
       disabledFeatureFlags: currentBackup.disabledFeatureFlags,
