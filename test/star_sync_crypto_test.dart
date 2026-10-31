@@ -51,6 +51,23 @@ void main() {
     expect(() => starSyncKeyFromBytes([1]), throwsArgumentError);
   });
 
+  test('file key id is read from a well formed header only', () async {
+    final created = createStarSyncPairingKeyring();
+    final bytes = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(created.dataKey),
+      keyId: created.keyring.keyId,
+      deviceId: 'device',
+      plaintext: [1],
+    );
+    expect(starSyncFileKeyId(bytes), created.keyring.keyId);
+    bytes[bytes.length - 1] ^= 1;
+    expect(starSyncFileKeyId(bytes), created.keyring.keyId);
+    expect(starSyncFileKeyId(bytes.sublist(0, 9)), isNull);
+    expect(starSyncFileKeyId([1, 2, 3]), isNull);
+    bytes[0] = 0;
+    expect(starSyncFileKeyId(bytes), isNull);
+  });
+
   test('wrong passphrase is rejected and rewrap preserves the key', () async {
     final created = await createStarSyncKeyring('old', params: fast);
     await expectLater(

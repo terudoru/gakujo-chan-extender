@@ -440,7 +440,15 @@ class StarSyncEngine {
     } finally {
       transport.close();
     }
-    await syncNow();
+    await _syncAfterSetup();
+  }
+
+  Future<void> _syncAfterSetup() async {
+    try {
+      await syncNow();
+    } on Object {
+      // The configuration is already saved and sync records its own error.
+    }
   }
 
   Future<void> _installPairing(
@@ -513,7 +521,7 @@ class StarSyncEngine {
     } finally {
       transport.close();
     }
-    await syncNow();
+    await _syncAfterSetup();
     return StarSyncPairingSetup.created;
   }
 
@@ -572,7 +580,7 @@ class StarSyncEngine {
     } finally {
       transport.close();
     }
-    await syncNow();
+    await _syncAfterSetup();
   }
 
   Future<String> pairingCode() => _queue.run(() async {
@@ -868,6 +876,11 @@ class StarSyncEngine {
             if (object == null) {
               continue;
             }
+            final fileKeyId = starSyncFileKeyId(object.bytes);
+            if (fileKeyId != null && fileKeyId != state.keyId) {
+              await transport.delete(entry.path);
+              continue;
+            }
             final plain = await decryptStarSyncFile(
               dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
               keyId: state.keyId,
@@ -994,7 +1007,7 @@ class StarSyncEngine {
         state.lastUploadedHash = hash;
       }
       state.status = StarSyncStatus.ok;
-      state.lastError = null;
+      state.lastError = skipped == 0 ? null : '一部の端末のデータを読めませんでした（$skipped台）';
       state.lastSyncAt = _now().toUtc();
       state.pendingLocalChange = false;
       state.serverFailures = 0;

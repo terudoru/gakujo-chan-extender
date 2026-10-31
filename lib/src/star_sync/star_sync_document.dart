@@ -248,11 +248,13 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
       if (item.isValid) item.id: item,
   };
   final ids = {...state.keys, ...localById.keys}.toList()..sort();
-  DateTime? oldest;
+  GakujoStarredMessage? lastKept;
   if (local.length >= starSyncMaxStars && local.isNotEmpty) {
-    oldest = local
-        .map((item) => item.starredAt)
-        .reduce((a, b) => a.isBefore(b) ? a : b);
+    lastKept = local.reduce((a, b) {
+      final date = b.starredAt.compareTo(a.starredAt);
+      final order = date != 0 ? date : a.id.compareTo(b.id);
+      return order >= 0 ? a : b;
+    });
   }
   for (final id in ids) {
     final item = localById[id];
@@ -276,7 +278,10 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
     } else if (previous != null &&
         previous.starred &&
         !bulkReplace &&
-        (oldest == null || previous.starredAt.isAfter(oldest))) {
+        (lastKept == null ||
+            previous.starredAt.isAfter(lastKept.starredAt) ||
+            (previous.starredAt.isAtSameMomentAs(lastKept.starredAt) &&
+                previous.id.compareTo(lastKept.id) < 0))) {
       result[id] = previous.copyWith(
         starred: false,
         clock: ++clock,

@@ -75,6 +75,26 @@ void main() {
     ),
   );
 
+  testWidgets('enabled state shows partial sync as a warning', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.ok,
+        lastError: '一部の端末のデータを読めませんでした（2台）',
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status));
+    expect(find.text('まだ同期していません'), findsOneWidget);
+    expect(find.text('一部の端末のデータを読めませんでした（2台）'), findsOneWidget);
+    status.value = const StarSyncStatusSnapshot(
+      enabled: true,
+      status: StarSyncStatus.ok,
+    );
+    await tester.pump();
+    expect(find.text('一部の端末のデータを読めませんでした（2台）'), findsNothing);
+  });
+
   testWidgets('disabled state offers setup', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);

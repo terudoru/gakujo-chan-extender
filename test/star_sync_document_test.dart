@@ -212,6 +212,25 @@ void main() {
     expect(result.state[newer.id]!.starred, false);
   });
 
+  test('equal timestamps use id ordering to identify cap trimming', () {
+    final items = List.generate(301, (i) => local(i, at: now))
+      ..sort((a, b) => a.id.compareTo(b.id));
+    final removedByUser = items.removeAt(0);
+    final trimmed = items.removeLast();
+    items.add(local(-1, at: now));
+    final deletedRecord = record(int.parse(removedByUser.seqNo));
+    final trimmedRecord = record(int.parse(trimmed.seqNo));
+    final result = reconcileLocalStars(
+      local: items,
+      state: {deletedRecord.id: deletedRecord, trimmedRecord.id: trimmedRecord},
+      clock: 1,
+      deviceId: 'd',
+      now: now,
+    );
+    expect(result.state[deletedRecord.id]!.starred, isFalse);
+    expect(result.state[trimmedRecord.id]!.starred, isTrue);
+  });
+
   test('applying state preserves local details and takes remote timestamp', () {
     final r = record(1, title: 'remote', at: now.add(const Duration(days: 1)));
     final newRecord = record(2);

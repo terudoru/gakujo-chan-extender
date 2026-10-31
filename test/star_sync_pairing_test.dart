@@ -150,6 +150,45 @@ class _Transport implements StarSyncTransport {
 void main() {
   const config = StarSyncConfig(backend: StarSyncBackend.googleDrive);
 
+  test(
+    'pairing setup, reset and join retain settings after first sync fails',
+    () async {
+      final remote = _Transport();
+      StarSyncEngine make() {
+        final storage = _Storage();
+        return StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+        );
+      }
+
+      final first = make();
+      remote.failDevicePutOnce = true;
+      expect(await first.setUpWithPairing(config), StarSyncPairingSetup.created);
+      expect(first.status.value.enabled, isTrue);
+      expect(first.status.value.status, StarSyncStatus.error);
+      expect(first.status.value.lastError, isNotNull);
+      await first.syncNow();
+      final second = make();
+      remote.failDevicePutOnce = true;
+      await second.joinWithPairingCode(config, await first.pairingCode());
+      expect(second.status.value.enabled, isTrue);
+      expect(second.status.value.status, StarSyncStatus.error);
+      expect(second.status.value.lastError, isNotNull);
+      final reset = make();
+      remote.failDevicePutOnce = true;
+      expect(
+        await reset.setUpWithPairing(config, resetExisting: true),
+        StarSyncPairingSetup.created,
+      );
+      expect(reset.status.value.enabled, isTrue);
+      expect(reset.status.value.status, StarSyncStatus.error);
+      expect(reset.status.value.lastError, isNotNull);
+    },
+  );
+
   test('pairing, two-way sync, reset and rejoin', () async {
     final remote = _Transport();
     final storageA = _Storage();

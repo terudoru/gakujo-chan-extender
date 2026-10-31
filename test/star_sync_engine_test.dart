@@ -591,6 +591,8 @@ void main() {
       plaintext: document.toBytes(),
     );
     expect((await engine.syncNow()).skippedFiles, 1);
+    expect(engine.status.value.status, StarSyncStatus.ok);
+    expect(engine.status.value.lastError, '一部の端末のデータを読めませんでした（1台）');
     expect(await activity.loadStarredMessages(), isEmpty);
   });
 
@@ -989,6 +991,96 @@ void main() {
     expect(b.status.value.status, StarSyncStatus.needsPassphrase);
     await b.rejoin('new passphrase');
     expect(b.status.value.status, StarSyncStatus.ok);
+  });
+
+  test('old-key files are removed only after a matching keyring check', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    final old = createStarSyncPairingKeyring();
+    const path = 'stars/devices/old';
+    remote.files[path] = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(old.dataKey),
+      keyId: old.keyring.keyId,
+      deviceId: 'old',
+      plaintext: [],
+    );
+    final ownPath = 'stars/devices/${state['deviceId']}';
+    final oldOwnFile = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(old.dataKey),
+      keyId: old.keyring.keyId,
+      deviceId: state['deviceId'] as String,
+      plaintext: [],
+    );
+    remote.files[ownPath] = oldOwnFile;
+    final currentKeyring = remote.files['stars/keyring.json']!;
+    remote.files['stars/keyring.json'] = utf8.encode(
+      jsonEncode(old.keyring.toJson()),
+    );
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
+    expect(remote.files.containsKey(path), isTrue);
+    remote.files['stars/keyring.json'] = currentKeyring;
+    expect((await engine.syncNow()).skippedFiles, 0);
+    expect(remote.files.containsKey(path), isFalse);
+    expect(remote.files[ownPath], oldOwnFile);
+  });
+
+  test('partial sync keeps unreadable files and clears its warning', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    final corrupted = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(base64Decode(state['dataKey'] as String)),
+      keyId: state['keyId'] as String,
+      deviceId: 'bad-auth',
+      plaintext: [1],
+    );
+    corrupted[corrupted.length - 1] ^= 1;
+    remote.files['stars/devices/bad-auth'] = corrupted;
+    remote.files['stars/devices/malformed'] = [1, 2, 3];
+    expect((await engine.syncNow()).skippedFiles, 2);
+    expect(engine.status.value.status, StarSyncStatus.ok);
+    expect(engine.status.value.lastError, '一部の端末のデータを読めませんでした（2台）');
+    expect(remote.files.containsKey('stars/devices/bad-auth'), isTrue);
+    expect(remote.files.containsKey('stars/devices/malformed'), isTrue);
+    remote.files.remove('stars/devices/bad-auth');
+    remote.files.remove('stars/devices/malformed');
+    expect((await engine.syncNow()).skippedFiles, 0);
+    expect(engine.status.value.lastError, isNull);
+  });
+
+  test('setup remains enabled when its first upload fails', () async {
+    final remote = _Transport()..failDevicePutOnce = true;
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    expect(engine.status.value.enabled, isTrue);
+    expect(engine.status.value.status, StarSyncStatus.error);
+    expect(engine.status.value.lastError, isNotNull);
+    expect(storage.values[starSyncStateKey], isNotNull);
   });
 
   test('corrupt remote files are skipped', () async {

@@ -376,6 +376,38 @@ Future<Uint8List> encryptStarSyncFile({
   return Uint8List.fromList([...aad, ...box.cipherText, ...box.mac.bytes]);
 }
 
+String? starSyncFileKeyId(List<int> bytes) {
+  if (bytes.length < 25 ||
+      bytes.take(9).any((byte) => byte < 0 || byte > 255) ||
+      bytes[0] != 77 ||
+      bytes[1] != 66 ||
+      bytes[2] != 71 ||
+      bytes[3] != 83 ||
+      bytes[4] != 1) {
+    return null;
+  }
+  final size = (bytes[5] << 24) | (bytes[6] << 16) | (bytes[7] << 8) | bytes[8];
+  if (size > 4096 || 9 + size + 16 > bytes.length) return null;
+  try {
+    final headerBytes = bytes.sublist(9, 9 + size);
+    if (headerBytes.any((byte) => byte < 0 || byte > 255)) return null;
+    final header = jsonDecode(utf8.decode(headerBytes));
+    if (header is! Map ||
+        header['keyId'] is! String ||
+        !_validKeyId(header['keyId'] as String) ||
+        header['deviceId'] is! String ||
+        (header['deviceId'] as String).isEmpty) {
+      return null;
+    }
+    _decode(header['nonce'], 12);
+    return header['keyId'] as String;
+  } on FormatException {
+    return null;
+  } on StarSyncFormatException {
+    return null;
+  }
+}
+
 Future<List<int>> decryptStarSyncFile({
   required SecretKey dataKey,
   required String keyId,

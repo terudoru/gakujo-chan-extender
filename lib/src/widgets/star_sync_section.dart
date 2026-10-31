@@ -403,9 +403,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           ],
         );
       }
+      final warning = status.status == StarSyncStatus.ok
+          ? status.lastError
+          : null;
       final line = status.syncing
           ? '同期中…'
-          : status.lastError ??
+          : (warning == null ? status.lastError : null) ??
                 (status.lastSyncAt == null
                     ? 'まだ同期していません'
                     : '最終同期: ${_date(status.lastSyncAt!)}');
@@ -414,6 +417,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(line),
+          if (warning != null)
+            Text(
+              warning,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           if (cooldown != null && cooldown.isAfter(DateTime.now()))
             Text(
               '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
