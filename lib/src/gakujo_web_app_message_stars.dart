@@ -59,6 +59,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         await _activityStore.refreshStarredMessage(entry);
       } else {
         final starred = await _activityStore.toggleStarredMessage(entry);
+        _scheduleStarSync();
         if (mounted) {
           _showSnackBar(starred ? 'スターを付けました' : 'スターを外しました');
         }
@@ -206,6 +207,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                                       try {
                                         await _activityStore
                                             .removeStarredMessage(entry.id);
+                                        _scheduleStarSync();
                                         entries = await _activityStore
                                             .loadStarredMessages();
                                         await _refreshMessageStars();

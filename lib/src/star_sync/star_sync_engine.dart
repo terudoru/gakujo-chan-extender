@@ -161,25 +161,22 @@ class StarSyncState {
 
 class StarSyncEngine {
   StarSyncEngine({
-    required GakujoActivityStore activityStore,
+    required this.activityStore,
     FlutterSecureStorage? secureStorage,
     StarSyncTransport Function(StarSyncConfig)? transportFactory,
     DateTime Function()? now,
-    String? Function()? loginId,
-    StarSyncKdfParams kdfParams = const StarSyncKdfParams(),
-  }) : _activityStore = activityStore,
-       _storage = secureStorage ?? SecureStorageFactory.create(),
+    this.loginId,
+    this.kdfParams = const StarSyncKdfParams(),
+  }) : _storage = secureStorage ?? SecureStorageFactory.create(),
        _transportFactory = transportFactory ?? _defaultTransport,
-       _now = now ?? DateTime.now,
-       _loginId = loginId,
-       _kdfParams = kdfParams;
+       _now = now ?? DateTime.now;
 
-  final GakujoActivityStore _activityStore;
+  final GakujoActivityStore activityStore;
   final FlutterSecureStorage _storage;
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
   final DateTime Function() _now;
-  final String? Function()? _loginId;
-  final StarSyncKdfParams _kdfParams;
+  final String? Function()? loginId;
+  final StarSyncKdfParams kdfParams;
   final StorageOperationQueue _queue = StorageOperationQueue();
   final ValueNotifier<StarSyncStatusSnapshot> _status = ValueNotifier(
     const StarSyncStatusSnapshot(),
@@ -255,9 +252,9 @@ class StarSyncEngine {
       await transport.ensureDirectory(_deviceDirectory);
       var remote = await transport.get(_keyringPath);
       if (remote == null) {
-        final memory = _kdfParams.memoryKiB;
-        final iterations = _kdfParams.iterations;
-        final parallelism = _kdfParams.parallelism;
+        final memory = kdfParams.memoryKiB;
+        final iterations = kdfParams.iterations;
+        final parallelism = kdfParams.parallelism;
         final data = utf8.encode(
           await _createKeyringJson(passphrase, memory, iterations, parallelism),
         );
@@ -346,7 +343,7 @@ class StarSyncEngine {
         await _saveState();
         return const StarSyncResult();
       }
-      final id = _loginId?.call()?.trim();
+      final id = loginId?.call()?.trim();
       final account = id == null || id.isEmpty
           ? null
           : base64UrlEncode(
@@ -428,7 +425,7 @@ class StarSyncEngine {
         }
       }
       final now = _now().toUtc();
-      final changed = await _activityStore.transformStarredMessages<bool>((
+      final changed = await activityStore.transformStarredMessages<bool>((
         current,
       ) async {
         final reconciled = reconcileLocalStars(
@@ -519,15 +516,34 @@ class StarSyncEngine {
     return '同期できませんでした';
   }
 
-  void scheduleSync({Duration delay = const Duration(seconds: 5)}) {
+  void scheduleSync({
+    Duration delay = const Duration(seconds: 5),
+    bool Function()? shouldSync,
+    void Function(StarSyncResult)? onResult,
+  }) {
     if (_config == null) {
       return;
     }
     _timer?.cancel();
     _timer = Timer(delay, () {
-      unawaited(syncNow().then<void>((_) {}, onError: (Object _) {}));
+      if (shouldSync != null && !shouldSync()) return;
+      unawaited(
+        syncNow()
+            .then<void>((result) {
+              onResult?.call(result);
+            })
+            .catchError((Object _) {}),
+      );
     });
   }
+
+  void dispose() => _timer?.cancel();
+
+  Future<void> withBulkReplace(Future<void> Function() replace) =>
+      _queue.runExclusive(() async {
+        await markBulkReplace();
+        await replace();
+      });
 
   Future<void> markBulkReplace() => _queue.run(() async {
     if (_state == null) {
@@ -592,9 +608,9 @@ class StarSyncEngine {
           await transport.delete(entry.path);
         }
         await transport.delete(_keyringPath);
-        final memory = _kdfParams.memoryKiB;
-        final iterations = _kdfParams.iterations;
-        final parallelism = _kdfParams.parallelism;
+        final memory = kdfParams.memoryKiB;
+        final iterations = kdfParams.iterations;
+        final parallelism = kdfParams.parallelism;
         final created = await _createKeyringJson(
           newPassphrase,
           memory,

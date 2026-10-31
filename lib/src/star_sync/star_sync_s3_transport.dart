@@ -19,10 +19,12 @@ class StarSyncS3Config {
            ? ''
            : '${prefix.replaceAll(RegExp(r'^/+|/+$'), '')}/' {
     validateStarSyncEndpoint(endpoint);
-    if (bucket.isEmpty || bucket.contains('/'))
+    if (bucket.isEmpty || bucket.contains('/')) {
       throw ArgumentError('Invalid bucket');
-    if (this.prefix.isNotEmpty)
+    }
+    if (this.prefix.isNotEmpty) {
       validateStarSyncPath(this.prefix.substring(0, this.prefix.length - 1));
+    }
   }
   final Uri endpoint;
   final String region;
@@ -40,8 +42,9 @@ String _encode(String value) => utf8.encode(value).map((b) {
       b == 45 ||
       b == 46 ||
       b == 95 ||
-      b == 126)
+      b == 126) {
     return String.fromCharCode(b);
+  }
   return '%${b.toRadixString(16).toUpperCase().padLeft(2, '0')}';
 }).join();
 String _query(Map<String, String> query) {
@@ -196,8 +199,9 @@ class StarSyncS3Transport implements StarSyncTransport {
       checkStarSyncStatus(response.statusCode);
       try {
         final root = XmlDocument.parse(utf8.decode(response.bytes)).rootElement;
-        if (root.name.local != 'ListBucketResult')
+        if (root.name.local != 'ListBucketResult') {
           throw const FormatException();
+        }
         String? field(XmlElement e, String name) {
           for (final child in e.childElements) {
             if (child.name.local == name) return child.innerText;
@@ -230,8 +234,9 @@ class StarSyncS3Transport implements StarSyncTransport {
         }
         final truncated = field(root, 'IsTruncated') == 'true';
         token = truncated ? field(root, 'NextContinuationToken') : null;
-        if (truncated && (token == null || token.isEmpty || !seen.add(token)))
+        if (truncated && (token == null || token.isEmpty || !seen.add(token))) {
           throw const FormatException();
+        }
       } on FormatException {
         throw const StarSyncTransportException(
           StarSyncTransportErrorKind.invalidResponse,

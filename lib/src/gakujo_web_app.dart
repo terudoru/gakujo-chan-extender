@@ -62,6 +62,7 @@ import 'gakujo_upload_preview_script.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
+import 'star_sync/star_sync_engine.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'macos_input_focus_service.dart';
@@ -1200,6 +1201,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoCalendarService _calendarService;
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
+  late final StarSyncEngine _starSyncEngine;
+  Future<void>? _starSyncLoad;
   late final GakujoNotificationService _notificationService;
   late final GakujoDeadlineNotificationCoordinator
       _deadlineNotificationCoordinator;
@@ -1292,6 +1295,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = GakujoActivityStore();
+    _starSyncEngine = StarSyncEngine(
+      activityStore: _activityStore,
+      loginId: () => _appSettings.loginCredentials?.loginId,
+    );
     _notificationService = GakujoNotificationService();
     _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
       activityStore: _activityStore,
@@ -1355,6 +1362,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_pdfPreviewServer.close());
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
+    _starSyncEngine.dispose();
     _pendingMessageOpenTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
@@ -1380,6 +1388,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_resumeNotificationsAndRefresh());
+      unawaited(_syncStarsInBackground());
     }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
@@ -1395,6 +1404,43 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         unawaited(_writeAutomaticBackup());
       }
     }
+  }
+
+  bool get _canSyncStars => mounted && _appSettingsLoaded &&
+      _secureStorageAccessAllowed && _messageStarsEnabled;
+
+  Future<void> _ensureStarSyncLoaded() async {
+    try {
+      await (_starSyncLoad ??= _starSyncEngine.load());
+    } on Object {
+      _starSyncLoad = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _syncStarsInBackground() async {
+    if (!_appSettingsLoaded || !_secureStorageAccessAllowed) return;
+    try {
+      await _ensureStarSyncLoaded();
+      if (!_canSyncStars) return;
+      final result = await _starSyncEngine.syncNow();
+      if (result.localChanged && _canSyncStars) await _refreshMessageStars();
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to sync message stars',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+
+  void _scheduleStarSync() {
+    if (!_canSyncStars) return;
+    _starSyncEngine.scheduleSync(
+      shouldSync: () => _canSyncStars,
+      onResult: (result) {
+        if (result.localChanged && _canSyncStars) {
+          unawaited(_refreshMessageStars());
+        }
+      },
+    );
   }
 
   Future<void> _resumeNotificationsAndRefresh() async {
@@ -2426,6 +2472,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (!mounted) {
                         return;
                       }
+                      if (flag == GakujoFeatureFlag.messageStars && enabled) {
+                        unawaited(_syncStarsInBackground());
+                      }
                       if (flag == GakujoFeatureFlag.autoBackup) {
                         _scheduleAutoBackup();
                       }
@@ -3313,6 +3362,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     Future<void> clearAll() async {
+      if (_starSyncLoad != null) await _ensureStarSyncLoaded();
+      await _starSyncEngine.disable();
       await Future.wait([
         _downloadHistoryStore.clear(),
         _downloadHistoryStore.clearFailedDownloads(),
@@ -5322,11 +5373,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
+      if (backup.starredMessages != null) await _ensureStarSyncLoaded();
       await restoreGakujoBackup(
         backup: backup,
         settingsStore: _appSettingsStore,
         historyStore: _downloadHistoryStore,
         activityStore: _activityStore,
+        withStarredMessagesReplacement: _starSyncEngine.withBulkReplace,
         isAllowedUrl: _isAllowedBackupUrl,
         isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
       );
@@ -5359,6 +5412,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _injectMessageFilterIfAllowed();
       await _refreshActivityCounts();
       await _refreshMessageStars();
+      if (backup.starredMessages != null) _scheduleStarSync();
       // The imported notification choices decide which reminders to book.
       unawaited(_syncReminders());
       _scheduleAutoBackup();
@@ -5627,6 +5681,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final wasEnabled = previousSettings.isFeatureEnabled(flag);
       final isEnabled = nextSettings.isFeatureEnabled(flag);
       if (wasEnabled != isEnabled) {
+        if (flag == GakujoFeatureFlag.messageStars && isEnabled) {
+          unawaited(_syncStarsInBackground());
+        }
         await _applyFeatureFlagRuntimeState(
           flag,
           enabled: isEnabled,
@@ -6270,6 +6327,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _appSettings = settings;
         _appSettingsLoaded = true;
       });
+      unawaited(_syncStarsInBackground());
       await _syncLocalSettingsMirror(settings);
       await _loadDownloadRoot();
       unawaited(_compactStoredData());
