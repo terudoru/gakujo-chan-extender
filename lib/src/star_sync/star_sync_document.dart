@@ -237,6 +237,7 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
 ({Map<String, StarSyncRecord> state, int clock}) reconcileLocalStars({
   required List<GakujoStarredMessage> local,
   required Map<String, StarSyncRecord> state,
+  Map<String, StarSyncRecord> known = const {},
   required int clock,
   required String deviceId,
   required DateTime now,
@@ -260,9 +261,14 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
     final item = localById[id];
     final previous = state[id];
     if (item != null) {
-      if (previous == null ||
-          !previous.starred ||
-          !previous.starredAt.isAtSameMomentAs(item.starredAt)) {
+      final knownRecord = known[id];
+      final matchesPrevious =
+          previous != null &&
+          previous.starredAt.isAtSameMomentAs(item.starredAt);
+      final matchesKnown =
+          knownRecord != null &&
+          knownRecord.starredAt.isAtSameMomentAs(item.starredAt);
+      if (!matchesPrevious && !matchesKnown) {
         result[id] = StarSyncRecord(
           id: id,
           title: item.title,
@@ -272,7 +278,11 @@ Map<String, StarSyncRecord> mergeStarSyncRecords(
           deviceId: deviceId,
           updatedAt: now,
         );
-      } else if (item.title.isNotEmpty && item.title != previous.title) {
+      } else if (previous != null &&
+          matchesPrevious &&
+          previous.starred &&
+          item.title.isNotEmpty &&
+          item.title != previous.title) {
         result[id] = previous.copyWith(title: item.title);
       }
     } else if (previous != null &&

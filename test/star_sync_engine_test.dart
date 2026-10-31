@@ -16,7 +16,6 @@ class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failStarWriteOnce = false;
   bool failStateAfterStarWrite = false;
-  bool failPendingApplyWriteOnce = false;
   String? failWriteKeyOnce;
   void Function()? onStarRead;
 
@@ -45,13 +44,6 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    if (failPendingApplyWriteOnce &&
-        key == starSyncStateKey &&
-        value != null &&
-        (jsonDecode(value) as Map)['pendingApply'] == true) {
-      failPendingApplyWriteOnce = false;
-      throw StateError('pending apply write failed');
-    }
     if (key == failWriteKeyOnce) {
       failWriteKeyOnce = null;
       throw StateError('sync write failed');
@@ -1598,56 +1590,7 @@ void main() {
     expect(await activityB.loadStarredMessages(), isEmpty);
   });
 
-  test('failed star write replays the journal before reconciling', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    final a = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activityA,
-      secureStorage: storageA,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    );
-    final b = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: activityB,
-      secureStorage: storageB,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    );
-    await a.setUp(config, 'correct horse');
-    await b.setUp(config, 'correct horse');
-    await activityA.upsertStarredMessage(
-      GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'Title',
-        starredAt: DateTime.utc(2026),
-      ),
-    );
-    await a.syncNow();
-    storageB.failStarWriteOnce = true;
-    await expectLater(b.syncNow(), throwsStateError);
-    expect(await activityB.loadStarredMessages(), isEmpty);
-    final persisted = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
-    expect(persisted['pendingApply'], isTrue);
-    expect((persisted['records'] as Map)['1|2|3']['starred'], isTrue);
-    await b.load();
-    expect((await b.syncNow()).localChanged, isTrue);
-    expect(
-      (jsonDecode(storageB.values[starSyncStateKey]!) as Map)['pendingApply'],
-      isFalse,
-    );
-    expect((await activityB.loadStarredMessages()).single.title, 'Title');
-    await a.syncNow();
-    expect((await activityA.loadStarredMessages()).single.title, 'Title');
-  });
-
-  test('journal save failure leaves the local list unchanged', () async {
+  test('failed state save does not resurrect a remote deletion', () async {
     final remote = _Transport();
     final storageA = _Storage();
     final storageB = _Storage();
@@ -1663,69 +1606,155 @@ void main() {
         );
     final a = make(storageA, activityA);
     final b = make(storageB, activityB);
+    final star = GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'A',
+      starredAt: DateTime.utc(2026),
+    );
     await a.setUp(config, 'pass');
     await b.setUp(config, 'pass');
-    await activityA.upsertStarredMessage(
-      GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'Title',
-        starredAt: DateTime.utc(2026),
-      ),
-    );
+    await activityA.upsertStarredMessage(star);
     await a.syncNow();
-    storageB.failPendingApplyWriteOnce = true;
+    storageB.failStateAfterStarWrite = true;
     await expectLater(b.syncNow(), throwsStateError);
-    expect(await activityB.loadStarredMessages(), isEmpty);
+    expect((await activityB.loadStarredMessages()).single.id, star.id);
     final state = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
-    expect(state['pendingApply'], isFalse);
-    expect(state['records'], isEmpty);
-    await b.syncNow();
-    expect((await activityB.loadStarredMessages()).single.title, 'Title');
-  });
-
-  test('failed deletion apply is replayed without resurrection', () async {
-    final remote = _Transport();
-    final storageA = _Storage();
-    final storageB = _Storage();
-    final activityA = GakujoActivityStore(secureStorage: storageA);
-    final activityB = GakujoActivityStore(secureStorage: storageB);
-    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
-        StarSyncEngine(
-          loginId: () => 'student',
-          activityStore: activity,
-          secureStorage: storage,
-          transportFactory: (_) => remote,
-          kdfParams: kdf,
-        );
-    final a = make(storageA, activityA);
-    final b = make(storageB, activityB);
-    await a.setUp(config, 'pass');
-    await activityA.upsertStarredMessage(
-      GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'Title',
-        starredAt: DateTime.utc(2026),
-      ),
-    );
+    expect((state['records'] as Map).containsKey(star.id), isFalse);
+    await activityA.removeStarredMessage(star.id);
     await a.syncNow();
-    await b.setUp(config, 'pass');
-    await activityA.removeStarredMessage('1|2|3');
-    await a.syncNow();
-    storageB.failStarWriteOnce = true;
-    await expectLater(b.syncNow(), throwsStateError);
-    expect((await activityB.loadStarredMessages()).single.title, 'Title');
-    final state = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
-    expect(state['pendingApply'], isTrue);
-    expect((state['records'] as Map)['1|2|3']['starred'], isFalse);
     await b.load();
     await b.syncNow();
-    await a.syncNow();
     expect(await activityB.loadStarredMessages(), isEmpty);
+    await a.syncNow();
     expect(await activityA.loadStarredMessages(), isEmpty);
+    final saved = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
+    expect((saved['records'] as Map)[star.id]['starred'], isFalse);
+  });
+
+  test('edits after a failed state save survive and sync', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
+        StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: activity,
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+        );
+    final a = make(storageA, activityA);
+    final b = make(storageB, activityB);
+    await a.setUp(config, 'pass');
+    await activityA.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'A',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
+    await a.syncNow();
+    await b.setUp(config, 'pass');
+    await activityA.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '5',
+        title: 'X',
+        starredAt: DateTime.utc(2026, 1, 2),
+      ),
+    );
+    await a.syncNow();
+    storageB.failStateAfterStarWrite = true;
+    await expectLater(b.syncNow(), throwsStateError);
+    expect((await activityB.loadStarredMessages()).length, 2);
+    await activityB.removeStarredMessage('1|2|3');
+    await activityB.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '4',
+        title: 'B',
+        starredAt: DateTime.utc(2026, 1, 3),
+      ),
+    );
+    await b.load();
+    await b.syncNow();
+    expect(
+      (await activityB.loadStarredMessages()).map((e) => e.title),
+      ['B', 'X'],
+    );
+    await a.syncNow();
+    expect(
+      (await activityA.loadStarredMessages()).map((e) => e.title),
+      ['B', 'X'],
+    );
+  });
+
+  test('a re-star after a failed state save is a new edit', () async {
+    final remote = _Transport();
+    final storageA = _Storage();
+    final storageB = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: storageA);
+    final activityB = GakujoActivityStore(secureStorage: storageB);
+    StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
+        StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: activity,
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+        );
+    final a = make(storageA, activityA);
+    final b = make(storageB, activityB);
+    final star = GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'A',
+      starredAt: DateTime.utc(2026),
+    );
+    await a.setUp(config, 'pass');
+    await b.setUp(config, 'pass');
+    await activityA.upsertStarredMessage(star);
+    await a.syncNow();
+    storageB.failStateAfterStarWrite = true;
+    await expectLater(b.syncNow(), throwsStateError);
+    expect((await activityB.loadStarredMessages()).single.id, star.id);
+    final state = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
+    expect((state['records'] as Map).containsKey(star.id), isFalse);
+    await activityA.removeStarredMessage(star.id);
+    await a.syncNow();
+    final later = DateTime.utc(2026, 1, 2);
+    await activityB.removeStarredMessage(star.id);
+    await activityB.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'Re-starred',
+        starredAt: later,
+      ),
+    );
+    await b.load();
+    await b.syncNow();
+    await a.syncNow();
+    final restored = (await activityA.loadStarredMessages()).single;
+    expect(restored.starredAt, later);
+    expect(restored.id, star.id);
+  });
+
+  test('legacy pendingApply is ignored when loading state', () {
+    final state = StarSyncState(deviceId: 'd', dataKey: 'key', keyId: 'id');
+    final json = state.toJson()..['pendingApply'] = true;
+    final loaded = StarSyncState.fromJson(json);
+    expect(loaded.toJson().containsKey('pendingApply'), isFalse);
   });
 
   test('local change callback runs once even when upload fails', () async {

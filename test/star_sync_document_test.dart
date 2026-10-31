@@ -157,7 +157,7 @@ void main() {
   test('reconcile detects additions, restars, removals and title updates', () {
     final state = {
       for (final r in [
-        record(1, starred: false),
+        record(1, starred: false, at: now.subtract(const Duration(seconds: 1))),
         record(2),
         record(3),
         record(4),
@@ -195,6 +195,46 @@ void main() {
     );
     expect(bulk.clock, 10);
     expect(bulk.state['1|2|4']!.starred, true);
+  });
+
+  test('known star instances do not create local edits', () {
+    final live = record(1, clock: 5);
+    final deleted = record(2, clock: 6, starred: false);
+    final previous = record(3, clock: 2, starred: false);
+    final remote = record(3, clock: 7, at: now.add(const Duration(days: 1)));
+    final result = reconcileLocalStars(
+      local: [local(1), local(2), local(3)],
+      state: {previous.id: previous},
+      known: {live.id: live, deleted.id: deleted, remote.id: remote},
+      clock: 7,
+      deviceId: 'local',
+      now: now,
+    );
+    expect(result.clock, 7);
+    expect(result.state.keys, [previous.id]);
+    expect(result.state[previous.id]!.starred, isFalse);
+    final merged = mergeStarSyncRecords([
+      result.state,
+      {live.id: live, deleted.id: deleted, remote.id: remote},
+    ], now: now);
+    expect(merged[deleted.id]!.starred, isFalse);
+    expect(merged[previous.id]!.clock, 7);
+  });
+
+  test('a different starredAt creates a new edit even for a tombstone', () {
+    final deleted = record(1, clock: 4, starred: false);
+    final later = now.add(const Duration(seconds: 1));
+    final result = reconcileLocalStars(
+      local: [local(1, at: later)],
+      state: {deleted.id: deleted},
+      known: {deleted.id: deleted},
+      clock: 4,
+      deviceId: 'local',
+      now: later,
+    );
+    expect(result.clock, 5);
+    expect(result.state[deleted.id]!.starred, isTrue);
+    expect(result.state[deleted.id]!.starredAt, later);
   });
 
   test('cap trimmed absences are retained, newer absences are deleted', () {
