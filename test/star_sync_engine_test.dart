@@ -1135,73 +1135,76 @@ void main() {
   });
 
   for (final resetMode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
-    test('reset $resetMode sweeps only retired key files for seven days', () async {
-      final remote = _Transport();
-      final storage = _Storage();
-      var now = DateTime.utc(2026);
-      final engine = StarSyncEngine(
-        loginId: () => 'student',
-        activityStore: GakujoActivityStore(secureStorage: storage),
-        secureStorage: storage,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-        now: () => now,
-      );
-      await engine.setUp(config, 'old');
-      final oldState = StarSyncState.fromJson(
-        jsonDecode(storage.values[starSyncStateKey]!),
-      );
-      switch (resetMode) {
-        case 'passphrase':
-          await engine.resetRemote('new');
-        case 'pairing':
-          await engine.resetRemoteWithPairing();
-        case 'setup':
-          await engine.setUp(config, 'new', resetExisting: true);
-        case 'setupPairing':
-          await engine.setUpWithPairing(config, resetExisting: true);
-      }
-      final state = StarSyncState.fromJson(
-        jsonDecode(storage.values[starSyncStateKey]!),
-      );
-      expect(state.retiredKeyIds.keys, contains(oldState.keyId));
-      final unrelated = createStarSyncPairingKeyring();
-      Future<List<int>> file(String id, String keyId, List<int> key) =>
-          encryptStarSyncFile(
-            dataKey: starSyncKeyFromBytes(key),
-            keyId: keyId,
-            deviceId: id,
-            plaintext: [],
-          );
-      const stalePath = 'stars/devices/stale';
-      const otherPath = 'stars/devices/unrelated';
-      remote.files[stalePath] = await file(
-        'stale',
-        oldState.keyId,
-        base64Decode(oldState.dataKey),
-      );
-      remote.files[otherPath] = await file(
-        'unrelated',
-        unrelated.keyring.keyId,
-        unrelated.dataKey,
-      );
-      await engine.syncNow();
-      expect(remote.files.containsKey(stalePath), isFalse);
-      expect(remote.files.containsKey(otherPath), isTrue);
-      now = now.add(const Duration(days: 8));
-      remote.files[stalePath] = await file(
-        'stale',
-        oldState.keyId,
-        base64Decode(oldState.dataKey),
-      );
-      await engine.syncNow();
-      expect(remote.files.containsKey(stalePath), isTrue);
-      final expired = StarSyncState.fromJson(
-        jsonDecode(storage.values[starSyncStateKey]!),
-      );
-      expect(expired.retiredKeyIds, isEmpty);
-      engine.dispose();
-    });
+    test(
+      'reset $resetMode sweeps only retired key files for seven days',
+      () async {
+        final remote = _Transport();
+        final storage = _Storage();
+        var now = DateTime.utc(2026);
+        final engine = StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+          now: () => now,
+        );
+        await engine.setUp(config, 'old');
+        final oldState = StarSyncState.fromJson(
+          jsonDecode(storage.values[starSyncStateKey]!),
+        );
+        switch (resetMode) {
+          case 'passphrase':
+            await engine.resetRemote('new');
+          case 'pairing':
+            await engine.resetRemoteWithPairing();
+          case 'setup':
+            await engine.setUp(config, 'new', resetExisting: true);
+          case 'setupPairing':
+            await engine.setUpWithPairing(config, resetExisting: true);
+        }
+        final state = StarSyncState.fromJson(
+          jsonDecode(storage.values[starSyncStateKey]!),
+        );
+        expect(state.retiredKeyIds.keys, contains(oldState.keyId));
+        final unrelated = createStarSyncPairingKeyring();
+        Future<List<int>> file(String id, String keyId, List<int> key) =>
+            encryptStarSyncFile(
+              dataKey: starSyncKeyFromBytes(key),
+              keyId: keyId,
+              deviceId: id,
+              plaintext: [],
+            );
+        const stalePath = 'stars/devices/stale';
+        const otherPath = 'stars/devices/unrelated';
+        remote.files[stalePath] = await file(
+          'stale',
+          oldState.keyId,
+          base64Decode(oldState.dataKey),
+        );
+        remote.files[otherPath] = await file(
+          'unrelated',
+          unrelated.keyring.keyId,
+          unrelated.dataKey,
+        );
+        await engine.syncNow();
+        expect(remote.files.containsKey(stalePath), isFalse);
+        expect(remote.files.containsKey(otherPath), isTrue);
+        now = now.add(const Duration(days: 8));
+        remote.files[stalePath] = await file(
+          'stale',
+          oldState.keyId,
+          base64Decode(oldState.dataKey),
+        );
+        await engine.syncNow();
+        expect(remote.files.containsKey(stalePath), isTrue);
+        final expired = StarSyncState.fromJson(
+          jsonDecode(storage.values[starSyncStateKey]!),
+        );
+        expect(expired.retiredKeyIds, isEmpty);
+        engine.dispose();
+      },
+    );
   }
 
   test('different-key files are kept without a partial sync warning', () async {

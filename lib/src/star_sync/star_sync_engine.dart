@@ -409,7 +409,8 @@ class StarSyncEngine {
     final keyring = await transport.get(_keyringPath);
     final retiredKeyId = keyring == null
         ? null
-        : StarSyncKeyring.fromJson(jsonDecode(utf8.decode(keyring.bytes))).keyId;
+        : StarSyncKeyring.fromJson(jsonDecode(utf8.decode(keyring.bytes)))
+              .keyId;
     for (final entry in await transport.list(_deviceDirectory)) {
       await transport.delete(entry.path);
     }
@@ -471,7 +472,7 @@ class StarSyncEngine {
           dataKey: base64Encode(keyBytes),
           keyId: keyring.keyId,
           boundAccount: account,
-          retiredKeyIds: {if (retiredKeyId != null) retiredKeyId: _now()},
+          retiredKeyIds: {?retiredKeyId: _now()},
         );
         await _saveState();
         await _saveConfig();
@@ -515,7 +516,7 @@ class StarSyncEngine {
       dataKey: base64Encode(keyBytes),
       keyId: keyId,
       boundAccount: account,
-      retiredKeyIds: {if (retiredKeyId != null) retiredKeyId: _now()},
+      retiredKeyIds: {?retiredKeyId: _now()},
     );
     await _saveState();
     await _saveConfig();
@@ -939,7 +940,8 @@ class StarSyncEngine {
         state.keyringEtag = etag;
       }
       state.retiredKeyIds.removeWhere(
-        (_, retiredAt) => _now().difference(retiredAt) > const Duration(days: 7),
+        (_, retiredAt) =>
+            _now().difference(retiredAt) > const Duration(days: 7),
       );
       await _saveState();
       final entries = await transport.list(_deviceDirectory);
