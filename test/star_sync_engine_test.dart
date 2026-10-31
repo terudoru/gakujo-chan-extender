@@ -731,50 +731,54 @@ void main() {
     engine.dispose();
   });
 
-  test('bound action blocks account changes and rejects stale generations', () async {
-    final storage = _Storage();
-    var account = 'student';
-    final engine = StarSyncEngine(
-      loginId: () => account,
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => _Transport(),
-      kdfParams: kdf,
-    );
-    await engine.setUp(config, 'pass');
-    final generation = engine.accountGeneration;
-    final started = Completer<void>();
-    final release = Completer<void>();
-    final action = engine.runBoundToAccount(
-      expectedAccount: account,
-      expectedGeneration: generation,
-      action: () async {
-        started.complete();
-        await release.future;
-        return 42;
-      },
-    );
-    await started.future;
-    var changed = false;
-    final change = engine.runAccountChange(() async {
-      account = 'other';
-      changed = true;
-    });
-    await Future<void>.delayed(Duration.zero);
-    expect(changed, isFalse);
-    release.complete();
-    expect(await action, 42);
-    await change;
-    await expectLater(
-      engine.runBoundToAccount(
-        expectedAccount: 'student',
+  test(
+    'bound action blocks account changes and rejects stale generations',
+    () async {
+      final storage = _Storage();
+      var account = 'student';
+      final engine = StarSyncEngine(
+        loginId: () => account,
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => _Transport(),
+        kdfParams: kdf,
+      );
+      await engine.setUp(config, 'pass');
+      final generation = engine.accountGeneration;
+      final boundAccount = engine.requireAccount();
+      final started = Completer<void>();
+      final release = Completer<void>();
+      final action = engine.runBoundToAccount(
+        expectedAccount: boundAccount,
         expectedGeneration: generation,
-        action: () async => 0,
-      ),
-      throwsA(isA<StarSyncAccountMismatchException>()),
-    );
-    engine.dispose();
-  });
+        action: () async {
+          started.complete();
+          await release.future;
+          return 42;
+        },
+      );
+      await started.future;
+      var changed = false;
+      final change = engine.runAccountChange(() async {
+        account = 'other';
+        changed = true;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(changed, isFalse);
+      release.complete();
+      expect(await action, 42);
+      await change;
+      await expectLater(
+        engine.runBoundToAccount(
+          expectedAccount: boundAccount,
+          expectedGeneration: generation,
+          action: () async => 0,
+        ),
+        throwsA(isA<StarSyncAccountMismatchException>()),
+      );
+      engine.dispose();
+    },
+  );
 
   test('account change waits for the complete sync', () async {
     final remote = _Transport();
@@ -2804,34 +2808,39 @@ void main() {
     },
   );
 
-  test('bulk restore treats present entries as edits and retains omissions', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final collection = _Collection('drafts');
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-      collections: [collection],
-    );
-    await engine.setUp(config, 'pass');
-    collection.entries = {'present': 'same', 'omitted': 'keep'};
-    await engine.syncNow();
-    Map state() => (jsonDecode(storage.values[starSyncStateKey]!)
-        as Map)['collectionStates']['drafts'] as Map;
-    final oldClock = state()['records']['present']['clock'] as int;
-    await engine.withBulkReplace(() async {
-      collection.entries = {'present': 'same'};
-    });
-    await engine.syncNow();
-    expect(state()['records']['present']['clock'], greaterThan(oldClock));
-    expect(state()['records']['omitted']['deleted'], isFalse);
-    expect(collection.entries, {'present': 'same', 'omitted': 'keep'});
-    expect(state()['pendingBulkReplace'], isNull);
-    engine.dispose();
-  });
+  test(
+    'bulk restore treats present entries as edits and retains omissions',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final collection = _Collection('drafts');
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [collection],
+      );
+      await engine.setUp(config, 'pass');
+      collection.entries = {'present': 'same', 'omitted': 'keep'};
+      await engine.syncNow();
+      Map state() =>
+          (jsonDecode(storage.values[starSyncStateKey]!)
+                  as Map)['collectionStates']['drafts']
+              as Map;
+      final oldClock = state()['records']['present']['clock'] as int;
+      await engine.withBulkReplace(() async {
+        collection.entries = {'present': 'same'};
+      });
+      await engine.syncNow();
+      expect(state()['records']['present']['clock'], greaterThan(oldClock));
+      expect(state()['records']['omitted']['deleted'], isFalse);
+      expect(collection.entries, {'present': 'same', 'omitted': 'keep'});
+      expect(state()['pendingBulkReplace'], isNull);
+      engine.dispose();
+    },
+  );
 
   test('failed collection apply does not create remote tombstones', () async {
     final remote = _Transport();

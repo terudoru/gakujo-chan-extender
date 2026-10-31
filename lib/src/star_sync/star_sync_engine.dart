@@ -1572,7 +1572,9 @@ class StarSyncEngine {
         final value = local[key];
         final hash = starSyncValueHash(value);
         if (stored['pendingBulkReplace'] == true ||
-            old == null || old.deleted || old.valueHash != hash) {
+            old == null ||
+            old.deleted ||
+            old.valueHash != hash) {
           reconciled[key] = StarSyncCollectionRecord(
             key: key,
             value: value,
@@ -1583,7 +1585,9 @@ class StarSyncEngine {
           );
         }
       } else if (stored['pendingBulkReplace'] != true &&
-          !collection.growOnly && old != null && !old.deleted) {
+          !collection.growOnly &&
+          old != null &&
+          !old.deleted) {
         reconciled[key] = StarSyncCollectionRecord(
           key: key,
           value: null,
@@ -1926,14 +1930,13 @@ class StarSyncEngine {
     return last == null || now.difference(last) >= const Duration(hours: 24);
   }
 
-  Future<bool> uploadAutomaticBackupIfDue(
-    Future<List<int>> Function() build,
-  ) => _queue.runExclusive(() async {
-    if (!shouldUploadAutomaticBackup(_now())) return false;
-    final bytes = await build();
-    await uploadBackup(bytes);
-    return true;
-  });
+  Future<bool> uploadAutomaticBackupIfDue(Future<List<int>> Function() build) =>
+      _queue.runExclusive(() async {
+        if (!shouldUploadAutomaticBackup(_now())) return false;
+        final bytes = await build();
+        await uploadBackup(bytes);
+        return true;
+      });
 
   Future<void> uploadBackup(List<int> bytes) => _queue.run(() async {
     await _requireBackupAccount();
