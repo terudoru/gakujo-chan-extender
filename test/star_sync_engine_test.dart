@@ -258,7 +258,10 @@ class _Collection implements StarSyncCollection {
     Map<String, Object?> values, {
     required Map<String, Object?> basedOn,
   }) async {
-    if (rejectApply || starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) return false;
+    if (rejectApply ||
+        starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
+      return false;
+    }
     if (failApply) throw StateError('write failed');
     entries = Map.of(values);
     return true;
@@ -778,14 +781,16 @@ void main() {
       release.complete();
       expect(await action, 42);
       await change;
+      var restored = false;
       await expectLater(
         engine.runBoundToAccount(
           expectedAccount: boundAccount,
           expectedGeneration: generation,
-          action: () async => 0,
+          action: () async { restored = true; },
         ),
         throwsA(isA<StarSyncAccountMismatchException>()),
       );
+      expect(restored, isFalse);
       engine.dispose();
     },
   );

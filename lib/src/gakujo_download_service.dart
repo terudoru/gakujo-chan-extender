@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 
 import 'download_destination_settings.dart';
@@ -58,6 +60,12 @@ class MethodChannelGakujoDownloadService extends GakujoDownloadService {
   static const _channel = MethodChannel(
     'net.yoshida.morebettergakujo/downloads',
   );
+
+  Future<Uint8List> readContentUri(String uri) async {
+    final bytes = await _channel.invokeMethod<Uint8List>('readContentUri', {'uri': uri});
+    if (bytes == null) throw StateError('Content URI returned no data');
+    return bytes;
+  }
 
   @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {

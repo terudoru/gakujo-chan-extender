@@ -215,12 +215,13 @@ void main() {
       ),
     );
     for (final entry in const {
-      'favorites': '?????',
-      'settings': '??',
-      'report-drafts': '???????',
-      'notified-deadlines': '???????',
+      'favorites': 'お気に入り',
+      'settings': '設定',
+      'report-drafts': 'レポート下書き',
+      'notified-deadlines': '通知済みの締切',
     }.entries) {
       await tester.ensureVisible(find.byKey(ValueKey(entry.key)));
+      expect(find.text(entry.value), findsOneWidget);
       await tester.tap(find.byKey(ValueKey(entry.key)));
       await tester.pumpAndSettle();
       expect(enabled[entry.key], isFalse);

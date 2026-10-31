@@ -35,9 +35,11 @@ void main() {
         'mbg-report-draft:v2:bad-fields': {'savedAt': 123, 'fields': {}},
         'mbg-report-draft:v2:array': [],
         'unrelated': draft,
+      }, {
+        'mbg-report-draft:v2:absent': {'savedAt': 12, 'fields': []},
       }),
       {
-        'mbg-report-draft:v2:absent': 'old',
+        'mbg-report-draft:v2:absent': jsonEncode({'savedAt': 12, 'fields': []}),
         'mbg-report-draft:v1:old': 'keep',
         'unrelated': 'keep',
       },
@@ -53,6 +55,25 @@ void main() {
     expect(storage, isNot(contains('mbg-report-draft:v2:array')));
     expect(storage['mbg-report-draft:v1:old'], 'keep');
     expect(storage['unrelated'], 'keep');
+  });
+
+  test('import preserves drafts changed since the snapshot', () async {
+    const key = 'mbg-report-draft:v2:changed';
+    const unchanged = 'mbg-report-draft:v2:unchanged';
+    final expected = {'savedAt': 1, 'fields': []};
+    final edited = {'savedAt': 2, 'fields': []};
+    final replacement = {'savedAt': 3, 'fields': []};
+    final result = await _evaluateSyncStorage(
+      GakujoReportDraftScript.buildImportAll(
+        {key: replacement, unchanged: replacement},
+        {key: expected, unchanged: expected},
+      ),
+      {key: jsonEncode(edited), unchanged: jsonEncode(expected)},
+    );
+    expect(result['result'], isFalse);
+    final storage = result['storage'] as Map<String, dynamic>;
+    expect(jsonDecode(storage[key] as String), edited);
+    expect(jsonDecode(storage[unchanged] as String), replacement);
   });
 
   test('failed storage keeps pending text and reports failure until retry',

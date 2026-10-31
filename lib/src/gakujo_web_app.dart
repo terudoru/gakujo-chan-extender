@@ -65,6 +65,7 @@ import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
 import 'star_sync/star_sync_adapters.dart';
+import 'star_sync/star_sync_collections.dart';
 import 'star_sync/star_sync_config.dart';
 import 'star_sync/star_sync_google_auth.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
@@ -157,6 +158,39 @@ final Map<GakujoFeatureFlag, _PageScriptBuilder>
   GakujoFeatureFlag.uploadCompression:
       GakujoUploadCompressionScript.buildTeardown,
 };
+
+@visibleForTesting
+bool portableSyncSettingsMatch(
+  GakujoAppSettings settings,
+  Map<String, Object?> basedOn,
+) => starSyncCanonicalJson(exportStarSyncPortableSettings(settings)) ==
+    starSyncCanonicalJson(basedOn);
+
+Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
+  Object? clean(Object? value) {
+    if (value is List) return value.map(clean).toList();
+    if (value is Map) {
+      return <String, Object?>{
+        for (final entry in value.entries)
+          if (entry.key is String &&
+              !RegExp(r'password|passwd|secret|credential|token|api.?key|private.?key|login.?id', caseSensitive: false)
+                  .hasMatch(entry.key as String))
+            entry.key as String: clean(entry.value),
+      };
+    }
+    return value;
+  }
+  final result = clean(payload) as Map<String, Object?>;
+  result.remove('downloadSaveMode');
+  result.remove('pageMode');
+  final flags = result['disabledFeatureFlags'];
+  if (flags is List) {
+    result['disabledFeatureFlags'] = flags
+        .where((flag) => flag != GakujoFeatureFlag.messageStars.storageValue)
+        .toList();
+  }
+  return result;
+}
 
 @visibleForTesting
 Future<bool?> showGakujoBackupRestoreConfirmation(BuildContext context) {
@@ -2704,14 +2738,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onBackup: _uploadSyncBackup,
                       onListBackups: _starSyncEngine.listBackups,
-                      onRestoreBackup: (id) => _importSettings(() async {
-                        final bytes = await _starSyncEngine.downloadBackup(id);
-                        await _restoreSettingsFromText(
-                          utf8.decode(bytes),
-                          emptyMessage: 'バックアップが空です',
-                          alreadyConfirmed: true,
+                      onRestoreBackup: (id) {
+                        final account = _starSyncEngine.requireAccount();
+                        final generation = _starSyncEngine.accountGeneration;
+                        return _starSyncEngine.runBoundToAccount(
+                          expectedAccount: account,
+                          expectedGeneration: generation,
+                          action: () => _importSettings(() async {
+                            final bytes = await _starSyncEngine.downloadBackup(id);
+                            await _restoreSettingsFromText(
+                              utf8.decode(bytes),
+                              emptyMessage: 'バックアップが空です',
+                              alreadyConfirmed: true,
+                              fromSyncStorage: true,
+                            );
+                          }),
                         );
-                      }),
+                      },
                       collectionEnabled: _starSyncEngine.collectionEnabled,
                       onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
@@ -5525,7 +5568,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _uploadSyncBackup() async {
     await _ensureStarSyncLoaded();
-    final payload = await _backupPayload();
+    final payload = portableSyncBackupPayload(await _backupPayload());
     await _starSyncEngine.uploadBackup(utf8.encode(jsonEncode(payload)));
   }
 
@@ -5533,9 +5576,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       if (!_secureStorageAccessAllowed) return;
       await _ensureStarSyncLoaded();
-      if (_starSyncEngine.shouldUploadAutomaticBackup(DateTime.now())) {
-        await _uploadSyncBackup();
-      }
+      await _starSyncEngine.uploadAutomaticBackupIfDue(() async =>
+          utf8.encode(jsonEncode(portableSyncBackupPayload(await _backupPayload()))));
     } on Object catch (error, stackTrace) {
       developer.log('Failed to upload automatic backup',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -5557,7 +5599,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     _isImportingSettings = true;
     try {
-      await _backupOperations.run(restore);
+      await restore();
     } finally {
       _isImportingSettings = false;
     }
@@ -5599,8 +5641,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<void> _applySyncedSettings(Map<String, Object?> entries) async {
+  Future<bool> _applySyncedSettings(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) async {
     final previousSettings = _appSettings;
+    if (!portableSyncSettingsMatch(previousSettings, basedOn)) return false;
     final backup = importStarSyncPortableSettings(previousSettings, entries);
     await restoreGakujoBackup(
       backup: backup,
@@ -5618,7 +5664,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       messageNotification: backup.messageNotification,
       notificationPreferences: backup.notificationPreferences,
     );
-    if (!mounted) return;
+    if (!mounted) return false;
     setState(() {
       if (backup.disabledFeatureFlags != null) _startupPlaceholderFeatureFlags.clear();
       _appSettings = nextSettings;
@@ -5628,6 +5674,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectMessageFilterIfAllowed();
     unawaited(_syncReminders());
     _scheduleAutoBackup();
+    return true;
   }
 
   Future<bool> _canSyncReportDrafts() async => mounted &&
@@ -5646,25 +5693,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return Map<String, Object?>.from(decoded);
   }
 
-  Future<void> _applySyncedReportDrafts(Map<String, Object?> drafts) async {
+  Future<bool> _applySyncedReportDrafts(
+    Map<String, Object?> drafts, {
+    required Map<String, Object?> basedOn,
+  }) async {
     final revision = _navigationRevision;
     if (revision != _draftReadRevision || !await _canSyncReportDrafts()) {
       throw StateError('Draft page unavailable');
     }
-    final script = GakujoReportDraftScript.buildImportAll(drafts);
+    final script = GakujoReportDraftScript.buildImportAll(drafts, basedOn);
     final result = await _controller.runJavaScriptReturningResult(
-      '(function() { try { $script return "ok"; } catch (e) { return "error"; } })()',
+      script,
     );
-    if (_stringFromJavaScriptResult(result) != 'ok' ||
-        revision != _navigationRevision || !await _canSyncReportDrafts()) {
+    if (revision != _navigationRevision || !await _canSyncReportDrafts()) {
       throw StateError('Draft write failed');
     }
+    final value = _stringFromJavaScriptResult(result);
+    if (value != 'true' && value != 'false') throw StateError('Draft write failed');
+    return value == 'true';
   }
 
   Future<void> _restoreSettingsFromText(
     String text, {
     required String emptyMessage,
     bool alreadyConfirmed = false,
+    bool fromSyncStorage = false,
   }) async {
     if (text.trim().isEmpty) {
       _showSnackBar(emptyMessage);
@@ -5673,6 +5726,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     final GakujoBackupImport backup;
     try {
+      if (fromSyncStorage) {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map) throw const FormatException('Invalid backup');
+        final portable = portableSyncBackupPayload(Map<String, Object?>.from(decoded));
+        final flags = portable['disabledFeatureFlags'];
+        if (flags is List && _appSettings.disabledFeatureFlags.contains(GakujoFeatureFlag.messageStars)) {
+          portable['disabledFeatureFlags'] = [...flags, GakujoFeatureFlag.messageStars.storageValue];
+        }
+        text = jsonEncode(portable);
+      }
       backup = parseGakujoBackup(
         text,
         currentReminderOffsets:
@@ -5696,37 +5759,40 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
-      if (backup.starredMessages != null) await _ensureStarSyncLoaded();
-      await restoreGakujoBackup(
-        backup: backup,
-        settingsStore: _appSettingsStore,
-        historyStore: _downloadHistoryStore,
-        activityStore: _activityStore,
-        withStarredMessagesReplacement: _starSyncEngine.withBulkReplace,
-        isAllowedUrl: _isAllowedBackupUrl,
-        isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
-      );
+      await _ensureStarSyncLoaded();
       final previousSettings = _appSettings;
-      final nextSettings = _appSettings.copyWith(
-        downloadSaveMode: backup.downloadSaveMode,
-        pageMode: backup.pageMode,
-        disabledFeatureFlags: backup.disabledFeatureFlags,
-        setupCompleted: backup.setupCompleted,
-        calendarImportSettings: backup.calendarImportSettings,
-        messageExcludeKeywords: backup.messageExcludeKeywords,
-        notificationTopics: backup.notificationTopics,
-        messageNotification: backup.messageNotification,
-        notificationPreferences: backup.notificationPreferences,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        if (backup.disabledFeatureFlags != null) {
-          _startupPlaceholderFeatureFlags.clear();
+      late GakujoAppSettings nextSettings;
+      await _starSyncEngine.withBulkReplace(() async {
+        await restoreGakujoBackup(
+          backup: backup,
+          settingsStore: _appSettingsStore,
+          historyStore: _downloadHistoryStore,
+          activityStore: _activityStore,
+          isAllowedUrl: _isAllowedBackupUrl,
+          isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
+        );
+        nextSettings = _appSettings.copyWith(
+          downloadSaveMode: backup.downloadSaveMode,
+          pageMode: backup.pageMode,
+          disabledFeatureFlags: backup.disabledFeatureFlags,
+          setupCompleted: backup.setupCompleted,
+          calendarImportSettings: backup.calendarImportSettings,
+          messageExcludeKeywords: backup.messageExcludeKeywords,
+          notificationTopics: backup.notificationTopics,
+          messageNotification: backup.messageNotification,
+          notificationPreferences: backup.notificationPreferences,
+        );
+        if (!mounted) {
+          return;
         }
-        _appSettings = nextSettings;
+        setState(() {
+          if (backup.disabledFeatureFlags != null) {
+            _startupPlaceholderFeatureFlags.clear();
+          }
+          _appSettings = nextSettings;
+        });
       });
+      if (!mounted) return;
       await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(
         previousSettings,

@@ -47,7 +47,10 @@ void main() {
           'addedAt': DateTime.utc(2026, 1, 1, 0, i).toIso8601String(),
         },
     };
-    await collection.applyLocal(entries, basedOn: await collection.readLocal() ?? {});
+    await collection.applyLocal(
+      entries,
+      basedOn: await collection.readLocal(),
+    );
     final result = await collection.readLocal();
     expect(collection.name, 'favorites');
     expect(collection.growOnly, isFalse);

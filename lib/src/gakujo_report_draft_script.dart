@@ -1129,27 +1129,54 @@ class GakujoReportDraftScript {
 ''');
   }
 
-  static String buildImportAll(Map<String, Object?> drafts) {
+  static String buildImportAll(
+    Map<String, Object?> drafts,
+    Map<String, Object?> basedOn,
+  ) {
     const action = r'''
+  function canonical(value) {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object') {
+      var result = {};
+      Object.keys(value).sort().forEach(function(key) { result[key] = canonical(value[key]); });
+      return result;
+    }
+    return value;
+  }
+  var matched = true;
+  var writes = [];
   draftDocuments().forEach(function(doc) {
     var store = doc.defaultView.localStorage;
-    for (var i = store.length - 1; i >= 0; i -= 1) {
-      var key = store.key(i);
-      if (/^mbg-report-draft:v2:/.test(key) &&
-          !Object.prototype.hasOwnProperty.call(drafts, key)) store.removeItem(key);
-    }
-    Object.keys(drafts).forEach(function(key) {
+    var keys = Object.keys(basedOn).concat(Object.keys(drafts));
+    for (var i = 0; i < store.length; i += 1) keys.push(store.key(i));
+    Array.from(new Set(keys)).forEach(function(key) {
+      if (!/^mbg-report-draft:v2:/.test(key)) return;
+      var raw = store.getItem(key);
+      var current;
+      try { current = raw === null ? undefined : JSON.parse(raw); }
+      catch (_) { matched = false; return; }
+      var expected = Object.prototype.hasOwnProperty.call(basedOn, key) ? basedOn[key] : undefined;
+      if (JSON.stringify(canonical(current)) !== JSON.stringify(canonical(expected))) {
+        matched = false;
+        return;
+      }
+      if (!Object.prototype.hasOwnProperty.call(drafts, key)) {
+        writes.push(function() { store.removeItem(key); });
+        return;
+      }
       var draft = drafts[key];
-      if (!/^mbg-report-draft:v2:/.test(key) || !draft ||
-          typeof draft !== 'object' || Array.isArray(draft) ||
+      if (!draft || typeof draft !== 'object' || Array.isArray(draft) ||
           typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
           !Array.isArray(draft.fields)) return;
-      store.setItem(key, JSON.stringify(draft));
+      writes.push(function() { store.setItem(key, JSON.stringify(draft)); });
     });
   });
+  writes.forEach(function(write) { write(); });
+  return matched;
 ''';
     return _buildStorageAction(
-      'var drafts = JSON.parse(${jsonEncode(jsonEncode(drafts))});\n$action',
+      'var drafts = JSON.parse(${jsonEncode(jsonEncode(drafts))});\n'
+      'var basedOn = JSON.parse(${jsonEncode(jsonEncode(basedOn))});\n$action',
     );
   }
 

@@ -616,12 +616,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           ],
           if (widget.collectionEnabled != null &&
               widget.onCollectionChanged != null) ...[
-            const Text('??????'),
+            const Text('同期する項目'),
             for (final item in const {
-              'favorites': '?????',
-              'settings': '??',
-              'report-drafts': '???????',
-              'notified-deadlines': '???????',
+              'favorites': 'お気に入り',
+              'settings': '設定',
+              'report-drafts': 'レポート下書き',
+              'notified-deadlines': '通知済みの締切',
             }.entries)
               SwitchListTile(
                 key: ValueKey(item.key),

@@ -31,6 +31,18 @@ import java.net.URLEncoder
 import java.util.Locale
 import java.util.TimeZone
 
+internal fun readContentBytes(input: java.io.InputStream, limit: Int = 200 * 1024 * 1024): ByteArray {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (true) {
+        val count = input.read(buffer)
+        if (count == -1) break
+        if (count > limit - output.size()) throw IllegalArgumentException("Content is too large")
+        output.write(buffer, 0, count)
+    }
+    return output.toByteArray()
+}
+
 internal data class GakujoCalendarEventData(
     val id: String,
     val uidNamespace: String?,
@@ -486,6 +498,7 @@ class MainActivity : FlutterActivity() {
                 "downloadToPickedFile" -> downloadToPickedFile(call, result)
                 "exportDownloadedFile" -> exportDownloadedFile(call, result)
                 "openDownloadedFile" -> openDownloadedFile(call, result)
+                "readContentUri" -> readContentUri(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -584,6 +597,25 @@ class MainActivity : FlutterActivity() {
         return pendingPickRootResult != null ||
             pendingPickFileResult != null ||
             pendingExportResult != null
+    }
+
+    private fun readContentUri(call: MethodCall, result: MethodChannel.Result) {
+        val value = call.argument<String>("uri")
+        val uri = value?.let { Uri.parse(it) }
+        if (uri == null || uri.scheme != "content") {
+            result.error("invalid_uri", "Invalid content URI", null)
+            return
+        }
+        Thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                    readContentBytes(input)
+                } ?: throw IllegalStateException("Content URI is unavailable")
+                runOnUiThread { result.success(bytes) }
+            } catch (error: Exception) {
+                runOnUiThread { result.error("read_failed", error.message, null) }
+            }
+        }.start()
     }
 
     /**

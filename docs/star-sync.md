@@ -172,4 +172,8 @@ Drive API の上限（2026年5月1日以降に作成したプロジェクト）�
 
 # ダウンロードの Google ドライブ保存
 
-任意の設定を有効にすると、Google の `drive.file` 権限を追加で求め、ダウンロードしたファイルを `More Better Gakujo/科目名/` に保存します。同じ名前とサイズのファイルは重複して作成しません。端末内への保存を優先し、読み取れるローカルファイルがない場合はアップロードを省略します。
+任意の設定を有効にすると、Google の `drive.file` 権限を追加で求め、ダウンロードしたファイルを `More Better Gakujo/科目名/` に保存します。同じ名前とサイズのファイルは重複して作成しません。端末内への保存を優先し、読み取りやアップロードに失敗した場合は画面に通知します。
+
+## Sync storage backups and restore
+
+Encrypted sync-storage backups omit download save mode, page mode, the messageStars disabled flag, and credential-like fields. Restore from sync storage ignores those fields and retains their local values. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs with a 200 MiB limit.

@@ -1110,21 +1110,25 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   void _queueDriveDownload(GakujoDownloadResult result) {
     if (!_driveDownloadsEnabled) return;
     final location = result.location;
-    if (location == null || location.isEmpty || location.startsWith('content:')) {
-      debugPrint('Drive upload skipped: local file is unavailable');
-      return;
-    }
     unawaited(_driveDownloadQueue.run(() async {
       if (!_driveDownloadsEnabled) return;
       try {
+        if (location == null || location.isEmpty) {
+          throw StateError('Local file is unavailable');
+        }
         final uri = Uri.tryParse(location);
-        final file = uri?.scheme == 'file' ? File.fromUri(uri!) : File(location);
+        final content = Platform.isAndroid && uri?.scheme == 'content'
+            ? await const MethodChannelGakujoDownloadService().readContentUri(location)
+            : null;
+        final file = content == null
+            ? (uri?.scheme == 'file' ? File.fromUri(uri!) : File(location))
+            : null;
         _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
         await _googleDriveFileSaver.saveFile(
           courseName: result.courseName,
           fileName: result.fileName,
-          open: file.openRead,
-          length: await file.length(),
+          open: content != null ? () => Stream.value(content) : file!.openRead,
+          length: content?.length ?? await file!.length(),
         );
         if (mounted) _showSnackBar('Google ドライブに保存しました');
       } on Object catch (error, stackTrace) {
