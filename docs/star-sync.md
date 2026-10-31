@@ -1,15 +1,15 @@
 # スターの複数端末共有（設計メモ）
 
-状態: `star-sync` ブランチで実装済み（未リリース）。実装は `lib/src/star_sync/` と設定画面の「スターの端末間同期」です。S3 互換は SeaweedFS 3.80（SigV4 認証あり）、WebDAV は Apache httpd 2.4.62 の mod_dav（Basic 認証あり）で動作を確認済みです。
+状態: WebDAV/S3 は `star-sync`、Google ドライブは `star-sync-google` ブランチで実装済み（未リリース）。実装は `lib/src/star_sync/` と設定画面の「スターの端末間同期」です。S3 互換は SeaweedFS 3.80（SigV4 認証あり）、WebDAV は Apache httpd 2.4.62 の mod_dav（Basic 認証あり）で動作を確認済みです。Google ドライブは OAuth クライアントが未登録のため、実際の Google アカウントでは未確認です。
 
-連絡通知のスターを、同じユーザーの複数端末で共有します。同期先のストレージは各ユーザーが用意し、More Better Gakujo 側ではサーバーを運用しません。アプリは利用者が入力した WebDAV または S3 互換ストレージへ、端末ごとに暗号化したファイルを置き、他端末のファイルを読み込んでマージします。
+連絡通知のスターを、同じユーザーの複数端末で共有します。More Better Gakujo 側ではサーバーを運用しません。標準の方法は「Google ドライブで同期」ボタンで、本人の Google ドライブにあるアプリ専用領域を使います。自分のサーバーを使いたい人向けに、WebDAV と S3 互換も詳細設定として残します。どの方式でも、端末ごとに暗号化したファイルを置き、他端末のファイルを読み込んでマージします。
 
 ## 確定した仕様
 
 - **同期先は WebDAV と S3 互換の両方に対応する。** WebDAV は Nextcloud、NAS、InfiniCLOUD などでURLとパスワードだけで始められます。S3 互換は Cloudflare R2、Backblaze B2、MinIO などを想定します。
 - **端末ごとに1ファイルを書き、共有ファイルを上書きしない。** 条件付き書き込み（`If-Match`）は AWS S3 などでは使えますが、R2 と B2 は公式資料で対応を確認できませんでした。ヘッダーを黙って無視する実装があっても変更が消えないよう、書き込み競合そのものが起きない構成にします。
 - **同期するのは ID と件名だけ。** 本文、送信者、ジャンル、期間、掲載日は端末内にだけ保存します。他端末で付いたスターは件名だけで表示し、メッセージを開いたときに既存の `refreshStarredMessage` で本文を補います。
-- **パスフレーズによる暗号化を必須にする。** 件名にも人名や手続き内容が含まれうるため、同期先の管理者から中身を読めない状態にします。
+- **暗号化を必須にする。** 件名にも人名や手続き内容が含まれうるため、同期先の管理者から中身を読めない状態にします。鍵は WebDAV/S3 ではパスフレーズから作り、Google ドライブでは自動で作ってペアリングコードで別の端末に渡します。
 
 ## 同期先のファイル構成
 
@@ -88,6 +88,23 @@
 - **WebDAV**: URL、ユーザー名、パスワード（アプリパスワード推奨）。`PROPFIND`（Depth: 1）で一覧し、`GET`、`PUT`、`MKCOL` を使います。
 - **S3 互換**: エンドポイント、リージョン（R2 は `auto`）、バケット、プレフィックス、アクセスキー、シークレット、パス形式URLの切り替え（MinIO・R2向け）。署名 SigV4 は既存の `crypto` パッケージの HMAC-SHA256 で実装し、`ListObjectsV2`、`GetObject`、`PutObject` を使います。案内では、そのバケットとプレフィックスに限定したキーの作成を勧めます。
 
+## Google ドライブ同期（標準の方法）
+
+利用者が用意するのは Google アカウントだけです。保存先は Drive API の `appDataFolder`（このアプリだけが読み書きできる非表示の領域）で、スコープは `drive.appdata` と、接続中のアカウントを表示するための `openid`・`email` です。`drive.appdata` は Google の分類で非機密スコープなので、必要なのは基本的な OAuth 審査だけです。
+
+- **ログイン**: Windows/macOS は既定のブラウザを開き、端末内（`127.0.0.1`）で結果を受け取る方式（PKCE と state 付き）です。更新用トークンだけを `FlutterSecureStorage` に保存します。Android/iOS は `google_sign_in` を使います。
+- **ファイル**: Drive のファイル名に相対パス（`stars/keyring.json`、`stars/devices/<端末ID>`）をそのまま使います。2台が同時に作って同名ファイルが重複した場合は、作成日時が最も古いものを正とします。
+- **鍵の受け渡し（ペアリングコード）**: パスフレーズは使いません。1台目が鍵を自動で作り、`keyring.json` には鍵IDだけを置きます。2台目は、1台目の「別の端末を追加」に表示される QR（`mbgstar:` + コード）を読み取るか、コードを入力して鍵を受け取ります。コードは鍵ID・鍵・チェックサムを Base32 にしたもので、知っている人は同期データを読めます。
+- **リセット**: 新しい鍵とコードを作ります。他の端末は新しいコードの入力が必要になります。
+- **ボタンを表示する条件**: OAuth クライアントIDを組み込んだビルドでだけ「Google ドライブで同期」を表示します。組み込んでいないビルドでは WebDAV/S3 だけが選べます。
+
+### OAuth クライアントの設定（メンテナー作業）
+
+- Google Cloud で External の同意画面を作成し、`drive.appdata`、`openid`、`email` を設定して本番公開します。
+- Desktop クライアントを作成し、Windows/macOS のビルド時に ID とシークレットをそれぞれ `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...`、`--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` で渡します。インストール型アプリのシークレットは、Google の扱いでも機密ではありません。
+- Android クライアントはパッケージ `net.yoshida.morebettergakujo` と、リリース用・デバッグ用それぞれの署名鍵の SHA-1 で登録します。
+- iOS クライアントはバンドル ID `net.yoshida.morebettergakujo` で作成し、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...`、逆順 ID をビルド設定 `GOOGLE_REVERSED_CLIENT_ID` に指定します（既定値はダミーの `com.googleusercontent.apps.unset`）。
+
 ## 実装時に決めたこと
 
 - **暗号ライブラリ**: 純粋な Dart 製の `cryptography` を使います（XML の解析には `xml`）。Argon2id（19 MiB・2回）は開発機の `flutter test` で鍵の作成が約0.14秒、取り出しが約0.09秒でした。UI を止めないよう別 isolate で実行します。モバイル実機での時間は未計測です。
@@ -114,10 +131,3 @@
 - [CoreWeave conditional requests](https://docs.coreweave.com/products/storage/object-storage/buckets/conditional-requests.md)
 - [Cloudflare R2 runtime APIs](https://cloudflare-docs-siq.pages.dev/r2/runtime-apis)
 - [multistore issue #120](https://github.com/developmentseed/multistore/issues/120)（S3互換の経路で `If-Match` が無視された事例）
-
-## Google ドライブ同期のための OAuth クライアント設定
-
-- Google Cloud で External の同意画面を作成し、`drive.appdata`、`openid`、`email` を設定して本番公開します。`drive.appdata` は非機密スコープです。
-- Desktop クライアントを作成し、Windows/macOS のビルド時に ID とシークレットをそれぞれ `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...`、`--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` で渡します。
-- Android クライアントはパッケージ `net.yoshida.morebettergakujo` と、リリース用・デバッグ用それぞれの署名鍵の SHA-1 で登録します。
-- iOS クライアントはバンドル ID `net.yoshida.morebettergakujo` で作成し、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...`、逆順 ID をビルド設定 `GOOGLE_REVERSED_CLIENT_ID` に指定します。
