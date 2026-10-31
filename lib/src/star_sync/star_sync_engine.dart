@@ -1809,25 +1809,24 @@ class StarSyncEngine {
             if (star.isValid) star.id,
         };
       }
-      state.collectionStates = {
-        ...state.collectionStates,
-        for (final entry in snapshots.entries)
-          entry.key: {
-            ...Map<String, dynamic>.from(
-              state.collectionStates[entry.key] as Map? ?? {},
-            ),
-            'pendingBulkReplaceLocalKeys': entry.value == null
-                ? (state.collectionStates[entry.key]
-                      as Map?)?['pendingBulkReplaceLocalKeys']
-                : ({
-                    ...?((state.collectionStates[entry.key]
-                                as Map?)?['pendingBulkReplaceLocalKeys']
-                            as List?)
-                        ?.cast<String>(),
-                    ...entry.value!,
-                  }.toList()..sort()),
-          },
-      };
+      final nextCollections = Map<String, dynamic>.from(state.collectionStates);
+      for (final entry in snapshots.entries) {
+        final current = Map<String, dynamic>.from(
+          state.collectionStates[entry.key] as Map? ?? {},
+        );
+        final previousKeys = current['pendingBulkReplaceLocalKeys'];
+        final snapshot = entry.value;
+        if (snapshot != null) {
+          // Union with an earlier unsynced restore, so a deletion made after
+          // that restore is still recognised as a deletion.
+          current['pendingBulkReplaceLocalKeys'] = {
+            ...?(previousKeys as List?)?.cast<String>(),
+            ...snapshot,
+          }.toList()..sort();
+        }
+        nextCollections[entry.key] = current;
+      }
+      state.collectionStates = nextCollections;
       await _saveState();
     }
   });
@@ -1835,63 +1834,53 @@ class StarSyncEngine {
   Future<void> markBulkReplace({
     bool stars = true,
     Map<String, Set<String>?>? collections,
-  }) =>
-      _queue.run(() async {
-        if (_state == null) {
-          return;
-        }
-        final previous = _state!.pendingBulkReplace;
-        final previousStarIds = _state!.pendingBulkReplaceStarIds;
-        final previousCollections = _state!.collectionStates;
-        if (stars) {
-          _state!.pendingBulkReplace = true;
-          if (!previous) _state!.pendingBulkReplaceStarIds = null;
-        }
-        _state!.collectionStates = {
-          ...previousCollections,
-          for (final name in _collectionNames())
-            if (collections == null || collections.containsKey(name))
-              name: {
-                ...Map<String, dynamic>.from(
-                  previousCollections[name] as Map? ?? {},
-                ),
-                'pendingBulkReplace': true,
-                'pendingBulkReplaceLocalKeys':
-                    (previousCollections[name] as Map?)?['pendingBulkReplace'] ==
-                        true
-                    ? (previousCollections[name]
-                          as Map?)?['pendingBulkReplaceLocalKeys']
-                    : null,
-                'pendingBulkReplaceKeys':
-                    collections == null ||
-                        collections[name] == null ||
-                        ((previousCollections[name]
-                                    as Map?)?['pendingBulkReplace'] ==
-                                true &&
-                            (previousCollections[name]
-                                    as Map?)?['pendingBulkReplaceKeys'] ==
-                                null)
-                    ? null
-                    : ({
-                        ...?((previousCollections[name]
-                                    as Map?)?['pendingBulkReplaceKeys']
-                                as List?)
-                            ?.cast<String>(),
-                        ...collections[name]!,
-                      }.toList()..sort()),
-              },
-        };
-        try {
-          await _saveState();
-        } on Object {
-          // The restore aborts; a stale marker would turn a later unstar into
-          // a restore omission.
-          _state!.pendingBulkReplace = previous;
-          _state!.pendingBulkReplaceStarIds = previousStarIds;
-          _state!.collectionStates = previousCollections;
-          rethrow;
-        }
-      });
+  }) => _queue.run(() async {
+    if (_state == null) {
+      return;
+    }
+    final previous = _state!.pendingBulkReplace;
+    final previousStarIds = _state!.pendingBulkReplaceStarIds;
+    final previousCollections = _state!.collectionStates;
+    if (stars) {
+      _state!.pendingBulkReplace = true;
+      if (!previous) _state!.pendingBulkReplaceStarIds = null;
+    }
+    final nextCollections = Map<String, dynamic>.from(previousCollections);
+    for (final name in _collectionNames()) {
+      if (collections != null && !collections.containsKey(name)) continue;
+      final current = Map<String, dynamic>.from(
+        previousCollections[name] as Map? ?? {},
+      );
+      final pending = current['pendingBulkReplace'] == true;
+      final previousKeys = current['pendingBulkReplaceKeys'];
+      final restoredKeys = collections?[name];
+      current['pendingBulkReplace'] = true;
+      // An earlier unsynced restore keeps its snapshot so the next one
+      // can union into it.
+      if (!pending) current['pendingBulkReplaceLocalKeys'] = null;
+      // null means "every key"; once any restore covered every key, the
+      // union stays "every key" until the next sync.
+      current['pendingBulkReplaceKeys'] =
+          restoredKeys == null || (pending && previousKeys == null)
+          ? null
+          : ({
+              ...?(previousKeys as List?)?.cast<String>(),
+              ...restoredKeys,
+            }.toList()..sort());
+      nextCollections[name] = current;
+    }
+    _state!.collectionStates = nextCollections;
+    try {
+      await _saveState();
+    } on Object {
+      // The restore aborts; a stale marker would turn a later unstar into
+      // a restore omission.
+      _state!.pendingBulkReplace = previous;
+      _state!.pendingBulkReplaceStarIds = previousStarIds;
+      _state!.collectionStates = previousCollections;
+      rethrow;
+    }
+  });
 
   Future<StarSyncKeyring> _readKeyring(StarSyncTransport transport) async {
     final object = await transport.get(_keyringPath);

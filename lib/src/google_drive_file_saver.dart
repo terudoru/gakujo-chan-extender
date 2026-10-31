@@ -136,9 +136,8 @@ class GoogleDriveFileSaver {
       final existing = await _list(name, parent, folder: true);
       if (existing.isNotEmpty) {
         existing.sort((a, b) {
-          final time = DateTime.parse(a['createdTime'] as String).compareTo(
-            DateTime.parse(b['createdTime'] as String),
-          );
+          final time = DateTime.parse(a['createdTime'] as String)
+              .compareTo(DateTime.parse(b['createdTime'] as String));
           return time != 0 ? time : _id(a).compareTo(_id(b));
         });
         return _folders[key] = _id(existing.first);

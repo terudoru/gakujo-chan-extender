@@ -2902,11 +2902,7 @@ void main() {
     favoritesB.entries!.remove('new');
     await activityB.removeStarredMessage(star('1').id);
     await activityB.removeStarredMessage(star('3').id);
-    await b.withBulkReplace(
-      () async {},
-      stars: false,
-      collections: const {},
-    );
+    await b.withBulkReplace(() async {}, stars: false, collections: const {});
     await b.withBulkReplace(() async {
       favoritesB.entries = {'later': 'later'};
       await activityB.replaceStarredMessages([star('4')]);
@@ -2921,10 +2917,10 @@ void main() {
       expect(favorites.entries, {'omitted': 'keep', 'later': 'later'});
     }
     for (final activity in [activityA, activityB]) {
-      expect((await activity.loadStarredMessages()).map((star) => star.id).toSet(), {
-        star('2').id,
-        star('4').id,
-      });
+      expect(
+        (await activity.loadStarredMessages()).map((star) => star.id).toSet(),
+        {star('2').id, star('4').id},
+      );
     }
     a.dispose();
     restarted.dispose();

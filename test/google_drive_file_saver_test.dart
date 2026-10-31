@@ -179,15 +179,17 @@ void main() {
     final email = auth.currentEmail!;
     saver = GoogleDriveFileSaver(
       apiBase: base,
-      accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
-        auth, email, forceRefresh: forceRefresh,
-      ),
+      accessToken: ({bool forceRefresh = false}) =>
+          googleDriveTokenForAccount(auth, email, forceRefresh: forceRefresh),
     );
     onRequest = () {
       auth.email = 'other@example.test';
       onRequest = null;
     };
-    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDriveAccountChanged>()));
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDriveAccountChanged>()),
+    );
     expect(queries, hasLength(1));
     expect(uploads, 0);
     expect(chunks, 0);
@@ -231,7 +233,9 @@ void main() {
         'name': 'More Better Gakujo',
         'parent': 'root',
         'mimeType': 'application/vnd.google-apps.folder',
-        'createdTime': id == 'z' ? '2026-02-01T00:00:00Z' : '2026-01-01T00:00:00Z',
+        'createdTime': id == 'z'
+            ? '2026-02-01T00:00:00Z'
+            : '2026-01-01T00:00:00Z',
       });
     }
     expect(await save('Course', 'file', 1), 'uploaded');
