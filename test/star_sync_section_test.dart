@@ -79,7 +79,9 @@ void main() {
     ),
   );
 
-  testWidgets('account return asks before discarding local changes', (tester) async {
+  testWidgets('account return asks before discarding local changes', (
+    tester,
+  ) async {
     var kept = 0;
     var discarded = 0;
     final status = ValueNotifier(
@@ -88,12 +90,21 @@ void main() {
         status: StarSyncStatus.accountReturned,
       ),
     );
-    await tester.pumpWidget(section(
-      status,
-      onResumeKeepingLocal: () async { kept++; },
-      onResumeDiscardingLocal: () async { discarded++; },
-    ));
-    expect(find.text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'), findsOneWidget);
+    await tester.pumpWidget(
+      section(
+        status,
+        onResumeKeepingLocal: () async {
+          kept++;
+        },
+        onResumeDiscardingLocal: () async {
+          discarded++;
+        },
+      ),
+    );
+    expect(
+      find.text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('含めて再開'));
     await tester.pumpAndSettle();
     expect(kept, 1);

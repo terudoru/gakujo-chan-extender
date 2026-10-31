@@ -393,27 +393,29 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               child: const Text('含めて再開'),
             ),
             OutlinedButton(
-              onPressed: _busy ? null : () async {
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    content: const Text('この端末で、その間に付け外ししたスターは元に戻ります。'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('キャンセル'),
-                      ),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('戻して再開'),
-                      ),
-                    ],
-                  ),
-                );
-                if (confirmed == true && mounted) {
-                  await _run(widget.onResumeDiscardingLocal);
-                }
-              },
+              onPressed: _busy
+                  ? null
+                  : () async {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          content: const Text('この端末で、その間に付け外ししたスターは元に戻ります。'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('キャンセル'),
+                            ),
+                            FilledButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text('戻して再開'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true && mounted) {
+                        await _run(widget.onResumeDiscardingLocal);
+                      }
+                    },
               child: const Text('同期データの状態に戻して再開'),
             ),
             OutlinedButton(
@@ -422,7 +424,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                   : () => showDialog<void>(
                       context: context,
                       barrierDismissible: false,
-                      builder: (_) => _DisableDialog(onDisable: widget.onDisable),
+                      builder: (_) =>
+                          _DisableDialog(onDisable: widget.onDisable),
                     ),
               child: const Text('同期を無効にする'),
             ),

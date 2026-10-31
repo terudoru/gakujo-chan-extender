@@ -576,7 +576,11 @@ void main() {
       account = 'B';
       await engine.syncNow();
       expect(engine.status.value.status, StarSyncStatus.accountMismatch);
-      expect((jsonDecode(storage.values[starSyncStateKey]!) as Map)['localReviewRequired'], isTrue);
+      expect(
+        (jsonDecode(storage.values[starSyncStateKey]!)
+            as Map)['localReviewRequired'],
+        isTrue,
+      );
       await activity.replaceStarredMessages([star('2')]);
       final puts = remote.puts;
       engine.dispose();
@@ -591,7 +595,9 @@ void main() {
       } else {
         await engine.resumeKeepingLocal();
       }
-      final ids = (await activity.loadStarredMessages()).map((e) => e.seqNo).toSet();
+      final ids = (await activity.loadStarredMessages())
+          .map((e) => e.seqNo)
+          .toSet();
       expect(ids, discard ? {'1'} : {'2'});
       expect(remote.puts, discard ? puts : greaterThan(puts));
       final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
@@ -1054,58 +1060,56 @@ void main() {
         .where((path) => path.startsWith('stars/devices/'))
         .toSet();
     await a.resetRemote('new passphrase');
-    expect(otherFiles.every(remote.files.containsKey), isTrue);
+    // B's file is erased; only A's own file is uploaded again under the new key.
+    expect(otherFiles.where(remote.files.containsKey), hasLength(1));
     await b.syncNow();
     expect(b.status.value.status, StarSyncStatus.needsPassphrase);
     await b.rejoin('new passphrase');
     expect(b.status.value.status, StarSyncStatus.ok);
   });
 
-  test(
-    'different-key files are kept without a partial sync warning',
-    () async {
-      final remote = _Transport();
-      final storage = _Storage();
-      final engine = StarSyncEngine(
-        loginId: () => 'student',
-        activityStore: GakujoActivityStore(secureStorage: storage),
-        secureStorage: storage,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-      );
-      await engine.setUp(config, 'pass');
-      final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
-      final old = createStarSyncPairingKeyring();
-      const path = 'stars/devices/old';
-      remote.files[path] = await encryptStarSyncFile(
-        dataKey: starSyncKeyFromBytes(old.dataKey),
-        keyId: old.keyring.keyId,
-        deviceId: 'old',
-        plaintext: [],
-      );
-      final ownPath = 'stars/devices/${state['deviceId']}';
-      final oldOwnFile = await encryptStarSyncFile(
-        dataKey: starSyncKeyFromBytes(old.dataKey),
-        keyId: old.keyring.keyId,
-        deviceId: state['deviceId'] as String,
-        plaintext: [],
-      );
-      remote.files[ownPath] = oldOwnFile;
-      final currentKeyring = remote.files['stars/keyring.json']!;
-      remote.files['stars/keyring.json'] = utf8.encode(
-        jsonEncode(old.keyring.toJson()),
-      );
-      await engine.syncNow();
-      expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
-      expect(remote.files.containsKey(path), isTrue);
-      remote.files['stars/keyring.json'] = currentKeyring;
-      expect((await engine.syncNow()).skippedFiles, 0);
-      expect(remote.files.containsKey(path), isTrue);
-      expect(engine.status.value.lastError, isNull);
-      expect(remote.deletes, 0);
-      expect(remote.files[ownPath], oldOwnFile);
-    },
-  );
+  test('different-key files are kept without a partial sync warning', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    final old = createStarSyncPairingKeyring();
+    const path = 'stars/devices/old';
+    remote.files[path] = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(old.dataKey),
+      keyId: old.keyring.keyId,
+      deviceId: 'old',
+      plaintext: [],
+    );
+    final ownPath = 'stars/devices/${state['deviceId']}';
+    final oldOwnFile = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(old.dataKey),
+      keyId: old.keyring.keyId,
+      deviceId: state['deviceId'] as String,
+      plaintext: [],
+    );
+    remote.files[ownPath] = oldOwnFile;
+    final currentKeyring = remote.files['stars/keyring.json']!;
+    remote.files['stars/keyring.json'] = utf8.encode(
+      jsonEncode(old.keyring.toJson()),
+    );
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
+    expect(remote.files.containsKey(path), isTrue);
+    remote.files['stars/keyring.json'] = currentKeyring;
+    expect((await engine.syncNow()).skippedFiles, 0);
+    expect(remote.files.containsKey(path), isTrue);
+    expect(engine.status.value.lastError, isNull);
+    expect(remote.deletes, 0);
+    expect(remote.files[ownPath], oldOwnFile);
+  });
 
   test('partial sync keeps unreadable files and clears its warning', () async {
     final remote = _Transport();
@@ -1347,7 +1351,7 @@ void main() {
     expect(remote.deletes, 1);
   });
   test(
-    'disabled setup reset retains old device files and clears local stars',
+    'disabled setup reset removes old device files and clears local stars',
     () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -1383,7 +1387,7 @@ void main() {
       );
       expect(await engine.localStarCount(), 0);
       expect(remote.files['stars/keyring.json'], isNot(oldKeyring));
-      expect(oldDevices.where(remote.files.containsKey), hasLength(oldDevices.length));
+      expect(oldDevices.where(remote.files.containsKey), isEmpty);
       final state = StarSyncState.fromJson(
         jsonDecode(storage.values[starSyncStateKey]!),
       );
@@ -1570,24 +1574,27 @@ void main() {
     },
   );
 
-  test('Drive transport auth failure requests sign in without cooldown', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-    );
-    await engine.setUpWithPairing(
-      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
-    );
-    remote.authFailure = true;
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
-    expect(engine.status.value.lastError, 'Google へのログインが必要です');
-    expect(engine.status.value.cooldownUntil, isNull);
-  });
+  test(
+    'Drive transport auth failure requests sign in without cooldown',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+      );
+      await engine.setUpWithPairing(
+        const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+      );
+      remote.authFailure = true;
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
+      expect(engine.status.value.lastError, 'Google へのログインが必要です');
+      expect(engine.status.value.cooldownUntil, isNull);
+    },
+  );
 
   test('revoked Google credentials request sign in without cooldown', () async {
     final remote = _Transport();

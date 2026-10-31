@@ -209,7 +209,8 @@ class StarSyncState {
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
       keyringEtag: json['keyringEtag'] as String?,
       pendingLocalChange: json['pendingLocalChange'] as bool? ?? false,
-      localReviewRequired: json['localReviewRequired'] as bool? ??
+      localReviewRequired:
+          json['localReviewRequired'] as bool? ??
           (json['status'] == 'accountMismatch'),
       cooldownUntil: DateTime.tryParse(json['cooldownUntil'] as String? ?? ''),
       serverFailures: json['serverFailures'] as int? ?? 0,
@@ -379,8 +380,12 @@ class StarSyncEngine {
   Future<int> localStarCount() async =>
       (await activityStore.loadStarredMessages()).length;
 
-  Future<void> _deleteRemoteKeyring(StarSyncTransport transport) async {
-    await transport.list(_deviceDirectory);
+  /// An explicit reset erases every device file, so data under the old key
+  /// does not outlive it. Only automatic sync must leave other files alone.
+  Future<void> _deleteRemoteData(StarSyncTransport transport) async {
+    for (final entry in await transport.list(_deviceDirectory)) {
+      await transport.delete(entry.path);
+    }
     await transport.delete(_keyringPath);
   }
 
@@ -394,7 +399,7 @@ class StarSyncEngine {
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
-      if (resetExisting) await _deleteRemoteKeyring(transport);
+      if (resetExisting) await _deleteRemoteData(transport);
       var remote = await transport.get(_keyringPath);
       if (remote == null) {
         final memory = kdfParams.memoryKiB;
@@ -493,7 +498,7 @@ class StarSyncEngine {
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
-      if (resetExisting) await _deleteRemoteKeyring(transport);
+      if (resetExisting) await _deleteRemoteData(transport);
       if (await transport.get(_keyringPath) != null) {
         if (resetExisting) throw StarSyncSetupRaceException();
         return StarSyncPairingSetup.needsPairingCode;
@@ -628,8 +633,7 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
-        await transport.list(_deviceDirectory);
-        await transport.delete(_keyringPath);
+        await _deleteRemoteData(transport);
         final created = createStarSyncPairingKeyring();
         await transport.put(
           _keyringPath,
@@ -660,13 +664,11 @@ class StarSyncEngine {
     return code;
   }
 
-  Future<void> resumeKeepingLocal() => _resumeAfterAccountReturn(
-    discardLocal: false,
-  );
+  Future<void> resumeKeepingLocal() =>
+      _resumeAfterAccountReturn(discardLocal: false);
 
-  Future<void> resumeDiscardingLocal() => _resumeAfterAccountReturn(
-    discardLocal: true,
-  );
+  Future<void> resumeDiscardingLocal() =>
+      _resumeAfterAccountReturn(discardLocal: true);
 
   Future<void> _resumeAfterAccountReturn({required bool discardLocal}) async {
     final resumed = await _queue.run(() async {
@@ -688,7 +690,8 @@ class StarSyncEngine {
           );
           return (
             next: next,
-            result: jsonEncode(current.map((e) => e.toJson()).toList()) !=
+            result:
+                jsonEncode(current.map((e) => e.toJson()).toList()) !=
                 jsonEncode(next.map((e) => e.toJson()).toList()),
           );
         });
@@ -1258,8 +1261,7 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
-        await transport.list(_deviceDirectory);
-        await transport.delete(_keyringPath);
+        await _deleteRemoteData(transport);
         final memory = kdfParams.memoryKiB;
         final iterations = kdfParams.iterations;
         final parallelism = kdfParams.parallelism;
