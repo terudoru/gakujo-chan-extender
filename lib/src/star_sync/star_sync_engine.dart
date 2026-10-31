@@ -63,6 +63,14 @@ enum StarSyncTrigger { localChange, startup, resume, manual }
 
 enum StarSyncPairingSetup { created, needsPairingCode }
 
+class StarSyncAccountRequiredException implements Exception {
+  const StarSyncAccountRequiredException();
+}
+
+class StarSyncAccountMismatchException implements Exception {
+  const StarSyncAccountMismatchException();
+}
+
 class StarSyncPairingMismatchException implements Exception {
   const StarSyncPairingMismatchException();
 }
@@ -111,6 +119,7 @@ class StarSyncState {
     required this.deviceId,
     required this.dataKey,
     required this.keyId,
+    this.boundAccount,
     this.clock = 0,
     Map<String, StarSyncRecord>? records,
     Map<String, dynamic>? remoteCache,
@@ -130,6 +139,7 @@ class StarSyncState {
   final String deviceId;
   String dataKey;
   String keyId;
+  final String? boundAccount;
   int clock;
   Map<String, StarSyncRecord> records;
   Map<String, dynamic> remoteCache;
@@ -149,6 +159,7 @@ class StarSyncState {
     'deviceId': deviceId,
     'dataKey': dataKey,
     'keyId': keyId,
+    'boundAccount': boundAccount,
     'clock': clock,
     'records': records.map((key, value) => MapEntry(key, value.toJson())),
     'remoteCache': remoteCache,
@@ -175,6 +186,7 @@ class StarSyncState {
       deviceId: json['deviceId'] as String,
       dataKey: json['dataKey'] as String,
       keyId: json['keyId'] as String,
+      boundAccount: json['boundAccount'] as String?,
       clock: json['clock'] as int,
       records: records,
       remoteCache: Map<String, dynamic>.from(json['remoteCache'] as Map),
@@ -303,7 +315,36 @@ class StarSyncEngine {
     value: jsonEncode(_config!.toJson()),
   );
 
+  String? _currentAccount() {
+    final id = loginId?.call()?.trim();
+    if (id == null || id.isEmpty) return null;
+    return base64UrlEncode(
+      sha256.convert(utf8.encode('mbg-star-account:$id')).bytes,
+    );
+  }
+
+  String requireAccount() =>
+      _currentAccount() ?? (throw const StarSyncAccountRequiredException());
+
+  Future<bool> _accountMatches(StarSyncState state) async {
+    final current = _currentAccount();
+    if (current != null && state.boundAccount == current) return true;
+    state.status = StarSyncStatus.accountMismatch;
+    await _saveState();
+    _publish();
+    return false;
+  }
+
+  Future<void> _requireBoundAccount() async {
+    final state = _state;
+    if (_config == null || state == null) throw StateError('Sync is disabled');
+    if (!await _accountMatches(state)) {
+      throw const StarSyncAccountMismatchException();
+    }
+  }
+
   Future<void> setUp(StarSyncConfig config, String passphrase) async {
+    final account = requireAccount();
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -341,6 +382,7 @@ class StarSyncEngine {
           deviceId: deviceId,
           dataKey: base64Encode(keyBytes),
           keyId: keyring.keyId,
+          boundAccount: account,
         );
         await _saveState();
         await _saveConfig();
@@ -356,6 +398,7 @@ class StarSyncEngine {
     StarSyncConfig config,
     String keyId,
     List<int> keyBytes,
+    String account,
   ) => _queue.run(() async {
     final random = Random.secure();
     final deviceId = base64UrlEncode(
@@ -366,6 +409,7 @@ class StarSyncEngine {
       deviceId: deviceId,
       dataKey: base64Encode(keyBytes),
       keyId: keyId,
+      boundAccount: account,
     );
     await _saveState();
     await _saveConfig();
@@ -373,6 +417,7 @@ class StarSyncEngine {
   });
 
   Future<StarSyncPairingSetup> setUpWithPairing(StarSyncConfig config) async {
+    final account = requireAccount();
     final transport = _transportFactory(config);
     try {
       await transport.ensureDirectory(_deviceDirectory);
@@ -390,7 +435,7 @@ class StarSyncEngine {
         if (error.kind != StarSyncTransportErrorKind.alreadyExists) rethrow;
         return StarSyncPairingSetup.needsPairingCode;
       }
-      await _installPairing(config, created.keyring.keyId, created.dataKey);
+      await _installPairing(config, created.keyring.keyId, created.dataKey, account);
     } finally {
       transport.close();
     }
@@ -427,12 +472,13 @@ class StarSyncEngine {
   }
 
   Future<void> joinWithPairingCode(StarSyncConfig config, String code) async {
+    final account = requireAccount();
     final decoded = decodeStarSyncPairingCode(code);
     final transport = _transportFactory(config);
     try {
       final keyring = await _readKeyring(transport);
       await _verifyPairing(transport, keyring, decoded);
-      await _installPairing(config, decoded.keyId, decoded.dataKey);
+      await _installPairing(config, decoded.keyId, decoded.dataKey, account);
     } finally {
       transport.close();
     }
@@ -442,15 +488,17 @@ class StarSyncEngine {
   Future<String> pairingCode() => _queue.run(() async {
     final state = _state;
     if (_config == null || state == null) throw StateError('Sync is disabled');
+    await _requireBoundAccount();
     return encodeStarSyncPairingCode(state.keyId, base64Decode(state.dataKey));
   });
 
   Future<void> rejoinWithPairingCode(String code) async {
-    final decoded = decodeStarSyncPairingCode(code);
     await _queue.run(() async {
       final config = _config;
       final state = _state;
       if (config == null || state == null) throw StateError('Sync is disabled');
+      await _requireBoundAccount();
+      final decoded = decodeStarSyncPairingCode(code);
       final transport = _transportFactory(config);
       try {
         final keyring = await _readKeyring(transport);
@@ -475,6 +523,7 @@ class StarSyncEngine {
       final config = _config;
       final state = _state;
       if (config == null || state == null) throw StateError('Sync is disabled');
+      await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
         for (final entry in await transport.list(_deviceDirectory)) {
@@ -566,6 +615,10 @@ class StarSyncEngine {
   Future<StarSyncResult> _triggerSync(StarSyncTrigger trigger) async {
     final state = _state;
     if (_config == null || state == null) return const StarSyncResult();
+    if (!await _accountMatches(state)) return const StarSyncResult();
+    if (state.status == StarSyncStatus.accountMismatch) {
+      trigger = StarSyncTrigger.manual;
+    }
     final now = _now();
     final background =
         trigger == StarSyncTrigger.startup || trigger == StarSyncTrigger.resume;
@@ -620,6 +673,7 @@ class StarSyncEngine {
     if (config == null || state == null) {
       return const StarSyncResult();
     }
+    if (!await _accountMatches(state)) return const StarSyncResult();
     _publish(syncing: true);
     final transport = _transportFactory(config);
     try {
@@ -643,12 +697,6 @@ class StarSyncEngine {
         }
         state.keyringEtag = etag;
       }
-      final id = loginId?.call()?.trim();
-      final account = id == null || id.isEmpty
-          ? null
-          : base64UrlEncode(
-              sha256.convert(utf8.encode('mbg-star-account:$id')).bytes,
-            );
       final entries = await transport.list(_deviceDirectory);
       final caches = <String, dynamic>{};
       final documents = <StarSyncDocument>[];
@@ -700,9 +748,7 @@ class StarSyncEngine {
         if (document == null) {
           continue;
         }
-        if (account != null &&
-            document.account != null &&
-            account != document.account) {
+        if (document.account != state.boundAccount) {
           caches.remove(deviceId);
           skipped++;
           continue;
@@ -718,6 +764,7 @@ class StarSyncEngine {
         }
       }
       var clock = state.clock;
+      if (!await _accountMatches(state)) return const StarSyncResult();
       for (final document in documents) {
         clock = max(clock, document.clock);
         for (final record in document.records.values) {
@@ -767,11 +814,12 @@ class StarSyncEngine {
         writtenAt: now,
         clock: clock,
         records: state.records,
-        account: account,
+        account: state.boundAccount,
       );
       final semantic = document.toJson()..remove('writtenAt');
       final hash = sha256.convert(utf8.encode(jsonEncode(semantic))).toString();
       final ownPath = '$_deviceDirectory/${state.deviceId}';
+      if (!await _accountMatches(state)) return const StarSyncResult();
       if (state.lastUploadedHash != hash ||
           !entries.any((entry) => entry.path == ownPath)) {
         final encrypted = await encryptStarSyncFile(
@@ -882,6 +930,7 @@ class StarSyncEngine {
 
   Future<void> changePassphrase(String current, String next) =>
       _queue.run(() async {
+        await _requireBoundAccount();
         final transport = _transportFactory(_config!);
         try {
           final keyring = await _readKeyring(transport);
@@ -899,6 +948,7 @@ class StarSyncEngine {
 
   Future<void> rejoin(String passphrase) async {
     await _queue.run(() async {
+      await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
         final keyring = await _readKeyring(transport);
@@ -920,6 +970,7 @@ class StarSyncEngine {
 
   Future<void> resetRemote(String newPassphrase) async {
     await _queue.run(() async {
+      await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
         for (final entry in await transport.list(_deviceDirectory)) {
@@ -957,6 +1008,7 @@ class StarSyncEngine {
   }
 
   Future<List<StarSyncDeviceInfo>> listDevices() => _queue.run(() async {
+    await _requireBoundAccount();
     final transport = _transportFactory(_config!);
     try {
       final entries = await transport.list(_deviceDirectory);
@@ -974,6 +1026,7 @@ class StarSyncEngine {
   });
 
   Future<void> deleteDeviceFile(String deviceId) => _queue.run(() async {
+    await _requireBoundAccount();
     validateStarSyncPath(deviceId);
     if (deviceId.contains('/') || deviceId == _state!.deviceId) {
       throw ArgumentError('Invalid device');

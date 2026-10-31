@@ -2652,6 +2652,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
                       onGoogleSignIn: () async {
+                        _starSyncEngine.requireAccount();
                         _starSyncGoogleEmail = await _starSyncGoogleAuth.signIn();
                         try {
                           return await _starSyncEngine.setUpWithPairing(

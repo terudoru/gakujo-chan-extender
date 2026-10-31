@@ -159,21 +159,23 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       final result = Completer<String>();
       server.listen((request) async {
         final params = request.uri.queryParameters;
-        final valid =
-            params['state'] == state && params['code']?.isNotEmpty == true;
+        final matching = request.uri.path == '/' && params['state'] == state;
+        final valid = matching && params['code']?.isNotEmpty == true;
         request.response.headers.contentType = ContentType(
           'text',
           'html',
           charset: 'utf-8',
         );
-        request.response.statusCode = valid ? 200 : 400;
+        request.response.statusCode = request.uri.path != '/'
+            ? 404
+            : valid ? 200 : 400;
         request.response.write(
           valid
               ? '<!doctype html><meta charset="utf-8">接続しました。このタブを閉じてアプリに戻ってください。'
               : '<!doctype html><meta charset="utf-8">接続できませんでした。アプリに戻ってください。',
         );
         await request.response.close();
-        if (!result.isCompleted) {
+        if (matching && !result.isCompleted) {
           if (valid) {
             result.complete(params['code']!);
           } else {

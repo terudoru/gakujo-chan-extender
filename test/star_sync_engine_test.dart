@@ -8,6 +8,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_document.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
 class _Storage extends FlutterSecureStorage {
@@ -156,10 +157,147 @@ void main() {
   const config = StarSyncConfig(backend: StarSyncBackend.webDav);
   const kdf = StarSyncKdfParams(memoryKiB: 8, iterations: 1);
 
+  test('all setup paths require an account before any work', () async {
+    for (final id in <String?>[null, '', '   ']) {
+      final storage = _Storage();
+      var transports = 0;
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        loginId: () => id,
+        transportFactory: (_) {
+          transports++;
+          return _Transport();
+        },
+      );
+      await expectLater(
+        engine.setUp(config, 'passphrase'),
+        throwsA(isA<StarSyncAccountRequiredException>()),
+      );
+      await expectLater(
+        engine.setUpWithPairing(config),
+        throwsA(isA<StarSyncAccountRequiredException>()),
+      );
+      await expectLater(
+        engine.joinWithPairingCode(config, 'invalid'),
+        throwsA(isA<StarSyncAccountRequiredException>()),
+      );
+      expect(storage.values, isEmpty);
+      expect(transports, 0);
+    }
+  });
+
+  test('account changes stop all sync work until the account returns', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    String? id = 'student';
+    var transports = 0;
+    final engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => id,
+      transportFactory: (_) {
+        transports++;
+        return remote;
+      },
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'correct horse');
+    await activity.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'Local',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
+    final before = jsonEncode((await activity.loadStarredMessages()).map((e) => e.toJson()).toList());
+    final calls = transports;
+    final puts = remote.puts;
+    for (final changedId in <String?>['other', null, '']) {
+      id = changedId;
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+      expect(transports, calls);
+      expect(remote.puts, puts);
+      expect(jsonEncode((await activity.loadStarredMessages()).map((e) => e.toJson()).toList()), before);
+      await expectLater(engine.pairingCode(), throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(engine.rejoinWithPairingCode('invalid'), throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(engine.rejoin('passphrase'), throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(engine.changePassphrase('old', 'new'), throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(engine.resetRemote('passphrase'), throwsA(isA<StarSyncAccountMismatchException>()));
+      await expectLater(engine.resetRemoteWithPairing(), throwsA(isA<StarSyncAccountMismatchException>()));
+    }
+    expect(transports, calls);
+    id = 'student';
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.ok);
+    expect(transports, greaterThan(calls));
+    expect(remote.puts, greaterThan(puts));
+  });
+
+  test('old state without a bound account stops before transport', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var transports = 0;
+    StarSyncEngine make() => StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => 'student',
+      transportFactory: (_) {
+        transports++;
+        return remote;
+      },
+      kdfParams: kdf,
+    );
+    await make().setUp(config, 'correct horse');
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    state.remove('boundAccount');
+    storage.values[starSyncStateKey] = jsonEncode(state);
+    final engine = make();
+    await engine.load();
+    final calls = transports;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+    expect(transports, calls);
+  });
+
+  test('a document without an account is skipped', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    final engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => 'student',
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'correct horse');
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+    final document = StarSyncDocument(
+      deviceId: 'other',
+      writtenAt: DateTime.utc(2026),
+      clock: 0,
+      records: {},
+    );
+    remote.files['stars/devices/other'] = await encryptStarSyncFile(
+      dataKey: starSyncKeyFromBytes(base64Decode(state['dataKey'] as String)),
+      keyId: state['keyId'] as String,
+      deviceId: 'other',
+      plaintext: document.toBytes(),
+    );
+    expect((await engine.syncNow()).skippedFiles, 1);
+    expect(await activity.loadStarredMessages(), isEmpty);
+  });
+
   test('idle sync skips downloads and upload until keyring changes', () async {
     final remote = _Transport();
     final storage = _Storage();
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -185,6 +323,7 @@ void main() {
     var now = DateTime(2026, 11, 1, 12);
     final delays = <Duration>[];
     StarSyncEngine make() => StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -224,6 +363,7 @@ void main() {
       final storage = _Storage();
       var now = DateTime(2026, 11, 1, 12);
       final engine = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
@@ -270,6 +410,7 @@ void main() {
     final waiting = Completer<void>();
     final entered = Completer<Duration>();
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -297,12 +438,14 @@ void main() {
     final activityA = GakujoActivityStore(secureStorage: storageA);
     final activityB = GakujoActivityStore(secureStorage: storageB);
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: storageA,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: storageB,
       transportFactory: (_) => remote,
@@ -334,12 +477,14 @@ void main() {
     final activityA = GakujoActivityStore(secureStorage: storageA);
     final activityB = GakujoActivityStore(secureStorage: storageB);
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: storageA,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: storageB,
       transportFactory: (_) => remote,
@@ -376,12 +521,14 @@ void main() {
     final activityB = GakujoActivityStore(secureStorage: storageB);
     var callbacks = 0;
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: storageA,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: storageB,
       transportFactory: (_) => remote,
@@ -411,12 +558,14 @@ void main() {
     final first = _Storage();
     final second = _Storage();
     await StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: first),
       secureStorage: first,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     ).setUp(config, 'correct horse');
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second,
       transportFactory: (_) => remote,
@@ -433,6 +582,7 @@ void main() {
     storage.values[starSyncConfigKey] = '{}';
     storage.values[starSyncStateKey] = '{broken';
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => _Transport(),
@@ -449,6 +599,7 @@ void main() {
     final first = _Storage();
     final second = _Storage();
     StarSyncEngine make(_Storage storage) => StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -476,12 +627,14 @@ void main() {
       final second = _Storage();
       final activity = GakujoActivityStore(secureStorage: first);
       final a = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: activity,
         secureStorage: first,
         transportFactory: (_) => remote,
         kdfParams: kdf,
       );
       final b = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: second),
         secureStorage: second,
         transportFactory: (_) => remote,
@@ -518,6 +671,7 @@ void main() {
     StarSyncEngine make() {
       final storage = _Storage();
       return StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
@@ -540,6 +694,7 @@ void main() {
     final remote = _Transport();
     final storage = _Storage();
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -578,6 +733,7 @@ void main() {
     final storage = _Storage();
     final activity = GakujoActivityStore(secureStorage: storage);
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
@@ -609,6 +765,7 @@ void main() {
     StarSyncEngine make() {
       final storage = _Storage();
       return StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
@@ -631,12 +788,14 @@ void main() {
     final activityA = GakujoActivityStore(secureStorage: first);
     final activityB = GakujoActivityStore(secureStorage: second);
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: first,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: second,
       transportFactory: (_) => remote,
@@ -667,12 +826,14 @@ void main() {
     final activityA = GakujoActivityStore(secureStorage: first);
     final activityB = GakujoActivityStore(secureStorage: second);
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: first,
       transportFactory: (_) => remote,
       kdfParams: kdf,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: second,
       transportFactory: (_) => remote,
@@ -709,6 +870,7 @@ void main() {
     final remote = _Transport();
     final storage = _Storage();
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,

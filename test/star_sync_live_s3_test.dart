@@ -62,7 +62,11 @@ class _Storage extends FlutterSecureStorage {
 class _Device {
   _Device() : storage = _Storage() {
     activity = GakujoActivityStore(secureStorage: storage);
-    engine = StarSyncEngine(activityStore: activity, secureStorage: storage);
+    engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => 'student',
+    );
   }
 
   final _Storage storage;

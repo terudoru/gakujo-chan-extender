@@ -3,7 +3,7 @@ import 'star_sync_webdav_transport.dart';
 
 enum StarSyncBackend { webDav, s3, googleDrive }
 
-enum StarSyncStatus { disabled, ok, error, needsPassphrase, needsPairingCode }
+enum StarSyncStatus { disabled, ok, error, needsPassphrase, needsPairingCode, accountMismatch }
 
 class StarSyncConfig {
   const StarSyncConfig({required this.backend, this.webDav, this.s3});

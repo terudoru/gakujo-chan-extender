@@ -190,12 +190,14 @@ void main() {
       final activityA = GakujoActivityStore(secureStorage: storageA);
       final activityB = GakujoActivityStore(secureStorage: storageB);
       final a = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: activityA,
         secureStorage: storageA,
         transportFactory: transport,
         kdfParams: const StarSyncKdfParams(memoryKiB: 8, iterations: 1),
       );
       final b = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: activityB,
         secureStorage: storageB,
         transportFactory: transport,

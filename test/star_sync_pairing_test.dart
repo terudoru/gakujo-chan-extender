@@ -150,11 +150,13 @@ void main() {
     final activityA = GakujoActivityStore(secureStorage: storageA);
     final activityB = GakujoActivityStore(secureStorage: storageB);
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityA,
       secureStorage: storageA,
       googleDriveTransport: () => remote,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: activityB,
       secureStorage: storageB,
       googleDriveTransport: () => remote,
@@ -193,11 +195,13 @@ void main() {
     final first = _Storage();
     final second = _Storage();
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: first),
       secureStorage: first,
       googleDriveTransport: () => remote,
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second,
       googleDriveTransport: () => remote,
@@ -234,6 +238,7 @@ void main() {
       final remote = _Transport();
       final storage = _Storage();
       final a = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         googleDriveTransport: () => remote,
@@ -241,6 +246,7 @@ void main() {
       await a.setUpWithPairing(config);
       final second = _Storage();
       final b = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: second),
         secureStorage: second,
         googleDriveTransport: () => remote,
@@ -252,6 +258,7 @@ void main() {
       );
       expect(second.values, isEmpty);
       final absent = StarSyncEngine(
+        loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: second),
         secureStorage: second,
       );
@@ -264,12 +271,14 @@ void main() {
     final first = _Storage();
     final second = _Storage();
     final a = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: first),
       secureStorage: first,
       transportFactory: (_) => remote,
       kdfParams: const StarSyncKdfParams(memoryKiB: 8, iterations: 1),
     );
     final b = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second,
       transportFactory: (_) => remote,
@@ -283,6 +292,7 @@ void main() {
     final remote = _Transport();
     final storage = _Storage();
     final engine = StarSyncEngine(
+      loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       googleDriveTransport: () => remote,

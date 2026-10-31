@@ -16,6 +16,9 @@ import '../star_sync/star_sync_webdav_transport.dart';
 import 'settings_sections.dart';
 
 String _errorText(Object error) {
+  if (error is StarSyncAccountRequiredException) {
+    return '同期を使うには、設定の『ログイン』でログインIDを保存してください。';
+  }
   if (error is StarSyncPairingMismatchException) return 'コードが一致しません';
   if (error is FormatException || error is StarSyncFormatException) {
     return 'コードの形式が正しくありません';
@@ -91,9 +94,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   final _rejoin = TextEditingController();
   bool _busy = false;
   String? _error;
+  Timer? _clipboardTimer;
 
   @override
   void dispose() {
+    _clipboardTimer?.cancel();
     _rejoin.dispose();
     super.dispose();
   }
@@ -155,13 +160,25 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     }
   }
 
+  Future<void> _copyCode(String code) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    _clipboardTimer?.cancel();
+    _clipboardTimer = Timer(const Duration(seconds: 60), () async {
+      final contents = await Clipboard.getData(Clipboard.kTextPlain);
+      if (contents?.text == code) {
+        await Clipboard.setData(const ClipboardData(text: ''));
+      }
+    });
+  }
+
   Future<void> _showCode([String? code]) async {
     try {
       final value = code ?? await widget.onPairingCode();
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (_) => _PairingCodeDialog(code: value),
+        builder: (_) => _PairingCodeDialog(code: value, onCopy: _copyCode),
       );
     } on Object catch (error) {
       if (mounted) setState(() => _error = _errorText(error));
@@ -232,6 +249,24 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                   child: const Text('同期を設定'),
                 ),
               ],
+            ),
+          ],
+        );
+      }
+      if (status.status == StarSyncStatus.accountMismatch) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('ログインIDが同期を設定したときと違うため、同期を停止しています。'),
+            OutlinedButton(
+              onPressed: _busy
+                  ? null
+                  : () => showDialog<void>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => _DisableDialog(onDisable: widget.onDisable),
+                    ),
+              child: const Text('同期を無効にする'),
             ),
           ],
         );
@@ -477,9 +512,18 @@ class _PairingJoinDialogState extends State<_PairingJoinDialog> {
   );
 }
 
-class _PairingCodeDialog extends StatelessWidget {
-  const _PairingCodeDialog({required this.code});
+class _PairingCodeDialog extends StatefulWidget {
+  const _PairingCodeDialog({required this.code, required this.onCopy});
   final String code;
+  final Future<void> Function(String) onCopy;
+
+  @override
+  State<_PairingCodeDialog> createState() => _PairingCodeDialogState();
+}
+
+class _PairingCodeDialogState extends State<_PairingCodeDialog> {
+  bool _copied = false;
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('別の端末を追加'),
@@ -489,16 +533,20 @@ class _PairingCodeDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            QrImageView(data: 'mbgstar:$code', size: 220),
+            QrImageView(data: 'mbgstar:${widget.code}', size: 220),
             SelectableText(
-              code,
+              widget.code,
               style: const TextStyle(fontFamily: 'monospace'),
             ),
             TextButton.icon(
-              onPressed: () => Clipboard.setData(ClipboardData(text: code)),
+              onPressed: () async {
+                await widget.onCopy(widget.code);
+                if (mounted) setState(() => _copied = true);
+              },
               icon: const Icon(Icons.copy),
               label: const Text('コピー'),
             ),
+            if (_copied) const Text('コピーしました。60秒後にクリップボードから消去します。'),
             const Text('このコードを知っている人は同期データを読めます。共有しないでください。'),
           ],
         ),
