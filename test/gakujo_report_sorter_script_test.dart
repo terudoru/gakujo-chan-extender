@@ -10,15 +10,15 @@ void main() {
     final script = GakujoReportSorterScript.build();
 
     expect(script, contains('__MBG_REPORT_SORTER_VERSION'));
-    expect(script, contains("document.getElementById('main-frame-if')"));
+    expect(script, contains('document.getElementById("main-frame-if")'));
     expect(script, contains('|| document'));
     expect(script,
-        contains("doc.querySelector('#enqListForm table:nth-of-type(2)')"));
+        contains('doc.querySelector("#enqListForm table:nth-of-type(2)")'));
     expect(script, contains('タイトルでソート'));
     expect(script, contains('開講番号でソート'));
     expect(script, contains('提出期間でソート'));
     expect(script, contains('一時保存|Temporarily saved'));
-    expect(script, contains("cell.style.color = 'blue'"));
+    expect(script, contains('cell.style.color = "blue"'));
     expect(script, contains('sortByDate();'));
   });
 

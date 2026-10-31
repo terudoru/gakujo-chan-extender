@@ -1,3 +1,4 @@
+export {};
 function sessionExtender() {
   var version = 1;
   if (window.__MBG_SESSION_EXTENDER_VERSION === version) {

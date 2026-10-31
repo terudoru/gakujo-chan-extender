@@ -8,6 +8,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entries = [
   { source: 'web_scripts/src/session_extender/main.ts', output: 'lib/src/generated/session_extender.g.dart', name: 'gakujoSessionExtenderJs' },
   { source: 'web_scripts/src/session_extender/teardown.ts', output: 'lib/src/generated/session_extender_teardown.g.dart', name: 'gakujoSessionExtenderTeardownJs' },
+  { source: 'web_scripts/src/download_capture/main.ts', output: 'lib/src/generated/download_capture.g.dart', name: 'gakujoDownloadCaptureJs' },
+  { source: 'web_scripts/src/download_capture/teardown.ts', output: 'lib/src/generated/download_capture_teardown.g.dart', name: 'gakujoDownloadCaptureTeardownJs' },
+  { source: 'web_scripts/src/expired_page_recovery/main.ts', output: 'lib/src/generated/expired_page_recovery.g.dart', name: 'gakujoExpiredPageRecoveryJs' },
+  { source: 'web_scripts/src/gpa_display/main.ts', output: 'lib/src/generated/gpa_display.g.dart', name: 'gakujoGpaDisplayJs' },
+  { source: 'web_scripts/src/gpa_display/teardown.ts', output: 'lib/src/generated/gpa_display_teardown.g.dart', name: 'gakujoGpaDisplayTeardownJs' },
+  { source: 'web_scripts/src/message_reader/main.ts', output: 'lib/src/generated/message_reader.g.dart', name: 'gakujoMessageReaderJs' },
+  { source: 'web_scripts/src/message_reader/teardown.ts', output: 'lib/src/generated/message_reader_teardown.g.dart', name: 'gakujoMessageReaderTeardownJs' },
+  { source: 'web_scripts/src/report_sorter/main.ts', output: 'lib/src/generated/report_sorter.g.dart', name: 'gakujoReportSorterJs' },
+  { source: 'web_scripts/src/report_sorter/teardown.ts', output: 'lib/src/generated/report_sorter_teardown.g.dart', name: 'gakujoReportSorterTeardownJs' },
+  { source: 'web_scripts/src/timeout_popup/main.ts', output: 'lib/src/generated/timeout_popup.g.dart', name: 'gakujoTimeoutPopupJs' },
 ];
 const check = process.argv.includes('--check');
 const stale: string[] = [];

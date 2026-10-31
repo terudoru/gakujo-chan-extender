@@ -11,9 +11,9 @@ void main() {
     expect(script, contains('__MBG_GPA_DISPLAY_VERSION'));
     expect(script, contains('__MBG_UPDATE_GPA_DISPLAY'));
     expect(script, contains('MutationObserver'));
-    expect(script, contains("document.getElementById('main-frame-if')"));
+    expect(script, contains('document.getElementById("main-frame-if")'));
     expect(script,
-        contains("documentRef.querySelector('#taniReferListForm+table')"));
+        contains('documentRef.querySelector("#taniReferListForm+table")'));
     expect(script, contains('headerCells[12]'));
     expect(script, contains('numberIndex: 0'));
     expect(script, contains('openNumberIndex: 3'));
@@ -23,16 +23,16 @@ void main() {
     expect(script, contains('function labelOf(element)'));
     expect(script, contains('function isNumberLabel(label)'));
     expect(script, contains('function isScoreLabel(label)'));
-    expect(script, contains("label.indexOf('開講番号') >= 0"));
+    expect(script, contains('label.indexOf("開講番号") >= 0'));
     expect(script, contains('scoreIndex = cellIndex'));
-    expect(script, contains("label.indexOf('単位数') >= 0"));
-    expect(script, contains("label === 'GP'"));
-    expect(script, contains("labels.join('|').indexOf('科目')"));
-    expect(script, contains("labels.join('|').indexOf('得点')"));
-    expect(script, contains("labels.join('|').indexOf('評価')"));
+    expect(script, contains('label.indexOf("単位数") >= 0'));
+    expect(script, contains('label === "GP"'));
+    expect(script, contains('labels.join("|").indexOf("科目")'));
+    expect(script, contains('labels.join("|").indexOf("得点")'));
+    expect(script, contains('labels.join("|").indexOf("評価")'));
     expect(script, contains('.toUpperCase()'));
-    expect(script, contains("text.replace(/GPA:?\\d*(?:\\.\\d+)?/g, '')"));
-    expect(script, contains("var text = 'GPA:' + gpa.toFixed(4)"));
+    expect(script, contains('text.replace(/GPA:?\\d*(?:\\.\\d+)?/g, "")'));
+    expect(script, contains('var text = "GPA:" + gpa.toFixed(4)'));
     expect(script, contains('display && display.textContent === text'));
     expect(script, contains('weightedGp += credits * gp'));
     expect(script, contains('totalCredits += credits'));
@@ -52,9 +52,9 @@ void main() {
     expect(script, contains('gradeTable.headerRowIndex + 1'));
     expect(script, contains('__MBG_GPA_DISPLAY_INTERVAL'));
     expect(script, contains('.mbg-gpa-display'));
-    expect(script, contains("display.style.background = 'transparent'"));
-    expect(script, contains("display.style.border = '0'"));
-    expect(script, contains("display.style.display = 'block'"));
+    expect(script, contains('display.style.background = "transparent"'));
+    expect(script, contains('display.style.border = "0"'));
+    expect(script, contains('display.style.display = "block"'));
   });
 
   test('teardown stops all runtime work and rebuilds exactly one UI', () async {
