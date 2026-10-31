@@ -5863,7 +5863,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _applyChangedRuntimeFeatureFlags(previousSettings, nextSettings);
     await _injectMessageFilterIfAllowed();
     unawaited(_syncReminders());
-    _scheduleAutoBackup();
+    // Only real changes deserve a local backup; an identical sync must not
+    // rotate useful entries out of the short backup history.
+    if (!portableSyncSettingsMatch(
+      previousSettings,
+      exportStarSyncPortableSettings(nextSettings),
+    )) {
+      _scheduleAutoBackup();
+    }
     return true;
   });
 
