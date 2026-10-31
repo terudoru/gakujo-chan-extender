@@ -221,6 +221,56 @@ void main() {
     expect(merged[previous.id]!.clock, 7);
   });
 
+  test('bulk restore revives matching tombstones in state or known', () {
+    final inState = record(1, clock: 4, starred: false);
+    final inKnown = record(2, clock: 5, starred: false);
+    final live = record(3, clock: 6);
+    final absent = record(4, clock: 7);
+    final result = reconcileLocalStars(
+      local: [local(1, title: 'restored'), local(2), local(3)],
+      state: {inState.id: inState, live.id: live, absent.id: absent},
+      known: {inKnown.id: inKnown},
+      clock: 7,
+      deviceId: 'local',
+      now: now,
+      bulkReplace: true,
+    );
+    expect(result.clock, 9);
+    for (final id in [inState.id, inKnown.id]) {
+      final revived = result.state[id]!;
+      expect(revived.starred, isTrue);
+      expect(revived.starredAt, now);
+      expect(revived.deviceId, 'local');
+    }
+    expect(result.state[inState.id]!.clock, 8);
+    expect(result.state[inState.id]!.title, 'restored');
+    expect(result.state[inKnown.id]!.clock, 9);
+    expect(result.state[live.id]!.clock, 6);
+    expect(result.state[absent.id]!.starred, isTrue);
+  });
+
+  test('matching tombstones remove local copies without bulk restore', () {
+    final inState = record(1, clock: 4, starred: false);
+    final inKnown = record(2, clock: 5, starred: false);
+    final result = reconcileLocalStars(
+      local: [local(1), local(2)],
+      state: {inState.id: inState},
+      known: {inKnown.id: inKnown},
+      clock: 5,
+      deviceId: 'local',
+      now: now,
+    );
+    expect(result.clock, 5);
+    final merged = mergeStarSyncRecords([
+      result.state,
+      {inKnown.id: inKnown},
+    ], now: now);
+    expect(
+      applyStarSyncStateToLocal(state: merged, local: [local(1), local(2)]),
+      isEmpty,
+    );
+  });
+
   test('a different starredAt creates a new edit even for a tombstone', () {
     final deleted = record(1, clock: 4, starred: false);
     final later = now.add(const Duration(seconds: 1));

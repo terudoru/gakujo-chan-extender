@@ -2304,6 +2304,59 @@ void main() {
     expect((await activityB.loadStarredMessages()).single.title, 'Title');
   });
 
+  test('bulk restore revives a synced deletion on both devices', () async {
+    final remote = _Transport();
+    final first = _Storage();
+    final second = _Storage();
+    final activityA = GakujoActivityStore(secureStorage: first);
+    final activityB = GakujoActivityStore(secureStorage: second);
+    final a = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: activityA,
+      secureStorage: first,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    final b = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: activityB,
+      secureStorage: second,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    final star = GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'Backup title',
+      starredAt: DateTime.utc(2026),
+    );
+    await a.setUp(config, 'correct horse');
+    await activityA.upsertStarredMessage(star);
+    await a.syncNow();
+    await b.setUp(config, 'correct horse');
+    await activityA.removeStarredMessage(star.id);
+    await a.syncNow();
+    await b.syncNow();
+    expect(await activityA.loadStarredMessages(), isEmpty);
+    expect(await activityB.loadStarredMessages(), isEmpty);
+
+    await activityB.replaceStarredMessages([star]);
+    await b.syncNow();
+    expect(await activityB.loadStarredMessages(), isEmpty);
+
+    await b.withBulkReplace(() => activityB.replaceStarredMessages([star]));
+    await b.syncNow();
+    await a.syncNow();
+    await b.syncNow();
+    for (final activity in [activityA, activityB]) {
+      final restored = (await activity.loadStarredMessages()).single;
+      expect(restored.id, star.id);
+      expect(restored.starredAt, star.starredAt);
+      expect(restored.title, star.title);
+    }
+  });
+
   test('concurrent changes converge after two rounds', () async {
     final remote = _Transport();
     final first = _Storage();
