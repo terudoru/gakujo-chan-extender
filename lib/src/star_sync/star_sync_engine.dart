@@ -1602,13 +1602,34 @@ class StarSyncEngine {
       reconciled,
       ...documents.map((document) => document.records),
     ]);
+    final maxLive = collection.maxLive;
+    final order = collection.order;
+    if (maxLive != null && order != null) {
+      final ordered = merged.values.where((record) => !record.deleted).toList()
+        ..sort((a, b) {
+          final comparison = order(b.value).compareTo(order(a.value));
+          return comparison != 0 ? comparison : a.key.compareTo(b.key);
+        });
+      for (final record in ordered.skip(maxLive)) {
+        merged[record.key] = StarSyncCollectionRecord(
+          key: record.key,
+          value: null,
+          deleted: true,
+          clock: ++clock,
+          deviceId: state.deviceId,
+          valueHash: starSyncValueHash(null),
+        );
+      }
+    }
     final live = <String, Object?>{
       for (final record in merged.values)
         if (!record.deleted) record.key: record.value,
     };
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
-    if (changed) await collection.applyLocal(live);
+    if (!await collection.applyLocal(live, basedOn: local)) {
+      return (changed: false, skipped: 0);
+    }
     if (!await _accountMatches(state)) throw const _AccountChanged();
     final next = <String, dynamic>{
       'clock': clock,

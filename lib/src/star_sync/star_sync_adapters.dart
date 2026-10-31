@@ -90,6 +90,12 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
   String get name => 'favorites';
   @override
   bool get growOnly => false;
+  @override
+  int? get maxLive => 30;
+  @override
+  Comparable Function(Object?)? get order => (value) =>
+      DateTime.tryParse((value as Map)['addedAt']?.toString() ?? '') ??
+      DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
   @override
   Future<Map<String, Object?>> readLocal() async => {
@@ -101,16 +107,26 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
   };
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) async {
-    await store.replaceFavorites([
-      for (final entry in entries.entries)
-        if (entry.value is Map)
-          GakujoFavoritePage.fromJson({
-            ...(entry.value as Map),
-            'url': entry.key,
-          }),
-    ]);
-    await onChanged?.call();
+  Future<bool> applyLocal(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) async {
+    final applied = await store.compareAndReplaceFavorites(
+      [
+        for (final entry in entries.entries)
+          if (entry.value is Map)
+            GakujoFavoritePage.fromJson({
+              ...(entry.value as Map),
+              'url': entry.key,
+            }),
+      ],
+      basedOn: basedOn,
+    );
+    if (applied &&
+        starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
+      await onChanged?.call();
+    }
+    return applied;
   }
 }
 
@@ -123,53 +139,86 @@ class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
   String get name => 'notified-deadlines';
   @override
   bool get growOnly => true;
+  @override
+  int? get maxLive => 1000;
+  @override
+  Comparable Function(Object?)? get order => (value) =>
+      DateTime.parse(value as String);
 
   @override
   Future<Map<String, Object?>> readLocal() async => {
-    for (final key in await store.loadNotifiedDeadlineKeysForBackup())
-      key: true,
+    for (final entry in (await store.loadNotifiedDeadlineKeysWithTimes()).entries)
+      entry.key: entry.value.toUtc().toIso8601String(),
   };
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) =>
-      store.mergeNotifiedDeadlineKeys(entries.keys);
+  Future<bool> applyLocal(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) => store.compareAndReplaceNotifiedDeadlineKeysWithTimes(
+    {
+      for (final entry in entries.entries)
+        entry.key: DateTime.parse(entry.value as String),
+    },
+    basedOn: basedOn,
+  );
 }
 
 class StarSyncSettingsCollection implements StarSyncCollection {
   StarSyncSettingsCollection({required this.read, required this.apply});
 
   final Future<Map<String, Object?>> Function() read;
-  final Future<void> Function(Map<String, Object?>) apply;
+  final Future<bool> Function(
+    Map<String, Object?>, {
+    required Map<String, Object?> basedOn,
+  }) apply;
 
   @override
   String get name => 'settings';
   @override
   bool get growOnly => false;
+  @override
+  int? get maxLive => null;
+  @override
+  Comparable Function(Object?)? get order => null;
 
   @override
   Future<Map<String, Object?>> readLocal() => read();
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) => apply({
+  Future<bool> applyLocal(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) => apply({
     for (final key in starSyncPortableSettingKeys)
       if (entries.containsKey(key)) key: entries[key],
-  });
+  }, basedOn: basedOn);
 }
 
 class StarSyncReportDraftsCollection implements StarSyncCollection {
   StarSyncReportDraftsCollection({required this.read, required this.apply});
 
   final Future<Map<String, Object?>?> Function() read;
-  final Future<void> Function(Map<String, Object?>) apply;
+  final Future<bool> Function(
+    Map<String, Object?>, {
+    required Map<String, Object?> basedOn,
+  }) apply;
 
   @override
   String get name => 'report-drafts';
   @override
   bool get growOnly => false;
+  @override
+  int? get maxLive => null;
+  @override
+  Comparable Function(Object?)? get order => null;
 
   @override
   Future<Map<String, Object?>?> readLocal() => read();
 
   @override
-  Future<void> applyLocal(Map<String, Object?> entries) => apply(entries);
+  Future<bool> applyLocal(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) => apply(entries, basedOn: basedOn);
 }

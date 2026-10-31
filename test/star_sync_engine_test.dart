@@ -232,7 +232,7 @@ class _TestTimer implements Timer {
 }
 
 class _Collection implements StarSyncCollection {
-  _Collection(this.name, {this.growOnly = false});
+  _Collection(this.name, {this.growOnly = false, this.maxLive, this.order});
 
   @override
   final String name;
@@ -241,6 +241,11 @@ class _Collection implements StarSyncCollection {
   Map<String, Object?>? entries = {};
   bool fail = false;
   bool failApply = false;
+  bool rejectApply = false;
+  @override
+  final int? maxLive;
+  @override
+  final Comparable Function(Object?)? order;
 
   @override
   Future<Map<String, Object?>?> readLocal() async {
@@ -249,9 +254,14 @@ class _Collection implements StarSyncCollection {
   }
 
   @override
-  Future<void> applyLocal(Map<String, Object?> values) async {
+  Future<bool> applyLocal(
+    Map<String, Object?> values, {
+    required Map<String, Object?> basedOn,
+  }) async {
+    if (rejectApply || starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) return false;
     if (failApply) throw StateError('write failed');
     entries = Map.of(values);
+    return true;
   }
 }
 
@@ -2841,6 +2851,58 @@ void main() {
       engine.dispose();
     },
   );
+
+  test('rejected collection apply saves nothing and retries without warning', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final collection = _Collection('drafts');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [collection],
+    );
+    await engine.setUp(config, 'pass');
+    final before = jsonDecode(storage.values[starSyncStateKey]!)['collectionStates']['drafts'];
+    final files = Map<String, List<int>>.from(remote.files);
+    collection.entries = {'edit': 'value'};
+    collection.rejectApply = true;
+    await engine.syncNow();
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['collectionStates']['drafts'], before);
+    expect(engine.status.value.lastError, isNull);
+    for (final path in files.keys.where((p) => p.startsWith('sync/drafts/'))) {
+      expect(remote.files[path], files[path]);
+    }
+    collection.rejectApply = false;
+    await engine.syncNow();
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['collectionStates']['drafts']['records'], contains('edit'));
+    engine.dispose();
+  });
+
+  test('collection cap tombstones oldest entries with deterministic ties', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final collection = _Collection('favorites', maxLive: 2, order: (value) => value as int);
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [collection],
+    );
+    await engine.setUp(config, 'pass');
+    collection.entries = {'a': 3, 'b': 3, 'c': 3, 'old': 1};
+    await engine.syncNow();
+    expect(collection.entries, {'a': 3, 'b': 3});
+    final records = jsonDecode(storage.values[starSyncStateKey]!)['collectionStates']['favorites']['records'];
+    expect(records['c']['deleted'], isTrue);
+    expect(records['old']['deleted'], isTrue);
+    expect(records['c']['clock'], lessThan(records['old']['clock']));
+    engine.dispose();
+  });
 
   test('failed collection apply does not create remote tombstones', () async {
     final remote = _Transport();

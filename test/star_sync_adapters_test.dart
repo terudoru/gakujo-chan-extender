@@ -47,36 +47,48 @@ void main() {
           'addedAt': DateTime.utc(2026, 1, 1, 0, i).toIso8601String(),
         },
     };
-    await collection.applyLocal(entries);
+    await collection.applyLocal(entries, basedOn: await collection.readLocal() ?? {});
     final result = await collection.readLocal();
     expect(collection.name, 'favorites');
     expect(collection.growOnly, isFalse);
     expect(result, hasLength(30));
     expect(result['https://example.com/34'], entries['https://example.com/34']);
     expect(result.containsKey('https://example.com/0'), isFalse);
-    await collection.applyLocal(result);
+    await collection.applyLocal(result, basedOn: result);
     expect(await collection.readLocal(), result);
   });
 
-  test(
-    'notified deadline merge preserves local keys at the store limit',
-    () async {
-      final store = GakujoActivityStore();
-      final collection = StarSyncNotifiedDeadlinesCollection(store);
-      await store.replaceNotifiedDeadlineKeys(
-        List.generate(1000, (index) => 'local-$index'),
-      );
-      await collection.applyLocal({'remote': true, 'local-1': true});
-      final result = await collection.readLocal();
-      expect(collection.name, 'notified-deadlines');
-      expect(collection.growOnly, isTrue);
-      expect(result, hasLength(1000));
-      expect(result.keys, containsAll(List.generate(1000, (i) => 'local-$i')));
-      await store.replaceNotifiedDeadlineKeys(['local']);
-      await collection.applyLocal({'remote': true});
-      expect(await collection.readLocal(), {'local': true, 'remote': true});
-    },
-  );
+  test('notified keys retain newer incoming entries at capacity', () async {
+    final store = GakujoActivityStore();
+    final collection = StarSyncNotifiedDeadlinesCollection(store);
+    final base = DateTime.utc(2026);
+    await store.mergeNotifiedDeadlineKeysWithTimes({
+      for (var i = 0; i < 1000; i++) 'local-$i': base.add(Duration(seconds: i)),
+    });
+    await store.mergeNotifiedDeadlineKeysWithTimes({
+      'remote': base.add(const Duration(seconds: 2000)),
+      'older': base.subtract(const Duration(seconds: 1)),
+    });
+    final result = await collection.readLocal();
+    expect(result, hasLength(1000));
+    expect(result, contains('remote'));
+    expect(result, isNot(contains('older')));
+    expect(result, isNot(contains('local-0')));
+    final snapshot = Map<String, Object?>.of(result);
+    await store.addNotifiedDeadlineKeys(['concurrent']);
+    expect(await collection.applyLocal(snapshot, basedOn: snapshot), isFalse);
+  });
+
+  test('favorites reject a stale snapshot', () async {
+    final store = GakujoActivityStore();
+    final collection = StarSyncFavoritesCollection(store);
+    final snapshot = await collection.readLocal();
+    await store.addFavorite(GakujoFavoritePage(
+      title: 'Concurrent', url: 'https://example.com/new', addedAt: DateTime.utc(2026),
+    ));
+    expect(await collection.applyLocal({}, basedOn: snapshot), isFalse);
+    expect((await collection.readLocal()).keys, contains('https://example.com/new'));
+  });
 
   test('settings forwards portable keys and ignores unknown imports', () async {
     Map<String, Object?>? applied;
@@ -84,7 +96,7 @@ void main() {
       read: () async => {
         'notificationTopics': ['report'],
       },
-      apply: (entries) async => applied = entries,
+      apply: (entries, {required basedOn}) async { applied = entries; return true; },
     );
     expect(collection.name, 'settings');
     expect(collection.growOnly, isFalse);
@@ -95,7 +107,7 @@ void main() {
       'notificationTopics': ['report'],
       'password': 'secret',
       'unknown': true,
-    });
+    }, basedOn: const {});
     expect(applied, {
       'notificationTopics': ['report'],
     });
@@ -105,7 +117,7 @@ void main() {
     Map<String, Object?>? applied;
     final collection = StarSyncReportDraftsCollection(
       read: () async => null,
-      apply: (entries) async => applied = entries,
+      apply: (entries, {required basedOn}) async { applied = entries; return true; },
     );
     expect(collection.name, 'report-drafts');
     expect(collection.growOnly, isFalse);
@@ -113,7 +125,7 @@ void main() {
     final entries = <String, Object?>{
       'key': {'savedAt': 1, 'fields': []},
     };
-    await collection.applyLocal(entries);
+    await collection.applyLocal(entries, basedOn: await collection.readLocal() ?? {});
     expect(applied, entries);
   });
 }

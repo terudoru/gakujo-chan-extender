@@ -604,6 +604,128 @@ class GakujoActivityStore {
     );
   }
 
+  Future<Map<String, DateTime>> loadNotifiedDeadlineKeysWithTimes() {
+    return _enqueue(_readNotifiedDeadlineKeysWithTimes);
+  }
+
+  Future<Map<String, DateTime>> _readNotifiedDeadlineKeysWithTimes() async {
+    final keys = await _readNotifiedDeadlineKeys();
+    if (!keys.isSuccessful) throw StateError('Failed to read notified keys');
+    const timeKey = 'more_better_gakujo_notified_deadline_times';
+    final raw = await _readRawValue(timeKey);
+    if (!raw.isSuccessful) throw StateError('Failed to read notified times');
+    final stored = raw.value == null ? <String, dynamic>{} : jsonDecode(raw.value!);
+    if (stored is! Map) throw StateError('Invalid notified times');
+    final now = DateTime.now().toUtc();
+    var index = 0;
+    final result = <String, DateTime>{};
+    for (final key in keys.value) {
+      final value = stored[key];
+      final time = value is String ? DateTime.tryParse(value) : null;
+      result[key] = time?.toUtc() ?? now.subtract(
+        Duration(microseconds: keys.value.length - index),
+      );
+      index++;
+    }
+    final encoded = jsonEncode({
+      for (final entry in result.entries)
+        entry.key: entry.value.toIso8601String(),
+    });
+    if (raw.value != encoded) await _secureStorage.write(key: timeKey, value: encoded);
+    return result;
+  }
+
+  Future<void> mergeNotifiedDeadlineKeysWithTimes(Map<String, DateTime> incoming) {
+    return _enqueue(() async {
+      final local = await _readNotifiedDeadlineKeysWithTimes();
+      for (final entry in incoming.entries) {
+        final old = local[entry.key];
+        if (old == null || entry.value.isBefore(old)) local[entry.key] = entry.value;
+      }
+      await _writeNotifiedDeadlineKeysWithTimes(local);
+    });
+  }
+
+  Future<bool> compareAndReplaceNotifiedDeadlineKeysWithTimes(
+    Map<String, DateTime> entries, {
+    required Map<String, Object?> basedOn,
+  }) {
+    return _enqueue(() async {
+      final local = await _readNotifiedDeadlineKeysWithTimes();
+      final current = {for (final e in local.entries) e.key: e.value.toUtc().toIso8601String()};
+      if (_syncCanonicalJson(current) != _syncCanonicalJson(basedOn)) return false;
+      if (_syncCanonicalJson(current) != _syncCanonicalJson({
+        for (final e in entries.entries) e.key: e.value.toUtc().toIso8601String(),
+      })) {
+        await _writeNotifiedDeadlineKeysWithTimes(entries);
+      }
+      return true;
+    });
+  }
+
+  Future<void> _writeNotifiedDeadlineKeysWithTimes(Map<String, DateTime> entries) async {
+    final ordered = entries.entries.toList()
+      ..sort((a, b) {
+        final time = a.value.compareTo(b.value);
+        return time != 0 ? time : b.key.compareTo(a.key);
+      });
+    final kept = ordered.skip(ordered.length > _maxNotifiedDeadlineKeys
+        ? ordered.length - _maxNotifiedDeadlineKeys : 0).toList();
+    const timeKey = 'more_better_gakujo_notified_deadline_times';
+    final previous = await _secureStorage.read(key: timeKey);
+    await _secureStorage.write(
+      key: timeKey,
+      value: jsonEncode({
+        for (final e in kept) e.key: e.value.toUtc().toIso8601String(),
+      }),
+    );
+    try {
+      await _writeNotifiedDeadlineKeys(kept.map((e) => e.key).toList());
+    } on Object {
+      if (previous == null) {
+        await _secureStorage.delete(key: timeKey);
+      } else {
+        await _secureStorage.write(key: timeKey, value: previous);
+      }
+      rethrow;
+    }
+  }
+
+  Future<bool> compareAndReplaceFavorites(
+    List<GakujoFavoritePage> entries, {
+    required Map<String, Object?> basedOn,
+  }) {
+    return _enqueue(() async {
+      final local = await _readFavorites();
+      if (!local.isSuccessful) throw StateError('Failed to read favorites');
+      final current = {
+        for (final page in local.value)
+          page.durableUrl: {'title': page.title, 'addedAt': page.addedAt.toIso8601String()},
+      };
+      if (_syncCanonicalJson(current) != _syncCanonicalJson(basedOn)) return false;
+      final next = {
+        for (final page in entries)
+          page.durableUrl: {'title': page.title, 'addedAt': page.addedAt.toIso8601String()},
+      };
+      if (_syncCanonicalJson(current) != _syncCanonicalJson(next)) {
+        await _replaceFavorites(entries);
+      }
+      return true;
+    });
+  }
+
+  String _syncCanonicalJson(Object? value) {
+    Object? canonical(Object? item) {
+      if (item is Map) {
+        final keys = item.keys.cast<String>().toList()..sort();
+        return {for (final key in keys) key: canonical(item[key])};
+      }
+      if (item is List) return item.map(canonical).toList();
+      return item;
+    }
+    return jsonEncode(canonical(value));
+  }
+
   Future<List<GakujoFavoritePage>> loadFavorites() {
     return _enqueue(() async => (await _readFavorites()).value);
   }

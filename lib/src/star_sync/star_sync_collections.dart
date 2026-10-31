@@ -8,7 +8,14 @@ abstract interface class StarSyncCollection {
   String get name;
   bool get growOnly;
   Future<Map<String, Object?>?> readLocal();
-  Future<void> applyLocal(Map<String, Object?> entries);
+  /// Applies only if local data still equals basedOn in canonical JSON.
+  /// Returns false on a concurrent edit; the engine retries on a later sync.
+  Future<bool> applyLocal(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  });
+  int? get maxLive;
+  Comparable Function(Object? value)? get order;
 }
 
 Object? _canonical(Object? value) {
