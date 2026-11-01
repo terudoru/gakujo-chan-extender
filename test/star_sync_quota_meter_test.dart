@@ -7,7 +7,7 @@ void main() {
 
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  test('persists usage and notices and resets on the local day', () async {
+  test('persists usage and notices over a rolling 24 hours', () async {
     var now = DateTime(2026, 11, 1, 23, 59);
     StarSyncQuotaMeter make() => StarSyncQuotaMeter(
       storage: const FlutterSecureStorage(),
@@ -21,7 +21,13 @@ void main() {
     final restored = make();
     expect(await restored.currentUsage(), 14900);
     expect(await restored.claimSaveNotice(), isFalse);
+    // A local midnight does not reset anything: Google's accounting day is
+    // a different 24 hours, and only a rolling window bounds every one.
     now = DateTime(2026, 11, 2);
+    expect(await restored.currentUsage(), 14900);
+    expect(await restored.claimSaveNotice(), isFalse);
+    // The 23:00 hour leaves the window two days later at 00:00.
+    now = DateTime(2026, 11, 3, 0, 1);
     expect(await restored.currentUsage(), 0);
     expect(await restored.claimSaveNotice(), isTrue);
     await restored.charge(50);

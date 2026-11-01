@@ -11,8 +11,42 @@ import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 
+class _MemoryStorage extends FlutterSecureStorage {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values[key];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+}
+
+// No TestWidgetsFlutterBinding here: it replaces HttpClient with one that
+// answers 400, which would break the loopback fake Drive server.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   late StarSyncQuotaMeter meter;
   late HttpServer server;
   late Uri base;
@@ -31,8 +65,7 @@ void main() {
   void Function()? onRequest;
 
   setUp(() async {
-    FlutterSecureStorage.setMockInitialValues({});
-    meter = StarSyncQuotaMeter(storage: const FlutterSecureStorage());
+    meter = StarSyncQuotaMeter(storage: _MemoryStorage());
     files = [];
     queries = [];
     uploads = 0;

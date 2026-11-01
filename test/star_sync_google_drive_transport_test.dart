@@ -2,11 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_drive_transport.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
+
+import 'support/memory_secure_storage.dart';
 
 class _File {
   _File(this.id, this.name, this.bytes, this.created);
@@ -124,14 +125,12 @@ class _FakeDrive {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   late StarSyncQuotaMeter meter;
   late _FakeDrive drive;
   late StarSyncGoogleDriveTransport transport;
 
   setUp(() async {
-    FlutterSecureStorage.setMockInitialValues({});
-    meter = StarSyncQuotaMeter(storage: const FlutterSecureStorage());
+    meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
     drive = _FakeDrive(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     transport = StarSyncGoogleDriveTransport(
       quotaMeter: meter,

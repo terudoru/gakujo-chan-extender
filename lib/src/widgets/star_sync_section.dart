@@ -581,10 +581,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         children: [
           Text(line),
           if (widget.isGoogleDrive()) ...[
-            Text('本日の利用量: ${status.googleQuotaUsed} / 15,000',
-                style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              '本日の利用量: ${status.googleQuotaUsed} / 15,000',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             if (status.googleQuotaSoftLimited)
-              const Text('本日の自動同期は上限に達したため、明日まで停止しています'),
+              const Text('直近24時間の利用量が上限に達したため、自動同期を一時停止しています'),
           ],
           if (warning != null)
             Text(

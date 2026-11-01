@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_collections.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_drive_transport.dart';
+
+import 'support/memory_secure_storage.dart';
 
 void main() {
   test('canonical JSON sorts keys recursively', () {
@@ -48,8 +49,6 @@ void main() {
   });
 
   test('Drive collection listing uses the same files.list cache', () async {
-    TestWidgetsFlutterBinding.ensureInitialized();
-    FlutterSecureStorage.setMockInitialValues({});
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var listCount = 0;
     final serving = server.forEach((request) async {
@@ -59,7 +58,7 @@ void main() {
       await request.response.close();
     });
     final transport = StarSyncGoogleDriveTransport(
-      quotaMeter: StarSyncQuotaMeter(storage: const FlutterSecureStorage()),
+      quotaMeter: StarSyncQuotaMeter(storage: MemorySecureStorage()),
       accessToken: ({bool forceRefresh = false}) async => 'test',
       apiBase: Uri.parse('http://127.0.0.1:${server.port}'),
     );

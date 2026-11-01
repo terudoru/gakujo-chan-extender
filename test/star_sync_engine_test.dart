@@ -1538,43 +1538,53 @@ void main() {
     expect(remote.gets['stars/keyring.json'], gets['stars/keyring.json']! + 1);
   });
 
-  test('soft quota defers local changes until the next day', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    var now = DateTime(2026, 11, 1, 23, 59);
-    final meter = StarSyncQuotaMeter(storage: storage, now: () => now);
-    _TestTimer? timer;
-    Duration? wait;
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      quotaMeter: meter,
-      now: () => now,
-      random: Random(1),
-      timerFactory: (duration, callback) {
-        wait = duration;
-        return timer = _TestTimer(callback);
-      },
-    );
-    await engine.setUpWithPairing(
-      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
-    );
-    await meter.charge(14950);
-    final lists = remote.lists;
-    await engine.syncNow(trigger: StarSyncTrigger.localChange);
-    expect(remote.lists, lists);
-    expect(engine.status.value.googleQuotaSoftLimited, isTrue);
-    expect(wait!.inSeconds, inInclusiveRange(60, 1860));
-    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isTrue);
-    now = DateTime(2026, 11, 2, 0, 31);
-    timer!.fire();
-    await engine.syncNow(trigger: StarSyncTrigger.localChange);
-    expect(remote.lists, greaterThan(lists));
-    expect(engine.status.value.googleQuotaSoftLimited, isFalse);
-    engine.dispose();
-  });
+  test(
+    'soft quota defers local changes until the rolling window frees up',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      var now = DateTime(2026, 11, 1, 23, 59);
+      final meter = StarSyncQuotaMeter(storage: storage, now: () => now);
+      _TestTimer? timer;
+      Duration? wait;
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        quotaMeter: meter,
+        now: () => now,
+        random: Random(1),
+        timerFactory: (duration, callback) {
+          wait = duration;
+          return timer = _TestTimer(callback);
+        },
+      );
+      await engine.setUpWithPairing(
+        const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+      );
+      await meter.charge(14950);
+      final lists = remote.lists;
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      expect(remote.lists, lists);
+      expect(engine.status.value.googleQuotaSoftLimited, isTrue);
+      // The retry delay is computed asynchronously from the meter.
+      await pumpEventQueue();
+      // The usage charged in the 23:00 hour leaves the rolling 24-hour window
+      // at 00:00 two days later, plus up to 30 minutes of spread.
+      expect(wait!.inMinutes, inInclusiveRange(24 * 60, 24 * 60 + 31));
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+        isTrue,
+      );
+      now = DateTime(2026, 11, 3, 0, 31);
+      timer!.fire();
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      expect(remote.lists, greaterThan(lists));
+      expect(engine.status.value.googleQuotaSoftLimited, isFalse);
+      engine.dispose();
+    },
+  );
 
   test('resume is throttled, daily cap does not block manual sync', () async {
     final remote = _Transport();

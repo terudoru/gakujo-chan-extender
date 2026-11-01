@@ -317,9 +317,11 @@ class StarSyncEngine {
        _random = random ?? Random(),
        _delay = delay ?? Future<void>.delayed,
        _timerFactory = timerFactory ?? Timer.new,
-       _quotaMeter = quotaMeter ?? (secureStorage == null
-           ? StarSyncQuotaMeter.shared
-           : StarSyncQuotaMeter(storage: secureStorage, now: now)) {
+       _quotaMeter =
+           quotaMeter ??
+           (secureStorage == null
+               ? StarSyncQuotaMeter.shared
+               : StarSyncQuotaMeter(storage: secureStorage, now: now)) {
     _quotaMeter.usage.addListener(_quotaChanged);
   }
 
@@ -505,8 +507,10 @@ class StarSyncEngine {
       syncing: syncing,
       cooldownUntil: state?.cooldownUntil,
       googleQuotaUsed: _quotaMeter.usage.value,
-      googleQuotaSoftLimited: _quotaMeter.usage.value + 100 > starSyncGoogleSoftLimit,
-      googleQuotaHardLimited: _quotaMeter.usage.value >= starSyncGoogleHardLimit,
+      googleQuotaSoftLimited:
+          _quotaMeter.usage.value + 100 > starSyncGoogleSoftLimit,
+      googleQuotaHardLimited:
+          _quotaMeter.usage.value >= starSyncGoogleHardLimit,
     );
   }
 
@@ -514,16 +518,19 @@ class StarSyncEngine {
     if (!_disposed) _publish(syncing: _status.value.syncing);
   }
 
-  void _scheduleQuotaRetry() {
+  Future<void> _scheduleQuotaRetry() async {
     _quotaTimer?.cancel();
-    final now = _now().toLocal();
-    final midnight = DateTime(now.year, now.month, now.day + 1);
-    final delay = midnight.difference(now) +
-        Duration(milliseconds: _random.nextInt(1800001));
+    // Retry once enough of the rolling 24-hour usage has expired, spread by
+    // up to 30 minutes so devices do not return together.
+    final wait = await _quotaMeter.timeUntilAutomaticAllowed(100);
+    if (_disposed) return;
+    final delay = wait + Duration(milliseconds: _random.nextInt(1800001));
     _quotaTimer = _timerFactory(delay, () {
       if (_disposed || canSync?.call() == false) return;
-      unawaited(syncNow(trigger: StarSyncTrigger.localChange)
-          .catchError((Object _) => const StarSyncResult()));
+      unawaited(
+        syncNow(trigger: StarSyncTrigger.localChange)
+            .catchError((Object _) => const StarSyncResult()),
+      );
     });
   }
 
@@ -1148,7 +1155,7 @@ class StarSyncEngine {
           state.pendingLocalChange = true;
           await _saveState();
         }
-        _scheduleQuotaRetry();
+        unawaited(_scheduleQuotaRetry());
         _publish();
         return const StarSyncResult();
       }
@@ -2223,7 +2230,7 @@ class StarSyncEngine {
         if (!shouldUploadAutomaticBackup(_now())) return false;
         if (_config?.backend == StarSyncBackend.googleDrive &&
             !await _quotaMeter.allowsAutomatic(100)) {
-          _scheduleQuotaRetry();
+          unawaited(_scheduleQuotaRetry());
           _publish();
           return false;
         }

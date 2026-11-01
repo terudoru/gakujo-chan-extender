@@ -74,8 +74,10 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       final cost = method != 'GET'
           ? 50
           : uri.path.endsWith('/files')
-              ? 100
-              : uri.queryParameters['alt'] == 'media' ? 200 : 5;
+          ? 100
+          : uri.queryParameters['alt'] == 'media'
+          ? 200
+          : 5;
       await _quotaMeter.charge(cost);
       final response = await starSyncRequest(
         _client,
