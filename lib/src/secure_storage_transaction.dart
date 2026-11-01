@@ -72,6 +72,7 @@ Future<void> runBackupStorageTransaction(
   List<BackupStorageParticipant> participants,
   Future<void> Function() operation, {
   void Function()? beforeOperation,
+  void Function()? afterOperation,
 }) =>
     runWithBackupStorageLocks(participants, () async {
       // Read exact raw values before any writes. Tolerant cache loaders can hide
@@ -89,6 +90,7 @@ Future<void> runBackupStorageTransaction(
       beforeOperation?.call();
       try {
         await operation();
+        afterOperation?.call();
       } on Object catch (error) {
         final rollbackErrors = <Object>[];
         for (final (storage, key, value) in snapshots.reversed) {

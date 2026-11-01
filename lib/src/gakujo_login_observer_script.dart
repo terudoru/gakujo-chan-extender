@@ -7,19 +7,21 @@ class GakujoLoginObserverScript {
   window.__MBG_LOGIN_OBSERVER_INSTALLED = true;
 
   function report(form) {
-    if (!form || !form.querySelector('input[type="password"]')) return;
+    if (!form || form.querySelectorAll('input[type="password"]').length !== 1) return;
     var inputs = form.querySelectorAll('input');
     var username = null;
     for (var i = 0; i < inputs.length; i += 1) {
       var type = (inputs[i].getAttribute('type') || 'text').toLowerCase();
       if (type !== 'text' && type !== 'email' && type !== 'tel') continue;
-      var id = ((inputs[i].getAttribute('name') || '') + ' ' +
-        (inputs[i].getAttribute('id') || '')).toLowerCase();
-      if (/userid|loginid|username|jusername/.test(id.replace(/[\s_-]+/g, ''))) {
+      var identifiers = [inputs[i].getAttribute('name'), inputs[i].getAttribute('id')];
+      if (identifiers.some(function(identifier) {
+        return ['userid', 'loginid', 'username', 'jusername'].indexOf(
+          (identifier || '').toLowerCase().replace(/[\s_-]+/g, '')
+        ) !== -1;
+      })) {
         username = inputs[i];
         break;
       }
-      if (!username) username = inputs[i];
     }
     var loginId = username ? username.value.trim() : '';
     if (!loginId) return;

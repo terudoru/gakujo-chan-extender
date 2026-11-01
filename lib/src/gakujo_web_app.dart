@@ -7068,7 +7068,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
         // Windows SourceChanged only sees the final URL of an HTTP redirect.
-        onNavigationStarting: _captureNavigationRecoveryCandidate,
+        onNavigationStarting: (url) {
+          _invalidateLoginUrl(url);
+          _captureNavigationRecoveryCandidate(url);
+        },
         onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
           _invalidateLoginUrl(url);

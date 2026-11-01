@@ -143,7 +143,7 @@ Future<void> restoreGakujoBackup({
       beforeWrite?.call();
       await activityStore.replaceReportLists(reportLists);
     }
-  }, beforeOperation: beforeWrite);
+  }, beforeOperation: beforeWrite, afterOperation: beforeWrite);
   if (starredMessages != null && withStarredMessagesReplacement != null) {
     await withStarredMessagesReplacement(restore);
   } else {

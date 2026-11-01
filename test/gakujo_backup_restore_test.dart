@@ -601,6 +601,43 @@ void main() {
     expect(storage.values, before);
     expect(await activity.loadFavorites(), isEmpty);
   });
+
+  test('a refusal after the last restore write rolls back every write', () async {
+    final storage = _Storage({_modeKey: 'flat_configured'});
+    final before = Map<String, String>.of(storage.values);
+    final activity = GakujoActivityStore(secureStorage: storage);
+    var calls = 0;
+    await expectLater(
+      restoreGakujoBackup(
+        backup: GakujoBackupImport(
+          version: 2,
+          downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
+          favorites: [
+            GakujoFavoritePage(
+                title: 'other account',
+                url: 'https://example.com/favorite',
+                addedAt: DateTime.now()),
+          ],
+        ),
+        settingsStore: GakujoAppSettingsStore(secureStorage: storage),
+        historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+        activityStore: activity,
+        beforeWrite: () {
+          if (++calls == 4) {
+            expect(storage.values[_modeKey], isNot(before[_modeKey]));
+            expect(storage.values, contains(_favoritesKey));
+            throw StateError('account changed after last write');
+          }
+        },
+        isAllowedUrl: (_) => true,
+        isAllowedNavigationUrl: (_) => true,
+      ),
+      throwsStateError,
+    );
+    expect(calls, 4);
+    expect(storage.values, before);
+    expect(await activity.loadFavorites(), isEmpty);
+  });
 }
 
 GakujoDeadlineEntry _deadline() => GakujoDeadlineEntry(

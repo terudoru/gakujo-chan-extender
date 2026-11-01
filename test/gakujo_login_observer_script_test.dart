@@ -21,8 +21,11 @@ const password = {
   getAttribute: name => name === 'type' ? 'password' : null
 };
 const form = {
-  querySelector: () => password,
-  querySelectorAll: () => [username, password]
+  inputs: [username, password],
+  querySelectorAll: function(selector) {
+    return selector === 'input' ? this.inputs :
+      this.inputs.filter(input => input.getAttribute('type') === 'password');
+  }
 };
 const button = {
   tagName: 'BUTTON', form,
@@ -40,6 +43,23 @@ vm.runInContext(process.argv[1], context);
 vm.runInContext(process.argv[1], context);
 for (const callback of listeners.submit) callback({target: form});
 for (const callback of listeners.click) callback({target: button});
+form.inputs = [{value: 'id-by-name', getAttribute: name =>
+  ({type: 'email', name: 'Login_ID'})[name] || null}, password];
+for (const callback of listeners.submit) callback({target: form});
+form.inputs = [{value: 'id-by-id', getAttribute: name =>
+  ({type: 'text', id: 'J-Username'})[name] || null}, password];
+for (const callback of listeners.submit) callback({target: form});
+form.inputs = [username, password, password];
+for (const callback of listeners.submit) callback({target: form});
+for (const callback of listeners.click) callback({target: button});
+form.inputs = [{value: 'other', getAttribute: name =>
+  ({type: 'text', name: 'email'})[name] || null}, password];
+for (const callback of listeners.submit) callback({target: form});
+for (const callback of listeners.click) callback({target: button});
+form.inputs = [{value: 'other', getAttribute: name =>
+  ({type: 'text', name: 'notuserid'})[name] || null}, password];
+for (const callback of listeners.submit) callback({target: form});
+form.inputs = [username, password];
 username.value = '   ';
 for (const callback of listeners.submit) callback({target: form});
 for (const callback of listeners.click) callback({target: button});
@@ -51,6 +71,8 @@ process.stdout.write(JSON.stringify(messages));
     expect(jsonDecode(result.stdout as String), [
       {'type': 'gakujoLoginSubmitted', 'loginId': 'student-123'},
       {'type': 'gakujoLoginSubmitted', 'loginId': 'student-123'},
+      {'type': 'gakujoLoginSubmitted', 'loginId': 'id-by-name'},
+      {'type': 'gakujoLoginSubmitted', 'loginId': 'id-by-id'},
     ]);
   });
 }
