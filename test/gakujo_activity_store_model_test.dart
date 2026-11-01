@@ -6,6 +6,86 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('loadDeadlines anchors year-less due dates to their capture time',
+      () async {
+    const deadlinesKey = 'more_better_gakujo_deadlines';
+    final now = DateTime.now();
+    final tomorrow = now.add(const Duration(days: 1));
+    final futureDue = tomorrow.month == DateTime.february && tomorrow.day == 29
+        ? tomorrow.add(const Duration(days: 1))
+        : tomorrow;
+    final explicitFutureDue = now.add(const Duration(days: 365));
+    final rangeStart = DateTime(now.year, now.month);
+    final rangeEnd = now.add(const Duration(days: 10));
+    final oldDetection = now.subtract(const Duration(days: 365));
+    final futureDetection = now.add(const Duration(days: 365));
+    final rangeDetection = now.subtract(const Duration(days: 120));
+    final expiredYearLessDue = now.subtract(const Duration(days: 8));
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    String monthDay(DateTime value) =>
+        '${twoDigits(value.month)}/${twoDigits(value.day)}';
+    String fullDate(DateTime value) => '${value.year}/${monthDay(value)}';
+
+    FlutterSecureStorage.setMockInitialValues({
+      deadlinesKey: jsonEncode([
+        {
+          'title': 'Stale captured year-less deadline',
+          'url': 'https://gakujo.example/report-stale-capture',
+          'dueText': '${monthDay(futureDue)} 23:59',
+          'detectedAt': oldDetection.toIso8601String(),
+          'kind': 'deadline',
+        },
+        {
+          'title': 'Fresh year-less deadline',
+          'url': 'https://gakujo.example/report-fresh-capture',
+          'dueText': '${monthDay(futureDue)} 23:59',
+          'detectedAt': now.toIso8601String(),
+          'kind': 'deadline',
+        },
+        {
+          'title': 'Explicit-year future deadline',
+          'url': 'https://gakujo.example/report-explicit-future',
+          'dueText': '${fullDate(explicitFutureDue)} 23:59',
+          'detectedAt': oldDetection.toIso8601String(),
+          'kind': 'deadline',
+        },
+        {
+          'title': 'Year-less range',
+          'url': 'https://gakujo.example/report-year-less-range',
+          'dueText': '${monthDay(rangeStart)}～${monthDay(rangeEnd)} 17:00',
+          'detectedAt': rangeDetection.toIso8601String(),
+          'kind': 'deadline',
+        },
+        {
+          'title': 'Legacy missing capture time',
+          'url': 'https://gakujo.example/report-legacy-capture',
+          'dueText': '${monthDay(futureDue)} 23:59',
+          'kind': 'deadline',
+        },
+        if (expiredYearLessDue.year == now.year)
+          {
+            'title': 'Future capture timestamp',
+            'url': 'https://gakujo.example/report-future-capture',
+            'dueText': '${monthDay(expiredYearLessDue)} 00:00',
+            'detectedAt': futureDetection.toIso8601String(),
+            'kind': 'deadline',
+          },
+      ]),
+    });
+
+    final deadlines = await GakujoActivityStore().loadDeadlines();
+
+    expect(
+      deadlines.map((entry) => entry.title),
+      unorderedEquals([
+        'Fresh year-less deadline',
+        'Explicit-year future deadline',
+        'Year-less range',
+        'Legacy missing capture time',
+      ]),
+    );
+  });
+
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
   });
