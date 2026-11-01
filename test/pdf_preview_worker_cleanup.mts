@@ -3,33 +3,35 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 
 let worker;
-let warnings = 0;
-const listeners = new Map();
+let warnings: any = 0;
+const listeners: any = new Map();
 class FakeWorker {
-  constructor(url) { this.url = url; this.messages = []; worker = this; }
-  postMessage(message) { this.messages.push(message); }
+  [key: string]: any;
+  constructor(url: any) { this.url = url; this.messages = []; worker = this; }
+  postMessage(message: any) { this.messages.push(message); }
   terminate() { this.terminated = true; }
 }
-const context = {
+const context: any = {
   Worker: FakeWorker,
   pdfiumWasmWorkerUrl: 'blob:worker',
   parent: {},
   ArrayBuffer,
-  Event: class { constructor(type) { this.type = type; } },
-  addEventListener(type, callback) { listeners.set(type, callback); },
-  dispatchEvent(event) { if (event.type === 'mbg-pdf-text-limited') warnings++; },
+  Event: class {
+  [key: string]: any; constructor(type: any) { this.type = type; } },
+  addEventListener(type: any, callback: any) { listeners.set(type, callback); },
+  dispatchEvent(event: any) { if (event.type === 'mbg-pdf-text-limited') warnings++; },
   console,
   Promise,
 };
 vm.runInNewContext(await readFile(process.argv[2], 'utf8'), context);
 context.PdfiumWasmCommunicator.sendCommand('loadDocument', {synthetic: true});
 assert.equal(worker.messages.length, 1);
-const first = context.PdfiumWasmCommunicator.sendCommand('loadDocumentFromData');
+const first: any = context.PdfiumWasmCommunicator.sendCommand('loadDocumentFromData');
 worker.onmessage({data: {id: 2, status: 'success', result: {docHandle: 1}}});
 await first;
 worker.onmessage({data: {type: 'mbg-text-limited', docHandle: 1}});
 assert.equal(warnings, 1);
-const second = context.PdfiumWasmCommunicator.sendCommand('loadDocumentFromData');
+const second: any = context.PdfiumWasmCommunicator.sendCommand('loadDocumentFromData');
 worker.onmessage({data: {id: 3, status: 'success', result: {docHandle: 2}}});
 await second;
 worker.onmessage({data: {type: 'mbg-text-limited', docHandle: 1}});

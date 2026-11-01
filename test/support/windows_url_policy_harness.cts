@@ -1,20 +1,21 @@
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
+import type {} from 'node:fs';
+const assert: any = require('node:assert/strict');
+const fs: any = require('node:fs');
 
 // Execute the production predicates with adapters for C++ scalar/string syntax,
 // as in windows_notification_source_test's CopyWideString harness. This does
 // not compile Win32 calls; the reviewer still needs to build on Windows.
-function predicate(source, name, parameter, env) {
-  const start = source.indexOf('{', source.indexOf(` ${name}(`));
+function predicate(source: any, name: any, parameter: any, env: any) {
+  const start: any = source.indexOf('{', source.indexOf(` ${name}(`));
   assert(start >= 0, `missing ${name}`);
-  let end = start + 1, depth = 1;
+  let end: any = start + 1, depth: any = 1;
   while (depth) {
-    const char = source[end++];
+    const char: any = source[end++];
     if (char === '{') depth++;
     if (char === '}') depth--;
     assert(end <= source.length, `unterminated ${name}`);
   }
-  const body = source.slice(start + 1, end - 1)
+  const body: any = source.slice(start + 1, end - 1)
     .replace(/^\s*\/\/[^\n]*/gm, '')
     .replace(/const NavigationAllowlist gakujo\{\{"([^"]+)"\}, \{\}\};/g,
       'const gakujo = {hosts: ["$1"], host_suffixes: []};')
@@ -28,7 +29,7 @@ function predicate(source, name, parameter, env) {
     .replace(/for \(const unsigned char (\w+) : (\w+)\)/g,
       'for (const $1 of Buffer.from($2, "utf8"))')
     .replace(/for \(const auto& (\w+) : ([\w.]+)\)/g, 'for (const $1 of $2)')
-    .replace(/'(?:\\.|[^'\\])'/g, literal => String(new Function(`return ${literal}`)().charCodeAt(0)))
+    .replace(/'(?:\\.|[^'\\])'/g, (literal: any) => String(new Function(`return ${literal}`)().charCodeAt(0)))
     .replace(/(\w+)\[([^\]]+)\]/g, '$1.charCodeAt($2)')
     .replace(/(\w+)\.size\(\)/g, '$1.length')
     .replace(/(\w+)\.(?:c_str|data)\(\)/g, '$1')
@@ -40,43 +41,43 @@ function predicate(source, name, parameter, env) {
     .replace(/(\w+)\.find\(/g, 'find($1, ')
     .replace(/(\w+)\.compare\(/g, 'compare($1, ')
     .replace(/\bnullptr\b/g, 'null');
-  const run = new Function('env', parameter, `with (env) { ${body} }`);
-  return value => run(env, value);
+  const run: any = new Function('env', parameter, `with (env) { ${body} }`);
+  return (value: any) => run(env, value);
 }
 
-const env = {
+const env: any = {
   Buffer,
-  AsciiLower: value => value.toLowerCase(),
-  find: (text, needle, start = 0) => {
-    const index = text.indexOf(typeof needle === 'number' ? String.fromCharCode(needle) : needle, start);
+  AsciiLower: (value: any) => value.toLowerCase(),
+  find: (text: any, needle: any, start: any = 0) => {
+    const index: any = text.indexOf(typeof needle === 'number' ? String.fromCharCode(needle) : needle, start);
     return index < 0 ? Infinity : index;
   },
-  findFirstOf: (text, chars, start = 0) => {
-    for (let i = start; i < text.length; i++) if (chars.includes(text[i])) return i;
+  findFirstOf: (text: any, chars: any, start: any = 0) => {
+    for (let i: any = start; i < text.length; i++) if (chars.includes(text[i])) return i;
     return Infinity;
   },
-  compare: (text, start, length, other) => text.substr(start, length) === other ? 0 : -1,
-  _strnicmp: (left, right, length) => left.slice(0, length).toLowerCase() === right.slice(0, length).toLowerCase() ? 0 : -1,
+  compare: (text: any, start: any, length: any, other: any) => text.substr(start, length) === other ? 0 : -1,
+  _strnicmp: (left: any, right: any, length: any) => left.slice(0, length).toLowerCase() === right.slice(0, length).toLowerCase() ? 0 : -1,
   CP_UTF8: 65001,
   MB_ERR_INVALID_CHARS: 8,
-  MultiByteToWideChar: (_codepage, _flags, value) => Buffer.from(value).length,
+  MultiByteToWideChar: (_codepage: any, _flags: any, value: any) => Buffer.from(value).length,
 };
-const runner = fs.readFileSync('windows/runner/utils.cpp', 'utf8');
+const runner: any = fs.readFileSync('windows/runner/utils.cpp', 'utf8');
 env.HexDigit = predicate(runner, 'HexDigit', 'value', env);
 env.IsDeadlineNotificationUrl = predicate(runner, 'IsDeadlineNotificationUrl', 'url', env);
-const activationTarget = predicate(runner, 'DeadlineNotificationUrlFromArgument', 'argument', env);
-const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+const activationTarget: any = predicate(runner, 'DeadlineNotificationUrlFromArgument', 'argument', env);
+const base: any = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
 for (const target of [
   'report?title=Report%20A', 'report?title=Report+A', 'report?title=Report%2520A',
   'report?title=%00%09%0A%7F', 'report?title=%26_eventId%3Ddelete',
   'Report%20A?title=%E9%80%A3%E7%B5%A1', 'report?a%2Bb=ok', 'report#?_eventId=delete',
 ]) {
-  const url = base + target;
+  const url: any = base + target;
   assert.equal(env.IsDeadlineNotificationUrl(url), true, target);
   assert.equal(activationTarget('morebettergakujo://notification?url=' + encodeURIComponent(url)), url);
 }
-for (const code of [...Array.from({length: 33}, (_, i) => i), 127]) {
-  const raw = String.fromCharCode(code), encoded = '%' + code.toString(16).padStart(2, '0');
+for (const code of [...Array.from({length: 33}, (_: any, i: any) => i), 127]) {
+  const raw: any = String.fromCharCode(code), encoded: any = '%' + code.toString(16).padStart(2, '0');
   for (const target of [`report${raw}`, `report?title=A${raw}B`, `report#A${raw}B`,
     `report?_even${encoded}tId=delete`, `report?name${encoded}=ok`]) {
     assert.equal(env.IsDeadlineNotificationUrl(base + target), false, JSON.stringify(target));
@@ -87,13 +88,13 @@ for (const query of ['_eventId=delete', '%5Fevent%49d=download', '_eventId_x=del
   assert.equal(env.IsDeadlineNotificationUrl(base + 'report?' + query), false, query);
 }
 
-const navigation = fs.readFileSync('third_party/webview_flutter_windows/windows/util/navigation_allowlist.h', 'utf8');
-const allowed = predicate(navigation, 'IsNavigationAllowed', 'url', env);
-env.IsNavigationAllowed = (url, allowlist) => {
+const navigation: any = fs.readFileSync('third_party/webview_flutter_windows/windows/util/navigation_allowlist.h', 'utf8');
+const allowed: any = predicate(navigation, 'IsNavigationAllowed', 'url', env);
+env.IsNavigationAllowed = (url: any, allowlist: any) => {
   env.allowlist = allowlist;
   return allowed(url);
 };
-const replayable = predicate(navigation, 'IsReplayableGakujoDownload', 'url', env);
+const replayable: any = predicate(navigation, 'IsReplayableGakujoDownload', 'url', env);
 for (const query of ['_eventId=download', 'fileId=42&_EVENTID=DOWNLOAD', '_eventId=download&fileId=42#file']) {
   assert.equal(replayable(base + 'file?' + query), true, query);
 }

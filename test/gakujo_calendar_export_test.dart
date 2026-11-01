@@ -1255,8 +1255,7 @@ void main() {
     final result = await Process.run(
         'node',
         [
-          '-e',
-          _calendarExtractionHarness,
+          'test/support/gakujo_calendar_export_calendar_extraction_harness.cts',
           GakujoCalendarExport.extractionScript(),
         ],
         stdoutEncoding: utf8,
@@ -1740,67 +1739,3 @@ bool _hasUnpairedSurrogate(String value) {
   }
   return false;
 }
-
-const _calendarExtractionHarness = r'''
-const vm = require('node:vm');
-const extractionScript = process.argv[1];
-
-function cell(text) {
-  return {
-    innerText: String(text || ''),
-    textContent: String(text || ''),
-    querySelectorAll() { return []; }
-  };
-}
-
-function row(values) {
-  const children = values.map(cell);
-  const text = values.join(' ');
-  return {
-    children,
-    innerText: text,
-    textContent: text
-  };
-}
-
-function table(rows) {
-  return {
-    querySelectorAll(selector) {
-      return selector === 'tr' ? rows : [];
-    }
-  };
-}
-
-function documentWithTables(tables) {
-  return {
-    body: cell(''),
-    location: {href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'},
-    querySelectorAll(selector) {
-      return selector === 'table' ? tables : [];
-    }
-  };
-}
-
-const scheduleTable = table([
-  row(['', '月', '火', '水']),
-  row(['', '1限: コンピュータ基礎 @ A-101', '', ''])
-]);
-const structuredTable = table([
-  row(['開講番号', '科目名', '曜日', '時限', '教室']),
-  row(['262G5001', '物理学基礎BⅠ', '火', '2限', 'F-271'])
-]);
-const child = {
-  document: documentWithTables([structuredTable]),
-  frames: []
-};
-const root = {
-  document: documentWithTables([scheduleTable]),
-  frames: [child]
-};
-
-const output = vm.runInNewContext(extractionScript, {
-  window: root,
-  URL
-});
-process.stdout.write(String(output));
-''';

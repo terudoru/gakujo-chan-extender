@@ -17,6 +17,7 @@ import 'package:webview_flutter_windows/webview_flutter_windows.dart'
 
 import 'generated/channel_bridge.g.dart';
 import 'generated/channel_guard.g.dart';
+import 'generated/document_title.g.dart';
 
 import 'allowed_web_origins.dart';
 import 'macos_input_focus_service.dart';
@@ -1429,7 +1430,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     if (_title != null && _title!.isNotEmpty) {
       return _title;
     }
-    final result = await _inner.executeScript('document.title');
+    final result = await _inner.executeScript(gakujoDocumentTitleJs);
     return WindowsJavaScriptResult.decodeString(result);
   }
 

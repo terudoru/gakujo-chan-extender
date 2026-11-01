@@ -260,3 +260,5 @@ declare namespace Intl {
     segment(input: string): Iterable<{segment: string}>;
   }
 }
+
+interface Window { __MBG_MESSAGE_STARS_REFRESH?: (ids: string[]) => void; }

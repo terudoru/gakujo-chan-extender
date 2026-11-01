@@ -192,8 +192,7 @@ Future<Map<String, dynamic>> evaluate(List<Map<String, dynamic>> nodes,
   final result = await Process.run(
       'node',
       [
-        '-e',
-        harness,
+        'test/support/gakujo_quick_jump_script_harness.cts',
         jsonEncode({'nodes': nodes, 'frames': frames}),
         GakujoQuickJumpScript.build(label),
       ],
@@ -202,36 +201,3 @@ Future<Map<String, dynamic>> evaluate(List<Map<String, dynamic>> nodes,
   expect(result.exitCode, 0, reason: result.stderr as String);
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
 }
-
-const harness = r'''
-const vm = require('node:vm');
-const spec = JSON.parse(process.argv[1]);
-const clicked = [];
-function windowFor(specs) {
-  const element = spec => ({
-    ...spec, innerText: spec.text || '', textContent: spec.text || '',
-    attributes: Object.keys(spec).map(name => ({name})),
-    parentElement: spec.parent ? element(spec.parent) : null,
-    getAttribute: name => spec[name] || null,
-    matches: selector => selector === ':disabled' && !!spec.disabled,
-    closest: () => spec.inert || spec.ariaDisabled ? {} : null,
-    getClientRects: () => spec.hidden ? [] : [{}],
-    querySelectorAll: () => spec.imageAlt ? [{getAttribute: () => spec.imageAlt}] : [],
-    click: () => clicked.push(spec.id),
-  });
-  const nodes = specs.map(element);
-  const win = {frames: [], getComputedStyle: node => ({visibility: node.visibility || 'visible'})};
-  win.document = {defaultView: win, querySelectorAll: selector => nodes.filter(node =>
-    selector.includes('td, div, span') || ['a','button'].includes(node.tag) ||
-    selector.includes('div.tabcell') && node.tag === 'div' &&
-      (node.class || '').split(/\s+/).includes('tabcell') ||
-    node.tag === 'input' && ['button','submit','image'].includes(node.type) ||
-    ['tab','button','menuitem'].includes(node.role) || !!node.onclick
-  )};
-  return win;
-}
-const window = windowFor(spec.nodes);
-window.frames = spec.frames.map(windowFor);
-const result = vm.runInNewContext(process.argv[2], {window});
-process.stdout.write(JSON.stringify({result, clicked}));
-''';

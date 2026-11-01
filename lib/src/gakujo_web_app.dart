@@ -13,6 +13,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'generated/course_name_estimate.g.dart';
+import 'generated/document_cookie.g.dart';
+import 'generated/navigator_user_agent.g.dart';
+import 'generated/pdf_preview_ready.g.dart';
+import 'generated/preview_navigate.g.dart';
 import 'generated/portal_auth_state_probe.g.dart';
 import 'generated/authenticated_session_reset.g.dart';
 import 'generated/course_name_body_text.g.dart';
@@ -1846,8 +1851,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<String> _estimateCourseNameFromPage(String? fallbackTitle) async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        '(window.__MBG_ESTIMATE_COURSE_NAME && '
-        'window.__MBG_ESTIMATE_COURSE_NAME()) || ""',
+        gakujoCourseNameEstimateJs,
       );
       final estimated = _stringFromJavaScriptResult(result).trim();
       if (kDebugMode) {
@@ -6291,7 +6295,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _navigatePreview(String direction) async {
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        "window.__MBG_PREVIEW_NAVIGATE ? window.__MBG_PREVIEW_NAVIGATE('$direction') : false",
+        gakujoPreviewNavigateJs({'direction': direction}),
       );
       return _boolFromJavaScriptResult(result);
     } on Object catch (error, stackTrace) {

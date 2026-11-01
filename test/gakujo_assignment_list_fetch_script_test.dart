@@ -282,9 +282,9 @@ Future<Map<String, dynamic>> _evaluate({
   final directory =
       Directory.systemTemp.createTempSync('gakujo_assignment_list_');
   try {
-    final harness = File.fromUri(directory.uri.resolve('harness.cjs'))
+    final harness = File.fromUri(directory.uri.resolve('harness.cts'))
       ..writeAsStringSync(
-          File('test/support/gakujo_assignment_list_fetch_harness.cjs')
+          File('test/support/gakujo_assignment_list_fetch_harness.cts')
               .readAsStringSync(),
           encoding: utf8);
     final input = File.fromUri(directory.uri.resolve('input.json'))

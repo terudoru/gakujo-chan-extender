@@ -6,6 +6,16 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entries: ({ source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true; asset?: false } | { source: string; output: string; asset: true; name?: never; kind?: never; config?: never })[] = [
+  { source: 'web_scripts/src/message_star_refresh/main.ts', output: 'lib/src/generated/message_star_refresh.g.dart', name: 'gakujoMessageStarRefreshJs', config: true },
+  { source: 'web_scripts/src/course_name_estimate/main.ts', output: 'lib/src/generated/course_name_estimate.g.dart', name: 'gakujoCourseNameEstimateJs', kind: 'expression' },
+  { source: 'web_scripts/src/preview_navigate/main.ts', output: 'lib/src/generated/preview_navigate.g.dart', name: 'gakujoPreviewNavigateJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/pdf_preview_ready/main.ts', output: 'lib/src/generated/pdf_preview_ready.g.dart', name: 'gakujoPdfPreviewReadyJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/navigator_user_agent/main.ts', output: 'lib/src/generated/navigator_user_agent.g.dart', name: 'gakujoNavigatorUserAgentJs', kind: 'expression' },
+  { source: 'web_scripts/src/document_cookie/main.ts', output: 'lib/src/generated/document_cookie.g.dart', name: 'gakujoDocumentCookieJs', kind: 'expression' },
+  { source: 'web_scripts/src/document_title/main.ts', output: 'lib/src/generated/document_title.g.dart', name: 'gakujoDocumentTitleJs', kind: 'expression' },
+  { source: 'web_scripts/src/upload_library_callback/main.ts', output: 'lib/src/generated/upload_library_callback.g.dart', name: 'gakujoUploadLibraryCallbackJs', config: true },
+  { source: 'web_scripts/src/pdf_preview_orientation/main.ts', output: 'tools/pdf_preview/web/orientation.js', asset: true },
+  { source: 'web_scripts/src/pdf_preview_orientation/main.ts', output: 'assets/pdf_preview/web/orientation.js', asset: true },
   { source: 'web_scripts/src/qpdf_worker/main.ts', output: 'assets/js/upload_compression/qpdf-worker.js', asset: true },
   { source: 'web_scripts/src/upload_library_ack/main.ts', output: 'lib/src/generated/upload_library_ack.g.dart', name: 'gakujoUploadLibraryAckJs', kind: 'expression' },
   { source: 'web_scripts/src/upload_library_setup/main.ts', output: 'lib/src/generated/upload_library_setup.g.dart', name: 'gakujoUploadLibrarySetupJs', config: true },

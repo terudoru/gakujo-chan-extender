@@ -14,7 +14,7 @@ void main() {
         final script = File('${directory.path}/preview.js');
         await script.writeAsString(GakujoUploadPreviewScript.build());
         final result = await Process.run('node', [
-          'test/remote_file_preview.mjs',
+          'test/remote_file_preview.mts',
           script.path,
         ]);
         expect(

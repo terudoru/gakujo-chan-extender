@@ -108,7 +108,7 @@ void main() {
   test('a month-view calendar is read day by day', () async {
     final result = await Process.run(
       'node',
-      ['-e', _monthViewHarness, GakujoCalendarExport.extractionScript()],
+      ['test/support/gakujo_schedule_export_format_month_view_harness.cts', GakujoCalendarExport.extractionScript()],
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
@@ -135,8 +135,7 @@ void main() {
     final result = await Process.run(
       'node',
       [
-        '-e',
-        _exportFetchHarness,
+        'test/support/gakujo_schedule_export_format_export_fetch_harness.cts',
         GakujoCalendarExport.officialScheduleExportFetchScript(
           startDate: '2026/10/02',
           endDate: '2026/12/01',
@@ -239,171 +238,3 @@ void main() {
         courses.map((course) => course.location), ['A-101', 'A-101', 'Zoom']);
   });
 }
-
-const _monthViewHarness = r'''
-const vm = require('node:vm');
-const script = process.argv[1];
-
-function node(text, extra) {
-  return Object.assign({
-    innerText: text,
-    textContent: text,
-    children: [],
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
-    getAttribute() { return null; }
-  }, extra || {});
-}
-function day(date, text) {
-  const add = node('', {
-    getAttribute(name) {
-      return name === 'onclick' ? 'addSchedule(' + date + ');' : null;
-    }
-  });
-  return node(text, {
-    querySelector(selector) {
-      return selector.indexOf('addSchedule') >= 0 ? add : null;
-    },
-    querySelectorAll() { return [add]; }
-  });
-}
-function row(cells) {
-  return node(cells.map((cell) => cell.innerText).join('\t'), {children: cells});
-}
-const rows = [
-  row(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => node(d))),
-  row([
-    day(20260928, '28\n[休日]夏期休業'),
-    day(20260929, '29\n[休日]夏期休業'),
-    day(20260930, '30\n[休日]夏期休業'),
-    day(20261001, '1\n[休日]補講日'),
-    day(20261002, '2\n1限:プログラミング基礎@A-101'),
-    day(20261003, '3'),
-    day(20261004, '4'),
-  ]),
-  row([
-    day(20261005, '5'),
-    day(20261006, '6\n4限:基礎数理@B-353'),
-    // A quiz deadline names a course code and another day's date.
-    day(20261007, '7\n2限:知的財産概論@備考欄参照\n' +
-      '[小テスト][263T0005 知的財産概論]第2回【2026/10/14まで】'),
-    day(20261008, '8'),
-    day(20261009, '9'),
-    day(20261010, '10'),
-    day(20261011, '11'),
-  ]),
-];
-const table = node('', {
-  querySelectorAll(selector) { return selector === 'tr' ? rows : []; }
-});
-const doc = node('', {
-  body: node(''),
-  location: {href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'},
-  querySelectorAll(selector) { return selector === 'table' ? [table] : []; }
-});
-process.stdout.write(String(vm.runInNewContext(script, {
-  window: {document: doc, frames: []},
-  URL
-})));
-''';
-
-const _exportFetchHarness = r'''
-const vm = require('node:vm');
-const script = process.argv[1];
-const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=k1';
-
-function input(name, type, value, checked) {
-  return {
-    name, value, checked: !!checked, id: '', className: '',
-    innerText: '', textContent: '',
-    getAttribute(attr) { return attr === 'type' ? type : null; },
-    dispatchEvent() {}
-  };
-}
-const fields = [
-  input('_flowExecutionKey', 'hidden', 'k1'),
-  input('_eventId', 'hidden', ''),
-  input('check1', 'checkbox', 'true', true),
-  input('check2', 'checkbox', 'true', true),
-  input('startYmd', 'text', '2026/10/07'),
-  input('endYmd', 'text', '2026/11/04'),
-];
-const form = {
-  name: 'scheduleExportForm', id: 'scheduleExportForm', className: '',
-  method: 'post', action: '/campusweb/campussquare.do', value: '',
-  innerText: 'カテゴリ 時間割コマ情報 対象期間 エクスポート実行',
-  textContent: '',
-  fields,
-  getAttribute() { return null; },
-  querySelector(selector) {
-    return selector.indexOf('_eventId') >= 0 ? fields[1] : null;
-  },
-  querySelectorAll(selector) {
-    if (selector.indexOf('checkbox') >= 0) {
-      return fields.filter((f) => f.getAttribute('type') === 'checkbox');
-    }
-    return selector === 'input' ? fields : fields;
-  }
-};
-class FormData {
-  constructor(owner) {
-    this.entries = owner.fields
-      .filter((f) => f.getAttribute('type') !== 'checkbox' || f.checked)
-      .map((f) => [f.name, f.value]);
-  }
-  [Symbol.iterator]() { return this.entries[Symbol.iterator](); }
-}
-const requests = [];
-let postedBody = '';
-const progressPage = '<html><body><meta http-equiv="REFRESH" content="0; ' +
-  'URL=/campusweb/campussquare.do?_flowExecutionKey=k2&amp;_eventId=output">' +
-  '<span>データ出力処理が完了しました。</span></body></html>';
-class XMLHttpRequest {
-  open(method, url) { this.method = method; this.url = new URL(url); }
-  setRequestHeader() {}
-  send(body) {
-    requests.push(this.method + ' ' + this.url.pathname + this.url.search);
-    if (this.method === 'POST') {
-      postedBody = body;
-      this.responseText = progressPage;
-      this.contentType = 'text/html;charset=UTF-8';
-    } else {
-      this.responseText = 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n';
-      this.contentType = 'text/plain;charset=UTF-8';
-    }
-    this.status = 200;
-    this.responseURL = this.url.href;
-  }
-  getResponseHeader(name) {
-    return name === 'Content-Type' ? this.contentType : null;
-  }
-}
-class DOMParser {
-  parseFromString(html) {
-    const metas = [];
-    const pattern = /<meta\s+http-equiv="([^"]*)"\s+content="([^"]*)"/gi;
-    let match;
-    while ((match = pattern.exec(html)) !== null) {
-      const attrs = {
-        'http-equiv': match[1],
-        content: match[2].replace(/&amp;/g, '&')
-      };
-      metas.push({getAttribute(name) { return attrs[name] || null; }});
-    }
-    return {querySelectorAll(selector) { return selector === 'meta' ? metas : []; }};
-  }
-}
-const doc = {
-  location: {href: base},
-  title: 'スケジュール',
-  querySelectorAll(selector) { return selector === 'form' ? [form] : []; }
-};
-const output = vm.runInNewContext(script, {
-  window: {document: doc, frames: []},
-  URL, URLSearchParams, FormData, XMLHttpRequest, DOMParser, Event: class {}
-});
-const payload = JSON.parse(String(output));
-payload.requests = requests;
-payload.body = postedBody;
-process.stdout.write(JSON.stringify(payload));
-''';

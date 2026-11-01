@@ -714,8 +714,18 @@ void main() {
     final withdrawn = _assignment(
       _row('小テスト', '取り下げ', '未提出', '2099/10/21 17:01 ～2099/10/29 16:31'),
     );
+    // Recently closed, so the 30-day retention keeps it whatever today is.
+    String day(DateTime d) => '${d.year}/${d.month.toString().padLeft(2, '0')}/'
+        '${d.day.toString().padLeft(2, '0')} 00:00';
+    final now = DateTime.now();
     final past = _assignment(
-      _row('レポート', '終わった課題', '提出済', '2026/10/01 00:00 ～2026/10/02 00:00'),
+      _row(
+        'レポート',
+        '終わった課題',
+        '提出済',
+        '${day(now.subtract(const Duration(days: 3)))} ～'
+            '${day(now.subtract(const Duration(days: 2)))}',
+      ),
     );
     await store.mergeAssignments([kept, withdrawn, past]);
 
