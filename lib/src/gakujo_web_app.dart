@@ -7673,6 +7673,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           developer.log('Failed to disable Drive saving: ${error.runtimeType}',
               name: 'MoreBetterGakujo');
         }
+        _starSyncGoogleEmail = null;
         try {
           if (!await _signOutGoogle(warn: false)) revocationUnconfirmed = true;
         } on Object catch (error) {
