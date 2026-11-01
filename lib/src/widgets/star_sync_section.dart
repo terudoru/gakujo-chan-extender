@@ -58,6 +58,7 @@ class StarSyncClipboardGuard {
   final Future<void> Function(String) _write;
   Timer? _timer;
   int _generation = 0;
+  String? _pendingCode;
 
   static Future<String?> _readClipboard() async =>
       (await Clipboard.getData(Clipboard.kTextPlain))?.text;
@@ -67,12 +68,27 @@ class StarSyncClipboardGuard {
   Future<void> copy(String code) async {
     final generation = ++_generation;
     _timer?.cancel();
+    _pendingCode = code;
     await _write(code);
-    if (generation != _generation) return;
+    if (generation != _generation) {
+      if (_pendingCode == null && await _read() == code && _pendingCode == null) {
+        await _write('');
+      }
+      return;
+    }
     _timer = Timer(const Duration(seconds: 60), () async {
-      final contents = await _read();
-      if (generation == _generation && contents == code) await _write('');
+      await clear();
     });
+  }
+
+  Future<void> clear() async {
+    final code = _pendingCode;
+    final generation = ++_generation;
+    _timer?.cancel();
+    _pendingCode = null;
+    if (code == null) return;
+    final contents = await _read();
+    if (generation == _generation && contents == code) await _write('');
   }
 }
 

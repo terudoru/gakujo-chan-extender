@@ -1594,6 +1594,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      unawaited(StarSyncClipboardGuard.instance.clear());
+    }
     // Do not probe the network every few seconds while the app is in the
     // background; check again once it is back.
     if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
@@ -1636,9 +1639,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _starSyncGoogleEmail = await _driveDownloadQueue.run(
               _starSyncGoogleAuth.restore,
             );
-          } on Object catch (error, stackTrace) {
-            developer.log('Failed to restore Google sign-in',
-                name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+          } on Object catch (error) {
+            developer.log('Failed to restore Google sign-in: ${error.runtimeType}',
+                name: 'MoreBetterGakujo');
           }
         }
       }());
@@ -1656,9 +1659,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _ensureStarSyncLoaded();
       if (!_canSyncStars) return;
       await _starSyncEngine.syncNow(trigger: trigger);
-    } on Object catch (error, stackTrace) {
-      developer.log('Failed to sync message stars',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    } on Object catch (error) {
+      developer.log('Failed to sync message stars: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
     }
   }
 
@@ -3748,11 +3751,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     Future<void> clearAll() async {
+      await StarSyncClipboardGuard.instance.clear();
       try {
         await _ensureStarSyncLoaded();
-      } on Object catch (error, stackTrace) {
-        developer.log('Failed to load star sync before clearing data',
-            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      } on Object catch (error) {
+        developer.log('Failed to load star sync before clearing data: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
       }
       try {
         await _starSyncEngine.disable();
@@ -3761,9 +3765,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           await _setDriveDownloadsEnabled(false);
           await _signOutGoogle();
           _starSyncGoogleEmail = null;
-        } on Object catch (error, stackTrace) {
-          developer.log('Failed to sign out of Google while clearing data',
-              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        } on Object catch (error) {
+          developer.log('Failed to sign out of Google while clearing data: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
         }
       }
       await Future.wait([
@@ -3771,6 +3775,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _downloadHistoryStore.clearFailedDownloads(),
         _activityStore.clearSnapshots(),
         _activityStore.clearDeadlines(),
+        _activityStore.clearNotifiedDeadlineTimes(),
+        StarSyncQuotaMeter.shared.clear(),
         _activityStore.clearChanges(),
         _activityStore.clearReportLists(),
         _activityStore.replaceFavorites(const []),
@@ -5718,9 +5724,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       }
       if (mounted) setState(() => _driveDownloadsEnabled = enabled);
-    } on Object catch (error, stackTrace) {
-      developer.log('Failed to load Drive download preference',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    } on Object catch (error) {
+      developer.log('Failed to load Drive download preference: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
     }
   }
 
@@ -5764,9 +5770,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           encodePortableSyncBackup(await _backupPayload()));
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
-    } on Object catch (error, stackTrace) {
-      developer.log('Failed to upload automatic backup',
-          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    } on Object catch (error) {
+      developer.log('Failed to upload automatic backup: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
     }
   }
 
@@ -7133,9 +7139,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         try {
           await _setDriveDownloadsEnabled(false);
           await _signOutGoogle();
-        } on Object catch (error, stackTrace) {
-          developer.log('Failed to sign out of Google',
-              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        } on Object catch (error) {
+          developer.log('Failed to sign out of Google: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
         }
         await SecureStorageFactory.resetStorage();
         _appSettings = _appSettings.copyWith(loginCredentials: null);

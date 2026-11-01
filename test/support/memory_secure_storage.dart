@@ -7,6 +7,19 @@ class MemorySecureStorage extends FlutterSecureStorage {
   final values = <String, String>{};
 
   @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
+
+  @override
   Future<String?> read({
     required String key,
     AppleOptions? iOptions,

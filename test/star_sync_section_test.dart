@@ -532,6 +532,21 @@ void main() {
     );
   }
 
+  test('clipboard guard clears only the pending code on demand', () async {
+    String? clipboard;
+    final guard = StarSyncClipboardGuard(
+      read: () async => clipboard,
+      write: (value) async => clipboard = value,
+    );
+    await guard.copy('pairing code');
+    await guard.clear();
+    expect(clipboard, '');
+    await guard.copy('pairing code');
+    clipboard = 'other content';
+    await guard.clear();
+    expect(clipboard, 'other content');
+  });
+
   testWidgets('pairing reset requires a new code', (tester) async {
     final status = ValueNotifier(
       const StarSyncStatusSnapshot(

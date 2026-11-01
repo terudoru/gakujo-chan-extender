@@ -465,7 +465,7 @@ class StarSyncEngine {
     try {
       await _quotaMeter.currentUsage();
     } on Object catch (error) {
-      debugPrint('Star sync quota record unavailable: $error');
+      debugPrint('Star sync quota record unavailable: ${error.runtimeType}');
     }
     final config = await _storage.read(key: starSyncConfigKey);
     final state = await _storage.read(key: starSyncStateKey);

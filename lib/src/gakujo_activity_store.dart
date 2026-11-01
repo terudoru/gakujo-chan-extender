@@ -1160,6 +1160,12 @@ class GakujoActivityStore {
     );
   }
 
+  Future<void> clearNotifiedDeadlineTimes() {
+    return _enqueue(
+      () => _secureStorage.delete(key: 'more_better_gakujo_notified_deadline_times'),
+    );
+  }
+
   /// Assignments from the レポート・小テスト list, newest closing time first.
   Future<List<GakujoAssignment>> loadAssignments() {
     return _enqueue(() async => (await _readAssignments()).value);

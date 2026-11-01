@@ -1167,9 +1167,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         }
       } on GoogleDriveAccountChanged {
         if (mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
-      } on Object catch (error, stackTrace) {
-        developer.log('Failed to save download to Google Drive',
-            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      } on Object catch (error) {
+        developer.log('Failed to save download to Google Drive: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
         if (mounted) _showSnackBar('Google ドライブに保存できませんでした');
       }
     }));

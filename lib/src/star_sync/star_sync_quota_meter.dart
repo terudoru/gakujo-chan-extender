@@ -121,6 +121,15 @@ class StarSyncQuotaMeter {
     return _used;
   });
 
+  Future<void> clear() => _queue.run(() async {
+    await _storage.delete(key: starSyncGoogleQuotaKey);
+    _buckets.clear();
+    _saveNoticeAt = null;
+    _lastSeen = null;
+    _loaded = false;
+    usage.value = 0;
+  });
+
   Future<bool> allowsAutomatic(int estimate) => _queue.run(() async {
     await _load();
     return _used + estimate <= starSyncGoogleSoftLimit;
