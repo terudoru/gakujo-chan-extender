@@ -28,6 +28,9 @@ class GoogleDriveFileSaver {
   static const _chunkSize = 8 * 1024 * 1024;
   static const _folderMime = 'application/vnd.google-apps.folder';
 
+  /// Releases the HTTP client; the saver must not be used afterwards.
+  void close() => _client.close(force: true);
+
   Uri _uri(String path, [Map<String, String>? query]) =>
       _base.resolve(path).replace(queryParameters: query);
 

@@ -5738,6 +5738,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await file.parent.create(recursive: true);
       await file.writeAsString(enabled ? 'true' : 'false', flush: true);
       if (!enabled) {
+        _googleDriveFileSaver?.close();
         _googleDriveFileSaver = null;
         _driveSaverEmail = null;
       }

@@ -1135,6 +1135,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         }
         if (_googleDriveFileSaver == null || _driveSaverEmail != email) {
           _driveSaverEmail = email;
+          _googleDriveFileSaver?.close();
           _googleDriveFileSaver = GoogleDriveFileSaver(
             accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
               _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
