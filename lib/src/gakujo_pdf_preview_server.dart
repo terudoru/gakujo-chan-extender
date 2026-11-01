@@ -5,6 +5,8 @@ import 'dart:math';
 
 import 'package:flutter/services.dart';
 
+import 'generated/popup_relay.g.dart';
+
 /// Serves only bundled viewer resources. PDF bytes never pass through HTTP.
 class GakujoPdfPreviewServer {
   GakujoPdfPreviewServer({AssetBundle? bundle})
@@ -159,18 +161,7 @@ class GakujoPdfPreviewServer {
   // The isolated viewer expects its PDF from its parent frame. A macOS
   // top-level popup relays only messages from its opener into itself; no PDF
   // bytes are served over HTTP or written to disk.
-  static const _popupRelay = r'''
-if (window.opener && window.parent === window) {
-  window.addEventListener('message', function(event) {
-    if (event.source === window.opener && event.data instanceof ArrayBuffer) {
-      window.postMessage(event.data, '*', [event.data]);
-    } else if (event.source === window && typeof event.data === 'string' &&
-               event.data.indexOf('mbg-preview-') === 0) {
-      window.opener.postMessage(event.data, '*');
-    }
-  });
-}
-''';
+  static const _popupRelay = gakujoPopupRelayJs;
 
   static String _contentType(String name) {
     if (name.endsWith('.html')) return 'text/html; charset=utf-8';

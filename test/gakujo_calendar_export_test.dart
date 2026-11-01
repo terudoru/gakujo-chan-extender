@@ -1239,8 +1239,8 @@ void main() {
     expect(script, contains('titleLooksUseful'));
     expect(script, contains('termRangeText'));
     expect(script, contains('JSON.stringify({'));
-    expect(script, contains("host === 'calendar.google.com'"));
-    expect(script, isNot(contains("host.indexOf('google.')")));
+    expect(script, contains('host === "calendar.google.com"'));
+    expect(script, isNot(contains('host.indexOf("google.")')));
     expect(script, isNot(contains('function scanUnsafeTable')));
     expect(script, isNot(contains('function splitCourse')));
     expect(script, isNot(contains('scanDailyScheduleLines')));
@@ -1659,11 +1659,11 @@ END:VCALENDAR
     );
 
     expect(inspectScript, contains('googleスケジュール連携'));
-    expect(inspectScript, contains("'available'"));
-    expect(inspectScript, contains("'clickable'"));
+    expect(inspectScript, contains('"available"'));
+    expect(inspectScript, contains('"clickable"'));
     expect(inspectScript, contains('querySelectorAll'));
     expect(activateScript, contains('parent.click()'));
-    expect(activateScript, contains("status: 'clicked'"));
+    expect(activateScript, contains('status: "clicked"'));
   });
 
   test('official schedule export execution script targets export form', () {
@@ -1690,7 +1690,7 @@ END:VCALENDAR
     );
 
     expect(script, contains('XMLHttpRequest'));
-    expect(script, contains("checkbox.name === 'check2'"));
+    expect(script, contains('checkbox.name === "check2"'));
     expect(script, contains('executeExport'));
     expect(script, contains('2026/06/11'));
     expect(script, contains('responseText'));
@@ -1707,12 +1707,12 @@ END:VCALENDAR
 
     expect(monthScript, contains('loadnextmonth'));
     expect(monthScript, contains('loadbeforemonth'));
-    expect(monthScript, contains("label.indexOf('次') >= 0))"));
-    expect(monthScript, contains("label.indexOf('前') >= 0))"));
-    expect(monthScript, contains('targetYear = 2026'));
-    expect(monthScript, contains('targetMonth = 6'));
+    expect(monthScript, contains('label.indexOf("次") >= 0))'));
+    expect(monthScript, contains('label.indexOf("前") >= 0))'));
+    expect(monthScript, contains('"targetYear":2026'));
+    expect(monthScript, contains('"targetMonth":6'));
     expect(dayScript, contains('2026/06/23'));
-    expect(dayScript, contains("status: 'clicked'"));
+    expect(dayScript, contains('status: "clicked"'));
   });
 }
 
