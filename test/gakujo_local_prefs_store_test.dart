@@ -20,6 +20,18 @@ void main() {
     }
   });
 
+  test('clear also removes temporary copies left by an interrupted write', () async {
+    await store.saveLastGpa(3.5);
+    final file = File('${directory.path}/local_prefs.json');
+    expect(await file.exists(), isTrue);
+    final orphan = File('${file.path}.123.456.tmp')..writeAsStringSync('{}');
+    final unrelated = File('${directory.path}/other.tmp')..writeAsStringSync('x');
+    await store.clear();
+    expect(await file.exists(), isFalse);
+    expect(await orphan.exists(), isFalse);
+    expect(await unrelated.exists(), isTrue);
+  });
+
   test('round-trips non-sensitive settings without credentials or URLs', () async {
     const settings = GakujoAppSettings(
       downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,

@@ -65,6 +65,20 @@ class GakujoLocalPrefsStore {
       if (await file.exists()) {
         await file.delete();
       }
+      // A write cut short by a crash leaves its temporary copy behind.
+      final directory = file.parent;
+      if (!await directory.exists()) return;
+      final prefix = '${file.uri.pathSegments.last}.';
+      await for (final entry in directory.list(followLinks: false)) {
+        final name = entry.uri.pathSegments.last;
+        if (entry is File && name.startsWith(prefix) && name.endsWith('.tmp')) {
+          try {
+            await entry.delete();
+          } on FileSystemException {
+            // Best effort, like the writer's own cleanup.
+          }
+        }
+      }
     });
   }
 

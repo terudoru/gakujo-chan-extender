@@ -220,14 +220,17 @@ class StarSyncSection extends StatefulWidget {
 }
 
 class _StarSyncSectionState extends State<StarSyncSection> {
-  final _rejoin = TextEditingController();
+  // Separate fields: a passphrase must never reappear in the visible code box.
+  final _rejoinCode = TextEditingController();
+  final _rejoinPassphrase = TextEditingController();
   bool _busy = false;
   String? _error;
   List<StarSyncBackupInfo>? _backups;
 
   @override
   void dispose() {
-    _rejoin.dispose();
+    _rejoinCode.dispose();
+    _rejoinPassphrase.dispose();
     super.dispose();
   }
 
@@ -635,18 +638,21 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             Text(widget.googleEmail()!),
           if (status.status == StarSyncStatus.needsPairingCode) ...[
             const Text('別の端末で同期データがリセットされました。新しいコードを入力してください。'),
-            _PairingInput(controller: _rejoin, enabled: !_busy),
+            _PairingInput(controller: _rejoinCode, enabled: !_busy),
             OutlinedButton(
               onPressed: _busy
                   ? null
-                  : () => _run(() => widget.onRejoinWithCode(_rejoin.text)),
+                  : () => _run(() async {
+                      await widget.onRejoinWithCode(_rejoinCode.text);
+                      _rejoinCode.clear();
+                    }),
               child: const Text('再接続'),
             ),
           ],
           if (status.status == StarSyncStatus.needsPassphrase) ...[
             const Text('別の端末で同期データがリセットされたか、鍵が変更されました。'),
             TextField(
-              controller: _rejoin,
+              controller: _rejoinPassphrase,
               enabled: !_busy,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'パスフレーズ'),
@@ -654,7 +660,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             OutlinedButton(
               onPressed: _busy
                   ? null
-                  : () => _run(() => widget.onRejoin(_rejoin.text)),
+                  : () => _run(() async {
+                      await widget.onRejoin(_rejoinPassphrase.text);
+                      _rejoinPassphrase.clear();
+                    }),
               child: const Text('再接続'),
             ),
           ],
