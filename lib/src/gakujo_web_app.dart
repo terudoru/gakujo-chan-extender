@@ -64,6 +64,7 @@ import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
+import 'star_sync/drive_download_preference.dart';
 import 'star_sync/star_sync_adapters.dart';
 import 'star_sync/star_sync_collections.dart';
 import 'star_sync/star_sync_config.dart';
@@ -1383,7 +1384,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _driveSaverEmail;
   String? _starSyncGoogleEmail;
   int? _draftReadRevision;
-  bool _driveDownloadsEnabled = false;
+  final _driveDownloadPreference = DriveDownloadPreference();
+  final _driveUploads = DriveDownloadQueue();
+  bool _driveDownloadsSuspended = false;
+  bool get _driveDownloadsEnabled => !_driveDownloadsSuspended && _appSettingsLoaded &&
+      _driveDownloadPreference.matches(_driveAccountHash);
+  String? get _driveAccountHash =>
+      starSyncAccountHash(_appSettings.loginCredentials?.loginId);
   late final Future<void> _driveDownloadsLoad;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
@@ -1576,6 +1583,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    _cancelDriveUploads();
     unawaited(_pdfPreviewServer.close());
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
@@ -2301,6 +2309,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }) async {
     try {
       return await _starSyncEngine.runAccountChange(() => _settingsOperations.runExclusive(() async {
+        if (starSyncAccountHash(loginId) != _driveAccountHash) {
+          _cancelDriveUploads();
+        }
         final credentials = await saveGakujoLoginCredentials(
           store: _appSettingsStore,
           loginId: loginId,
@@ -2325,6 +2336,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _syncLocalSettingsMirror(_appSettings);
         if (!mounted) {
           return false;
+        }
+        if (_driveDownloadPreference.enabled && !_driveDownloadsEnabled) {
+          _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
         }
         _showSnackBar('ログイン情報を保存しました');
         await _applyFeatureFlagRuntimeState(
@@ -2507,6 +2521,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         onClear: () async {
                           try {
                             await _starSyncEngine.runAccountChange(() async {
+                              _cancelDriveUploads();
                               try {
                                 await _appSettingsStore.clearLoginCredentials();
                               } finally {
@@ -5710,20 +5725,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _starSyncGoogleAuth.signIn,
   );
 
-  Future<void> _signOutGoogle() => _driveDownloadQueue.runExclusive(
-    _starSyncGoogleAuth.signOut,
-  );
+  Future<void> _signOutGoogle() {
+    _driveDownloadsSuspended = true;
+    _cancelDriveUploads();
+    return _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
+  }
+
+  void _cancelDriveUploads() {
+    _driveUploads.cancel();
+    _googleDriveFileSaver?.close();
+    _googleDriveFileSaver = null;
+    _driveSaverEmail = null;
+  }
 
   Future<void> _loadDriveDownloadsPreference() async {
     try {
-      final file = await _driveDownloadsPreferenceFile();
-      final enabled = await file.exists() && await file.readAsString() == 'true';
-      if (enabled) {
+      await _driveDownloadPreference.load(await _driveDownloadsPreferenceFile());
+      if (_driveDownloadPreference.enabled) {
         _starSyncGoogleEmail = await _driveDownloadQueue.run(
           _starSyncGoogleAuth.restore,
         );
       }
-      if (mounted) setState(() => _driveDownloadsEnabled = enabled);
+      if (mounted) setState(() {});
     } on Object catch (error) {
       developer.log('Failed to load Drive download preference: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
@@ -5731,25 +5754,38 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _setDriveDownloadsEnabled(bool enabled) async {
+    if (!enabled) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      if (mounted) setState(() {});
+    }
+    final generation = _driveUploads.generation;
     await _driveDownloadsLoad;
     return _driveDownloadQueue.runExclusive(() async {
       if (enabled) {
+        final account = _driveAccountHash;
+        if (account == null) throw const StarSyncAccountRequiredException();
+        if (_driveDownloadPreference.enabled &&
+            _driveDownloadPreference.boundAccount != null &&
+            _driveDownloadPreference.boundAccount != account) {
+          if (mounted) _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
+          return;
+        }
         _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
         _starSyncGoogleEmail ??= await _signInGoogle();
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
           throw StateError('Google Drive permission was not granted');
         }
+        if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
+        await _driveDownloadPreference.save(true, account);
+        if (_driveUploads.isCurrent(generation) && _driveAccountHash == account) {
+          _driveDownloadsSuspended = false;
+        }
+      } else {
+        await _driveDownloadPreference.save(false, null);
       }
-      final file = await _driveDownloadsPreferenceFile();
-      await file.parent.create(recursive: true);
-      await file.writeAsString(enabled ? 'true' : 'false', flush: true);
-      if (!enabled) {
-        _googleDriveFileSaver?.close();
-        _googleDriveFileSaver = null;
-        _driveSaverEmail = null;
-      }
-      if (mounted) setState(() => _driveDownloadsEnabled = enabled);
+      if (mounted) setState(() {});
     });
   }
 

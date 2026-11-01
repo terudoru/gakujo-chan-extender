@@ -189,3 +189,5 @@ Drive API の利用量は端末ごとに「直近24時間」（1時間単位の�
 Encrypted sync-storage backups omit download save mode, page mode, download locations and other local path or URI fields, the messageStars disabled flag, and credential-like fields. Restore from sync storage ignores those fields. Uploads exceeding the 5 MiB restore limit are rejected without replacing the previous backup. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs in chunks of at most 8 MiB.
 
 バックアップ復元時、同期対象のコレクションはバックアップの値で上書き・追加し、省略されたキーは削除しません。バックアップ後に他の端末で追加された項目も残ります。
+
+Drive download saving is bound to the hash of the saved Gakujo login ID. A changed or missing ID suspends saving until the original ID returns. Disabling or signing out drops pending uploads and aborts the active transfer. Legacy toggle values are migrated to secure storage without an account binding, so they require explicit re-enabling.

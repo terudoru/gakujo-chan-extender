@@ -293,6 +293,14 @@ class StarSyncState {
   }
 }
 
+String? starSyncAccountHash(String? loginId) {
+  final id = loginId?.trim();
+  if (id == null || id.isEmpty) return null;
+  return base64UrlEncode(
+    sha256.convert(utf8.encode('mbg-star-account:$id')).bytes,
+  );
+}
+
 class StarSyncEngine {
   StarSyncEngine({
     required this.activityStore,
@@ -630,13 +638,7 @@ class StarSyncEngine {
     await _finishPendingLocalClear();
   }
 
-  String? _currentAccount() {
-    final id = loginId?.call()?.trim();
-    if (id == null || id.isEmpty) return null;
-    return base64UrlEncode(
-      sha256.convert(utf8.encode('mbg-star-account:$id')).bytes,
-    );
-  }
+  String? _currentAccount() => starSyncAccountHash(loginId?.call());
 
   String requireAccount() =>
       _currentAccount() ?? (throw const StarSyncAccountRequiredException());

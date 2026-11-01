@@ -1108,11 +1108,20 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   }
 
   void _queueDriveDownload(GakujoDownloadResult result) {
-    if (!_driveDownloadsEnabled) return;
+    if (!_driveDownloadsEnabled) {
+      if (!_driveDownloadsSuspended && _appSettingsLoaded &&
+          _driveDownloadPreference.enabled && mounted) {
+        _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
+      }
+      return;
+    }
+    final account = _driveAccountHash;
     final location = result.location;
     final email = _starSyncGoogleAuth.currentEmail;
-    unawaited(_driveDownloadQueue.run(() async {
-      if (!_driveDownloadsEnabled) return;
+    _driveUploads.add((generation) => _driveDownloadQueue.run(() async {
+      bool allowed() => _driveUploads.isCurrent(generation) &&
+          _driveDownloadsEnabled && _driveAccountHash == account;
+      if (!allowed()) return;
       try {
         if (location == null || location.isEmpty) {
           throw StateError('Local file is unavailable');
@@ -1129,10 +1138,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (GoogleDriveFileSaver.isAutomaticFileTooLarge(length)) {
           throw const GoogleDriveSaveTooLarge();
         }
+        if (!allowed()) return;
         if (email == null || _starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
         }
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
+        if (!allowed()) return;
         if (_starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
         }
@@ -1140,9 +1151,14 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           _driveSaverEmail = email;
           _googleDriveFileSaver?.close();
           _googleDriveFileSaver = GoogleDriveFileSaver(
-            accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
-              _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
-            ),
+            accessToken: ({bool forceRefresh = false}) async {
+              if (!allowed()) throw const GoogleDriveAccountChanged();
+              final token = await googleDriveTokenForAccount(
+                _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
+              );
+              if (!allowed()) throw const GoogleDriveAccountChanged();
+              return token;
+            },
           );
         }
         await _googleDriveFileSaver!.saveFile(
@@ -1154,23 +1170,26 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           length: length,
           automatic: true,
         );
-        if (mounted) _showSnackBar('Google ドライブに保存しました');
+        if (allowed() && mounted) _showSnackBar('Google ドライブに保存しました');
       } on GoogleDriveSaveTooLarge {
-        if (mounted) _showSnackBar('ファイルが大きすぎるため、Google ドライブへの自動保存を見送りました');
+        if (allowed() && mounted) _showSnackBar('ファイルが大きすぎるため、Google ドライブへの自動保存を見送りました');
       } on GoogleDriveSaveSoftLimit {
+        if (!allowed()) return;
         if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
           _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
         }
       } on StarSyncQuotaExceeded {
+        if (!allowed()) return;
         if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
           _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
         }
       } on GoogleDriveAccountChanged {
-        if (mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
+        if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on Object catch (error) {
+        if (!allowed()) return;
         developer.log('Failed to save download to Google Drive: ${error.runtimeType}',
             name: 'MoreBetterGakujo');
-        if (mounted) _showSnackBar('Google ドライブに保存できませんでした');
+        if (allowed() && mounted) _showSnackBar('Google ドライブに保存できませんでした');
       }
     }));
   }

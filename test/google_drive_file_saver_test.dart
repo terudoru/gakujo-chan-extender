@@ -183,6 +183,16 @@ void main() {
     },
   );
 
+  test('closing a running saver prevents subsequent requests', () async {
+    onRequest = () {
+      onRequest = null;
+      saver.close();
+    };
+    await expectLater(save('Course', 'file', 1), throwsA(anything));
+    expect(uploads, 0);
+    expect(chunks, 0);
+  });
+
   test('account change during a job prevents further requests', () async {
     final auth = _FakeGoogleAuth();
     final email = auth.currentEmail!;
