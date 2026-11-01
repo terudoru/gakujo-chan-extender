@@ -1495,7 +1495,11 @@ class GakujoActivityStore {
 
   bool _isActiveDeadline(GakujoDeadlineEntry entry) {
     final now = DateTime.now();
-    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: entry.detectedAt);
+    final detectedAt = entry.detectedAt.toLocal();
+    final hasTrustworthyDetection =
+        detectedAt.millisecondsSinceEpoch != 0 && !detectedAt.isAfter(now);
+    final anchor = hasTrustworthyDetection ? detectedAt : now;
+    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: anchor);
     if (dueAt == null) {
       return entry.detectedAt.isAfter(now.subtract(_undatedDeadlineRetention));
     }
