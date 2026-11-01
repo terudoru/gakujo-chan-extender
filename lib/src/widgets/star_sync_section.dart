@@ -71,7 +71,9 @@ class StarSyncClipboardGuard {
     _pendingCode = code;
     await _write(code);
     if (generation != _generation) {
-      if (_pendingCode == null && await _read() == code && _pendingCode == null) {
+      if (_pendingCode == null &&
+          await _read() == code &&
+          _pendingCode == null) {
         await _write('');
       }
       return;
