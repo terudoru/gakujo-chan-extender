@@ -50,7 +50,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         final loginId = data['loginId'];
         if (loginId is String) {
           final account = starSyncAccountHash(loginId);
-          if (account != null) await _setActiveLoginAccount(account);
+          if (account != null) _submitLoginAccount(account);
         }
         return;
       }

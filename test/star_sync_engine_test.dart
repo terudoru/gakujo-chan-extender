@@ -856,6 +856,37 @@ void main() {
     },
   );
 
+  test('synchronous invalidation stops a sync blocked in list', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? active = starSyncAccountHash('student');
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      accountHash: () => active,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    remote.listStarted = Completer<void>();
+    remote.listRelease = Completer<void>();
+    final started = remote.listStarted!;
+    final release = remote.listRelease!;
+    final puts = remote.puts;
+    final deletes = remote.deletes;
+    final syncing = engine.syncNow();
+    await started.future;
+    active = null;
+    final change = engine.runAccountChange(() async {});
+    release.complete();
+    await syncing;
+    await change;
+    expect(remote.puts, puts);
+    expect(remote.deletes, deletes);
+    engine.dispose();
+  });
+
   test('account change waits for the complete sync', () async {
     final remote = _Transport();
     final storage = _Storage();

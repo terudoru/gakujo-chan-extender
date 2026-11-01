@@ -729,11 +729,17 @@ class StarSyncEngine {
     }
   }
 
+  void _assertCurrentAccount(StarSyncState state) {
+    if (_currentAccount() != state.boundAccount) {
+      throw const StarSyncAccountMismatchException();
+    }
+  }
+
   Future<int> localStarCount() async =>
       (await activityStore.loadStarredMessages()).length;
 
   /// Read the retired key before an explicit reset removes remote data.
-  Future<String?> _deleteRemoteData(StarSyncTransport transport) async {
+  Future<String?> _deleteRemoteData(StarSyncTransport transport, String account) async {
     String? retiredKeyId;
     try {
       final keyring = await transport.get(_keyringPath);
@@ -746,16 +752,20 @@ class StarSyncEngine {
       // An explicit reset must also recover from an unreadable keyring.
     }
     for (final entry in await transport.list(_deviceDirectory)) {
+      if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
       await transport.delete(entry.path);
     }
     for (final entry in await transport.list(_backupDirectory)) {
+      if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
       await transport.delete(entry.path);
     }
     for (final name in _collectionNames()) {
       for (final entry in await transport.list('sync/$name')) {
+        if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
         await transport.delete(entry.path);
       }
     }
+    if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
     await transport.delete(_keyringPath);
     return retiredKeyId;
   }
@@ -845,6 +855,7 @@ class StarSyncEngine {
     final raw = await _storage.read(key: starSyncPendingDraftClearKey);
     if (raw == null) return true;
     final time = DateTime.tryParse(raw);
+    if (state != null) _assertCurrentAccount(state);
     if (time == null ||
         clearDraftsBefore == null ||
         !await clearDraftsBefore!(time)) {
@@ -866,9 +877,10 @@ class StarSyncEngine {
     final account = _setupAccount(expectedAccount, expectedGeneration);
     final transport = _transportFactory(config);
     try {
+      _setupAccount(account, expectedGeneration);
       await transport.ensureDirectory(_deviceDirectory);
       final retiredKeyId = resetExisting
-          ? await _deleteRemoteData(transport)
+          ? await _deleteRemoteData(transport, account)
           : null;
       var remote = await transport.get(_keyringPath);
       if (remote == null) {
@@ -972,9 +984,10 @@ class StarSyncEngine {
     final account = _setupAccount(expectedAccount, expectedGeneration);
     final transport = _transportFactory(config);
     try {
+      _setupAccount(account, expectedGeneration);
       await transport.ensureDirectory(_deviceDirectory);
       final retiredKeyId = resetExisting
-          ? await _deleteRemoteData(transport)
+          ? await _deleteRemoteData(transport, account)
           : null;
       if (await transport.get(_keyringPath) != null) {
         if (resetExisting) throw StarSyncSetupRaceException();
@@ -983,6 +996,7 @@ class StarSyncEngine {
       _setupAccount(account, expectedGeneration);
       final created = createStarSyncPairingKeyring();
       try {
+        _setupAccount(account, expectedGeneration);
         await transport.put(
           _keyringPath,
           utf8.encode(jsonEncode(created.keyring.toJson())),
@@ -1119,9 +1133,11 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
-        final retiredKeyId = await _deleteRemoteData(transport);
+        final retiredKeyId = await _deleteRemoteData(transport, state.boundAccount);
         if (retiredKeyId != null) state.retiredKeyIds[retiredKeyId] = _now();
         final created = createStarSyncPairingKeyring();
+        await _requireBoundAccount();
+        _assertCurrentAccount(state);
         await transport.put(
           _keyringPath,
           utf8.encode(jsonEncode(created.keyring.toJson())),
@@ -1507,6 +1523,8 @@ class StarSyncEngine {
                 final latest = await transport.get(entry.path);
                 if (latest != null &&
                     starSyncFileKeyId(latest.bytes) == fileKeyId) {
+                  if (!await _accountMatches(state)) return const StarSyncResult();
+                  _assertCurrentAccount(state);
                   await transport.delete(entry.path);
                 }
               }
@@ -1650,6 +1668,7 @@ class StarSyncEngine {
           plaintext: document.toBytes(),
         );
         if (!await _accountMatches(state)) return const StarSyncResult();
+        _assertCurrentAccount(state);
         await transport.put(ownPath, encrypted);
         state.lastUploadedHash = hash;
       }
@@ -1813,6 +1832,8 @@ class StarSyncEngine {
         );
         if (!record.deleted) live[record.key] = record.value;
       }
+      if (!await _accountMatches(state)) throw const _AccountChanged();
+      _assertCurrentAccount(state);
       if (!await collection.applyLocal(
         collection.restoreSnapshot(live),
         basedOn: local,
@@ -1883,6 +1904,8 @@ class StarSyncEngine {
               );
               if (latest != null &&
                   starSyncFileKeyId(latest.bytes) == fileKeyId) {
+                if (!await _accountMatches(state)) throw const _AccountChanged();
+                _assertCurrentAccount(state);
                 await transport.delete(entry.path);
               }
             }
@@ -2047,6 +2070,7 @@ class StarSyncEngine {
     }
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
+    _assertCurrentAccount(state);
     if (!await collection.applyLocal(live, basedOn: local)) {
       _refuseCollection(state, name);
       return (changed: false, skipped: skipped);
@@ -2070,8 +2094,10 @@ class StarSyncEngine {
       rethrow;
     }
     if (encrypted != null) {
+      _assertCurrentAccount(state);
       await transport.ensureDirectory(directory);
       if (!await _accountMatches(state)) throw const _AccountChanged();
+      _assertCurrentAccount(state);
       await transport.put(path, encrypted);
       next['lastUploadedHash'] = hash;
       await _saveState();
@@ -2317,6 +2343,8 @@ class StarSyncEngine {
           final wrapped = utf8.encode(
             await _rewrapKeyringJson(encoded, bytes, next),
           );
+          await _requireBoundAccount();
+          _assertCurrentAccount(_state!);
           await transport.put(_keyringPath, wrapped);
         } finally {
           transport.close();
@@ -2353,7 +2381,7 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
-        final retiredKeyId = await _deleteRemoteData(transport);
+        final retiredKeyId = await _deleteRemoteData(transport, _state!.boundAccount);
         if (retiredKeyId != null) _state!.retiredKeyIds[retiredKeyId] = _now();
         final memory = kdfParams.memoryKiB;
         final iterations = kdfParams.iterations;
@@ -2364,6 +2392,8 @@ class StarSyncEngine {
           iterations,
           parallelism,
         );
+        await _requireBoundAccount();
+        _assertCurrentAccount(_state!);
         await transport.put(
           _keyringPath,
           utf8.encode(created),
@@ -2510,8 +2540,10 @@ class StarSyncEngine {
               }),
             ),
           );
+          _assertCurrentAccount(state);
           await transport.ensureDirectory(_backupDirectory);
           await _requireBackupAccount();
+          _assertCurrentAccount(state);
           await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
           state.lastBackupUploadAt = _now().toUtc();
           if (state.lastError == 'バックアップを保存できませんでした') {
@@ -2607,6 +2639,8 @@ class StarSyncEngine {
     _validateBackupDevice(deviceId);
     final transport = _transportFactory(_config!);
     try {
+      await _requireBackupAccount();
+      _assertCurrentAccount(_state!);
       await transport.delete('$_backupDirectory/$deviceId');
     } finally {
       transport.close();
@@ -2621,9 +2655,15 @@ class StarSyncEngine {
     }
     final transport = _transportFactory(_config!);
     try {
+      await _requireBoundAccount();
+      _assertCurrentAccount(_state!);
       await transport.delete('$_deviceDirectory/$deviceId');
+      await _requireBoundAccount();
+      _assertCurrentAccount(_state!);
       await transport.delete('$_backupDirectory/$deviceId');
       for (final name in _collectionNames()) {
+        await _requireBoundAccount();
+        _assertCurrentAccount(_state!);
         await transport.delete('sync/$name/$deviceId');
       }
     } finally {
@@ -2642,8 +2682,12 @@ class StarSyncEngine {
         if (deleteOwnRemoteFile && _config != null && _state != null) {
           final transport = _transportFactory(_config!);
           try {
+            await _requireBoundAccount();
+            _assertCurrentAccount(_state!);
             await transport.delete('$_deviceDirectory/${_state!.deviceId}');
             for (final name in _collectionNames()) {
+              await _requireBoundAccount();
+              _assertCurrentAccount(_state!);
               await transport.delete('sync/$name/${_state!.deviceId}');
             }
           } finally {

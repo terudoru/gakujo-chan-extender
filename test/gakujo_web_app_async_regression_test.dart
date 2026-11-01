@@ -18,6 +18,67 @@ import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  group('login identity confirmation', () {
+    test('failed login and two-factor pages keep a submission pending', () {
+      final identity = GakujoLoginIdentity();
+      expect(identity.submit('account-a'), isTrue);
+      identity.challenge();
+      expect(identity.active, isNull);
+      expect(identity.pending, 'account-a');
+      identity.challenge();
+      expect(identity.pending, 'account-a');
+      expect(identity.confirm(), 'account-a');
+      identity.active = 'account-a';
+      expect(identity.active, 'account-a');
+    });
+
+    test('a new submission replaces the candidate and clears active identity', () {
+      final identity = GakujoLoginIdentity()..active = 'account-a';
+      expect(identity.submit('account-b'), isTrue);
+      expect(identity.active, isNull);
+      identity.submit('account-c');
+      expect(identity.confirm(), 'account-c');
+    });
+
+    test('login fields on a generic URL invalidate an active identity', () {
+      final identity = GakujoLoginIdentity()..active = 'account-a';
+      final state = gakujoPortalAuthStateFromJavaScriptResult({
+        'hasLoginFields': true,
+        'hasTwoFactorField': false,
+        'hasAuthenticatedMarker': false,
+      }, recognizeFieldFree: true);
+      if (isGakujoAuthenticationChallenge(
+        authState: state,
+        urlLooksLikeLoginOrTimeout: false,
+      )) {
+        identity.challenge();
+      }
+      expect(identity.active, isNull);
+    });
+
+    test('restored identity waits for a field-free page and is discarded on login', () {
+      final identity = GakujoLoginIdentity()..restored = 'account-a';
+      expect(identity.active, isNull);
+      expect(identity.confirm(), 'account-a');
+      final login = GakujoLoginIdentity()..restored = 'account-a';
+      login.challenge();
+      expect(login.active, isNull);
+      expect(login.confirm(), isNull);
+      expect(
+        gakujoPortalAuthStateFromJavaScriptResult({
+          'hasLoginFields': false,
+          'hasTwoFactorField': false,
+          'hasAuthenticatedMarker': false,
+        }, recognizeFieldFree: true),
+        GakujoPortalAuthState.fieldFree,
+      );
+      expect(
+        gakujoPortalAuthStateFromJavaScriptResult(null, recognizeFieldFree: true),
+        GakujoPortalAuthState.unknown,
+      );
+    });
+  });
+
   group('native download routing', () {
     test('uses the captured GET path with a suggested name and course estimate',
         () async {
