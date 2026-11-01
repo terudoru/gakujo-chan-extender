@@ -1775,7 +1775,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final revision = _loginIdentity.revision;
     final restored = await SecureStorageFactory.create().read(key: _activeLoginAccountKey);
     if (revision != _loginIdentity.revision ||
-        (_loginIdentity.pageSeen && !_loginIdentity.pageConfirmed)) return;
+        (_loginIdentity.pageSeen && !_loginIdentity.pageConfirmed)) {
+      return;
+    }
     _loginIdentity.restored = restored;
     if (_loginIdentity.pageSeen && _loginIdentity.pageConfirmed && restored != null) {
       _loginIdentity.restored = null;

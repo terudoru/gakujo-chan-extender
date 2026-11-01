@@ -739,7 +739,10 @@ class StarSyncEngine {
       (await activityStore.loadStarredMessages()).length;
 
   /// Read the retired key before an explicit reset removes remote data.
-  Future<String?> _deleteRemoteData(StarSyncTransport transport, String account) async {
+  Future<String?> _deleteRemoteData(
+    StarSyncTransport transport,
+    String account,
+  ) async {
     String? retiredKeyId;
     try {
       final keyring = await transport.get(_keyringPath);
@@ -752,20 +755,28 @@ class StarSyncEngine {
       // An explicit reset must also recover from an unreadable keyring.
     }
     for (final entry in await transport.list(_deviceDirectory)) {
-      if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
+      if (_currentAccount() != account) {
+        throw const StarSyncAccountMismatchException();
+      }
       await transport.delete(entry.path);
     }
     for (final entry in await transport.list(_backupDirectory)) {
-      if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
+      if (_currentAccount() != account) {
+        throw const StarSyncAccountMismatchException();
+      }
       await transport.delete(entry.path);
     }
     for (final name in _collectionNames()) {
       for (final entry in await transport.list('sync/$name')) {
-        if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
+        if (_currentAccount() != account) {
+          throw const StarSyncAccountMismatchException();
+        }
         await transport.delete(entry.path);
       }
     }
-    if (_currentAccount() != account) throw const StarSyncAccountMismatchException();
+    if (_currentAccount() != account) {
+      throw const StarSyncAccountMismatchException();
+    }
     await transport.delete(_keyringPath);
     return retiredKeyId;
   }
@@ -1133,7 +1144,11 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
-        final retiredKeyId = await _deleteRemoteData(transport, state.boundAccount);
+        final retiredKeyId = await _deleteRemoteData(
+          transport,
+          state.boundAccount ??
+              (throw const StarSyncAccountMismatchException()),
+        );
         if (retiredKeyId != null) state.retiredKeyIds[retiredKeyId] = _now();
         final created = createStarSyncPairingKeyring();
         await _requireBoundAccount();
@@ -1523,7 +1538,9 @@ class StarSyncEngine {
                 final latest = await transport.get(entry.path);
                 if (latest != null &&
                     starSyncFileKeyId(latest.bytes) == fileKeyId) {
-                  if (!await _accountMatches(state)) return const StarSyncResult();
+                  if (!await _accountMatches(state)) {
+                    return const StarSyncResult();
+                  }
                   _assertCurrentAccount(state);
                   await transport.delete(entry.path);
                 }
@@ -1904,7 +1921,9 @@ class StarSyncEngine {
               );
               if (latest != null &&
                   starSyncFileKeyId(latest.bytes) == fileKeyId) {
-                if (!await _accountMatches(state)) throw const _AccountChanged();
+                if (!await _accountMatches(state)) {
+                  throw const _AccountChanged();
+                }
                 _assertCurrentAccount(state);
                 await transport.delete(entry.path);
               }
@@ -2381,7 +2400,11 @@ class StarSyncEngine {
       await _requireBoundAccount();
       final transport = _transportFactory(_config!);
       try {
-        final retiredKeyId = await _deleteRemoteData(transport, _state!.boundAccount);
+        final retiredKeyId = await _deleteRemoteData(
+          transport,
+          _state!.boundAccount ??
+              (throw const StarSyncAccountMismatchException()),
+        );
         if (retiredKeyId != null) _state!.retiredKeyIds[retiredKeyId] = _now();
         final memory = kdfParams.memoryKiB;
         final iterations = kdfParams.iterations;
