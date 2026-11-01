@@ -1,7 +1,8 @@
 const vm: any = require('node:vm');
+const assert: any = require('node:assert/strict');
 const {scripts, scenario}: any = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
 const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
-let headerQueryCount = 0, urlParseCount = 0, rowCellReadCount = 0;
+let headerQueryCount = 0, urlParseCount = 0, rowCellReadCount = 0, pressedWriteCount = 0;
 const performanceScenario = scenario === 'largeList' || scenario === 'growingList';
 class Element {
   [key: string]: any;
@@ -12,7 +13,7 @@ class Element {
   get textContent() { return this._text + this.children.map(e => e.textContent).join(''); }
   set textContent(value) { this._text = value; this.children = []; }
   get innerText() { return this.textContent; }
-  setAttribute(key, value) { this.attributes[key] = value; }
+  setAttribute(key, value) { if (key === 'aria-pressed') pressedWriteCount++; this.attributes[key] = value; }
   getAttribute(key) { return this.attributes[key] || null; }
   addEventListener(key, callback, capture) { this.listeners[key] = callback; this.captures[key] = capture; }
   removeEventListener(key, callback, capture) {
@@ -163,7 +164,9 @@ scripts.forEach((script, index) => {
   urlParseCounts.push(urlParseCount);
   rowCellReadCounts.push(rowCellReadCount);
   if (performanceScenario) {
+    const pressedWritesBeforeTick = pressedWriteCount;
     for (const callback of intervals.values()) callback();
+    assert.equal(pressedWriteCount, pressedWritesBeforeTick, 'unchanged stars must not rewrite aria-pressed');
     timerReadsUnchanged = timerReadsUnchanged &&
       headerQueryCount === headerQueryCounts[index] &&
       urlParseCount === urlParseCounts[index] && rowCellReadCount === rowCellReadCounts[index];

@@ -521,12 +521,24 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       return {url: url.href, method: 'GET', fileName: name.slice(0, 240), formFields: {}};
     } catch (_) { return null; }
   }
+  var mbgRejectedPreviewAnchors = new WeakMap<Element, string>();
   function mbgAttachSubmittedPreviews(doc: Document) {
     var anchors = doc.querySelectorAll<MbgPreviewAnchor>('a[href], button, input[type="submit"], input[type="button"]');
     for (var i = 0; i < anchors.length; i++) {
       var anchor = anchors[i];
       if (anchor.__mbgSubmittedPreviewButton && anchor.__mbgSubmittedPreviewButton.isConnected) continue;
-      if (!anchor.parentNode || !mbgRemoteFileRequest(anchor)) continue;
+      if (!anchor.parentNode) continue;
+      var signature: string | null = null;
+      if (String(anchor.tagName || '').toLowerCase() === 'a') {
+        signature = (anchor.getAttribute('href') || '') + '\n' +
+          (anchor.getAttribute('onclick') || '') + '\n' + anchor.ownerDocument.location.href;
+        if (mbgRejectedPreviewAnchors.get(anchor) === signature) continue;
+      }
+      if (!mbgRemoteFileRequest(anchor)) {
+        if (signature !== null) mbgRejectedPreviewAnchors.set(anchor, signature);
+        continue;
+      }
+      if (signature !== null) mbgRejectedPreviewAnchors.delete(anchor);
       var button = doc.createElement('button'); button.type = 'button';
       button.textContent = 'プレビューを見る';
       button.setAttribute('data-mbg-submitted-preview', 'true');
@@ -547,10 +559,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
   }
   function mbgRemoteFileRequest(anchor: MbgPreviewAnchor) {
     try {
-      // Preview buttons inside a download form inherit that form. Never treat
-      // our own control as another download button on the next scan.
-      if (anchor.getAttribute('data-mbg-submitted-preview') !== null ||
-          anchor.getAttribute('data-mbg-upload-preview') !== null) return null;
+      // Injected controls can inherit download forms; never scan them.
+      if ((anchor.getAttribute('id') || '').startsWith('mbg-') ||
+          anchor.getAttributeNames().some(function(name) { return name.startsWith('data-mbg-'); })) return null;
       var page = new URL(anchor.ownerDocument.location.href);
       if (page.origin !== 'https://gakujo.iess.niigata-u.ac.jp' || page.username || page.password) return null;
       if (String(anchor.tagName || '').toLowerCase() !== 'a') {
