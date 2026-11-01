@@ -5894,7 +5894,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final email = _starSyncGoogleAuth.currentEmail ??
             await _starSyncGoogleAuth.restore();
         if (email == null ||
-            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) return;
+            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+          return;
+        }
         final saver = GoogleDriveFileSaver(
           account: email,
           accessToken: ({bool forceRefresh = false}) async {

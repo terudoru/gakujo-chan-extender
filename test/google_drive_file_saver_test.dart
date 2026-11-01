@@ -165,12 +165,15 @@ void main() {
       } else if (request.uri.path == '/upload/drive/v3/files') {
         final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
         uploads++;
-        final pending = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+        final pending =
+            jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
         expect(pending.last['id'], isNull);
         expect(pending.last['gakujoAccountHash'], isA<String>());
         uploadName = data['name'] as String;
         uploadParent = (data['parents'] as List).single as String;
-        uploadProperties = Map<String, dynamic>.from(data['appProperties'] as Map);
+        uploadProperties = Map<String, dynamic>.from(
+          data['appProperties'] as Map,
+        );
         received = 0;
         response.headers.set('location', base.resolve('/session').toString());
       } else {
@@ -371,23 +374,27 @@ void main() {
     },
   );
 
-  test('lost final response leaves an id-less record and later deletes the upload', () async {
-    dropFinal = true;
-    shareDuringUpload = 'Course';
-    await expectLater(
-      save('Course', 'file', 3),
-      throwsA(isA<GoogleDrivePendingCheckException>()),
-    );
-    final entries = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
-    expect(entries.single['id'], isNull);
-    expect(entries.single['name'], 'file');
-    expect(entries.single['gakujoAccountHash'], 'gakujo-hash');
-    expect(entries.single['size'], '3');
-    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
-    await saver.processPendingChecks();
-    expect(deleted, ['lost-upload']);
-    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
-  });
+  test(
+    'lost final response leaves an id-less record and later deletes the upload',
+    () async {
+      dropFinal = true;
+      shareDuringUpload = 'Course';
+      await expectLater(
+        save('Course', 'file', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()),
+      );
+      final entries =
+          jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+      expect(entries.single['id'], isNull);
+      expect(entries.single['name'], 'file');
+      expect(entries.single['gakujoAccountHash'], 'gakujo-hash');
+      expect(entries.single['size'], '3');
+      expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+      await saver.processPendingChecks();
+      expect(deleted, ['lost-upload']);
+      expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+    },
+  );
 
   test('lost final response is verified when folders remain private', () async {
     dropFinal = true;
@@ -400,16 +407,19 @@ void main() {
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 
-  test('an id-less entry remains pending when its upload cannot be found', () async {
-    dropFinal = true;
-    await expectLater(
-      save('Course', 'file', 3),
-      throwsA(isA<GoogleDrivePendingCheckException>()),
-    );
-    files.removeWhere((file) => file['id'] == 'lost-upload');
-    await expectLater(saver.processPendingChecks(), throwsStateError);
-    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
-  });
+  test(
+    'an id-less entry remains pending when its upload cannot be found',
+    () async {
+      dropFinal = true;
+      await expectLater(
+        save('Course', 'file', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()),
+      );
+      files.removeWhere((file) => file['id'] == 'lost-upload');
+      await expectLater(saver.processPendingChecks(), throwsStateError);
+      expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+    },
+  );
 
   test('retry only uses the account that owns the pending entry', () async {
     failCheck = true;

@@ -268,8 +268,10 @@ class GoogleDriveFileSaver {
           entry['parent'] is! String ||
           entry['account'] is! String ||
           (entry['id'] == null &&
-              (entry['name'] is! String || entry['size'] is! String ||
-                  entry['md5'] is! String || entry['started'] is! String ||
+              (entry['name'] is! String ||
+                  entry['size'] is! String ||
+                  entry['md5'] is! String ||
+                  entry['started'] is! String ||
                   entry['uploadKey'] is! String)) ||
           (entry['root'] as String).isEmpty ||
           (entry['parent'] as String).isEmpty) {
@@ -279,10 +281,12 @@ class GoogleDriveFileSaver {
     }).toList();
   }
 
-  Future<List<Map<String, String>>> _pendingChecks() => _readPendingChecks(_storage);
+  Future<List<Map<String, String>>> _pendingChecks() =>
+      _readPendingChecks(_storage);
 
   static Future<int> pendingCheckCount({FlutterSecureStorage? storage}) async =>
-      (await _readPendingChecks(storage ?? SecureStorageFactory.create())).length;
+      (await _readPendingChecks(storage ?? SecureStorageFactory.create()))
+          .length;
 
   Future<void> _savePendingChecks(List<Map<String, String>> entries) =>
       entries.isEmpty
@@ -309,8 +313,10 @@ class GoogleDriveFileSaver {
         if (file['name'] == entry['name'] &&
             file['size'] == entry['size'] &&
             file['md5Checksum'] == entry['md5'] &&
-            created != null && !created.toUtc().isBefore(started) &&
-            properties is Map && properties['mbgUpload'] == entry['uploadKey']) {
+            created != null &&
+            !created.toUtc().isBefore(started) &&
+            properties is Map &&
+            properties['mbgUpload'] == entry['uploadKey']) {
           ids.add(_id(file));
         }
       }
@@ -429,8 +435,10 @@ class GoogleDriveFileSaver {
         (DateTime.now().millisecondsSinceEpoch ~/ 1000) * 1000,
         isUtc: true,
       ).toIso8601String(),
-      'uploadKey': List.generate(16, (_) => _random.nextInt(256))
-          .map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
+      'uploadKey': List.generate(
+        16,
+        (_) => _random.nextInt(256),
+      ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
     };
     final entries = await _pendingChecks();
     entries.add(entry);
