@@ -463,6 +463,5 @@ class GoogleDriveSaveFolderShared implements Exception {
   const GoogleDriveSaveFolderShared();
 
   @override
-  String toString() =>
-      '保存先のフォルダが共有されていたため、Google ドライブへの保存を取り消しました';
+  String toString() => '保存先のフォルダが共有されていたため、Google ドライブへの保存を取り消しました';
 }
