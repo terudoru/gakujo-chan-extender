@@ -7574,6 +7574,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
+      _loginIdentity.pending = null;
+      _loginIdentity.restored = null;
+      await _setActiveLoginAccount(null, resync: false);
+      await StarSyncClipboardGuard.instance.clear();
+      try {
+        await _warnPendingDriveChecks();
+      } on Object catch (error) {
+        developer.log('Failed to check saved Drive files: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
+      }
       await _starSyncEngine.runAccountChange(() async {
         await _starSyncEngine.resetInMemory();
         _starSyncLoad = null;
@@ -7584,7 +7594,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           developer.log('Failed to sign out of Google: ${error.runtimeType}',
               name: 'MoreBetterGakujo');
         }
+        // Like 「データをすべて削除」, keep the record of unverified Drive
+        // uploads so the startup warning still points at them.
+        String? pendingChecks;
+        try {
+          pendingChecks = await SecureStorageFactory.create()
+              .read(key: googleDrivePendingChecksKey);
+        } on Object {
+          // An unreadable store has nothing left to carry over.
+        }
         await SecureStorageFactory.resetStorage();
+        if (pendingChecks != null) {
+          try {
+            await SecureStorageFactory.create()
+                .write(key: googleDrivePendingChecksKey, value: pendingChecks);
+          } on Object catch (error) {
+            developer.log(
+                'Failed to keep pending Drive checks: ${error.runtimeType}',
+                name: 'MoreBetterGakujo');
+          }
+        }
         _appSettings = _appSettings.copyWith(loginCredentials: null);
         _starSyncLoad = null;
       });
