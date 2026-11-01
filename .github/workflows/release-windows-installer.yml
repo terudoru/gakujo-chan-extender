@@ -66,8 +66,14 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
+        run: python scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+
       - name: Build Windows app
-        run: flutter build windows --release
+        run: flutter build windows --release --dart-define-from-file=build/google_oauth_defines.json
 
       - name: Install Inno Setup
         shell: pwsh

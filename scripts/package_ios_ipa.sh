@@ -14,7 +14,11 @@ esac
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   flutter pub get
-  flutter build ios --release --no-codesign
+  build_args=()
+  if [ -n "${DART_DEFINE_FILE:-}" ]; then
+    build_args+=("--dart-define-from-file=$DART_DEFINE_FILE")
+  fi
+  flutter build ios --release --no-codesign "${build_args[@]}"
 fi
 
 if [ ! -d "$app_path" ]; then

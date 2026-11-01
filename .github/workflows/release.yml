@@ -174,8 +174,13 @@ jobs:
             "keyPassword=$ANDROID_KEY_PASSWORD" \
             > "${GITHUB_WORKSPACE}/android/key.properties"
 
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID }}
+        run: python3 scripts/write_google_oauth_defines.py --platform android --out build/google_oauth_defines.json
+
       - name: Build Android APK
-        run: flutter build apk --release
+        run: flutter build apk --release --dart-define-from-file=build/google_oauth_defines.json
 
       - name: Verify Android signing identity and upgrade version
         shell: bash
@@ -233,9 +238,15 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_IOS_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_IOS_CLIENT_ID }}
+        run: python3 scripts/write_google_oauth_defines.py --platform ios --out build/google_oauth_defines.json --ios-xcconfig ios/Flutter/GoogleOAuth.xcconfig
+
       - name: Package unsigned iOS IPA
         env:
           OUTPUT_PATH: dist/${{ env.APP_NAME }}-${{ inputs.tag_name || github.ref_name }}.ipa
+          DART_DEFINE_FILE: build/google_oauth_defines.json
         run: ./scripts/package_ios_ipa.sh
 
       - name: Upload iOS artifact
@@ -278,8 +289,14 @@ jobs:
           bash scripts/test_darwin_secure_storage.sh
           flutter test --no-pub
 
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
+        run: python3 scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+
       - name: Build macOS app
-        run: flutter build macos --release
+        run: flutter build macos --release --dart-define-from-file=build/google_oauth_defines.json
 
       - name: Verify macOS app bundle and launch
         timeout-minutes: 2
@@ -332,8 +349,14 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
+        run: python scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+
       - name: Build Windows app
-        run: flutter build windows --release
+        run: flutter build windows --release --dart-define-from-file=build/google_oauth_defines.json
 
       - name: Install Inno Setup
         shell: pwsh

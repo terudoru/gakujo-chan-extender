@@ -133,7 +133,7 @@ flutter build windows --release
 
 ## Google OAuth クライアント
 
-端末間同期の「Google ドライブで同期」と、ダウンロードの Google ドライブ保存に使います。クライアント ID を組み込まないビルドでは、このボタンは出ず、WebDAV/S3 だけが選べます。いまのリリース workflow は、Google の `--dart-define` を渡していません。
+端末間同期の「Google ドライブで同期」と、ダウンロードの Google ドライブ保存に使います。クライアント ID を組み込まないビルドでは、このボタンは出ず、WebDAV/S3 だけが選べます。リリース workflow は Repository secrets の `GOOGLE_OAUTH_DESKTOP_CLIENT_ID`、`GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET`、`GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID`、`GOOGLE_OAUTH_IOS_CLIENT_ID` から dart-define ファイルと、iOS 用の `GoogleOAuth.xcconfig` を作ります。必要な secret がなければリリースは失敗します。
 
 1. Google Cloud で External の同意画面を作り、`drive.appdata`、`openid`、`email` を設定して本番として公開する。ダウンロードの Google ドライブ保存は、使うときに `drive.file` を追加で求める
 2. Desktop クライアントを作り、Windows/macOS のビルドで `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...` と `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` を渡す。インストール型アプリのシークレットは、Google の扱いでも機密ではない
