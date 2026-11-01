@@ -51,9 +51,33 @@ void main() {
         () => uploadAborted = true,
       );
       expect(identity.active, isNull);
-      expect(identity.pending, isNull);
+      // The login form posts back to a login URL; its candidate must survive.
+      expect(identity.pending, 'account-b');
       expect(identity.restored, isNull);
       expect(uploadAborted, isTrue);
+    });
+
+    test('a login form after the submit drops the candidate; 2FA keeps it', () {
+      final identity = GakujoLoginIdentity();
+      identity.submit('account-b', navigation: 3);
+      identity.invalidateLoginNavigation(
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/login.do',
+        () {},
+      );
+      // A probe of the page the form was submitted from keeps the candidate.
+      identity.loginFormShown(probeRevision: identity.revision, navigation: 3);
+      expect(identity.pending, 'account-b');
+      // A probe that began before a newer submit does not drop it either.
+      identity.loginFormShown(probeRevision: identity.revision - 1, navigation: 4);
+      expect(identity.pending, 'account-b');
+      // The 2FA page shows no login form: it stays pending until the portal.
+      identity.challenge();
+      expect(identity.pending, 'account-b');
+      // The login form again on a later page: the login failed.
+      identity.loginFormShown(probeRevision: identity.revision, navigation: 4);
+      expect(identity.pending, isNull);
+      // Going back to a page still signed in as someone else promotes nothing.
+      expect(identity.confirm(GakujoPortalAuthState.authenticated), isNull);
     });
 
     test('login fields on a generic URL invalidate an active identity', () {

@@ -980,11 +980,13 @@ class GakujoLoginIdentity {
   String? pending;
   String? restored;
   int revision = 0;
+  int? pendingNavigation;
   bool pageConfirmed = false;
   bool pageSeen = false;
 
-  bool submit(String account) {
+  bool submit(String account, {int? navigation}) {
     pending = account;
+    pendingNavigation = navigation;
     restored = null;
     pageConfirmed = false;
     revision++;
@@ -1002,9 +1004,20 @@ class GakujoLoginIdentity {
 
   void invalidateLoginNavigation(String url, void Function() cancelUploads) {
     if (!AllowedWebOrigins.isLoginOrTimeoutPage(url)) return;
-    pending = null;
+    // The login form posts back to login.do, so the submitted candidate must
+    // survive its own navigation; a failed login drops it in loginFormShown.
     challenge();
     cancelUploads();
+  }
+
+  /// A login form on a page loaded after the submit means the login failed.
+  /// A probe that started before a newer submit leaves that one alone.
+  void loginFormShown({required int probeRevision, required int navigation}) {
+    final submittedAt = pendingNavigation;
+    if (pending == null || probeRevision != revision) return;
+    if (submittedAt != null && navigation <= submittedAt) return;
+    pending = null;
+    pendingNavigation = null;
   }
 
   String? confirm(GakujoPortalAuthState authState) {
@@ -1013,6 +1026,7 @@ class GakujoLoginIdentity {
     pageConfirmed = true;
     final account = pending ?? restored;
     pending = null;
+    pendingNavigation = null;
     restored = null;
     return account;
   }
@@ -1786,7 +1800,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _submitLoginAccount(String account) {
-    if (_loginIdentity.submit(account)) {
+    if (_loginIdentity.submit(account, navigation: _navigationRevision)) {
       unawaited(_setActiveLoginAccount(null, resync: false));
     }
   }
@@ -5784,12 +5798,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // callback. Give that DOM mutation time to settle before classifying the
       // shared portal URL as an ordinary authenticated page.
       for (var attempt = 0; attempt < 3; attempt += 1) {
+        final probeRevision = _loginIdentity.revision;
+        final navigation = _navigationRevision;
         final result = await _controller.runJavaScriptReturningResult(
           gakujoPortalAuthStateProbeScript,
         );
         final state = gakujoPortalAuthStateFromJavaScriptResult(
           result,
         );
+        if (state == GakujoPortalAuthState.login &&
+            navigation == _navigationRevision) {
+          _loginIdentity.loginFormShown(
+            probeRevision: probeRevision,
+            navigation: navigation,
+          );
+        }
         if (state == GakujoPortalAuthState.login ||
             state == GakujoPortalAuthState.twoFactor) {
           _loginIdentity.challenge();
