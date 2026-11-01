@@ -17,7 +17,7 @@ void main() {
             GakujoUploadPreviewScript.build(compactAndroid: compactAndroid),
           );
           final result = await Process.run('node', [
-            'test/upload_preview_lifecycle.mjs',
+            'test/upload_preview_lifecycle.mts',
             script.path,
             compactAndroid ? 'android' : 'desktop',
           ]);

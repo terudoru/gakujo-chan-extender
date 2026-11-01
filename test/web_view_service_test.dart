@@ -12,17 +12,7 @@ void main() {
     final guard = GakujoJavaScriptChannelGuard(token: 'test-capability');
     final native = guard.register('TrustedChannel');
     final result = await Process.run('node', [
-      '-e',
-      r'''const vm = require('node:vm');
-const [script, native] = process.argv.slice(1);
-const messages = [];
-const top = {}; top.top = top;
-top[native] = {postMessage: value => messages.push(value)};
-vm.runInNewContext(script, {window: top});
-top.TrustedChannel.postMessage('allowed');
-const frame = {top: {}}; frame[native] = {postMessage: value => messages.push(value)};
-vm.runInNewContext(script, {window: frame});
-process.stdout.write(JSON.stringify({messages, frameHasWrapper: !!frame.TrustedChannel}));''',
+      'test/support/web_view_service_inline_0.cts',
       guard.installScript(), native,
     ]);
     expect(result.exitCode, 0, reason: '${result.stderr}');

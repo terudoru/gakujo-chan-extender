@@ -22,13 +22,13 @@ void main() {
     expect(
         script,
         contains(
-          'body.style.transform = \'scale(\' + effectiveZoom + \')\'',
+          'body.style.transform = "scale(" + effectiveZoom + ")"',
         ));
     expect(script, contains('element.style.minWidth'));
     expect(script, contains('element.style.minHeight'));
     expect(script, isNot(contains('appendChild')));
     expect(script, isNot(contains('insertBefore')));
-    expect(script, contains("body.style.transformOrigin = '0 0'"));
+    expect(script, contains('body.style.transformOrigin = "0 0"'));
     expect(script, isNot(contains('style.zoom = Math.round')));
     expect(script, isNot(contains('__MBG_REFLOW_WEB_VIEW')));
     expect(script, isNot(contains('__MBG_STEP_PAGE_ZOOM')));
@@ -47,7 +47,7 @@ void main() {
       () async {
     final result = await Process.run(
       'node',
-      ['-e', _shortcutHarness, DesktopPageZoomScript.build(1.25)],
+      ['test/support/desktop_page_zoom_script_shortcut_harness.cts', DesktopPageZoomScript.build(1.25)],
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
@@ -65,12 +65,12 @@ void main() {
   test('clears visual zoom state at 100 percent', () {
     final script = DesktopPageZoomScript.build(1);
 
-    expect(script, contains('if (Math.abs(effectiveZoom - 1) < 0.001)'));
-    expect(script, contains('body.style.transform = \'\''));
-    expect(script, contains('body.style.minWidth = \'\''));
-    expect(script, contains('body.style.minHeight = \'\''));
-    expect(script, contains('element.style.minWidth = \'\''));
-    expect(script, contains('element.style.minHeight = \'\''));
+    expect(script, contains('if (Math.abs(effectiveZoom - 1) < 1e-3)'));
+    expect(script, contains('body.style.transform = ""'));
+    expect(script, contains('body.style.minWidth = ""'));
+    expect(script, contains('body.style.minHeight = ""'));
+    expect(script, contains('element.style.minWidth = ""'));
+    expect(script, contains('element.style.minHeight = ""'));
   });
 
   test('fits the 100 percent baseline to the current desktop viewport', () {
@@ -85,7 +85,7 @@ void main() {
   test('reapplies baseline when the desktop page shape changes', () {
     final script = DesktopPageZoomScript.build(1);
 
-    expect(script, contains('addEventListener(\'resize\''));
+    expect(script, contains('addEventListener("resize"'));
     expect(script, contains('new win.MutationObserver'));
     expect(script, contains('scheduleReapply(win)'));
   });
@@ -105,8 +105,8 @@ void main() {
       originY: 567.8,
     );
 
-    expect(script, contains('x: 123.4'));
-    expect(script, contains('y: 567.8'));
+    expect(script, contains('"originX":123.4'));
+    expect(script, contains('"originY":567.8'));
     expect(script, contains('function originFor(win)'));
     expect(
         script, contains('var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM'));
@@ -124,8 +124,7 @@ void main() {
   test('restores position when measurement clamps the browser scroll', () async {
     for (final zoom in [0.8, 1.4]) {
       final result = await Process.run('node', [
-        '-e',
-        _scrollClampHarness,
+        'test/support/desktop_page_zoom_script_scroll_clamp_harness.cts',
         DesktopPageZoomScript.build(zoom, originX: 400, originY: 300),
       ]);
       expect(result.exitCode, 0, reason: '${result.stderr}');
@@ -136,8 +135,7 @@ void main() {
 
   test('preserves the visible position on first zoom application', () async {
     final result = await Process.run('node', [
-      '-e',
-      _scrollClampHarness,
+      'test/support/desktop_page_zoom_script_scroll_clamp_harness.cts',
       DesktopPageZoomScript.build(1.0, originX: 400, originY: 300),
       'first',
     ]);
@@ -145,68 +143,3 @@ void main() {
     expect(jsonDecode(result.stdout as String), closeTo(3200, 0.01));
   });
 }
-
-const _scrollClampHarness = r'''
-const vm = require('node:vm');
-const win = {frames: [], innerWidth: 900, innerHeight: 700,
-  scrollX: 0, scrollY: 3200, __MBG_PAGE_EFFECTIVE_ZOOM: 1.4,
-  addEventListener() {}, clearTimeout() {}, setTimeout() {},
-  scrollTo(x,y) { this.scrollX=x; this.scrollY=y; }};
-if (process.argv[2] === 'first') delete win.__MBG_PAGE_EFFECTIVE_ZOOM;
-const style = new Proxy({}, {set(target,key,value) {
-  if (key === 'transform' && value === 'none') win.scrollY=Math.min(win.scrollY,2900);
-  target[key]=value; return true;
-}});
-win.document = {body:{style,scrollWidth:900,offsetWidth:900,scrollHeight:3600,offsetHeight:3600},
-  documentElement:{style:{},clientWidth:900,scrollWidth:900,offsetWidth:900,scrollHeight:3600,offsetHeight:3600}};
-vm.runInNewContext(process.argv[1], {window:win});
-process.stdout.write(JSON.stringify(win.scrollY));
-''';
-
-const _shortcutHarness = r'''
-const vm = require('node:vm');
-const script = process.argv[1];
-const actions = [];
-function page() {
-  const listeners = {};
-  return {
-    document: {
-      body: {style: {}, scrollWidth: 800, scrollHeight: 600},
-      documentElement: {style: {}, clientWidth: 800}
-    },
-    frames: [], innerWidth: 800, innerHeight: 600,
-    addEventListener(type, callback) {
-      (listeners[type] ||= []).push(callback);
-    },
-    listeners,
-    scrollTo() {}, clearTimeout() {}, setTimeout() {}
-  };
-}
-const window = page();
-const frame = page();
-window.frames.push(frame);
-window.MoreBetterGakujoDesktopZoom = {postMessage: action => actions.push(action)};
-const context = vm.createContext({window});
-vm.runInContext(script, context);
-vm.runInContext(script, context);
-const prevented = [];
-for (const [target, key, ctrlKey, metaKey] of [
-  [window, '+', true, false],
-  [window, '=', true, false],
-  [window, '-', true, false],
-  [window, '_', true, false],
-  [window, '0', true, false],
-  [frame, '+', false, true],
-  [window, '+', false, false],
-  [window, 'a', true, false]
-]) {
-  let blocked = false;
-  const event = {key, ctrlKey, metaKey, preventDefault() { blocked = true; }};
-  for (const listener of target.listeners.keydown) listener(event);
-  prevented.push(blocked);
-}
-process.stdout.write(JSON.stringify({
-  actions, prevented, zoom: window.__MBG_PAGE_ZOOM_VALUE,
-  keydownListeners: [window, frame].map(win => win.listeners.keydown.length)
-}));
-''';

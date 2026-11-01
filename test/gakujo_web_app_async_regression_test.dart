@@ -1984,8 +1984,7 @@ Future<Map<String, dynamic>> _evaluateAuthProbe(
   final result = await Process.run(
       'node',
       [
-        '-e',
-        _authProbeDomHarness,
+        'test/support/gakujo_web_app_async_regression_auth_probe_dom_harness.cts',
         gakujoPortalAuthStateProbeScript,
         jsonEncode(elements),
       ],
@@ -2003,8 +2002,7 @@ Future<Map<String, dynamic>> _evaluateAuthenticatedSessionReset() async {
   final result = await Process.run(
       'node',
       [
-        '-e',
-        _authenticatedSessionResetHarness,
+        'test/support/gakujo_web_app_async_regression_authenticated_session_reset_harness.cts',
         gakujoAuthenticatedSessionResetScript,
       ],
       stdoutEncoding: utf8,
@@ -2016,92 +2014,3 @@ Future<Map<String, dynamic>> _evaluateAuthenticatedSessionReset() async {
   );
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
 }
-
-const _authProbeDomHarness = r'''
-const vm = require('node:vm');
-const generatedScript = process.argv[1];
-const specs = JSON.parse(process.argv[2]);
-
-class FakeElement {
-  constructor(spec) {
-    this.attributes = {...spec};
-    this.innerText = spec.text || '';
-    this.textContent = this.innerText;
-    this.value = spec.value || '';
-    this.ownerDocument = null;
-  }
-  getAttribute(name) { return this.attributes[name] ?? null; }
-  getClientRects() { return this.attributes.display === 'none' ? [] : [{}]; }
-}
-
-const elements = specs.map((spec) => new FakeElement(spec));
-const inputs = elements.filter((element) =>
-  (element.getAttribute('tag') || '').toLowerCase() === 'input'
-);
-const document = {
-  body: new FakeElement({tag: 'body', text: ''}),
-  defaultView: null,
-  querySelectorAll(selector) {
-    if (selector === 'input') return inputs;
-    if (selector === 'a, button, input, [role="button"], img, #logout') {
-      return elements.filter((element) =>
-        ['a', 'button', 'input', 'img'].includes(
-          (element.getAttribute('tag') || '').toLowerCase()
-        ) ||
-        element.getAttribute('role') === 'button' ||
-        element.getAttribute('id') === 'logout'
-      );
-    }
-    return [];
-  }
-};
-const window = {
-  document,
-  frames: [],
-  getComputedStyle(element) {
-    return {
-      display: element.attributes.display || 'block',
-      visibility: 'visible',
-      opacity: '1'
-    };
-  }
-};
-window.window = window;
-document.defaultView = window;
-document.body.ownerDocument = document;
-for (const element of elements) element.ownerDocument = document;
-
-const output = vm.runInNewContext(generatedScript, {window, document});
-process.stdout.write(output);
-''';
-
-const _authenticatedSessionResetHarness = r'''
-const vm = require('node:vm');
-const generatedScript = process.argv[1];
-const values = new Map([
-  ['MBG_LOGIN_AUTOFILL_ERROR:/login:key', '1'],
-  ['MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:/login:key', '1'],
-  ['MBG_LOGIN_AUTOFILL_LAST_CREDENTIAL:/login', 'key'],
-  ['MBG_2FA_AUTOFILL_ERROR:/2fa:key', '1'],
-  ['MBG_2FA_AUTOFILL_SUBMIT_COUNT:/2fa:key', '1'],
-  ['UNRELATED', 'keep']
-]);
-const window = {
-  __MBG_LOGIN_AUTOFILL_SUBMITTED_KEY: 'credentials',
-  __MBG_2FA_AUTO_SUBMITTED_KEY: 'secret',
-  sessionStorage: {
-    get length() { return values.size; },
-    key(index) { return Array.from(values.keys())[index] || null; },
-    removeItem(key) { values.delete(key); }
-  }
-};
-window.window = window;
-vm.runInNewContext(generatedScript, {window});
-process.stdout.write(JSON.stringify({
-  hasLoginDocumentGuard:
-    Object.prototype.hasOwnProperty.call(window, '__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY'),
-  hasTwoFactorDocumentGuard:
-    Object.prototype.hasOwnProperty.call(window, '__MBG_2FA_AUTO_SUBMITTED_KEY'),
-  keys: Array.from(values.keys())
-}));
-''';

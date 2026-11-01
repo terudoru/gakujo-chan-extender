@@ -1,0 +1,10 @@
+# Keep third-party and build-output JavaScript out of GitHub's language stats.
+assets/js/upload_compression/*.min.js linguist-vendored
+assets/js/upload_compression/pdf_viewer.js linguist-vendored
+assets/js/upload_compression/qpdf.js linguist-vendored
+assets/pdf_preview/web/** linguist-generated
+
+# Built from web_scripts/ (TypeScript).
+assets/js/upload_compression/qpdf-worker.js linguist-generated
+tools/pdf_preview/web/orientation.js linguist-generated
+lib/src/generated/** linguist-generated

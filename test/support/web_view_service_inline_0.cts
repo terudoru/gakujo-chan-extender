@@ -1,0 +1,10 @@
+const vm: any = require('node:vm');
+const [script, native]: any = process.argv.slice(2);
+const messages: any = [];
+const top: any = {}; top.top = top;
+top[native] = {postMessage: value => messages.push(value)};
+vm.runInNewContext(script, {window: top});
+top.TrustedChannel.postMessage('allowed');
+const frame: any = {top: {}}; frame[native] = {postMessage: value => messages.push(value)};
+vm.runInNewContext(script, {window: frame});
+process.stdout.write(JSON.stringify({messages, frameHasWrapper: !!frame.TrustedChannel}));

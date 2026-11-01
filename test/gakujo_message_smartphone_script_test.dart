@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_list_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
+import 'package:morebettergakujo_flutter/src/generated/page_text_activity.g.dart';
 import 'package:test/test.dart';
 
 const _title = '情報セキュリティ概論 第4回 授業資料';
@@ -274,31 +274,16 @@ void main() {
 }
 
 // Exercise the actual private page-scan script, including its shared helpers.
-String _pageScanScript() {
-  final source = File('lib/src/gakujo_web_app.dart').readAsStringSync();
-  final start =
-      source.indexOf('Future<_PageTextSnapshot?> _readPageTextForActivity()');
-  final end = source.indexOf("''');", start);
-  final parts = RegExp(r"r'''([\s\S]*?)'''")
-      .allMatches(source.substring(start, end + 3))
-      .map((match) => match.group(1)!)
-      .toList();
-  expect(parts.length, 3);
-  return parts[0] +
-      gakujoSmartphoneMessageRowsScript +
-      parts[1] +
-      gakujoAssignmentRowsScript +
-      parts[2];
-}
+String _pageScanScript() => gakujoPageTextActivityJs;
 
 Future<Map<String, dynamic>> _evaluate(
     String mode, String scenario, List<String> scripts) async {
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_mobile_');
   try {
-    final harness = File.fromUri(directory.uri.resolve('harness.cjs'))
+    final harness = File.fromUri(directory.uri.resolve('harness.cts'))
       ..writeAsStringSync(
-          File('test/support/gakujo_message_smartphone_harness.cjs')
+          File('test/support/gakujo_message_smartphone_harness.cts')
               .readAsStringSync(),
           encoding: utf8);
     final input = File.fromUri(directory.uri.resolve('input.json'))

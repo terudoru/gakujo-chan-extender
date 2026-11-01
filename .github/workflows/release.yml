@@ -119,6 +119,10 @@ jobs:
         working-directory: tools/pdf_preview
         run: flutter pub get
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
       - name: Analyze and test Windows and Android boundaries
         run: |
           flutter analyze --no-pub
@@ -264,6 +268,10 @@ jobs:
 
       - name: Install Flutter dependencies
         run: flutter pub get
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
 
       - name: Test macOS security and Flutter behavior
         run: |

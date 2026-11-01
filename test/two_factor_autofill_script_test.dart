@@ -29,13 +29,13 @@ void main() {
   test('builds an autofill script for ninshoCode', () {
     final script = TwoFactorAutofillScript.build(token: '123456');
 
-    expect(script, contains('input[name="ninshoCode"]'));
+    expect(script, contains('"inputName":"ninshoCode"'));
     expect(script, contains('function allDocuments()'));
     expect(script, contains('function collect(win)'));
-    expect(script, contains("document.querySelectorAll('iframe, frame')"));
+    expect(script, contains('document.querySelectorAll("iframe, frame")'));
     expect(script, contains('documents[i].querySelector'));
     expect(script, contains('input.ownerDocument || document'));
-    expect(script, contains('var token = "123456";'));
+    expect(script, contains('"token":"123456"'));
     expect(script, contains('MBG_2FA_AUTOFILL_SUCCESS'));
     expect(script, contains('function findSubmitControl(input)'));
     expect(script, contains('form.requestSubmit()'));
@@ -58,14 +58,14 @@ void main() {
     // Recognise login/auth submit labels.
     expect(script, contains('ログイン|認証'));
     // CampusSquare send() fallback when no clickable control is found.
-    expect(script, contains("typeof pageWindow.send === 'function'"));
+    expect(script, contains('typeof pageWindow.send === "function"'));
     expect(script, contains('pageWindow.send()'));
   });
 
   test('escapes token as JavaScript string literal', () {
     final script = TwoFactorAutofillScript.build(token: '12"34');
 
-    expect(script, contains(r'var token = "12\"34";'));
+    expect(script, contains(r'"token":"12\"34"'));
   });
 
   test('can disable automatic submit', () {
@@ -74,19 +74,19 @@ void main() {
       autoSubmit: false,
     );
 
-    expect(script, contains('var autoSubmit = false;'));
+    expect(script, contains('"autoSubmit":false'));
   });
 
   test('limits automatic submit across reloads and stops after errors', () {
     final script = TwoFactorAutofillScript.build(token: '123456');
 
     expect(script, contains('window.sessionStorage.getItem(key)'));
-    expect(script, contains("sessionKey('SUBMIT_COUNT')"));
+    expect(script, contains('sessionKey("SUBMIT_COUNT")'));
     expect(script, contains('var maxAutoSubmitPerSession = 3;'));
     expect(script, contains('count >= maxAutoSubmitPerSession'));
     expect(script, contains('function hasTwoFactorError()'));
-    expect(script, contains("setSessionValue(sessionKey('ERROR'), '1')"));
-    expect(script, contains("reportProgress('submit-blocked'"));
+    expect(script, contains('setSessionValue(sessionKey("ERROR"), "1")'));
+    expect(script, contains('reportProgress("submit-blocked"'));
     expect(script, contains('markAutoSubmitAttempted()'));
   });
 
@@ -275,8 +275,7 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   final result = await Process.run(
       'node',
       [
-        '-e',
-        _nodeDomHarness,
+        'test/support/two_factor_autofill_dom_harness.cts',
         script,
         teardownScript ?? '',
         url ?? 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
@@ -291,138 +290,3 @@ Future<Map<String, dynamic>> _evaluateTwoFactorAssist(
   );
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;
 }
-
-const _nodeDomHarness = r'''
-const vm = require('node:vm');
-const generatedScript = process.argv[1];
-const generatedTeardown = process.argv[2];
-const spec = JSON.parse(process.argv[4] || '{}');
-const reports = [];
-const consoleLogs = [];
-let clickCount = 0;
-const clickedNames = [];
-const sessionValues = new Map();
-const activeTimers = new Map();
-let nextTimerId = 1;
-let fieldsAvailable = !generatedTeardown;
-
-class FakeEvent {
-  constructor(type, options) { this.type = type; Object.assign(this, options || {}); }
-}
-
-class FakeElement {
-  constructor(tag, attributes) {
-    this.tagName = tag.toUpperCase();
-    this.attributes = {...attributes};
-    this.value = '';
-    this.type = attributes.type || '';
-    this.innerText = attributes.text || '';
-    this.textContent = this.innerText;
-    this.ownerDocument = null;
-    this.form = null;
-  }
-  getAttribute(name) { return this.attributes[name] ?? null; }
-  hasAttribute(name) { return Object.hasOwn(this.attributes, name); }
-  getClientRects() { return this.attributes.display === 'none' ? [] : [{}]; }
-  closest(selector) { return selector === 'form' ? this.form : null; }
-  dispatchEvent() { return true; }
-  focus() {}
-  click() {
-    clickCount += 1;
-    clickedNames.push(this.getAttribute('name') || '');
-  }
-}
-
-const hidden = new FakeElement('input', {
-  name: 'ninshoCode', type: 'password', display: 'none'
-});
-const visible = new FakeElement('input', {
-  name: 'ninshoCode', type: 'password'
-});
-const controls = (spec.controls || [
-  {tag: 'button', type: 'submit', text: '認証', ...(spec.formOverride ? {formaction: spec.formOverride} : {})}
-]).map((attributes) => new FakeElement(attributes.tag, attributes));
-const form = {
-  getAttribute(name) { return name === 'action' ? (spec.formAction ?? null) : null; },
-  querySelectorAll(selector) {
-    const elements = [hidden, visible, ...controls];
-    if (selector === 'button, input, a, [role="button"]') return elements;
-    if (selector === 'button, input') {
-      return elements.filter((element) => ['BUTTON', 'INPUT'].includes(element.tagName));
-    }
-    return [];
-  }
-};
-const document = {
-  body: {innerText: '', textContent: ''},
-  location: new URL(process.argv[3]),
-  baseURI: spec.baseUri || process.argv[3],
-  defaultView: null,
-  querySelectorAll(selector) {
-    if (selector === 'iframe, frame') return [];
-    if (selector === 'input[name="ninshoCode"]') {
-      return fieldsAvailable ? [hidden, visible] : [];
-    }
-    return [];
-  }
-};
-const window = {
-  document,
-  Event: FakeEvent,
-  getComputedStyle(element) {
-    return {
-      display: element.attributes.display || 'block',
-      visibility: 'visible',
-      opacity: '1'
-    };
-  },
-  clearTimeout(id) { activeTimers.delete(id); },
-  setTimeout(callback) {
-    const id = nextTimerId++;
-    if (generatedTeardown) {
-      activeTimers.set(id, callback);
-    } else {
-      callback();
-    }
-    return id;
-  },
-  sessionStorage: {
-    getItem(key) { return sessionValues.get(key) || null; },
-    setItem(key, value) { sessionValues.set(key, String(value)); }
-  },
-  MoreBetterGakujoLoginAutofill: {
-    postMessage(payload) { reports.push(JSON.parse(payload)); }
-  }
-};
-window.window = window;
-document.defaultView = window;
-for (const element of [hidden, visible, ...controls]) {
-  element.ownerDocument = document;
-  element.form = form;
-}
-
-const context = {
-  window,
-  document,
-  URL,
-  location: new URL(process.argv[3]),
-  Event: FakeEvent,
-  console: {log(message) { consoleLogs.push(message); }}
-};
-vm.runInNewContext(generatedScript, context);
-if (generatedTeardown) {
-  vm.runInNewContext(generatedTeardown, context);
-  fieldsAvailable = true;
-  for (const callback of [...activeTimers.values()]) callback();
-}
-
-process.stdout.write(JSON.stringify({
-  hiddenValue: hidden.value,
-  visibleValue: visible.value,
-  clickCount,
-  clickedNames,
-  sessionValues: Object.fromEntries(sessionValues),
-  reports,
-  consoleLogs
-}));
-''';

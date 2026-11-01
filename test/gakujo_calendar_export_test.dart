@@ -1239,8 +1239,8 @@ void main() {
     expect(script, contains('titleLooksUseful'));
     expect(script, contains('termRangeText'));
     expect(script, contains('JSON.stringify({'));
-    expect(script, contains("host === 'calendar.google.com'"));
-    expect(script, isNot(contains("host.indexOf('google.')")));
+    expect(script, contains('host === "calendar.google.com"'));
+    expect(script, isNot(contains('host.indexOf("google.")')));
     expect(script, isNot(contains('function scanUnsafeTable')));
     expect(script, isNot(contains('function splitCourse')));
     expect(script, isNot(contains('scanDailyScheduleLines')));
@@ -1255,8 +1255,7 @@ void main() {
     final result = await Process.run(
         'node',
         [
-          '-e',
-          _calendarExtractionHarness,
+          'test/support/gakujo_calendar_export_calendar_extraction_harness.cts',
           GakujoCalendarExport.extractionScript(),
         ],
         stdoutEncoding: utf8,
@@ -1659,11 +1658,11 @@ END:VCALENDAR
     );
 
     expect(inspectScript, contains('googleスケジュール連携'));
-    expect(inspectScript, contains("'available'"));
-    expect(inspectScript, contains("'clickable'"));
+    expect(inspectScript, contains('"available"'));
+    expect(inspectScript, contains('"clickable"'));
     expect(inspectScript, contains('querySelectorAll'));
     expect(activateScript, contains('parent.click()'));
-    expect(activateScript, contains("status: 'clicked'"));
+    expect(activateScript, contains('status: "clicked"'));
   });
 
   test('official schedule export execution script targets export form', () {
@@ -1690,7 +1689,7 @@ END:VCALENDAR
     );
 
     expect(script, contains('XMLHttpRequest'));
-    expect(script, contains("checkbox.name === 'check2'"));
+    expect(script, contains('checkbox.name === "check2"'));
     expect(script, contains('executeExport'));
     expect(script, contains('2026/06/11'));
     expect(script, contains('responseText'));
@@ -1707,12 +1706,12 @@ END:VCALENDAR
 
     expect(monthScript, contains('loadnextmonth'));
     expect(monthScript, contains('loadbeforemonth'));
-    expect(monthScript, contains("label.indexOf('次') >= 0))"));
-    expect(monthScript, contains("label.indexOf('前') >= 0))"));
-    expect(monthScript, contains('targetYear = 2026'));
-    expect(monthScript, contains('targetMonth = 6'));
+    expect(monthScript, contains('label.indexOf("次") >= 0))'));
+    expect(monthScript, contains('label.indexOf("前") >= 0))'));
+    expect(monthScript, contains('"targetYear":2026'));
+    expect(monthScript, contains('"targetMonth":6'));
     expect(dayScript, contains('2026/06/23'));
-    expect(dayScript, contains("status: 'clicked'"));
+    expect(dayScript, contains('status: "clicked"'));
   });
 }
 
@@ -1740,67 +1739,3 @@ bool _hasUnpairedSurrogate(String value) {
   }
   return false;
 }
-
-const _calendarExtractionHarness = r'''
-const vm = require('node:vm');
-const extractionScript = process.argv[1];
-
-function cell(text) {
-  return {
-    innerText: String(text || ''),
-    textContent: String(text || ''),
-    querySelectorAll() { return []; }
-  };
-}
-
-function row(values) {
-  const children = values.map(cell);
-  const text = values.join(' ');
-  return {
-    children,
-    innerText: text,
-    textContent: text
-  };
-}
-
-function table(rows) {
-  return {
-    querySelectorAll(selector) {
-      return selector === 'tr' ? rows : [];
-    }
-  };
-}
-
-function documentWithTables(tables) {
-  return {
-    body: cell(''),
-    location: {href: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'},
-    querySelectorAll(selector) {
-      return selector === 'table' ? tables : [];
-    }
-  };
-}
-
-const scheduleTable = table([
-  row(['', '月', '火', '水']),
-  row(['', '1限: コンピュータ基礎 @ A-101', '', ''])
-]);
-const structuredTable = table([
-  row(['開講番号', '科目名', '曜日', '時限', '教室']),
-  row(['262G5001', '物理学基礎BⅠ', '火', '2限', 'F-271'])
-]);
-const child = {
-  document: documentWithTables([structuredTable]),
-  frames: []
-};
-const root = {
-  document: documentWithTables([scheduleTable]),
-  frames: [child]
-};
-
-const output = vm.runInNewContext(extractionScript, {
-  window: root,
-  URL
-});
-process.stdout.write(String(output));
-''';

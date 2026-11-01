@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+
+const script: any = await readFile(process.argv[2], 'utf8');
+let created: any = 0, callbacks: any = 0;
+const revoked: any = [];
+const window: any = {fail: true, pdfjsLib: {pageProvided: true},
+  __MBG_PDF_WORKER_URL: 'blob:page-provided',
+  __MBG_PDF_VIEWER_CSS: 'page-provided',
+  __MBG_UPLOAD_PREVIEW_LIBRARY_LOADED() { callbacks++; }};
+const context: any = vm.createContext({window, Blob, URL: {
+  createObjectURL() { return `blob:synthetic-${++created}`; },
+  revokeObjectURL(url: any) { revoked.push(url); },
+}});
+assert.equal(vm.runInContext(script, context), 'mbg-failed');
+assert.deepEqual(revoked, ['blob:synthetic-1']);
+assert.equal(window.__MBG_PDF_WORKER_URL, 'blob:page-provided');
+assert.equal(window.__MBG_PDF_VIEWER_CSS, 'page-provided');
+assert.equal(callbacks, 1, 'failure should wake waiting previews');
+window.fail = false;
+assert.equal(vm.runInContext(script, context), 'mbg-ready');
+assert.equal(window.__MBG_PDF_WORKER_URL, 'blob:synthetic-2');
+assert.deepEqual(revoked, ['blob:synthetic-1']);
+assert.equal(vm.runInContext(script, context), 'mbg-ready');
+assert.equal(created, 2, 'ready libraries should not create more Blob URLs');
