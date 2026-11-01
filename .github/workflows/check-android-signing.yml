@@ -120,7 +120,7 @@ jobs:
           printf '%s\n' "storeFile=$keystore" "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
             "keyAlias=$ANDROID_KEY_ALIAS" "keyPassword=$ANDROID_KEY_PASSWORD" > "$properties"
           flutter pub get
-          flutter build apk --release --no-pub
+          flutter build apk --release --target-platform android-arm64 --no-pub
       - name: Inspect the public APK signature
         shell: bash
         run: |

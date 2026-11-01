@@ -189,7 +189,7 @@ jobs:
         run: python3 .release-tools/scripts/write_google_oauth_defines.py --platform android --out build/google_oauth_defines.json
 
       - name: Build Android APK
-        run: flutter build apk --release --dart-define-from-file=build/google_oauth_defines.json
+        run: flutter build apk --release --target-platform android-arm64 --dart-define-from-file=build/google_oauth_defines.json
 
       - name: Verify Android signing identity and upgrade version
         shell: bash
