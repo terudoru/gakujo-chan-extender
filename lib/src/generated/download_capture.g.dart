@@ -7,7 +7,7 @@ const String gakujoDownloadCaptureJs = r'''
 (() => {
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
-    var captureVersion = 18;
+    var captureVersion = 20;
     if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
       if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
         window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -439,7 +439,7 @@ const String gakujoDownloadCaptureJs = r'''
       return /^(提出|提出する|送信|送信する)$/.test(text) || /^(取消|取消し|取り消し|取り消す|キャンセル|中止)$/.test(text) || /^(戻る|前へ|次へ|進む|確認|確認する)$/.test(text) || /^(確定保存|一時保存|保存|クリア|削除|登録|確定)(する)?$/.test(text) || /^(save|submit|confirm|back|clear|delete|register|cancel)$/.test(text) || /^(レポート|小テスト)?提出(確認)?$/.test(text) || /^(レポート|小テスト)?提出(用)?(画面|ページ)(へ|に進む|へ進む)?$/.test(text);
     }
     function formFields(form, submitter) {
-      var fields = {};
+      var fields = /* @__PURE__ */ Object.create(null);
       if (!form) {
         return fields;
       }
@@ -512,7 +512,7 @@ const String gakujoDownloadCaptureJs = r'''
       var enctype = (submissionAttribute(form, submitter, "enctype") || "application/x-www-form-urlencoded").toLowerCase();
       var target = submissionAttribute(form, submitter, "target") || "_self";
       if (!/^(GET|POST)$/.test(method) || method === "POST" && enctype !== "application/x-www-form-urlencoded" || !/^_self$/i.test(target)) return false;
-      var absoluteAction = absoluteUrlOf(form, action);
+      var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute("formaction") ? submitter : form, action);
       var fields = formFields(form, submitter);
       var signals = formDownloadSignals(absoluteAction, fields);
       if (signals.workflow) return false;
@@ -547,6 +547,10 @@ const String gakujoDownloadCaptureJs = r'''
         var href = (anchor.getAttribute("href") || "").trim();
         if (href.charAt(0) === "#" || /^javascript:/i.test(href)) return;
         var absoluteUrl = absoluteUrlOf(anchor, href);
+        var absoluteProtocol = new URL(absoluteUrl).protocol;
+        if (absoluteProtocol !== "http:" && absoluteProtocol !== "https:") {
+          return;
+        }
         var params = new URL(absoluteUrl).searchParams;
         if (anchor.hasAttribute("onclick") && !hasStrongDownloadSignal(absoluteUrl, {}) && !(/filerefer/i.test(params.get("_flowId") || "") && (params.get("fileId") || "").trim() && (!params.has("_eventId") || /download/i.test(params.get("_eventId"))))) {
           return;

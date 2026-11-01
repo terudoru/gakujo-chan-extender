@@ -5,6 +5,157 @@ import 'package:morebettergakujo_flutter/src/gakujo_quick_jump_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('prefers an exact link inside an equally matching onclick wrapper',
+      () async {
+    expect(
+        (await evaluate([
+          {
+            'id': 'wrapper',
+            'tag': 'div',
+            'text': 'シラバス',
+            'onclick': 'openSyllabus()'
+          },
+          {'id': 'syllabus', 'tag': 'a', 'text': 'シラバス', 'parentId': 'wrapper'},
+        ]))['clicked'],
+        ['syllabus']);
+  });
+
+  test('prefers an exact button inside an equally matching role wrapper',
+      () async {
+    expect(
+        (await evaluate([
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'syllabus',
+            'tag': 'button',
+            'text': 'シラバス',
+            'parentId': 'wrapper'
+          },
+        ]))['clicked'],
+        ['syllabus']);
+  });
+
+  test('prefers the deepest of three equally matching nested controls',
+      () async {
+    expect(
+        (await evaluate([
+          {'id': 'outer', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'middle',
+            'tag': 'div',
+            'text': 'シラバス',
+            'role': 'menuitem',
+            'parentId': 'outer'
+          },
+          {
+            'id': 'syllabus',
+            'tag': 'button',
+            'text': 'シラバス',
+            'parentId': 'middle'
+          },
+        ]))['clicked'],
+        ['syllabus']);
+  });
+
+  test('keeps an earlier exact match ahead of an unrelated nested pair',
+      () async {
+    expect(
+        (await evaluate([
+          {'id': 'first', 'tag': 'a', 'text': 'シラバス'},
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'nested',
+            'tag': 'button',
+            'text': 'シラバス',
+            'parentId': 'wrapper'
+          },
+        ]))['clicked'],
+        ['first']);
+  });
+
+  test('keeps an exact wrapper ahead of a partial inner match', () async {
+    expect(
+        (await evaluate([
+          {
+            'id': 'wrapper',
+            'tag': 'div',
+            'text': 'シラバス',
+            'onclick': 'openSyllabus()'
+          },
+          {
+            'id': 'syllabus-reference',
+            'tag': 'a',
+            'text': 'シラバス参照',
+            'parentId': 'wrapper'
+          },
+        ]))['clicked'],
+        ['wrapper']);
+  });
+
+  test('uses a clickable wrapper instead of an unclickable matching child',
+      () async {
+    expect(
+        await evaluate([
+          {
+            'id': 'wrapper',
+            'tag': 'div',
+            'text': '',
+            'aria-label': 'シラバス',
+            'role': 'button'
+          },
+          {
+            'id': 'synthetic',
+            'tag': 'a',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'noClick': true
+          },
+        ]),
+        {
+          'result': true,
+          'clicked': ['wrapper']
+        });
+  });
+
+  test('falls back to a matching wrapper when the inner click throws',
+      () async {
+    expect(
+        await evaluate([
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'inner',
+            'tag': 'a',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'clickThrows': true
+          },
+        ]),
+        {
+          'result': true,
+          'clicked': ['inner', 'wrapper']
+        });
+  });
+
+  test('tries an exact wrapper before an unrelated partial fallback',
+      () async {
+    expect(
+        await evaluate([
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'inner',
+            'tag': 'button',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'clickThrows': true
+          },
+          {'id': 'partial', 'tag': 'button', 'text': 'シラバス検索'},
+        ]),
+        {
+          'result': true,
+          'clicked': ['inner', 'wrapper']
+        });
+  });
+
   test('clicks syllabus link rather than the surrounding page container',
       () async {
     expect(

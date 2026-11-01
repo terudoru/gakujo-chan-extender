@@ -139,13 +139,18 @@ class GakujoDownloadOperationGate {
     if (atCapacity) return null;
     final startedAt = now ?? DateTime.now();
     _recentRequestStarts.removeWhere(
-      (_, previous) =>
-          startedAt.difference(previous) > const Duration(minutes: 1),
+      (_, previous) {
+        final elapsed = startedAt.difference(previous);
+        return elapsed.isNegative || elapsed > const Duration(minutes: 1);
+      },
     );
     final requestKey = _requestKey(request);
     final previousStart = _recentRequestStarts[requestKey];
-    if (previousStart != null &&
-        startedAt.difference(previousStart) < duplicateCaptureWindow) {
+    final elapsed =
+        previousStart == null ? null : startedAt.difference(previousStart);
+    if (elapsed != null &&
+        !elapsed.isNegative &&
+        elapsed < duplicateCaptureWindow) {
       return null;
     }
 

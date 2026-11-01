@@ -5,6 +5,20 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('contenteditable text stays out of its own draft key', () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: 'first',
+      initialText: 'first',
+      deferSaveTimer: true,
+      scenario: 'selfRowContentEditable',
+    );
+
+    expect(result, {
+      'draftKeyCount': 1,
+      'storedValues': ['first second'],
+      'restoredText': 'first second',
+    });
+  });
   test('deferred clear removes all v1 and v2 drafts regardless of date', () async {
     final cutoff = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
     final values = {
@@ -229,11 +243,27 @@ void main() {
     expect(result['failureStatus'], contains('保存できませんでした'));
   });
 
+  test('status changes keep one draft key and restore the latest text',
+      () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: 'first',
+      initialText: 'first',
+      deferSaveTimer: true,
+      scenario: 'statusInRow',
+    );
+
+    expect(result, {
+      'draftKeyCount': 1,
+      'storedValues': ['first second'],
+      'restoredText': 'first second',
+    });
+  });
+
   test('builds report submission draft autosave script', () {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 9;'));
+    expect(script, contains('var version = 10;'));
     expect(script, contains('document.querySelectorAll("iframe,frame")'));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));

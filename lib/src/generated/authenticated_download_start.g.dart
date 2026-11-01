@@ -59,7 +59,7 @@ const String _gakujoAuthenticatedDownloadStartJsPrefix =
       try {
         const inputUrl = __mbgConfig.url;
         const method = __mbgConfig.method;
-        const fields = __mbgConfig.fields;
+        const fields = JSON.parse(__mbgConfig.fields);
         const url = new URL(inputUrl, window.location.href);
         const options = {
           method,

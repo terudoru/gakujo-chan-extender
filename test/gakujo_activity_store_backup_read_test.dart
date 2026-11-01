@@ -57,6 +57,25 @@ void main() {
     });
   }
 
+  test('notification read throws while normal notified-key load is tolerant',
+      () async {
+    const key = 'more_better_gakujo_notified_deadline_keys';
+    final storage = _MemorySecureStorage(failingReadKey: key);
+    final store = GakujoActivityStore(secureStorage: storage);
+
+    expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+    await expectLater(
+      store.loadNotifiedDeadlineKeysForNotifications(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.toString(),
+          'message',
+          contains(key),
+        ),
+      ),
+    );
+  });
+
   test('backup reads match normal loads and re-enter the storage queue',
       () async {
     final now = DateTime.now();

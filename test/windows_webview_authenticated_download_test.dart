@@ -8,6 +8,51 @@ import 'package:morebettergakujo_flutter/src/windows_webview_authenticated_downl
 import 'package:test/test.dart';
 
 void main() {
+  test('preserves special form field names in GET and POST requests', () async {
+    const fields = {
+      '__proto__': 'special-value',
+      'constructor': 'constructor-value',
+      'toString': 'to-string-value',
+      'normal': 'normal-value',
+    };
+    const getRequest = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'GET',
+      fileName: 'fixture.bin',
+      courseName: '',
+      formFields: fields,
+    );
+    const postRequest = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+      method: 'POST',
+      fileName: 'fixture.bin',
+      courseName: '',
+      formFields: fields,
+    );
+    final result = await Process.run(
+      'node',
+      [
+        'test/support/windows_download_special_fields_harness.cts',
+        WindowsWebViewAuthenticatedDownloadScript.start(
+          requestId: 'special-get',
+          request: getRequest,
+        ),
+        WindowsWebViewAuthenticatedDownloadScript.start(
+          requestId: 'special-post',
+          request: postRequest,
+        ),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['getFields'], fields);
+    expect(behavior['postFields'], fields);
+  });
+
   test('does not expose captured form values to a navigated external page',
       () async {
     const request = GakujoDownloadRequest(

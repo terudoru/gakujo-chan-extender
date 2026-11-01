@@ -107,7 +107,7 @@ void main() {
       formFields: {'token': '1', 'file': '42'},
     );
     const duplicateFromAnotherCapturePath = GakujoDownloadRequest(
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download#captured',
       method: 'post',
       courseName: '未分類',
       fileName: '',
@@ -150,5 +150,46 @@ void main() {
 
     gate.finish(concurrentRepeat!);
     gate.finish(firstKey!);
+  });
+
+  test('download gate recovers when the clock moves backwards', () {
+    final gate = GakujoDownloadOperationGate();
+    final originalTime = DateTime.utc(2026, 8, 22, 12);
+    const request = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'token': '1', 'file': '42'},
+    );
+
+    final originalOperation = gate.tryStart(request, now: originalTime);
+    expect(originalOperation, isNotNull);
+    gate.finish(originalOperation!);
+
+    final rolledBackTime = originalTime.subtract(const Duration(minutes: 5));
+    final rolledBackOperation = gate.tryStart(request, now: rolledBackTime);
+    expect(
+      rolledBackOperation,
+      isNotNull,
+      reason: 'a future-dated start is stale after the clock moves backwards',
+    );
+    gate.finish(rolledBackOperation!);
+
+    expect(
+      gate.tryStart(
+        request,
+        now: rolledBackTime.add(const Duration(milliseconds: 100)),
+      ),
+      isNull,
+      reason: 'the debounce window restarts from the rolled-back clock',
+    );
+    expect(
+      gate.tryStart(
+        request,
+        now: rolledBackTime.add(const Duration(milliseconds: 250)),
+      ),
+      isNotNull,
+    );
   });
 }

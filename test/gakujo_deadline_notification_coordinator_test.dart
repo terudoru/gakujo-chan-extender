@@ -6,6 +6,55 @@ import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('notified-key read failure skips the pass without duplicate sends',
+      () async {
+    final storage = _FlakyNotifiedKeysSecureStorage();
+    final store = GakujoActivityStore(secureStorage: storage);
+    final notificationService = _FakeNotificationService(notifyResult: true);
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: notificationService,
+    );
+    final firstDeadline = _deadline('first deadline');
+    final secondDeadline = _deadline('second deadline');
+
+    await store.mergeDeadlines([firstDeadline]);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+    expect(
+      notificationService.notifiedEntries.map((entry) => entry.key),
+      [firstDeadline.key],
+    );
+
+    storage.failNotifiedKeysRead = true;
+    await expectLater(
+      coordinator.notifyPendingDeadlines(notificationsEnabled: true),
+      completes,
+    );
+    expect(
+      notificationService.notifiedEntries.map((entry) => entry.key),
+      [firstDeadline.key],
+    );
+
+    storage.failNotifiedKeysRead = false;
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+    expect(
+      notificationService.notifiedEntries.map((entry) => entry.key),
+      [firstDeadline.key],
+    );
+
+    await store.mergeDeadlines([secondDeadline]);
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+
+    expect(
+      notificationService.notifiedEntries.map((entry) => entry.key),
+      [firstDeadline.key, secondDeadline.key],
+    );
+    expect(await store.loadNotifiedDeadlineKeys(), {
+      firstDeadline.key,
+      secondDeadline.key,
+    });
+  });
+
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
   });
@@ -165,5 +214,34 @@ class _FakeNotificationService extends GakujoNotificationService {
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
     notifiedEntries.add(entry);
     return notifyResult;
+  }
+}
+
+class _FlakyNotifiedKeysSecureStorage extends FlutterSecureStorage {
+  bool failNotifiedKeysRead = false;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    if (failNotifiedKeysRead &&
+        key == 'more_better_gakujo_notified_deadline_keys') {
+      throw StateError('notified deadline keys read failed');
+    }
+    return super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
   }
 }

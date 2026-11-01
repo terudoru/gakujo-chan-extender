@@ -1,6 +1,6 @@
 export {};
 
-declare const __mbgConfig: { requestId: string; url: string; method: string; fields: Record<string, string>; fileName: string; byteLimit: number; pageReturnedMessage: string };
+declare const __mbgConfig: { requestId: string; url: string; method: string; fields: string; fileName: string; byteLimit: number; pageReturnedMessage: string };
 
 function authenticatedDownloadStart() {
   // The native caller can race a navigation; reject the receiving document
@@ -30,7 +30,7 @@ function authenticatedDownloadStart() {
     try {
       const inputUrl = __mbgConfig.url;
       const method = __mbgConfig.method;
-      const fields = __mbgConfig.fields;
+      const fields: Record<string, string> = JSON.parse(__mbgConfig.fields);
       const url = new URL(inputUrl, window.location.href);
       const options: RequestInit = {
         method,

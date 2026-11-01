@@ -509,6 +509,18 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readNotifiedDeadlineKeys()).value);
   }
 
+  Future<Set<String>> loadNotifiedDeadlineKeysForNotifications() {
+    return _enqueue(() async {
+      final result = await _readNotifiedDeadlineKeys();
+      if (!result.isSuccessful) {
+        throw StateError(
+          'Failed to read $_notifiedDeadlineKeysKey for notifications',
+        );
+      }
+      return result.value;
+    });
+  }
+
   Future<Set<String>> loadNotifiedDeadlineKeysForBackup() {
     return _enqueue(
       () => _readForBackup(_notifiedDeadlineKeysKey, _readNotifiedDeadlineKeys),
@@ -1483,7 +1495,11 @@ class GakujoActivityStore {
 
   bool _isActiveDeadline(GakujoDeadlineEntry entry) {
     final now = DateTime.now();
-    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: entry.detectedAt);
+    final detectedAt = entry.detectedAt.toLocal();
+    final hasTrustworthyDetection =
+        detectedAt.millisecondsSinceEpoch != 0 && !detectedAt.isAfter(now);
+    final anchor = hasTrustworthyDetection ? detectedAt : now;
+    final dueAt = _deadlineDueAt(entry.dueText, detectedAt: anchor);
     if (dueAt == null) {
       return entry.detectedAt.isAfter(now.subtract(_undatedDeadlineRetention));
     }

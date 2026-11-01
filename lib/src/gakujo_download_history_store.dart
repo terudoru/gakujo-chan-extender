@@ -357,16 +357,15 @@ class GakujoDownloadHistoryStore {
   String _failedRequestKey(GakujoDownloadRequest request) {
     final fields = request.formFields.entries.toList()
       ..sort((left, right) => left.key.compareTo(right.key));
-    final encodedFields = fields
-        .map((entry) => '${entry.key}\u{1f}=${entry.value}')
-        .join('\u{1e}');
-    return [
+    return jsonEncode([
       request.method.toUpperCase(),
       request.url,
       request.fileName,
       request.courseName,
-      encodedFields,
-    ].join('\u{1d}');
+      [
+        for (final field in fields) [field.key, field.value],
+      ],
+    ]);
   }
 
   Future<T> _enqueue<T>(Future<T> Function() operation) {

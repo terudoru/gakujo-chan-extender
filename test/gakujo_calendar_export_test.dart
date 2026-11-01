@@ -1480,6 +1480,62 @@ END:VCALENDAR
   });
 
   test(
+      'official iCalendar keeps standalone masters one-off in an RRULE feed',
+      () {
+    final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(
+      '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:weekly@example.edu
+SUMMARY:Weekly seminar
+DTSTART;TZID=Asia/Tokyo:20260615T084500
+DTEND;TZID=Asia/Tokyo:20260615T101500
+RRULE:FREQ=WEEKLY;UNTIL=20260808T145959Z
+END:VEVENT
+BEGIN:VEVENT
+UID:standalone@example.edu
+SUMMARY:Intensive lecture
+DTSTART;TZID=Asia/Tokyo:20260722T103000
+DTEND;TZID=Asia/Tokyo:20260722T120000
+END:VEVENT
+END:VCALENDAR
+''',
+    );
+
+    expect(courses, hasLength(2));
+    final weekly = courses.singleWhere(
+      (course) => course.officialTitle == 'Weekly seminar',
+    );
+    final standalone = courses.singleWhere(
+      (course) => course.officialTitle == 'Intensive lecture',
+    );
+    expect(weekly.recursWeekly, isTrue);
+    expect(standalone.recursWeekly, isFalse);
+    expect(standalone.sourceDate, DateTime(2026, 7, 22));
+
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses,
+      rangeStart: DateTime(2026, 7, 13),
+      rangeEnd: DateTime(2026, 7, 27),
+      generatedAt: DateTime.utc(2026, 7, 1),
+    );
+    final eventBlocks = RegExp(
+      r'BEGIN:VEVENT\r\n.*?END:VEVENT',
+      dotAll: true,
+    ).allMatches(ics).map((match) => match.group(0)!).toList();
+    final weeklyBlock = eventBlocks.singleWhere(
+      (block) => block.contains('SUMMARY:Weekly seminar'),
+    );
+    final standaloneBlock = eventBlocks.singleWhere(
+      (block) => block.contains('SUMMARY:Intensive lecture'),
+    );
+
+    expect(eventBlocks, hasLength(2));
+    expect(weeklyBlock, contains('RRULE:FREQ=WEEKLY'));
+    expect(standaloneBlock, isNot(contains('RRULE:')));
+  });
+
+  test(
       'official iCalendar keeps EXDATE and a moved recurrence exception distinct',
       () {
     final courses = GakujoCalendarExport.coursesFromOfficialScheduleExportText(

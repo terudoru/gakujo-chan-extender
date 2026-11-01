@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 18'));
+    expect(script, contains('captureVersion = 20'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -44,6 +44,110 @@ void main() {
         'isSubmissionWorkflowAction(element) && !hasStrongDownloadSignal',
       ),
     );
+  });
+
+  test('preserves special form field names', () async {
+    final result = await _runNode(
+      [
+        'test/support/download_capture_special_fields_harness.cts',
+        GakujoDownloadCaptureScript.build(),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['capturedCount'], 1);
+    expect(
+      behavior['formFields'],
+      {
+        '__proto__': 'special-value',
+        'constructor': 'constructor-value',
+        'toString': 'to-string-value',
+        'normal': 'normal-value',
+      },
+    );
+  });
+
+  test('upgrades version 19 and captures once', () async {
+    final result = await _runNode(
+      [
+        'test/support/download_capture_special_fields_harness.cts',
+        GakujoDownloadCaptureScript.build(),
+        'upgrade',
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['version'], 20);
+    expect(behavior['listenerCount'], 1);
+    expect(behavior['oldHandlerCalls'], 0);
+    expect(behavior['capturedCount'], 1);
+  });
+
+  group('click handler submission behavior', () {
+    late Map<String, dynamic> behavior;
+
+    setUpAll(() async {
+      final result = await _runNode(
+          [
+            'test/support/download_capture_submission_harness.cts',
+            GakujoDownloadCaptureScript.build(),
+          ],
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8);
+
+      expect(
+        result.exitCode,
+        0,
+        reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+      );
+      behavior = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    });
+
+    test('leaves javascript download links to the page handler', () {
+      expect(behavior['javascriptPostCount'], 0);
+      expect(behavior['javascriptPrevented'], isFalse);
+      expect(behavior['javascriptPropagationStopped'], isFalse);
+      expect(behavior['pageActionRan'], isTrue);
+    });
+
+    test('uses submitter formaction and formmethod overrides', () {
+      final payload = behavior['overridePayload'] as Map<String, dynamic>;
+
+      expect(
+        payload['url'],
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/'
+        'fileDownload.do',
+      );
+      expect(payload['method'], 'GET');
+      expect(payload['formFields'], {'k': 'v', 'b': '1'});
+    });
+
+    test('uses the form action and method without submitter overrides', () {
+      final payload = behavior['controlPayload'] as Map<String, dynamic>;
+
+      expect(
+        payload['url'],
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/list.do',
+      );
+      expect(payload['method'], 'POST');
+      expect(payload['formFields'], {'k': 'v', 'b': '1'});
+    });
   });
 
   test('teardown removes the injected click handler', () async {

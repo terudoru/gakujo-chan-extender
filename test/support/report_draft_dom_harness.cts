@@ -68,16 +68,21 @@ class FakeContentEditable {
     this.readOnly = false;
     this.style = {};
     this.listeners = {};
-    this.attributes = {contenteditable: 'true', name: 'answer'};
+    this.attributes = spec.scenario === 'selfRowContentEditable'
+      ? {contenteditable: 'true', id: 'draft', 'aria-label': '??'}
+      : {contenteditable: 'true', name: 'answer'};
     this.events = [];
     this._innerHTML = html;
     this._text = text;
     this.parentNode = {
       insertBefore: (node: any) => { doc.insertedStatus = node; }
     };
+    this.parentElement = spec.scenario === 'selfRowContentEditable'
+      ? {closest: () => ({cloneNode: () => textClone(doc, true)})}
+      : null;
   }
 
-  get id() { return ''; }
+  get id() { return this.attributes.id || ''; }
   get innerHTML() { return this._innerHTML; }
   set innerHTML(value: any) {
     this._innerHTML = String(value);
@@ -121,7 +126,14 @@ class FakeContentEditable {
   }
   getClientRects() { return [{}]; }
   matches(selector: any) { return selector === '[contenteditable]'; }
-  closest(_selector?: any): any { return null; }
+  closest(selector?: any): any {
+    return spec.scenario === 'selfRowContentEditable' &&
+      selector === 'tr,div,p,li,section' ? this : null;
+  }
+  cloneNode() {
+    const text = this._text;
+    return {innerText: text, textContent: text, querySelectorAll() { return []; }};
+  }
   addEventListener(type: any, callback: any) {
     (this.listeners[type] ||= []).push(callback);
   }
@@ -137,6 +149,7 @@ class FakeControl extends FakeContentEditable {
   constructor(doc: any, tag: any, attributes: any = {}, options: any = {}) {
     super(doc, '', '');
     this.tagName = tag.toUpperCase();
+    this.parentElement = {closest: (selector: any) => this.closest(selector)};
     this.attributes = attributes;
     this.value = options.value || '';
     this.defaultValue = this.value;
@@ -166,6 +179,7 @@ class FakeControl extends FakeContentEditable {
 
 function textClone(doc: any, rowOnly: any = false) {
   let removed: any = false;
+  let includesStatus = rowOnly && spec.scenario === 'statusInRow' && !!findById(doc.insertedStatus, 'mbg-report-draft-status-label');
   const counter: any = {
     getAttribute(name: any) {
       return name === 'id' ? 'gakuCommentCOUNT' : 'countField';
@@ -175,11 +189,12 @@ function textClone(doc: any, rowOnly: any = false) {
   return {
     get innerText() {
       const base: any = rowOnly ? '' : doc.pageText;
-      return base + (doc.counter == null ? '' :
+      return base + (includesStatus ? ' ' + findById(doc.insertedStatus, 'mbg-report-draft-status-label').textContent : '') + (doc.counter == null ? '' :
         ' 入力文字数：' + (removed ? '' : doc.counter) + '/200文字');
     },
     get textContent() { return this.innerText; },
     querySelectorAll(selector: any) {
+      if (includesStatus && selector.includes('#mbg-report-draft-status')) return [{remove() { includesStatus = false; }}];
       return selector === '[id],[class]' && doc.counterElement ? [counter] : [];
     }
   };
@@ -314,8 +329,25 @@ function hidePage(page: any) {
   for (const callback of page.window.listeners.pagehide || []) callback();
 }
 
+function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimers.values()); pendingTimers.clear(); for (const callback of callbacks) callback(); }
+
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'statusInRow') {
+    const savingPage = textPage(storage, {value: 'first', anonymous: true});
+    runPage(savingPage);
+    flushTimersForStatus();
+    savingPage.field = new FakeControl(savingPage.document, 'textarea', {}, {value: 'first'});
+    savingPage.document.field = savingPage.field;
+    savingPage.window.__MBG_REPORT_DRAFT_UPDATE();
+    savingPage.field.value = 'first second';
+    savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+    flushTimersForStatus();
+    const restoringPage = textPage(storage, {anonymous: true});
+    runPage(restoringPage);
+    const storedValues = Array.from(storage.values.values()).map((value: any) => JSON.parse(value).fields[0].value);
+    return {draftKeyCount: storage.length, storedValues, restoredText: restoringPage.field.value};
+  }
   if (spec.scenario === 'legacyMigrationReopenedEmpty') {
     // Same captured v0.70.0 draft, but the reopened form's counter shows 0.
     const legacyKey: any = 'mbg-report-draft:v1:cmm5xw';
@@ -875,6 +907,17 @@ function retry() {
   return !!button;
 }
 function flushTimers() { const callbacks: any=Array.from(pendingTimers.values());pendingTimers.clear();for(const callback of callbacks)callback(); }
+if (spec.scenario === 'selfRowContentEditable') {
+  flushTimers();
+  savingPage.field.textContent = 'first second';
+  savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  flushTimers();
+  const restoringPage = createPage('', '', storage);
+  runPage(restoringPage);
+  const storedValues = Array.from(storage.values.values()).map((value: any) => JSON.parse(value).fields[0].value);
+  return process.stdout.write(JSON.stringify({draftKeyCount: storage.length,
+    storedValues, restoredText: restoringPage.field.textContent}));
+}
 if (spec.scenario === 'saveFailure') {
   const failureStatus: any=statusText(), dirtyAfterFailure: any=!!savingPage.field.__MBG_REPORT_DRAFT_DIRTY;
   const pendingAfterFailure: any=!!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT;

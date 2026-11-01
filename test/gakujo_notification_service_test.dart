@@ -522,6 +522,11 @@ class _NotificationRaceActivityStore extends GakujoActivityStore {
   }
 
   @override
+  Future<Set<String>> loadNotifiedDeadlineKeysForNotifications() async {
+    return Set<String>.from(notifiedKeys);
+  }
+
+  @override
   Future<void> addNotifiedDeadlineKeys(Iterable<String> deadlineKeys) async {
     notifiedKeys.addAll(deadlineKeys);
   }

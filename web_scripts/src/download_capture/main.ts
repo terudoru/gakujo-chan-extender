@@ -1,6 +1,6 @@
 export {};
 function downloadCapture() {
-  var captureVersion = 18;
+  var captureVersion = 20;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -521,7 +521,7 @@ function downloadCapture() {
   }
 
   function formFields(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined) {
-    var fields: Record<string, string> = {};
+    var fields: Record<string, string> = Object.create(null);
     if (!form) {
       return fields;
     }
@@ -607,7 +607,7 @@ function downloadCapture() {
     if (!/^(GET|POST)$/.test(method) ||
         method === 'POST' && enctype !== 'application/x-www-form-urlencoded' ||
         !/^_self$/i.test(target)) return false;
-    var absoluteAction = absoluteUrlOf(form, action);
+    var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute('formaction') ? submitter : form, action);
     var fields = formFields(form, submitter);
     var signals = formDownloadSignals(absoluteAction, fields);
     if (signals.workflow) return false;
@@ -646,6 +646,10 @@ function downloadCapture() {
       var href = (anchor.getAttribute('href') || '').trim();
       if (href.charAt(0) === '#' || /^javascript:/i.test(href)) return;
       var absoluteUrl = absoluteUrlOf(anchor, href);
+      var absoluteProtocol = new URL(absoluteUrl).protocol;
+      if (absoluteProtocol !== 'http:' && absoluteProtocol !== 'https:') {
+        return;
+      }
       var params = new URL(absoluteUrl).searchParams;
       if (anchor.hasAttribute('onclick') &&
           !hasStrongDownloadSignal(absoluteUrl, {}) &&
