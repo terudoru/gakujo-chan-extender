@@ -55,6 +55,14 @@ android {
     }
 }
 
+// Releases ship arm64-v8a only; other plugin ABIs can make devices select an ABI
+// without libflutter.so and crash.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(listOf("lib/armeabi-v7a/**", "lib/armeabi/**", "lib/x86/**", "lib/x86_64/**"))
+    }
+}
+
 gradle.taskGraph.whenReady {
     val runsReleaseVariant =
         allTasks.any { task ->
