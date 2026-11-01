@@ -1805,6 +1805,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _storedLoginAccountWrites = Future<void>.value();
+
+  /// Stored identity writes run in order, so an invalidating delete issued
+  /// while an activation write is in flight lands after it.
+  Future<void> _writeStoredLoginAccount(String? account) {
+    final write = _storedLoginAccountWrites.then((_) {
+      final storage = SecureStorageFactory.create();
+      return account == null
+          ? storage.delete(key: _activeLoginAccountKey)
+          : storage.write(key: _activeLoginAccountKey, value: account);
+    });
+    _storedLoginAccountWrites = write.then<void>((_) {}, onError: (Object _) {});
+    return write;
+  }
+
   Future<void> _setActiveLoginAccount(String? account, {bool resync = true, bool Function()? stillValid}) async {
     if (account != null && _activeLoginAccount == account) return;
     final revision = ++_loginIdentity.revision;
@@ -1812,9 +1827,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _cancelDriveUploads();
     // Delete the stored identity now, not behind a running sync: a crash in
     // between must not restore it onto the next person's session.
-    final deletion = account == null
-        ? SecureStorageFactory.create().delete(key: _activeLoginAccountKey)
-        : null;
+    final deletion = account == null ? _writeStoredLoginAccount(null) : null;
     // Awaited in the queue below; this only keeps an early failure from being
     // reported as unhandled before then.
     if (deletion != null) unawaited(deletion.then<void>((_) {}, onError: (Object _) {}));
@@ -1827,11 +1840,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _loginIdentity.pending = account;
           return;
         }
-        await SecureStorageFactory.create().write(key: _activeLoginAccountKey, value: account);
+        await _writeStoredLoginAccount(account);
         if (revision == _loginIdentity.revision && (stillValid?.call() ?? true)) {
           _activeLoginAccount = account;
         } else {
-          await SecureStorageFactory.create().delete(key: _activeLoginAccountKey);
+          await _writeStoredLoginAccount(null);
           if (revision == _loginIdentity.revision) _loginIdentity.pending = account;
         }
       }

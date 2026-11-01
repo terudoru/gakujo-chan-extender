@@ -34,16 +34,21 @@ class GakujoLoginObserverScript {
     }
   }
 
+  // Report only a submission the page let through: a click on the submit
+  // button may still be stopped by validation or a page handler. Bubble phase
+  // runs after the form's own handlers, so defaultPrevented is settled.
   document.addEventListener('submit', function(event) {
-    report(event.target);
-  }, true);
-  document.addEventListener('click', function(event) {
-    var button = event.target.closest('button, input');
-    if (!button) return;
-    var type = (button.getAttribute('type') ||
-      (button.tagName.toLowerCase() === 'button' ? 'submit' : '')).toLowerCase();
-    if (type === 'submit' || type === 'image') report(button.form);
-  }, true);
+    if (!event.defaultPrevented) report(event.target);
+  }, false);
+  // form.submit() fires no submit event.
+  var proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
+  if (proto && typeof proto.submit === 'function') {
+    var submit = proto.submit;
+    proto.submit = function() {
+      report(this);
+      return submit.apply(this, arguments);
+    };
+  }
 })();
 ''';
 }
