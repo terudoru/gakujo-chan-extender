@@ -2573,8 +2573,23 @@ class StarSyncEngine {
         }
       });
 
-  Future<void> uploadBackup(List<int> bytes, {bool automatic = false}) =>
+  /// [expectedAccount] and [expectedGeneration], captured before the caller
+  /// read the data in [bytes], keep a snapshot from going to an account that
+  /// was set up while it was being built.
+  Future<void> uploadBackup(
+    List<int> bytes, {
+    bool automatic = false,
+    String? expectedAccount,
+    int? expectedGeneration,
+  }) =>
       _queue.run(() async {
+        if (expectedAccount != null &&
+            !isBoundAccountCurrent(
+              expectedAccount: expectedAccount,
+              expectedGeneration: expectedGeneration ?? _accountGeneration,
+            )) {
+          throw const StarSyncAccountMismatchException();
+        }
         await _requireBackupAccount();
         final state = _state!;
         final transport = _transportFactory(_config!);

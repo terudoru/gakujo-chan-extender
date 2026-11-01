@@ -3269,10 +3269,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           deleteOwnRemoteFile: deleteOwnRemoteFile,
                         );
                         if (google) {
-                          await _warnPendingDriveChecks();
-                          await _setDriveDownloadsEnabled(false);
-                          await _signOutGoogle(warn: false);
-                          _starSyncGoogleEmail = null;
+                          try {
+                            await _warnPendingDriveChecks();
+                            await _setDriveDownloadsEnabled(false);
+                          } finally {
+                            await _signOutGoogle(warn: false);
+                            _starSyncGoogleEmail = null;
+                          }
                         }
                       },
                       onReset: (passphrase) async {
@@ -6196,11 +6199,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _uploadSyncBackup() async {
     await _ensureStarSyncLoaded();
+    // Bind the snapshot to the account it is read under.
+    final account = _starSyncEngine.requireAccount();
+    final generation = _starSyncEngine.accountGeneration;
     try {
       await _starSyncEngine.uploadBackup(encodePortableSyncBackup(await _backupPayload(), disabledCollections: {
         for (final name in ['favorites', 'settings', 'notified-deadlines'])
           if (!_starSyncEngine.collectionEnabled(name)) name,
-      }));
+      }), expectedAccount: account, expectedGeneration: generation);
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
     }

@@ -171,6 +171,19 @@ void main() {
     await b.deleteDeviceFile(own.deviceId);
     expect(await a.listBackups(), isEmpty);
     now = now.add(const Duration(days: 1));
+    // A snapshot read before an account change must not upload afterwards.
+    final staleAccount = a.requireAccount();
+    final staleGeneration = a.accountGeneration;
+    await a.runAccountChange(() async {});
+    await expectLater(
+      a.uploadBackup(
+        [9],
+        expectedAccount: staleAccount,
+        expectedGeneration: staleGeneration,
+      ),
+      throwsA(isA<StarSyncAccountMismatchException>()),
+    );
+    expect(await a.listBackups(), isEmpty);
     await a.uploadBackup([1, 2, 3]);
     await a.resetRemoteWithPairing();
     expect(await a.listBackups(), isEmpty);
