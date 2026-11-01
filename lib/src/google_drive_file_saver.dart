@@ -405,7 +405,12 @@ class GoogleDriveFileSaver {
     }
     final id = await _upload(session, open, length);
     final entries = await _pendingChecks();
-    final entry = {'id': id, 'root': root, 'parent': parent, 'account': account};
+    final entry = {
+      'id': id,
+      'root': root,
+      'parent': parent,
+      'account': account,
+    };
     entries.add(entry);
     await _savePendingChecks(entries);
     bool private;

@@ -497,10 +497,14 @@ class StarSyncEngine {
       _config = parsedConfig;
       _state = parsedState;
       try {
-        final legacy = (parsedState.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+        final legacy =
+            (parsedState.collectionStates['report-drafts']
+                as Map?)?['clearBefore'];
         if (legacy is String) {
           await _recordDraftClear(legacy);
-          final drafts = Map<String, dynamic>.from(parsedState.collectionStates['report-drafts'] as Map);
+          final drafts = Map<String, dynamic>.from(
+            parsedState.collectionStates['report-drafts'] as Map,
+          );
           drafts.remove('clearBefore');
           parsedState.collectionStates['report-drafts'] = drafts;
           await _saveState();
@@ -760,8 +764,11 @@ class StarSyncEngine {
       if (collectionEnabled(collection.name))
         collection.name:
             collection.name == 'report-drafts' &&
-                (await _storage.read(key: starSyncPendingDraftClearKey) != null ||
-                    (_state?.collectionStates['report-drafts'] as Map?)?['clearBefore'] != null)
+                (await _storage.read(key: starSyncPendingDraftClearKey) !=
+                        null ||
+                    (_state?.collectionStates['report-drafts']
+                            as Map?)?['clearBefore'] !=
+                        null)
             ? null
             : (await collection.readLocal())?.length,
   };
@@ -798,7 +805,8 @@ class StarSyncEngine {
   Future<bool> prepareLocalDrafts() => _queue.run(() async {
     final state = _state;
     if (state != null && state.pendingLocalClear.isNotEmpty) return false;
-    final legacy = (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+    final legacy =
+        (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
     final pending = await _storage.read(key: starSyncPendingDraftClearKey);
     if (legacy == null && pending == null) return true;
     if (state != null && !await _accountMatches(state)) return false;
@@ -2625,7 +2633,8 @@ class StarSyncEngine {
           }
         }
         final state = _state;
-        final legacy = (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+        final legacy =
+            (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
         final pending = state?.pendingLocalClear[_deferredDraftClearKey];
         if (legacy is String) await _recordDraftClear(legacy);
         if (pending != null) await _recordDraftClear(pending);

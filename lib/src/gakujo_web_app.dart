@@ -5862,7 +5862,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _driveDownloadQueue.run(() async {
         final email = _starSyncGoogleAuth.currentEmail;
         if (!_driveDownloadsEnabled || email == null ||
-            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) return;
+            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+          return;
+        }
         final account = _driveAccountHash;
         final saver = GoogleDriveFileSaver(
           account: email,

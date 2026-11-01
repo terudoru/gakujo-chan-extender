@@ -313,23 +313,38 @@ void main() {
     expect(files.last['name'], 'Course');
   });
 
-  test('failed post-upload verification is retried before the next upload', () async {
-    failCheck = true;
-    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
-    expect(pendingNotices, 1);
-    expect(jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List, hasLength(1));
-    await expectLater(save('Course', 'blocked', 1), throwsA(isA<Exception>()));
-    expect(uploads, 1);
-    failCheck = false;
-    expect(await save('Course', 'second', 1), 'uploaded');
-    expect(uploads, 2);
-    expect(storage.values[googleDrivePendingChecksKey], isNull);
-    expect(deleted, isEmpty);
-  });
+  test(
+    'failed post-upload verification is retried before the next upload',
+    () async {
+      failCheck = true;
+      await expectLater(
+        save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()),
+      );
+      expect(pendingNotices, 1);
+      expect(
+        jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List,
+        hasLength(1),
+      );
+      await expectLater(
+        save('Course', 'blocked', 1),
+        throwsA(isA<Exception>()),
+      );
+      expect(uploads, 1);
+      failCheck = false;
+      expect(await save('Course', 'second', 1), 'uploaded');
+      expect(uploads, 2);
+      expect(storage.values[googleDrivePendingChecksKey], isNull);
+      expect(deleted, isEmpty);
+    },
+  );
 
   test('retry only uses the account that owns the pending entry', () async {
     failCheck = true;
-    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
     failCheck = false;
     final other = GoogleDriveFileSaver(
       quotaMeter: meter,
@@ -348,7 +363,10 @@ void main() {
   test('failed deletion remains pending until a later retry', () async {
     shareDuringUpload = 'Course';
     failDelete = true;
-    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
     expect(pendingNotices, 1);
     expect(storage.values[googleDrivePendingChecksKey], isNotNull);
     failDelete = false;
@@ -357,15 +375,24 @@ void main() {
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 
-  test('pending retry uses automatic quota and leaves entries when exhausted', () async {
-    failCheck = true;
-    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
-    failCheck = false;
-    final used = await meter.currentUsage();
-    await meter.charge(starSyncGoogleSoftLimit - used, automatic: true);
-    await expectLater(saver.processPendingChecks(), throwsA(isA<StarSyncQuotaExceeded>()));
-    expect(storage.values[googleDrivePendingChecksKey], isNotNull);
-  });
+  test(
+    'pending retry uses automatic quota and leaves entries when exhausted',
+    () async {
+      failCheck = true;
+      await expectLater(
+        save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()),
+      );
+      failCheck = false;
+      final used = await meter.currentUsage();
+      await meter.charge(starSyncGoogleSoftLimit - used, automatic: true);
+      await expectLater(
+        saver.processPendingChecks(),
+        throwsA(isA<StarSyncQuotaExceeded>()),
+      );
+      expect(storage.values[googleDrivePendingChecksKey], isNotNull);
+    },
+  );
 
   for (final folder in ['Course', 'More Better Gakujo']) {
     test('deletes upload when $folder becomes shared during upload', () async {

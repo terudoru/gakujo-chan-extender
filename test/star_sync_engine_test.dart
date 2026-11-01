@@ -1388,7 +1388,9 @@ void main() {
           expect(time, cutoff);
           clears++;
           if (!readable) return false;
-          drafts.entries!.removeWhere((_, value) => (value as int) <= time.millisecondsSinceEpoch);
+          drafts.entries!.removeWhere(
+            (_, value) => (value as int) <= time.millisecondsSinceEpoch,
+          );
           return true;
         },
       );
