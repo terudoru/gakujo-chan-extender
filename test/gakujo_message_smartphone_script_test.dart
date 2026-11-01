@@ -281,9 +281,9 @@ Future<Map<String, dynamic>> _evaluate(
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_mobile_');
   try {
-    final harness = File.fromUri(directory.uri.resolve('harness.cjs'))
+    final harness = File.fromUri(directory.uri.resolve('harness.cts'))
       ..writeAsStringSync(
-          File('test/support/gakujo_message_smartphone_harness.cjs')
+          File('test/support/gakujo_message_smartphone_harness.cts')
               .readAsStringSync(),
           encoding: utf8);
     final input = File.fromUri(directory.uri.resolve('input.json'))

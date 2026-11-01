@@ -58,6 +58,9 @@ jobs:
       - run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
       - run: bash scripts/test_darwin_secure_storage.sh
       - run: flutter pub get
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
       - run: flutter test
       - run: flutter build macos --debug
       - run: flutter build ios --debug --no-codesign

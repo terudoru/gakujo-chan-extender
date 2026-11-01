@@ -758,9 +758,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
               if (!mounted || !_canRunPageScripts || revision != _navigationRevision) return false;
             }
             final result = await _controller.runJavaScriptReturningResult(
-              'window.__MBG_PDF_PREVIEW_URL = ${jsonEncode(url.toString())};'
-              'window.__MBG_PDF_PREVIEW_POPUP = ${Platform.isMacOS};'
-              'window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED(); "mbg-ready";',
+              gakujoPdfPreviewReadyJs({
+                'url': url.toString(),
+                'popup': Platform.isMacOS,
+              }),
             );
             return mounted && revision == _navigationRevision &&
                 _stringFromJavaScriptResult(result) == 'mbg-ready';
@@ -997,7 +998,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
   Future<String?> _userAgent() async {
     final result = await _controller.runJavaScriptReturningResult(
-      'navigator.userAgent',
+      gakujoNavigatorUserAgentJs,
     );
     return _stringFromJavaScriptResult(result);
   }
@@ -1036,7 +1037,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        'document.cookie',
+        gakujoDocumentCookieJs,
       );
       return _stringFromJavaScriptResult(result);
     } catch (error, stackTrace) {

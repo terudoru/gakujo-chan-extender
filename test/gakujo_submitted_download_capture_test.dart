@@ -12,7 +12,7 @@ void main() {
         final script = File('${dir.path}/preview.js');
         await script.writeAsString(GakujoUploadPreviewScript.build());
         final result = await Process.run('node', [
-          'test/submitted_download_capture.mjs',
+          'test/submitted_download_capture.mts',
           script.path,
         ]);
         expect(

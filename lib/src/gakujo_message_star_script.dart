@@ -1,7 +1,6 @@
-import 'dart:convert';
-
 import 'generated/message_star.g.dart';
 import 'generated/message_star_open.g.dart';
+import 'generated/message_star_refresh.g.dart';
 import 'generated/message_star_teardown.g.dart';
 
 class GakujoMessageStarScript {
@@ -13,9 +12,7 @@ class GakujoMessageStarScript {
       gakujoMessageStarJs({'initialIds': starredIds.toList()});
 
   static String buildRefresh(Iterable<String> starredIds) =>
-      'if (window.__MBG_MESSAGE_STARS_REFRESH) {'
-      'window.__MBG_MESSAGE_STARS_REFRESH(${jsonEncode(starredIds.toList())});'
-      '}';
+      gakujoMessageStarRefreshJs({'ids': starredIds.toList()});
 
   static String buildTeardown() => gakujoMessageStarTeardownJs;
 

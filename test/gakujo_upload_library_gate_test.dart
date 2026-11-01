@@ -22,7 +22,7 @@ void main() {
           ),
         );
         final result = await Process.run('node', [
-          'test/upload_office_library_ack.mjs',
+          'test/upload_office_library_ack.mts',
           script.path,
         ]);
         expect(
@@ -56,7 +56,7 @@ window.__MBG_PDF_STANDARD_FONTS = {};
         ),
       );
       final result = await Process.run('node', [
-        'test/upload_library_ack.mjs',
+        'test/upload_library_ack.mts',
         script.path,
       ]);
       expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'generated/upload_library_ack.g.dart';
+import 'generated/upload_library_callback.g.dart';
 import 'generated/upload_library_setup.g.dart';
 
 /// Deduplicates library requests within a navigation while allowing retries
@@ -146,9 +147,7 @@ class GakujoUploadCompressionLibraries {
     };
     if (kind != 'preview-office') {
       buffer.writeln(
-        'if (window.$callback) {'
-        ' window.$callback(${jsonEncode(kind)});'
-        ' }',
+        gakujoUploadLibraryCallbackJs({'callback': callback, 'kind': kind}),
       );
     }
     return buffer.toString();

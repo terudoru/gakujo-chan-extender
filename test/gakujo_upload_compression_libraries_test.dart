@@ -14,7 +14,9 @@ void main() {
     expect(script, contains('URL.createObjectURL'));
     expect(
       script!.trimRight(),
-      endsWith("window.__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED(\"pdf\"); }"),
+      endsWith(
+        '{"callback":"__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED","kind":"pdf"});',
+      ),
     );
   });
 
