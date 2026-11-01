@@ -5,13 +5,16 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('deferred clear removes only v2 drafts at or before the cutoff', () async {
+  test('deferred clear removes old, invalid, future and v1 drafts', () async {
     final cutoff = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
     final values = {
       'mbg-report-draft:v2:old': jsonEncode({'savedAt': 999}),
       'mbg-report-draft:v2:equal': jsonEncode({'savedAt': 1000}),
       'mbg-report-draft:v2:new': jsonEncode({'savedAt': 1001}),
       'mbg-report-draft:v2:invalid': '{',
+      'mbg-report-draft:v2:missing': '{}',
+      'mbg-report-draft:v2:future': jsonEncode({'savedAt': 86401001}),
+      'mbg-report-draft:v2:within-day': jsonEncode({'savedAt': 86401000}),
       'mbg-report-draft:v1:old': jsonEncode({'savedAt': 999}),
       'other': 'keep',
     };
@@ -21,8 +24,7 @@ void main() {
     expect(result['result'], isTrue);
     expect(result['storage'], {
       'mbg-report-draft:v2:new': values['mbg-report-draft:v2:new'],
-      'mbg-report-draft:v2:invalid': '{',
-      'mbg-report-draft:v1:old': values['mbg-report-draft:v1:old'],
+      'mbg-report-draft:v2:within-day': values['mbg-report-draft:v2:within-day'],
       'other': 'keep',
     });
   });

@@ -186,13 +186,16 @@ Drive API の利用量は端末ごとに「直近24時間」（1時間単位の�
 
 ## Sync storage backups and restore
 
-Encrypted sync-storage backups omit download save mode, page mode, download locations and other local path or URI fields, the messageStars disabled flag, and credential-like fields. Restore from sync storage ignores those fields. Uploads exceeding the 5 MiB restore limit are rejected without replacing the previous backup. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs in chunks of at most 8 MiB.
+Encrypted sync-storage backups contain only stars (ID, title, and starred time), and enabled favorites, portable settings, and notified-deadline keys. Download history, failed downloads, deadlines, change history, cached report lists, assignments, and drafts are excluded and ignored on restore. Uploads exceeding the 5 MiB restore limit are rejected without replacing the previous backup. Local file backups retain their existing content. Restore is bound to the account at confirmation and marks restored collections as local changes. Automatic sync-storage uploads are limited to once per 24 hours. Android Drive uploads read content URIs in chunks of at most 8 MiB.
 
 バックアップ復元時、同期対象のコレクションはバックアップの値で上書き・追加し、省略されたキーは削除しません。バックアップ後に他の端末で追加された項目も残ります。
 
-Drive download saving is bound to the hash of the saved Gakujo login ID. A changed or missing ID suspends saving until the original ID returns. Disabling or signing out drops pending uploads and aborts the active transfer. Legacy toggle values are migrated to secure storage without an account binding, so they require explicit re-enabling.
+Drive download saving is bound to both the hash of the saved Gakujo login ID and the Google email. A download is eligible only when its account identities at the start match the binding and remain current during upload. A different Google account turns the setting off. Google sync also requires the Google account used during setup. Disabling or signing out drops pending uploads and aborts the active transfer. Legacy toggle values are migrated to secure storage without an account binding, so they require explicit re-enabling.
 
 
 同期先に保存するバックアップでは、スターは ID・件名・スター日時のみを含め、同期対象で無効にしたお気に入り・設定・通知済み期限キーを含めません。レポート下書きはバックアップに含めません。同期先からスターを復元するときは、同じ ID の端末内の本文などを保持します。
 
-初期設定で「空にして始める」を選んだ時に下書きを読めない場合は選択時刻を保存し、学務ページで読めるようになった時に、その時刻以前に保存された v2 下書きだけを消してから下書きの読み取りと同期を再開します。
+When setup selects an empty start, unreadable drafts are cleared once available: all v1 drafts and v2 drafts with invalid dates, dates at or before the choice, or dates more than one day after it. Newer valid drafts within one day are retained.
+
+
+The setup clear snapshots all registered collections, including currently disabled ones. Existing Google sync configurations without a stored Google email require disabling and setting up sync again.

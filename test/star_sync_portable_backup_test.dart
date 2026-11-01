@@ -16,6 +16,9 @@ void main() {
         'notifiedDeadlineKeys': ['private'],
         'messageExcludeKeywords': ['private'],
         'reportDrafts': ['private'],
+        'deadlines': ['private'],
+        'changes': ['private'],
+        'reportLists': ['private'],
         'starredMessages': [
           {
             'keijitype': '1',
@@ -34,6 +37,9 @@ void main() {
     expect(payload, isNot(contains('notifiedDeadlineKeys')));
     expect(payload, isNot(contains('messageExcludeKeywords')));
     expect(payload, isNot(contains('reportDrafts')));
+    expect(payload, isNot(contains('deadlines')));
+    expect(payload, isNot(contains('changes')));
+    expect(payload, isNot(contains('reportLists')));
     expect((payload['starredMessages'] as List).single, {
       'keijitype': '1',
       'genrecd': '2',
@@ -133,8 +139,8 @@ void main() {
       ],
     });
     final backup = parseGakujoBackup(jsonEncode(portable));
-    expect(backup.downloadHistory!.single.location, isNull);
-    expect(backup.failedDownloads!.single.request.url, 'https://example.com/');
+    expect(backup.downloadHistory, isNull);
+    expect(backup.failedDownloads, isNull);
   });
 
   test('sync backup removes local settings and nested credentials', () {
@@ -165,16 +171,9 @@ void main() {
     expect(portable, isNot(contains('downloadSaveMode')));
     expect(portable, isNot(contains('pageMode')));
     expect(portable['disabledFeatureFlags'], ['other']);
-    expect(portable['nested'], {'safe': 'kept'});
-    expect(portable['downloadHistory'], [
-      {'fileName': 'a.pdf'},
-      {'fileName': 'b.pdf'},
-    ]);
-    expect(portable['failedDownloads'], [
-      {
-        'request': {'url': 'https://example.com/'},
-      },
-    ]);
+    expect(portable, isNot(contains('nested')));
+    expect(portable, isNot(contains('downloadHistory')));
+    expect(portable, isNot(contains('failedDownloads')));
     expect(
       portableSyncBackupPayload(
         jsonDecode(jsonEncode(payload)) as Map<String, dynamic>,
@@ -185,10 +184,10 @@ void main() {
   });
 
   test('portable backup checks UTF-8 size before upload', () async {
-    final overhead = utf8.encode(jsonEncode({'version': 2, 'data': ''})).length;
+    final overhead = utf8.encode(jsonEncode({'version': 2, 'messageExcludeKeywords': ''})).length;
     final atLimit = {
       'version': 2,
-      'data': 'a' * (maxGakujoBackupBytes - overhead),
+      'messageExcludeKeywords': 'a' * (maxGakujoBackupBytes - overhead),
     };
     expect(encodePortableSyncBackup(atLimit), hasLength(maxGakujoBackupBytes));
     var uploaded = false;
@@ -198,7 +197,7 @@ void main() {
     }
 
     await expectLater(
-      upload({'version': 2, 'data': '${atLimit['data']}あ'}),
+      upload({'version': 2, 'messageExcludeKeywords': '${atLimit['messageExcludeKeywords']}あ'}),
       throwsA(
         isA<GakujoBackupImportException>().having(
           (error) => error.message,

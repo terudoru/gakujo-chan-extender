@@ -851,6 +851,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
+    final downloadAccount = _driveAccountHash;
+    final downloadEmail = _starSyncGoogleAuth.currentEmail;
     var effectiveRequest = request;
     try {
       if (!_isUsefulCourseName(request.courseName)) {
@@ -942,7 +944,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                 ? '保存しました: $savedPath'
                 : '保存しました（履歴は更新できませんでした）: $savedPath',
       );
-      _queueDriveDownload(result);
+      _queueDriveDownload(result, downloadAccount, downloadEmail);
       _showDownloadSavedSnackBar(
         result,
         historyRecorded: historyRecorded,
@@ -1107,7 +1109,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  void _queueDriveDownload(GakujoDownloadResult result) {
+  void _queueDriveDownload(
+    GakujoDownloadResult result, String? account, String? email,
+  ) {
+    if (!_driveDownloadPreference.matchesUpload(
+      _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
+    )) return;
     if (!_driveDownloadsEnabled) {
       if (!_driveDownloadsSuspended && _appSettingsLoaded &&
           _driveDownloadPreference.enabled && mounted) {
@@ -1115,12 +1122,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       }
       return;
     }
-    final account = _driveAccountHash;
     final location = result.location;
-    final email = _starSyncGoogleAuth.currentEmail;
     _driveUploads.add((generation) => _driveDownloadQueue.run(() async {
       bool allowed() => _driveUploads.isCurrent(generation) &&
-          _driveDownloadsEnabled && _driveAccountHash == account;
+          _driveDownloadsEnabled && _driveAccountHash == account &&
+          _starSyncGoogleAuth.currentEmail == email &&
+          _driveDownloadPreference.matches(account, email);
       if (!allowed()) return;
       try {
         if (location == null || location.isEmpty) {

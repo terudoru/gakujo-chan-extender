@@ -37,15 +37,25 @@ void main() {
   test('binding survives restart and matches only the original login', () async {
     final preference = DriveDownloadPreference(storage: storage);
     final account = starSyncAccountHash(' student ');
-    await preference.save(true, account);
+    await preference.save(true, account, 'a@example.com');
     final reloaded = DriveDownloadPreference(storage: storage);
     await reloaded.load(legacy);
-    expect(reloaded.matches(starSyncAccountHash('student')), isTrue);
-    expect(reloaded.matches(starSyncAccountHash('other')), isFalse);
-    expect(reloaded.matches(null), isFalse);
-    expect(reloaded.matches(starSyncAccountHash('student')), isTrue);
+    expect(reloaded.matches(starSyncAccountHash('student'), 'a@example.com'), isTrue);
+    expect(reloaded.matches(starSyncAccountHash('other'), 'a@example.com'), isFalse);
+    expect(reloaded.matches(null, 'a@example.com'), isFalse);
+    expect(reloaded.matches(account, 'b@example.com'), isFalse);
+    expect(reloaded.boundGoogleEmail, 'a@example.com');
+    expect(reloaded.matches(starSyncAccountHash('student'), 'a@example.com'), isTrue);
     await reloaded.save(false, null);
     expect(reloaded.matches(account), isFalse);
+  });
+
+  test('download origin must match the current binding', () async {
+    final preference = DriveDownloadPreference(storage: storage);
+    await preference.save(true, 'A', 'a@example.com');
+    expect(preference.matchesUpload('A', 'a@example.com', 'B', 'a@example.com'), isFalse);
+    expect(preference.matchesUpload('A', 'a@example.com', 'A', 'b@example.com'), isFalse);
+    expect(preference.matchesUpload('A', 'a@example.com', 'A', 'a@example.com'), isTrue);
   });
 
   test('clear removes stored notification times', () async {

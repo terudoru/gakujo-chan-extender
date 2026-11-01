@@ -116,13 +116,15 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   });
 
   @override
-  Future<void> signOut() => _guard(() async {
+  Future<void> signOut() async {
     try {
       await _initialize();
       if (_account != null) await GoogleSignIn.instance.disconnect();
+    } on Object {
+      throw const StarSyncGoogleRevocationException();
     } finally {
       _account = null;
       _token = null;
     }
-  });
+  }
 }

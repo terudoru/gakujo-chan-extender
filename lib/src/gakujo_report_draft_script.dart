@@ -1128,11 +1128,12 @@ class GakujoReportDraftScript {
     var store = doc.defaultView.localStorage;
     for (var i = store.length - 1; i >= 0; i -= 1) {
       var key = store.key(i);
-      if (!/^mbg-report-draft:v2:/.test(key)) continue;
+      if (!/^mbg-report-draft:v[12]:/.test(key)) continue;
       var draft;
-      try { draft = JSON.parse(store.getItem(key)); } catch (_) { continue; }
-      if (draft && typeof draft.savedAt === 'number' &&
-          isFinite(draft.savedAt) && draft.savedAt <= cutoff) {
+      try { draft = JSON.parse(store.getItem(key)); } catch (_) {}
+      if (/^mbg-report-draft:v1:/.test(key) || !draft ||
+          typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
+          draft.savedAt <= cutoff || draft.savedAt > cutoff + 86400000) {
         store.removeItem(key);
       }
     }

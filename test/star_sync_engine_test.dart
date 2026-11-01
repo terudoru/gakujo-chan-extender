@@ -1342,6 +1342,29 @@ void main() {
     engine.dispose();
   });
 
+  test('setup snapshot includes disabled collections', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites')..entries = {'old': 'favorite'};
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => 'A',
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites],
+    );
+    await engine.setUp(config, 'pass');
+    await engine.setCollectionEnabled('favorites', false);
+    final snapshot = await engine.snapshotLocalStars();
+    final encoded = snapshot.values.singleWhere((value) => value.contains('favorites'));
+    expect(jsonDecode(encoded)['favorites'], {'old': 'favorite'});
+    remote.files.removeWhere((key, _) => key.startsWith('sync/'));
+    await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+    expect(favorites.entries, isEmpty);
+    engine.dispose();
+  });
+
   test(
     'unreadable drafts retain a clear cutoff until cleanup succeeds',
     () async {

@@ -15,14 +15,16 @@ enum StarSyncStatus {
 }
 
 class StarSyncConfig {
-  const StarSyncConfig({required this.backend, this.webDav, this.s3});
+  const StarSyncConfig({required this.backend, this.webDav, this.s3, this.googleEmail});
 
   final StarSyncBackend backend;
   final StarSyncWebDavConfig? webDav;
   final StarSyncS3Config? s3;
+  final String? googleEmail;
 
   Map<String, Object?> toJson() => {
     'backend': backend.name,
+    if (backend == StarSyncBackend.googleDrive) 'googleEmail': googleEmail,
     if (backend != StarSyncBackend.googleDrive)
       if (webDav case final value?)
         'webDav': {
@@ -49,6 +51,7 @@ class StarSyncConfig {
     final s3 = json['s3'] as Map<String, dynamic>?;
     return StarSyncConfig(
       backend: backend,
+      googleEmail: json['googleEmail'] as String?,
       webDav: dav == null
           ? null
           : StarSyncWebDavConfig(

@@ -159,7 +159,7 @@ void main() {
       a.uploadAutomaticBackupIfDue(
         () async => encodePortableSyncBackup({
           'version': 2,
-          'data': 'a' * maxGakujoBackupBytes,
+          'messageExcludeKeywords': 'a' * maxGakujoBackupBytes,
         }),
       ),
       throwsA(isA<GakujoBackupImportException>()),

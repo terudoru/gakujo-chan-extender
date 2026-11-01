@@ -769,7 +769,6 @@ class StarSyncEngine {
     };
     final snapshots = <String, Object?>{};
     for (final collection in _collections) {
-      if (!collectionEnabled(collection.name)) continue;
       final local = await collection.readLocal();
       if (local != null) {
         snapshots[collection.name] = local;

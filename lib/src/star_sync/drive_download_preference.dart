@@ -15,6 +15,7 @@ class DriveDownloadPreference {
   final FlutterSecureStorage _storage;
   bool enabled = false;
   String? boundAccount;
+  String? boundGoogleEmail;
 
   Future<void> load(File legacyFile) async {
     final raw = await _storage.read(key: key);
@@ -22,6 +23,7 @@ class DriveDownloadPreference {
       final data = jsonDecode(raw) as Map<String, dynamic>;
       enabled = data['enabled'] == true;
       boundAccount = data['boundAccount'] as String?;
+      boundGoogleEmail = data['boundGoogleEmail'] as String?;
     } else if (await legacyFile.exists()) {
       // The old toggle has no account identity, so it cannot be trusted on.
       final legacyEnabled = await legacyFile.readAsString() == 'true';
@@ -30,23 +32,31 @@ class DriveDownloadPreference {
     if (await legacyFile.exists()) await legacyFile.delete();
   }
 
-  Future<void> save(bool value, String? account) async {
+  Future<void> save(bool value, String? account, [String? googleEmail]) async {
     await _storage.write(
       key: key,
-      value: jsonEncode({'enabled': value, 'boundAccount': account}),
+      value: jsonEncode({'enabled': value, 'boundAccount': account, 'boundGoogleEmail': googleEmail}),
     );
     enabled = value;
     boundAccount = account;
+    boundGoogleEmail = googleEmail;
   }
 
   Future<void> clear() async {
     await _storage.delete(key: key);
     enabled = false;
     boundAccount = null;
+    boundGoogleEmail = null;
   }
 
-  bool matches(String? account) =>
-      enabled && account != null && account == boundAccount;
+  bool matches(String? account, [String? googleEmail]) =>
+      enabled && account != null && account == boundAccount &&
+      googleEmail != null && googleEmail == boundGoogleEmail;
+
+  bool matchesUpload(String? account, String? googleEmail,
+      String? originAccount, String? originGoogleEmail) =>
+      matches(account, googleEmail) &&
+      matches(originAccount, originGoogleEmail);
 }
 
 class DriveDownloadQueue {
