@@ -853,6 +853,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
     final downloadAccount = _driveAccountHash;
     final downloadEmail = _starSyncGoogleAuth.currentEmail;
+    // Any identity change meanwhile bumps this, even if it later changes back:
+    // the file may have been fetched with the other person's session.
+    final downloadGeneration = _driveUploads.generation;
     var effectiveRequest = request;
     try {
       if (!_isUsefulCourseName(request.courseName)) {
@@ -944,7 +947,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                 ? '保存しました: $savedPath'
                 : '保存しました（履歴は更新できませんでした）: $savedPath',
       );
-      _queueDriveDownload(result, downloadAccount, downloadEmail);
+      _queueDriveDownload(
+        result, downloadAccount, downloadEmail, downloadGeneration,
+      );
       _showDownloadSavedSnackBar(
         result,
         historyRecorded: historyRecorded,
@@ -1111,7 +1116,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
   void _queueDriveDownload(
     GakujoDownloadResult result, String? account, String? email,
+    int startGeneration,
   ) {
+    if (!_driveUploads.isCurrent(startGeneration)) return;
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
     )) {

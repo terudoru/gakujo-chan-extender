@@ -3206,8 +3206,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       },
                       onGoogleSignOut: () async {
                         try {
-                          await _warnPendingDriveChecks();
+                          // Off first: a failing warning must not leave it on.
                           await _setDriveDownloadsEnabled(false);
+                          await _warnPendingDriveChecks();
                         } finally {
                           await _signOutGoogle(warn: false);
                           _starSyncGoogleEmail = null;
@@ -3270,8 +3271,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         );
                         if (google) {
                           try {
-                            await _warnPendingDriveChecks();
+                            // Off first: a failing warning must not leave it on.
                             await _setDriveDownloadsEnabled(false);
+                            await _warnPendingDriveChecks();
                           } finally {
                             await _signOutGoogle(warn: false);
                             _starSyncGoogleEmail = null;
