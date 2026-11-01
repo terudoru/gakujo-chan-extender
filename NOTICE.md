@@ -35,3 +35,19 @@ Android WebView向けに実装したものです。
   シェーディング解析に処理量の上限と診断転送を追加しています。
   IJG 9f の README は `LICENSE.libjpeg-9f`、その他のライセンスは
   同ディレクトリの `LICENSE.*` を参照してください。
+
+- `third_party/flutter_secure_storage_darwin`: flutter_secure_storage_darwin 0.3.2
+  （BSD 3-Clause）。macOS のキーチェーンでの `readAll` を修正しています。
+  ライセンスは同ディレクトリの `LICENSE` を参照してください。
+- `third_party/flutter_secure_storage_windows`: flutter_secure_storage_windows 4.2.2
+  （BSD 3-Clause）。Windows でのデータ消失を防ぐ修正をしています。
+  ライセンスは同ディレクトリの `LICENSE` を参照してください。
+- `tools/pdf_preview/` と `assets/pdf_preview/web/`: PDFプレビュー用の Flutter Web ビューア。
+  pdfrx 2.10.1（MIT、`pdfium_worker.patch` と `pdfium_client.patch` で修正）、
+  PDFium とその同梱ライブラリ（`tools/pdf_preview/licenses/pdfium/`）、
+  Noto Sans CJK と GNU Unifont 18.0.01（SIL OFL 1.1、`tools/pdf_preview/licenses/`）を使用しています。
+  `MBGPreviewUI.otf` は Noto Sans CJK のサブセットを改名したものです。
+  ビルドに含まれる Flutter Web / CanvasKit などのライセンスは
+  `assets/pdf_preview/web/assets/NOTICES` を参照してください。
+
+アプリ内では「設定 > このアプリについて > オープンソースライセンス」でこれらと依存パッケージのライセンスを表示できます。
