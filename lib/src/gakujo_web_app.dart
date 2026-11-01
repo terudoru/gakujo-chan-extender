@@ -944,9 +944,8 @@ GakujoPortalAuthState gakujoPortalAuthStateFromSignals({
 
 @visibleForTesting
 GakujoPortalAuthState gakujoPortalAuthStateFromJavaScriptResult(
-  Object? result, {
-  bool recognizeFieldFree = false,
-}) {
+  Object? result,
+) {
   Object? decoded = result;
   for (var attempt = 0; attempt < 2 && decoded is String; attempt += 1) {
     try {
@@ -958,18 +957,11 @@ GakujoPortalAuthState gakujoPortalAuthStateFromJavaScriptResult(
   if (decoded is! Map) {
     return GakujoPortalAuthState.unknown;
   }
-  final state = gakujoPortalAuthStateFromSignals(
+  return gakujoPortalAuthStateFromSignals(
     hasLoginFields: decoded['hasLoginFields'] == true,
     hasTwoFactorField: decoded['hasTwoFactorField'] == true,
     hasAuthenticatedMarker: decoded['hasAuthenticatedMarker'] == true,
   );
-  if (recognizeFieldFree && state == GakujoPortalAuthState.unknown &&
-      decoded['hasLoginFields'] is bool &&
-      decoded['hasTwoFactorField'] is bool &&
-      decoded['hasAuthenticatedMarker'] is bool) {
-    return GakujoPortalAuthState.fieldFree;
-  }
-  return state;
 }
 
 @visibleForTesting
@@ -1008,7 +1000,15 @@ class GakujoLoginIdentity {
     restored = null;
   }
 
-  String? confirm() {
+  void invalidateLoginNavigation(String url, void Function() cancelUploads) {
+    if (!AllowedWebOrigins.isLoginOrTimeoutPage(url)) return;
+    pending = null;
+    challenge();
+    cancelUploads();
+  }
+
+  String? confirm(GakujoPortalAuthState authState) {
+    if (authState != GakujoPortalAuthState.authenticated) return null;
     pageSeen = true;
     pageConfirmed = true;
     final account = pending ?? restored;
@@ -2362,6 +2362,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoNavigationDecision> _handleNavigationRequest(
     GakujoNavigationRequest request,
   ) async {
+    if (request.isMainFrame) _invalidateLoginUrl(request.url);
     if (!request.isMainFrame && _pdfPreviewServer.isViewerUrl(request.url)) {
       return GakujoNavigationDecision.navigate;
     }
@@ -5764,7 +5765,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<GakujoPortalAuthState> _readPortalAuthState({bool recognizeFieldFree = false}) async {
+  Future<GakujoPortalAuthState> _readPortalAuthState() async {
     if (!_canRunPageScripts) {
       return GakujoPortalAuthState.unknown;
     }
@@ -5777,15 +5778,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           gakujoPortalAuthStateProbeScript,
         );
         final state = gakujoPortalAuthStateFromJavaScriptResult(
-          result, recognizeFieldFree: recognizeFieldFree,
+          result,
         );
         if (state == GakujoPortalAuthState.login ||
             state == GakujoPortalAuthState.twoFactor) {
           _loginIdentity.challenge();
           unawaited(_setActiveLoginAccount(null, resync: false));
         }
-        if ((state != GakujoPortalAuthState.unknown &&
-                state != GakujoPortalAuthState.fieldFree) || attempt == 2) {
+        if (state != GakujoPortalAuthState.unknown || attempt == 2) {
           return state;
         }
         await Future<void>.delayed(const Duration(milliseconds: 175));
@@ -5899,6 +5899,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           ? 'ログインが切れました。自動ログイン後に前のページへ戻ります'
           : 'ログインが切れました。再ログイン後に前のページへ戻ります',
     );
+  }
+
+  void _invalidateLoginUrl(String url) {
+    _loginIdentity.invalidateLoginNavigation(url, () {
+      unawaited(_setActiveLoginAccount(null, resync: false));
+    });
   }
 
   bool _looksLikeLoginOrTimeoutUrl(String url) {
@@ -7019,6 +7025,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onNavigationStarting: _captureNavigationRecoveryCandidate,
         onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
+          _invalidateLoginUrl(url);
           if (_isInternalBlankUrl(url)) {
             _beginNavigation();
             _pendingPageFinishedNavigationRevision = _navigationRevision;
@@ -7114,13 +7121,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             }
             final identityAllowed = AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed);
             final loginUrl = _looksLikeLoginOrTimeoutUrl(url);
-            if (loginUrl) {
-              _loginIdentity.challenge();
-              unawaited(_setActiveLoginAccount(null, resync: false));
-            }
+            if (loginUrl) _invalidateLoginUrl(url);
             final identityRevision = _loginIdentity.revision;
             _setStatus('表示中: ${_displayUrl(url)}');
-            final authState = await _readPortalAuthState(recognizeFieldFree: true);
+            final authState = await _readPortalAuthState();
             if (!stillCurrent()) {
               return;
             }
@@ -7129,9 +7133,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               urlLooksLikeLoginOrTimeout: _looksLikeLoginOrTimeoutUrl(url),
             );
             if (!isAuthenticationChallenge && identityAllowed && identityRevision == _loginIdentity.revision &&
-                (authState == GakujoPortalAuthState.authenticated ||
-                    authState == GakujoPortalAuthState.fieldFree)) {
-              final account = _loginIdentity.confirm();
+                authState == GakujoPortalAuthState.authenticated) {
+              final account = _loginIdentity.confirm(authState);
               if (account != null) {
                 await _setActiveLoginAccount(account, stillValid: stillCurrent);
                 if (!stillCurrent()) return;

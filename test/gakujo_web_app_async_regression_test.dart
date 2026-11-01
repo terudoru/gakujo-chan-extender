@@ -27,7 +27,7 @@ void main() {
       expect(identity.pending, 'account-a');
       identity.challenge();
       expect(identity.pending, 'account-a');
-      expect(identity.confirm(), 'account-a');
+      expect(identity.confirm(GakujoPortalAuthState.authenticated), 'account-a');
       identity.active = 'account-a';
       expect(identity.active, 'account-a');
     });
@@ -37,7 +37,23 @@ void main() {
       expect(identity.submit('account-b'), isTrue);
       expect(identity.active, isNull);
       identity.submit('account-c');
-      expect(identity.confirm(), 'account-c');
+      expect(identity.confirm(GakujoPortalAuthState.authenticated), 'account-c');
+    });
+
+    test('login navigation clears identity and cancels uploads synchronously', () {
+      final identity = GakujoLoginIdentity()
+        ..active = 'account-a'
+        ..pending = 'account-b'
+        ..restored = 'account-c';
+      var uploadAborted = false;
+      identity.invalidateLoginNavigation(
+        'https://gakujo.iess.niigata-u.ac.jp/login',
+        () => uploadAborted = true,
+      );
+      expect(identity.active, isNull);
+      expect(identity.pending, isNull);
+      expect(identity.restored, isNull);
+      expect(uploadAborted, isTrue);
     });
 
     test('login fields on a generic URL invalidate an active identity', () {
@@ -46,7 +62,7 @@ void main() {
         'hasLoginFields': true,
         'hasTwoFactorField': false,
         'hasAuthenticatedMarker': false,
-      }, recognizeFieldFree: true);
+      });
       if (isGakujoAuthenticationChallenge(
         authState: state,
         urlLooksLikeLoginOrTimeout: false,
@@ -56,24 +72,27 @@ void main() {
       expect(identity.active, isNull);
     });
 
-    test('restored identity waits for a field-free page and is discarded on login', () {
+    test('restored identity waits for an authenticated page and is discarded on login', () {
       final identity = GakujoLoginIdentity()..restored = 'account-a';
       expect(identity.active, isNull);
-      expect(identity.confirm(), 'account-a');
+      expect(identity.confirm(GakujoPortalAuthState.fieldFree), isNull);
+      expect(identity.restored, 'account-a');
+      expect(identity.confirm(GakujoPortalAuthState.unknown), isNull);
+      expect(identity.confirm(GakujoPortalAuthState.authenticated), 'account-a');
       final login = GakujoLoginIdentity()..restored = 'account-a';
       login.challenge();
       expect(login.active, isNull);
-      expect(login.confirm(), isNull);
+      expect(login.confirm(GakujoPortalAuthState.authenticated), isNull);
       expect(
         gakujoPortalAuthStateFromJavaScriptResult({
           'hasLoginFields': false,
           'hasTwoFactorField': false,
           'hasAuthenticatedMarker': false,
-        }, recognizeFieldFree: true),
-        GakujoPortalAuthState.fieldFree,
+        }),
+        GakujoPortalAuthState.unknown,
       );
       expect(
-        gakujoPortalAuthStateFromJavaScriptResult(null, recognizeFieldFree: true),
+        gakujoPortalAuthStateFromJavaScriptResult(null),
         GakujoPortalAuthState.unknown,
       );
     });
