@@ -1799,10 +1799,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  int _mainFrameNavigationStarts = 0;
+
   void _submitLoginAccount(String account) {
-    if (_loginIdentity.submit(account, navigation: _navigationRevision)) {
+    final navigation = _navigationRevision;
+    if (_loginIdentity.submit(account, navigation: navigation)) {
       unawaited(_setActiveLoginAccount(null, resync: false));
     }
+    // A reported submit that starts no navigation was stopped (validation, a
+    // page handler); it must not wait to be promoted by some later page.
+    final starts = _mainFrameNavigationStarts;
+    Timer(const Duration(seconds: 15), () {
+      if (!mounted || _mainFrameNavigationStarts != starts) return;
+      if (_loginIdentity.pending == account &&
+          _loginIdentity.pendingNavigation == navigation) {
+        _loginIdentity.pending = null;
+        _loginIdentity.pendingNavigation = null;
+      }
+    });
   }
 
   Future<void> _storedLoginAccountWrites = Future<void>.value();
@@ -5956,6 +5970,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _invalidateLoginUrl(String url) {
+    _mainFrameNavigationStarts += 1;
     _loginIdentity.invalidateLoginNavigation(url, () {
       unawaited(_setActiveLoginAccount(null, resync: false));
     });

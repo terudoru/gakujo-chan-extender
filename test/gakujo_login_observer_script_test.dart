@@ -33,11 +33,23 @@ const button = {
   closest: () => button
 };
 const submitted = [];
+const windowListeners = {};
+// Capture on document, then bubble to window; a later page handler may cancel.
+function dispatchSubmit(event, cancelLate) {
+  for (const callback of listeners.submit) callback(event);
+  if (cancelLate) event.defaultPrevented = true;
+  const late = windowListeners.submit || [];
+  windowListeners.submit = [];
+  for (const callback of late) callback(event);
+}
 const formProto = {submit: function() { submitted.push(this); }};
 const context = {
   window: {
     GakujoMessageStars: {postMessage: value => messages.push(JSON.parse(value))},
-    HTMLFormElement: {prototype: formProto}
+    HTMLFormElement: {prototype: formProto},
+    addEventListener: (type, callback) => {
+      (windowListeners[type] ||= []).push(callback);
+    }
   },
   document: {addEventListener: (type, callback) => {
     (listeners[type] ||= []).push(callback);
@@ -46,30 +58,31 @@ const context = {
 vm.createContext(context);
 vm.runInContext(process.argv[1], context);
 vm.runInContext(process.argv[1], context);
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 // A click alone, or a submit the page prevented, is not a login.
 for (const callback of listeners.click || []) callback({target: button});
-for (const callback of listeners.submit) callback({target: form, defaultPrevented: true});
+dispatchSubmit({target: form, defaultPrevented: true});
+dispatchSubmit({target: form, defaultPrevented: false}, true);
 formProto.submit.call(form);
 form.inputs = [{value: 'id-by-name', getAttribute: name =>
   ({type: 'email', name: 'Login_ID'})[name] || null}, password];
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 form.inputs = [{value: 'id-by-id', getAttribute: name =>
   ({type: 'text', id: 'J-Username'})[name] || null}, password];
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 form.inputs = [username, password, password];
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 for (const callback of listeners.click || []) callback({target: button});
 form.inputs = [{value: 'other', getAttribute: name =>
   ({type: 'text', name: 'email'})[name] || null}, password];
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 for (const callback of listeners.click || []) callback({target: button});
 form.inputs = [{value: 'other', getAttribute: name =>
   ({type: 'text', name: 'notuserid'})[name] || null}, password];
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 form.inputs = [username, password];
 username.value = '   ';
-for (const callback of listeners.submit) callback({target: form});
+dispatchSubmit({target: form});
 for (const callback of listeners.click || []) callback({target: button});
 messages.push({submitted: submitted.length});
 process.stdout.write(JSON.stringify(messages));
