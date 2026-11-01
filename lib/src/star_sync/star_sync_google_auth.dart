@@ -21,6 +21,9 @@ class StarSyncGoogleAuthConfig {
     this.desktopClientSecret = const String.fromEnvironment(
       'GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET',
     ),
+    this.androidServerClientId = const String.fromEnvironment(
+      'GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID',
+    ),
     this.iosClientId = const String.fromEnvironment(
       'GOOGLE_OAUTH_IOS_CLIENT_ID',
     ),
@@ -28,10 +31,11 @@ class StarSyncGoogleAuthConfig {
 
   final String desktopClientId;
   final String desktopClientSecret;
+  final String androidServerClientId;
   final String iosClientId;
 
   bool get isAvailable {
-    if (Platform.isAndroid) return true;
+    if (Platform.isAndroid) return androidServerClientId.isNotEmpty;
     if (Platform.isIOS) return iosClientId.isNotEmpty;
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
       return desktopClientId.isNotEmpty && desktopClientSecret.isNotEmpty;

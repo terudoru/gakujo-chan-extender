@@ -13,7 +13,10 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   final Set<String> _scopes = {...starSyncGoogleScopes};
 
   Future<void> _initialize() => _initialization ??= GoogleSignIn.instance
-      .initialize(clientId: Platform.isIOS ? config.iosClientId : null);
+      .initialize(
+        clientId: Platform.isIOS ? config.iosClientId : null,
+        serverClientId: Platform.isAndroid ? config.androidServerClientId : null,
+      );
 
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {

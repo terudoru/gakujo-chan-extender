@@ -126,8 +126,9 @@ Drive API の利用量は端末ごとに「直近24時間」（1時間単位の�
 
 - Google Cloud で External の同意画面を作成し、`drive.appdata`、`openid`、`email` を設定して本番公開します。
 - Desktop クライアントを作成し、Windows/macOS のビルド時に ID とシークレットをそれぞれ `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...`、`--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` で渡します。インストール型アプリのシークレットは、Google の扱いでも機密ではありません。
-- Android クライアントはパッケージ `net.yoshida.morebettergakujo` と、リリース用・デバッグ用それぞれの署名鍵の SHA-1 で登録します。
-- iOS クライアントはバンドル ID `net.yoshida.morebettergakujo` で作成し、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...`、逆順 ID をビルド設定 `GOOGLE_REVERSED_CLIENT_ID` に指定します（既定値はダミーの `com.googleusercontent.apps.unset`）。
+- Android クライアントはパッケージ `net.yoshida.morebettergakujo` と、リリース用・デバッグ用それぞれの署名鍵の SHA-1 で登録します。Android クライアントの ID をアプリに指定する必要はありません。
+- Android 用には同じ Google Cloud プロジェクトに Web クライアントも作成し、その ID をビルド時に `--dart-define=GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID=...` で渡します。Android クライアントの登録とあわせて必要です。
+- iOS クライアントはバンドル ID `net.yoshida.morebettergakujo` で作成し、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...` で渡します。逆順 ID は追跡対象外の `ios/Flutter/GoogleOAuth.xcconfig` に `GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.<id>` と記入します。追跡対象の xcconfig は編集せず、ファイルがない場合はダミーの `com.googleusercontent.apps.unset` が使われます。
 
 ## 実装時に決めたこと
 
