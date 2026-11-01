@@ -80,7 +80,7 @@ GakujoBackupImport importStarSyncPortableSettings(
   );
 }
 
-class StarSyncFavoritesCollection implements StarSyncCollection {
+class StarSyncFavoritesCollection extends StarSyncCollection {
   StarSyncFavoritesCollection(this.store, {this.onChanged});
 
   final GakujoActivityStore store;
@@ -128,7 +128,7 @@ class StarSyncFavoritesCollection implements StarSyncCollection {
   }
 }
 
-class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
+class StarSyncNotifiedDeadlinesCollection extends StarSyncCollection {
   StarSyncNotifiedDeadlinesCollection(this.store);
 
   final GakujoActivityStore store;
@@ -160,7 +160,7 @@ class StarSyncNotifiedDeadlinesCollection implements StarSyncCollection {
   }, basedOn: basedOn);
 }
 
-class StarSyncSettingsCollection implements StarSyncCollection {
+class StarSyncSettingsCollection extends StarSyncCollection {
   StarSyncSettingsCollection({required this.read, required this.apply});
 
   final Future<Map<String, Object?>> Function() read;
@@ -172,6 +172,8 @@ class StarSyncSettingsCollection implements StarSyncCollection {
 
   @override
   String get name => 'settings';
+  @override
+  bool get preferRemoteOnFirstSync => true;
   @override
   bool get growOnly => false;
   @override
@@ -192,7 +194,7 @@ class StarSyncSettingsCollection implements StarSyncCollection {
   }, basedOn: basedOn);
 }
 
-class StarSyncReportDraftsCollection implements StarSyncCollection {
+class StarSyncReportDraftsCollection extends StarSyncCollection {
   StarSyncReportDraftsCollection({required this.read, required this.apply});
 
   final Future<Map<String, Object?>?> Function() read;

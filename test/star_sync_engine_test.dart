@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_collections.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
@@ -234,7 +235,7 @@ class _TestTimer implements Timer {
   }
 }
 
-class _Collection implements StarSyncCollection {
+class _Collection extends StarSyncCollection {
   _Collection(this.name, {this.growOnly = false, this.maxLive, this.order});
 
   @override
@@ -3534,6 +3535,111 @@ void main() {
       engine.dispose();
     },
   );
+
+  test('new device adopts remote settings and adds its own favorites', () async {
+    final remote = _Transport();
+    var settingsA = <String, Object?>{'messageExcludeKeywords': ['custom']};
+    var settingsB = <String, Object?>{
+      'messageExcludeKeywords': <String>[],
+      'notificationTopics': ['local-only'],
+    };
+    final favoritesA = _Collection('favorites')
+      ..entries = {'a': 'A', 'shared': 'A'};
+    final favoritesB = _Collection('favorites')
+      ..entries = {'b': 'B', 'shared': 'B'};
+    StarSyncEngine make(StarSyncCollection settings, _Collection favorites) {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+        collections: [settings, favorites],
+      );
+    }
+
+    final a = make(
+      StarSyncSettingsCollection(
+        read: () async => Map.of(settingsA),
+        apply: (values, {required basedOn}) async {
+          settingsA = Map.of(values);
+          return true;
+        },
+      ),
+      favoritesA,
+    );
+    final b = make(
+      StarSyncSettingsCollection(
+        read: () async => Map.of(settingsB),
+        apply: (values, {required basedOn}) async {
+          settingsB = Map.of(values);
+          return true;
+        },
+      ),
+      favoritesB,
+    );
+    await a.setUp(config, 'pass');
+    await b.setUp(config, 'pass');
+    expect(settingsB['messageExcludeKeywords'], ['custom']);
+    expect(settingsB['notificationTopics'], ['local-only']);
+    expect(favoritesB.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
+    await a.syncNow();
+    expect(settingsA, settingsB);
+    expect(favoritesA.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
+    settingsB['messageExcludeKeywords'] = ['later'];
+    await b.syncNow();
+    await a.syncNow();
+    expect(settingsA['messageExcludeKeywords'], ['later']);
+    a.dispose();
+    b.dispose();
+  });
+
+  test('first settings sync retains explicitly restored edits', () async {
+    final remote = _Transport();
+    var valuesA = <String, Object?>{'messageExcludeKeywords': ['remote']};
+    var valuesB = <String, Object?>{'messageExcludeKeywords': ['restored']};
+    StarSyncSettingsCollection settings(
+      Map<String, Object?> Function() read,
+      void Function(Map<String, Object?>) write,
+    ) => StarSyncSettingsCollection(
+      read: () async => Map.of(read()),
+      apply: (values, {required basedOn}) async {
+        write(Map.of(values));
+        return true;
+      },
+    );
+    StarSyncEngine make() {
+      final storage = _Storage();
+      return StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        kdfParams: kdf,
+      );
+    }
+
+    final a = make();
+    a.registerCollection(settings(() => valuesA, (value) => valuesA = value));
+    await a.setUp(config, 'pass');
+    final b = make();
+    await b.setUp(config, 'pass');
+    b.registerCollection(settings(() => valuesB, (value) => valuesB = value));
+    await b.withBulkReplace(
+      () async {},
+      stars: false,
+      collections: const {
+        'settings': {'messageExcludeKeywords'},
+      },
+    );
+    await b.syncNow();
+    await a.syncNow();
+    expect(valuesA['messageExcludeKeywords'], ['restored']);
+    expect(valuesB['messageExcludeKeywords'], ['restored']);
+    a.dispose();
+    b.dispose();
+  });
 
   test('failed collection apply does not create remote tombstones', () async {
     final remote = _Transport();

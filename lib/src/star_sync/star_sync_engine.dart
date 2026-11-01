@@ -1748,6 +1748,11 @@ class StarSyncEngine {
     final reconciled = Map<String, StarSyncCollectionRecord>.from(
       previousRecords,
     );
+    final remoteKeys = {
+      for (final document in documents) ...document.records.keys,
+    };
+    final preferRemote =
+        collection.preferRemoteOnFirstSync && !stored.containsKey('records');
     final pendingKeys = stored['pendingBulkReplaceKeys'];
     final snapshot = stored['pendingBulkReplaceLocalKeys'];
     final keys = {
@@ -1765,9 +1770,9 @@ class StarSyncEngine {
         if ((stored['pendingBulkReplace'] == true &&
                 (pendingKeys == null ||
                     (pendingKeys is List && pendingKeys.contains(key)))) ||
-            old == null ||
-            old.deleted ||
-            old.valueHash != hash) {
+            (old == null && !(preferRemote && remoteKeys.contains(key))) ||
+            (old != null && old.deleted) ||
+            (old != null && old.valueHash != hash)) {
           reconciled[key] = StarSyncCollectionRecord(
             key: key,
             value: value,

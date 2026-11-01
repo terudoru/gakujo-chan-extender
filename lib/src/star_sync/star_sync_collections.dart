@@ -4,7 +4,8 @@ import 'package:crypto/crypto.dart';
 
 import 'star_sync_document.dart';
 
-abstract interface class StarSyncCollection {
+abstract class StarSyncCollection {
+  bool get preferRemoteOnFirstSync => false;
   String get name;
   bool get growOnly;
   Future<Map<String, Object?>?> readLocal();
