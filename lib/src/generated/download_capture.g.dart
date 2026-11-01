@@ -7,7 +7,7 @@ const String gakujoDownloadCaptureJs = r'''
 (() => {
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
-    var captureVersion = 18;
+    var captureVersion = 19;
     if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
       if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
         window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -512,7 +512,7 @@ const String gakujoDownloadCaptureJs = r'''
       var enctype = (submissionAttribute(form, submitter, "enctype") || "application/x-www-form-urlencoded").toLowerCase();
       var target = submissionAttribute(form, submitter, "target") || "_self";
       if (!/^(GET|POST)$/.test(method) || method === "POST" && enctype !== "application/x-www-form-urlencoded" || !/^_self$/i.test(target)) return false;
-      var absoluteAction = absoluteUrlOf(form, action);
+      var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute("formaction") ? submitter : form, action);
       var fields = formFields(form, submitter);
       var signals = formDownloadSignals(absoluteAction, fields);
       if (signals.workflow) return false;
@@ -547,6 +547,10 @@ const String gakujoDownloadCaptureJs = r'''
         var href = (anchor.getAttribute("href") || "").trim();
         if (href.charAt(0) === "#" || /^javascript:/i.test(href)) return;
         var absoluteUrl = absoluteUrlOf(anchor, href);
+        var absoluteProtocol = new URL(absoluteUrl).protocol;
+        if (absoluteProtocol !== "http:" && absoluteProtocol !== "https:") {
+          return;
+        }
         var params = new URL(absoluteUrl).searchParams;
         if (anchor.hasAttribute("onclick") && !hasStrongDownloadSignal(absoluteUrl, {}) && !(/filerefer/i.test(params.get("_flowId") || "") && (params.get("fileId") || "").trim() && (!params.has("_eventId") || /download/i.test(params.get("_eventId"))))) {
           return;
