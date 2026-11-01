@@ -974,6 +974,9 @@ bool isGakujoAuthenticationChallenge({
       authState == GakujoPortalAuthState.twoFactor;
 }
 
+const googleRevocationUnconfirmedMessage =
+    'Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください';
+
 @visibleForTesting
 class GakujoLoginIdentity {
   String? active;
@@ -3202,10 +3205,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         }
                       },
                       onGoogleSignOut: () async {
-                        await _warnPendingDriveChecks();
-                        await _setDriveDownloadsEnabled(false);
-                        await _signOutGoogle(warn: false);
-                        _starSyncGoogleEmail = null;
+                        try {
+                          await _warnPendingDriveChecks();
+                          await _setDriveDownloadsEnabled(false);
+                        } finally {
+                          await _signOutGoogle(warn: false);
+                          _starSyncGoogleEmail = null;
+                        }
                       },
                       onGoogleReSignIn: () async {
                         _starSyncGoogleEmail = await _signInGoogle();
@@ -4026,6 +4032,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    var revocationUnconfirmed = false;
     Future<void> clearAll() async {
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
@@ -4048,17 +4055,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               name: 'MoreBetterGakujo');
         }
         // Sign out even when the Drive preference could not be cleared.
-        try {
-          if (!await _signOutGoogle()) {
-            _showSnackBar(
-              'Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください',
-            );
-          }
-          _starSyncGoogleEmail = null;
-        } on Object catch (error) {
-          developer.log('Failed to sign out of Google while clearing data: ${error.runtimeType}',
-              name: 'MoreBetterGakujo');
-        }
+        if (!await _signOutGoogle()) revocationUnconfirmed = true;
+        _starSyncGoogleEmail = null;
       }
       await Future.wait([
         _downloadHistoryStore.clear(),
@@ -4113,7 +4111,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   return;
                 }
                 Navigator.of(dialogContext).pop();
-                _showSnackBar('保存データを削除しました');
+                // Keep the revocation warning: a success message would hide it.
+                _showSnackBar(revocationUnconfirmed
+                    ? '保存データを削除しました。$googleRevocationUnconfirmedMessage'
+                    : '保存データを削除しました');
               },
               child: const Text('全て削除'),
             ),
@@ -6043,14 +6044,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   });
 
   Future<bool> _signOutGoogle({bool warn = true}) async {
-    if (warn) await _warnPendingDriveChecks();
+    if (warn) {
+      // The warning is a courtesy; it must never keep the sign-out from running.
+      try {
+        await _warnPendingDriveChecks();
+      } on Object catch (error) {
+        developer.log('Failed to check saved Drive files: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
+      }
+    }
     _driveDownloadsSuspended = true;
     _cancelDriveUploads();
     try {
       await _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
       return true;
-    } on StarSyncGoogleRevocationException {
-      if (mounted) _showSnackBar('Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください');
+    } on Object catch (error) {
+      developer.log('Failed to sign out of Google: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
+      if (mounted) _showSnackBar(googleRevocationUnconfirmedMessage);
       return false;
     }
   }
@@ -7655,7 +7666,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               name: 'MoreBetterGakujo');
         }
         try {
-          if (!await _signOutGoogle()) revocationUnconfirmed = true;
+          if (!await _signOutGoogle(warn: false)) revocationUnconfirmed = true;
         } on Object catch (error) {
           revocationUnconfirmed = true;
           developer.log('Failed to sign out of Google: ${error.runtimeType}',
@@ -7711,7 +7722,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
       _setStatus('保存データをリセットしました');
       _showSnackBar(revocationUnconfirmed
-          ? '保存データをリセットしました。Google 側の接続解除を確認できなかったため、Google アカウントの設定から確認してください'
+          ? '保存データをリセットしました。$googleRevocationUnconfirmedMessage'
           : '保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
     } on Object catch (error, stackTrace) {
       developer.log(
