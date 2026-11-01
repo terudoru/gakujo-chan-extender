@@ -765,7 +765,9 @@ class StarSyncEngine {
     if (accountHash != null) {
       final saved = starSyncAccountHash(loginId?.call());
       if (saved == null) throw const StarSyncAccountRequiredException();
-      if (account != saved) throw const StarSyncActiveAccountRequiredException();
+      if (account != saved) {
+        throw const StarSyncActiveAccountRequiredException();
+      }
     }
     if ((expectedAccount != null && account != expectedAccount) ||
         (expectedGeneration != null &&

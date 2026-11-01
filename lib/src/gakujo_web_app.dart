@@ -6343,6 +6343,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         // Autofill is starting this navigation on behalf of the pending open.
         _pendingMessageOpen?.navigation.record(null, _navigationRevision);
       }
+      if (decoded is Map && decoded['event'] == 'submit') {
+        // Autofill always submits the saved login ID; some of its fallbacks
+        // (form.submit) fire no event the login observer could see.
+        final account = starSyncAccountHash(
+          _appSettings.loginCredentials?.loginId,
+        );
+        if (account != null) unawaited(_setActiveLoginAccount(account));
+      }
       if (decoded is Map && decoded['event'] == 'challenge') {
         final recoveryUrl = selectGakujoSessionRecoveryUrl(
           navigationCandidateUrl: _navigationRecoveryCandidateUrl,
