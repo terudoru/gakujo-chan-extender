@@ -66,11 +66,20 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Check out the Google OAuth helper from the workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts/write_google_oauth_defines.py
+          sparse-checkout-cone-mode: false
+
       - name: Prepare Google OAuth defines
         env:
           GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
           GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
-        run: python scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+        run: python .release-tools/scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
 
       - name: Build Windows app
         run: flutter build windows --release --dart-define-from-file=build/google_oauth_defines.json
