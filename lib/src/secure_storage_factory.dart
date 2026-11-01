@@ -11,6 +11,7 @@ class SecureStorageFactory {
 
   static const macosMigrationKeys = [
     'more_better_gakujo_2fa_secret',
+    'more_better_gakujo_active_login_account',
     'more_better_gakujo_activity_changes',
     'more_better_gakujo_activity_snapshots',
     'more_better_gakujo_assignments',

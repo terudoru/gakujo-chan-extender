@@ -605,6 +605,58 @@ void main() {
     },
   );
 
+  test('account hash callback gates transport on the active identity', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? active = starSyncAccountHash('A');
+    final engine = StarSyncEngine(
+      loginId: () => 'A',
+      accountHash: () => active,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+    );
+    active = null;
+    await expectLater(
+      engine.setUp(config, 'pass'),
+      throwsA(isA<StarSyncActiveAccountRequiredException>()),
+    );
+    active = starSyncAccountHash('B');
+    await expectLater(
+      engine.setUp(config, 'pass'),
+      throwsA(isA<StarSyncActiveAccountRequiredException>()),
+    );
+    expect(remote.lists, 0);
+    expect(remote.puts, 0);
+    expect(remote.gets, isEmpty);
+    active = starSyncAccountHash('A');
+    await engine.setUp(config, 'pass');
+    final lists = remote.lists;
+    final puts = remote.puts;
+    final gets = Map<String, int>.of(remote.gets);
+    active = null;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+    expect(engine.status.value.activeAccountUnknown, isTrue);
+    expect(remote.lists, lists);
+    expect(remote.puts, puts);
+    expect(remote.gets, gets);
+    active = starSyncAccountHash('B');
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountMismatch);
+    expect(engine.status.value.activeAccountUnknown, isFalse);
+    expect(remote.lists, lists);
+    expect(remote.puts, puts);
+    expect(remote.gets, gets);
+    active = starSyncAccountHash('A');
+    await engine.syncNow();
+    await engine.resumeKeepingLocal();
+    await engine.syncNow();
+    expect(remote.lists, greaterThan(lists));
+    engine.dispose();
+  });
+
   test('pending clear waits for the bound account', () async {
     final remote = _Transport();
     final storage = _Storage();

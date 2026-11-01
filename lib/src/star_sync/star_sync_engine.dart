@@ -78,6 +78,10 @@ class StarSyncAccountRequiredException implements Exception {
   const StarSyncAccountRequiredException();
 }
 
+class StarSyncActiveAccountRequiredException implements Exception {
+  const StarSyncActiveAccountRequiredException();
+}
+
 class StarSyncAccountMismatchException implements Exception {
   const StarSyncAccountMismatchException();
 }
@@ -105,6 +109,7 @@ class StarSyncStatusSnapshot {
     this.googleQuotaUsed = 0,
     this.googleQuotaSoftLimited = false,
     this.googleQuotaHardLimited = false,
+    this.activeAccountUnknown = false,
   });
   final bool enabled;
   final StarSyncStatus status;
@@ -115,6 +120,7 @@ class StarSyncStatusSnapshot {
   final int googleQuotaUsed;
   final bool googleQuotaSoftLimited;
   final bool googleQuotaHardLimited;
+  final bool activeAccountUnknown;
 }
 
 class StarSyncResult {
@@ -316,6 +322,7 @@ class StarSyncEngine {
     Timer Function(Duration, void Function())? timerFactory,
     StarSyncQuotaMeter? quotaMeter,
     this.loginId,
+    this.accountHash,
     this.canSync,
     this.onLocalStarsChanged,
     this.clearDraftsBefore,
@@ -382,6 +389,7 @@ class StarSyncEngine {
   final Timer Function(Duration, void Function()) _timerFactory;
   Completer<void>? _backgroundWake;
   final String? Function()? loginId;
+  final String? Function()? accountHash;
   final bool Function()? canSync;
   final void Function()? onLocalStarsChanged;
   final Future<bool> Function(DateTime)? clearDraftsBefore;
@@ -536,6 +544,7 @@ class StarSyncEngine {
     final state = _state;
     _status.value = StarSyncStatusSnapshot(
       enabled: _config != null && state != null,
+      activeAccountUnknown: accountHash != null && _currentAccount() == null,
       status: state?.status ?? StarSyncStatus.disabled,
       lastSyncAt: state?.lastSyncAt,
       lastError: state?.lastError,
@@ -695,7 +704,9 @@ class StarSyncEngine {
     await _finishPendingLocalClear();
   }
 
-  String? _currentAccount() => starSyncAccountHash(loginId?.call());
+  String? _currentAccount() => accountHash != null
+      ? accountHash!()
+      : starSyncAccountHash(loginId?.call());
 
   String requireAccount() =>
       _currentAccount() ?? (throw const StarSyncAccountRequiredException());
@@ -751,6 +762,11 @@ class StarSyncEngine {
 
   String _setupAccount(String? expectedAccount, int? expectedGeneration) {
     final account = _currentAccount();
+    if (accountHash != null) {
+      final saved = starSyncAccountHash(loginId?.call());
+      if (saved == null) throw const StarSyncAccountRequiredException();
+      if (account != saved) throw const StarSyncActiveAccountRequiredException();
+    }
     if ((expectedAccount != null && account != expectedAccount) ||
         (expectedGeneration != null &&
             accountGeneration != expectedGeneration)) {

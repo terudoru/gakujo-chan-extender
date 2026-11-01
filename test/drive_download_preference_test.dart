@@ -53,6 +53,8 @@ void main() {
   test('download origin must match the current binding', () async {
     final preference = DriveDownloadPreference(storage: storage);
     await preference.save(true, 'A', 'a@example.com');
+    expect(preference.matchesUpload(null, 'a@example.com', 'A', 'a@example.com'), isFalse);
+    expect(preference.matchesUpload('A', 'a@example.com', null, 'a@example.com'), isFalse);
     expect(preference.matchesUpload('A', 'a@example.com', 'B', 'a@example.com'), isFalse);
     expect(preference.matchesUpload('A', 'a@example.com', 'A', 'b@example.com'), isFalse);
     expect(preference.matchesUpload('A', 'a@example.com', 'A', 'a@example.com'), isTrue);

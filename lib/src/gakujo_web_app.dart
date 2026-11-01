@@ -42,6 +42,7 @@ import 'gakujo_expired_page_recovery_script.dart';
 import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_last_page_store.dart';
+import 'gakujo_login_observer_script.dart';
 import 'gakujo_local_prefs_store.dart';
 import 'google_drive_file_saver.dart';
 import 'gakujo_message_filter_script.dart';
@@ -1458,8 +1459,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _driveDownloadsSuspended = false;
   bool get _driveDownloadsEnabled => !_driveDownloadsSuspended && _appSettingsLoaded &&
       _driveDownloadPreference.matches(_driveAccountHash, _starSyncGoogleAuth.currentEmail);
-  String? get _driveAccountHash =>
-      starSyncAccountHash(_appSettings.loginCredentials?.loginId);
+  String? _activeLoginAccount;
+  String? get _driveAccountHash => _activeLoginAccount;
   late final Future<void> _driveDownloadsLoad;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
@@ -1592,6 +1593,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ],
       clearDraftsBefore: _clearSyncedDraftsBefore,
       loginId: () => _appSettings.loginCredentials?.loginId,
+      accountHash: () => _activeLoginAccount,
       canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
         if (_canSyncStars) unawaited(_refreshMessageStars());
@@ -1719,6 +1721,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   bool get _canSyncStars => mounted && _appSettingsLoaded &&
       _secureStorageAccessAllowed && _messageStarsEnabled;
+
+  static const _activeLoginAccountKey = 'more_better_gakujo_active_login_account';
+
+  Future<void> _loadActiveLoginAccount() => _starSyncEngine.runAccountChange(() async {
+    _activeLoginAccount = await SecureStorageFactory.create().read(key: _activeLoginAccountKey);
+  });
+
+  Future<void> _setActiveLoginAccount(String? account, {bool resync = true}) async {
+    if (account != null && _activeLoginAccount == account) return;
+    await _starSyncEngine.runAccountChange(() async {
+      _cancelDriveUploads();
+      _activeLoginAccount = null;
+      if (account == null) {
+        await SecureStorageFactory.create().delete(key: _activeLoginAccountKey);
+      } else {
+        await SecureStorageFactory.create().write(key: _activeLoginAccountKey, value: account);
+        _activeLoginAccount = account;
+      }
+    });
+    if (mounted) setState(() {});
+    if (resync) unawaited(_syncStarsInBackground(StarSyncTrigger.resume));
+  }
 
   Future<void> _ensureStarSyncLoaded() async {
     try {
@@ -3046,7 +3070,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onLocalStarCount: _starSyncEngine.localStarCount,
                       onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
                       onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
-                      onRequireAccount: _starSyncEngine.requireAccount,
+                      onRequireAccount: () {
+                        final saved = starSyncAccountHash(_appSettings.loginCredentials?.loginId);
+                        if (saved == null) throw const StarSyncAccountRequiredException();
+                        if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
+                        return _starSyncEngine.requireAccount();
+                      },
                       onAccountGeneration: () => _starSyncEngine.accountGeneration,
                       onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
                           _starSyncEngine.setUpWithPairing(
@@ -3853,6 +3882,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     Future<void> clearAll() async {
+      await _setActiveLoginAccount(null, resync: false);
       await StarSyncClipboardGuard.instance.clear();
       try {
         await _ensureStarSyncLoaded();
@@ -6990,6 +7020,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               _offlineAutoReloads = 0;
               _lastAllowedPageUrl = url;
             }
+            if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed) &&
+                _looksLikeLoginOrTimeoutUrl(url)) {
+              await _setActiveLoginAccount(null);
+              if (!stillCurrent()) return;
+            }
             _setStatus('表示中: ${_displayUrl(url)}');
             final authState = await _readPortalAuthState();
             if (!stillCurrent()) {
@@ -7033,6 +7068,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             await _injectTimeoutPopupIfAllowed();
             if (!stillCurrent()) {
               return;
+            }
+            if (_canRunPageScripts) {
+              await _controller.runJavaScript(GakujoLoginObserverScript.build());
+              if (!stillCurrent()) return;
             }
             // Both read the keychain, which can wait on a macOS access dialog
             // indefinitely; do not hold back download capture and the rest.
@@ -7204,6 +7243,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return true;
       }
 
+      await _loadActiveLoginAccount();
       _secureStorageAccessAllowed = true;
       setState(() {
         _startupPlaceholderFeatureFlags.clear();

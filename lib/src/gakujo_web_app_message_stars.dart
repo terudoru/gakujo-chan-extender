@@ -44,6 +44,20 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
 
   Future<void> _handleMessageStarMessage(String message) async {
     if (!_canRunPageScripts) return;
+    try {
+      final data = jsonDecode(message);
+      if (data is Map && data['type'] == 'gakujoLoginSubmitted') {
+        final loginId = data['loginId'];
+        if (loginId is String) {
+          final account = starSyncAccountHash(loginId);
+          if (account != null) await _setActiveLoginAccount(account);
+        }
+        return;
+      }
+    } on FormatException {
+      // Other channel messages are parsed below.
+    }
+
     if (handleReportDraftSavedMessage(message, _scheduleDraftSync)) return;
     if (!_messageStarsEnabled) return;
     String? action;

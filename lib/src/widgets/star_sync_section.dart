@@ -18,6 +18,9 @@ import 'settings_sections.dart';
 
 String _errorText(Object error) {
   if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
+  if (error is StarSyncActiveAccountRequiredException) {
+    return '学情にログインしてから設定してください';
+  }
   if (error is StarSyncAccountRequiredException) {
     return '同期を使うには、設定の『ログイン』でログインIDを保存してください。';
   }
@@ -499,7 +502,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('ログインIDが同期を設定したときと違うため、同期を停止しています。'),
+            Text(status.activeAccountUnknown
+                ? '学情へのログイン状態を確認できないため、同期を停止しています。学情にログインすると再開します'
+                : 'ログインIDが同期を設定したときと違うため、同期を停止しています。'),
             OutlinedButton(
               onPressed: _busy
                   ? null
