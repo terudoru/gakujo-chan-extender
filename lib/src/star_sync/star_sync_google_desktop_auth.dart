@@ -361,9 +361,21 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   @override
   Future<void> signOut() async {
-    final refresh = _refreshToken;
     var revocationFailed = false;
     try {
+      var refresh = _refreshToken;
+      if (refresh == null) {
+        final stored = await storage.read(key: starSyncGoogleTokenKey);
+        if (stored != null) {
+          final data = jsonDecode(stored);
+          if (data is! Map ||
+              data['refreshToken'] is! String ||
+              (data['refreshToken'] as String).isEmpty) {
+            throw const FormatException('Invalid stored credentials');
+          }
+          refresh = data['refreshToken'] as String;
+        }
+      }
       if (refresh != null) await _post(revokeEndpoint, {'token': refresh});
     } catch (_) {
       revocationFailed = true;

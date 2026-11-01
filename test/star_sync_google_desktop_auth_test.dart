@@ -60,6 +60,7 @@ void main() {
   var refreshes = 0;
   var revoked = false;
   var revokeFails = false;
+  String? revokedToken;
   var strayRequests = false;
   String? verifier;
   String? challenge;
@@ -72,6 +73,7 @@ void main() {
     refreshes = 0;
     revoked = false;
     revokeFails = false;
+    revokedToken = null;
     strayRequests = false;
     verifier = null;
     challenge = null;
@@ -84,6 +86,7 @@ void main() {
       final fields = Uri.splitQueryString(body);
       request.response.headers.contentType = ContentType.json;
       if (request.uri.path == '/revoke') {
+        revokedToken = fields['token'];
         if (revokeFails) request.response.statusCode = 500;
         request.response.write('{}');
       } else if (fields['grant_type'] == 'refresh_token') {
@@ -294,6 +297,24 @@ void main() {
     );
     expect(storage.values, isEmpty);
     expect(auth.currentEmail, isNull);
+  });
+
+  test('sign out after restart revokes the stored token', () async {
+    await makeAuth().signIn();
+    await makeAuth().signOut();
+    expect(revokedToken, 'refresh-secret');
+    expect(storage.values, isEmpty);
+  });
+
+  test('failed revocation after restart still deletes credentials', () async {
+    await makeAuth().signIn();
+    revokeFails = true;
+    await expectLater(
+      makeAuth().signOut(),
+      throwsA(isA<StarSyncGoogleRevocationException>()),
+    );
+    expect(revokedToken, 'refresh-secret');
+    expect(storage.values, isEmpty);
   });
 
   test('restore uses persisted refresh token', () async {

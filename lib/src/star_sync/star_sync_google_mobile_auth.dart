@@ -119,6 +119,16 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   Future<void> signOut() async {
     try {
       await _initialize();
+      if (_account == null) {
+        if (Platform.isAndroid) {
+          throw const StarSyncGoogleRevocationException();
+        }
+        final attempt = GoogleSignIn.instance.attemptLightweightAuthentication(
+          reportAllExceptions: true,
+        );
+        if (attempt == null) throw const StarSyncGoogleRevocationException();
+        _account = await attempt;
+      }
       if (_account != null) await GoogleSignIn.instance.disconnect();
     } on Object {
       throw const StarSyncGoogleRevocationException();

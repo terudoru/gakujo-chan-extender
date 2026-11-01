@@ -152,7 +152,24 @@ class GoogleDriveFileSaver {
   Future<String> _folder(String name, String parent) async {
     final key = jsonEncode([parent, name]);
     final cached = _folders[key];
-    if (cached != null) return cached;
+    if (cached != null) {
+      final response = await _request(
+        'GET',
+        _uri('/drive/v3/files/${Uri.encodeComponent(cached)}', {
+          'fields': 'id,ownedByMe,shared,trashed',
+        }),
+      );
+      if (response.statusCode != 404) {
+        final file = _json(response);
+        if (file['id'] == cached &&
+            file['ownedByMe'] == true &&
+            file['shared'] == false &&
+            file['trashed'] == false) {
+          return cached;
+        }
+      }
+      _folders.remove(key);
+    }
     var retries = 0;
     while (true) {
       final existing = (await _list(name, parent, folder: true))

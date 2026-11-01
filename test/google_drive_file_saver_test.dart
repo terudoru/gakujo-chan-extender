@@ -68,6 +68,15 @@ void main() {
           request.headers.value('authorization') != 'Bearer refreshed') {
         unauthorized = false;
         response.statusCode = 401;
+      } else if (request.method == 'GET' &&
+          request.uri.path != '/drive/v3/files') {
+        expect(request.uri.queryParameters['fields'], 'id,ownedByMe,shared,trashed');
+        final matches = files.where((f) => f['id'] == request.uri.pathSegments.last);
+        if (matches.isEmpty) {
+          response.statusCode = 404;
+        } else {
+          response.write(jsonEncode({'trashed': false, ...matches.single}));
+        }
       } else if (request.method == 'GET') {
         final query = request.uri.queryParameters['q']!;
         queries.add(query);
@@ -86,6 +95,7 @@ void main() {
                   (f) =>
                       f['name'] == name &&
                       f['parent'] == parent &&
+                      f['trashed'] != true &&
                       (!query.startsWith('mimeType=') ||
                           f['mimeType'] ==
                               'application/vnd.google-apps.folder'),
@@ -239,6 +249,51 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('replaces cached folders that become shared', () async {
+    await save('Course', 'first', 1);
+    final oldRoot = files.singleWhere((f) => f['name'] == 'More Better Gakujo');
+    oldRoot['shared'] = true;
+    await save('Course', 'second', 1);
+    final newRoot = files.lastWhere((f) => f['name'] == 'More Better Gakujo');
+    expect(newRoot['id'], isNot(oldRoot['id']));
+    final oldCourse = files.lastWhere((f) => f['name'] == 'Course');
+    expect(oldCourse['parent'], newRoot['id']);
+    oldCourse['shared'] = true;
+    await save('Course', 'third', 1);
+    expect(uploadParent, isNot(oldCourse['id']));
+    expect(files.last['parent'], newRoot['id']);
+  });
+
+  test('replaces a cached trashed folder', () async {
+    await save('Course', 'first', 1);
+    final oldCourse = files.singleWhere((f) => f['name'] == 'Course');
+    oldCourse['trashed'] = true;
+    await save('Course', 'second', 1);
+    expect(uploadParent, isNot(oldCourse['id']));
+    expect(files.last['name'], 'Course');
+  });
+
+  test('replaces a cached folder that is missing or no longer owned', () async {
+    await save('Course', 'first', 1);
+    final oldRoot = files.singleWhere((f) => f['name'] == 'More Better Gakujo');
+    oldRoot['ownedByMe'] = false;
+    await save('Course', 'second', 1);
+    final oldCourse = files.lastWhere((f) => f['name'] == 'Course');
+    expect(oldCourse['parent'], isNot(oldRoot['id']));
+    final oldCourseId = oldCourse['id'];
+    oldCourse['id'] = 'missing';
+    oldCourse['trashed'] = true;
+    await save('Course', 'third', 1);
+    expect(uploadParent, isNot(oldCourseId));
+  });
+
+  test('charges five units for each cached folder check', () async {
+    await save('Course', 'first', 1);
+    final before = await meter.currentUsage();
+    await save('Course', 'second', 1);
+    expect(await meter.currentUsage() - before, 210);
   });
 
   test('does not deduplicate a shared file', () async {
