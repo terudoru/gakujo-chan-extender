@@ -122,12 +122,13 @@ class StarSyncQuotaMeter {
   });
 
   Future<void> clear() => _queue.run(() async {
-    await _storage.delete(key: starSyncGoogleQuotaKey);
+    // Memory first, so a failed delete cannot leave usage to be written back.
     _buckets.clear();
     _saveNoticeAt = null;
     _lastSeen = null;
     _loaded = false;
     usage.value = 0;
+    await _storage.delete(key: starSyncGoogleQuotaKey);
   });
 
   Future<bool> allowsAutomatic(int estimate) => _queue.run(() async {
