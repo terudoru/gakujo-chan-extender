@@ -2738,6 +2738,8 @@ class StarSyncEngine {
         _timer?.cancel();
         _cooldownTimer?.cancel();
         _applyRetryTimer?.cancel();
+        _quotaTimer?.cancel();
+        _pendingAutomaticBackup = null;
         final wake = _backgroundWake;
         if (wake != null && !wake.isCompleted) wake.complete();
         _backgroundWake = null;

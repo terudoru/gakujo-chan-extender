@@ -4043,6 +4043,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         try {
           await _setDriveDownloadsEnabled(false);
           await _driveDownloadQueue.runExclusive(_driveDownloadPreference.clear);
+        } on Object catch (error) {
+          developer.log('Failed to clear Drive saving while clearing data: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+        }
+        // Sign out even when the Drive preference could not be cleared.
+        try {
           if (!await _signOutGoogle()) {
             _showSnackBar(
               'Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください',
@@ -7627,6 +7633,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    var revocationUnconfirmed = false;
     try {
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
@@ -7643,8 +7650,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _starSyncLoad = null;
         try {
           await _setDriveDownloadsEnabled(false);
-          await _signOutGoogle();
         } on Object catch (error) {
+          developer.log('Failed to disable Drive saving: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+        }
+        try {
+          if (!await _signOutGoogle()) revocationUnconfirmed = true;
+        } on Object catch (error) {
+          revocationUnconfirmed = true;
           developer.log('Failed to sign out of Google: ${error.runtimeType}',
               name: 'MoreBetterGakujo');
         }
@@ -7697,7 +7710,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
       );
       _setStatus('保存データをリセットしました');
-      _showSnackBar('保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
+      _showSnackBar(revocationUnconfirmed
+          ? '保存データをリセットしました。Google 側の接続解除を確認できなかったため、Google アカウントの設定から確認してください'
+          : '保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to reset secure storage',
