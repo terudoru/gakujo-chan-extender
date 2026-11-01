@@ -595,7 +595,12 @@ class GakujoDeadlineNotificationCoordinator {
       return;
     }
     final deadlines = await _activityStore.loadDeadlines();
-    final notifiedKeys = await _loadNotifiedKeys();
+    late final Set<String> notifiedKeys;
+    try {
+      notifiedKeys = await _loadNotifiedKeys(strict: true);
+    } on StateError {
+      return;
+    }
     final assignments = await _activityStore.loadAssignments();
     final seenIds = <String>{};
     final collidingIds = <String>{};
@@ -776,8 +781,10 @@ class GakujoDeadlineNotificationCoordinator {
     }
   }
 
-  Future<Set<String>> _loadNotifiedKeys() async {
-    final keys = await _activityStore.loadNotifiedDeadlineKeys();
+  Future<Set<String>> _loadNotifiedKeys({bool strict = false}) async {
+    final keys = strict
+        ? await _activityStore.loadNotifiedDeadlineKeysForNotifications()
+        : await _activityStore.loadNotifiedDeadlineKeys();
     final firstSeen = _now().millisecondsSinceEpoch;
     final migrationKeys = <String>[];
     for (final key
