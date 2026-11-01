@@ -3536,69 +3536,78 @@ void main() {
     },
   );
 
-  test('new device adopts remote settings and adds its own favorites', () async {
-    final remote = _Transport();
-    var settingsA = <String, Object?>{'messageExcludeKeywords': ['custom']};
-    var settingsB = <String, Object?>{
-      'messageExcludeKeywords': <String>[],
-      'notificationTopics': ['local-only'],
-    };
-    final favoritesA = _Collection('favorites')
-      ..entries = {'a': 'A', 'shared': 'A'};
-    final favoritesB = _Collection('favorites')
-      ..entries = {'b': 'B', 'shared': 'B'};
-    StarSyncEngine make(StarSyncCollection settings, _Collection favorites) {
-      final storage = _Storage();
-      return StarSyncEngine(
-        loginId: () => 'student',
-        activityStore: GakujoActivityStore(secureStorage: storage),
-        secureStorage: storage,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-        collections: [settings, favorites],
-      );
-    }
+  test(
+    'new device adopts remote settings and adds its own favorites',
+    () async {
+      final remote = _Transport();
+      var settingsA = <String, Object?>{
+        'messageExcludeKeywords': ['custom'],
+      };
+      var settingsB = <String, Object?>{
+        'messageExcludeKeywords': <String>[],
+        'notificationTopics': ['local-only'],
+      };
+      final favoritesA = _Collection('favorites')
+        ..entries = {'a': 'A', 'shared': 'A'};
+      final favoritesB = _Collection('favorites')
+        ..entries = {'b': 'B', 'shared': 'B'};
+      StarSyncEngine make(StarSyncCollection settings, _Collection favorites) {
+        final storage = _Storage();
+        return StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          kdfParams: kdf,
+          collections: [settings, favorites],
+        );
+      }
 
-    final a = make(
-      StarSyncSettingsCollection(
-        read: () async => Map.of(settingsA),
-        apply: (values, {required basedOn}) async {
-          settingsA = Map.of(values);
-          return true;
-        },
-      ),
-      favoritesA,
-    );
-    final b = make(
-      StarSyncSettingsCollection(
-        read: () async => Map.of(settingsB),
-        apply: (values, {required basedOn}) async {
-          settingsB = Map.of(values);
-          return true;
-        },
-      ),
-      favoritesB,
-    );
-    await a.setUp(config, 'pass');
-    await b.setUp(config, 'pass');
-    expect(settingsB['messageExcludeKeywords'], ['custom']);
-    expect(settingsB['notificationTopics'], ['local-only']);
-    expect(favoritesB.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
-    await a.syncNow();
-    expect(settingsA, settingsB);
-    expect(favoritesA.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
-    settingsB['messageExcludeKeywords'] = ['later'];
-    await b.syncNow();
-    await a.syncNow();
-    expect(settingsA['messageExcludeKeywords'], ['later']);
-    a.dispose();
-    b.dispose();
-  });
+      final a = make(
+        StarSyncSettingsCollection(
+          read: () async => Map.of(settingsA),
+          apply: (values, {required basedOn}) async {
+            settingsA = Map.of(values);
+            return true;
+          },
+        ),
+        favoritesA,
+      );
+      final b = make(
+        StarSyncSettingsCollection(
+          read: () async => Map.of(settingsB),
+          apply: (values, {required basedOn}) async {
+            settingsB = Map.of(values);
+            return true;
+          },
+        ),
+        favoritesB,
+      );
+      await a.setUp(config, 'pass');
+      await b.setUp(config, 'pass');
+      expect(settingsB['messageExcludeKeywords'], ['custom']);
+      expect(settingsB['notificationTopics'], ['local-only']);
+      expect(favoritesB.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
+      await a.syncNow();
+      expect(settingsA, settingsB);
+      expect(favoritesA.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
+      settingsB['messageExcludeKeywords'] = ['later'];
+      await b.syncNow();
+      await a.syncNow();
+      expect(settingsA['messageExcludeKeywords'], ['later']);
+      a.dispose();
+      b.dispose();
+    },
+  );
 
   test('first settings sync retains explicitly restored edits', () async {
     final remote = _Transport();
-    var valuesA = <String, Object?>{'messageExcludeKeywords': ['remote']};
-    var valuesB = <String, Object?>{'messageExcludeKeywords': ['restored']};
+    var valuesA = <String, Object?>{
+      'messageExcludeKeywords': ['remote'],
+    };
+    var valuesB = <String, Object?>{
+      'messageExcludeKeywords': ['restored'],
+    };
     StarSyncSettingsCollection settings(
       Map<String, Object?> Function() read,
       void Function(Map<String, Object?>) write,
