@@ -483,6 +483,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                 child: const Text('Google ドライブで同期'),
               ),
             ],
+            // Local data is per device, not per Gakujo account.
+            const Text(
+              '同期した内容は、この端末を使う他の人からも見えます。共用の端末では同期を設定しないでください。',
+            ),
             if (_error != null) Text(_error!),
             if (_busy) const LinearProgressIndicator(),
             if (status.lastError != null) Text(status.lastError!),
