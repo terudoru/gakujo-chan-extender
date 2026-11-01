@@ -32,6 +32,10 @@ class GoogleDriveFileSaver {
   static const _chunkSize = 8 * 1024 * 1024;
   static const _folderMime = 'application/vnd.google-apps.folder';
 
+  static bool isAutomaticFileTooLarge(int length) =>
+      300 + 50 * ((length + _chunkSize - 1) ~/ _chunkSize) >
+      starSyncGoogleSoftLimit;
+
   /// Releases the HTTP client; the saver must not be used afterwards.
   void close() => _client.close(force: true);
 
@@ -61,7 +65,10 @@ class GoogleDriveFileSaver {
           : uri.queryParameters['alt'] == 'media'
           ? 200
           : 5;
-      await _quotaMeter.charge(cost);
+      await _quotaMeter.charge(
+        cost,
+        automatic: Zone.current[#driveSaveAutomatic] == true,
+      );
       try {
         response = await starSyncRequest(
           _client,
@@ -203,10 +210,34 @@ class GoogleDriveFileSaver {
     required Stream<List<int>> Function() open,
     required int length,
     String? mimeType,
+    bool automatic = false,
+  }) => runZoned(
+    () => _saveFile(
+      courseName: courseName,
+      fileName: fileName,
+      open: open,
+      length: length,
+      mimeType: mimeType,
+      automatic: automatic,
+    ),
+    zoneValues: {#driveSaveAutomatic: automatic},
+  );
+
+  Future<String> _saveFile({
+    required String courseName,
+    required String fileName,
+    required Stream<List<int>> Function() open,
+    required int length,
+    String? mimeType,
+    required bool automatic,
   }) async {
     if (length < 0 || fileName.isEmpty) throw ArgumentError('Invalid file');
     final chunks = (length + _chunkSize - 1) ~/ _chunkSize;
-    if (!await _quotaMeter.allowsAutomatic(300 + 50 * chunks)) {
+    final estimate = 300 + 50 * chunks;
+    if (automatic && isAutomaticFileTooLarge(length)) {
+      throw const GoogleDriveSaveTooLarge();
+    }
+    if (automatic && !await _quotaMeter.allowsAutomatic(estimate)) {
       throw const GoogleDriveSaveSoftLimit();
     }
     final course = courseName
@@ -374,4 +405,8 @@ class GoogleDriveFileSaver {
 
 class GoogleDriveSaveSoftLimit implements Exception {
   const GoogleDriveSaveSoftLimit();
+}
+
+class GoogleDriveSaveTooLarge implements Exception {
+  const GoogleDriveSaveTooLarge();
 }

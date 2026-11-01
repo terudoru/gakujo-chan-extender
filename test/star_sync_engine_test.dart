@@ -14,6 +14,8 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dar
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_document.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
+import 'support/memory_secure_storage.dart';
+
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failStarWriteOnce = false;
@@ -1585,6 +1587,43 @@ void main() {
       engine.dispose();
     },
   );
+
+  test('quota timer retries a blocked automatic backup', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime.utc(2026, 1, 1, 12);
+    final meter = StarSyncQuotaMeter(
+      storage: MemorySecureStorage(),
+      now: () => now,
+    );
+    _TestTimer? timer;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      quotaMeter: meter,
+      now: () => now,
+      timerFactory: (duration, callback) => timer = _TestTimer(callback),
+    );
+    await engine.setUpWithPairing(
+      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    );
+    await meter.charge(14950);
+    var builds = 0;
+    expect(await engine.uploadAutomaticBackupIfDue(() async {
+      builds++;
+      return [1, 2, 3];
+    }), isFalse);
+    await pumpEventQueue();
+    expect(builds, 0);
+    now = now.add(const Duration(hours: 25));
+    timer!.fire();
+    await pumpEventQueue(times: 100);
+    expect(builds, 1);
+    expect(await engine.listBackups(), hasLength(1));
+    engine.dispose();
+  });
 
   test('resume is throttled, daily cap does not block manual sync', () async {
     final remote = _Transport();

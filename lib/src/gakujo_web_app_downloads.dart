@@ -1126,6 +1126,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         final length = isContent
             ? await contentService.contentUriSize(location)
             : await file!.length();
+        if (GoogleDriveFileSaver.isAutomaticFileTooLarge(length)) {
+          throw const GoogleDriveSaveTooLarge();
+        }
         if (email == null || _starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
         }
@@ -1149,9 +1152,16 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
               ? () => contentService.openContentUri(location, length)
               : file!.openRead,
           length: length,
+          automatic: true,
         );
         if (mounted) _showSnackBar('Google ドライブに保存しました');
+      } on GoogleDriveSaveTooLarge {
+        if (mounted) _showSnackBar('ファイルが大きすぎるため、Google ドライブへの自動保存を見送りました');
       } on GoogleDriveSaveSoftLimit {
+        if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
+          _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+        }
+      } on StarSyncQuotaExceeded {
         if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
           _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
         }

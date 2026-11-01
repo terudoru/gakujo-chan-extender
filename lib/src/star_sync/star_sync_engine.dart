@@ -15,6 +15,7 @@ import 'star_sync_config.dart';
 import 'star_sync_crypto.dart';
 import 'star_sync_document.dart';
 import 'star_sync_google_auth.dart';
+import 'star_sync_google_drive_transport.dart';
 import 'star_sync_quota_meter.dart';
 import 'star_sync_s3_transport.dart';
 import 'star_sync_transport.dart';
@@ -388,6 +389,9 @@ class StarSyncEngine {
   Timer? _cooldownTimer;
   Timer? _applyRetryTimer;
   Timer? _quotaTimer;
+  int _quotaRetryGeneration = 0;
+  int _quotaRetryEstimate = 100;
+  Future<List<int>> Function()? _pendingAutomaticBackup;
   bool _disposed = false;
   int _accountGeneration = 0;
   int get accountGeneration => _accountGeneration;
@@ -518,15 +522,24 @@ class StarSyncEngine {
     if (!_disposed) _publish(syncing: _status.value.syncing);
   }
 
-  Future<void> _scheduleQuotaRetry() async {
+  Future<void> _scheduleQuotaRetry([int estimate = 100]) async {
     _quotaTimer?.cancel();
+    _quotaRetryEstimate = max(_quotaRetryEstimate, estimate);
+    final generation = ++_quotaRetryGeneration;
     // Retry once enough of the rolling 24-hour usage has expired, spread by
     // up to 30 minutes so devices do not return together.
-    final wait = await _quotaMeter.timeUntilAutomaticAllowed(100);
-    if (_disposed) return;
+    final wait = await _quotaMeter.timeUntilAutomaticAllowed(_quotaRetryEstimate);
+    if (_disposed || generation != _quotaRetryGeneration) return;
     final delay = wait + Duration(milliseconds: _random.nextInt(1800001));
     _quotaTimer = _timerFactory(delay, () {
+      _quotaRetryEstimate = 100;
       if (_disposed || canSync?.call() == false) return;
+      final backup = _pendingAutomaticBackup;
+      if (backup != null) {
+        unawaited(
+          uploadAutomaticBackupIfDue(backup).catchError((Object _) => false),
+        );
+      }
       unawaited(
         syncNow(trigger: StarSyncTrigger.localChange)
             .catchError((Object _) => const StarSyncResult()),
@@ -1190,7 +1203,7 @@ class StarSyncEngine {
       }
       _cooldownTimer?.cancel();
       _applyRetryTimer?.cancel();
-      return _sync();
+      return _sync(automatic: trigger != StarSyncTrigger.manual);
     });
   }
 
@@ -1250,7 +1263,7 @@ class StarSyncEngine {
     state.pendingLocalChange = true;
   }
 
-  Future<StarSyncResult> _sync() async {
+  Future<StarSyncResult> _sync({required bool automatic}) async {
     final config = _config;
     final state = _state;
     if (config == null || state == null) {
@@ -1259,6 +1272,9 @@ class StarSyncEngine {
     if (!await _accountMatches(state)) return const StarSyncResult();
     _publish(syncing: true);
     final transport = _transportFactory(config);
+    if (transport is StarSyncGoogleDriveTransport) {
+      transport.automatic = automatic;
+    }
     try {
       final keyEntries = await transport.list('stars');
       final matches = keyEntries.where((entry) => entry.path == _keyringPath);
@@ -1557,6 +1573,10 @@ class StarSyncEngine {
         state.serverFailures++;
         final minutes = min(60, 1 << min(state.serverFailures - 1, 6));
         state.cooldownUntil = _now().add(Duration(minutes: minutes));
+      }
+      if (error is StarSyncQuotaExceeded) {
+        state.pendingLocalChange = true;
+        unawaited(_scheduleQuotaRetry(error.units));
       }
       state.status = StarSyncStatus.error;
       state.lastError = _errorMessage(error);
@@ -2227,22 +2247,39 @@ class StarSyncEngine {
 
   Future<bool> uploadAutomaticBackupIfDue(Future<List<int>> Function() build) =>
       _queue.runExclusive(() async {
-        if (!shouldUploadAutomaticBackup(_now())) return false;
+        if (!shouldUploadAutomaticBackup(_now())) {
+          _pendingAutomaticBackup = null;
+          return false;
+        }
         if (_config?.backend == StarSyncBackend.googleDrive &&
             !await _quotaMeter.allowsAutomatic(100)) {
+          _pendingAutomaticBackup = build;
           unawaited(_scheduleQuotaRetry());
           _publish();
           return false;
         }
         final bytes = await build();
-        await uploadBackup(bytes);
-        return true;
+        try {
+          await uploadBackup(bytes, automatic: true);
+          _pendingAutomaticBackup = null;
+          return true;
+        } on StarSyncQuotaExceeded catch (error) {
+          _pendingAutomaticBackup = build;
+          unawaited(_scheduleQuotaRetry(error.units));
+          return false;
+        }
       });
 
-  Future<void> uploadBackup(List<int> bytes) => _queue.run(() async {
+  Future<void> uploadBackup(
+    List<int> bytes, {
+    bool automatic = false,
+  }) => _queue.run(() async {
     await _requireBackupAccount();
     final state = _state!;
     final transport = _transportFactory(_config!);
+    if (transport is StarSyncGoogleDriveTransport) {
+      transport.automatic = automatic;
+    }
     try {
       final keyring = await _readKeyring(transport);
       if (keyring.keyId != state.keyId) {

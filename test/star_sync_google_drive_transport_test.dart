@@ -311,6 +311,18 @@ void main() {
     expect(await meter.currentUsage(), 24950);
   });
 
+  test('automatic requests stop at the soft limit mid-operation', () async {
+    transport.automatic = true;
+    await meter.charge(14900);
+    expect(await transport.list('stars'), isEmpty);
+    await expectLater(
+      transport.put('stars/device', [1]),
+      throwsA(isA<StarSyncQuotaExceeded>()),
+    );
+    expect(drive.counts['POST /upload/drive/v3/files'], isNull);
+    expect(await meter.currentUsage(), 15000);
+  });
+
   test('plain 403 is an auth error', () async {
     drive.failures = 1;
     drive.failureStatus = 403;

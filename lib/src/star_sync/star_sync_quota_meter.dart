@@ -13,7 +13,9 @@ const starSyncGoogleQuotaMessage =
     '直近24時間の Google ドライブの利用量が上限に達しました。時間をおくと再開します';
 
 class StarSyncQuotaExceeded implements Exception {
-  const StarSyncQuotaExceeded();
+  const StarSyncQuotaExceeded([this.units = 100]);
+
+  final int units;
 
   @override
   String toString() => starSyncGoogleQuotaMessage;
@@ -36,6 +38,7 @@ class StarSyncQuotaMeter {
   // Hour start (UTC, ms since epoch) -> units charged in that hour.
   final Map<int, int> _buckets = {};
   int? _saveNoticeAt;
+  int? _lastSeen;
   bool _loaded = false;
 
   int _hour(DateTime time) {
@@ -50,7 +53,13 @@ class StarSyncQuotaMeter {
 
   // Buckets that can still overlap the last 24 hours (one extra hour, so the
   // hourly rounding never undercounts).
-  int get _oldestCounted => _hour(_now()) - _window.inMilliseconds;
+  int get _referenceHour {
+    final now = _now().toUtc().millisecondsSinceEpoch;
+    final reference = _lastSeen == null || now < _lastSeen! ? now : _lastSeen!;
+    return _hour(DateTime.fromMillisecondsSinceEpoch(reference, isUtc: true));
+  }
+
+  int get _oldestCounted => _referenceHour - _window.inMilliseconds;
 
   int get _used => _buckets.entries
       .where((entry) => entry.key >= _oldestCounted)
@@ -73,15 +82,27 @@ class StarSyncQuotaMeter {
           }
           final notice = data['saveNoticeAt'];
           _saveNoticeAt = notice is int ? notice : null;
+          final lastSeen = data['lastSeen'];
+          _lastSeen = lastSeen is int ? lastSeen : null;
+        } else if (data is Map &&
+            data['date'] is String &&
+            data['units'] is int) {
+          final units = data['units'] as int;
+          if (units < 0) {
+            throw const FormatException('Invalid Google Drive quota');
+          }
+          _buckets[_hour(_now())] = units;
         }
-        // An older day-based record is ignored; the rolling window starts
-        // empty, which can only make the next 24 hours slightly generous
-        // once.
       }
       _loaded = true;
     }
-    _buckets.removeWhere((hour, _) => hour < _oldestCounted);
+    final now = _now().toUtc().millisecondsSinceEpoch;
+    if (_lastSeen == null || now > _lastSeen!) _lastSeen = now;
+    final oldestRetained =
+        _referenceHour - const Duration(hours: 48).inMilliseconds;
+    _buckets.removeWhere((hour, _) => hour < oldestRetained);
     usage.value = _used;
+    await _save();
   }
 
   Future<void> _save() => _storage.write(
@@ -91,6 +112,7 @@ class StarSyncQuotaMeter {
         for (final entry in _buckets.entries) '${entry.key}': entry.value,
       },
       'saveNoticeAt': ?_saveNoticeAt,
+      'lastSeen': ?_lastSeen,
     }),
   );
 
@@ -140,11 +162,12 @@ class StarSyncQuotaMeter {
     return true;
   });
 
-  Future<void> charge(int units) => _queue.run(() async {
+  Future<void> charge(int units, {bool automatic = false}) => _queue.run(() async {
     if (units <= 0) throw ArgumentError.value(units, 'units');
     await _load();
-    if (_used + units > starSyncGoogleHardLimit) {
-      throw const StarSyncQuotaExceeded();
+    if (_used + units >
+        (automatic ? starSyncGoogleSoftLimit : starSyncGoogleHardLimit)) {
+      throw StarSyncQuotaExceeded(units);
     }
     final hour = _hour(_now());
     _buckets[hour] = (_buckets[hour] ?? 0) + units;

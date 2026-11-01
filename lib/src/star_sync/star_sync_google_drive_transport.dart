@@ -17,6 +17,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     Future<void> Function(Duration)? delay,
     Random? random,
     StarSyncQuotaMeter? quotaMeter,
+    this.automatic = false,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _apiBase = apiBase ?? Uri.parse('https://www.googleapis.com'),
        _delay = delay ?? Future<void>.delayed,
@@ -26,6 +27,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   }
 
   final StarSyncAccessTokenProvider accessToken;
+  bool automatic;
   final StarSyncQuotaMeter _quotaMeter;
   final HttpClient _client;
   final Uri _apiBase;
@@ -78,7 +80,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           : uri.queryParameters['alt'] == 'media'
           ? 200
           : 5;
-      await _quotaMeter.charge(cost);
+      await _quotaMeter.charge(cost, automatic: automatic);
       final response = await starSyncRequest(
         _client,
         method,

@@ -4,45 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 
-class _MemoryStorage extends FlutterSecureStorage {
-  final values = <String, String>{};
-
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async => values[key];
-
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-}
+import 'support/memory_secure_storage.dart';
 
 // No TestWidgetsFlutterBinding here: it replaces HttpClient with one that
 // answers 400, which would break the loopback fake Drive server.
@@ -65,7 +33,7 @@ void main() {
   void Function()? onRequest;
 
   setUp(() async {
-    meter = StarSyncQuotaMeter(storage: _MemoryStorage());
+    meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
     files = [];
     queries = [];
     uploads = 0;
@@ -181,6 +149,7 @@ void main() {
   Future<String> save(String course, String name, int length) => saver.saveFile(
     courseName: course,
     fileName: name,
+    automatic: true,
     length: length,
     open: () async* {
       var remaining = length;
@@ -301,6 +270,26 @@ void main() {
     expect(queries, isEmpty);
     expect(uploads, 0);
     expect(await meter.currentUsage(), 14700);
+  });
+
+  test('rejects oversized automatic saves before opening or requesting', () async {
+    var opened = false;
+    await expectLater(
+      saver.saveFile(
+        courseName: 'Course',
+        fileName: 'large',
+        length: 295 * 8 * 1024 * 1024,
+        automatic: true,
+        open: () {
+          opened = true;
+          return const Stream<List<int>>.empty();
+        },
+      ),
+      throwsA(isA<GoogleDriveSaveTooLarge>()),
+    );
+    expect(opened, isFalse);
+    expect(queries, isEmpty);
+    expect(await meter.currentUsage(), 0);
   });
 
   test('counts lists, folder creation and each upload request', () async {
