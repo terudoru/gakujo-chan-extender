@@ -460,7 +460,13 @@ class StarSyncEngine {
   });
 
   Future<void> load() => _queue.run(() async {
-    await _quotaMeter.currentUsage();
+    // The Drive quota record only matters for the Google backend; a broken
+    // record must never stop a WebDAV/S3 configuration from loading.
+    try {
+      await _quotaMeter.currentUsage();
+    } on Object catch (error) {
+      debugPrint('Star sync quota record unavailable: $error');
+    }
     final config = await _storage.read(key: starSyncConfigKey);
     final state = await _storage.read(key: starSyncStateKey);
     try {
@@ -535,13 +541,15 @@ class StarSyncEngine {
     final delay = wait + Duration(milliseconds: _random.nextInt(1800001));
     _quotaTimer = _timerFactory(delay, () {
       _quotaRetryEstimate = 100;
-      if (_disposed || canSync?.call() == false) return;
+      if (_disposed) return;
+      // A pending backup does not depend on the message-stars feature.
       final backup = _pendingAutomaticBackup;
       if (backup != null) {
         unawaited(
           uploadAutomaticBackupIfDue(backup).catchError((Object _) => false),
         );
       }
+      if (canSync?.call() == false) return;
       unawaited(
         syncNow(trigger: StarSyncTrigger.localChange)
             .catchError((Object _) => const StarSyncResult()),
