@@ -29,6 +29,8 @@ void main() {
   var dropFolder = false;
   var unauthorized = false;
   var refreshes = 0;
+  String? shareDuringUpload;
+  late List<String> deleted;
   String? uploadName;
   String? uploadParent;
   void Function()? onRequest;
@@ -45,6 +47,8 @@ void main() {
     dropFolder = false;
     unauthorized = false;
     refreshes = 0;
+    shareDuringUpload = null;
+    deleted = [];
     uploadName = null;
     uploadParent = null;
     onRequest = null;
@@ -108,6 +112,9 @@ void main() {
                 .toList(),
           }),
         );
+      } else if (request.method == 'DELETE') {
+        deleted.add(request.uri.pathSegments.last);
+        response.statusCode = 204;
       } else if (request.uri.path == '/drive/v3/files') {
         final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
         final id = 'folder${files.length}';
@@ -143,6 +150,11 @@ void main() {
           }
         } else {
           chunks++;
+          if (shareDuringUpload != null) {
+            files.singleWhere((f) => f['name'] == shareDuringUpload)['shared'] =
+                true;
+            shareDuringUpload = null;
+          }
           final match = RegExp(r'bytes (\d+)-(\d+)/(\d+)').firstMatch(range)!;
           expect(int.parse(match[1]!), received);
           received += body.length;
@@ -280,6 +292,32 @@ void main() {
     expect(files.last['name'], 'Course');
   });
 
+  for (final folder in ['Course', 'More Better Gakujo']) {
+    test('deletes upload when $folder becomes shared during upload', () async {
+      shareDuringUpload = folder;
+      await expectLater(
+        save('Course', 'file', 1),
+        throwsA(
+          isA<GoogleDriveSaveFolderShared>().having(
+            (error) => error.toString(),
+            'message',
+            '保存先のフォルダが共有されていたため、Google ドライブへの保存を取り消しました',
+          ),
+        ),
+      );
+      expect(deleted, ['uploaded']);
+      expect(await meter.currentUsage(), 560);
+      await save('Course', 'another', 1);
+      final shared = files.singleWhere(
+        (f) => f['name'] == folder && f['shared'] == true,
+      );
+      expect(uploadParent, isNot(shared['id']));
+      if (folder == 'More Better Gakujo') {
+        expect(files.last['parent'], isNot(shared['id']));
+      }
+    });
+  }
+
   test('replaces a cached folder that is missing or no longer owned', () async {
     await save('Course', 'first', 1);
     final oldRoot = files.singleWhere((f) => f['name'] == 'More Better Gakujo');
@@ -298,7 +336,7 @@ void main() {
     await save('Course', 'first', 1);
     final before = await meter.currentUsage();
     await save('Course', 'second', 1);
-    expect(await meter.currentUsage() - before, 210);
+    expect(await meter.currentUsage() - before, 220);
   });
 
   test('does not deduplicate a shared file', () async {
@@ -442,14 +480,14 @@ void main() {
   test('counts lists, folder creation and each upload request', () async {
     await save('Course', 'file', 8 * 1024 * 1024 + 1);
     expect(chunks, 2);
-    expect(await meter.currentUsage(), 550);
+    expect(await meter.currentUsage(), 560);
   });
 
   test('charges the repeated request after a token refresh', () async {
     unauthorized = true;
     await save('Course', 'file', 1);
     expect(refreshes, 1);
-    expect(await meter.currentUsage(), 600);
+    expect(await meter.currentUsage(), 610);
   });
 
   test('refreshes once on 401 and escapes course names', () async {

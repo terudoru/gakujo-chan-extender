@@ -215,6 +215,21 @@ class GoogleDriveFileSaver {
     }
   }
 
+  Future<bool> _isPrivateFolder(String id) async {
+    final response = await _request(
+      'GET',
+      _uri('/drive/v3/files/${Uri.encodeComponent(id)}', {
+        'fields': 'id,ownedByMe,shared,trashed',
+      }),
+    );
+    if (response.statusCode == 404) return false;
+    final file = _json(response);
+    return file['id'] == id &&
+        file['ownedByMe'] == true &&
+        file['shared'] == false &&
+        file['trashed'] == false;
+  }
+
   String _id(Map<String, dynamic> value) {
     final id = value['id'];
     if (id is! String || id.isEmpty) {
@@ -317,7 +332,19 @@ class GoogleDriveFileSaver {
         session.hasFragment) {
       throw const FormatException('Invalid upload location');
     }
-    return _upload(session, open, length);
+    final id = await _upload(session, open, length);
+    final coursePrivate = await _isPrivateFolder(parent);
+    final rootPrivate = await _isPrivateFolder(root);
+    if (!coursePrivate || !rootPrivate) {
+      _folders.removeWhere((_, value) => value == parent || value == root);
+      final deleted = await _request(
+        'DELETE',
+        _uri('/drive/v3/files/${Uri.encodeComponent(id)}'),
+      );
+      if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
+      throw const GoogleDriveSaveFolderShared();
+    }
+    return id;
   }
 
   int _offset(StarSyncHttpResponse response, int total) {
@@ -430,4 +457,12 @@ class GoogleDriveSaveSoftLimit implements Exception {
 
 class GoogleDriveSaveTooLarge implements Exception {
   const GoogleDriveSaveTooLarge();
+}
+
+class GoogleDriveSaveFolderShared implements Exception {
+  const GoogleDriveSaveFolderShared();
+
+  @override
+  String toString() =>
+      '保存先のフォルダが共有されていたため、Google ドライブへの保存を取り消しました';
 }

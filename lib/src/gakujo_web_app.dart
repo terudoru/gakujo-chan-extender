@@ -3860,6 +3860,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.clearSnapshots(),
         _activityStore.clearDeadlines(),
         _activityStore.clearNotifiedDeadlineTimes(),
+        _activityStore.replaceNotifiedDeadlineKeys(const []),
         StarSyncQuotaMeter.shared.clear(),
         _activityStore.clearChanges(),
         _activityStore.clearReportLists(),
