@@ -288,7 +288,10 @@ void main() {
     final auth = makeAuth();
     await auth.signIn();
     revokeFails = true;
-    await expectLater(auth.signOut(), throwsA(isA<StarSyncGoogleRevocationException>()));
+    await expectLater(
+      auth.signOut(),
+      throwsA(isA<StarSyncGoogleRevocationException>()),
+    );
     expect(storage.values, isEmpty);
     expect(auth.currentEmail, isNull);
   });

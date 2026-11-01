@@ -3811,7 +3811,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    var googleRevocationFailed = false;
     Future<void> clearAll() async {
       await StarSyncClipboardGuard.instance.clear();
       try {
@@ -3826,7 +3825,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         try {
           await _setDriveDownloadsEnabled(false);
           await _driveDownloadQueue.runExclusive(_driveDownloadPreference.clear);
-          googleRevocationFailed = !await _signOutGoogle();
+          if (!await _signOutGoogle()) {
+            _showSnackBar(
+              'Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください',
+            );
+          }
           _starSyncGoogleEmail = null;
         } on Object catch (error) {
           developer.log('Failed to sign out of Google while clearing data: ${error.runtimeType}',

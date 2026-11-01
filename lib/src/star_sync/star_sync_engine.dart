@@ -582,7 +582,9 @@ class StarSyncEngine {
       final deferredDraftClear = pending[_deferredDraftClearKey];
       if (deferredDraftClear != null) {
         state.collectionStates['report-drafts'] = {
-          ...Map<String, dynamic>.from(state.collectionStates['report-drafts'] as Map? ?? {}),
+          ...Map<String, dynamic>.from(
+            state.collectionStates['report-drafts'] as Map? ?? {},
+          ),
           'clearBefore': deferredDraftClear,
         };
         pending.remove(_deferredDraftClearKey);
@@ -750,8 +752,11 @@ class StarSyncEngine {
   Future<Map<String, int?>> localCollectionCounts() async => {
     for (final collection in _collections)
       if (collectionEnabled(collection.name))
-        collection.name: collection.name == 'report-drafts' &&
-                (_state?.collectionStates['report-drafts'] as Map?)?['clearBefore'] != null
+        collection.name:
+            collection.name == 'report-drafts' &&
+                (_state?.collectionStates['report-drafts']
+                        as Map?)?['clearBefore'] !=
+                    null
             ? null
             : (await collection.readLocal())?.length,
   };
@@ -795,8 +800,11 @@ class StarSyncEngine {
     final raw = stored['clearBefore'];
     if (raw == null) return true;
     final time = raw is String ? DateTime.tryParse(raw) : null;
-    if (time == null || clearDraftsBefore == null ||
-        !await clearDraftsBefore!(time)) return false;
+    if (time == null ||
+        clearDraftsBefore == null ||
+        !await clearDraftsBefore!(time)) {
+      return false;
+    }
     if (!await _accountMatches(state)) return false;
     stored.remove('clearBefore');
     state.collectionStates['report-drafts'] = stored;
