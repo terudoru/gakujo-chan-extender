@@ -7694,6 +7694,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           }
         }
         await SecureStorageFactory.resetStorage();
+        try {
+          // Also drops the meter's in-memory usage, which would be written back.
+          await StarSyncQuotaMeter.shared.clear();
+        } on Object catch (error) {
+          developer.log('Failed to clear the Drive quota record: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+        }
         for (final entry in kept.entries) {
           try {
             await SecureStorageFactory.create()
