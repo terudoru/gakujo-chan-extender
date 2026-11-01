@@ -509,6 +509,18 @@ class GakujoActivityStore {
     return _enqueue(() async => (await _readNotifiedDeadlineKeys()).value);
   }
 
+  Future<Set<String>> loadNotifiedDeadlineKeysForNotifications() {
+    return _enqueue(() async {
+      final result = await _readNotifiedDeadlineKeys();
+      if (!result.isSuccessful) {
+        throw StateError(
+          'Failed to read $_notifiedDeadlineKeysKey for notifications',
+        );
+      }
+      return result.value;
+    });
+  }
+
   Future<Set<String>> loadNotifiedDeadlineKeysForBackup() {
     return _enqueue(
       () => _readForBackup(_notifiedDeadlineKeysKey, _readNotifiedDeadlineKeys),
