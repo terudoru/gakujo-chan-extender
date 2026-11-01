@@ -16,6 +16,19 @@ abstract class StarSyncCollection {
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
   });
+  Map<String, Object?> clearSnapshot(
+    Map<String, Object?> current,
+    Map<String, Object?> snapshot,
+  ) => {
+    for (final entry in current.entries)
+      if (!snapshot.containsKey(entry.key) ||
+          starSyncCanonicalJson(entry.value) !=
+              starSyncCanonicalJson(snapshot[entry.key]))
+        entry.key: entry.value,
+  };
+
+  Map<String, Object?> restoreSnapshot(Map<String, Object?> live) => live;
+
   int? get maxLive;
   Comparable Function(Object? value)? get order;
 }

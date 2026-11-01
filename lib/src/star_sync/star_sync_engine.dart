@@ -27,6 +27,7 @@ const _keyringPath = 'stars/keyring.json';
 const _deviceDirectory = 'stars/devices';
 const _backupDirectory = 'backups';
 const _collectionMaxBytes = 8 * 1024 * 1024;
+const _clearCollectionsKey = '\u0000collection-snapshot';
 
 class _CollectionTooLarge implements Exception {}
 
@@ -573,8 +574,39 @@ class StarSyncEngine {
   Future<void> _finishPendingLocalClear() async {
     final state = _state!;
     if (state.pendingLocalClear.isEmpty) return;
-    final pending = state.pendingLocalClear;
+    final pending = Map<String, String>.of(state.pendingLocalClear);
     try {
+      final encodedCollections = pending[_clearCollectionsKey];
+      if (encodedCollections != null) {
+        final snapshots = Map<String, dynamic>.from(
+          jsonDecode(encodedCollections) as Map,
+        );
+        for (final entry in snapshots.entries.toList()) {
+          final matches = _collections.where((item) => item.name == entry.key);
+          if (matches.length != 1 || entry.value is! Map) {
+            throw StateError('Collection clear is unavailable');
+          }
+          final collection = matches.single;
+          final current = await collection.readLocal();
+          if (current == null) {
+            throw StateError('Collection clear is unavailable');
+          }
+          if (_currentAccount() != state.boundAccount) {
+            throw const _AccountChanged();
+          }
+          final snapshot = Map<String, Object?>.from(entry.value as Map);
+          if (!await collection.applyLocal(
+            collection.clearSnapshot(current, snapshot),
+            basedOn: current,
+          )) {
+            throw StateError('Collection changed during clear');
+          }
+          snapshots.remove(entry.key);
+          pending[_clearCollectionsKey] = jsonEncode(snapshots);
+          state.pendingLocalClear = Map.of(pending);
+          await _saveState();
+        }
+      }
       await activityStore.transformStarredMessages<void>(
         (current) async => (
           next: current
@@ -702,10 +734,28 @@ class StarSyncEngine {
     return account ?? (throw const StarSyncAccountRequiredException());
   }
 
-  Future<Map<String, String>> snapshotLocalStars() async => {
-    for (final star in await activityStore.loadStarredMessages())
-      star.id: star.starredAt.toIso8601String(),
+  Future<Map<String, int?>> localCollectionCounts() async => {
+    for (final collection in _collections)
+      if (collectionEnabled(collection.name))
+        collection.name: (await collection.readLocal())?.length,
   };
+
+  Future<Map<String, String>> snapshotLocalStars() async {
+    final result = <String, String>{
+      for (final star in await activityStore.loadStarredMessages())
+        star.id: star.starredAt.toIso8601String(),
+    };
+    final snapshots = <String, Object?>{};
+    for (final collection in _collections) {
+      if (!collectionEnabled(collection.name)) continue;
+      final local = await collection.readLocal();
+      if (local != null) snapshots[collection.name] = local;
+    }
+    if (snapshots.isNotEmpty) {
+      result[_clearCollectionsKey] = jsonEncode(snapshots);
+    }
+    return result;
+  }
 
   Future<void> setUp(
     StarSyncConfig config,
@@ -1041,6 +1091,17 @@ class StarSyncEngine {
         if (changed) onLocalStarsChanged?.call();
         state.pendingBulkReplace = false;
         state.pendingBulkReplaceStarIds = null;
+        for (final collection in _collections) {
+          final stored = Map<String, dynamic>.from(
+            state.collectionStates[collection.name] as Map? ?? {},
+          );
+          stored['pendingDiscardLocal'] = true;
+          stored['pendingApplyRetry'] = true;
+          stored.remove('pendingBulkReplace');
+          stored.remove('pendingBulkReplaceKeys');
+          stored.remove('pendingBulkReplaceLocalKeys');
+          state.collectionStates[collection.name] = stored;
+        }
       }
       state.localReviewRequired = false;
       state.status = StarSyncStatus.ok;
@@ -1631,14 +1692,46 @@ class StarSyncEngine {
         _collections.where((item) => item.name == name).length != 1) {
       throw ArgumentError('Invalid or duplicate collection name');
     }
-    var local = await collection.readLocal();
-    if (!await _accountMatches(state)) throw const _AccountChanged();
-    if (local == null && name != 'report-drafts') {
-      return (changed: false, skipped: 0);
-    }
     final stored = Map<String, dynamic>.from(
       state.collectionStates[name] as Map? ?? {},
     );
+    var local = await collection.readLocal();
+    if (!await _accountMatches(state)) throw const _AccountChanged();
+    if (stored['pendingDiscardLocal'] == true) {
+      if (local == null) {
+        _refuseCollection(state, name);
+        await _saveState();
+        return (changed: false, skipped: 0);
+      }
+      final live = <String, Object?>{};
+      for (final entry in (stored['records'] as Map? ?? {}).entries) {
+        if (entry.key is! String) throw const StarSyncFormatException();
+        final record = StarSyncCollectionRecord.fromJson(
+          entry.value,
+          entry.key as String,
+        );
+        if (!record.deleted) live[record.key] = record.value;
+      }
+      if (!await collection.applyLocal(
+        collection.restoreSnapshot(live),
+        basedOn: local,
+      )) {
+        _refuseCollection(state, name);
+        await _saveState();
+        return (changed: false, skipped: 0);
+      }
+      if (!await _accountMatches(state)) throw const _AccountChanged();
+      stored.remove('pendingDiscardLocal');
+      stored.remove('pendingApplyRetry');
+      stored.remove('applyRefusals');
+      state.collectionStates[name] = stored;
+      await _saveState();
+      local = await collection.readLocal();
+      if (!await _accountMatches(state)) throw const _AccountChanged();
+    }
+    if (local == null && name != 'report-drafts') {
+      return (changed: false, skipped: 0);
+    }
     final previousRecords = <String, StarSyncCollectionRecord>{};
     for (final entry in (stored['records'] as Map? ?? {}).entries) {
       if (entry.key is String) {

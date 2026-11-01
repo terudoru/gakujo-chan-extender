@@ -1306,6 +1306,90 @@ void main() {
     engine.dispose();
   });
 
+  test('setup clear snapshots collections and preserves later edits', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites')..entries = {'old': 'favorite'};
+    final drafts = _Collection('report-drafts')..entries = {'old': 'draft'};
+    final settings = _Collection('settings')..entries = {'A': 'settings'};
+    final deadlines = _Collection('notified-deadlines', growOnly: true)
+      ..entries = {'old': 'deadline'};
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => 'A',
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites, settings, drafts, deadlines],
+    );
+    final snapshot = await engine.snapshotLocalStars();
+    favorites.entries!['new'] = 'later';
+    await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+    expect(favorites.entries, {'new': 'later'});
+    expect(settings.entries, isEmpty);
+    expect(drafts.entries, isEmpty);
+    expect(deadlines.entries, isEmpty);
+    final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    for (final name in [
+      'favorites',
+      'settings',
+      'report-drafts',
+      'notified-deadlines',
+    ]) {
+      final records = state['collectionStates'][name]['records'] as Map;
+      expect(records.containsKey('old'), isFalse);
+    }
+    engine.dispose();
+  });
+
+  test('discard restores collections and defers unavailable drafts', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final favorites = _Collection('favorites')..entries = {'A': 'favorite'};
+    final drafts = _Collection('report-drafts')..entries = {'A': 'draft'};
+    final settings = _Collection('settings')..entries = {'A': 'settings'};
+    final deadlines = _Collection('notified-deadlines', growOnly: true)
+      ..entries = {'A': 'deadline'};
+    var account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      collections: [favorites, settings, drafts, deadlines],
+    );
+    await engine.setUp(config, 'pass');
+    await engine.runAccountChange(() async {
+      account = 'B';
+    });
+    favorites.entries = {'B': 'favorite'};
+    settings.entries = {'B': 'settings'};
+    deadlines.entries = {'B': 'deadline'};
+    drafts.entries = null;
+    await engine.runAccountChange(() async {
+      account = 'A';
+    });
+    await engine.resumeDiscardingLocal();
+    expect(favorites.entries, {'A': 'favorite'});
+    expect(settings.entries, {'A': 'settings'});
+    expect(deadlines.entries, {'A': 'deadline'});
+    var state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    expect(
+      state['collectionStates']['report-drafts']['pendingDiscardLocal'],
+      true,
+    );
+    drafts.entries = {'B': 'draft'};
+    await engine.syncNow();
+    expect(drafts.entries, {'A': 'draft'});
+    state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+    expect(
+      state['collectionStates']['report-drafts']['records'].containsKey('B'),
+      false,
+    );
+    engine.dispose();
+  });
+
   test('discarding local stars removes another account details', () async {
     final remote = _Transport();
     final storage = _Storage();

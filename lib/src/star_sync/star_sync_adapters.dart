@@ -182,6 +182,29 @@ class StarSyncSettingsCollection extends StarSyncCollection {
   Comparable Function(Object?)? get order => null;
 
   @override
+  Map<String, Object?> clearSnapshot(
+    Map<String, Object?> current,
+    Map<String, Object?> snapshot,
+  ) {
+    final defaults = exportStarSyncPortableSettings(const GakujoAppSettings());
+    return {
+      ...current,
+      for (final key in starSyncPortableSettingKeys)
+        if (snapshot.containsKey(key) &&
+            current.containsKey(key) &&
+            starSyncCanonicalJson(current[key]) ==
+                starSyncCanonicalJson(snapshot[key]))
+          key: defaults[key],
+    };
+  }
+
+  @override
+  Map<String, Object?> restoreSnapshot(Map<String, Object?> live) => {
+    ...exportStarSyncPortableSettings(const GakujoAppSettings()),
+    ...live,
+  };
+
+  @override
   Future<Map<String, Object?>> readLocal() => read();
 
   @override

@@ -37,6 +37,24 @@ void main() {
     expect(current.loginCredentials!.password, 'secret');
   });
 
+  test('settings clear only unchanged portable values to defaults', () {
+    final collection = StarSyncSettingsCollection(
+      read: () async => {},
+      apply: (entries, {required basedOn}) async => true,
+    );
+    final snapshot = exportStarSyncPortableSettings(
+      const GakujoAppSettings(messageExcludeKeywords: ['old']),
+    );
+    final current = {
+      ...snapshot,
+      'notificationTopics': ['later'],
+    };
+    final result = collection.clearSnapshot(current, snapshot);
+    expect(result['messageExcludeKeywords'], isEmpty);
+    expect(result['notificationTopics'], ['later']);
+    expect(collection.restoreSnapshot({})['messageExcludeKeywords'], isEmpty);
+  });
+
   test('favorites round trip and retain the store limit', () async {
     final store = GakujoActivityStore();
     final collection = StarSyncFavoritesCollection(store);

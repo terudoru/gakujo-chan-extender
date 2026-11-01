@@ -35,6 +35,7 @@ void main() {
     })?
     onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
+    Future<Map<String, int?>> Function()? onLocalCollectionCounts,
     Future<Map<String, String>> Function()? onSnapshotLocalStars,
     Future<void> Function()? onGoogleReSignIn,
     Future<void> Function()? onResumeKeepingLocal,
@@ -78,6 +79,7 @@ void main() {
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onLocalStarCount: onLocalStarCount ?? () async => 0,
+          onLocalCollectionCounts: onLocalCollectionCounts,
           onSnapshotLocalStars:
               onSnapshotLocalStars ?? () async => {'id': 'time'},
           onRequireAccount: () => 'account',
@@ -315,7 +317,10 @@ void main() {
       ),
     );
     await tester.tap(find.text('Google ドライブで同期'));
-    await tester.pump();
+    await tester.pumpAndSettle();
+    // The local data choice is always asked now (settings always exist).
+    await tester.tap(find.text('含めて同期する'));
+    await tester.pumpAndSettle();
     expect(find.text('同期を使うには、設定の『ログイン』でログインIDを保存してください。'), findsOneWidget);
   });
 
@@ -348,6 +353,8 @@ void main() {
     await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('同期を設定'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('含めて同期する'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('接続'));
     await tester.pump();
@@ -444,6 +451,8 @@ void main() {
       ),
     );
     await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('含めて同期する'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('接続'));
     await tester.pump();
@@ -559,6 +568,28 @@ void main() {
     expect(find.widgetWithText(TextField, '同期コード'), findsOneWidget);
     expect(find.text('再接続'), findsOneWidget);
   });
+  testWidgets('shows collection counts even with no stars', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onLocalCollectionCounts: () async => {
+          'favorites': 2,
+          'settings': 6,
+          'report-drafts': null,
+          'notified-deadlines': 4,
+        },
+      ),
+    );
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('お気に入り（2件）'), findsOneWidget);
+    expect(find.textContaining('下書き（未確認件）'), findsOneWidget);
+    expect(find.text('空にして始める'), findsOneWidget);
+  });
+
   for (final choice in ['キャンセル', '空にして始める', '含めて同期する']) {
     testWidgets('local stars choice: $choice', (tester) async {
       final status = ValueNotifier(const StarSyncStatusSnapshot());

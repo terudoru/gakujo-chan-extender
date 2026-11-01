@@ -131,6 +131,7 @@ class StarSyncSection extends StatefulWidget {
     required this.onGoogleSignOut,
     required this.onGoogleReSignIn,
     required this.onLocalStarCount,
+    this.onLocalCollectionCounts,
     required this.onSnapshotLocalStars,
     required this.onRequireAccount,
     required this.onAccountGeneration,
@@ -171,6 +172,7 @@ class StarSyncSection extends StatefulWidget {
   final Future<void> Function() onGoogleSignOut;
   final Future<void> Function() onGoogleReSignIn;
   final Future<int> Function() onLocalStarCount;
+  final Future<Map<String, int?>> Function()? onLocalCollectionCounts;
   final Future<Map<String, String>> Function() onSnapshotLocalStars;
   final String Function() onRequireAccount;
   final int Function() onAccountGeneration;
@@ -242,16 +244,21 @@ class _StarSyncSectionState extends State<StarSyncSection> {
 
   Future<Map<String, String>?> _chooseLocalStars() async {
     final count = await widget.onLocalStarCount();
+    final counts = await widget.onLocalCollectionCounts?.call();
     if (!mounted) return null;
-    if (count == 0) return {};
+    String collectionCount(String name) => counts?[name]?.toString() ?? '未確認';
     Future<Map<String, String>>? snapshot;
     final clear = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Text('この端末のスター（$count件）'),
-        content: const Text(
-          'この端末に残っているスターも同期されます。他の人が使っていた端末なら『空にして始める』を選んでください。',
+        content: Text(
+          'この端末に残っているお気に入り（${collectionCount('favorites')}件）、'
+          '設定（${collectionCount('settings')}項目）、'
+          '下書き（${collectionCount('report-drafts')}件）、'
+          '通知済み期限（${collectionCount('notified-deadlines')}件）も含まれます。'
+          '他の人が使っていた端末なら「空にして始める」を選んでください。',
         ),
         actions: [
           TextButton(
