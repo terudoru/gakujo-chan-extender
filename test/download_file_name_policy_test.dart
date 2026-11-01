@@ -255,6 +255,60 @@ void main() {
         'right.pdf');
   });
 
+  test('decodes a doubly escaped URL space exactly once', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url:
+          'https://gakujo.iess.niigata-u.ac.jp/files/report%2520v1.pdf',
+    );
+
+    expect(name, 'report%20v1.pdf');
+  });
+
+  test('decodes a doubly escaped URL percent sign exactly once', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/files/100%2525.pdf',
+    );
+
+    expect(name, '100%25.pdf');
+  });
+
+  test('keeps a doubly escaped URL slash as literal filename text', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/files/a%252Fb.pdf',
+    );
+
+    expect(
+      name,
+      'a%2Fb.pdf',
+      reason: 'the sanitizer must not see a slash produced by a second decode',
+    );
+  });
+
+  test('decodes a singly escaped URL space', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/files/report%20v1.pdf',
+    );
+
+    expect(name, 'report v1.pdf');
+  });
+
+  test('decodes a UTF-8 URL filename', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url:
+          'https://gakujo.iess.niigata-u.ac.jp/files/%E8%B3%87%E6%96%99.pdf',
+    );
+
+    expect(name, '資料.pdf');
+  });
+
+  test('decodes a singly escaped URL percent sign', () {
+    final name = DownloadFileNamePolicy.safeFileName(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/files/100%25.pdf',
+    );
+
+    expect(name, '100%.pdf');
+  });
+
   test('does not fail on malformed encoded filename hints', () {
     final dispositionName =
         DownloadFileNamePolicy.fileNameFromContentDisposition(

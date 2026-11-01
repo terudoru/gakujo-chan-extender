@@ -254,11 +254,15 @@ class DownloadFileNamePolicy {
           uri?.pathSegments.isNotEmpty == true ? uri!.pathSegments.last : null;
     } on FormatException {
       segment = Uri.tryParse(rawUrl)?.path.split('/').last;
+      if (segment == null || segment.isEmpty) {
+        return null;
+      }
+      return _tryDecodeComponent(segment);
     }
     if (segment == null || segment.isEmpty) {
       return null;
     }
-    return _tryDecodeComponent(segment);
+    return segment;
   }
 
   static String? _tryDecodeComponent(String value) {
