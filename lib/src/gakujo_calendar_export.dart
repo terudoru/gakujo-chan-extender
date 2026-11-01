@@ -787,6 +787,12 @@ class GakujoCalendarExport {
     }
 
     final events = _icalendarEvents(text);
+    final hasExplicitRecurrenceMaster = events.any(
+      (event) =>
+          event.first('RECURRENCE-ID').trim().isEmpty &&
+          event.first('STATUS').trim().toUpperCase() != 'CANCELLED' &&
+          event.all('RRULE').isNotEmpty,
+    );
     final mastersByUid = <String, _IcalendarEvent>{};
     for (final event in events) {
       if (event.first('RECURRENCE-ID').trim().isNotEmpty) {
@@ -832,7 +838,8 @@ class GakujoCalendarExport {
       final course = _courseFromIcalendarEvent(
         event,
         inherited: master,
-        recursWeekly: !isException,
+        recursWeekly: !isException &&
+            (!hasExplicitRecurrenceMaster || event.all('RRULE').isNotEmpty),
         excludedDates:
             isException ? const [] : excludedDatesByMaster[event] ?? const [],
       );
