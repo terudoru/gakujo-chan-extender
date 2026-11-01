@@ -179,6 +179,7 @@ class FakeControl extends FakeContentEditable {
 
 function textClone(doc: any, rowOnly: any = false) {
   let removed: any = false;
+  let includesStatus = rowOnly && spec.scenario === 'statusInRow' && !!findById(doc.insertedStatus, 'mbg-report-draft-status-label');
   const counter: any = {
     getAttribute(name: any) {
       return name === 'id' ? 'gakuCommentCOUNT' : 'countField';
@@ -188,11 +189,12 @@ function textClone(doc: any, rowOnly: any = false) {
   return {
     get innerText() {
       const base: any = rowOnly ? '' : doc.pageText;
-      return base + (doc.counter == null ? '' :
+      return base + (includesStatus ? ' ' + findById(doc.insertedStatus, 'mbg-report-draft-status-label').textContent : '') + (doc.counter == null ? '' :
         ' 入力文字数：' + (removed ? '' : doc.counter) + '/200文字');
     },
     get textContent() { return this.innerText; },
     querySelectorAll(selector: any) {
+      if (includesStatus && selector.includes('#mbg-report-draft-status')) return [{remove() { includesStatus = false; }}];
       return selector === '[id],[class]' && doc.counterElement ? [counter] : [];
     }
   };
@@ -327,8 +329,25 @@ function hidePage(page: any) {
   for (const callback of page.window.listeners.pagehide || []) callback();
 }
 
+function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimers.values()); pendingTimers.clear(); for (const callback of callbacks) callback(); }
+
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'statusInRow') {
+    const savingPage = textPage(storage, {value: 'first', anonymous: true});
+    runPage(savingPage);
+    flushTimersForStatus();
+    savingPage.field = new FakeControl(savingPage.document, 'textarea', {}, {value: 'first'});
+    savingPage.document.field = savingPage.field;
+    savingPage.window.__MBG_REPORT_DRAFT_UPDATE();
+    savingPage.field.value = 'first second';
+    savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+    flushTimersForStatus();
+    const restoringPage = textPage(storage, {anonymous: true});
+    runPage(restoringPage);
+    const storedValues = Array.from(storage.values.values()).map((value: any) => JSON.parse(value).fields[0].value);
+    return {draftKeyCount: storage.length, storedValues, restoredText: restoringPage.field.value};
+  }
   if (spec.scenario === 'legacyMigrationReopenedEmpty') {
     // Same captured v0.70.0 draft, but the reopened form's counter shows 0.
     const legacyKey: any = 'mbg-report-draft:v1:cmm5xw';

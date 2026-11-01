@@ -7,7 +7,7 @@ const String gakujoReportDraftJs = r'''
 (() => {
   // web_scripts/src/report_draft/main.ts
   function reportDraft() {
-    var version = 9;
+    var version = 10;
     var prefix = "mbg-report-draft:v2:";
     var retentionMs = 14 * 24 * 60 * 60 * 1e3;
     if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -172,7 +172,7 @@ const String gakujoReportDraftJs = r'''
       if (row) {
         var rowClone = row.cloneNode(true);
         Array.prototype.slice.call(
-          rowClone.querySelectorAll("textarea,input,select,button,[contenteditable]")
+          rowClone.querySelectorAll("textarea,input,select,button,[contenteditable],#mbg-report-draft-status")
         ).forEach(function(node) {
           node.remove();
         });
@@ -407,7 +407,7 @@ const String gakujoReportDraftJs = r'''
         if (row) {
           var rowClone = row.cloneNode(true);
           Array.prototype.slice.call(
-            rowClone.querySelectorAll("textarea,input,select,button,[contenteditable]")
+            rowClone.querySelectorAll("textarea,input,select,button,[contenteditable],#mbg-report-draft-status")
           ).forEach(function(node) {
             node.remove();
           });

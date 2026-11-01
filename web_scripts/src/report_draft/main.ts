@@ -13,7 +13,7 @@ declare global {
 }
 
 function reportDraft() {
-  var version = 9;
+  var version = 10;
   var prefix = 'mbg-report-draft:v2:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -210,7 +210,7 @@ function reportDraft() {
     if (row) {
       var rowClone = row.cloneNode(true) as HTMLElement;
       Array.prototype.slice.call(
-        rowClone.querySelectorAll('textarea,input,select,button,[contenteditable]')
+        rowClone.querySelectorAll('textarea,input,select,button,[contenteditable],#mbg-report-draft-status')
       ).forEach(function(node) {
         node.remove();
       });
@@ -463,7 +463,7 @@ function reportDraft() {
       if (row) {
         var rowClone = row.cloneNode(true) as HTMLElement;
         Array.prototype.slice.call(
-          rowClone.querySelectorAll('textarea,input,select,button,[contenteditable]')
+          rowClone.querySelectorAll('textarea,input,select,button,[contenteditable],#mbg-report-draft-status')
         ).forEach(function(node) {
           node.remove();
         });
