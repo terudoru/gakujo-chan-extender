@@ -272,25 +272,28 @@ void main() {
     expect(await meter.currentUsage(), 14700);
   });
 
-  test('rejects oversized automatic saves before opening or requesting', () async {
-    var opened = false;
-    await expectLater(
-      saver.saveFile(
-        courseName: 'Course',
-        fileName: 'large',
-        length: 295 * 8 * 1024 * 1024,
-        automatic: true,
-        open: () {
-          opened = true;
-          return const Stream<List<int>>.empty();
-        },
-      ),
-      throwsA(isA<GoogleDriveSaveTooLarge>()),
-    );
-    expect(opened, isFalse);
-    expect(queries, isEmpty);
-    expect(await meter.currentUsage(), 0);
-  });
+  test(
+    'rejects oversized automatic saves before opening or requesting',
+    () async {
+      var opened = false;
+      await expectLater(
+        saver.saveFile(
+          courseName: 'Course',
+          fileName: 'large',
+          length: 295 * 8 * 1024 * 1024,
+          automatic: true,
+          open: () {
+            opened = true;
+            return const Stream<List<int>>.empty();
+          },
+        ),
+        throwsA(isA<GoogleDriveSaveTooLarge>()),
+      );
+      expect(opened, isFalse);
+      expect(queries, isEmpty);
+      expect(await meter.currentUsage(), 0);
+    },
+  );
 
   test('counts lists, folder creation and each upload request', () async {
     await save('Course', 'file', 8 * 1024 * 1024 + 1);

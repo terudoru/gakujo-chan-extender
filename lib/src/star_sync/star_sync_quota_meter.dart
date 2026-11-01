@@ -162,16 +162,17 @@ class StarSyncQuotaMeter {
     return true;
   });
 
-  Future<void> charge(int units, {bool automatic = false}) => _queue.run(() async {
-    if (units <= 0) throw ArgumentError.value(units, 'units');
-    await _load();
-    if (_used + units >
-        (automatic ? starSyncGoogleSoftLimit : starSyncGoogleHardLimit)) {
-      throw StarSyncQuotaExceeded(units);
-    }
-    final hour = _hour(_now());
-    _buckets[hour] = (_buckets[hour] ?? 0) + units;
-    await _save();
-    usage.value = _used;
-  });
+  Future<void> charge(int units, {bool automatic = false}) =>
+      _queue.run(() async {
+        if (units <= 0) throw ArgumentError.value(units, 'units');
+        await _load();
+        if (_used + units >
+            (automatic ? starSyncGoogleSoftLimit : starSyncGoogleHardLimit)) {
+          throw StarSyncQuotaExceeded(units);
+        }
+        final hour = _hour(_now());
+        _buckets[hour] = (_buckets[hour] ?? 0) + units;
+        await _save();
+        usage.value = _used;
+      });
 }

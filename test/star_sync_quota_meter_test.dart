@@ -9,10 +9,8 @@ void main() {
   test('persists usage and notices over a rolling 24 hours', () async {
     var now = DateTime(2026, 11, 1, 23, 59);
     final storage = MemorySecureStorage();
-    StarSyncQuotaMeter make() => StarSyncQuotaMeter(
-      storage: storage,
-      now: () => now,
-    );
+    StarSyncQuotaMeter make() =>
+        StarSyncQuotaMeter(storage: storage, now: () => now);
     final first = make();
     await first.charge(14900);
     expect(await first.allowsAutomatic(100), isTrue);
@@ -57,10 +55,8 @@ void main() {
   test('retains buckets after a forward and backward clock jump', () async {
     final storage = MemorySecureStorage();
     var now = DateTime.utc(2026, 1, 1, 12);
-    StarSyncQuotaMeter make() => StarSyncQuotaMeter(
-      storage: storage,
-      now: () => now,
-    );
+    StarSyncQuotaMeter make() =>
+        StarSyncQuotaMeter(storage: storage, now: () => now);
     await make().charge(100);
     now = now.add(const Duration(hours: 30));
     expect(await make().currentUsage(), 0);
@@ -68,8 +64,10 @@ void main() {
     expect(await make().currentUsage(), 100);
     await make().charge(50);
     expect(await make().currentUsage(), 150);
-    expect(jsonDecode(storage.values[starSyncGoogleQuotaKey]!)['lastSeen'],
-        DateTime.utc(2026, 1, 2, 18).millisecondsSinceEpoch);
+    expect(
+      jsonDecode(storage.values[starSyncGoogleQuotaKey]!)['lastSeen'],
+      DateTime.utc(2026, 1, 2, 18).millisecondsSinceEpoch,
+    );
   });
 
   test('migrates a day-based record into the current hour', () async {

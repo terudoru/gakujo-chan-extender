@@ -1611,10 +1611,13 @@ void main() {
     );
     await meter.charge(14950);
     var builds = 0;
-    expect(await engine.uploadAutomaticBackupIfDue(() async {
-      builds++;
-      return [1, 2, 3];
-    }), isFalse);
+    expect(
+      await engine.uploadAutomaticBackupIfDue(() async {
+        builds++;
+        return [1, 2, 3];
+      }),
+      isFalse,
+    );
     await pumpEventQueue();
     expect(builds, 0);
     now = now.add(const Duration(hours: 25));
@@ -2021,7 +2024,9 @@ void main() {
       kdfParams: kdf,
     );
     await engine.load();
-    expect(storage.values, isEmpty);
+    // The Google quota record lives in its own key and is kept on purpose.
+    expect(storage.values.containsKey(starSyncConfigKey), isFalse);
+    expect(storage.values.containsKey(starSyncStateKey), isFalse);
     expect(engine.status.value.enabled, isFalse);
     expect(engine.status.value.lastError, '同期設定を読み込めませんでした');
   });

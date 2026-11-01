@@ -528,7 +528,9 @@ class StarSyncEngine {
     final generation = ++_quotaRetryGeneration;
     // Retry once enough of the rolling 24-hour usage has expired, spread by
     // up to 30 minutes so devices do not return together.
-    final wait = await _quotaMeter.timeUntilAutomaticAllowed(_quotaRetryEstimate);
+    final wait = await _quotaMeter.timeUntilAutomaticAllowed(
+      _quotaRetryEstimate,
+    );
     if (_disposed || generation != _quotaRetryGeneration) return;
     final delay = wait + Duration(milliseconds: _random.nextInt(1800001));
     _quotaTimer = _timerFactory(delay, () {
@@ -2270,54 +2272,52 @@ class StarSyncEngine {
         }
       });
 
-  Future<void> uploadBackup(
-    List<int> bytes, {
-    bool automatic = false,
-  }) => _queue.run(() async {
-    await _requireBackupAccount();
-    final state = _state!;
-    final transport = _transportFactory(_config!);
-    if (transport is StarSyncGoogleDriveTransport) {
-      transport.automatic = automatic;
-    }
-    try {
-      final keyring = await _readKeyring(transport);
-      if (keyring.keyId != state.keyId) {
-        throw StateError('Sync key has changed');
-      }
-      final createdAt = _now().toUtc();
-      final encrypted = await encryptStarSyncFile(
-        dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
-        keyId: state.keyId,
-        deviceId: state.deviceId,
-        kind: 'backup',
-        plaintext: utf8.encode(
-          jsonEncode({
-            'schema': 1,
-            'account': state.boundAccount,
-            'deviceId': state.deviceId,
-            'createdAt': createdAt.toIso8601String(),
-            'payload': base64Encode(bytes),
-          }),
-        ),
-      );
-      await transport.ensureDirectory(_backupDirectory);
-      await _requireBackupAccount();
-      await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
-      state.lastBackupUploadAt = _now().toUtc();
-      if (state.lastError == 'バックアップを保存できませんでした') {
-        state.lastError = null;
-      }
-      await _saveState();
-      _publish();
-    } on Object {
-      state.lastError ??= 'バックアップを保存できませんでした';
-      _publish();
-      rethrow;
-    } finally {
-      transport.close();
-    }
-  });
+  Future<void> uploadBackup(List<int> bytes, {bool automatic = false}) =>
+      _queue.run(() async {
+        await _requireBackupAccount();
+        final state = _state!;
+        final transport = _transportFactory(_config!);
+        if (transport is StarSyncGoogleDriveTransport) {
+          transport.automatic = automatic;
+        }
+        try {
+          final keyring = await _readKeyring(transport);
+          if (keyring.keyId != state.keyId) {
+            throw StateError('Sync key has changed');
+          }
+          final createdAt = _now().toUtc();
+          final encrypted = await encryptStarSyncFile(
+            dataKey: starSyncKeyFromBytes(base64Decode(state.dataKey)),
+            keyId: state.keyId,
+            deviceId: state.deviceId,
+            kind: 'backup',
+            plaintext: utf8.encode(
+              jsonEncode({
+                'schema': 1,
+                'account': state.boundAccount,
+                'deviceId': state.deviceId,
+                'createdAt': createdAt.toIso8601String(),
+                'payload': base64Encode(bytes),
+              }),
+            ),
+          );
+          await transport.ensureDirectory(_backupDirectory);
+          await _requireBackupAccount();
+          await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
+          state.lastBackupUploadAt = _now().toUtc();
+          if (state.lastError == 'バックアップを保存できませんでした') {
+            state.lastError = null;
+          }
+          await _saveState();
+          _publish();
+        } on Object {
+          state.lastError ??= 'バックアップを保存できませんでした';
+          _publish();
+          rethrow;
+        } finally {
+          transport.close();
+        }
+      });
 
   Future<List<StarSyncBackupInfo>> listBackups() => _queue.run(() async {
     await _requireBackupAccount();
