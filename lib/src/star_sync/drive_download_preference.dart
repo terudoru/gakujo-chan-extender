@@ -39,6 +39,12 @@ class DriveDownloadPreference {
     boundAccount = account;
   }
 
+  Future<void> clear() async {
+    await _storage.delete(key: key);
+    enabled = false;
+    boundAccount = null;
+  }
+
   bool matches(String? account) =>
       enabled && account != null && account == boundAccount;
 }

@@ -191,3 +191,8 @@ Encrypted sync-storage backups omit download save mode, page mode, download loca
 バックアップ復元時、同期対象のコレクションはバックアップの値で上書き・追加し、省略されたキーは削除しません。バックアップ後に他の端末で追加された項目も残ります。
 
 Drive download saving is bound to the hash of the saved Gakujo login ID. A changed or missing ID suspends saving until the original ID returns. Disabling or signing out drops pending uploads and aborts the active transfer. Legacy toggle values are migrated to secure storage without an account binding, so they require explicit re-enabling.
+
+
+同期先に保存するバックアップでは、スターは ID・件名・スター日時のみを含め、同期対象で無効にしたお気に入り・設定・通知済み期限キーを含めません。レポート下書きはバックアップに含めません。同期先からスターを復元するときは、同じ ID の端末内の本文などを保持します。
+
+初期設定で「空にして始める」を選んだ時に下書きを読めない場合は選択時刻を保存し、学務ページで読めるようになった時に、その時刻以前に保存された v2 下書きだけを消してから下書きの読み取りと同期を再開します。

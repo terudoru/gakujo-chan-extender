@@ -56,6 +56,10 @@ class StarSyncGoogleAuthException implements Exception {
   String toString() => 'StarSyncGoogleAuthException($kind): $message';
 }
 
+class StarSyncGoogleRevocationException implements Exception {
+  const StarSyncGoogleRevocationException();
+}
+
 abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
   Future<String?> restore();

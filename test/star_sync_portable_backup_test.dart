@@ -2,11 +2,45 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 
 void main() {
+  test('sync backup respects collection scope and omits star details', () {
+    final payload = portableSyncBackupPayload({
+      'version': 2,
+      'favorites': ['private'],
+      'notifiedDeadlineKeys': ['private'],
+      'messageExcludeKeywords': ['private'],
+      'reportDrafts': ['private'],
+      'starredMessages': [
+        {'keijitype': '1', 'genrecd': '2', 'seqNo': '3',
+         'title': 'title', 'starredAt': '2026-01-01', 'body': 'private', 'sender': 'private'},
+      ],
+    }, disabledCollections: {'favorites', 'settings', 'notified-deadlines'});
+    expect(payload, isNot(contains('favorites')));
+    expect(payload, isNot(contains('notifiedDeadlineKeys')));
+    expect(payload, isNot(contains('messageExcludeKeywords')));
+    expect(payload, isNot(contains('reportDrafts')));
+    expect((payload['starredMessages'] as List).single, {
+      'keijitype': '1', 'genrecd': '2', 'seqNo': '3',
+      'title': 'title', 'starredAt': '2026-01-01',
+    });
+  });
+
+  test('sync restore preserves local star details', () {
+    GakujoStarredMessage star(String title, String body) => GakujoStarredMessage(
+      keijitype: '1', genrecd: '2', seqNo: '3', title: title,
+      body: body, sender: body, starredAt: DateTime.utc(2026),
+    );
+    final restored = mergeSyncBackupStars([star('remote', '')], [star('local', 'detail')]).single;
+    expect(restored.title, 'remote');
+    expect(restored.body, 'detail');
+    expect(restored.sender, 'detail');
+  });
+
   test('restore markers use only settings present in the backup', () {
     final backup = parseGakujoBackup(
       '{"version":2,"notificationTopics":["report"]}',

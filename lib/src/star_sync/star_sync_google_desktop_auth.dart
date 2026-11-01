@@ -362,13 +362,15 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   @override
   Future<void> signOut() async {
     final refresh = _refreshToken;
+    var revocationFailed = false;
     try {
       if (refresh != null) await _post(revokeEndpoint, {'token': refresh});
     } catch (_) {
-      // Local sign-out must succeed even if revocation is offline.
+      revocationFailed = true;
     } finally {
       _clear();
       await storage.delete(key: starSyncGoogleTokenKey);
     }
+    if (revocationFailed) throw const StarSyncGoogleRevocationException();
   }
 }

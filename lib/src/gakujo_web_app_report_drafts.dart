@@ -12,6 +12,10 @@ extension _GakujoWebAppReportDrafts on _GakujoWebAppState {
   }
 
   Future<List<Map<String, dynamic>>> _loadReportDrafts() async {
+    await _ensureStarSyncLoaded();
+    if (!await _starSyncEngine.prepareLocalDrafts()) {
+      throw StateError('Draft clear is pending');
+    }
     final result = await _controller.runJavaScriptReturningResult(
       GakujoReportDraftScript.buildList(),
     );

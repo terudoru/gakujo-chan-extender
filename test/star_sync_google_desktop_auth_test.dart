@@ -59,6 +59,7 @@ void main() {
   late DateTime now;
   var refreshes = 0;
   var revoked = false;
+  var revokeFails = false;
   var strayRequests = false;
   String? verifier;
   String? challenge;
@@ -70,6 +71,7 @@ void main() {
     now = DateTime.utc(2026);
     refreshes = 0;
     revoked = false;
+    revokeFails = false;
     strayRequests = false;
     verifier = null;
     challenge = null;
@@ -82,6 +84,7 @@ void main() {
       final fields = Uri.splitQueryString(body);
       request.response.headers.contentType = ContentType.json;
       if (request.uri.path == '/revoke') {
+        if (revokeFails) request.response.statusCode = 500;
         request.response.write('{}');
       } else if (fields['grant_type'] == 'refresh_token') {
         refreshes++;
@@ -279,6 +282,15 @@ void main() {
     await auth.signIn();
     await auth.signOut();
     expect(storage.values, isEmpty);
+  });
+
+  test('failed revocation still deletes local credentials', () async {
+    final auth = makeAuth();
+    await auth.signIn();
+    revokeFails = true;
+    await expectLater(auth.signOut(), throwsA(isA<StarSyncGoogleRevocationException>()));
+    expect(storage.values, isEmpty);
+    expect(auth.currentEmail, isNull);
   });
 
   test('restore uses persisted refresh token', () async {

@@ -277,7 +277,9 @@ Set<GakujoFeatureFlag>? syncRestoreFeatureFlags(
   };
 }
 
-Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
+Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload, {
+  Set<String> disabledCollections = const {},
+}) {
   Object? clean(Object? value) {
     if (value is List) return value.map(clean).toList();
     if (value is Map) {
@@ -296,6 +298,23 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
   final result = clean(payload) as Map<String, Object?>;
   result.remove('downloadSaveMode');
   result.remove('pageMode');
+  if (disabledCollections.contains('favorites')) result.remove('favorites');
+  if (disabledCollections.contains('notified-deadlines')) result.remove('notifiedDeadlineKeys');
+  if (disabledCollections.contains('settings')) {
+    for (final key in starSyncPortableSettingKeys) {
+      result.remove(key);
+    }
+  }
+  result.remove('reportDrafts');
+  final stars = result['starredMessages'];
+  if (stars is List) {
+    result['starredMessages'] = [
+      for (final star in stars)
+        if (star is Map)
+          {for (final key in ['keijitype', 'genrecd', 'seqNo', 'title', 'starredAt'])
+            if (star.containsKey(key)) key: star[key]},
+    ];
+  }
   final flags = result['disabledFeatureFlags'];
   if (flags is List) {
     result['disabledFeatureFlags'] = flags
@@ -306,8 +325,33 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload) {
 }
 
 @visibleForTesting
-List<int> encodePortableSyncBackup(Map<String, Object?> payload) {
-  final bytes = utf8.encode(jsonEncode(portableSyncBackupPayload(payload)));
+List<GakujoStarredMessage> mergeSyncBackupStars(
+  List<GakujoStarredMessage> incoming,
+  List<GakujoStarredMessage> local,
+) {
+  final existing = {for (final star in local) star.id: star};
+  return [
+    for (final star in incoming)
+      GakujoStarredMessage(
+        keijitype: star.keijitype,
+        genrecd: star.genrecd,
+        seqNo: star.seqNo,
+        title: star.title,
+        starredAt: star.starredAt,
+        genre: existing[star.id]?.genre ?? '',
+        sender: existing[star.id]?.sender ?? '',
+        period: existing[star.id]?.period ?? '',
+        postedAt: existing[star.id]?.postedAt ?? '',
+        body: existing[star.id]?.body ?? '',
+      ),
+  ];
+}
+
+@visibleForTesting
+List<int> encodePortableSyncBackup(Map<String, Object?> payload, {
+  Set<String> disabledCollections = const {},
+}) {
+  final bytes = utf8.encode(jsonEncode(portableSyncBackupPayload(payload, disabledCollections: disabledCollections)));
   if (bytes.length > maxGakujoBackupBytes) {
     throw const GakujoBackupImportException('バックアップが大きすぎるため、同期先に保存できませんでした');
   }
@@ -1509,6 +1553,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           apply: _applySyncedReportDrafts,
         ),
       ],
+      clearDraftsBefore: _clearSyncedDraftsBefore,
       loginId: () => _appSettings.loginCredentials?.loginId,
       canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
@@ -2959,6 +3004,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                       },
                       onLocalStarCount: _starSyncEngine.localStarCount,
+                      onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
                       onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
                       onRequireAccount: _starSyncEngine.requireAccount,
                       onAccountGeneration: () => _starSyncEngine.accountGeneration,
@@ -3765,6 +3811,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    var googleRevocationFailed = false;
     Future<void> clearAll() async {
       await StarSyncClipboardGuard.instance.clear();
       try {
@@ -3778,7 +3825,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       } finally {
         try {
           await _setDriveDownloadsEnabled(false);
-          await _signOutGoogle();
+          await _driveDownloadQueue.runExclusive(_driveDownloadPreference.clear);
+          googleRevocationFailed = !await _signOutGoogle();
           _starSyncGoogleEmail = null;
         } on Object catch (error) {
           developer.log('Failed to sign out of Google while clearing data: ${error.runtimeType}',
@@ -5725,10 +5773,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _starSyncGoogleAuth.signIn,
   );
 
-  Future<void> _signOutGoogle() {
+  Future<bool> _signOutGoogle() async {
     _driveDownloadsSuspended = true;
     _cancelDriveUploads();
-    return _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
+    try {
+      await _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
+      return true;
+    } on StarSyncGoogleRevocationException {
+      if (mounted) _showSnackBar('Google 側の接続解除を確認できませんでした。Google アカウントの設定から確認してください');
+      return false;
+    }
   }
 
   void _cancelDriveUploads() {
@@ -5792,7 +5846,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _uploadSyncBackup() async {
     await _ensureStarSyncLoaded();
     try {
-      await _starSyncEngine.uploadBackup(encodePortableSyncBackup(await _backupPayload()));
+      await _starSyncEngine.uploadBackup(encodePortableSyncBackup(await _backupPayload(), disabledCollections: {
+        for (final name in ['favorites', 'settings', 'notified-deadlines'])
+          if (!_starSyncEngine.collectionEnabled(name)) name,
+      }));
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
     }
@@ -5803,7 +5860,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (!_secureStorageAccessAllowed) return;
       await _ensureStarSyncLoaded();
       await _starSyncEngine.uploadAutomaticBackupIfDue(() async =>
-          encodePortableSyncBackup(await _backupPayload()));
+          encodePortableSyncBackup(await _backupPayload(), disabledCollections: {
+        for (final name in ['favorites', 'settings', 'notified-deadlines'])
+          if (!_starSyncEngine.collectionEnabled(name)) name,
+      }));
     } on GakujoBackupImportException catch (error) {
       _showSnackBar(error.message);
     } on Object catch (error) {
@@ -5921,6 +5981,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _canSyncReportDrafts() async => mounted &&
       AllowedWebOrigins.canLoad(await _controller.currentUrl(), debugAllowed: _debugAllowed);
 
+  Future<bool> _clearSyncedDraftsBefore(DateTime cutoff) async {
+    final revision = _navigationRevision;
+    if (!await _canSyncReportDrafts()) return false;
+    final result = await _controller.runJavaScriptReturningResult(
+      GakujoReportDraftScript.buildClearSavedBefore(cutoff),
+    );
+    return revision == _navigationRevision && await _canSyncReportDrafts() &&
+        _stringFromJavaScriptResult(result) == 'true';
+  }
+
   Future<Map<String, Object?>?> _readSyncedReportDrafts() async {
     final revision = _navigationRevision;
     if (!await _canSyncReportDrafts()) return null;
@@ -6028,7 +6098,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           downloadHistory: backup.downloadHistory,
           failedDownloads: backup.failedDownloads,
           favorites: backup.favorites,
-          starredMessages: backup.starredMessages,
+          starredMessages: fromSyncStorage && backup.starredMessages != null
+              ? mergeSyncBackupStars(backup.starredMessages!, await _activityStore.loadStarredMessagesForBackup())
+              : backup.starredMessages,
           deadlines: backup.deadlines,
           notifiedDeadlineKeys: backup.notifiedDeadlineKeys,
           changes: backup.changes,
@@ -6388,6 +6460,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
+      await _ensureStarSyncLoaded();
+      if (!await _starSyncEngine.prepareLocalDrafts()) return;
       await _controller.runJavaScript(GakujoReportDraftScript.build());
     } catch (error, stackTrace) {
       developer.log(

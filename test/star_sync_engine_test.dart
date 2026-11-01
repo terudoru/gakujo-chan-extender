@@ -1342,6 +1342,48 @@ void main() {
     engine.dispose();
   });
 
+  test('unreadable drafts retain a clear cutoff until cleanup succeeds', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final drafts = _Collection('report-drafts')..entries = null;
+    final cutoff = DateTime.utc(2026, 1, 1);
+    var readable = false;
+    var clears = 0;
+    StarSyncEngine makeEngine() => StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => 'A',
+      transportFactory: (_) => remote,
+      kdfParams: kdf,
+      now: () => cutoff,
+      collections: [drafts],
+      clearDraftsBefore: (time) async {
+        expect(time, cutoff);
+        clears++;
+        if (!readable) return false;
+        drafts.entries!.removeWhere((key, value) => (value as int) <= time.millisecondsSinceEpoch);
+        return true;
+      },
+    );
+    var engine = makeEngine();
+    final snapshot = await engine.snapshotLocalStars();
+    await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+    expect(await engine.prepareLocalDrafts(), isFalse);
+    expect(remote.files.keys.where((key) => key.startsWith('sync/report-drafts/')), isEmpty);
+    engine.dispose();
+    engine = makeEngine();
+    await engine.load();
+    expect(await engine.prepareLocalDrafts(), isFalse);
+    drafts.entries = {'old': cutoff.millisecondsSinceEpoch, 'new': cutoff.millisecondsSinceEpoch + 1};
+    readable = true;
+    expect(await engine.prepareLocalDrafts(), isTrue);
+    expect(drafts.entries, {'new': cutoff.millisecondsSinceEpoch + 1});
+    final afterClear = clears;
+    expect(await engine.prepareLocalDrafts(), isTrue);
+    expect(clears, afterClear);
+    engine.dispose();
+  });
+
   test('discard restores collections and defers unavailable drafts', () async {
     final remote = _Transport();
     final storage = _Storage();

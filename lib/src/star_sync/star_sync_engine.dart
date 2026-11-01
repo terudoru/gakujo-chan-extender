@@ -28,6 +28,7 @@ const _deviceDirectory = 'stars/devices';
 const _backupDirectory = 'backups';
 const _collectionMaxBytes = 8 * 1024 * 1024;
 const _clearCollectionsKey = '\u0000collection-snapshot';
+const _deferredDraftClearKey = '\u0000draft-clear-before';
 
 class _CollectionTooLarge implements Exception {}
 
@@ -316,6 +317,7 @@ class StarSyncEngine {
     this.loginId,
     this.canSync,
     this.onLocalStarsChanged,
+    this.clearDraftsBefore,
     this.kdfParams = const StarSyncKdfParams(),
     List<StarSyncCollection> collections = const [],
   }) : _collections = List.of(collections),
@@ -381,6 +383,7 @@ class StarSyncEngine {
   final String? Function()? loginId;
   final bool Function()? canSync;
   final void Function()? onLocalStarsChanged;
+  final Future<bool> Function(DateTime)? clearDraftsBefore;
   final StarSyncKdfParams kdfParams;
   final StorageOperationQueue _queue = StorageOperationQueue();
   final ValueNotifier<StarSyncStatusSnapshot> _status = ValueNotifier(
@@ -576,6 +579,16 @@ class StarSyncEngine {
     if (state.pendingLocalClear.isEmpty) return;
     final pending = Map<String, String>.of(state.pendingLocalClear);
     try {
+      final deferredDraftClear = pending[_deferredDraftClearKey];
+      if (deferredDraftClear != null) {
+        state.collectionStates['report-drafts'] = {
+          ...Map<String, dynamic>.from(state.collectionStates['report-drafts'] as Map? ?? {}),
+          'clearBefore': deferredDraftClear,
+        };
+        pending.remove(_deferredDraftClearKey);
+        state.pendingLocalClear = Map.of(pending);
+        await _saveState();
+      }
       final encodedCollections = pending[_clearCollectionsKey];
       if (encodedCollections != null) {
         final snapshots = Map<String, dynamic>.from(
@@ -737,10 +750,14 @@ class StarSyncEngine {
   Future<Map<String, int?>> localCollectionCounts() async => {
     for (final collection in _collections)
       if (collectionEnabled(collection.name))
-        collection.name: (await collection.readLocal())?.length,
+        collection.name: collection.name == 'report-drafts' &&
+                (_state?.collectionStates['report-drafts'] as Map?)?['clearBefore'] != null
+            ? null
+            : (await collection.readLocal())?.length,
   };
 
   Future<Map<String, String>> snapshotLocalStars() async {
+    final choiceTime = _now().toUtc();
     final result = <String, String>{
       for (final star in await activityStore.loadStarredMessages())
         star.id: star.starredAt.toIso8601String(),
@@ -749,12 +766,42 @@ class StarSyncEngine {
     for (final collection in _collections) {
       if (!collectionEnabled(collection.name)) continue;
       final local = await collection.readLocal();
-      if (local != null) snapshots[collection.name] = local;
+      if (local != null) {
+        snapshots[collection.name] = local;
+      } else if (collection.name == 'report-drafts') {
+        result[_deferredDraftClearKey] = choiceTime.toIso8601String();
+      }
     }
     if (snapshots.isNotEmpty) {
       result[_clearCollectionsKey] = jsonEncode(snapshots);
     }
     return result;
+  }
+
+  Future<bool> prepareLocalDrafts() => _queue.run(() async {
+    final state = _state;
+    if (state == null) return true;
+    if (state.pendingLocalClear.isNotEmpty) return false;
+    final stored = state.collectionStates['report-drafts'];
+    if (stored is! Map || stored['clearBefore'] == null) return true;
+    if (!await _accountMatches(state)) return false;
+    return _prepareLocalDrafts(state);
+  });
+
+  Future<bool> _prepareLocalDrafts(StarSyncState state) async {
+    final stored = Map<String, dynamic>.from(
+      state.collectionStates['report-drafts'] as Map? ?? {},
+    );
+    final raw = stored['clearBefore'];
+    if (raw == null) return true;
+    final time = raw is String ? DateTime.tryParse(raw) : null;
+    if (time == null || clearDraftsBefore == null ||
+        !await clearDraftsBefore!(time)) return false;
+    if (!await _accountMatches(state)) return false;
+    stored.remove('clearBefore');
+    state.collectionStates['report-drafts'] = stored;
+    await _saveState();
+    return true;
   }
 
   Future<void> setUp(
@@ -1688,6 +1735,9 @@ class StarSyncEngine {
     StarSyncState state,
   ) async {
     final name = collection.name;
+    if (name == 'report-drafts' && !await _prepareLocalDrafts(state)) {
+      return (changed: false, skipped: 0);
+    }
     if (!RegExp(r'^[a-z0-9-]+$').hasMatch(name) ||
         _collections.where((item) => item.name == name).length != 1) {
       throw ArgumentError('Invalid or duplicate collection name');
