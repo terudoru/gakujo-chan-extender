@@ -7672,23 +7672,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           developer.log('Failed to sign out of Google: ${error.runtimeType}',
               name: 'MoreBetterGakujo');
         }
-        // Like 「データをすべて削除」, keep the record of unverified Drive
-        // uploads so the startup warning still points at them.
-        String? pendingChecks;
-        try {
-          pendingChecks = await SecureStorageFactory.create()
-              .read(key: googleDrivePendingChecksKey);
-        } on Object {
-          // An unreadable store has nothing left to carry over.
+        // Like 「データをすべて削除」, keep pending protections: the record of
+        // unverified Drive uploads (the startup warning points at them) and a
+        // deferred 「空にして始める」 draft clear (old drafts must not sync).
+        const keptKeys = [googleDrivePendingChecksKey, starSyncPendingDraftClearKey];
+        final kept = <String, String>{};
+        for (final key in keptKeys) {
+          try {
+            final value = await SecureStorageFactory.create().read(key: key);
+            if (value != null) kept[key] = value;
+          } on Object {
+            // An unreadable store has nothing left to carry over.
+          }
         }
         await SecureStorageFactory.resetStorage();
-        if (pendingChecks != null) {
+        for (final entry in kept.entries) {
           try {
             await SecureStorageFactory.create()
-                .write(key: googleDrivePendingChecksKey, value: pendingChecks);
+                .write(key: entry.key, value: entry.value);
           } on Object catch (error) {
             developer.log(
-                'Failed to keep pending Drive checks: ${error.runtimeType}',
+                'Failed to keep a pending protection: ${error.runtimeType}',
                 name: 'MoreBetterGakujo');
           }
         }
