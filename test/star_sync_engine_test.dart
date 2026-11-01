@@ -83,6 +83,51 @@ class _Storage extends FlutterSecureStorage {
   }
 }
 
+class _DelayedActivityStore extends GakujoActivityStore {
+  _DelayedActivityStore(_Storage storage) : super(secureStorage: storage);
+
+  Completer<void>? started;
+  Completer<void>? release;
+  bool delayStars = false;
+  bool delayFavorites = false;
+
+  Future<void> _wait() async {
+    started!.complete();
+    await release!.future;
+  }
+
+  @override
+  Future<T> transformStarredMessages<T>(
+    Future<({List<GakujoStarredMessage> next, T result})> Function(
+      List<GakujoStarredMessage> current,
+    ) transform, {void Function()? beforeWrite}) async {
+    if (!delayStars) {
+      return super.transformStarredMessages(transform, beforeWrite: beforeWrite);
+    }
+    delayStars = false;
+    return super.transformStarredMessages((current) async {
+      final result = await transform(current);
+      await _wait();
+      return result;
+    }, beforeWrite: beforeWrite);
+  }
+
+  @override
+  Future<bool> compareAndReplaceFavorites(
+    List<GakujoFavoritePage> entries, {
+    required Map<String, Object?> basedOn,
+    void Function()? beforeWrite,
+  }) async {
+    if (delayFavorites) {
+      delayFavorites = false;
+      await _wait();
+    }
+    return super.compareAndReplaceFavorites(
+      entries, basedOn: basedOn, beforeWrite: beforeWrite,
+    );
+  }
+}
+
 class _Transport implements StarSyncTransport {
   final files = <String, List<int>>{};
   int puts = 0;
@@ -261,12 +306,16 @@ class _Collection extends StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> values, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) async {
     if (rejectApply ||
         starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
       return false;
     }
     if (failApply) throw StateError('write failed');
+    if (stillCurrent != null && !stillCurrent()) {
+      throw const StarSyncAccountMismatchException();
+    }
     entries = Map.of(values);
     return true;
   }
@@ -275,6 +324,56 @@ class _Collection extends StarSyncCollection {
 void main() {
   const config = StarSyncConfig(backend: StarSyncBackend.webDav);
   const kdf = StarSyncKdfParams(memoryKiB: 8, iterations: 1);
+
+  for (final path in ['stars', 'favorites']) {
+    test('account change while $path apply waits prevents the write', () async {
+      final remote = _Transport();
+      final sourceStorage = _Storage();
+      final targetStorage = _Storage();
+      final sourceActivity = GakujoActivityStore(secureStorage: sourceStorage);
+      final targetActivity = _DelayedActivityStore(targetStorage);
+      var account = 'student';
+      StarSyncEngine make(_Storage storage, GakujoActivityStore activity,
+          String Function() login) => StarSyncEngine(
+        loginId: login,
+        activityStore: activity,
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        collections: [StarSyncFavoritesCollection(activity)],
+        kdfParams: kdf,
+      );
+      final source = make(sourceStorage, sourceActivity, () => 'student');
+      final target = make(targetStorage, targetActivity, () => account);
+      await source.setUp(config, 'pass');
+      await target.setUp(config, 'pass');
+      if (path == 'stars') {
+        await sourceActivity.upsertStarredMessage(GakujoStarredMessage(
+          keijitype: '1', genrecd: '2', seqNo: '3', title: 'remote',
+          starredAt: DateTime.utc(2026),
+        ));
+      } else {
+        await sourceActivity.addFavorite(GakujoFavoritePage(
+          title: 'remote', url: 'https://example.com/page',
+          addedAt: DateTime.utc(2026),
+        ));
+      }
+      await source.syncNow();
+      targetActivity.started = Completer<void>();
+      targetActivity.release = Completer<void>();
+      targetActivity.delayStars = path == 'stars';
+      targetActivity.delayFavorites = path == 'favorites';
+      final syncing = target.syncNow();
+      await targetActivity.started!.future;
+      account = 'other';
+      targetActivity.release!.complete();
+      await syncing;
+      expect(target.status.value.status, StarSyncStatus.accountMismatch);
+      expect(await targetActivity.loadStarredMessages(), isEmpty);
+      expect(await targetActivity.loadFavoritesForBackup(), isEmpty);
+      source.dispose();
+      target.dispose();
+    });
+  }
 
   test('failed installation removes both keys and keeps local stars', () async {
     for (final mode in [
@@ -3816,7 +3915,7 @@ void main() {
       final a = make(
         StarSyncSettingsCollection(
           read: () async => Map.of(settingsA),
-          apply: (values, {required basedOn}) async {
+          apply: (values, {required basedOn, stillCurrent}) async {
             settingsA = Map.of(values);
             return true;
           },
@@ -3826,7 +3925,7 @@ void main() {
       final b = make(
         StarSyncSettingsCollection(
           read: () async => Map.of(settingsB),
-          apply: (values, {required basedOn}) async {
+          apply: (values, {required basedOn, stillCurrent}) async {
             settingsB = Map.of(values);
             return true;
           },
@@ -3863,7 +3962,7 @@ void main() {
       void Function(Map<String, Object?>) write,
     ) => StarSyncSettingsCollection(
       read: () async => Map.of(read()),
-      apply: (values, {required basedOn}) async {
+      apply: (values, {required basedOn, stillCurrent}) async {
         write(Map.of(values));
         return true;
       },

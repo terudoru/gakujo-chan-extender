@@ -10,6 +10,7 @@ Future<void> restoreGakujoBackup({
   required GakujoDownloadHistoryStore historyStore,
   required GakujoActivityStore activityStore,
   Future<void> Function(Future<void> Function())? withStarredMessagesReplacement,
+  void Function()? beforeSettingsWrite,
   required bool Function(String) isAllowedUrl,
   required bool Function(String) isAllowedNavigationUrl,
 }) async {
@@ -63,37 +64,46 @@ Future<void> restoreGakujoBackup({
     activityStore.backupStorage,
   ], () async {
     if (backup.downloadSaveMode != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveDownloadSaveMode(backup.downloadSaveMode!);
     }
     if (backup.pageMode != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.savePageMode(backup.pageMode!);
     }
     if (backup.disabledFeatureFlags != null) {
+      beforeSettingsWrite?.call();
       await settingsStore
           .saveDisabledFeatureFlags(backup.disabledFeatureFlags!);
     }
     if (backup.setupCompleted != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveSetupCompleted(backup.setupCompleted!);
     }
     if (backup.calendarImportSettings != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveCalendarImportSettings(
         backup.calendarImportSettings!,
       );
     }
     if (messageExcludeKeywords != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveMessageExcludeKeywords(
         messageExcludeKeywords,
       );
     }
     if (backup.notificationTopics != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveNotificationTopics(backup.notificationTopics!);
     }
     if (backup.notificationPreferences != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveNotificationPreferences(
         backup.notificationPreferences!,
       );
     }
     if (backup.messageNotification != null) {
+      beforeSettingsWrite?.call();
       await settingsStore.saveMessageNotification(
         backup.messageNotification!,
       );
@@ -125,7 +135,7 @@ Future<void> restoreGakujoBackup({
     if (reportLists != null) {
       await activityStore.replaceReportLists(reportLists);
     }
-  });
+  }, beforeOperation: beforeSettingsWrite);
   if (starredMessages != null && withStarredMessagesReplacement != null) {
     await withStarredMessagesReplacement(restore);
   } else {

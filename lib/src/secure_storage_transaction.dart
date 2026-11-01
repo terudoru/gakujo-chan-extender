@@ -70,8 +70,9 @@ Future<T> runWithBackupStorageLocks<T>(
 /// This handles storage errors during a running import, not process termination.
 Future<void> runBackupStorageTransaction(
   List<BackupStorageParticipant> participants,
-  Future<void> Function() operation,
-) =>
+  Future<void> Function() operation, {
+  void Function()? beforeOperation,
+}) =>
     runWithBackupStorageLocks(participants, () async {
       // Read exact raw values before any writes. Tolerant cache loaders can hide
       // read errors or discard expired data, so cannot provide a rollback image.
@@ -85,6 +86,7 @@ Future<void> runBackupStorageTransaction(
           ));
         }
       }
+      beforeOperation?.call();
       try {
         await operation();
       } on Object catch (error) {

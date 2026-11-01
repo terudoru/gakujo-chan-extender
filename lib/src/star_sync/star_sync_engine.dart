@@ -630,6 +630,7 @@ class StarSyncEngine {
           if (!await collection.applyLocal(
             collection.clearSnapshot(current, snapshot),
             basedOn: current,
+            stillCurrent: _writeGuard(state),
           )) {
             throw StateError('Collection changed during clear');
           }
@@ -639,6 +640,7 @@ class StarSyncEngine {
           await _saveState();
         }
       }
+      final clearGuard = _writeGuard(state);
       await activityStore.transformStarredMessages<void>(
         (current) async => (
           next: current
@@ -648,6 +650,7 @@ class StarSyncEngine {
               .toList(),
           result: null,
         ),
+        beforeWrite: () => _assertWriteCurrent(clearGuard),
       );
       state.pendingLocalClear = {};
       if (state.lastError == '端末内のスターを消去できませんでした') {
@@ -656,6 +659,10 @@ class StarSyncEngine {
       }
       await _saveState();
       _publish();
+    } on StarSyncAccountMismatchException {
+      state.pendingLocalClear = pending;
+      await _accountMatches(state);
+      rethrow;
     } on Object {
       state.pendingLocalClear = pending;
       state.status = StarSyncStatus.error;
@@ -727,6 +734,19 @@ class StarSyncEngine {
     if (!await _accountMatches(state)) {
       throw const StarSyncAccountMismatchException();
     }
+  }
+
+  bool Function() _writeGuard(StarSyncState state) {
+    final generation = _accountGeneration;
+    return () {
+      final current = _currentAccount();
+      return _accountGeneration == generation &&
+          current != null && current == state.boundAccount;
+    };
+  }
+
+  void _assertWriteCurrent(bool Function() stillCurrent) {
+    if (!stillCurrent()) throw const StarSyncAccountMismatchException();
   }
 
   void _assertCurrentAccount(StarSyncState state) {
@@ -1200,6 +1220,7 @@ class StarSyncEngine {
       }
       if (!await _accountMatches(state)) return false;
       if (discardLocal) {
+        final writeGuard = _writeGuard(state);
         final changed = await activityStore.transformStarredMessages<bool>((
           current,
         ) async {
@@ -1216,7 +1237,7 @@ class StarSyncEngine {
                 jsonEncode(current.map((e) => e.toJson()).toList()) !=
                 jsonEncode(next.map((e) => e.toJson()).toList()),
           );
-        });
+        }, beforeWrite: () => _assertWriteCurrent(writeGuard));
         if (changed) onLocalStarsChanged?.call();
         state.pendingBulkReplace = false;
         state.pendingBulkReplaceStarIds = null;
@@ -1599,6 +1620,7 @@ class StarSyncEngine {
         ...documents.map((e) => e.records),
       ], now: now);
       late Map<String, StarSyncRecord> mergedRecords;
+      final writeGuard = _writeGuard(state);
       final changed = await activityStore.transformStarredMessages<bool>((
         current,
       ) async {
@@ -1648,7 +1670,7 @@ class StarSyncEngine {
               jsonEncode(current.map((e) => e.toJson()).toList()) !=
               jsonEncode(next.map((e) => e.toJson()).toList()),
         );
-      });
+      }, beforeWrite: () => _assertWriteCurrent(writeGuard));
       if (changed) onLocalStarsChanged?.call();
       final previousRecords = state.records;
       final previousClock = state.clock;
@@ -1699,6 +1721,8 @@ class StarSyncEngine {
           final result = await _syncCollection(collection, transport, state);
           skipped += result.skipped;
           collectionsChanged = collectionsChanged || result.changed;
+        } on StarSyncAccountMismatchException {
+          rethrow;
         } on _AccountChanged {
           rethrow;
         } on StarSyncQuotaExceeded {
@@ -1749,6 +1773,9 @@ class StarSyncEngine {
         skippedFiles: skipped,
         devices: entries.length,
       );
+    } on StarSyncAccountMismatchException {
+      await _accountMatches(state);
+      return const StarSyncResult();
     } on _AccountChanged {
       await _accountMatches(state);
       return const StarSyncResult();
@@ -1854,6 +1881,7 @@ class StarSyncEngine {
       if (!await collection.applyLocal(
         collection.restoreSnapshot(live),
         basedOn: local,
+        stillCurrent: _writeGuard(state),
       )) {
         _refuseCollection(state, name);
         await _saveState();
@@ -2090,7 +2118,9 @@ class StarSyncEngine {
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
     _assertCurrentAccount(state);
-    if (!await collection.applyLocal(live, basedOn: local)) {
+    if (!await collection.applyLocal(
+      live, basedOn: local, stillCurrent: _writeGuard(state),
+    )) {
       _refuseCollection(state, name);
       return (changed: false, skipped: skipped);
     }

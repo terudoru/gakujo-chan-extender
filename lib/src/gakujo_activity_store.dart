@@ -649,6 +649,7 @@ class GakujoActivityStore {
   Future<bool> compareAndReplaceNotifiedDeadlineKeysWithTimes(
     Map<String, DateTime> entries, {
     required Map<String, Object?> basedOn,
+    void Function()? beforeWrite,
   }) {
     return _enqueue(() async {
       final local = await _readNotifiedDeadlineKeysWithTimes();
@@ -657,13 +658,16 @@ class GakujoActivityStore {
       if (_syncCanonicalJson(current) != _syncCanonicalJson({
         for (final e in entries.entries) e.key: e.value.toUtc().toIso8601String(),
       })) {
-        await _writeNotifiedDeadlineKeysWithTimes(entries);
+        await _writeNotifiedDeadlineKeysWithTimes(entries, beforeWrite: beforeWrite);
       }
       return true;
     });
   }
 
-  Future<void> _writeNotifiedDeadlineKeysWithTimes(Map<String, DateTime> entries) async {
+  Future<void> _writeNotifiedDeadlineKeysWithTimes(
+    Map<String, DateTime> entries, {
+    void Function()? beforeWrite,
+  }) async {
     final ordered = entries.entries.toList()
       ..sort((a, b) {
         final time = a.value.compareTo(b.value);
@@ -673,6 +677,7 @@ class GakujoActivityStore {
         ? ordered.length - _maxNotifiedDeadlineKeys : 0).toList();
     const timeKey = 'more_better_gakujo_notified_deadline_times';
     final previous = await _secureStorage.read(key: timeKey);
+    beforeWrite?.call();
     await _secureStorage.write(
       key: timeKey,
       value: jsonEncode({
@@ -680,6 +685,7 @@ class GakujoActivityStore {
       }),
     );
     try {
+      beforeWrite?.call();
       await _writeNotifiedDeadlineKeys(kept.map((e) => e.key).toList());
     } on Object {
       if (previous == null) {
@@ -694,6 +700,7 @@ class GakujoActivityStore {
   Future<bool> compareAndReplaceFavorites(
     List<GakujoFavoritePage> entries, {
     required Map<String, Object?> basedOn,
+    void Function()? beforeWrite,
   }) {
     return _enqueue(() async {
       final local = await _readFavorites();
@@ -708,6 +715,7 @@ class GakujoActivityStore {
           page.durableUrl: {'title': page.title, 'addedAt': page.addedAt.toIso8601String()},
       };
       if (_syncCanonicalJson(current) != _syncCanonicalJson(next)) {
+        beforeWrite?.call();
         await _replaceFavorites(entries);
       }
       return true;
@@ -835,13 +843,15 @@ class GakujoActivityStore {
   Future<T> transformStarredMessages<T>(
     Future<({List<GakujoStarredMessage> next, T result})> Function(
       List<GakujoStarredMessage> current,
-    ) transform,
-  ) {
+    ) transform, {
+    void Function()? beforeWrite,
+  }) {
     return _enqueue(() async {
       final current = await _readForBackup(_starredMessagesKey, _readStarredMessages);
       final transformed = await transform(current);
       if (jsonEncode(current.map((e) => e.toJson()).toList()) !=
           jsonEncode(transformed.next.map((e) => e.toJson()).toList())) {
+        beforeWrite?.call();
         await _replaceStarredMessages(transformed.next);
       }
       return transformed.result;

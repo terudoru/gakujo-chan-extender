@@ -6187,12 +6187,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _applySyncedSettings(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) => _settingsOperations.runExclusive(() async {
     final previousSettings = _appSettings;
     if (!portableSyncSettingsMatch(previousSettings, basedOn)) return false;
     final backup = importStarSyncPortableSettings(previousSettings, entries);
     await restoreGakujoBackup(
       backup: backup,
+      beforeSettingsWrite: () {
+        if (stillCurrent != null && !stillCurrent()) {
+          throw const StarSyncAccountMismatchException();
+        }
+      },
       settingsStore: _appSettingsStore,
       historyStore: _downloadHistoryStore,
       activityStore: _activityStore,
@@ -6262,12 +6268,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _applySyncedReportDrafts(
     Map<String, Object?> drafts, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) async {
     final revision = _navigationRevision;
     if (revision != _draftReadRevision || !await _canSyncReportDrafts()) {
       throw StateError('Draft page unavailable');
     }
     final script = GakujoReportDraftScript.buildImportAll(drafts, basedOn);
+    if (stillCurrent != null && !stillCurrent()) {
+      throw const StarSyncAccountMismatchException();
+    }
+    if (revision != _navigationRevision) throw StateError('Draft page changed');
     final result = await _controller.runJavaScriptReturningResult(
       script,
     );

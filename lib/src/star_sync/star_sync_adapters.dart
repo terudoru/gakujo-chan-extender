@@ -4,6 +4,13 @@ import '../gakujo_activity_store.dart';
 import '../gakujo_app_settings.dart';
 import '../gakujo_backup_import.dart';
 import 'star_sync_collections.dart';
+import 'star_sync_engine.dart' show StarSyncAccountMismatchException;
+
+void _checkAccount(bool Function()? stillCurrent) {
+  if (stillCurrent != null && !stillCurrent()) {
+    throw const StarSyncAccountMismatchException();
+  }
+}
 
 // The exporter must exclude messageStars from disabledFeatureFlags. Credentials,
 // 2FA secrets, download paths and save mode, and page mode are not portable.
@@ -111,6 +118,7 @@ class StarSyncFavoritesCollection extends StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) async {
     final applied = await store.compareAndReplaceFavorites([
       for (final entry in entries.entries)
@@ -119,7 +127,7 @@ class StarSyncFavoritesCollection extends StarSyncCollection {
             ...(entry.value as Map),
             'url': entry.key,
           }),
-    ], basedOn: basedOn);
+    ], basedOn: basedOn, beforeWrite: () => _checkAccount(stillCurrent));
     if (applied &&
         starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
       await onChanged?.call();
@@ -154,10 +162,11 @@ class StarSyncNotifiedDeadlinesCollection extends StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) => store.compareAndReplaceNotifiedDeadlineKeysWithTimes({
     for (final entry in entries.entries)
       entry.key: DateTime.parse(entry.value as String),
-  }, basedOn: basedOn);
+  }, basedOn: basedOn, beforeWrite: () => _checkAccount(stillCurrent));
 }
 
 class StarSyncSettingsCollection extends StarSyncCollection {
@@ -167,6 +176,7 @@ class StarSyncSettingsCollection extends StarSyncCollection {
   final Future<bool> Function(
     Map<String, Object?>, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   })
   apply;
 
@@ -211,10 +221,11 @@ class StarSyncSettingsCollection extends StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   }) => apply({
     for (final key in starSyncPortableSettingKeys)
       if (entries.containsKey(key)) key: entries[key],
-  }, basedOn: basedOn);
+  }, basedOn: basedOn, stillCurrent: stillCurrent);
 }
 
 class StarSyncReportDraftsCollection extends StarSyncCollection {
@@ -224,6 +235,7 @@ class StarSyncReportDraftsCollection extends StarSyncCollection {
   final Future<bool> Function(
     Map<String, Object?>, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   })
   apply;
 
@@ -243,5 +255,6 @@ class StarSyncReportDraftsCollection extends StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
-  }) => apply(entries, basedOn: basedOn);
+    bool Function()? stillCurrent,
+  }) => apply(entries, basedOn: basedOn, stillCurrent: stillCurrent);
 }

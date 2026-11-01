@@ -15,6 +15,7 @@ abstract class StarSyncCollection {
   Future<bool> applyLocal(
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
   });
   Map<String, Object?> clearSnapshot(
     Map<String, Object?> current,

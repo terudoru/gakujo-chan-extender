@@ -40,7 +40,7 @@ void main() {
   test('settings clear only unchanged portable values to defaults', () {
     final collection = StarSyncSettingsCollection(
       read: () async => {},
-      apply: (entries, {required basedOn}) async => true,
+      apply: (entries, {required basedOn, stillCurrent}) async => true,
     );
     final snapshot = exportStarSyncPortableSettings(
       const GakujoAppSettings(messageExcludeKeywords: ['old']),
@@ -121,7 +121,7 @@ void main() {
       read: () async => {
         'notificationTopics': ['report'],
       },
-      apply: (entries, {required basedOn}) async {
+      apply: (entries, {required basedOn, stillCurrent}) async {
         applied = entries;
         return true;
       },
@@ -145,7 +145,7 @@ void main() {
     Map<String, Object?>? applied;
     final collection = StarSyncReportDraftsCollection(
       read: () async => null,
-      apply: (entries, {required basedOn}) async {
+      apply: (entries, {required basedOn, stillCurrent}) async {
         applied = entries;
         return true;
       },
