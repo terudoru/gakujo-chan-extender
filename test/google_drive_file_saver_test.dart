@@ -518,6 +518,28 @@ void main() {
     });
   }
 
+  test('an early failure removes a just-created course folder found shared', () async {
+    await expectLater(
+      saver.saveFile(
+        courseName: 'Course',
+        fileName: 'file',
+        automatic: true,
+        length: 1,
+        open: () async* {
+          // The root is shared after the course folder was created, and the
+          // local read fails before any pending record exists.
+          files.singleWhere((f) => f['name'] == 'More Better Gakujo')['shared'] =
+              true;
+          throw StateError('read failed');
+        },
+      ),
+      throwsStateError,
+    );
+    final course = files.singleWhere((f) => f['name'] == 'Course');
+    expect(deleted, [course['id']]);
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
   test('replaces a cached folder that is missing or no longer owned', () async {
     await save('Course', 'first', 1);
     final oldRoot = files.singleWhere((f) => f['name'] == 'More Better Gakujo');

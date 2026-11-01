@@ -1809,14 +1809,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // A reported submit that starts no navigation was stopped (validation, a
     // page handler); it must not wait to be promoted by some later page.
     final starts = _mainFrameNavigationStarts;
+    bool stillThisSubmit() =>
+        mounted &&
+        _loginIdentity.pending == account &&
+        _loginIdentity.pendingNavigation == navigation;
     Timer(const Duration(seconds: 30), () {
-      if (!mounted || _mainFrameNavigationStarts != starts) return;
-      if (_loginIdentity.pending == account &&
-          _loginIdentity.pendingNavigation == navigation) {
-        _loginIdentity.pending = null;
-        _loginIdentity.pendingNavigation = null;
+      if (_mainFrameNavigationStarts == starts && stillThisSubmit()) {
+        _dropPendingLogin();
       }
     });
+    // Login, including typing a 2FA code, ends well within this; a candidate
+    // left over from an abandoned attempt must not wait for some later page.
+    Timer(const Duration(minutes: 5), () {
+      if (stillThisSubmit()) _dropPendingLogin();
+    });
+  }
+
+  void _dropPendingLogin() {
+    _loginIdentity.pending = null;
+    _loginIdentity.pendingNavigation = null;
   }
 
   Future<void> _storedLoginAccountWrites = Future<void>.value();
@@ -7341,6 +7352,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onWebResourceError: (error) {
           if (!mounted) {
             return;
+          }
+          // A login request that could not load proves nothing; a later page
+          // must not promote its candidate. Aborted loads are left to the
+          // timers: a redirect replacing the login POST also aborts it.
+          if (error.isForMainFrame && error.isConnectivityError) {
+            _dropPendingLogin();
           }
           _navigationRecoveryCandidateFailed =
               gakujoNavigationRecoveryCandidateAfterError(

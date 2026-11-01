@@ -233,6 +233,23 @@ class GoogleDriveFileSaver {
     }
   }
 
+  /// Best effort: the caller's own failure is what gets reported.
+  Future<void> _dropCreatedFolderIfExposed(String root, String folder) async {
+    try {
+      if (await _isPrivateFolder(root) && await _isPrivateFolder(folder)) {
+        return;
+      }
+      _folders.removeWhere((_, value) => value == folder || value == root);
+      if (await _hasChildren(folder)) return;
+      await _request(
+        'DELETE',
+        _uri('/drive/v3/files/${Uri.encodeComponent(folder)}'),
+      );
+    } on Object {
+      // Nothing more can be done without a record; see the docs.
+    }
+  }
+
   Future<bool> _hasChildren(String folder) async {
     final result = _json(
       await _request(
@@ -430,13 +447,26 @@ class GoogleDriveFileSaver {
         .trim();
     final root = await _folder('More Better Gakujo', 'root');
     final parent = await _folder(course.isEmpty ? 'その他' : course, root);
+    final createdParent = parent != root && _createdFolders.contains(parent);
+    // Until the pending record exists nothing would revisit a course folder
+    // created just now, so a failure here checks it at once.
+    Future<T> beforeRecord<T>(Future<T> Function() step) async {
+      try {
+        return await step();
+      } on Object {
+        if (createdParent) await _dropCreatedFolderIfExposed(root, parent);
+        rethrow;
+      }
+    }
+
     var name = fileName;
     var suffix = 2;
     String? checksum;
     while (true) {
-      final existing = await _list(name, parent);
+      final existing = await beforeRecord(() => _list(name, parent));
       if (existing.isNotEmpty && checksum == null) {
-        checksum = (await md5.bind(open()).first).toString();
+        checksum = (await beforeRecord(() => md5.bind(open()).first))
+            .toString();
       }
       for (final file in existing) {
         if (file['shared'] == false &&
@@ -451,11 +481,12 @@ class GoogleDriveFileSaver {
       name =
           '${fileName.substring(0, split)} (${suffix++})${fileName.substring(split)}';
     }
-    checksum ??= (await md5.bind(open()).first).toString();
+    checksum ??= (await beforeRecord(() => md5.bind(open()).first))
+        .toString();
     final entry = <String, String>{
       'root': root,
       'parent': parent,
-      if (parent != root && _createdFolders.contains(parent)) 'createdParent': '1',
+      if (createdParent) 'createdParent': '1',
       'account': account,
       'gakujoAccountHash': gakujoAccountHash ?? '',
       'name': name,
@@ -470,9 +501,9 @@ class GoogleDriveFileSaver {
         (_) => _random.nextInt(256),
       ).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
     };
-    final entries = await _pendingChecks();
+    final entries = await beforeRecord(_pendingChecks);
     entries.add(entry);
-    await _savePendingChecks(entries);
+    await beforeRecord(() => _savePendingChecks(entries));
     try {
       final response = await _request(
         'POST',
