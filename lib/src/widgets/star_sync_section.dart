@@ -643,8 +643,10 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               onPressed: _busy
                   ? null
                   : () => _run(() async {
-                      await widget.onRejoinWithCode(_rejoinCode.text);
+                      final code = _rejoinCode.text;
+                      // A code holds the data key; do not leave it on screen.
                       _rejoinCode.clear();
+                      await widget.onRejoinWithCode(code);
                     }),
               child: const Text('再接続'),
             ),
@@ -661,8 +663,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               onPressed: _busy
                   ? null
                   : () => _run(() async {
-                      await widget.onRejoin(_rejoinPassphrase.text);
+                      final passphrase = _rejoinPassphrase.text;
                       _rejoinPassphrase.clear();
+                      await widget.onRejoin(passphrase);
                     }),
               child: const Text('再接続'),
             ),
@@ -777,12 +780,16 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               OutlinedButton(
                 onPressed: _busy
                     ? null
-                    : () => showDialog<void>(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) =>
-                            _DisableDialog(onDisable: widget.onDisable),
-                      ),
+                    : () {
+                        _rejoinCode.clear();
+                        _rejoinPassphrase.clear();
+                        unawaited(showDialog<void>(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) =>
+                              _DisableDialog(onDisable: widget.onDisable),
+                        ));
+                      },
                 child: const Text('同期を無効にする'),
               ),
               OutlinedButton(
