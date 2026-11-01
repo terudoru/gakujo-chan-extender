@@ -290,6 +290,28 @@ void main() {
     expect(find.text('一部の端末のデータを読めませんでした（2台）'), findsNothing);
   });
 
+  testWidgets('a typed passphrase is cleared when the rejoin state ends', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsPassphrase,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status));
+    await tester.enterText(find.widgetWithText(TextField, 'パスフレーズ'), 'secret');
+    expect(find.text('secret'), findsOneWidget);
+    // Disabled through another path, then asked again later.
+    status.value = const StarSyncStatusSnapshot();
+    await tester.pump();
+    status.value = const StarSyncStatusSnapshot(
+      enabled: true,
+      status: StarSyncStatus.needsPassphrase,
+    );
+    await tester.pump();
+    expect(find.text('secret'), findsNothing);
+  });
+
   testWidgets('disabled state offers setup', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);

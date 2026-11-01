@@ -228,7 +228,31 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   List<StarSyncBackupInfo>? _backups;
 
   @override
+  void initState() {
+    super.initState();
+    widget.status.addListener(_clearRejoinWhenNotAsked);
+  }
+
+  @override
+  void didUpdateWidget(StarSyncSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.status != widget.status) {
+      oldWidget.status.removeListener(_clearRejoinWhenNotAsked);
+      widget.status.addListener(_clearRejoinWhenNotAsked);
+    }
+  }
+
+  /// Whatever path leaves the rejoin state (disable, reset, re-sign-in), a
+  /// typed code or passphrase must not wait there for the next person.
+  void _clearRejoinWhenNotAsked() {
+    final status = widget.status.value.status;
+    if (status != StarSyncStatus.needsPairingCode) _rejoinCode.clear();
+    if (status != StarSyncStatus.needsPassphrase) _rejoinPassphrase.clear();
+  }
+
+  @override
   void dispose() {
+    widget.status.removeListener(_clearRejoinWhenNotAsked);
     _rejoinCode.dispose();
     _rejoinPassphrase.dispose();
     super.dispose();
