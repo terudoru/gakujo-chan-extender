@@ -307,6 +307,92 @@ void main() {
     expect(await store.loadFailedDownloads(), hasLength(2));
   });
 
+  test('failed download queue distinguishes separator characters in fields',
+      () async {
+    final store = GakujoDownloadHistoryStore();
+    const first = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'a': 'x', 'b': 'y'},
+    );
+    const second = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'a': 'x\u001eb\u001f=y'},
+    );
+
+    await store.addFailedDownload(request: first, errorMessage: 'first');
+    await store.addFailedDownload(request: second, errorMessage: 'second');
+
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(2));
+    expect(entries.map((entry) => entry.request.formFields),
+        containsAll([first.formFields, second.formFields]));
+  });
+
+  test('failed download queue ignores form field insertion order', () async {
+    final store = GakujoDownloadHistoryStore();
+    const first = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'a': 'x', 'b': 'y'},
+    );
+    const reordered = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'b': 'y', 'a': 'x'},
+    );
+
+    await store.addFailedDownload(request: first, errorMessage: 'first');
+    await store.addFailedDownload(
+      request: reordered,
+      errorMessage: 'reordered',
+    );
+
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(1));
+    expect(entries.single.errorMessage, 'reordered');
+  });
+
+  test('failed download queue ignores method case', () async {
+    final store = GakujoDownloadHistoryStore();
+    const lowerCase = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'post',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'a': 'x'},
+    );
+    const upperCase = GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/download',
+      method: 'POST',
+      courseName: 'course',
+      fileName: 'material.pdf',
+      formFields: {'a': 'x'},
+    );
+
+    await store.addFailedDownload(
+      request: lowerCase,
+      errorMessage: 'lowercase',
+    );
+    await store.addFailedDownload(
+      request: upperCase,
+      errorMessage: 'uppercase',
+    );
+
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(1));
+    expect(entries.single.errorMessage, 'uppercase');
+  });
+
   test('replaceFailedDownloads drops unusable imported entries', () async {
     final store = GakujoDownloadHistoryStore();
 
