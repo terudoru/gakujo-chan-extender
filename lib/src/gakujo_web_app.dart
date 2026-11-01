@@ -1810,9 +1810,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final revision = ++_loginIdentity.revision;
     _activeLoginAccount = null;
     _cancelDriveUploads();
+    // Delete the stored identity now, not behind a running sync: a crash in
+    // between must not restore it onto the next person's session.
+    final deletion = account == null
+        ? SecureStorageFactory.create().delete(key: _activeLoginAccountKey)
+        : null;
+    // Awaited in the queue below; this only keeps an early failure from being
+    // reported as unhandled before then.
+    if (deletion != null) unawaited(deletion.then<void>((_) {}, onError: (Object _) {}));
     await _starSyncEngine.runAccountChange(() async {
       if (account == null) {
-        await SecureStorageFactory.create().delete(key: _activeLoginAccountKey);
+        await deletion;
       } else {
         if (revision != _loginIdentity.revision) return;
         if (!(stillValid?.call() ?? true)) {
