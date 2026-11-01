@@ -100,9 +100,15 @@ class _DelayedActivityStore extends GakujoActivityStore {
   Future<T> transformStarredMessages<T>(
     Future<({List<GakujoStarredMessage> next, T result})> Function(
       List<GakujoStarredMessage> current,
-    ) transform, {void Function()? beforeWrite}) async {
+    )
+    transform, {
+    void Function()? beforeWrite,
+  }) async {
     if (!delayStars) {
-      return super.transformStarredMessages(transform, beforeWrite: beforeWrite);
+      return super.transformStarredMessages(
+        transform,
+        beforeWrite: beforeWrite,
+      );
     }
     delayStars = false;
     return super.transformStarredMessages((current) async {
@@ -123,7 +129,9 @@ class _DelayedActivityStore extends GakujoActivityStore {
       await _wait();
     }
     return super.compareAndReplaceFavorites(
-      entries, basedOn: basedOn, beforeWrite: beforeWrite,
+      entries,
+      basedOn: basedOn,
+      beforeWrite: beforeWrite,
     );
   }
 }
@@ -333,8 +341,11 @@ void main() {
       final sourceActivity = GakujoActivityStore(secureStorage: sourceStorage);
       final targetActivity = _DelayedActivityStore(targetStorage);
       var account = 'student';
-      StarSyncEngine make(_Storage storage, GakujoActivityStore activity,
-          String Function() login) => StarSyncEngine(
+      StarSyncEngine make(
+        _Storage storage,
+        GakujoActivityStore activity,
+        String Function() login,
+      ) => StarSyncEngine(
         loginId: login,
         activityStore: activity,
         secureStorage: storage,
@@ -347,15 +358,23 @@ void main() {
       await source.setUp(config, 'pass');
       await target.setUp(config, 'pass');
       if (path == 'stars') {
-        await sourceActivity.upsertStarredMessage(GakujoStarredMessage(
-          keijitype: '1', genrecd: '2', seqNo: '3', title: 'remote',
-          starredAt: DateTime.utc(2026),
-        ));
+        await sourceActivity.upsertStarredMessage(
+          GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '3',
+            title: 'remote',
+            starredAt: DateTime.utc(2026),
+          ),
+        );
       } else {
-        await sourceActivity.addFavorite(GakujoFavoritePage(
-          title: 'remote', url: 'https://example.com/page',
-          addedAt: DateTime.utc(2026),
-        ));
+        await sourceActivity.addFavorite(
+          GakujoFavoritePage(
+            title: 'remote',
+            url: 'https://example.com/page',
+            addedAt: DateTime.utc(2026),
+          ),
+        );
       }
       await source.syncNow();
       targetActivity.started = Completer<void>();
@@ -954,6 +973,33 @@ void main() {
       engine.dispose();
     },
   );
+
+  test('bound account check fails as soon as the identity drops', () async {
+    final storage = _Storage();
+    String? account = 'student';
+    final engine = StarSyncEngine(
+      loginId: () => account,
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => _Transport(),
+      kdfParams: kdf,
+    );
+    await engine.setUp(config, 'pass');
+    final generation = engine.accountGeneration;
+    final boundAccount = engine.requireAccount();
+    bool current() => engine.isBoundAccountCurrent(
+      expectedAccount: boundAccount,
+      expectedGeneration: generation,
+    );
+    expect(current(), isTrue);
+    account = null;
+    expect(current(), isFalse);
+    account = 'student';
+    expect(current(), isTrue);
+    await engine.runAccountChange(() async {});
+    expect(current(), isFalse);
+    engine.dispose();
+  });
 
   test('synchronous invalidation stops a sync blocked in list', () async {
     final remote = _Transport();

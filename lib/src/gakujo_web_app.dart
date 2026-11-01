@@ -3106,6 +3106,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               emptyMessage: 'バックアップが空です',
                               alreadyConfirmed: true,
                               fromSyncStorage: true,
+                              // A login navigation can end the session while
+                              // the restore waits; check before each write.
+                              beforeWrite: () {
+                                if (!_starSyncEngine.isBoundAccountCurrent(
+                                  expectedAccount: account,
+                                  expectedGeneration: generation,
+                                )) {
+                                  throw const StarSyncAccountMismatchException();
+                                }
+                              },
                             );
                           }),
                         );
@@ -6194,7 +6204,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final backup = importStarSyncPortableSettings(previousSettings, entries);
     await restoreGakujoBackup(
       backup: backup,
-      beforeSettingsWrite: () {
+      beforeWrite: () {
         if (stillCurrent != null && !stillCurrent()) {
           throw const StarSyncAccountMismatchException();
         }
@@ -6295,6 +6305,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String emptyMessage,
     bool alreadyConfirmed = false,
     bool fromSyncStorage = false,
+    void Function()? beforeWrite,
   }) async {
     if (text.trim().isEmpty) {
       _showSnackBar(emptyMessage);
@@ -6377,6 +6388,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           settingsStore: _appSettingsStore,
           historyStore: _downloadHistoryStore,
           activityStore: _activityStore,
+          beforeWrite: beforeWrite,
           isAllowedUrl: _isAllowedBackupUrl,
           isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
         );

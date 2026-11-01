@@ -459,15 +459,24 @@ class StarSyncEngine {
         }
       });
 
+  bool isBoundAccountCurrent({
+    required String expectedAccount,
+    required int expectedGeneration,
+  }) =>
+      _accountGeneration == expectedGeneration &&
+      _currentAccount() == expectedAccount &&
+      _state?.boundAccount == expectedAccount &&
+      _config != null;
+
   Future<T> runBoundToAccount<T>({
     required String expectedAccount,
     required int expectedGeneration,
     required Future<T> Function() action,
   }) => _queue.runExclusive(() async {
-    if (_accountGeneration != expectedGeneration ||
-        _currentAccount() != expectedAccount ||
-        _state?.boundAccount != expectedAccount ||
-        _config == null) {
+    if (!isBoundAccountCurrent(
+      expectedAccount: expectedAccount,
+      expectedGeneration: expectedGeneration,
+    )) {
       throw const StarSyncAccountMismatchException();
     }
     return action();

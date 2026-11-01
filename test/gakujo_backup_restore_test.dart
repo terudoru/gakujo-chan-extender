@@ -566,6 +566,41 @@ void main() {
     expect(storage.readKeys,
         isNot(contains('more_better_gakujo_login_credentials_v2')));
   });
+
+  test('a beforeWrite refusal mid-restore rolls back earlier writes', () async {
+    final storage = _Storage({_modeKey: 'flat_configured'});
+    final before = Map<String, String>.of(storage.values);
+    final activity = GakujoActivityStore(secureStorage: storage);
+    var calls = 0;
+    await expectLater(
+      restoreGakujoBackup(
+        backup: GakujoBackupImport(
+          version: 2,
+          downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
+          favorites: [
+            GakujoFavoritePage(
+                title: 'other account',
+                url: 'https://example.com/favorite',
+                addedAt: DateTime.now()),
+          ],
+        ),
+        settingsStore: GakujoAppSettingsStore(secureStorage: storage),
+        historyStore: GakujoDownloadHistoryStore(secureStorage: storage),
+        activityStore: activity,
+        // Allow the transaction start and the save-mode write, then refuse
+        // the favorites write as if the account changed meanwhile.
+        beforeWrite: () {
+          if (++calls > 2) throw StateError('account changed');
+        },
+        isAllowedUrl: (_) => true,
+        isAllowedNavigationUrl: (_) => true,
+      ),
+      throwsStateError,
+    );
+    expect(calls, 3);
+    expect(storage.values, before);
+    expect(await activity.loadFavorites(), isEmpty);
+  });
 }
 
 GakujoDeadlineEntry _deadline() => GakujoDeadlineEntry(

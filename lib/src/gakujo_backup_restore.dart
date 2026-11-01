@@ -10,7 +10,7 @@ Future<void> restoreGakujoBackup({
   required GakujoDownloadHistoryStore historyStore,
   required GakujoActivityStore activityStore,
   Future<void> Function(Future<void> Function())? withStarredMessagesReplacement,
-  void Function()? beforeSettingsWrite,
+  void Function()? beforeWrite,
   required bool Function(String) isAllowedUrl,
   required bool Function(String) isAllowedNavigationUrl,
 }) async {
@@ -64,78 +64,86 @@ Future<void> restoreGakujoBackup({
     activityStore.backupStorage,
   ], () async {
     if (backup.downloadSaveMode != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveDownloadSaveMode(backup.downloadSaveMode!);
     }
     if (backup.pageMode != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.savePageMode(backup.pageMode!);
     }
     if (backup.disabledFeatureFlags != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore
           .saveDisabledFeatureFlags(backup.disabledFeatureFlags!);
     }
     if (backup.setupCompleted != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveSetupCompleted(backup.setupCompleted!);
     }
     if (backup.calendarImportSettings != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveCalendarImportSettings(
         backup.calendarImportSettings!,
       );
     }
     if (messageExcludeKeywords != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveMessageExcludeKeywords(
         messageExcludeKeywords,
       );
     }
     if (backup.notificationTopics != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveNotificationTopics(backup.notificationTopics!);
     }
     if (backup.notificationPreferences != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveNotificationPreferences(
         backup.notificationPreferences!,
       );
     }
     if (backup.messageNotification != null) {
-      beforeSettingsWrite?.call();
+      beforeWrite?.call();
       await settingsStore.saveMessageNotification(
         backup.messageNotification!,
       );
     }
     if (downloadHistory != null) {
+      beforeWrite?.call();
       await historyStore.replaceHistory(downloadHistory);
     }
     if (failedDownloads != null) {
+      beforeWrite?.call();
       await historyStore.replaceFailedDownloads([
         for (final entry in failedDownloads)
           GakujoFailedDownloadEntry.fromExternalJson(entry.toJson()),
       ]);
     }
     if (favorites != null) {
+      beforeWrite?.call();
       await activityStore.replaceFavorites(favorites);
     }
     if (starredMessages != null) {
+      beforeWrite?.call();
       await activityStore.replaceStarredMessages(starredMessages);
     }
     if (deadlines != null) {
+      beforeWrite?.call();
       await activityStore.replaceDeadlines(deadlines);
     }
     if (notifiedDeadlineKeys != null) {
+      beforeWrite?.call();
       await activityStore.replaceNotifiedDeadlineKeys(notifiedDeadlineKeys);
     }
     if (changes != null) {
+      beforeWrite?.call();
       await activityStore.replaceChanges(changes);
     }
     if (reportLists != null) {
+      beforeWrite?.call();
       await activityStore.replaceReportLists(reportLists);
     }
-  }, beforeOperation: beforeSettingsWrite);
+  }, beforeOperation: beforeWrite);
   if (starredMessages != null && withStarredMessagesReplacement != null) {
     await withStarredMessagesReplacement(restore);
   } else {
