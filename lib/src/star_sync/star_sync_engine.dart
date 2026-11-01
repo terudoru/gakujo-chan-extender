@@ -28,6 +28,7 @@ const _deviceDirectory = 'stars/devices';
 const _backupDirectory = 'backups';
 const _collectionMaxBytes = 8 * 1024 * 1024;
 const _clearCollectionsKey = '\u0000collection-snapshot';
+const starSyncPendingDraftClearKey = 'more_better_gakujo_pending_draft_clear';
 const _deferredDraftClearKey = '\u0000draft-clear-before';
 
 class _CollectionTooLarge implements Exception {}
@@ -496,6 +497,14 @@ class StarSyncEngine {
       _config = parsedConfig;
       _state = parsedState;
       try {
+        final legacy = (parsedState.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+        if (legacy is String) {
+          await _recordDraftClear(legacy);
+          final drafts = Map<String, dynamic>.from(parsedState.collectionStates['report-drafts'] as Map);
+          drafts.remove('clearBefore');
+          parsedState.collectionStates['report-drafts'] = drafts;
+          await _saveState();
+        }
         if (!await _accountMatches(parsedState)) return;
         await _finishPendingLocalClear();
       } on Object {
@@ -581,12 +590,7 @@ class StarSyncEngine {
     try {
       final deferredDraftClear = pending[_deferredDraftClearKey];
       if (deferredDraftClear != null) {
-        state.collectionStates['report-drafts'] = {
-          ...Map<String, dynamic>.from(
-            state.collectionStates['report-drafts'] as Map? ?? {},
-          ),
-          'clearBefore': deferredDraftClear,
-        };
+        await _recordDraftClear(deferredDraftClear);
         pending.remove(_deferredDraftClearKey);
         state.pendingLocalClear = Map.of(pending);
         await _saveState();
@@ -659,6 +663,7 @@ class StarSyncEngine {
     required Map<String, String> pendingLocalClear,
   }) async {
     state.pendingLocalClear = Map.of(pendingLocalClear);
+    final deferred = pendingLocalClear[_deferredDraftClearKey];
     try {
       await _storage.write(
         key: starSyncStateKey,
@@ -668,6 +673,7 @@ class StarSyncEngine {
         key: starSyncConfigKey,
         value: jsonEncode(config.toJson()),
       );
+      if (deferred != null) await _recordDraftClear(deferred);
     } on Object {
       for (final key in [starSyncStateKey, starSyncConfigKey]) {
         try {
@@ -754,9 +760,8 @@ class StarSyncEngine {
       if (collectionEnabled(collection.name))
         collection.name:
             collection.name == 'report-drafts' &&
-                (_state?.collectionStates['report-drafts']
-                        as Map?)?['clearBefore'] !=
-                    null
+                (await _storage.read(key: starSyncPendingDraftClearKey) != null ||
+                    (_state?.collectionStates['report-drafts'] as Map?)?['clearBefore'] != null)
             ? null
             : (await collection.readLocal())?.length,
   };
@@ -782,32 +787,45 @@ class StarSyncEngine {
     return result;
   }
 
+  Future<void> _recordDraftClear(String raw) async {
+    final next = DateTime.parse(raw);
+    final previous = await _storage.read(key: starSyncPendingDraftClearKey);
+    if (previous == null || DateTime.parse(previous).isBefore(next)) {
+      await _storage.write(key: starSyncPendingDraftClearKey, value: raw);
+    }
+  }
+
   Future<bool> prepareLocalDrafts() => _queue.run(() async {
     final state = _state;
-    if (state == null) return true;
-    if (state.pendingLocalClear.isNotEmpty) return false;
-    final stored = state.collectionStates['report-drafts'];
-    if (stored is! Map || stored['clearBefore'] == null) return true;
-    if (!await _accountMatches(state)) return false;
+    if (state != null && state.pendingLocalClear.isNotEmpty) return false;
+    final legacy = (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+    final pending = await _storage.read(key: starSyncPendingDraftClearKey);
+    if (legacy == null && pending == null) return true;
+    if (state != null && !await _accountMatches(state)) return false;
     return _prepareLocalDrafts(state);
   });
 
-  Future<bool> _prepareLocalDrafts(StarSyncState state) async {
+  Future<bool> _prepareLocalDrafts(StarSyncState? state) async {
     final stored = Map<String, dynamic>.from(
-      state.collectionStates['report-drafts'] as Map? ?? {},
+      state?.collectionStates['report-drafts'] as Map? ?? {},
     );
-    final raw = stored['clearBefore'];
+    final legacy = stored['clearBefore'];
+    if (legacy is String) {
+      await _recordDraftClear(legacy);
+      stored.remove('clearBefore');
+      state!.collectionStates['report-drafts'] = stored;
+      await _saveState();
+    }
+    final raw = await _storage.read(key: starSyncPendingDraftClearKey);
     if (raw == null) return true;
-    final time = raw is String ? DateTime.tryParse(raw) : null;
+    final time = DateTime.tryParse(raw);
     if (time == null ||
         clearDraftsBefore == null ||
         !await clearDraftsBefore!(time)) {
       return false;
     }
-    if (!await _accountMatches(state)) return false;
-    stored.remove('clearBefore');
-    state.collectionStates['report-drafts'] = stored;
-    await _saveState();
+    if (state != null && !await _accountMatches(state)) return false;
+    await _storage.delete(key: starSyncPendingDraftClearKey);
     return true;
   }
 
@@ -2606,6 +2624,11 @@ class StarSyncEngine {
             transport.close();
           }
         }
+        final state = _state;
+        final legacy = (state?.collectionStates['report-drafts'] as Map?)?['clearBefore'];
+        final pending = state?.pendingLocalClear[_deferredDraftClearKey];
+        if (legacy is String) await _recordDraftClear(legacy);
+        if (pending != null) await _recordDraftClear(pending);
         await _storage.delete(key: starSyncConfigKey);
         await _storage.delete(key: starSyncStateKey);
         _config = null;

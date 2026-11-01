@@ -4,9 +4,14 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import 'secure_storage_factory.dart';
 
 import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_transport.dart';
+
+const googleDrivePendingChecksKey = 'more_better_gakujo_drive_pending_checks';
 
 class GoogleDriveFileSaver {
   GoogleDriveFileSaver({
@@ -15,16 +20,24 @@ class GoogleDriveFileSaver {
     Uri? apiBase,
     Future<void> Function(Duration)? delay,
     StarSyncQuotaMeter? quotaMeter,
+    FlutterSecureStorage? secureStorage,
+    required this.account,
+    this.onPendingCheck,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _base = apiBase ?? Uri.parse('https://www.googleapis.com'),
        _delay = delay ?? Future<void>.delayed,
-       _quotaMeter = quotaMeter ?? StarSyncQuotaMeter.shared {
+       _quotaMeter = quotaMeter ?? StarSyncQuotaMeter.shared,
+       _storage = secureStorage ?? SecureStorageFactory.create() {
+    if (account.isEmpty) throw ArgumentError('Missing Google account');
     validateStarSyncEndpoint(_base);
   }
 
   final Future<String> Function({bool forceRefresh}) _accessToken;
   final HttpClient _client;
   final StarSyncQuotaMeter _quotaMeter;
+  final FlutterSecureStorage _storage;
+  final String account;
+  final void Function()? onPendingCheck;
   final Uri _base;
   final Future<void> Function(Duration) _delay;
   final Map<String, String> _folders = {};
@@ -238,6 +251,60 @@ class GoogleDriveFileSaver {
     return id;
   }
 
+  Future<List<Map<String, String>>> _pendingChecks() async {
+    final raw = await _storage.read(key: googleDrivePendingChecksKey);
+    if (raw == null) return [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) throw const FormatException('Invalid pending checks');
+    return decoded.map((entry) {
+      if (entry is! Map ||
+          entry['id'] is! String ||
+          entry['root'] is! String ||
+          entry['parent'] is! String ||
+          entry['account'] is! String ||
+          (entry['id'] as String).isEmpty ||
+          (entry['root'] as String).isEmpty ||
+          (entry['parent'] as String).isEmpty) {
+        throw const FormatException('Invalid pending check');
+      }
+      return Map<String, String>.from(entry);
+    }).toList();
+  }
+
+  Future<void> _savePendingChecks(List<Map<String, String>> entries) =>
+      entries.isEmpty
+      ? _storage.delete(key: googleDrivePendingChecksKey)
+      : _storage.write(
+          key: googleDrivePendingChecksKey,
+          value: jsonEncode(entries),
+        );
+
+  Future<bool> _verifyPending(Map<String, String> entry) async {
+    final parent = entry['parent']!;
+    final root = entry['root']!;
+    final coursePrivate = await _isPrivateFolder(parent);
+    final rootPrivate = await _isPrivateFolder(root);
+    if (coursePrivate && rootPrivate) return true;
+    _folders.removeWhere((_, value) => value == parent || value == root);
+    final deleted = await _request(
+      'DELETE',
+      _uri('/drive/v3/files/${Uri.encodeComponent(entry['id']!)}'),
+    );
+    if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
+    return false;
+  }
+
+  /// Retries verification using the automatic quota budget.
+  Future<void> processPendingChecks() => runZoned(() async {
+    final entries = await _pendingChecks();
+    for (final entry in List<Map<String, String>>.of(entries)) {
+      if (entry['account'] != account) continue;
+      await _verifyPending(entry);
+      entries.remove(entry);
+      await _savePendingChecks(entries);
+    }
+  }, zoneValues: {#driveSaveAutomatic: true});
+
   Future<String> saveFile({
     required String courseName,
     required String fileName,
@@ -266,6 +333,10 @@ class GoogleDriveFileSaver {
     required bool automatic,
   }) async {
     if (length < 0 || fileName.isEmpty) throw ArgumentError('Invalid file');
+    await processPendingChecks();
+    if ((await _pendingChecks()).length >= 100) {
+      throw StateError('Too many pending Drive checks');
+    }
     final chunks = (length + _chunkSize - 1) ~/ _chunkSize;
     final estimate = 300 + 50 * chunks;
     if (automatic && isAutomaticFileTooLarge(length)) {
@@ -333,17 +404,20 @@ class GoogleDriveFileSaver {
       throw const FormatException('Invalid upload location');
     }
     final id = await _upload(session, open, length);
-    final coursePrivate = await _isPrivateFolder(parent);
-    final rootPrivate = await _isPrivateFolder(root);
-    if (!coursePrivate || !rootPrivate) {
-      _folders.removeWhere((_, value) => value == parent || value == root);
-      final deleted = await _request(
-        'DELETE',
-        _uri('/drive/v3/files/${Uri.encodeComponent(id)}'),
-      );
-      if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
-      throw const GoogleDriveSaveFolderShared();
+    final entries = await _pendingChecks();
+    final entry = {'id': id, 'root': root, 'parent': parent, 'account': account};
+    entries.add(entry);
+    await _savePendingChecks(entries);
+    bool private;
+    try {
+      private = await _verifyPending(entry);
+      entries.remove(entry);
+      await _savePendingChecks(entries);
+    } on Object catch (error) {
+      onPendingCheck?.call();
+      throw GoogleDrivePendingCheckException(error);
     }
+    if (!private) throw const GoogleDriveSaveFolderShared();
     return id;
   }
 
@@ -464,4 +538,10 @@ class GoogleDriveSaveFolderShared implements Exception {
 
   @override
   String toString() => '保存先のフォルダが共有されていたため、Google ドライブへの保存を取り消しました';
+}
+
+class GoogleDrivePendingCheckException implements Exception {
+  const GoogleDrivePendingCheckException(this.cause);
+
+  final Object cause;
 }

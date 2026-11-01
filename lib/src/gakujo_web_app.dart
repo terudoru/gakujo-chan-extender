@@ -5856,6 +5856,39 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _retryPendingDriveChecksAtStartup() async {
+    try {
+      await _driveDownloadsLoad;
+      await _driveDownloadQueue.run(() async {
+        final email = _starSyncGoogleAuth.currentEmail;
+        if (!_driveDownloadsEnabled || email == null ||
+            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) return;
+        final account = _driveAccountHash;
+        final saver = GoogleDriveFileSaver(
+          account: email,
+          accessToken: ({bool forceRefresh = false}) async {
+            if (!_driveDownloadsEnabled || _driveAccountHash != account ||
+                _starSyncGoogleAuth.currentEmail != email ||
+                !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+              throw const GoogleDriveAccountChanged();
+            }
+            return googleDriveTokenForAccount(
+              _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
+            );
+          },
+        );
+        try {
+          await saver.processPendingChecks();
+        } finally {
+          saver.close();
+        }
+      });
+    } on Object catch (error) {
+      developer.log('Failed to verify saved Drive files: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
+    }
+  }
+
   Future<void> _setDriveDownloadsEnabled(bool enabled) async {
     if (!enabled) {
       _driveDownloadsSuspended = true;
@@ -7137,6 +7170,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _appSettingsLoaded = true;
       });
       unawaited(_syncStarsInBackground());
+      unawaited(_retryPendingDriveChecksAtStartup());
       await _syncLocalSettingsMirror(settings);
       await _loadDownloadRoot();
       unawaited(_compactStoredData());

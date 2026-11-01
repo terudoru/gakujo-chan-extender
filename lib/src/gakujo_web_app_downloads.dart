@@ -1160,6 +1160,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           _driveSaverEmail = email;
           _googleDriveFileSaver?.close();
           _googleDriveFileSaver = GoogleDriveFileSaver(
+            account: email,
+            onPendingCheck: () {
+              if (mounted) _showSnackBar('Google ドライブへの保存の確認が終わっていないファイルがあります。後でもう一度確認します');
+            },
             accessToken: ({bool forceRefresh = false}) async {
               if (!allowed()) throw const GoogleDriveAccountChanged();
               final token = await googleDriveTokenForAccount(
@@ -1192,6 +1196,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
           _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
         }
+      } on GoogleDrivePendingCheckException {
+        // The saver has already shown the pending-verification notice.
       } on GoogleDriveAccountChanged {
         if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on Object catch (error) {

@@ -121,6 +121,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       await _initialize();
       if (_account == null) {
         if (Platform.isAndroid) {
+          // Android disconnect only revokes cached accounts; lightweight auth can show UI.
           throw const StarSyncGoogleRevocationException();
         }
         final attempt = GoogleSignIn.instance.attemptLightweightAuthentication(

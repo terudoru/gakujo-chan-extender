@@ -200,3 +200,7 @@ When setup selects an empty start while drafts are unreadable, all stored v1 and
 
 
 The setup clear snapshots all registered collections, including currently disabled ones. Existing Google sync configurations without a stored Google email require disabling and setting up sync again.
+
+Pending Drive uploads retain their file and folder IDs per Google account in secure storage until the folders are verified private or the file is deleted. Startup and subsequent uploads retry within the automatic quota budget. The app notifies the user when verification is deferred.
+
+A deferred draft clear is stored separately from sync state and survives disabling sync or clearing app data. At the next readable Gakujo page it removes drafts saved no later than the selected cutoff.

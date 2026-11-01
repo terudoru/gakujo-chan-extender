@@ -1388,7 +1388,7 @@ void main() {
           expect(time, cutoff);
           clears++;
           if (!readable) return false;
-          drafts.entries!.clear();
+          drafts.entries!.removeWhere((_, value) => (value as int) <= time.millisecondsSinceEpoch);
           return true;
         },
       );
@@ -1400,6 +1400,7 @@ void main() {
         remote.files.keys.where((key) => key.startsWith('sync/report-drafts/')),
         isEmpty,
       );
+      await engine.disable();
       engine.dispose();
       engine = makeEngine();
       await engine.load();
@@ -1410,7 +1411,8 @@ void main() {
       };
       readable = true;
       expect(await engine.prepareLocalDrafts(), isTrue);
-      expect(drafts.entries, isEmpty);
+      expect(drafts.entries, {'new': cutoff.millisecondsSinceEpoch + 1});
+      expect(storage.values[starSyncPendingDraftClearKey], isNull);
       final afterClear = clears;
       expect(await engine.prepareLocalDrafts(), isTrue);
       expect(clears, afterClear);

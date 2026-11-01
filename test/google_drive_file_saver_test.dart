@@ -16,6 +16,10 @@ import 'support/memory_secure_storage.dart';
 // answers 400, which would break the loopback fake Drive server.
 void main() {
   late StarSyncQuotaMeter meter;
+  late MemorySecureStorage storage;
+  var pendingNotices = 0;
+  var failCheck = false;
+  var failDelete = false;
   late HttpServer server;
   late Uri base;
   late GoogleDriveFileSaver saver;
@@ -36,7 +40,11 @@ void main() {
   void Function()? onRequest;
 
   setUp(() async {
-    meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
+    storage = MemorySecureStorage();
+    meter = StarSyncQuotaMeter(storage: storage);
+    pendingNotices = 0;
+    failCheck = false;
+    failDelete = false;
     files = [];
     queries = [];
     fields = [];
@@ -56,6 +64,9 @@ void main() {
     base = Uri.parse('http://127.0.0.1:${server.port}');
     saver = GoogleDriveFileSaver(
       quotaMeter: meter,
+      secureStorage: storage,
+      account: 'user@example.com',
+      onPendingCheck: () => pendingNotices++,
       apiBase: base,
       delay: (_) async {},
       accessToken: ({bool forceRefresh = false}) async {
@@ -78,6 +89,11 @@ void main() {
           request.uri.queryParameters['fields'],
           'id,ownedByMe,shared,trashed',
         );
+        if (failCheck && uploads > 0) {
+          response.statusCode = 403;
+          await response.close();
+          return;
+        }
         final matches = files.where(
           (f) => f['id'] == request.uri.pathSegments.last,
         );
@@ -113,6 +129,11 @@ void main() {
           }),
         );
       } else if (request.method == 'DELETE') {
+        if (failDelete) {
+          response.statusCode = 403;
+          await response.close();
+          return;
+        }
         deleted.add(request.uri.pathSegments.last);
         response.statusCode = 204;
       } else if (request.uri.path == '/drive/v3/files') {
@@ -292,6 +313,60 @@ void main() {
     expect(files.last['name'], 'Course');
   });
 
+  test('failed post-upload verification is retried before the next upload', () async {
+    failCheck = true;
+    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    expect(pendingNotices, 1);
+    expect(jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List, hasLength(1));
+    await expectLater(save('Course', 'blocked', 1), throwsA(isA<Exception>()));
+    expect(uploads, 1);
+    failCheck = false;
+    expect(await save('Course', 'second', 1), 'uploaded');
+    expect(uploads, 2);
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+    expect(deleted, isEmpty);
+  });
+
+  test('retry only uses the account that owns the pending entry', () async {
+    failCheck = true;
+    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    failCheck = false;
+    final other = GoogleDriveFileSaver(
+      quotaMeter: meter,
+      secureStorage: storage,
+      account: 'other@example.com',
+      apiBase: base,
+      accessToken: ({bool forceRefresh = false}) async => 'token',
+    );
+    await other.processPendingChecks();
+    expect(storage.values[googleDrivePendingChecksKey], isNotNull);
+    other.close();
+    await saver.processPendingChecks();
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('failed deletion remains pending until a later retry', () async {
+    shareDuringUpload = 'Course';
+    failDelete = true;
+    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    expect(pendingNotices, 1);
+    expect(storage.values[googleDrivePendingChecksKey], isNotNull);
+    failDelete = false;
+    await saver.processPendingChecks();
+    expect(deleted, ['uploaded']);
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('pending retry uses automatic quota and leaves entries when exhausted', () async {
+    failCheck = true;
+    await expectLater(save('Course', 'file', 1), throwsA(isA<GoogleDrivePendingCheckException>()));
+    failCheck = false;
+    final used = await meter.currentUsage();
+    await meter.charge(starSyncGoogleSoftLimit - used, automatic: true);
+    await expectLater(saver.processPendingChecks(), throwsA(isA<StarSyncQuotaExceeded>()));
+    expect(storage.values[googleDrivePendingChecksKey], isNotNull);
+  });
+
   for (final folder in ['Course', 'More Better Gakujo']) {
     test('deletes upload when $folder becomes shared during upload', () async {
       shareDuringUpload = folder;
@@ -368,6 +443,9 @@ void main() {
     final email = auth.currentEmail!;
     saver = GoogleDriveFileSaver(
       quotaMeter: meter,
+      secureStorage: storage,
+      account: 'user@example.com',
+      onPendingCheck: () => pendingNotices++,
       apiBase: base,
       accessToken: ({bool forceRefresh = false}) =>
           googleDriveTokenForAccount(auth, email, forceRefresh: forceRefresh),
@@ -434,6 +512,9 @@ void main() {
     expect(files.singleWhere((f) => f['name'] == 'Course')['parent'], 'a');
     saver = GoogleDriveFileSaver(
       quotaMeter: meter,
+      secureStorage: storage,
+      account: 'user@example.com',
+      onPendingCheck: () => pendingNotices++,
       apiBase: base,
       delay: (_) async {},
       accessToken: ({bool forceRefresh = false}) async => 'token',
