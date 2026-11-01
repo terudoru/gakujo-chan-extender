@@ -1,6 +1,6 @@
 export {};
 function downloadCapture() {
-  var captureVersion = 19;
+  var captureVersion = 20;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -521,7 +521,7 @@ function downloadCapture() {
   }
 
   function formFields(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined) {
-    var fields: Record<string, string> = {};
+    var fields: Record<string, string> = Object.create(null);
     if (!form) {
       return fields;
     }

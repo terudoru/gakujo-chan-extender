@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'download_response_policy.dart';
 import 'gakujo_download_request.dart';
 import 'generated/authenticated_download_cleanup.g.dart';
@@ -14,7 +16,7 @@ class WindowsWebViewAuthenticatedDownloadScript {
     'requestId': requestId,
     'url': request.url,
     'method': request.method.toUpperCase() == 'POST' ? 'POST' : 'GET',
-    'fields': request.formFields,
+    'fields': jsonEncode(request.formFields),
     'fileName': request.fileName,
     'byteLimit': maxGakujoDownloadBytes,
     'pageReturnedMessage': DownloadResponsePolicy.pageReturnedMessage,

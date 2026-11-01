@@ -7,7 +7,7 @@ const String gakujoDownloadCaptureJs = r'''
 (() => {
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
-    var captureVersion = 19;
+    var captureVersion = 20;
     if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
       if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
         window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -439,7 +439,7 @@ const String gakujoDownloadCaptureJs = r'''
       return /^(提出|提出する|送信|送信する)$/.test(text) || /^(取消|取消し|取り消し|取り消す|キャンセル|中止)$/.test(text) || /^(戻る|前へ|次へ|進む|確認|確認する)$/.test(text) || /^(確定保存|一時保存|保存|クリア|削除|登録|確定)(する)?$/.test(text) || /^(save|submit|confirm|back|clear|delete|register|cancel)$/.test(text) || /^(レポート|小テスト)?提出(確認)?$/.test(text) || /^(レポート|小テスト)?提出(用)?(画面|ページ)(へ|に進む|へ進む)?$/.test(text);
     }
     function formFields(form, submitter) {
-      var fields = {};
+      var fields = /* @__PURE__ */ Object.create(null);
       if (!form) {
         return fields;
       }

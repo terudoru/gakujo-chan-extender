@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 19'));
+    expect(script, contains('captureVersion = 20'));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -44,6 +44,59 @@ void main() {
         'isSubmissionWorkflowAction(element) && !hasStrongDownloadSignal',
       ),
     );
+  });
+
+  test('preserves special form field names', () async {
+    final result = await _runNode(
+      [
+        'test/support/download_capture_special_fields_harness.cts',
+        GakujoDownloadCaptureScript.build(),
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['capturedCount'], 1);
+    expect(
+      behavior['formFields'],
+      {
+        '__proto__': 'special-value',
+        'constructor': 'constructor-value',
+        'toString': 'to-string-value',
+        'normal': 'normal-value',
+      },
+    );
+  });
+
+  test('upgrades version 19 and captures once', () async {
+    final result = await _runNode(
+      [
+        'test/support/download_capture_special_fields_harness.cts',
+        GakujoDownloadCaptureScript.build(),
+        'upgrade',
+      ],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+
+    expect(
+      result.exitCode,
+      0,
+      reason: 'Node JavaScript evaluation failed: ${result.stderr}',
+    );
+    final behavior =
+        jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(behavior['version'], 20);
+    expect(behavior['listenerCount'], 1);
+    expect(behavior['oldHandlerCalls'], 0);
+    expect(behavior['capturedCount'], 1);
   });
 
   group('click handler submission behavior', () {
