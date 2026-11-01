@@ -1,9 +1,9 @@
 # 通知事項
 
-このAndroidアプリは、独立したFlutterリポジトリとして公開しています。
+このアプリは、独立したFlutterリポジトリとして公開しています。
 
 このアプリは More-Better-Gakujo / Gakujo-chan-extender 系のアイデアを参考にし、
-Android WebView向けに実装したものです。
+Flutter の WebView 向けに実装したものです。Android、iOS/iPadOS、Windows、macOS で動きます。
 
 主な上流プロジェクト:
 
@@ -14,9 +14,8 @@ Android WebView向けに実装したものです。
 - https://github.com/yangniao23/gakujo-chan-extender
 
 上流のブラウザ拡張機能のREADMEには、元の作者が2024年4月1日以降は
-メンテナンスできない旨が記載されています。そのため、このAndroidアプリは
-公式の上流リリースではなく、Android WebViewで使うための非公式な独立継続版
-として扱ってください。
+メンテナンスできない旨が記載されています。そのため、このアプリは
+公式の上流リリースではなく、非公式な独立継続版として扱ってください。
 
 このアプリは、新潟大学および元のブラウザ拡張機能の作者と関係ありません。
 
