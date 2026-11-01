@@ -168,7 +168,7 @@ const String gakujoReportDraftJs = r'''
           labels.push(label.innerText || label.textContent || "");
         }
       }
-      var row = field.closest("tr,div,p,li,section");
+      var row = field.parentElement && field.parentElement.closest("tr,div,p,li,section");
       if (row) {
         var rowClone = row.cloneNode(true);
         Array.prototype.slice.call(

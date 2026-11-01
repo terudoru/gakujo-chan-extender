@@ -5,6 +5,20 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('contenteditable text stays out of its own draft key', () async {
+    final result = await _evaluateContentEditableDraft(
+      initialHtml: 'first',
+      initialText: 'first',
+      deferSaveTimer: true,
+      scenario: 'selfRowContentEditable',
+    );
+
+    expect(result, {
+      'draftKeyCount': 1,
+      'storedValues': ['first second'],
+      'restoredText': 'first second',
+    });
+  });
   test('deferred clear removes all v1 and v2 drafts regardless of date', () async {
     final cutoff = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
     final values = {

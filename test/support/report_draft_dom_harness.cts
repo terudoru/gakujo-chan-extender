@@ -68,16 +68,21 @@ class FakeContentEditable {
     this.readOnly = false;
     this.style = {};
     this.listeners = {};
-    this.attributes = {contenteditable: 'true', name: 'answer'};
+    this.attributes = spec.scenario === 'selfRowContentEditable'
+      ? {contenteditable: 'true', id: 'draft', 'aria-label': '??'}
+      : {contenteditable: 'true', name: 'answer'};
     this.events = [];
     this._innerHTML = html;
     this._text = text;
     this.parentNode = {
       insertBefore: (node: any) => { doc.insertedStatus = node; }
     };
+    this.parentElement = spec.scenario === 'selfRowContentEditable'
+      ? {closest: () => ({cloneNode: () => textClone(doc, true)})}
+      : null;
   }
 
-  get id() { return ''; }
+  get id() { return this.attributes.id || ''; }
   get innerHTML() { return this._innerHTML; }
   set innerHTML(value: any) {
     this._innerHTML = String(value);
@@ -121,7 +126,14 @@ class FakeContentEditable {
   }
   getClientRects() { return [{}]; }
   matches(selector: any) { return selector === '[contenteditable]'; }
-  closest(_selector?: any): any { return null; }
+  closest(selector?: any): any {
+    return spec.scenario === 'selfRowContentEditable' &&
+      selector === 'tr,div,p,li,section' ? this : null;
+  }
+  cloneNode() {
+    const text = this._text;
+    return {innerText: text, textContent: text, querySelectorAll() { return []; }};
+  }
   addEventListener(type: any, callback: any) {
     (this.listeners[type] ||= []).push(callback);
   }
@@ -137,6 +149,7 @@ class FakeControl extends FakeContentEditable {
   constructor(doc: any, tag: any, attributes: any = {}, options: any = {}) {
     super(doc, '', '');
     this.tagName = tag.toUpperCase();
+    this.parentElement = {closest: (selector: any) => this.closest(selector)};
     this.attributes = attributes;
     this.value = options.value || '';
     this.defaultValue = this.value;
@@ -875,6 +888,17 @@ function retry() {
   return !!button;
 }
 function flushTimers() { const callbacks: any=Array.from(pendingTimers.values());pendingTimers.clear();for(const callback of callbacks)callback(); }
+if (spec.scenario === 'selfRowContentEditable') {
+  flushTimers();
+  savingPage.field.textContent = 'first second';
+  savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+  flushTimers();
+  const restoringPage = createPage('', '', storage);
+  runPage(restoringPage);
+  const storedValues = Array.from(storage.values.values()).map((value: any) => JSON.parse(value).fields[0].value);
+  return process.stdout.write(JSON.stringify({draftKeyCount: storage.length,
+    storedValues, restoredText: restoringPage.field.textContent}));
+}
 if (spec.scenario === 'saveFailure') {
   const failureStatus: any=statusText(), dirtyAfterFailure: any=!!savingPage.field.__MBG_REPORT_DRAFT_DIRTY;
   const pendingAfterFailure: any=!!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
