@@ -42,7 +42,7 @@ function quickJump() {
   label = normalized(label);
   if (!label) return false;
   collect(window);
-  var matches = [];
+  var matches: Array<{node: HTMLElement; portal: number; score: number; order: number; dominated: boolean}> = [];
   for (var d = 0; d < documents.length; d += 1) {
     var doc = documents[d];
     var candidates = doc.querySelectorAll<HTMLElement & { disabled?: boolean }>(
@@ -69,12 +69,26 @@ function quickJump() {
         if (text.indexOf(label) !== -1) score = 1;
       }
       if (score < 2) matches.push({
-        node: node, portal: isPortalTab(node) ? 0 : 1, score: score, order: matches.length
+        node: node, portal: isPortalTab(node) ? 0 : 1, score: score, order: matches.length, dominated: false
       });
     }
   }
+  matches.forEach(function(match) {
+    match.dominated = false;
+    for (var i = 0; i < matches.length; i += 1) {
+      var other = matches[i];
+      if (other !== match && other.portal === match.portal && other.score <= match.score &&
+          typeof other.node.click === 'function' &&
+          match.node.contains(other.node)) {
+        match.dominated = true;
+        break;
+      }
+    }
+  });
   matches.sort(function(a, b) {
-    return a.portal - b.portal || a.score - b.score || a.order - b.order;
+    return a.portal - b.portal || a.score - b.score ||
+        (a.dominated ? 1 : 0) - (b.dominated ? 1 : 0) ||
+        a.order - b.order;
   });
   for (var m = 0; m < matches.length; m += 1) {
     try { matches[m].node.click(); return true; } catch (e) {}

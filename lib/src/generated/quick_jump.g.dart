@@ -77,12 +77,23 @@ const String _gakujoQuickJumpJsPrefix = r'''(function(__mbgConfig) {
           node,
           portal: isPortalTab(node) ? 0 : 1,
           score,
-          order: matches.length
+          order: matches.length,
+          dominated: false
         });
       }
     }
+    matches.forEach(function(match) {
+      match.dominated = false;
+      for (var i2 = 0; i2 < matches.length; i2 += 1) {
+        var other = matches[i2];
+        if (other !== match && other.portal === match.portal && other.score <= match.score && typeof other.node.click === "function" && match.node.contains(other.node)) {
+          match.dominated = true;
+          break;
+        }
+      }
+    });
     matches.sort(function(a, b) {
-      return a.portal - b.portal || a.score - b.score || a.order - b.order;
+      return a.portal - b.portal || a.score - b.score || (a.dominated ? 1 : 0) - (b.dominated ? 1 : 0) || a.order - b.order;
     });
     for (var m = 0; m < matches.length; m += 1) {
       try {

@@ -11,9 +11,22 @@ function windowFor(specs?: any) {
     closest: () => spec.inert || spec.ariaDisabled ? {} : null,
     getClientRects: () => spec.hidden ? [] : [{}],
     querySelectorAll: () => spec.imageAlt ? [{getAttribute: () => spec.imageAlt}] : [],
-    click: () => clicked.push(spec.id),
+    click: spec.noClick ? undefined : () => {
+      clicked.push(spec.id);
+      if (spec.clickThrows) throw new Error('synthetic click failure');
+    },
   });
   const nodes: any = specs.map(element);
+  const nodesById = new Map(nodes.map(node => [node.id, node]));
+  nodes.forEach(node => {
+    if (node.parentId) node.parentElement = nodesById.get(node.parentId) || null;
+    node.contains = other => {
+      for (let current = other; current; current = current.parentElement) {
+        if (current === node) return true;
+      }
+      return false;
+    };
+  });
   const win: any = {frames: [], getComputedStyle: node => ({visibility: node.visibility || 'visible'})};
   win.document = {defaultView: win, querySelectorAll: selector => nodes.filter(node =>
     selector.includes('td, div, span') || ['a','button'].includes(node.tag) ||

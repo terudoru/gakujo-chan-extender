@@ -5,6 +5,26 @@ import 'package:morebettergakujo_flutter/src/gakujo_quick_jump_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('tries an exact wrapper before an unrelated partial fallback',
+      () async {
+    expect(
+        await evaluate([
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'inner',
+            'tag': 'button',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'clickThrows': true
+          },
+          {'id': 'partial', 'tag': 'button', 'text': 'シラバス検索'},
+        ]),
+        {
+          'result': true,
+          'clicked': ['inner', 'wrapper']
+        });
+  });
+
   test('clicks syllabus link rather than the surrounding page container',
       () async {
     expect(
