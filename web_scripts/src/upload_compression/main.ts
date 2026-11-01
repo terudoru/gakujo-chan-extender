@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
 import { MAX_PDF_BYTES, type QpdfWorkerRequest, type QpdfWorkerResponse } from '../shared/qpdf_worker_messages.js';
 
@@ -6,7 +7,7 @@ type MbgCompressionImage = CanvasImageSource & { width: number; height: number; 
 declare const __mbgConfig: { libraryChannelName: string };
 
 function uploadCompression() {
-  var version = 2;
+  var version = 3;
   var libraryChannelName = __mbgConfig.libraryChannelName;
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = true;
   if (window.__MBG_UPLOAD_COMPRESSION_VERSION === version) {
@@ -855,7 +856,8 @@ function uploadCompression() {
   window.__MBG_UPLOAD_COMPRESSION_UPDATE = attach;
   attach();
   // Gakujo swaps pages inside a same-origin iframe without a top-level load.
-  window.__MBG_UPLOAD_COMPRESSION_INTERVAL = window.setInterval(attach, 1000);
+  if (window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE) window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE();
+  window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE = watchPage(window, attach, { fallbackMs: 5000, legacyIntervalMs: 1000 });
 }
 
 uploadCompression();

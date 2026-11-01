@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 
 type LoginTarget = { doc: Document; form: HTMLFormElement | null; username: HTMLInputElement; password: HTMLInputElement };
@@ -20,6 +21,7 @@ function loginAutofillAssist() {
   window.__MBG_LOGIN_AUTOFILL_DISABLED = false;
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_TIMER);
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+  if (window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE) window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE();
   window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
 
   function report(event: string, detail: string) {
@@ -566,7 +568,7 @@ function loginAutofillAssist() {
   }
 
   assist();
-  window.__MBG_LOGIN_AUTOFILL_MONITOR = window.setInterval(assist, 1000);
+  window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE = watchPage(window, assist, { fallbackMs: 5000, legacyIntervalMs: 1000 });
 }
 
 loginAutofillAssist();

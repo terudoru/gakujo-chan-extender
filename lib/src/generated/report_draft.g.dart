@@ -5,9 +5,113 @@
 const String gakujoReportDraftJs = r'''
 "use strict";
 (() => {
+  // web_scripts/src/shared/page_watch.ts
+  function watchPage(win, callback, options) {
+    var Observer = win.MutationObserver;
+    if (typeof Observer !== "function") {
+      var legacyTimer = win.setInterval(callback, options.legacyIntervalMs);
+      return function() {
+        win.clearInterval(legacyTimer);
+      };
+    }
+    var entries = [];
+    var state = win.__MBG_PAGE_WATCH_STATE || { running: 0, observers: [] };
+    win.__MBG_PAGE_WATCH_STATE = state;
+    var timer;
+    var disposed = false;
+    var running = false;
+    function schedule() {
+      if (disposed || running || state.running || timer !== void 0) return;
+      timer = win.setTimeout(function() {
+        timer = void 0;
+        run();
+      }, 100);
+    }
+    function sync() {
+      var docs = [];
+      function collect(current) {
+        try {
+          var doc = current.document;
+          if (!doc || docs.indexOf(doc) >= 0 || doc.defaultView === null) return;
+          docs.push(doc);
+          for (var i2 = 0; i2 < current.frames.length; i2 += 1) {
+            try {
+              collect(current.frames[i2]);
+            } catch (_) {
+            }
+          }
+        } catch (_) {
+        }
+      }
+      collect(win);
+      for (var i = entries.length - 1; i >= 0; i -= 1) {
+        if (docs.indexOf(entries[i].doc) < 0) {
+          remove(entries[i]);
+          entries.splice(i, 1);
+        }
+      }
+      docs.forEach(function(doc) {
+        if (!doc.documentElement || entries.some(function(entry) {
+          return entry.doc === doc;
+        })) return;
+        try {
+          var observer = new Observer(function() {
+            if (options.onMutation) options.onMutation(doc);
+            schedule();
+          });
+          observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+          doc.addEventListener("load", schedule, true);
+          doc.addEventListener("input", schedule, true);
+          doc.addEventListener("change", schedule, true);
+          entries.push({ doc, observer });
+          state.observers.push(observer);
+        } catch (_) {
+        }
+      });
+    }
+    function remove(entry) {
+      entry.observer.disconnect();
+      var index = state.observers.indexOf(entry.observer);
+      if (index >= 0) state.observers.splice(index, 1);
+      entry.doc.removeEventListener("load", schedule, true);
+      entry.doc.removeEventListener("input", schedule, true);
+      entry.doc.removeEventListener("change", schedule, true);
+    }
+    function run() {
+      if (disposed) return;
+      if (timer !== void 0) {
+        win.clearTimeout(timer);
+        timer = void 0;
+      }
+      sync();
+      running = true;
+      state.running += 1;
+      try {
+        callback();
+      } catch (_) {
+      } finally {
+        state.observers.forEach(function(observer) {
+          observer.takeRecords();
+        });
+        state.running -= 1;
+        running = false;
+      }
+    }
+    sync();
+    var fallbackTimer = win.setInterval(run, options.fallbackMs);
+    return function() {
+      disposed = true;
+      if (timer !== void 0) win.clearTimeout(timer);
+      win.clearInterval(fallbackTimer);
+      entries.forEach(remove);
+      entries = [];
+      if (!state.observers.length) delete win.__MBG_PAGE_WATCH_STATE;
+    };
+  }
+
   // web_scripts/src/report_draft/main.ts
   function reportDraft() {
-    var version = 10;
+    var version = 11;
     var prefix = "mbg-report-draft:v2:";
     var retentionMs = 14 * 24 * 60 * 60 * 1e3;
     if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -984,7 +1088,8 @@ const String gakujoReportDraftJs = r'''
     window.__MBG_REPORT_DRAFT_UPDATE = apply;
     apply();
     window.clearInterval(window.__MBG_REPORT_DRAFT_INTERVAL);
-    window.__MBG_REPORT_DRAFT_INTERVAL = window.setInterval(apply, 1e3);
+    if (window.__MBG_REPORT_DRAFT_WATCH_DISPOSE) window.__MBG_REPORT_DRAFT_WATCH_DISPOSE();
+    window.__MBG_REPORT_DRAFT_WATCH_DISPOSE = watchPage(window, apply, { fallbackMs: 5e3, legacyIntervalMs: 1e3 });
   }
   reportDraft();
 })();

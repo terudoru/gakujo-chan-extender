@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 type DraftValue = string | boolean | string[] | null;
 type DraftItem = { key: string; value: DraftValue; kind: string };
@@ -13,7 +14,7 @@ declare global {
 }
 
 function reportDraft() {
-  var version = 10;
+  var version = 11;
   var prefix = 'mbg-report-draft:v2:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -1081,7 +1082,8 @@ function reportDraft() {
   window.__MBG_REPORT_DRAFT_UPDATE = apply;
   apply();
   window.clearInterval(window.__MBG_REPORT_DRAFT_INTERVAL);
-  window.__MBG_REPORT_DRAFT_INTERVAL = window.setInterval(apply, 1000);
+  if (window.__MBG_REPORT_DRAFT_WATCH_DISPOSE) window.__MBG_REPORT_DRAFT_WATCH_DISPOSE();
+  window.__MBG_REPORT_DRAFT_WATCH_DISPOSE = watchPage(window, apply, { fallbackMs: 5000, legacyIntervalMs: 1000 });
 }
 
 reportDraft();

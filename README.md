@@ -17,7 +17,7 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 
 ### Android
 
-- `MoreBetterGakujo-vX.Y.Z.apk` をダウンロードしてインストールする
+- `MoreBetterGakujo-vX.Y.Z.apk` をダウンロードしてインストールする（64ビット ARM〔arm64-v8a〕の Android 端末向け）
 - 端末の設定によっては、「提供元不明のアプリ」の許可が必要
 - v0.68.0 以前とは署名が違うため、旧版の上から更新できない。旧版をアンインストールしてから入れる
 - アンインストールすると、アプリ内のデータは消える

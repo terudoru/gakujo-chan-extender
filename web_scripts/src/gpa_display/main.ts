@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 interface GradeTable {
   table: HTMLTableElement;
@@ -11,7 +12,7 @@ interface GradeTable {
   useDirectCells?: boolean;
 }
 function gpaDisplay() {
-  var version = 10;
+  var version = 11;
   if (window.__MBG_GPA_DISPLAY_VERSION === version) {
     if (window.__MBG_UPDATE_GPA_DISPLAY) {
       window.__MBG_UPDATE_GPA_DISPLAY();
@@ -27,6 +28,7 @@ function gpaDisplay() {
     window.clearTimeout(previousStartupTimers[timerIndex]);
   }
   window.__MBG_GPA_DISPLAY_STARTUP_TIMERS = [];
+  if (window.__MBG_GPA_DISPLAY_WATCH_DISPOSE) window.__MBG_GPA_DISPLAY_WATCH_DISPOSE();
   window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
   if (window.__MBG_GPA_DISPLAY_OBSERVERS) {
     for (var observerIndex = 0;
@@ -448,49 +450,10 @@ function gpaDisplay() {
 
   function updateAll() {
     var documents = collectDocuments();
-    var observedDocuments = window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS!;
-    var observers = window.__MBG_GPA_DISPLAY_OBSERVERS!;
-    for (var observerIndex = observedDocuments.length - 1;
-        observerIndex >= 0;
-        observerIndex -= 1) {
-      var documentRef = observedDocuments[observerIndex];
-      if (documents.indexOf(documentRef) < 0 || documentRef.defaultView === null) {
-        observers[observerIndex].disconnect();
-        observers.splice(observerIndex, 1);
-        observedDocuments.splice(observerIndex, 1);
-      }
-    }
     for (var i = 0; i < documents.length; i += 1) {
-      observeDocument(documents[i]);
       updateDocument(documents[i]);
     }
     addGradeSortButtons();
-  }
-
-  function scheduleUpdate() {
-    window.clearTimeout(window.__MBG_GPA_DISPLAY_TIMER);
-    window.__MBG_GPA_DISPLAY_TIMER = window.setTimeout(updateAll, 100);
-  }
-
-  function observeDocument(documentRef: Document) {
-    if (!documentRef || documentRef.defaultView === null ||
-        !documentRef.documentElement ||
-        window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS!.indexOf(documentRef) >= 0) {
-      return;
-    }
-    try {
-      var observer = new MutationObserver(function() {
-        gradeTableSearchCache.delete(documentRef);
-        scheduleUpdate();
-      });
-      observer.observe(documentRef.documentElement, {
-        childList: true,
-        subtree: true,
-        characterData: true
-      });
-      window.__MBG_GPA_DISPLAY_OBSERVERS!.push(observer);
-      window.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS!.push(documentRef);
-    } catch (e) {}
   }
 
   window.__MBG_UPDATE_GPA_DISPLAY = updateAll;
@@ -500,7 +463,10 @@ function gpaDisplay() {
     window.setTimeout(updateAll, 1500),
     window.setTimeout(updateAll, 3000)
   ];
-  window.__MBG_GPA_DISPLAY_INTERVAL = window.setInterval(updateAll, 500);
+  window.__MBG_GPA_DISPLAY_WATCH_DISPOSE = watchPage(window, updateAll, {
+    fallbackMs: 5000, legacyIntervalMs: 500,
+    onMutation: function(doc) { gradeTableSearchCache.delete(doc); }
+  });
 }
 
 gpaDisplay();

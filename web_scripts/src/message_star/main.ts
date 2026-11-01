@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 import { messageOnclickUrl, readSmartphoneMessageRow } from '../shared/smartphone_message_rows.js';
 
 type StarData = { keijitype: string; genrecd: string; seqNo: string; title?: string; genre?: string; sender?: string; period?: string; postedAt?: string; body?: string; [key: string]: string | undefined };
@@ -11,7 +12,7 @@ declare const __mbgConfig: { initialIds: string[] };
 function messageStar() {
 
   var initialIds = __mbgConfig.initialIds;
-  var version = 7;
+  var version = 8;
   if (window.__MBG_MESSAGE_STARS_VERSION === version) {
     window.__MBG_MESSAGE_STARS_REFRESH!(initialIds);
     return;
@@ -305,10 +306,10 @@ function messageStar() {
     ids = new Set(nextIds);
     update();
   };
-  var timer = window.setInterval(update, 700);
+  var disposeWatch = watchPage(window, update, { fallbackMs: 5000, legacyIntervalMs: 700 });
   window.__MBG_MESSAGE_STARS_DISPOSE = function() {
     disposed = true;
-    window.clearInterval(timer);
+    disposeWatch();
     listDocuments.forEach(function(doc) { doc.removeEventListener('click', rememberClickedMessage, true); });
     listDocuments = [];
     buttons.forEach(function(entry) { entry.button.remove(); });

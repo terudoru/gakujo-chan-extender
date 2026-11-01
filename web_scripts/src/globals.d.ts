@@ -37,6 +37,14 @@ interface MbgSubmitHookOwner {
   original?: MbgSubmitHookFunction;
 }
 interface Window {
+  __MBG_MESSAGE_READER_WATCH_DISPOSE?: () => void;
+  __MBG_REPORT_SORTER_WATCH_DISPOSE?: () => void;
+  __MBG_REPORT_DRAFT_WATCH_DISPOSE?: () => void;
+  __MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE?: () => void;
+  __MBG_MESSAGE_FILTER_WATCH_DISPOSE?: () => void;
+  __MBG_UPLOAD_PREVIEW_WATCH_DISPOSE?: () => void;
+  __MBG_LOGIN_AUTOFILL_WATCH_DISPOSE?: () => void;
+  __MBG_GPA_DISPLAY_WATCH_DISPOSE?: () => void;
   __MBG_UPLOAD_COMPRESSION_ENABLED?: boolean;
   __MBG_UPLOAD_COMPRESSION_GENERATION?: number;
   __MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES?: MbgCompressionHook[];
