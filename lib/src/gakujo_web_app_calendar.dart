@@ -10,6 +10,11 @@ DateTime gakujoCalendarDateAfterDays(DateTime value, int days) {
 }
 
 @visibleForTesting
+DateTime? parseManualCalendarDate(String raw) {
+  return parseCalendarDate(GakujoDatedActivity.normalizeDateText(raw));
+}
+
+@visibleForTesting
 String gakujoManualCalendarUidNamespace({
   required GakujoCalendarTermRange termRange,
 }) {
@@ -296,8 +301,8 @@ class _GakujoCalendarTermRangeDialogState
   }
 
   void _submit() {
-    final start = parseCalendarDate(_startController.text);
-    final end = parseCalendarDate(_endController.text);
+    final start = parseManualCalendarDate(_startController.text);
+    final end = parseManualCalendarDate(_endController.text);
     if (start == null || end == null || end.isBefore(start)) {
       setState(() {
         _errorText = 'YYYY/MM/DD形式で、終了日が開始日以降になるように入力してください';

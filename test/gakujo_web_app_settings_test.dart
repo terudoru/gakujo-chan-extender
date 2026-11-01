@@ -7,11 +7,90 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  group('parseManualCalendarDate', () {
+    test('normalizes full-width IME input before parsing', () {
+      expect(parseCalendarDate('２０２６／０６／１１'), isNull);
+      expect(
+        parseManualCalendarDate('２０２６／０６／１１'),
+        DateTime(2026, 6, 11),
+      );
+      expect(
+        parseManualCalendarDate('２０２６/06/11'),
+        DateTime(2026, 6, 11),
+      );
+      expect(
+        parseManualCalendarDate('2026－06－11'),
+        DateTime(2026, 6, 11),
+      );
+      expect(
+        parseManualCalendarDate(' ２０２６－６－１１ '),
+        DateTime(2026, 6, 11),
+      );
+    });
+
+    test('rejects invalid full-width dates', () {
+      expect(parseManualCalendarDate('２０２６／０２／３１'), isNull);
+      expect(parseManualCalendarDate('２０２６／１３／０１'), isNull);
+    });
+
+    test('preserves ASCII parsing behavior', () {
+      for (final raw in [
+        '2026/01/02',
+        ' 2026-1-2 ',
+        '26/01/02',
+        '2026/02/31',
+        '2026/13/01',
+        '2026.01.02',
+        'not-a-date',
+      ]) {
+        expect(
+          parseManualCalendarDate(raw),
+          parseCalendarDate(raw),
+          reason: raw,
+        );
+      }
+    });
+  });
+
+  testWidgets('manual term dialog accepts full-width dates', (tester) async {
+    GakujoCalendarTermRange? result;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async {
+              result = await showGakujoCalendarTermRangeDialog(
+                context: context,
+                title: 'Manual term',
+                description: 'Enter a range',
+                actionLabel: 'Apply',
+                initialDate: DateTime(2026, 6, 1),
+              );
+            },
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).at(0), '２０２６／０６／１１');
+    await tester.enterText(find.byType(TextField).at(1), '２０２６／０８／０８');
+    await tester.tap(find.widgetWithText(FilledButton, 'Apply'));
+    await tester.pumpAndSettle();
+
+    expect(result?.start, DateTime(2026, 6, 11));
+    expect(result?.end, DateTime(2026, 8, 8));
+  });
+
   testWidgets('pending Drive warning offers both choices', (tester) async {
     bool? result;
     await tester.pumpWidget(MaterialApp(
