@@ -1357,7 +1357,9 @@ void main() {
     await engine.setUp(config, 'pass');
     await engine.setCollectionEnabled('favorites', false);
     final snapshot = await engine.snapshotLocalStars();
-    final encoded = snapshot.values.singleWhere((value) => value.contains('favorites'));
+    final encoded = snapshot.values.singleWhere(
+      (value) => value.contains('favorites'),
+    );
     expect(jsonDecode(encoded)['favorites'], {'old': 'favorite'});
     remote.files.removeWhere((key, _) => key.startsWith('sync/'));
     await engine.setUp(config, 'pass', clearLocalStars: snapshot);

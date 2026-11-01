@@ -1114,7 +1114,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   ) {
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
-    )) return;
+    )) {
+      return;
+    }
     if (!_driveDownloadsEnabled) {
       if (!_driveDownloadsSuspended && _appSettingsLoaded &&
           _driveDownloadPreference.enabled && mounted) {

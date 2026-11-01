@@ -35,7 +35,11 @@ class DriveDownloadPreference {
   Future<void> save(bool value, String? account, [String? googleEmail]) async {
     await _storage.write(
       key: key,
-      value: jsonEncode({'enabled': value, 'boundAccount': account, 'boundGoogleEmail': googleEmail}),
+      value: jsonEncode({
+        'enabled': value,
+        'boundAccount': account,
+        'boundGoogleEmail': googleEmail,
+      }),
     );
     enabled = value;
     boundAccount = account;
@@ -50,11 +54,18 @@ class DriveDownloadPreference {
   }
 
   bool matches(String? account, [String? googleEmail]) =>
-      enabled && account != null && account == boundAccount &&
-      googleEmail != null && googleEmail == boundGoogleEmail;
+      enabled &&
+      account != null &&
+      account == boundAccount &&
+      googleEmail != null &&
+      googleEmail == boundGoogleEmail;
 
-  bool matchesUpload(String? account, String? googleEmail,
-      String? originAccount, String? originGoogleEmail) =>
+  bool matchesUpload(
+    String? account,
+    String? googleEmail,
+    String? originAccount,
+    String? originGoogleEmail,
+  ) =>
       matches(account, googleEmail) &&
       matches(originAccount, originGoogleEmail);
 }

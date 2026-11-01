@@ -15,7 +15,12 @@ enum StarSyncStatus {
 }
 
 class StarSyncConfig {
-  const StarSyncConfig({required this.backend, this.webDav, this.s3, this.googleEmail});
+  const StarSyncConfig({
+    required this.backend,
+    this.webDav,
+    this.s3,
+    this.googleEmail,
+  });
 
   final StarSyncBackend backend;
   final StarSyncWebDavConfig? webDav;

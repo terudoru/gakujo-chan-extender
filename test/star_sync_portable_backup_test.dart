@@ -184,7 +184,9 @@ void main() {
   });
 
   test('portable backup checks UTF-8 size before upload', () async {
-    final overhead = utf8.encode(jsonEncode({'version': 2, 'messageExcludeKeywords': ''})).length;
+    final overhead = utf8
+        .encode(jsonEncode({'version': 2, 'messageExcludeKeywords': ''}))
+        .length;
     final atLimit = {
       'version': 2,
       'messageExcludeKeywords': 'a' * (maxGakujoBackupBytes - overhead),
@@ -197,7 +199,10 @@ void main() {
     }
 
     await expectLater(
-      upload({'version': 2, 'messageExcludeKeywords': '${atLimit['messageExcludeKeywords']}あ'}),
+      upload({
+        'version': 2,
+        'messageExcludeKeywords': '${atLimit['messageExcludeKeywords']}あ',
+      }),
       throwsA(
         isA<GakujoBackupImportException>().having(
           (error) => error.message,
