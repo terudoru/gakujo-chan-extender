@@ -1122,20 +1122,13 @@ class GakujoReportDraftScript {
   }
 
   static String buildClearSavedBefore(DateTime cutoff) {
-    return _buildStorageAction('''
-  var cutoff = ${cutoff.millisecondsSinceEpoch};
+    return _buildStorageAction(r'''
   draftDocuments().forEach(function(doc) {
     var store = doc.defaultView.localStorage;
     for (var i = store.length - 1; i >= 0; i -= 1) {
       var key = store.key(i);
       if (!/^mbg-report-draft:v[12]:/.test(key)) continue;
-      var draft;
-      try { draft = JSON.parse(store.getItem(key)); } catch (_) {}
-      if (/^mbg-report-draft:v1:/.test(key) || !draft ||
-          typeof draft.savedAt !== 'number' || !isFinite(draft.savedAt) ||
-          draft.savedAt <= cutoff || draft.savedAt > cutoff + 86400000) {
-        store.removeItem(key);
-      }
+      store.removeItem(key);
     }
   });
   return true;

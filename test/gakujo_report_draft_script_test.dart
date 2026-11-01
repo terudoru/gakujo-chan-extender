@@ -5,7 +5,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('deferred clear removes old, invalid, future and v1 drafts', () async {
+  test('deferred clear removes all v1 and v2 drafts regardless of date', () async {
     final cutoff = DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true);
     final values = {
       'mbg-report-draft:v2:old': jsonEncode({'savedAt': 999}),
@@ -23,8 +23,6 @@ void main() {
     );
     expect(result['result'], isTrue);
     expect(result['storage'], {
-      'mbg-report-draft:v2:new': values['mbg-report-draft:v2:new'],
-      'mbg-report-draft:v2:within-day': values['mbg-report-draft:v2:within-day'],
       'other': 'keep',
     });
   });

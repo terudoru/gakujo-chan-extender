@@ -1368,7 +1368,7 @@ void main() {
   });
 
   test(
-    'unreadable drafts retain a clear cutoff until cleanup succeeds',
+    'unreadable drafts remain pending until all drafts are cleared',
     () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -1388,9 +1388,7 @@ void main() {
           expect(time, cutoff);
           clears++;
           if (!readable) return false;
-          drafts.entries!.removeWhere(
-            (key, value) => (value as int) <= time.millisecondsSinceEpoch,
-          );
+          drafts.entries!.clear();
           return true;
         },
       );
@@ -1412,7 +1410,7 @@ void main() {
       };
       readable = true;
       expect(await engine.prepareLocalDrafts(), isTrue);
-      expect(drafts.entries, {'new': cutoff.millisecondsSinceEpoch + 1});
+      expect(drafts.entries, isEmpty);
       final afterClear = clears;
       expect(await engine.prepareLocalDrafts(), isTrue);
       expect(clears, afterClear);

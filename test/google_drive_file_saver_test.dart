@@ -21,6 +21,7 @@ void main() {
   late GoogleDriveFileSaver saver;
   late List<Map<String, dynamic>> files;
   late List<String> queries;
+  late List<String?> fields;
   var uploads = 0;
   var chunks = 0;
   var received = 0;
@@ -36,6 +37,7 @@ void main() {
     meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
     files = [];
     queries = [];
+    fields = [];
     uploads = 0;
     chunks = 0;
     received = 0;
@@ -69,6 +71,7 @@ void main() {
       } else if (request.method == 'GET') {
         final query = request.uri.queryParameters['q']!;
         queries.add(query);
+        fields.add(request.uri.queryParameters['fields']);
         final match = RegExp(
           r"name='((?:\\.|[^'])*)'.*and '((?:\\.|[^'])*)' in parents",
         ).firstMatch(query)!;
@@ -99,6 +102,8 @@ void main() {
           'parent': data['parents'][0],
           'mimeType': data['mimeType'],
           'createdTime': '2026-01-01T00:00:00Z',
+          'ownedByMe': true,
+          'shared': false,
         });
         if (dropFolder) {
           dropFolder = false;
@@ -171,6 +176,7 @@ void main() {
         'parent': 'folder1',
         'size': '3',
         'md5Checksum': md5.convert([0, 0, 0]).toString(),
+        'shared': false,
       });
       expect(await save('Course', 'file.pdf', 3), 'existing');
       files.last['md5Checksum'] = md5.convert([1, 2, 3]).toString();
@@ -182,6 +188,72 @@ void main() {
       expect(uploads, 3);
     },
   );
+
+  test('ignores shared and unowned folders at both levels', () async {
+    const folderMime = 'application/vnd.google-apps.folder';
+    files.addAll([
+      {
+        'id': 'shared-root',
+        'name': 'More Better Gakujo',
+        'parent': 'root',
+        'mimeType': folderMime,
+        'createdTime': '2020-01-01T00:00:00Z',
+        'ownedByMe': true,
+        'shared': true,
+      },
+      {
+        'id': 'unowned-root',
+        'name': 'More Better Gakujo',
+        'parent': 'root',
+        'mimeType': folderMime,
+        'createdTime': '2020-01-01T00:00:00Z',
+        'ownedByMe': false,
+        'shared': false,
+      },
+      {
+        'id': 'shared-course',
+        'name': 'Course',
+        'parent': 'folder4',
+        'mimeType': folderMime,
+        'createdTime': '2020-01-01T00:00:00Z',
+        'ownedByMe': true,
+        'shared': true,
+      },
+      {
+        'id': 'unowned-course',
+        'name': 'Course',
+        'parent': 'folder4',
+        'mimeType': folderMime,
+        'createdTime': '2020-01-01T00:00:00Z',
+        'ownedByMe': false,
+        'shared': false,
+      },
+    ]);
+    expect(await save('Course', 'file', 1), 'uploaded');
+    expect(files[4]['parent'], 'root');
+    expect(files[5]['parent'], files[4]['id']);
+    expect(uploadParent, files[5]['id']);
+    expect(
+      fields.every(
+        (f) => f != null && f.contains('ownedByMe') && f.contains('shared'),
+      ),
+      isTrue,
+    );
+  });
+
+  test('does not deduplicate a shared file', () async {
+    await save('Course', 'first', 3);
+    files.add({
+      'id': 'shared-file',
+      'name': 'file.pdf',
+      'parent': uploadParent,
+      'md5Checksum': md5.convert([0, 0, 0]).toString(),
+      'shared': true,
+    });
+    expect(await save('Course', 'file.pdf', 3), 'uploaded');
+    expect(uploadName, 'file (2).pdf');
+    expect(uploads, 2);
+  });
 
   test('closing a running saver prevents subsequent requests', () async {
     onRequest = () {
@@ -253,6 +325,8 @@ void main() {
         'name': 'More Better Gakujo',
         'parent': 'root',
         'mimeType': 'application/vnd.google-apps.folder',
+        'ownedByMe': true,
+        'shared': false,
         'createdTime': id == 'z'
             ? '2026-02-01T00:00:00Z'
             : '2026-01-01T00:00:00Z',

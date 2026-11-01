@@ -129,7 +129,7 @@ class GoogleDriveFileSaver {
           'GET',
           _uri('/drive/v3/files', {
             'q': q,
-            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime)',
+            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared)',
             'pageSize': '1000',
             'pageToken': ?page,
           }),
@@ -155,7 +155,9 @@ class GoogleDriveFileSaver {
     if (cached != null) return cached;
     var retries = 0;
     while (true) {
-      final existing = await _list(name, parent, folder: true);
+      final existing = (await _list(name, parent, folder: true))
+          .where((file) => file['ownedByMe'] == true && file['shared'] == false)
+          .toList();
       if (existing.isNotEmpty) {
         existing.sort((a, b) {
           final time = DateTime.parse(a['createdTime'] as String)
@@ -254,7 +256,9 @@ class GoogleDriveFileSaver {
         checksum = (await md5.bind(open()).first).toString();
       }
       for (final file in existing) {
-        if (file['name'] == name && file['md5Checksum'] == checksum) {
+        if (file['shared'] == false &&
+            file['name'] == name &&
+            file['md5Checksum'] == checksum) {
           return _id(file);
         }
       }

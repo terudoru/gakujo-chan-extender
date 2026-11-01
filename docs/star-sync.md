@@ -182,7 +182,7 @@ Drive API の利用量は端末ごとに「直近24時間」（1時間単位の�
 
 # ダウンロードの Google ドライブ保存
 
-任意の設定を有効にすると、Google の `drive.file` 権限を追加で求め、ダウンロードしたファイルを `More Better Gakujo/科目名/` に保存します。同じ名前とサイズのファイルは重複して作成しません。端末内への保存を優先し、読み取りやアップロードに失敗した場合は画面に通知します。
+任意の設定を有効にすると、Google の `drive.file` 権限を追加で求め、ダウンロードしたファイルを `More Better Gakujo/科目名/` に保存します。本人所有で共有されていないフォルダだけを使い、該当するフォルダがなければ新しく作成します。同名ファイルは共有されておらず MD5 が一致する場合に重複を避けます。端末内への保存を優先し、読み取りやアップロードに失敗した場合は画面に通知します。
 
 ## Sync storage backups and restore
 
@@ -195,7 +195,7 @@ Drive download saving is bound to both the hash of the saved Gakujo login ID and
 
 同期先に保存するバックアップでは、スターは ID・件名・スター日時のみを含め、同期対象で無効にしたお気に入り・設定・通知済み期限キーを含めません。レポート下書きはバックアップに含めません。同期先からスターを復元するときは、同じ ID の端末内の本文などを保持します。
 
-When setup selects an empty start, unreadable drafts are cleared once available: all v1 drafts and v2 drafts with invalid dates, dates at or before the choice, or dates more than one day after it. Newer valid drafts within one day are retained.
+When setup selects an empty start while drafts are unreadable, all stored v1 and v2 drafts are cleared at the first readable moment, before any draft is read or uploaded, regardless of savedAt.
 
 
 The setup clear snapshots all registered collections, including currently disabled ones. Existing Google sync configurations without a stored Google email require disabling and setting up sync again.
