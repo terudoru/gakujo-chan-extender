@@ -907,12 +907,23 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         return null;
       }
     }
+    var mbgRejectedPreviewAnchors = /* @__PURE__ */ new WeakMap();
     function mbgAttachSubmittedPreviews(doc) {
       var anchors = doc.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]');
       for (var i = 0; i < anchors.length; i++) {
         var anchor = anchors[i];
         if (anchor.__mbgSubmittedPreviewButton && anchor.__mbgSubmittedPreviewButton.isConnected) continue;
-        if (!anchor.parentNode || !mbgRemoteFileRequest(anchor)) continue;
+        if (!anchor.parentNode) continue;
+        var signature = null;
+        if (String(anchor.tagName || "").toLowerCase() === "a") {
+          signature = (anchor.getAttribute("href") || "") + "\n" + (anchor.getAttribute("onclick") || "") + "\n" + anchor.ownerDocument.location.href;
+          if (mbgRejectedPreviewAnchors.get(anchor) === signature) continue;
+        }
+        if (!mbgRemoteFileRequest(anchor)) {
+          if (signature !== null) mbgRejectedPreviewAnchors.set(anchor, signature);
+          continue;
+        }
+        if (signature !== null) mbgRejectedPreviewAnchors.delete(anchor);
         var button = doc.createElement("button");
         button.type = "button";
         button.textContent = "プレビューを見る";
@@ -934,7 +945,9 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     }
     function mbgRemoteFileRequest(anchor) {
       try {
-        if (anchor.getAttribute("data-mbg-submitted-preview") !== null || anchor.getAttribute("data-mbg-upload-preview") !== null) return null;
+        if ((anchor.getAttribute("id") || "").startsWith("mbg-") || anchor.getAttributeNames().some(function(name) {
+          return name.startsWith("data-mbg-");
+        })) return null;
         var page = new URL(anchor.ownerDocument.location.href);
         if (page.origin !== "https://gakujo.iess.niigata-u.ac.jp" || page.username || page.password) return null;
         if (String(anchor.tagName || "").toLowerCase() !== "a") {

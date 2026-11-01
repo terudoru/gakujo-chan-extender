@@ -78,13 +78,14 @@ function messageStar() {
     if (message !== undefined) {
       entry.source = source;
       entry.id = message ? id(message) : null;
-      entry.button.disabled = !message;
+      if (entry.button.disabled !== !message) entry.button.disabled = !message;
       var label = 'スター: ' + (message ? message.title : title(entry.target));
-      entry.button.setAttribute('aria-label', label);
-      entry.button.title = label;
+      if (entry.button.getAttribute('aria-label') !== label) entry.button.setAttribute('aria-label', label);
+      if (entry.button.title !== label) entry.button.title = label;
     }
     var starred = ids.has(entry.id as string);
-    entry.button.setAttribute('aria-pressed', String(starred));
+    var pressed = String(starred);
+    if (entry.button.getAttribute('aria-pressed') !== pressed) entry.button.setAttribute('aria-pressed', pressed);
   }
   function ensureStyle(doc: Document) {
     if (doc.getElementById('mbg-message-star-style')) return;

@@ -9,6 +9,7 @@ class Element {
  insertBefore(node: any,reference: any){let i: any=this.children.indexOf(reference);if(i<0)i=this.children.length;this.children.splice(i,0,node);node.parentNode=this;return node;}
  get nextSibling(){const p: any=this.parentNode;if(!p)return null;return p.children[p.children.indexOf(this)+1]||null;}
  getAttribute(k: any){return this.attributes[k]??null;}
+ getAttributeNames(){this.validationCount=(this.validationCount||0)+1;return Object.keys(this.attributes);}
  setAttribute(k: any,v: any){this.attributes[k]=v;}
  addEventListener(k: any,fn: any){(this.listeners[k]||=[]).push(fn);}
  removeEventListener(k: any,fn: any){this.listeners[k]=(this.listeners[k]||[]).filter((x: any) =>x!==fn);}
@@ -29,14 +30,17 @@ const download: any=new Element('button',child);download.textContent='ダウン�
 const submit: any=new Element('button',child);submit.textContent='提出';submit.form={getAttribute:(key: any) =>({method:'POST',action:'campussquare.do'}[key]||null),fields:{_eventId:'submit',fileId:'42'}};child.body.appendChild(submit);child.anchors.push(submit);
 const ownPreview: any=new Element('button',child);ownPreview.textContent='プレビューを見る';ownPreview.form=download.form;ownPreview.attributes['data-mbg-submitted-preview']='true';child.body.appendChild(ownPreview);child.anchors.push(ownPreview);
 const ownUpload: any=new Element('button',child);ownUpload.textContent='選択したファイルをプレビュー';ownUpload.form=download.form;ownUpload.attributes['data-mbg-upload-preview']='true';child.body.appendChild(ownUpload);child.anchors.push(ownUpload);
+const ownStar: any=new Element('button',child);ownStar.form=download.form;ownStar.attributes['data-mbg-message-star']='true';child.body.appendChild(ownStar);child.anchors.push(ownStar);
+const ownId: any=new Element('button',child);ownId.form=download.form;ownId.attributes.id='mbg-control';child.body.appendChild(ownId);child.anchors.push(ownId);
 const frame: any={contentWindow:{document:child}};top.frames.push(frame);
 const grandchild: any=makeDoc('https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?_flowExecutionKey=nested');
 const nested: any=new Element('a',grandchild);nested.textContent='nested.pdf';nested.attributes.href='campussquare.do?_eventId=download&fileId=3';grandchild.body.appendChild(nested);grandchild.anchors.push(nested);
 child.frames.push({contentWindow:{document:grandchild}});
 const window: any={document:top,location:{origin:'https://gakujo.iess.niigata-u.ac.jp',href:top.location.href},setInterval(fn: any){this.attach=fn;return 1;},clearInterval(){},addEventListener(){},removeEventListener(){}};
 window.top=window;top.defaultView=window;child.defaultView={document:child,location:child.location,frameElement:{isConnected:true}};
+let formDataCount=0;
 class FormData {
-  [key: string]: any; constructor(form: any){this.fields={...form.fields};} set(k: any,v: any){this.fields[k]=v;} forEach(fn: any){Object.entries(this.fields).forEach(([k,v])=>fn(v,k));} }
+  [key: string]: any; constructor(form: any){formDataCount++;this.fields={...form.fields};} set(k: any,v: any){this.fields[k]=v;} forEach(fn: any){Object.entries(this.fields).forEach(([k,v])=>fn(v,k));} }
 vm.runInNewContext(source,{window,document:top,URL,URLSearchParams,FormData,Uint8Array,DataView,ArrayBuffer,Promise,Math,Number,Error});
 const button: any=anchor.__mbgSubmittedPreviewButton;
 assert.ok(button,'submitted link gets a preview button');
@@ -51,6 +55,20 @@ assert.ok(nested.__mbgSubmittedPreviewButton,'nested frames also receive preview
 assert.equal(submit.__mbgSubmittedPreviewButton,undefined,'submission forms do not get a preview button');
 assert.equal(ownPreview.__mbgSubmittedPreviewButton,undefined,'preview controls in a download form do not create more controls');
 assert.equal(ownUpload.__mbgSubmittedPreviewButton,undefined,'upload preview controls are not treated as download forms');
+assert.equal(formDataCount,2,'only the two original form buttons construct FormData');
+assert.equal(ownStar.__mbgSubmittedPreviewButton,undefined,'star controls are ignored');
+assert.equal(ownId.__mbgSubmittedPreviewButton,undefined,'controls with an mbg id are ignored');
+const rejectedValidations=unsafe.validationCount;
+window.attach();
+assert.equal(unsafe.validationCount,rejectedValidations,'unchanged rejected links are not revalidated');
+assert.equal(formDataCount,3,'rejected form buttons are revalidated on every scan');
+unsafe.attributes.href='javascript:void(0)';
+window.attach();
+assert.equal(unsafe.validationCount,rejectedValidations+1,'a changed href triggers revalidation');
+unsafe.attributes.onclick="return callFileDownLoad('answerDownLoad', 3, 4, '')";
+window.attach();
+assert.equal(unsafe.validationCount,rejectedValidations+2,'a changed onclick triggers revalidation');
+assert.ok(unsafe.__mbgSubmittedPreviewButton,'a formerly rejected submitted-file link gets a preview');
 let requested;window.__MBG_OPEN_REMOTE_PREVIEW=(req: any) =>{requested=req;return true;};button.fire('click');
 assert.equal(requested.method,'GET');assert.equal(requested.fileName,'synthetic.pdf');
 const url: any=new URL(requested.url);assert.equal(url.origin,'https://gakujo.iess.niigata-u.ac.jp');
@@ -62,6 +80,6 @@ assert.equal(new URL(requested.url).searchParams.get('_eventId'),'download');
 assert.equal(requested.fileName,'通知の資料.pdf');
 download.__mbgSubmittedPreviewButton.fire('click');
 assert.equal(requested.method,'POST');assert.equal(requested.formFields.fileId,'42');
-window.attach();assert.equal(child.body.children.filter((x: any) =>x.textContent==='プレビューを見る').length,5,'repeated attachment does not duplicate controls');
+window.attach();assert.equal(child.body.children.filter((x: any) =>x.textContent==='プレビューを見る').length,6,'repeated attachment does not duplicate controls');
 child.location.href='https://evil.invalid/campusweb/campussquare.do?_flowExecutionKey=synthetic';requested=undefined;button.fire('click');assert.equal(requested,undefined,'navigated frames cannot issue a request');
 console.log('Submitted preview button opens only the matching safe request.');
