@@ -1,6 +1,6 @@
 declare global {
   interface Window {
-    __MBG_PAGE_WATCH_STATE?: { running: number; observers: MutationObserver[] };
+    __MBG_PAGE_WATCH_STATE?: { running: number; observers: MutationObserver[]; fallbacks?: { [ms: string]: { timer: number; runs: Array<() => void> } } };
   }
 }
 
@@ -14,6 +14,7 @@ export function watchPage(win: Window, callback: () => void, options: { fallback
   var entries: { doc: Document; observer: MutationObserver }[] = [];
   var state = win.__MBG_PAGE_WATCH_STATE || { running: 0, observers: [] };
   win.__MBG_PAGE_WATCH_STATE = state;
+  var fallbacks = state.fallbacks || (state.fallbacks = {});
   var timer: number | undefined;
   var disposed = false;
   var running = false;
@@ -82,13 +83,27 @@ export function watchPage(win: Window, callback: () => void, options: { fallback
   }
 
   sync();
-  var fallbackTimer = win.setInterval(run, options.fallbackMs);
+  var fallbackKey = String(options.fallbackMs);
+  var fallback = fallbacks[fallbackKey];
+  if (!fallback) {
+    fallback = { timer: win.setInterval(function() {
+      fallback.runs.slice().forEach(function(registeredRun) { registeredRun(); });
+    }, options.fallbackMs), runs: [] };
+    fallbacks[fallbackKey] = fallback;
+  }
+  fallback.runs.push(run);
   return function() {
+    if (disposed) return;
     disposed = true;
     if (timer !== undefined) win.clearTimeout(timer);
-    win.clearInterval(fallbackTimer);
+    var index = fallback.runs.indexOf(run);
+    if (index >= 0) fallback.runs.splice(index, 1);
+    if (!fallback.runs.length) {
+      win.clearInterval(fallback.timer);
+      delete fallbacks[fallbackKey];
+    }
     entries.forEach(remove);
     entries = [];
-    if (!state.observers.length) delete win.__MBG_PAGE_WATCH_STATE;
+    if (!state.observers.length && !Object.keys(fallbacks).length) delete win.__MBG_PAGE_WATCH_STATE;
   };
 }

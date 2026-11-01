@@ -74,14 +74,26 @@ assert.equal(intervals.size, 0);
 
 win.MutationObserver = FakeObserver;
 let otherRuns = 0;
+let firstRuns = 0;
 const firstDispose = watchPage(win, () => {
+  firstRuns++;
   observers.filter(o => o.active).forEach(o => { o.pending = true; });
   doc.emit('input');
 }, { fallbackMs: 5000, legacyIntervalMs: 500 });
 const secondDispose = watchPage(win, () => { otherRuns++; }, { fallbackMs: 5000, legacyIntervalMs: 500 });
+assert.equal(intervals.size, 1);
+assert.equal(intervals.values().next().value!.ms, 5000);
 const firstActive = observers.find(o => o.active)!;
 firstActive.callback();
 flush(); deliverMutations(); flush();
 assert.equal(otherRuns, 0);
-firstDispose(); secondDispose();
+assert.equal(firstRuns, 1);
+intervals.values().next().value!.callback();
+assert.equal(firstRuns, 2);
+assert.equal(otherRuns, 1);
+firstDispose();
+assert.equal(intervals.size, 1);
+assert.ok(win.__MBG_PAGE_WATCH_STATE);
+secondDispose();
 assert.equal(intervals.size, 0);
+assert.equal(win.__MBG_PAGE_WATCH_STATE, undefined);
