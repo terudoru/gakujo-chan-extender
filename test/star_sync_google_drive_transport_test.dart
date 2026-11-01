@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_drive_transport.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
@@ -122,12 +124,17 @@ class _FakeDrive {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late StarSyncQuotaMeter meter;
   late _FakeDrive drive;
   late StarSyncGoogleDriveTransport transport;
 
   setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    meter = StarSyncQuotaMeter(storage: const FlutterSecureStorage());
     drive = _FakeDrive(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     transport = StarSyncGoogleDriveTransport(
+      quotaMeter: meter,
       apiBase: drive.base,
       accessToken: ({bool forceRefresh = false}) async => 'token',
       delay: (_) async {},
@@ -211,6 +218,7 @@ void main() {
       throwsA(isA<StarSyncTransportException>()),
     );
     expect(drive.counts['GET /drive/v3/files'], 2);
+    expect(await meter.currentUsage(), 200);
   });
 
   test('createOnly rejects an existing file without uploading', () async {
@@ -249,6 +257,7 @@ void main() {
     drive.rejectOldToken = true;
     var refreshes = 0;
     transport = StarSyncGoogleDriveTransport(
+      quotaMeter: meter,
       apiBase: drive.base,
       accessToken: ({bool forceRefresh = false}) async {
         if (forceRefresh) refreshes++;
@@ -258,6 +267,7 @@ void main() {
     expect(await transport.list('stars'), isEmpty);
     expect(refreshes, 1);
     expect(drive.counts['GET /drive/v3/files'], 2);
+    expect(await meter.currentUsage(), 200);
   });
 
   test('retries 429 with exponential delays', () async {
@@ -265,17 +275,41 @@ void main() {
     drive.failures = 3;
     final delays = <Duration>[];
     transport = StarSyncGoogleDriveTransport(
+      quotaMeter: meter,
       apiBase: drive.base,
       accessToken: ({bool forceRefresh = false}) async => 'token',
       delay: (duration) async => delays.add(duration),
       random: Random(42),
     );
     expect(await transport.list('stars'), isEmpty);
+    expect(await meter.currentUsage(), 400);
     final random = Random(42);
     expect(delays, [
       for (final seconds in [1, 2, 4])
         Duration(seconds: seconds, milliseconds: random.nextInt(1001)),
     ]);
+  });
+
+  test('allows requests up to the hard limit', () async {
+    await meter.charge(24900);
+    expect(await transport.list('stars'), isEmpty);
+    expect(await meter.currentUsage(), 25000);
+    await expectLater(
+      transport.put('stars/device', [1]),
+      throwsA(isA<StarSyncQuotaExceeded>()),
+    );
+    expect(drive.counts['GET /drive/v3/files'], 1);
+    expect(drive.counts['POST /upload/drive/v3/files'], isNull);
+  });
+
+  test('stops before sending a request that crosses the hard limit', () async {
+    await meter.charge(24950);
+    await expectLater(
+      transport.list('stars'),
+      throwsA(isA<StarSyncQuotaExceeded>()),
+    );
+    expect(drive.counts, isEmpty);
+    expect(await meter.currentUsage(), 24950);
   });
 
   test('plain 403 is an auth error', () async {

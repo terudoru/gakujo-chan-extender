@@ -15,6 +15,7 @@ import 'star_sync_config.dart';
 import 'star_sync_crypto.dart';
 import 'star_sync_document.dart';
 import 'star_sync_google_auth.dart';
+import 'star_sync_quota_meter.dart';
 import 'star_sync_s3_transport.dart';
 import 'star_sync_transport.dart';
 import 'star_sync_webdav_transport.dart';
@@ -97,6 +98,9 @@ class StarSyncStatusSnapshot {
     this.lastError,
     this.syncing = false,
     this.cooldownUntil,
+    this.googleQuotaUsed = 0,
+    this.googleQuotaSoftLimited = false,
+    this.googleQuotaHardLimited = false,
   });
   final bool enabled;
   final StarSyncStatus status;
@@ -104,6 +108,9 @@ class StarSyncStatusSnapshot {
   final String? lastError;
   final bool syncing;
   final DateTime? cooldownUntil;
+  final int googleQuotaUsed;
+  final bool googleQuotaSoftLimited;
+  final bool googleQuotaHardLimited;
 }
 
 class StarSyncResult {
@@ -295,6 +302,7 @@ class StarSyncEngine {
     Random? random,
     Future<void> Function(Duration)? delay,
     Timer Function(Duration, void Function())? timerFactory,
+    StarSyncQuotaMeter? quotaMeter,
     this.loginId,
     this.canSync,
     this.onLocalStarsChanged,
@@ -308,7 +316,12 @@ class StarSyncEngine {
        _now = now ?? DateTime.now,
        _random = random ?? Random(),
        _delay = delay ?? Future<void>.delayed,
-       _timerFactory = timerFactory ?? Timer.new;
+       _timerFactory = timerFactory ?? Timer.new,
+       _quotaMeter = quotaMeter ?? (secureStorage == null
+           ? StarSyncQuotaMeter.shared
+           : StarSyncQuotaMeter(storage: secureStorage, now: now)) {
+    _quotaMeter.usage.addListener(_quotaChanged);
+  }
 
   final GakujoActivityStore activityStore;
   final List<StarSyncCollection> _collections;
@@ -346,6 +359,7 @@ class StarSyncEngine {
   }
 
   final FlutterSecureStorage _storage;
+  final StarSyncQuotaMeter _quotaMeter;
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
   final DateTime Function() _now;
   final Random _random;
@@ -371,6 +385,7 @@ class StarSyncEngine {
   Timer? _timer;
   Timer? _cooldownTimer;
   Timer? _applyRetryTimer;
+  Timer? _quotaTimer;
   bool _disposed = false;
   int _accountGeneration = 0;
   int get accountGeneration => _accountGeneration;
@@ -439,6 +454,7 @@ class StarSyncEngine {
   });
 
   Future<void> load() => _queue.run(() async {
+    await _quotaMeter.currentUsage();
     final config = await _storage.read(key: starSyncConfigKey);
     final state = await _storage.read(key: starSyncStateKey);
     try {
@@ -488,7 +504,27 @@ class StarSyncEngine {
       lastError: state?.lastError,
       syncing: syncing,
       cooldownUntil: state?.cooldownUntil,
+      googleQuotaUsed: _quotaMeter.usage.value,
+      googleQuotaSoftLimited: _quotaMeter.usage.value + 100 > starSyncGoogleSoftLimit,
+      googleQuotaHardLimited: _quotaMeter.usage.value >= starSyncGoogleHardLimit,
     );
+  }
+
+  void _quotaChanged() {
+    if (!_disposed) _publish(syncing: _status.value.syncing);
+  }
+
+  void _scheduleQuotaRetry() {
+    _quotaTimer?.cancel();
+    final now = _now().toLocal();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final delay = midnight.difference(now) +
+        Duration(milliseconds: _random.nextInt(1800001));
+    _quotaTimer = _timerFactory(delay, () {
+      if (_disposed || canSync?.call() == false) return;
+      unawaited(syncNow(trigger: StarSyncTrigger.localChange)
+          .catchError((Object _) => const StarSyncResult()));
+    });
   }
 
   Future<void> _saveState() => _storage.write(
@@ -1081,7 +1117,7 @@ class StarSyncEngine {
       final wake = Completer<void>();
       _backgroundWake = wake;
       await Future.any([
-        _delay(Duration(milliseconds: _random.nextInt(20001))),
+        _delay(Duration(milliseconds: _random.nextInt(90001))),
         wake.future,
       ]);
       if (identical(_backgroundWake, wake)) _backgroundWake = null;
@@ -1103,6 +1139,17 @@ class StarSyncEngine {
           state.pendingLocalChange = true;
           await _saveState();
         }
+        return const StarSyncResult();
+      }
+      if (trigger != StarSyncTrigger.manual &&
+          config.backend == StarSyncBackend.googleDrive &&
+          !await _quotaMeter.allowsAutomatic(100)) {
+        if (trigger == StarSyncTrigger.localChange) {
+          state.pendingLocalChange = true;
+          await _saveState();
+        }
+        _scheduleQuotaRetry();
+        _publish();
         return const StarSyncResult();
       }
       if (state.localReviewRequired) {
@@ -1423,6 +1470,8 @@ class StarSyncEngine {
           skipped += result.skipped;
           collectionsChanged = collectionsChanged || result.changed;
         } on _AccountChanged {
+          rethrow;
+        } on StarSyncQuotaExceeded {
           rethrow;
         } on _CollectionTooLarge {
           collectionTooLarge = true;
@@ -1793,6 +1842,7 @@ class StarSyncEngine {
   }
 
   String _errorMessage(Object error) {
+    if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
     if (error is StateError && error.message == 'missing keyring') {
       return '同期データが見つかりません';
     }
@@ -1851,6 +1901,7 @@ class StarSyncEngine {
     _timer?.cancel();
     _cooldownTimer?.cancel();
     _applyRetryTimer?.cancel();
+    _quotaTimer?.cancel();
     final wake = _backgroundWake;
     if (wake != null && !wake.isCompleted) wake.complete();
     _backgroundWake = null;
@@ -1858,6 +1909,7 @@ class StarSyncEngine {
 
   void dispose() {
     _disposed = true;
+    _quotaMeter.usage.removeListener(_quotaChanged);
     pauseTimers();
   }
 
@@ -2169,6 +2221,12 @@ class StarSyncEngine {
   Future<bool> uploadAutomaticBackupIfDue(Future<List<int>> Function() build) =>
       _queue.runExclusive(() async {
         if (!shouldUploadAutomaticBackup(_now())) return false;
+        if (_config?.backend == StarSyncBackend.googleDrive &&
+            !await _quotaMeter.allowsAutomatic(100)) {
+          _scheduleQuotaRetry();
+          _publish();
+          return false;
+        }
         final bytes = await build();
         await uploadBackup(bytes);
         return true;

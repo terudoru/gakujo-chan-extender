@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'star_sync_quota_meter.dart';
 import 'star_sync_transport.dart';
 
 typedef StarSyncAccessTokenProvider = Future<String> Function({
@@ -15,14 +16,17 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     Uri? apiBase,
     Future<void> Function(Duration)? delay,
     Random? random,
+    StarSyncQuotaMeter? quotaMeter,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _apiBase = apiBase ?? Uri.parse('https://www.googleapis.com'),
        _delay = delay ?? Future<void>.delayed,
-       _random = random ?? Random() {
+       _random = random ?? Random(),
+       _quotaMeter = quotaMeter ?? StarSyncQuotaMeter.shared {
     validateStarSyncEndpoint(_apiBase);
   }
 
   final StarSyncAccessTokenProvider accessToken;
+  final StarSyncQuotaMeter _quotaMeter;
   final HttpClient _client;
   final Uri _apiBase;
   final Future<void> Function(Duration) _delay;
@@ -67,6 +71,12 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     var refreshed = false;
     var retries = 0;
     while (true) {
+      final cost = method != 'GET'
+          ? 50
+          : uri.path.endsWith('/files')
+              ? 100
+              : uri.queryParameters['alt'] == 'media' ? 200 : 5;
+      await _quotaMeter.charge(cost);
       final response = await starSyncRequest(
         _client,
         method,

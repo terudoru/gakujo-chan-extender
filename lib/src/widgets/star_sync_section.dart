@@ -10,12 +10,14 @@ import '../star_sync/star_sync_config.dart';
 import '../star_sync/star_sync_crypto.dart';
 import '../star_sync/star_sync_engine.dart';
 import '../star_sync/star_sync_google_auth.dart';
+import '../star_sync/star_sync_quota_meter.dart';
 import '../star_sync/star_sync_s3_transport.dart';
 import '../star_sync/star_sync_transport.dart';
 import '../star_sync/star_sync_webdav_transport.dart';
 import 'settings_sections.dart';
 
 String _errorText(Object error) {
+  if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
   if (error is StarSyncAccountRequiredException) {
     return '同期を使うには、設定の『ログイン』でログインIDを保存してください。';
   }
@@ -578,6 +580,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(line),
+          if (widget.isGoogleDrive()) ...[
+            Text('本日の利用量: ${status.googleQuotaUsed} / 15,000',
+                style: Theme.of(context).textTheme.bodySmall),
+            if (status.googleQuotaSoftLimited)
+              const Text('本日の自動同期は上限に達したため、明日まで停止しています'),
+          ],
           if (warning != null)
             Text(
               warning,

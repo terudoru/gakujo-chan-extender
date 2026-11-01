@@ -1151,6 +1151,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           length: length,
         );
         if (mounted) _showSnackBar('Google ドライブに保存しました');
+      } on GoogleDriveSaveSoftLimit {
+        if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
+          _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+        }
       } on GoogleDriveAccountChanged {
         if (mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on Object catch (error, stackTrace) {

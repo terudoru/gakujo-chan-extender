@@ -10,6 +10,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_document.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
@@ -1537,6 +1538,44 @@ void main() {
     expect(remote.gets['stars/keyring.json'], gets['stars/keyring.json']! + 1);
   });
 
+  test('soft quota defers local changes until the next day', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime(2026, 11, 1, 23, 59);
+    final meter = StarSyncQuotaMeter(storage: storage, now: () => now);
+    _TestTimer? timer;
+    Duration? wait;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      quotaMeter: meter,
+      now: () => now,
+      random: Random(1),
+      timerFactory: (duration, callback) {
+        wait = duration;
+        return timer = _TestTimer(callback);
+      },
+    );
+    await engine.setUpWithPairing(
+      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    );
+    await meter.charge(14950);
+    final lists = remote.lists;
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    expect(remote.lists, lists);
+    expect(engine.status.value.googleQuotaSoftLimited, isTrue);
+    expect(wait!.inSeconds, inInclusiveRange(60, 1860));
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isTrue);
+    now = DateTime(2026, 11, 2, 0, 31);
+    timer!.fire();
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    expect(remote.lists, greaterThan(lists));
+    expect(engine.status.value.googleQuotaSoftLimited, isFalse);
+    engine.dispose();
+  });
+
   test('resume is throttled, daily cap does not block manual sync', () async {
     final remote = _Transport();
     final storage = _Storage();
@@ -1560,7 +1599,7 @@ void main() {
     now = now.add(const Duration(minutes: 2));
     await engine.syncNow(trigger: StarSyncTrigger.resume);
     expect(remote.lists, lists + 2);
-    expect(delays.single.inMilliseconds, inInclusiveRange(0, 20000));
+    expect(delays.single.inMilliseconds, inInclusiveRange(0, 90000));
     final saved =
         jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     saved['backgroundDate'] = '2026-11-1';
@@ -1645,7 +1684,7 @@ void main() {
     await engine.setUp(config, 'correct horse');
     now = now.add(const Duration(minutes: 2));
     final startup = engine.syncNow(trigger: StarSyncTrigger.startup);
-    expect((await entered.future).inMilliseconds, inInclusiveRange(0, 20000));
+    expect((await entered.future).inMilliseconds, inInclusiveRange(0, 90000));
     final local = engine.syncNow(trigger: StarSyncTrigger.localChange);
     await Future.wait([startup, local]);
     expect(engine.status.value.lastSyncAt, now.toUtc());

@@ -68,6 +68,7 @@ import 'star_sync/star_sync_adapters.dart';
 import 'star_sync/star_sync_collections.dart';
 import 'star_sync/star_sync_config.dart';
 import 'star_sync/star_sync_google_auth.dart';
+import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';

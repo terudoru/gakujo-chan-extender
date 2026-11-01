@@ -4,12 +4,16 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late StarSyncQuotaMeter meter;
   late HttpServer server;
   late Uri base;
   late GoogleDriveFileSaver saver;
@@ -27,6 +31,8 @@ void main() {
   void Function()? onRequest;
 
   setUp(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    meter = StarSyncQuotaMeter(storage: const FlutterSecureStorage());
     files = [];
     queries = [];
     uploads = 0;
@@ -42,6 +48,7 @@ void main() {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     base = Uri.parse('http://127.0.0.1:${server.port}');
     saver = GoogleDriveFileSaver(
+      quotaMeter: meter,
       apiBase: base,
       delay: (_) async {},
       accessToken: ({bool forceRefresh = false}) async {
@@ -178,6 +185,7 @@ void main() {
     final auth = _FakeGoogleAuth();
     final email = auth.currentEmail!;
     saver = GoogleDriveFileSaver(
+      quotaMeter: meter,
       apiBase: base,
       accessToken: ({bool forceRefresh = false}) =>
           googleDriveTokenForAccount(auth, email, forceRefresh: forceRefresh),
@@ -241,6 +249,7 @@ void main() {
     expect(await save('Course', 'file', 1), 'uploaded');
     expect(files.singleWhere((f) => f['name'] == 'Course')['parent'], 'a');
     saver = GoogleDriveFileSaver(
+      quotaMeter: meter,
       apiBase: base,
       delay: (_) async {},
       accessToken: ({bool forceRefresh = false}) async => 'token',
@@ -248,6 +257,30 @@ void main() {
     expect(await save('Course', 'another', 1), 'uploaded');
     expect(files.where((f) => f['name'] == 'Course'), hasLength(1));
     expect(uploadParent, files.singleWhere((f) => f['name'] == 'Course')['id']);
+  });
+
+  test('skips an upload before any requests at the soft limit', () async {
+    await meter.charge(14700);
+    await expectLater(
+      save('Course', 'file', 1),
+      throwsA(isA<GoogleDriveSaveSoftLimit>()),
+    );
+    expect(queries, isEmpty);
+    expect(uploads, 0);
+    expect(await meter.currentUsage(), 14700);
+  });
+
+  test('counts lists, folder creation and each upload request', () async {
+    await save('Course', 'file', 8 * 1024 * 1024 + 1);
+    expect(chunks, 2);
+    expect(await meter.currentUsage(), 550);
+  });
+
+  test('charges the repeated request after a token refresh', () async {
+    unauthorized = true;
+    await save('Course', 'file', 1);
+    expect(refreshes, 1);
+    expect(await meter.currentUsage(), 600);
   });
 
   test('refreshes once on 401 and escapes course names', () async {

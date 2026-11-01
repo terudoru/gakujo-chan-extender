@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
+import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_transport.dart';
 
 class GoogleDriveFileSaver {
@@ -13,14 +14,17 @@ class GoogleDriveFileSaver {
     HttpClient Function()? httpClientFactory,
     Uri? apiBase,
     Future<void> Function(Duration)? delay,
+    StarSyncQuotaMeter? quotaMeter,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _base = apiBase ?? Uri.parse('https://www.googleapis.com'),
-       _delay = delay ?? Future<void>.delayed {
+       _delay = delay ?? Future<void>.delayed,
+       _quotaMeter = quotaMeter ?? StarSyncQuotaMeter.shared {
     validateStarSyncEndpoint(_base);
   }
 
   final Future<String> Function({bool forceRefresh}) _accessToken;
   final HttpClient _client;
+  final StarSyncQuotaMeter _quotaMeter;
   final Uri _base;
   final Future<void> Function(Duration) _delay;
   final Map<String, String> _folders = {};
@@ -50,6 +54,12 @@ class GoogleDriveFileSaver {
     var token = await _accessToken();
     while (true) {
       StarSyncHttpResponse response;
+      final cost = method != 'GET'
+          ? 50
+          : uri.path.endsWith('/files')
+              ? 100
+              : uri.queryParameters['alt'] == 'media' ? 200 : 5;
+      await _quotaMeter.charge(cost);
       try {
         response = await starSyncRequest(
           _client,
@@ -193,6 +203,10 @@ class GoogleDriveFileSaver {
     String? mimeType,
   }) async {
     if (length < 0 || fileName.isEmpty) throw ArgumentError('Invalid file');
+    final chunks = (length + _chunkSize - 1) ~/ _chunkSize;
+    if (!await _quotaMeter.allowsAutomatic(300 + 50 * chunks)) {
+      throw const GoogleDriveSaveSoftLimit();
+    }
     final course = courseName
         .replaceAll(RegExp(r'[\\/\x00-\x1f\x7f]'), '_')
         .trim();
@@ -354,4 +368,8 @@ class GoogleDriveFileSaver {
       await iterator.cancel();
     }
   }
+}
+
+class GoogleDriveSaveSoftLimit implements Exception {
+  const GoogleDriveSaveSoftLimit();
 }
