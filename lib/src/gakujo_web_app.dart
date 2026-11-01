@@ -1809,7 +1809,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // A reported submit that starts no navigation was stopped (validation, a
     // page handler); it must not wait to be promoted by some later page.
     final starts = _mainFrameNavigationStarts;
-    Timer(const Duration(seconds: 15), () {
+    Timer(const Duration(seconds: 30), () {
       if (!mounted || _mainFrameNavigationStarts != starts) return;
       if (_loginIdentity.pending == account &&
           _loginIdentity.pendingNavigation == navigation) {
@@ -5970,7 +5970,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _invalidateLoginUrl(String url) {
-    _mainFrameNavigationStarts += 1;
     _loginIdentity.invalidateLoginNavigation(url, () {
       unawaited(_setActiveLoginAccount(null, resync: false));
     });
@@ -7110,6 +7109,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
         onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
+          // Only a page that starts loading counts: blocked requests do not.
+          _mainFrameNavigationStarts += 1;
           _invalidateLoginUrl(url);
           if (_isInternalBlankUrl(url)) {
             _beginNavigation();

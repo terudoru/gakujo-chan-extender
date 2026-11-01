@@ -113,6 +113,21 @@ void main() {
         final query = request.uri.queryParameters['q']!;
         queries.add(query);
         fields.add(request.uri.queryParameters['fields']);
+        final children = RegExp(
+          r"^'((?:\\.|[^'])*)' in parents and trashed=false$",
+        ).firstMatch(query);
+        if (children != null) {
+          response.write(jsonEncode({
+            'files': files
+                .where((f) =>
+                    f['parent'] == children[1] &&
+                    f['trashed'] != true &&
+                    !deleted.contains(f['id']))
+                .toList(),
+          }));
+          await response.close();
+          return;
+        }
         final match = RegExp(
           r"name='((?:\\.|[^'])*)'.*and '((?:\\.|[^'])*)' in parents",
         ).firstMatch(query)!;
@@ -391,7 +406,7 @@ void main() {
       expect(entries.single['size'], '3');
       expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
       await saver.processPendingChecks();
-      expect(deleted, ['lost-upload']);
+      expect(deleted, ['lost-upload', 'folder1']);
       expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
     },
   );
@@ -453,7 +468,7 @@ void main() {
     expect(storage.values[googleDrivePendingChecksKey], isNotNull);
     failDelete = false;
     await saver.processPendingChecks();
-    expect(deleted, ['uploaded']);
+    expect(deleted, ['uploaded', 'folder1']);
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 
@@ -489,8 +504,9 @@ void main() {
           ),
         ),
       );
-      expect(deleted, ['uploaded']);
-      expect(await meter.currentUsage(), 560);
+      expect(deleted, ['uploaded', 'folder1']);
+      // Plus the empty check and deletion of the course folder it created.
+      expect(await meter.currentUsage(), 710);
       await save('Course', 'another', 1);
       final shared = files.singleWhere(
         (f) => f['name'] == folder && f['shared'] == true,

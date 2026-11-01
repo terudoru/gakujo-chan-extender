@@ -43,6 +43,7 @@ class GoogleDriveFileSaver {
   final Uri _base;
   final Future<void> Function(Duration) _delay;
   final Map<String, String> _folders = {};
+  final Set<String> _createdFolders = {};
   final Random _random = Random.secure();
   static const _chunkSize = 8 * 1024 * 1024;
   static const _folderMime = 'application/vnd.google-apps.folder';
@@ -226,8 +227,26 @@ class GoogleDriveFileSaver {
         await _backoff(retries++);
         continue;
       }
-      return _folders[key] = _id(_json(response));
+      final created = _id(_json(response));
+      _createdFolders.add(created);
+      return _folders[key] = created;
     }
+  }
+
+  Future<bool> _hasChildren(String folder) async {
+    final result = _json(
+      await _request(
+        'GET',
+        _uri('/drive/v3/files', {
+          'q': "'${_escape(folder)}' in parents and trashed=false",
+          'fields': 'files(id)',
+          'pageSize': '1',
+        }),
+      ),
+    );
+    final files = result['files'];
+    if (files is! List) throw const FormatException('Invalid Drive file list');
+    return files.isNotEmpty;
   }
 
   Future<bool> _isPrivateFolder(String id) async {
@@ -333,6 +352,16 @@ class GoogleDriveFileSaver {
       );
       if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
     }
+    // A course folder this upload created inherits a root shared meanwhile;
+    // its name is course information too. Folders that already existed may
+    // hold other files and are left alone.
+    if (entry['createdParent'] == '1' && !await _hasChildren(parent)) {
+      final deleted = await _request(
+        'DELETE',
+        _uri('/drive/v3/files/${Uri.encodeComponent(parent)}'),
+      );
+      if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
+    }
     return false;
   }
 
@@ -426,6 +455,7 @@ class GoogleDriveFileSaver {
     final entry = <String, String>{
       'root': root,
       'parent': parent,
+      if (parent != root && _createdFolders.contains(parent)) 'createdParent': '1',
       'account': account,
       'gakujoAccountHash': gakujoAccountHash ?? '',
       'name': name,
