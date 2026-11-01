@@ -204,3 +204,5 @@ The setup clear snapshots all registered collections, including currently disabl
 Pending Drive uploads retain their file and folder IDs per Google account in secure storage until the folders are verified private or the file is deleted. Startup and subsequent uploads retry within the automatic quota budget. The app notifies the user when verification is deferred.
 
 A deferred draft clear is stored separately from sync state and survives disabling sync or clearing app data. At the next readable Gakujo page it removes drafts saved no later than the selected cutoff.
+
+Drive uploads record their account, folder IDs, file name, size, MD5, start time and a random app property in secure storage before starting a resumable session. A lost final response is recovered by matching that property and metadata; no unrelated matching file is deleted. A pending check is retained when the file cannot yet be found or verification fails. At startup and before uploads, checks for the signed-in Google account run even when Drive saving is off or the Gakujo binding changed. Remaining checks are reported at startup, and disabling saving or signing out offers a check first.

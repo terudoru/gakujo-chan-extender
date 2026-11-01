@@ -390,6 +390,25 @@ Future<bool?> showGakujoBackupRestoreConfirmation(BuildContext context) {
 }
 
 @visibleForTesting
+Future<bool?> showPendingDriveCheckConfirmation(BuildContext context) =>
+    showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        content: const Text('確認が終わっていないファイルがあります。先に確認しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('このまま続ける'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('確認する'),
+          ),
+        ],
+      ),
+    );
+
+@visibleForTesting
 String? gakujoRuntimeTeardownScriptForFeature(GakujoFeatureFlag flag) {
   return _originalExtensionFeatureTeardownBuilders[flag]?.call();
 }
@@ -2952,6 +2971,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       value: _driveDownloadsEnabled,
                       onChanged: (enabled) async {
                         try {
+                          if (!enabled) await _warnPendingDriveChecks();
                           await _setDriveDownloadsEnabled(enabled);
                           if (dialogContext.mounted) setDialogState(() {});
                         } on Object {
@@ -2968,6 +2988,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       status: _starSyncEngine.status,
                       driveDownloadsEnabled: _driveDownloadsEnabled,
                       onDriveDownloadsChanged: (enabled) async {
+                        if (!enabled) await _warnPendingDriveChecks();
                         await _setDriveDownloadsEnabled(enabled);
                         if (dialogContext.mounted) setDialogState(() {});
                       },
@@ -3012,8 +3033,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         }
                       },
                       onGoogleSignOut: () async {
+                        await _warnPendingDriveChecks();
                         await _setDriveDownloadsEnabled(false);
-                        await _signOutGoogle();
+                        await _signOutGoogle(warn: false);
                         _starSyncGoogleEmail = null;
                       },
                       onGoogleReSignIn: () async {
@@ -3067,8 +3089,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           deleteOwnRemoteFile: deleteOwnRemoteFile,
                         );
                         if (google) {
+                          await _warnPendingDriveChecks();
                           await _setDriveDownloadsEnabled(false);
-                          await _signOutGoogle();
+                          await _signOutGoogle(warn: false);
                           _starSyncGoogleEmail = null;
                         }
                       },
@@ -5814,7 +5837,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return email;
   });
 
-  Future<bool> _signOutGoogle() async {
+  Future<bool> _signOutGoogle({bool warn = true}) async {
+    if (warn) await _warnPendingDriveChecks();
     _driveDownloadsSuspended = true;
     _cancelDriveUploads();
     try {
@@ -5856,21 +5880,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _warnPendingDriveChecks() async {
+    if (await GoogleDriveFileSaver.pendingCheckCount() == 0 || !mounted) return;
+    final check = await showPendingDriveCheckConfirmation(context);
+    if (check == true) await _retryPendingDriveChecksAtStartup();
+  }
+
   Future<void> _retryPendingDriveChecksAtStartup() async {
     try {
       await _driveDownloadsLoad;
       await _driveDownloadQueue.run(() async {
-        final email = _starSyncGoogleAuth.currentEmail;
-        if (!_driveDownloadsEnabled || email == null ||
-            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
-          return;
-        }
-        final account = _driveAccountHash;
+        if (await GoogleDriveFileSaver.pendingCheckCount() == 0) return;
+        final email = _starSyncGoogleAuth.currentEmail ??
+            await _starSyncGoogleAuth.restore();
+        if (email == null ||
+            !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) return;
         final saver = GoogleDriveFileSaver(
           account: email,
           accessToken: ({bool forceRefresh = false}) async {
-            if (!_driveDownloadsEnabled || _driveAccountHash != account ||
-                _starSyncGoogleAuth.currentEmail != email ||
+            if (_starSyncGoogleAuth.currentEmail != email ||
                 !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
               throw const GoogleDriveAccountChanged();
             }
@@ -5887,6 +5915,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       });
     } on Object catch (error) {
       developer.log('Failed to verify saved Drive files: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
+    }
+    try {
+      final count = await GoogleDriveFileSaver.pendingCheckCount();
+      if (count > 0 && mounted) {
+        _showSnackBar('Google ドライブで確認できていないファイルがあります（$count件）。Google ドライブの共有設定を確認してください');
+      }
+    } on Object catch (error) {
+      developer.log('Failed to read pending Drive checks: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
     }
   }

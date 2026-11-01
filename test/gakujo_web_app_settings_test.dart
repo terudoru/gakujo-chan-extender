@@ -12,6 +12,27 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  testWidgets('pending Drive warning offers both choices', (tester) async {
+    bool? result;
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(builder: (context) => TextButton(
+        onPressed: () async => result = await showPendingDriveCheckConfirmation(context),
+        child: const Text('open'),
+      )),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('確認が終わっていないファイルがあります。先に確認しますか？'), findsOneWidget);
+    await tester.tap(find.text('確認する'));
+    await tester.pumpAndSettle();
+    expect(result, isTrue);
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('このまま続ける'));
+    await tester.pumpAndSettle();
+    expect(result, isFalse);
+  });
+
   testWidgets('notification denial warning follows permission and app settings',
       (tester) async {
     final permission = ValueNotifier<bool?>(null);

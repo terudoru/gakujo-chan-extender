@@ -22,6 +22,7 @@ class GoogleDriveFileSaver {
     StarSyncQuotaMeter? quotaMeter,
     FlutterSecureStorage? secureStorage,
     required this.account,
+    this.gakujoAccountHash,
     this.onPendingCheck,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _base = apiBase ?? Uri.parse('https://www.googleapis.com'),
@@ -37,6 +38,7 @@ class GoogleDriveFileSaver {
   final StarSyncQuotaMeter _quotaMeter;
   final FlutterSecureStorage _storage;
   final String account;
+  final String? gakujoAccountHash;
   final void Function()? onPendingCheck;
   final Uri _base;
   final Future<void> Function(Duration) _delay;
@@ -142,7 +144,7 @@ class GoogleDriveFileSaver {
           'GET',
           _uri('/drive/v3/files', {
             'q': q,
-            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared)',
+            'fields': 'nextPageToken,files(id,name,size,mimeType,md5Checksum,createdTime,ownedByMe,shared,appProperties)',
             'pageSize': '1000',
             'pageToken': ?page,
           }),
@@ -251,18 +253,24 @@ class GoogleDriveFileSaver {
     return id;
   }
 
-  Future<List<Map<String, String>>> _pendingChecks() async {
-    final raw = await _storage.read(key: googleDrivePendingChecksKey);
+  static Future<List<Map<String, String>>> _readPendingChecks(
+    FlutterSecureStorage storage,
+  ) async {
+    final raw = await storage.read(key: googleDrivePendingChecksKey);
     if (raw == null) return [];
     final decoded = jsonDecode(raw);
     if (decoded is! List) throw const FormatException('Invalid pending checks');
     return decoded.map((entry) {
       if (entry is! Map ||
-          entry['id'] is! String ||
+          (entry['id'] != null &&
+              (entry['id'] is! String || (entry['id'] as String).isEmpty)) ||
           entry['root'] is! String ||
           entry['parent'] is! String ||
           entry['account'] is! String ||
-          (entry['id'] as String).isEmpty ||
+          (entry['id'] == null &&
+              (entry['name'] is! String || entry['size'] is! String ||
+                  entry['md5'] is! String || entry['started'] is! String ||
+                  entry['uploadKey'] is! String)) ||
           (entry['root'] as String).isEmpty ||
           (entry['parent'] as String).isEmpty) {
         throw const FormatException('Invalid pending check');
@@ -270,6 +278,11 @@ class GoogleDriveFileSaver {
       return Map<String, String>.from(entry);
     }).toList();
   }
+
+  Future<List<Map<String, String>>> _pendingChecks() => _readPendingChecks(_storage);
+
+  static Future<int> pendingCheckCount({FlutterSecureStorage? storage}) async =>
+      (await _readPendingChecks(storage ?? SecureStorageFactory.create())).length;
 
   Future<void> _savePendingChecks(List<Map<String, String>> entries) =>
       entries.isEmpty
@@ -284,25 +297,57 @@ class GoogleDriveFileSaver {
     final root = entry['root']!;
     final coursePrivate = await _isPrivateFolder(parent);
     final rootPrivate = await _isPrivateFolder(root);
-    if (coursePrivate && rootPrivate) return true;
+    final private = coursePrivate && rootPrivate;
+    final ids = <String>[];
+    if (entry['id'] != null) {
+      ids.add(entry['id']!);
+    } else {
+      final started = DateTime.parse(entry['started']!).toUtc();
+      for (final file in await _list(entry['name']!, parent)) {
+        final created = DateTime.tryParse(file['createdTime'] as String? ?? '');
+        final properties = file['appProperties'];
+        if (file['name'] == entry['name'] &&
+            file['size'] == entry['size'] &&
+            file['md5Checksum'] == entry['md5'] &&
+            created != null && !created.toUtc().isBefore(started) &&
+            properties is Map && properties['mbgUpload'] == entry['uploadKey']) {
+          ids.add(_id(file));
+        }
+      }
+    }
+    if (entry['id'] == null && ids.isEmpty) {
+      throw StateError('Pending upload not yet found');
+    }
+    if (private) return true;
     _folders.removeWhere((_, value) => value == parent || value == root);
-    final deleted = await _request(
-      'DELETE',
-      _uri('/drive/v3/files/${Uri.encodeComponent(entry['id']!)}'),
-    );
-    if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
+    for (final id in ids) {
+      final deleted = await _request(
+        'DELETE',
+        _uri('/drive/v3/files/${Uri.encodeComponent(id)}'),
+      );
+      if (deleted.statusCode != 404) checkStarSyncStatus(deleted.statusCode);
+    }
     return false;
   }
 
   /// Retries verification using the automatic quota budget.
   Future<void> processPendingChecks() => runZoned(() async {
     final entries = await _pendingChecks();
+    Object? failure;
+    StackTrace? failureStack;
     for (final entry in List<Map<String, String>>.of(entries)) {
       if (entry['account'] != account) continue;
-      await _verifyPending(entry);
-      entries.remove(entry);
-      await _savePendingChecks(entries);
+      try {
+        await _verifyPending(entry);
+        final remaining = List<Map<String, String>>.of(entries)..remove(entry);
+        await _savePendingChecks(remaining);
+        entries.remove(entry);
+      } on Object catch (error, stack) {
+        failure ??= error;
+        failureStack ??= stack;
+      }
     }
+    if (failure != null) Error.throwWithStackTrace(failure, failureStack!);
   }, zoneValues: {#driveSaveAutomatic: true});
 
   Future<String> saveFile({
@@ -371,59 +416,73 @@ class GoogleDriveFileSaver {
       name =
           '${fileName.substring(0, split)} (${suffix++})${fileName.substring(split)}';
     }
-    final response = await _request(
-      'POST',
-      _uri('/upload/drive/v3/files', {
-        'uploadType': 'resumable',
-        'fields': 'id',
-      }),
-      headers: {
-        'content-type': 'application/json; charset=utf-8',
-        'x-upload-content-length': '$length',
-        'x-upload-content-type': mimeType ?? 'application/octet-stream',
-      },
-      body: utf8.encode(
-        jsonEncode({
-          'name': name,
-          'parents': [parent],
-          'mimeType': ?mimeType,
-        }),
-      ),
-    );
-    checkStarSyncStatus(response.statusCode);
-    final location = response.headers.value('location');
-    if (location == null) {
-      throw const FormatException('Missing upload location');
-    }
-    final session = _base.resolve(location);
-    if (session.scheme != _base.scheme ||
-        session.host != _base.host ||
-        session.port != _base.port ||
-        session.userInfo.isNotEmpty ||
-        session.hasFragment) {
-      throw const FormatException('Invalid upload location');
-    }
-    final id = await _upload(session, open, length);
-    final entries = await _pendingChecks();
-    final entry = {
-      'id': id,
+    checksum ??= (await md5.bind(open()).first).toString();
+    final entry = <String, String>{
       'root': root,
       'parent': parent,
       'account': account,
+      'gakujoAccountHash': gakujoAccountHash ?? '',
+      'name': name,
+      'size': '$length',
+      'md5': checksum,
+      'started': DateTime.fromMillisecondsSinceEpoch(
+        (DateTime.now().millisecondsSinceEpoch ~/ 1000) * 1000,
+        isUtc: true,
+      ).toIso8601String(),
+      'uploadKey': List.generate(16, (_) => _random.nextInt(256))
+          .map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
     };
+    final entries = await _pendingChecks();
     entries.add(entry);
     await _savePendingChecks(entries);
-    bool private;
     try {
-      private = await _verifyPending(entry);
+      final response = await _request(
+        'POST',
+        _uri('/upload/drive/v3/files', {
+          'uploadType': 'resumable',
+          'fields': 'id',
+        }),
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'x-upload-content-length': '$length',
+          'x-upload-content-type': mimeType ?? 'application/octet-stream',
+        },
+        body: utf8.encode(
+          jsonEncode({
+            'name': name,
+            'parents': [parent],
+            'appProperties': {'mbgUpload': entry['uploadKey']},
+            'mimeType': ?mimeType,
+          }),
+        ),
+      );
+      checkStarSyncStatus(response.statusCode);
+      final location = response.headers.value('location');
+      if (location == null) {
+        throw const FormatException('Missing upload location');
+      }
+      final session = _base.resolve(location);
+      if (session.scheme != _base.scheme ||
+          session.host != _base.host ||
+          session.port != _base.port ||
+          session.userInfo.isNotEmpty ||
+          session.hasFragment) {
+        throw const FormatException('Invalid upload location');
+      }
+      final id = await _upload(session, open, length);
+      entry['id'] = id;
+      await _savePendingChecks(entries);
+      final private = await _verifyPending(entry);
       entries.remove(entry);
       await _savePendingChecks(entries);
+      if (!private) throw const GoogleDriveSaveFolderShared();
+      return id;
+    } on GoogleDriveSaveFolderShared {
+      rethrow;
     } on Object catch (error) {
       onPendingCheck?.call();
       throw GoogleDrivePendingCheckException(error);
     }
-    if (!private) throw const GoogleDriveSaveFolderShared();
-    return id;
   }
 
   int _offset(StarSyncHttpResponse response, int total) {

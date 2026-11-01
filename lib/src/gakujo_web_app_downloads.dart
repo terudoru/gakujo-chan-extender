@@ -1161,6 +1161,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           _googleDriveFileSaver?.close();
           _googleDriveFileSaver = GoogleDriveFileSaver(
             account: email,
+            gakujoAccountHash: account,
             onPendingCheck: () {
               if (mounted) _showSnackBar('Google ドライブへの保存の確認が終わっていないファイルがあります。後でもう一度確認します');
             },

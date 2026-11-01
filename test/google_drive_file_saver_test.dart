@@ -31,6 +31,9 @@ void main() {
   var received = 0;
   var drop = false;
   var dropFolder = false;
+  var dropFinal = false;
+  var finalLost = false;
+  Map<String, dynamic>? uploadProperties;
   var unauthorized = false;
   var refreshes = 0;
   String? shareDuringUpload;
@@ -53,6 +56,9 @@ void main() {
     received = 0;
     drop = false;
     dropFolder = false;
+    dropFinal = false;
+    finalLost = false;
+    uploadProperties = null;
     unauthorized = false;
     refreshes = 0;
     shareDuringUpload = null;
@@ -66,6 +72,7 @@ void main() {
       quotaMeter: meter,
       secureStorage: storage,
       account: 'user@example.com',
+      gakujoAccountHash: 'gakujo-hash',
       onPendingCheck: () => pendingNotices++,
       apiBase: base,
       delay: (_) async {},
@@ -158,13 +165,22 @@ void main() {
       } else if (request.uri.path == '/upload/drive/v3/files') {
         final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
         uploads++;
+        final pending = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+        expect(pending.last['id'], isNull);
+        expect(pending.last['gakujoAccountHash'], isA<String>());
         uploadName = data['name'] as String;
         uploadParent = (data['parents'] as List).single as String;
+        uploadProperties = Map<String, dynamic>.from(data['appProperties'] as Map);
         received = 0;
         response.headers.set('location', base.resolve('/session').toString());
       } else {
         final range = request.headers.value('content-range')!;
         if (range.startsWith('bytes */')) {
+          if (finalLost) {
+            response.statusCode = 403;
+            await response.close();
+            return;
+          }
           response.statusCode = 308;
           if (received > 0) {
             response.headers.set('range', 'bytes=0-${received - 1}');
@@ -179,6 +195,22 @@ void main() {
           final match = RegExp(r'bytes (\d+)-(\d+)/(\d+)').firstMatch(range)!;
           expect(int.parse(match[1]!), received);
           received += body.length;
+          if (dropFinal && received == int.parse(match[3]!)) {
+            dropFinal = false;
+            finalLost = true;
+            files.add({
+              'id': 'lost-upload',
+              'name': uploadName,
+              'parent': uploadParent,
+              'size': '$received',
+              'md5Checksum': md5.convert(body).toString(),
+              'createdTime': DateTime.now().toUtc().toIso8601String(),
+              'appProperties': uploadProperties,
+            });
+            final socket = await response.detachSocket(writeHeaders: false);
+            socket.destroy();
+            return;
+          }
           if (drop) {
             drop = false;
             final socket = await response.detachSocket(writeHeaders: false);
@@ -338,6 +370,46 @@ void main() {
       expect(deleted, isEmpty);
     },
   );
+
+  test('lost final response leaves an id-less record and later deletes the upload', () async {
+    dropFinal = true;
+    shareDuringUpload = 'Course';
+    await expectLater(
+      save('Course', 'file', 3),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
+    final entries = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+    expect(entries.single['id'], isNull);
+    expect(entries.single['name'], 'file');
+    expect(entries.single['gakujoAccountHash'], 'gakujo-hash');
+    expect(entries.single['size'], '3');
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+    await saver.processPendingChecks();
+    expect(deleted, ['lost-upload']);
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('lost final response is verified when folders remain private', () async {
+    dropFinal = true;
+    await expectLater(
+      save('Course', 'file', 3),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
+    await saver.processPendingChecks();
+    expect(deleted, isEmpty);
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('an id-less entry remains pending when its upload cannot be found', () async {
+    dropFinal = true;
+    await expectLater(
+      save('Course', 'file', 3),
+      throwsA(isA<GoogleDrivePendingCheckException>()),
+    );
+    files.removeWhere((file) => file['id'] == 'lost-upload');
+    await expectLater(saver.processPendingChecks(), throwsStateError);
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+  });
 
   test('retry only uses the account that owns the pending entry', () async {
     failCheck = true;
