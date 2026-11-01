@@ -12,6 +12,8 @@ const String gakujoGpaDisplayTeardownJs = r'''
     for (var timerIndex = 0; timerIndex < startupTimers.length; timerIndex += 1) {
       window.clearTimeout(startupTimers[timerIndex]);
     }
+    if (window.__MBG_GPA_DISPLAY_WATCH_DISPOSE) window.__MBG_GPA_DISPLAY_WATCH_DISPOSE();
+    delete window.__MBG_GPA_DISPLAY_WATCH_DISPOSE;
     window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
     var observers = window.__MBG_GPA_DISPLAY_OBSERVERS || [];
     for (var observerIndex = 0; observerIndex < observers.length; observerIndex += 1) {

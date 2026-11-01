@@ -7,6 +7,8 @@ function teardownGpaDisplay() {
       timerIndex += 1) {
     window.clearTimeout(startupTimers[timerIndex]);
   }
+  if (window.__MBG_GPA_DISPLAY_WATCH_DISPOSE) window.__MBG_GPA_DISPLAY_WATCH_DISPOSE();
+  delete window.__MBG_GPA_DISPLAY_WATCH_DISPOSE;
   window.clearInterval(window.__MBG_GPA_DISPLAY_INTERVAL);
 
   var observers = window.__MBG_GPA_DISPLAY_OBSERVERS || [];

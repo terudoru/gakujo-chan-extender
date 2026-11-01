@@ -1,9 +1,10 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 
 declare const __mbgConfig: { keywords: string[] };
 
 function messageFilter() {
-  var version = 5;
+  var version = 6;
   var keywords = __mbgConfig.keywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -186,6 +187,8 @@ function messageFilter() {
   }
 
   window.__MBG_MESSAGE_FILTER_DISPOSE = function() {
+    if (window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE) window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE();
+    delete window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE;
     window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
     candidateDocuments().forEach(function(doc) {
       restoreRows(doc);
@@ -200,7 +203,8 @@ function messageFilter() {
   window.__MBG_MESSAGE_FILTER_UPDATE = applyFilter;
   applyFilter();
   window.clearInterval(window.__MBG_MESSAGE_FILTER_INTERVAL);
-  window.__MBG_MESSAGE_FILTER_INTERVAL = window.setInterval(applyFilter, 500);
+  if (window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE) window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE();
+  window.__MBG_MESSAGE_FILTER_WATCH_DISPOSE = watchPage(window, applyFilter, { fallbackMs: 5000, legacyIntervalMs: 500 });
 }
 
 messageFilter();

@@ -4,6 +4,8 @@ function teardownMessageReader() {
     window.__MBG_MESSAGE_READER_DISPOSE();
   }
   delete window.__MBG_MESSAGE_READER_DISPOSE;
+  if (window.__MBG_MESSAGE_READER_WATCH_DISPOSE) window.__MBG_MESSAGE_READER_WATCH_DISPOSE();
+  delete window.__MBG_MESSAGE_READER_WATCH_DISPOSE;
   window.clearInterval(window.__MBG_MESSAGE_READER_INTERVAL);
   delete window.__MBG_MESSAGE_READER_INTERVAL;
   delete window.__MBG_MESSAGE_READER_VERSION;

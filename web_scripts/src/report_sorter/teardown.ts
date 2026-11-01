@@ -1,5 +1,7 @@
 export {};
 function teardownReportSorter() {
+  if (window.__MBG_REPORT_SORTER_WATCH_DISPOSE) window.__MBG_REPORT_SORTER_WATCH_DISPOSE();
+  delete window.__MBG_REPORT_SORTER_WATCH_DISPOSE;
   window.clearInterval(window.__MBG_REPORT_SORTER_INTERVAL);
   delete window.__MBG_REPORT_SORTER_INTERVAL;
   delete window.__MBG_REPORT_SORTER_VERSION;

@@ -263,7 +263,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 10;'));
+    expect(script, contains('var version = 11;'));
     expect(script, contains('document.querySelectorAll("iframe,frame")'));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));

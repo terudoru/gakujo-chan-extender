@@ -1,6 +1,7 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 function messageReader() {
-  var version = 7;
+  var version = 8;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -372,7 +373,8 @@ function messageReader() {
   window.__MBG_MESSAGE_READER_UPDATE = addControls;
   addControls();
   window.clearInterval(window.__MBG_MESSAGE_READER_INTERVAL);
-  window.__MBG_MESSAGE_READER_INTERVAL = window.setInterval(addControls, 500);
+  if (window.__MBG_MESSAGE_READER_WATCH_DISPOSE) window.__MBG_MESSAGE_READER_WATCH_DISPOSE();
+  window.__MBG_MESSAGE_READER_WATCH_DISPOSE = watchPage(window, addControls, { fallbackMs: 5000, legacyIntervalMs: 500 });
 }
 
 messageReader();

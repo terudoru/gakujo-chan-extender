@@ -1,3 +1,4 @@
+import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
 
 declare const __mbgConfig: { compactAndroid: boolean };
@@ -1064,7 +1065,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     };
   }
   attach();
-  window.setInterval(attach, 1000);
+  window.__MBG_UPLOAD_PREVIEW_WATCH_DISPOSE = watchPage(window, attach, { fallbackMs: 5000, legacyIntervalMs: 1000 });
 }
 
 uploadPreview();

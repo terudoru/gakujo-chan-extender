@@ -148,6 +148,8 @@ function createPage({hasGradeTable = true} = {}) {
     return [documentElement, ...rows.flatMap((row: any) => row.cells)];
   }
 
+  document.addEventListener = () => {};
+  document.removeEventListener = () => {};
   document.body = body;
   document.documentElement = documentElement;
   document.createElement = (tag: any) => new FakeElement(tag, document);
@@ -192,6 +194,8 @@ function createPage({hasGradeTable = true} = {}) {
       activeObservers.add(this);
     }
 
+    takeRecords() { return []; }
+
     disconnect() {
       this.disconnectCount += 1;
       this.active = false;
@@ -201,6 +205,7 @@ function createPage({hasGradeTable = true} = {}) {
 
   const window: any = {
     document,
+    MutationObserver: FakeMutationObserver,
     frames: [],
     clearInterval(id: any) { activeIntervals.delete(id); },
     setInterval(callback: any) {
@@ -286,6 +291,8 @@ function createPage({hasGradeTable = true} = {}) {
 
   return {
     context, snapshot, triggerMutation, tickInterval, flushTimeouts,
+    observers: () => [...activeObservers],
+    observedDocuments: () => [...activeObservers].map((observer: any) => observer.target.ownerDocument),
     addRow, addTable, showGradeHeader, setGp, gpaText,
     scanCounts: () => ({...document.scanCounts})
   };
@@ -393,20 +400,20 @@ portal.context.document.body.appendChild(frameElement);
 const sibling: any = createPage({hasGradeTable: false});
 portalWindow.frames.push(frameWindow, sibling.context.window);
 run(buildScript, portal);
-const navigationObservers: any = [...portalWindow.__MBG_GPA_DISPLAY_OBSERVERS];
+const navigationObservers: any = [...portal.observers()];
 const navigationUpdates: any = [];
 for (let i: any = 0; i < 30; i += 1) {
   const previousDocument: any = currentFrame.context.document;
   const previousIndex: any =
-    portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.indexOf(previousDocument);
-  const previousObserver: any = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS[previousIndex];
+    portal.observedDocuments().indexOf(previousDocument);
+  const previousObserver: any = portal.observers()[previousIndex];
   // Some discarded documents still have a defaultView; reachability must suffice.
   if (i % 2 === 0) previousDocument.defaultView = null;
   currentFrame = createPage();
   frameWindow.document = currentFrame.context.document;
   portal.tickInterval();
-  const documents: any = portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS;
-  const observers: any = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS;
+  const documents: any = portal.observedDocuments();
+  const observers: any = portal.observers();
   const currentDocuments: any = [
     portal.context.document, currentFrame.context.document, sibling.context.document
   ];
@@ -423,15 +430,15 @@ for (let i: any = 0; i < 30; i += 1) {
     gpaText: currentFrame.gpaText()
   });
 }
-const removedFrameObservers: any = portalWindow.__MBG_GPA_DISPLAY_OBSERVERS.filter(
-  (_: any, index: any) => portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS[index] ===
+const removedFrameObservers: any = portal.observers().filter(
+  (_: any, index: any) => portal.observedDocuments()[index] ===
     currentFrame.context.document
 );
 portalWindow.frames = [sibling.context.window];
 frameElement.remove();
 portal.tickInterval();
 const afterFrameRemoval: any = {
-  observedDocumentCount: portalWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.length,
+  observedDocumentCount: portal.observedDocuments().length,
   activeObserverCount: portal.snapshot().activeObserverCount,
   removedObserversDisconnected: removedFrameObservers.every((observer: any) =>
     !observer.active && observer.disconnectCount === 1)
@@ -450,14 +457,14 @@ const detachedChild: any = createPage({hasGradeTable: false});
 const detachedWindow: any = detachedPortal.context.window;
 detachedWindow.frames.push(detachedChild.context.window);
 run(buildScript, detachedPortal);
-const detachedObserver: any = detachedWindow.__MBG_GPA_DISPLAY_OBSERVERS[1];
+const detachedObserver: any = detachedPortal.observers()[1];
 detachedChild.context.document.defaultView = null;
 detachedPortal.tickInterval();
 detachedPortal.tickInterval();
 const detachedFrame: any = {
-  observedDocumentCount: detachedWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS.length,
+  observedDocumentCount: detachedPortal.observedDocuments().length,
   activeObserverCount: detachedPortal.snapshot().activeObserverCount,
-  detachedDocumentRetained: detachedWindow.__MBG_GPA_DISPLAY_OBSERVED_DOCUMENTS
+  detachedDocumentRetained: detachedPortal.observedDocuments()
     .includes(detachedChild.context.document),
   disconnectCount: detachedObserver.disconnectCount
 };

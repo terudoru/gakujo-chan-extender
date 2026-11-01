@@ -50,7 +50,7 @@ void main() {
     expect(script, isNot(contains('textOf(a.cells[3])')));
     expect(script, isNot(contains('numberFromCell(a.cells[9])')));
     expect(script, contains('gradeTable.headerRowIndex + 1'));
-    expect(script, contains('__MBG_GPA_DISPLAY_INTERVAL'));
+    expect(script, contains('__MBG_GPA_DISPLAY_WATCH_DISPOSE'));
     expect(script, contains('.mbg-gpa-display'));
     expect(script, contains('display.style.background = "transparent"'));
     expect(script, contains('display.style.border = "0"'));

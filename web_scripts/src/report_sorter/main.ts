@@ -1,6 +1,7 @@
+import { watchPage } from '../shared/page_watch.js';
 export {};
 function reportSorter() {
-  var version = 3;
+  var version = 4;
   if (window.__MBG_REPORT_SORTER_VERSION === version) {
     if (window.__MBG_REPORT_SORTER_UPDATE) {
       window.__MBG_REPORT_SORTER_UPDATE();
@@ -195,7 +196,8 @@ function reportSorter() {
   window.__MBG_REPORT_SORTER_UPDATE = update;
   update();
   window.clearInterval(window.__MBG_REPORT_SORTER_INTERVAL);
-  window.__MBG_REPORT_SORTER_INTERVAL = window.setInterval(update, 500);
+  if (window.__MBG_REPORT_SORTER_WATCH_DISPOSE) window.__MBG_REPORT_SORTER_WATCH_DISPOSE();
+  window.__MBG_REPORT_SORTER_WATCH_DISPOSE = watchPage(window, update, { fallbackMs: 5000, legacyIntervalMs: 500 });
 }
 
 reportSorter();
