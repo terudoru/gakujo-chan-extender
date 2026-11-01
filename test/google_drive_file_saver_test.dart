@@ -70,8 +70,13 @@ void main() {
         response.statusCode = 401;
       } else if (request.method == 'GET' &&
           request.uri.path != '/drive/v3/files') {
-        expect(request.uri.queryParameters['fields'], 'id,ownedByMe,shared,trashed');
-        final matches = files.where((f) => f['id'] == request.uri.pathSegments.last);
+        expect(
+          request.uri.queryParameters['fields'],
+          'id,ownedByMe,shared,trashed',
+        );
+        final matches = files.where(
+          (f) => f['id'] == request.uri.pathSegments.last,
+        );
         if (matches.isEmpty) {
           response.statusCode = 404;
         } else {
