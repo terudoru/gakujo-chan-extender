@@ -5,6 +5,50 @@ import 'package:morebettergakujo_flutter/src/gakujo_quick_jump_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('uses a clickable wrapper instead of an unclickable matching child',
+      () async {
+    expect(
+        await evaluate([
+          {
+            'id': 'wrapper',
+            'tag': 'div',
+            'text': '',
+            'aria-label': 'シラバス',
+            'role': 'button'
+          },
+          {
+            'id': 'synthetic',
+            'tag': 'a',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'noClick': true
+          },
+        ]),
+        {
+          'result': true,
+          'clicked': ['wrapper']
+        });
+  });
+
+  test('falls back to a matching wrapper when the inner click throws',
+      () async {
+    expect(
+        await evaluate([
+          {'id': 'wrapper', 'tag': 'div', 'text': 'シラバス', 'role': 'button'},
+          {
+            'id': 'inner',
+            'tag': 'a',
+            'text': 'シラバス',
+            'parentId': 'wrapper',
+            'clickThrows': true
+          },
+        ]),
+        {
+          'result': true,
+          'clicked': ['inner', 'wrapper']
+        });
+  });
+
   test('tries an exact wrapper before an unrelated partial fallback',
       () async {
     expect(
