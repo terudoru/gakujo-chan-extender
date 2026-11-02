@@ -103,6 +103,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.8'
+          cache: true
+      - run: flutter pub get
+      - run: flutter build linux --debug
+
   windows:
     runs-on: windows-latest
     steps:

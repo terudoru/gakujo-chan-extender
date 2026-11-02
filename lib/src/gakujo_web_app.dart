@@ -2107,7 +2107,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   bool get _supportsDesktopZoom {
     return defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.windows;
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux;
   }
 
   KeyEventResult _handleDesktopZoomKeyEvent(FocusNode node, KeyEvent event) {
@@ -2209,7 +2210,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Offset delta, {
     required bool positiveIsBack,
   }) {
-    if (defaultTargetPlatform != TargetPlatform.windows) {
+    if (defaultTargetPlatform != TargetPlatform.windows &&
+        defaultTargetPlatform != TargetPlatform.linux) {
       return;
     }
     final direction = _desktopHistorySwipe.add(

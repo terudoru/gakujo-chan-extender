@@ -1,0 +1,37 @@
+# More Better Gakujo patch: federated webview_flutter package and dependencies.
+name: webview_flutter_linux
+publish_to: none
+description: A Flutter plugin that provides a WebView widget on Linux using WebKitGTK.
+repository: https://github.com/abandoft/webview_all
+homepage: https://github.com/abandoft/webview_all
+issue_tracker: https://github.com/abandoft/webview_all/issues
+version: 1.4.9
+
+environment:
+  sdk: ">=3.13.7 <4.0.0"
+  flutter: ">=3.47.8"
+
+flutter:
+  plugin:
+    implements: webview_flutter
+    platforms:
+      linux:
+        pluginClass: WebviewAllLinuxPlugin
+        dartPluginClass: LinuxWebViewPlatform
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path: ^1.9.1
+  webview_flutter_platform_interface: ^2.15.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+topics:
+  - webview
+  - webview-flutter
+  - linux
+  - browser
+  - webkitgtk

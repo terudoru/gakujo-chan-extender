@@ -189,6 +189,8 @@ void main() {
         supportsNativeGakujoHistoryGestures(TargetPlatform.android), isFalse);
     expect(
         supportsNativeGakujoHistoryGestures(TargetPlatform.windows), isFalse);
+    expect(
+        supportsNativeGakujoHistoryGestures(TargetPlatform.linux), isFalse);
   });
 
   test('Android upload filters map HTML accept values to type groups', () {
@@ -210,6 +212,7 @@ void main() {
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.macOS), isTrue);
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.android), isFalse);
     expect(needsFlutterJavaScriptDialogs(TargetPlatform.windows), isFalse);
+    expect(needsFlutterJavaScriptDialogs(TargetPlatform.linux), isFalse);
   });
 
   test('mouse side buttons map to WebView history navigation', () {

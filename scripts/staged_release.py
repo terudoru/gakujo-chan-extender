@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish three platforms together and add validated iOS assets later."""
+"""Publish desktop and Android platforms together and add validated iOS assets later."""
 
 import hashlib
 import json
@@ -22,6 +22,7 @@ def initial_notes(tag: str) -> str:
 - **macOS**: `*.dmg`（Developer ID未署名。初回は「プライバシーとセキュリティ」から「このまま開く」を選択）
   ビルド・起動検証済み。全機能の実機検証は継続中です。
 - **Windows**: `*.exe`（インストーラー） / `*.zip`（ポータブル版）
+- **Linux**: `*-linux-amd64.deb` / `*-linux-x64.tar.gz`
 - **Android**: `*.apk`。`v0.68.0`以前と署名が異なるため、旧版からは上書き更新できません。アンインストールするとアプリ内データが削除されます。
 
 <!-- MBG_IOS_START -->
@@ -54,6 +55,9 @@ def release(mode: str, directory: Path, tag: str, repo: str, platform_commit: st
     if mode not in extensions:
         raise ValueError('Unknown release scope')
     files = [directory / f'MoreBetterGakujo-{tag}.{ext}' for ext in extensions[mode]]
+    if mode == 'all':
+        files += [directory / f'MoreBetterGakujo-{tag}-linux-x64.tar.gz',
+                  directory / f'MoreBetterGakujo-{tag}-linux-amd64.deb']
     for file in files:
         if not file.is_file() or file.stat().st_size == 0:
             raise ValueError(f'Missing release artifact: {file}')

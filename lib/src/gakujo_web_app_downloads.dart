@@ -747,7 +747,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         revision: revision,
         kind: kind,
         inject: () async {
-          if (kind == 'preview' && (Platform.isWindows || Platform.isAndroid || Platform.isMacOS)) {
+          if (kind == 'preview' &&
+              (Platform.isWindows || Platform.isAndroid ||
+                  Platform.isMacOS || Platform.isLinux)) {
             final url = await _pdfPreviewServer.start();
             if (!mounted || !_canRunPageScripts || revision != _navigationRevision) {
               return false;

@@ -23,10 +23,16 @@ class StagedReleaseTest(unittest.TestCase):
         for ext in ('dmg', 'apk', 'exe', 'zip', 'ipa'):
             (self.directory / f'MoreBetterGakujo-{self.tag}.{ext}').write_bytes(ext.encode())
 
+        for suffix in ('-linux-x64.tar.gz', '-linux-amd64.deb'):
+            (self.directory / f'MoreBetterGakujo-{self.tag}{suffix}').write_bytes(suffix.encode())
+
     def test_all_platforms_publish_only_after_draft_assets_match(self):
         assets = []
         for ext in ('dmg', 'apk', 'exe', 'zip'):
             file = self.directory / f'MoreBetterGakujo-{self.tag}.{ext}'
+            assets.append({'name': file.name, 'digest': 'sha256:' + hashlib.sha256(file.read_bytes()).hexdigest()})
+        for suffix in ('-linux-x64.tar.gz', '-linux-amd64.deb'):
+            file = self.directory / f'MoreBetterGakujo-{self.tag}{suffix}'
             assets.append({'name': file.name, 'digest': 'sha256:' + hashlib.sha256(file.read_bytes()).hexdigest()})
         calls = []
         def run(args, **kwargs):
@@ -39,10 +45,36 @@ class StagedReleaseTest(unittest.TestCase):
         self.assertEqual([args[2] for args in calls], ['create', 'view', 'edit'])
         self.assertIn('--draft', calls[0])
         self.assertIn('--verify-tag', calls[0])
-        self.assertEqual(len([x for x in calls[0] if x.endswith(('.dmg', '.apk', '.exe', '.zip'))]), 4)
+        self.assertEqual(len([x for x in calls[0] if x.endswith(('.dmg', '.apk', '.exe', '.zip', '.tar.gz', '.deb'))]), 6)
+        self.assertIn('**Linux**', calls[0][calls[0].index('--notes') + 1])
         self.assertIn(staged.IOS_PENDING, calls[0][calls[0].index('--notes') + 1])
         self.assertIn('--draft=false', calls[-1])
         self.assertIn('--latest', calls[-1])
+
+    def test_all_requires_both_linux_assets_before_creating_release(self):
+        for suffix in ('-linux-x64.tar.gz', '-linux-amd64.deb'):
+            file = self.directory / f'MoreBetterGakujo-{self.tag}{suffix}'
+            data = file.read_bytes()
+            file.unlink()
+            with patch.object(staged.subprocess, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'Missing release artifact'):
+                    staged.release('all', self.directory, self.tag, self.repo)
+                run.assert_not_called()
+            file.write_bytes(data)
+
+    def test_prerelease_uses_full_tag_for_linux_assets(self):
+        tag = self.tag + '-beta.1'
+        for ext in ('dmg', 'apk', 'exe', 'zip'):
+            (self.directory / f'MoreBetterGakujo-{tag}.{ext}').write_bytes(ext.encode())
+        for suffix in ('-linux-x64.tar.gz', '-linux-amd64.deb'):
+            (self.directory / f'MoreBetterGakujo-{tag}{suffix}').write_bytes(suffix.encode())
+        with patch.object(staged.subprocess, 'run') as run:
+            run.side_effect = RuntimeError('create reached')
+            with self.assertRaisesRegex(RuntimeError, 'create reached'):
+                staged.release('all', self.directory, tag, self.repo)
+            for suffix in ('-linux-x64.tar.gz', '-linux-amd64.deb'):
+                self.assertIn(str(self.directory / f'MoreBetterGakujo-{tag}{suffix}'), run.call_args.args[0])
+            self.assertIn('--prerelease', run.call_args.args[0])
 
     def test_ios_addition_preserves_other_notes_and_skips_identical_file(self):
         ipa = self.directory / f'MoreBetterGakujo-{self.tag}.ipa'

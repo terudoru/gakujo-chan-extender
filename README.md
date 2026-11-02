@@ -1,6 +1,6 @@
 # More Better Gakujo
 
-More Better Gakujo は、新潟大学の学務情報システム（学情）をアプリの中で開き、ログイン、2段階認証、資料の保存を楽にする非公式アプリです。Android、iOS/iPadOS、Windows、macOS で使えます。新潟大学とも、元のブラウザ拡張の作者とも関係ありません。
+More Better Gakujo は、新潟大学の学務情報システム（学情）をアプリの中で開き、ログイン、2段階認証、資料の保存を楽にする非公式アプリです。Android、iOS/iPadOS、Windows、macOS、Linux に対応します。新潟大学とも、元のブラウザ拡張の作者とも関係ありません。
 
 ## まず覚えること
 
@@ -32,6 +32,13 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 - `MoreBetterGakujo-vX.Y.Z.dmg` を開き、アプリを「アプリケーション」フォルダにコピーする
 - macOS 10.15 以降が必要
 - Developer ID で署名していないので、初回は macOS の設定の「プライバシーとセキュリティ」で「このまま開く」を選ぶ
+
+### Linux
+
+- x64 の Ubuntu 22.04 以降 / Debian 12 以降を対象とする。`MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` は `sudo apt install ./MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` を実行して入れる
+- `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
+- パスワードの保存には Secret Service（GNOME Keyring / KWallet など）が必要
+- Linux では QR コードの読み取りは使えない
 
 ### iOS/iPadOS
 

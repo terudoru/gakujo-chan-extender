@@ -18,6 +18,9 @@ abstract class GakujoPlatformService {
     if (Platform.isMacOS) {
       return const MacosGakujoPlatformService();
     }
+    if (Platform.isLinux) {
+      return const LinuxGakujoPlatformService();
+    }
     if (Platform.isWindows) {
       return const DesktopGakujoPlatformService();
     }
@@ -85,6 +88,25 @@ class MacosGakujoPlatformService extends GakujoPlatformService {
   @override
   GakujoCalendarService createCalendarService() {
     return const MethodChannelGakujoCalendarService();
+  }
+}
+
+class LinuxGakujoPlatformService extends GakujoPlatformService {
+  const LinuxGakujoPlatformService();
+
+  @override
+  GakujoWebViewService createWebViewService() {
+    return const WebViewFlutterGakujoWebViewService();
+  }
+
+  @override
+  GakujoDownloadService createDownloadService() {
+    return FileSystemGakujoDownloadService();
+  }
+
+  @override
+  GakujoCalendarService createCalendarService() {
+    return const UnsupportedGakujoCalendarService();
   }
 }
 

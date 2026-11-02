@@ -25,6 +25,10 @@ Flutter の WebView 向けに実装したものです。Android、iOS/iPadOS、W
   （BSD 3-Clause、https://github.com/omar-hanafy/webview_flutter_windows）。
   タッチパッドのスクロール処理を修正しています。ライセンスは同ディレクトリの
   `LICENSE` を参照してください。
+- `third_party/webview_flutter_linux`: webview_all_linux 1.4.9
+  （MIT、https://github.com/abandoft/webview_all）。
+  webview_flutter 向けに移植しています。ライセンスは同ディレクトリの
+  `LICENSE` を参照してください。
 - `assets/js/upload_compression/`: 添付ファイル圧縮に使う pdf.js 3.11.174
   （Apache-2.0、Mozilla）、pdf-lib 1.17.1（MIT）、JSZip 3.10.1（MIT）。
   qpdf 12.4.2 の WebAssembly 版（Apache-2.0、Emscripten 4.0.14 でビルド）は
