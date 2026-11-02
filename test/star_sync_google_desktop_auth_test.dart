@@ -128,8 +128,12 @@ void main() {
             'refresh_token': incremental
                 ? 'new-refresh-secret'
                 : 'refresh-secret',
+            // Google returns `email` as its full URL.
             'scope': [
-              ...starSyncGoogleScopes,
+              for (final scope in starSyncGoogleScopes)
+                scope == 'email'
+                    ? 'https://www.googleapis.com/auth/userinfo.email'
+                    : scope,
               if (incremental) googleDriveFileScope,
             ].join(' '),
             'id_token': 'header.$payload.signature',
