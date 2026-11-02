@@ -1,4 +1,4 @@
-name: Release macOS Windows Android
+name: Release macOS Windows Linux Android
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       release_scope:
-        description: "Publish macOS, Windows and Android together, or add iOS later"
+        description: "Publish macOS, Windows, Linux and Android together, or add iOS later"
         required: true
         type: choice
         default: all
@@ -451,10 +451,87 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  linux:
+    needs: [verify_release]
+    if: ${{ github.event_name == 'push' || inputs.release_scope == 'all' }}
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install Linux dependencies
+        run: |
+          apt-get update
+          apt-get install -y git curl unzip xz-utils zip ca-certificates jq python3 file clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev
+          git config --global --add safe.directory '*'
+
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.verify_release.outputs.commit }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.8'
+          cache: false
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Check out the Google OAuth helper from the workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts/write_google_oauth_defines.py
+          sparse-checkout-cone-mode: false
+
+      - name: Prepare Google OAuth defines
+        env:
+          GOOGLE_OAUTH_DESKTOP_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_ID }}
+          GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET }}
+        run: python3 .release-tools/scripts/write_google_oauth_defines.py --platform desktop --out build/google_oauth_defines.json
+
+      - name: Build and package Linux app
+        run: |
+          flutter build linux --release --dart-define-from-file=build/google_oauth_defines.json
+          bash scripts/package_linux.sh
+
+      - name: Check Linux packages and installed libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          tar tzf dist/*.tar.gz
+          apt-get install -y ./dist/*.deb
+          while IFS= read -r -d '' binary; do
+            echo "Checking $binary"
+            dependencies="$(ldd "$binary")"
+            printf '%s\n' "$dependencies"
+            if [[ "$dependencies" == *'not found'* ]]; then
+              echo "::error::Missing shared library for $binary"
+              exit 1
+            fi
+          done < <(find /opt/morebettergakujo -type f \( -name morebettergakujo_flutter -o -name '*.so*' \) -print0)
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+          if-no-files-found: error
+
   publish_all:
     permissions:
       contents: write
-    needs: [verify_release, android, macos, windows]
+    needs: [verify_release, android, macos, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout release scripts
@@ -477,6 +554,11 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows
+          path: dist
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux
           path: dist
       - name: Publish all verified artifacts together
         env:

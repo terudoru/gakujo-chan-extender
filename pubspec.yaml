@@ -20,6 +20,9 @@ dependencies:
   # 1.2.0 with a trackpad scrolling fix; see third_party/webview_flutter_windows.
   webview_flutter_windows:
     path: third_party/webview_flutter_windows
+  # 1.4.9 ported to webview_flutter; see third_party/webview_flutter_linux.
+  webview_flutter_linux:
+    path: third_party/webview_flutter_linux
   package_info_plus: ^10.1.0
   image_picker: ^1.2.4
   cryptography: ^2.9.0

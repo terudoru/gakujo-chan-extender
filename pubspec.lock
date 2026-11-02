@@ -971,6 +971,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.13.0"
+  webview_flutter_linux:
+    dependency: "direct main"
+    description:
+      path: "third_party/webview_flutter_linux"
+      relative: true
+    source: path
+    version: "1.4.9"
   webview_flutter_platform_interface:
     dependency: transitive
     description:

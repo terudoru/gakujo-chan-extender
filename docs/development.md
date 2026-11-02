@@ -1,6 +1,6 @@
 # 開発ガイド
 
-このアプリは Flutter 製で、学情を WebView で開き、ページを読み込むたびに TypeScript から生成したスクリプトを注入して機能を追加しています。Android、iOS/iPadOS、macOS、Windows を同じコードベースで扱います。
+このアプリは Flutter 製で、学情を WebView で開き、ページを読み込むたびに TypeScript から生成したスクリプトを注入して機能を追加しています。Android、iOS/iPadOS、macOS、Windows、Linux を同じコードベースで扱います。
 
 ## まず覚えること
 
@@ -19,6 +19,7 @@
 | Android | Android SDK。CI は Java 17 を使う |
 | iOS/iPadOS・macOS | Xcode と CocoaPods。`xcode-select` がフルの Xcode を指していること（Command Line Tools だけを指していると `xcrun xcodebuild` が失敗する） |
 | Windows | Windows ホスト、Visual Studio 2022 の C++ ワークロード、CMake 3.20 以降、Microsoft Edge WebView2 Runtime |
+| Linux | Linux x64、`clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev`（Ubuntu/Debian のパッケージ） |
 
 リポジトリのルートで依存関係を入れます。
 
@@ -41,6 +42,7 @@ flutter build apk --release
 flutter build ios --debug --no-codesign
 flutter build macos --debug
 flutter build windows --debug
+flutter build linux --debug
 ```
 
 - `flutter build windows` は Windows ホストでだけ動く
@@ -56,6 +58,7 @@ flutter build windows --debug
 | Android リリース AAB | `build/app/outputs/bundle/release/app-release.aab` |
 | macOS アプリ | `build/macos/Build/Products/Debug/More Better Gakujo.app` |
 | Windows アプリ | `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe` |
+| Linux アプリ | `build/linux/x64/debug/bundle/` |
 
 ## WebView に注入するスクリプト
 
@@ -223,6 +226,7 @@ flutter build apk --debug
 | `flutter_android_local_2fa_qa.sh` | Android の2段階認証の QA（上の節） |
 | `package_ios_ipa.sh` / `generate_altstore_source.sh` | iOS の IPA と SideStore の source を作る（[release.md](release.md)） |
 | `package_windows_inno.ps1` | Windows のインストーラーを作る（[release.md](release.md)） |
+| `package_linux.sh` | Linux の tar.gz と deb を作る（[release.md](release.md)） |
 | `staged_release.py` | リリース workflow から GitHub Release を公開する |
 | `verify_android_signature.py` / `verify_macos_release.sh` | リリース workflow で、APK の署名と macOS アプリの起動を確かめる |
 | `test_darwin_secure_storage.sh` | 同梱の `flutter_secure_storage_darwin` のキーチェーン処理を、Swift のテストで確かめる |
