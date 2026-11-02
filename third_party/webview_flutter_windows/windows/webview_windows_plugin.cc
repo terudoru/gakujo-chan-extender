@@ -145,6 +145,11 @@ WebviewWindowsPlugin::~WebviewWindowsPlugin() {
   if (window_proc_id_ != -1) {
     registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_id_);
   }
+  // More Better Gakujo patch: the engine is already gone when the registrar
+  // destroys this plugin, so bridges must not unregister through it.
+  for (const auto& [id, instance] : instances_) {
+    instance->DetachFromEngine();
+  }
   instances_.clear();
   UnregisterClass(window_class_.lpszClassName, nullptr);
 }

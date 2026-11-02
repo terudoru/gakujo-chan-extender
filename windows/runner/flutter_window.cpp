@@ -269,6 +269,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   DeleteAllDeadlineNotifications(GetHandle());
+  notification_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

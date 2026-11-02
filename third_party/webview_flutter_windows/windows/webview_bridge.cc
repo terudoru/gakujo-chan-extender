@@ -269,9 +269,21 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger* messenger,
   event_channel_->SetStreamHandler(std::move(handler));
 }
 
+// More Better Gakujo patch: called on engine shutdown, when messenger and
+// texture registrar calls would dereference the destroyed engine.
+void WebviewBridge::DetachFromEngine() {
+  detached_from_engine_ = true;
+  texture_bridge_->Stop();
+}
+
 WebviewBridge::~WebviewBridge() {
-  method_channel_->SetMethodCallHandler(nullptr);
-  texture_registrar_->UnregisterTexture(texture_id_);
+  if (detached_from_engine_) {
+    // Stop frame callbacks before closing the WebView.
+    texture_bridge_.reset();
+  } else {
+    method_channel_->SetMethodCallHandler(nullptr);
+    texture_registrar_->UnregisterTexture(texture_id_);
+  }
   // Tear down explicitly in a safe order: ~Webview closes the WebView2
   // controller, which can synchronously raise LostFocus and try to emit
   // through the event sink. Relying on member destruction order alone would

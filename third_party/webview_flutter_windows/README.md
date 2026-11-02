@@ -16,6 +16,7 @@ Local changes, all marked "More Better Gakujo patch":
   cancels disallowed main-frame navigations and redirects natively and reports
   them on `navigationBlocked` (`windows/util/navigation_allowlist.h`,
   `windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
+- Avoid engine messenger and texture calls during shutdown (`windows/webview_bridge.{h,cc}`, `windows/webview_windows_plugin.cc`).
 - `setDevToolsEnabled` so release builds can turn off WebView2 DevTools
   (`windows/webview.{h,cc}`, `windows/webview_bridge.cc`, `lib/src/webview.dart`).
 - `processFailed` stream from WebView2's `ProcessFailed` so a crashed renderer

@@ -19,6 +19,8 @@ class WebviewBridge {
                 std::unique_ptr<Webview> webview);
   ~WebviewBridge();
 
+  void DetachFromEngine();
+
   TextureBridge* texture_bridge() const { return texture_bridge_.get(); }
 
   int64_t texture_id() const { return texture_id_; }
@@ -39,6 +41,7 @@ class WebviewBridge {
 
   flutter::TextureRegistrar* texture_registrar_;
   int64_t texture_id_;
+  bool detached_from_engine_ = false;
 
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
@@ -47,7 +50,7 @@ class WebviewBridge {
 
   template <typename T>
   void EmitEvent(const T& value) {
-    if (event_sink_) {
+    if (!detached_from_engine_ && event_sink_) {
       event_sink_->Success(value);
     }
   }

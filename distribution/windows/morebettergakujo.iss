@@ -87,7 +87,7 @@ Type: files; Name: "{app}\.mbg-installed-files.txt"
 Type: files; Name: "{app}\.mbg-installed-files.txt.tmp"
 
 [Files]
-Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; AfterInstall: RecordInstalledFile
+Source: "{#MyBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs uninsrestartdelete; BeforeInstall: MoveLockedFile; AfterInstall: RecordInstalledFile
 
 #ifndef InstallerTestMode
 [Registry]
@@ -113,16 +113,25 @@ const
   ReparsePoint = $400;
   DirectoryAttribute = $10;
   InvalidAttributes = $FFFFFFFF;
+  LockedMarker = '.mbg-locked-';
 
 var
   PreviousFiles, CurrentFiles: TArrayOfString;
   TrackingOK, RemoveOldFiles: Boolean;
   PromptedInstallRoot: String;
+  LockedCounter: Integer;
 
 function GetFileAttributesW(Name: String): LongWord;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 function MoveFileExW(ExistingName, NewName: String; Flags: LongWord): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall';
+function MoveFileExDelete(ExistingName: String; NewName, Flags: LongWord): Boolean;
+  external 'MoveFileExW@kernel32.dll stdcall';
+function CreateFileW(Name: String; Access, Share: LongWord; Security: LongWord;
+  Creation, Flags: LongWord; Template: LongWord): LongWord;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseHandle(Handle: LongWord): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
 
 function TrustedRoot: Boolean;
 var Root, Expected: String;
@@ -165,6 +174,74 @@ begin
     end;
     if (Attr and DirectoryAttribute) = 0 then exit;
     Delete(Tail, 1, P);
+  end;
+end;
+
+procedure ScheduleLockedDelete(const FullName: String);
+begin
+  if not MoveFileExDelete(FullName, 0, 4) then
+    Log('Could not schedule locked file for deletion at reboot: ' + FullName);
+end;
+
+procedure MoveLockedFile;
+var Root, FullName, RelativeName, Aside: String; Handle: LongWord; ErrorCode: Integer;
+begin
+  if not TrustedRoot then exit;
+  Root := AddBackslash(RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}'))));
+  FullName := ExpandFileName(ExpandConstant(CurrentFilename));
+  if CompareText(Copy(FullName, 1, Length(Root)), Root) <> 0 then exit;
+  RelativeName := Copy(FullName, Length(Root) + 1, MaxInt);
+  if not SafeFile(RelativeName) then exit;
+  Handle := CreateFileW(FullName, $40000000, 7, 0, 3, 0, 0);
+  if Handle <> InvalidAttributes then begin
+    CloseHandle(Handle);
+    exit;
+  end;
+  ErrorCode := DLLGetLastError;
+  if (ErrorCode <> 5) and (ErrorCode <> 32) then exit;
+  repeat
+    LockedCounter := LockedCounter + 1;
+    Aside := FullName + LockedMarker + GetDateTimeString('yyyymmddhhnnss', '-', '-') + '-' + IntToStr(LockedCounter);
+  until GetFileAttributesW(Aside) = InvalidAttributes;
+  if MoveFileExW(FullName, Aside, 0) then begin
+    Log('Moved locked file aside: ' + Aside);
+    ScheduleLockedDelete(Aside);
+  end else
+    Log('Could not move locked file aside: ' + FullName);
+end;
+
+procedure SweepLockedFiles(const RelativeDir: String; ScheduleFailures: Boolean);
+var Root, Dir, RelativeName, FullName: String; FindRec: TFindRec; Attr: LongWord;
+begin
+  if not TrustedRoot then exit;
+  Root := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  Dir := Root;
+  if RelativeDir <> '' then Dir := AddBackslash(Root) + RelativeDir;
+  Attr := GetFileAttributesW(Dir);
+  if (Attr = InvalidAttributes) or ((Attr and ReparsePoint) <> 0) or
+     ((Attr and DirectoryAttribute) = 0) then exit;
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then begin
+    try
+      repeat
+        if (FindRec.Name = '.') or (FindRec.Name = '..') then continue;
+        RelativeName := FindRec.Name;
+        if RelativeDir <> '' then RelativeName := RelativeDir + '\' + RelativeName;
+        FullName := AddBackslash(Root) + RelativeName;
+        Attr := GetFileAttributesW(FullName);
+        if (Attr = InvalidAttributes) or ((Attr and ReparsePoint) <> 0) then continue;
+        if (Attr and DirectoryAttribute) <> 0 then
+          SweepLockedFiles(RelativeName, ScheduleFailures)
+        else if (Pos(LockedMarker, Lowercase(FindRec.Name)) > 0) and SafeFile(RelativeName) then begin
+          if not DeleteFile(FullName) then begin
+            Log('Could not remove locked file: ' + FullName);
+            if ScheduleFailures then ScheduleLockedDelete(FullName);
+          end else
+            Log('Removed locked file: ' + FullName);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
   end;
 end;
 
@@ -279,6 +356,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var I: Integer; RelativeName, FullName, Manifest, Temporary: String;
 begin
   if CurStep = ssInstall then begin
+    SweepLockedFiles('', False);
     TrackingOK := True;
     SetArrayLength(PreviousFiles, 0);
     SetArrayLength(CurrentFiles, 0);
@@ -318,4 +396,10 @@ begin
       Log('Could not replace installed-file manifest.');
   end else
     Log('Could not write installed-file manifest.');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    SweepLockedFiles('', True);
 end;
