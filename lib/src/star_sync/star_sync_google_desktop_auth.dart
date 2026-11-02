@@ -12,6 +12,12 @@ import 'star_sync_transport.dart';
 
 const starSyncGoogleTokenKey = 'more_better_gakujo_star_sync_google_token';
 
+// Google grants the `email` and `profile` scopes under their full URLs.
+const _googleScopeAliases = {
+  'https://www.googleapis.com/auth/userinfo.email': 'email',
+  'https://www.googleapis.com/auth/userinfo.profile': 'profile',
+};
+
 class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   StarSyncGoogleDesktopAuth({
     required this.config,
@@ -292,7 +298,11 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         throw const FormatException();
       }
       final granted = scopeField is String
-          ? scopeField.split(' ').where((s) => s.isNotEmpty).toSet()
+          ? scopeField
+                .split(' ')
+                .where((s) => s.isNotEmpty)
+                .map((s) => _googleScopeAliases[s] ?? s)
+                .toSet()
           : scopes.toSet();
       if (!granted.containsAll(scopes)) throw const FormatException();
       final token = data['access_token'];
