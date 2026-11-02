@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -16,6 +17,68 @@ ISCC = Path(os.environ.get('INNO_ISCC_PATH') or
 
 @unittest.skipUnless(os.name == 'nt' and ISCC.is_file(), 'Inno Setup 6 is required')
 class WindowsInstallerUpgradeTest(unittest.TestCase):
+    def test_upgrade_replaces_loaded_dll_and_cleans_up_after_release(self):
+        system = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32'
+        v1_dll, v2_dll = system / 'version.dll', system / 'msimg32.dll'
+        if not v1_dll.is_file() or not v2_dll.is_file():
+            self.skipTest('System DLLs version.dll and msimg32.dll are required')
+        scratch = ROOT / 'build' / 'installer-upgrade-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        case = Path(tempfile.mkdtemp(prefix='case-', dir=scratch)).resolve()
+        self.addCleanup(self._remove_case, case, scratch.resolve())
+        source, installed, output = (case / name for name in ('source', 'installed', 'output'))
+        source.mkdir()
+        output.mkdir()
+
+        def install(name):
+            subprocess.run([
+                str(ISCC), '/Qp', '/DInstallerTestMode=1',
+                f'/DInstallerTestRoot={installed}', f'/DMyBuildDir={source}',
+                f'/DMyOutputDir={output}', f'/DMyOutputBaseFilename={name}',
+                str(ROOT / 'distribution/windows/morebettergakujo.iss'),
+            ], check=True, capture_output=True, text=True, timeout=120)
+            subprocess.run([
+                str(output / (name + '.exe')), '/VERYSILENT', '/SUPPRESSMSGBOXES',
+                '/NORESTART', f'/DIR={installed}',
+            ], check=True, capture_output=True, timeout=120)
+
+        (source / 'morebettergakujo_flutter.exe').write_text('synthetic executable')
+        (source / 'plugin.dll').write_bytes(v1_dll.read_bytes())
+        install('v1')
+        holder = subprocess.Popen([
+            sys.executable, '-c',
+            "import ctypes,sys,time; ctypes.WinDLL(sys.argv[1]); "
+            "print('loaded', flush=True); time.sleep(600)",
+            str(installed / 'plugin.dll'),
+        ], stdout=subprocess.PIPE, text=True)
+
+        def stop_holder():
+            if holder.poll() is None:
+                holder.kill()
+            holder.wait(timeout=20)
+            holder.stdout.close()
+
+        self.addCleanup(stop_holder)
+        self.assertEqual(holder.stdout.readline().strip(), 'loaded')
+        with self.assertRaises(PermissionError):
+            with (installed / 'plugin.dll').open('wb'):
+                pass
+
+        v2_bytes = v2_dll.read_bytes()
+        (source / 'plugin.dll').write_bytes(v2_bytes)
+        install('v2')
+        self.assertEqual((installed / 'plugin.dll').read_bytes(), v2_bytes)
+        self.assertEqual(len(list(installed.glob('plugin.dll.mbg-locked-*'))), 1)
+        manifest = installed / '.mbg-installed-files.txt'
+        self.assertNotIn('.mbg-locked-', manifest.read_text(encoding='utf-8-sig'))
+
+        stop_holder()
+        (source / 'morebettergakujo_flutter.exe').write_text('third version')
+        install('v3')
+        self.assertEqual(list(installed.glob('plugin.dll.mbg-locked-*')), [])
+        subprocess.run([str(installed / 'unins000.exe'), '/VERYSILENT', '/NORESTART'],
+                       check=True, capture_output=True, timeout=120)
+
     def test_upgrade_removes_only_unmodified_previously_installed_files(self):
         scratch = ROOT / 'build' / 'installer-upgrade-tests'
         scratch.mkdir(parents=True, exist_ok=True)
