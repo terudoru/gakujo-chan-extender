@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'migrating_secure_storage.dart';
+import 'protected_secrets_vault.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
 
@@ -786,7 +787,9 @@ const _unchanged = Object();
 class GakujoAppSettingsStore {
   GakujoAppSettingsStore({
     FlutterSecureStorage? secureStorage,
-  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create();
+    SecretProtectionState? protectionState,
+  }) : _secureStorage = secureStorage ?? SecureStorageFactory.create(),
+       protectionState = protectionState ?? SecretProtectionState(storage: secureStorage);
 
   static const _downloadSaveModeKey = 'more_better_gakujo_download_save_mode';
   static const _pageModeKey = 'more_better_gakujo_page_mode';
@@ -822,6 +825,7 @@ class GakujoAppSettingsStore {
   ];
 
   final FlutterSecureStorage _secureStorage;
+  final SecretProtectionState protectionState;
   final _operations = StorageOperationQueue();
 
   BackupStorageParticipant get backupStorage => BackupStorageParticipant(
@@ -846,6 +850,10 @@ class GakujoAppSettingsStore {
 
   Future<GakujoLoginCredentials?> loadLoginCredentials() {
     return _enqueue(() async {
+      if ((await protectionState.read()).enabled) {
+        final raw = (await protectionState.vault.read())?.loginCredentials;
+        return raw == null ? null : _decodeLoginCredentialsRecord(raw);
+      }
       // The v2 record (or its tombstone) is authoritative, so the legacy keys
       // are read only when it is missing. On macOS each read of these keys is
       // a fresh Keychain read because they are kept out of the bundle cache.
@@ -865,8 +873,16 @@ class GakujoAppSettingsStore {
   Future<GakujoAppSettings> _load({
     bool migrateLegacyCredentials = false,
   }) async {
-    final values = await _loadSettingsValues();
-    final loginCredentials = await _loadLoginCredentials(
+    final protection = await protectionState.read();
+    final values = protection.enabled
+        ? <String, String?>{
+            for (final key in _settingsKeys)
+              if (key != _loginIdKey && key != _loginPasswordKey && key != _loginCredentialsKey)
+                key: await _secureStorage.read(key: key),
+          }
+        : await _loadSettingsValues();
+    if (protection.enabled) await protectionState.cleanupNormalSecrets();
+    final loginCredentials = protection.enabled ? null : await _loadLoginCredentials(
       values,
       migrateLegacyCredentials: migrateLegacyCredentials,
     );
@@ -880,7 +896,7 @@ class GakujoAppSettingsStore {
         values[_downloadSaveModeKey],
       ),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[_pageModeKey]),
-      savedLoginId: loginCredentials?.loginId,
+      savedLoginId: protection.enabled ? protection.loginId : loginCredentials?.loginId,
       disabledFeatureFlags: disabledFeatureFlags,
       setupCompleted: values[_setupCompletedKey] == 'true',
       calendarImportSettings: GakujoCalendarImportSettings.fromJson(
@@ -1038,14 +1054,22 @@ class GakujoAppSettingsStore {
         return;
       }
 
-      await _secureStorage.write(
-        key: _loginCredentialsKey,
-        value: jsonEncode({
-          'version': 1,
-          'loginId': trimmedLoginId,
-          'password': password,
-        }),
-      );
+      final record = jsonEncode({
+        'version': 1,
+        'loginId': trimmedLoginId,
+        'password': password,
+      });
+      final protection = await protectionState.read();
+      if (protection.enabled) {
+        await protectionState.updateSecrets(
+          (old) => ProtectedSecrets(
+            loginCredentials: record,
+            twoFactorSecret: old.twoFactorSecret,
+          ),
+        );
+        return;
+      }
+      await _secureStorage.write(key: _loginCredentialsKey, value: record);
       await _deleteLegacyLoginCredentialsBestEffort();
     });
   }
@@ -1055,6 +1079,13 @@ class GakujoAppSettingsStore {
   }
 
   Future<void> _clearLoginCredentials() async {
+    final protection = await protectionState.read();
+    if (protection.enabled) {
+      await protectionState.updateSecrets(
+        (old) => ProtectedSecrets(twoFactorSecret: old.twoFactorSecret),
+      );
+      return;
+    }
     // Keep an authoritative tombstone instead of deleting the v2 record. If a
     // legacy-key cleanup fails, subsequent loads must not reconstruct a mixed
     // or previously deleted credential pair from the remaining old key.

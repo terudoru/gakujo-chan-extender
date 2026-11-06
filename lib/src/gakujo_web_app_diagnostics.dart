@@ -83,7 +83,7 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
   Future<Map<String, Object?>> _diagnosticPayload({
     required bool includeStoredData,
   }) async {
-    final hasTwoFactorSecret = await _secretStore.load() != null;
+    final hasTwoFactorSecret = await _secretStore.hasSecret();
     final historyCount = (await _downloadHistoryStore.load()).length;
     final failedDownloadCount =
         (await _downloadHistoryStore.loadFailedDownloads()).length;

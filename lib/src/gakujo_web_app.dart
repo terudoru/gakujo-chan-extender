@@ -74,6 +74,7 @@ import 'gakujo_upload_preview_script.dart';
 import 'google_drive_file_saver.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
+import 'protected_secrets_vault.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
 import 'star_sync/drive_download_preference.dart';
@@ -1482,6 +1483,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final GakujoPdfPreviewServer _pdfPreviewServer = GakujoPdfPreviewServer();
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
+  int? _authenticationCancelledRevision;
   int? _pendingPageFinishedNavigationRevision;
 
   static const double _minimumDesktopZoom = 0.5;
@@ -1495,7 +1497,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _secretStore = widget._secretStore ?? TwoFactorSecretStore();
+    _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
+    _secretStore = widget._secretStore ?? TwoFactorSecretStore(
+      protectionState: _appSettingsStore.protectionState,
+    );
     _totpGenerator = widget._totpGenerator ?? const TotpGenerator();
     final platformService = GakujoPlatformService.current();
     _webViewService = platformService.createWebViewService();
@@ -1559,7 +1564,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _updateService = const AppUpdateService();
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
-    _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
     unawaited(_restoreSavedGpa());
     _macosInputFocusService = const MacosInputFocusService();
@@ -2570,6 +2574,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _showSettingsDialog() async {
     unawaited(_notificationService.checkPermission());
+    var protectionEnabled = (Platform.isAndroid || Platform.isIOS)
+        ? (await _appSettingsStore.protectionState.read()).enabled : false;
+    var protectionBusy = false;
     var secretInput = '';
     var loginIdInput = '';
     var loginPasswordInput = '';
@@ -2706,6 +2713,54 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                       ),
+                      if (Platform.isAndroid || Platform.isIOS) ...[
+                        SecretProtectionSection(
+                          enabled: protectionEnabled,
+                          isAndroid: Platform.isAndroid,
+                          onChanged: protectionBusy ? null : (enabled) async {
+                            setDialogState(() => protectionBusy = true);
+                            final controller = SecretProtectionController(_appSettingsStore.protectionState);
+                            try {
+                              if (enabled) {
+                                await controller.enable();
+                              } else {
+                                try {
+                                  await controller.disable();
+                                } on ProtectedSecretsUnreadable {
+                                  if (!dialogContext.mounted) return;
+                                  final discard = await showDialog<bool>(
+                                    context: dialogContext,
+                                    builder: (context) => AlertDialog(
+                                      content: const Text('保存済みのログイン情報を読み出せません。削除して本人確認をオフにしますか？（ログイン情報と2FA秘密鍵を入れ直す必要があります）'),
+                                      actions: [
+                                        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+                                        TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('削除してオフ')),
+                                      ],
+                                    ),
+                                  );
+                                  if (discard != true) return;
+                                  await controller.disableAndDiscard();
+                                  if (mounted) setState(() { _appSettings = _appSettings.copyWith(savedLoginId: null); });
+                                }
+                              }
+                              protectionEnabled = enabled;
+                            } on Object catch (error) {
+                              if (mounted) {
+                                _showSnackBar(enabled
+                                    ? '本人確認を有効にできませんでした: ${error is PlatformException ? (error.message ?? error.code) : error.runtimeType}'
+                                    : '本人確認をオフにできませんでした');
+                              }
+                            } finally {
+                              try {
+                                protectionEnabled = (await _appSettingsStore.protectionState.read()).enabled;
+                              } on Object {
+                                // Keep the last known value when state cannot be read.
+                              }
+                              if (dialogContext.mounted) setDialogState(() => protectionBusy = false);
+                            }
+                          },
+                        ),
+                      ],
                       const Divider(height: 32),
                       TwoFactorSecretSection(
                         controller: secretController,
@@ -6579,6 +6634,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  void _handleAuthenticationCancellation(Object error, int revision) {
+    if (error is! PlatformException) return;
+    final detail = '${error.code} ${error.message} ${error.details}'.toLowerCase();
+    final cancelled = detail.contains('authentication error [5]') ||
+        detail.contains('authentication error [10]') ||
+        detail.contains('authentication error [13]') ||
+        detail.contains('-128') || detail.contains('user cancel');
+    if (!cancelled ||
+        revision != _navigationRevision ||
+        _authenticationCancelledRevision == revision) {
+      return;
+    }
+    _authenticationCancelledRevision = revision;
+    if (mounted) _showSnackBar('本人確認がキャンセルされたため自動ログインしませんでした');
+  }
+
   Future<void> _injectLoginAutofillAssistIfAllowed() async {
     final url = _currentPageUrl;
     final navigationRevision = _navigationRevision;
@@ -6586,7 +6657,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         url != null &&
         _isCurrentPageCallback(url, navigationRevision) &&
         AllowedWebOrigins.canAutofill(_currentPageUrl, debugAllowed: false);
-    if (!stillCurrent()) {
+    if (!stillCurrent() || _authenticationCancelledRevision == navigationRevision) {
       return;
     }
     await _loadStoredLoginForAutofillIfNeeded();
@@ -6598,7 +6669,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // campussmart.do can reveal the login form dynamically, so the injected
     // script positively identifies the login DOM before filling or submitting.
     try {
-      final credentials = await _appSettingsStore.loadLoginCredentials();
+      final credentials = await _appSettingsStore.loadLoginCredentials().catchError((Object error) {
+        _handleAuthenticationCancellation(error, navigationRevision);
+        throw error;
+      });
       if (!stillCurrent() ||
           !_appSettings.isFeatureEnabled(GakujoFeatureFlag.loginAutofill)) {
         return;
@@ -6695,12 +6769,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         url != null &&
         _isCurrentPageCallback(url, navigationRevision) &&
         AllowedWebOrigins.canAutofill(_currentPageUrl, debugAllowed: false);
-    if (!stillCurrent()) {
+    if (!stillCurrent() || _authenticationCancelledRevision == navigationRevision) {
       return;
     }
 
     try {
-      final secret = await _secretStore.load();
+      final secret = await _secretStore.load().catchError((Object error) {
+        _handleAuthenticationCancellation(error, navigationRevision);
+        throw error;
+      });
       if (!stillCurrent() ||
           !_appSettings.isFeatureEnabled(GakujoFeatureFlag.twoFactorAutofill) ||
           secret == null) {
@@ -7422,6 +7499,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (value != null) kept[key] = value;
           } on Object {
             // An unreadable store has nothing left to carry over.
+          }
+        }
+        if ((Platform.isAndroid || Platform.isIOS) &&
+            (await _appSettingsStore.protectionState.read()).enabled) {
+          try {
+            await _appSettingsStore.protectionState.vault.delete();
+          } on Object catch (error) {
+            developer.log(
+              'Failed to delete protected secrets: ${error.runtimeType}',
+              name: 'MoreBetterGakujo',
+            );
           }
         }
         await SecureStorageFactory.resetStorage();
