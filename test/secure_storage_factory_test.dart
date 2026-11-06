@@ -5,6 +5,17 @@ import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('iOS device-only keys cover the six secret keys', () {
+    expect(SecureStorageFactory.iosDeviceOnlyKeys, {
+      'more_better_gakujo_login_credentials_v2',
+      'more_better_gakujo_login_id',
+      'more_better_gakujo_login_password',
+      'more_better_gakujo_2fa_secret',
+      'more_better_gakujo_star_sync_google_token',
+      'more_better_gakujo_star_sync_config',
+    });
+  });
+
   test('macOS migration keys cover every app storage key in lib/src', () {
     final keyLiteral =
         RegExp(r'''['"](more_better_gakujo_[a-zA-Z0-9_]+)['"]''');
