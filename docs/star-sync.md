@@ -4,9 +4,9 @@
 
 ## 現在の状態
 
-- `star-sync`（WebDAV/S3）、`star-sync-google`（Google ドライブ）、`google-sync-extras`（同期する項目の追加、同期先のバックアップ、ダウンロードの Google ドライブ保存）のブランチは main に統合済み。v0.70.6 には含まれていない
+- `star-sync`（WebDAV/S3）、`star-sync-google`（Google ドライブ）、`google-sync-extras`（同期する項目の追加、同期先のバックアップ、ダウンロードの Google ドライブ保存）のブランチは main に統合済み。v0.70.6 には含まれておらず、次のリリースに含める予定
 - 実装は `lib/src/star_sync/` と、設定画面の「スターの端末間同期」（`lib/src/widgets/star_sync_section.dart`）
-- いまのリリース workflow は Google の OAuth クライアント ID を組み込んでいないので、リリースビルドでは WebDAV/S3 だけが選べる。クライアントの登録手順は [release.md](release.md) の「Google OAuth クライアント」にある
+- 次のタグ付きリリースでは、リリース workflow が Google の OAuth クライアント ID を組み込むため、Google ドライブも選べる予定。クライアントの登録手順は [release.md](release.md) の「Google OAuth クライアント」にある
 - 実際のサーバーやアカウントで確かめた範囲は、末尾の「確認できた範囲」にある
 
 ## 確定した仕様
