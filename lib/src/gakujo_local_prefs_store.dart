@@ -11,12 +11,15 @@ class GakujoLocalPrefs {
     this.appSettings,
     this.appSettingsKeys,
     this.lastGpa,
+    this.externalServiceNoticeDismissed = false,
   });
 
   final GakujoAppSettings? appSettings;
   // Null denotes a complete settings object supplied by the app.
   final Set<String>? appSettingsKeys;
   final double? lastGpa;
+  // Set when the user chose not to see the external-service notice again.
+  final bool externalServiceNoticeDismissed;
 }
 
 class GakujoLocalPrefsStore {
@@ -45,6 +48,8 @@ class GakujoLocalPrefsStore {
       return GakujoLocalPrefs(
         appSettings: settings.copyWith(loginCredentials: null),
         lastGpa: current?.lastGpa,
+        externalServiceNoticeDismissed:
+            current?.externalServiceNoticeDismissed ?? false,
       );
     });
   }
@@ -55,6 +60,19 @@ class GakujoLocalPrefsStore {
         appSettings: current?.appSettings,
         appSettingsKeys: current?.appSettingsKeys,
         lastGpa: gpa,
+        externalServiceNoticeDismissed:
+            current?.externalServiceNoticeDismissed ?? false,
+      );
+    });
+  }
+
+  Future<void> saveExternalServiceNoticeDismissed(bool dismissed) {
+    return _enqueueUpdate((current) {
+      return GakujoLocalPrefs(
+        appSettings: current?.appSettings,
+        appSettingsKeys: current?.appSettingsKeys,
+        lastGpa: current?.lastGpa,
+        externalServiceNoticeDismissed: dismissed,
       );
     });
   }
@@ -175,12 +193,15 @@ class GakujoLocalPrefsStore {
         'notificationPreferences': settings.notificationPreferences.toJson(),
       },
       if (prefs.lastGpa != null) 'lastGpa': prefs.lastGpa,
+      if (prefs.externalServiceNoticeDismissed)
+        'externalServiceNoticeDismissed': true,
     };
     final keys = prefs.appSettingsKeys;
     if (keys != null) {
       encoded.removeWhere((key, _) =>
           key != 'version' &&
           key != 'lastGpa' &&
+          key != 'externalServiceNoticeDismissed' &&
           !keys.contains(key));
     }
     return encoded;
@@ -247,6 +268,8 @@ class GakujoLocalPrefsStore {
           lastGpa is num && lastGpa.isFinite && lastGpa >= 0 && lastGpa <= 5
               ? lastGpa.toDouble()
               : null,
+      externalServiceNoticeDismissed:
+          raw['externalServiceNoticeDismissed'] == true,
     );
   }
 }
