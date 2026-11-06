@@ -4,10 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'bundled_secure_storage.dart';
+import 'device_only_secret_storage.dart';
 import 'migrating_secure_storage.dart';
 
 class SecureStorageFactory {
   const SecureStorageFactory._();
+
+  static const iosDeviceOnlyKeys = <String>{
+    'more_better_gakujo_login_credentials_v2',
+    'more_better_gakujo_login_id',
+    'more_better_gakujo_login_password',
+    'more_better_gakujo_2fa_secret',
+    'more_better_gakujo_star_sync_google_token',
+    'more_better_gakujo_star_sync_config',
+  };
 
   static const macosMigrationKeys = [
     'more_better_gakujo_2fa_secret',
@@ -99,6 +109,14 @@ class SecureStorageFactory {
     operationTimeout: _macosStorageOperationTimeout,
   );
 
+  static const FlutterSecureStorage _nonMacosStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(resetOnError: false, migrateWithBackup: true),
+  );
+  static final FlutterSecureStorage _iosStorage = DeviceOnlySecretStorage(
+    inner: _nonMacosStorage,
+    secretKeys: iosDeviceOnlyKeys,
+  );
+
   static FlutterSecureStorage create() {
     if (Platform.isMacOS) {
       if (_isFlutterTest) {
@@ -110,9 +128,10 @@ class SecureStorageFactory {
     // history) when one entry cannot be decrypted, and drop old keys before a
     // cipher migration is committed. Fail the read instead; callers already
     // fall back per key and report unreadable data.
-    return const FlutterSecureStorage(
-      aOptions: AndroidOptions(resetOnError: false, migrateWithBackup: true),
-    );
+    if (Platform.isIOS && !_isFlutterTest) {
+      return _iosStorage;
+    }
+    return _nonMacosStorage;
   }
 
   static bool get _isFlutterTest {
