@@ -167,7 +167,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 同期先は次から選びます。
 
-- Google ドライブ：Google アカウントだけで使える。2台目以降は、1台目の「別の端末を追加」に出る QR コードかペアリングコードで参加する。このボタンは、Google の OAuth クライアント ID を組み込んだビルドにだけ出る。いまの GitHub Actions のリリースビルドには組み込んでいない
+- Google ドライブ：Google アカウントだけで使える。2台目以降は、1台目の「別の端末を追加」に出る QR コードかペアリングコードで参加する。このボタンは、Google の OAuth クライアント ID を組み込んだビルドにだけ出る。v0.70.6 の次のリリースから GitHub Actions のリリースビルドに組み込む予定
 - WebDAV または S3 互換ストレージ：詳細設定から、自分のサーバーの接続情報とパスフレーズを入れる
 
 使う前に、次の点を確かめてください。
@@ -177,7 +177,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - ペアリングコードやパスフレーズを知っている人は、同期データを読める。忘れたときは同期データをリセットしてやり直す（端末の中のスターは残る）
 - Google ドライブで同期するなら、全端末をなくしたときに備えて、「別の端末を追加」のコードを安全な場所に控えておく
 
-任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md) にあります。
+任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://terudoru.github.io/gakujo-chan-extender/privacy.html) をご覧ください。
 
 ## バックアップ
 

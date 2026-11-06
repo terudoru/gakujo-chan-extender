@@ -142,7 +142,7 @@ flutter build windows --release
 
 端末間同期の「Google ドライブで同期」と、ダウンロードの Google ドライブ保存に使います。クライアント ID を組み込まないビルドでは、このボタンは出ず、WebDAV/S3 だけが選べます。リリース workflow は Repository secrets の `GOOGLE_OAUTH_DESKTOP_CLIENT_ID`、`GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET`、`GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID`、`GOOGLE_OAUTH_IOS_CLIENT_ID` から dart-define ファイルと、iOS 用の `GoogleOAuth.xcconfig` を作ります。必要な secret がなければリリースは失敗します。
 
-1. Google Cloud で External の同意画面を作り、`drive.appdata`、`openid`、`email` を設定して本番として公開する。ダウンロードの Google ドライブ保存は、使うときに `drive.file` を追加で求める
+1. Google Cloud で External の同意画面を作り、下の「本番公開の手順」に従って本番として公開する。ダウンロードの Google ドライブ保存は、使うときに `drive.file` を追加で求める
 2. Desktop クライアントを作り、Windows/macOS/Linux のビルドで `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...` と `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` を渡す。インストール型アプリのシークレットは、Google の扱いでも機密ではない
 3. Android クライアントを、パッケージ `net.yoshida.morebettergakujo` と、リリース用とデバッグ用の署名鍵の SHA-1 で登録する。Android クライアントの ID はアプリに渡さない
 4. 同じプロジェクトに Web クライアントを作り、その ID を Android のビルドで `--dart-define=GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID=...` として渡す
@@ -150,3 +150,13 @@ flutter build windows --release
 6. iOS の逆順のクライアント ID を、git で追跡しない `ios/Flutter/GoogleOAuth.xcconfig` に `GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.<id>` と書く。追跡しているほうの xcconfig は編集しない。このファイルがなければ、ダミーの `com.googleusercontent.apps.unset` が使われる
 
 クライアント ID は配布するアプリに入るので、誰でも取り出せます。そのため、Drive API を意図して使い込まれるのを端末側では防げません。Google Cloud のプロジェクトには課金アカウントを付けず、コンソールで設定できるなら、無料枠より低い割り当ての上限を設定してください。端末ごとの利用量の上限は [star-sync.md](star-sync.md) の「Drive API の上限への対策」にあります。
+
+### 本番公開の手順
+
+1. リポジトリの Settings → Pages で Source を「GitHub Actions」にし、pages workflow で `site/` を公開する
+2. `github.io` は公開サフィックスなので、承認済みドメインには `terudoru.github.io` を登録する。所有確認のため、ユーザーサイト用リポジトリ `terudoru/terudoru.github.io` を作り、Search Console の URL プレフィックス `https://terudoru.github.io/` 用の HTML 確認ファイルをそのルートに置く。確認する Google アカウントは Cloud プロジェクトのオーナーか編集者にする
+3. Google Auth Platform のブランディングに、アプリ名、サポートメール、ホームページ `https://terudoru.github.io/gakujo-chan-extender/`、プライバシーポリシー `https://terudoru.github.io/gakujo-chan-extender/privacy.html`、承認済みドメインを入力する
+4. データアクセスに `openid`、`email`、`drive.appdata`、`drive.file` を登録する（いずれも非機密のスコープ）
+5. 対象を「本番環境」に公開し、ブランドの確認を申請する
+
+テスト中のままだと、登録したテストユーザー（最大100人）しかログインできず、更新トークンは7日で失効します。
