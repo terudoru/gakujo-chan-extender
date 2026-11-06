@@ -64,6 +64,12 @@ class SecureStorageFactory {
   static final BundledSecureStorage _macosBundledStorage = BundledSecureStorage(
     storage: _macosStorage,
     bundleKey: _macosBundleKey,
+    uncachedKeys: {
+      'more_better_gakujo_login_credentials_v2',
+      'more_better_gakujo_login_id',
+      'more_better_gakujo_login_password',
+      'more_better_gakujo_2fa_secret',
+    },
   );
 
   static const FlutterSecureStorage _macosLegacyClassicStorage =

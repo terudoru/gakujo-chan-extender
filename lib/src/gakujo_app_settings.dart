@@ -710,7 +710,7 @@ class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
     this.pageMode = GakujoPageMode.desktop,
-    this.loginCredentials,
+    this.savedLoginId,
     this.disabledFeatureFlags = const {},
     this.setupCompleted = false,
     this.calendarImportSettings = const GakujoCalendarImportSettings(),
@@ -722,7 +722,7 @@ class GakujoAppSettings {
 
   final DownloadSaveMode downloadSaveMode;
   final GakujoPageMode pageMode;
-  final GakujoLoginCredentials? loginCredentials;
+  final String? savedLoginId;
   final Set<GakujoFeatureFlag> disabledFeatureFlags;
   final bool setupCompleted;
   final GakujoCalendarImportSettings calendarImportSettings;
@@ -731,7 +731,7 @@ class GakujoAppSettings {
   final GakujoMessageNotificationSettings messageNotification;
   final GakujoNotificationPreferences notificationPreferences;
 
-  bool get hasLoginCredentials => loginCredentials?.isComplete ?? false;
+  bool get hasLoginCredentials => savedLoginId?.trim().isNotEmpty ?? false;
 
   bool isFeatureEnabled(GakujoFeatureFlag flag) {
     return !disabledFeatureFlags.contains(flag);
@@ -740,7 +740,7 @@ class GakujoAppSettings {
   GakujoAppSettings copyWith({
     DownloadSaveMode? downloadSaveMode,
     GakujoPageMode? pageMode,
-    Object? loginCredentials = _unchanged,
+    Object? savedLoginId = _unchanged,
     Set<GakujoFeatureFlag>? disabledFeatureFlags,
     bool? setupCompleted,
     GakujoCalendarImportSettings? calendarImportSettings,
@@ -752,9 +752,9 @@ class GakujoAppSettings {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
       pageMode: pageMode ?? this.pageMode,
-      loginCredentials: loginCredentials == _unchanged
-          ? this.loginCredentials
-          : loginCredentials as GakujoLoginCredentials?,
+      savedLoginId: savedLoginId == _unchanged
+          ? this.savedLoginId
+          : savedLoginId as String?,
       disabledFeatureFlags: disabledFeatureFlags ?? this.disabledFeatureFlags,
       setupCompleted: setupCompleted ?? this.setupCompleted,
       calendarImportSettings:
@@ -844,6 +844,24 @@ class GakujoAppSettingsStore {
     return _enqueue(() => _load(migrateLegacyCredentials: true));
   }
 
+  Future<GakujoLoginCredentials?> loadLoginCredentials() {
+    return _enqueue(() async {
+      // The v2 record (or its tombstone) is authoritative, so the legacy keys
+      // are read only when it is missing. On macOS each read of these keys is
+      // a fresh Keychain read because they are kept out of the bundle cache.
+      final values = <String, String?>{
+        _loginCredentialsKey:
+            await _secureStorage.read(key: _loginCredentialsKey),
+      };
+      if (values[_loginCredentialsKey] == null) {
+        for (final key in const [_loginIdKey, _loginPasswordKey]) {
+          values[key] = await _secureStorage.read(key: key);
+        }
+      }
+      return _loadLoginCredentials(values, migrateLegacyCredentials: false);
+    });
+  }
+
   Future<GakujoAppSettings> _load({
     bool migrateLegacyCredentials = false,
   }) async {
@@ -862,7 +880,7 @@ class GakujoAppSettingsStore {
         values[_downloadSaveModeKey],
       ),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[_pageModeKey]),
-      loginCredentials: loginCredentials,
+      savedLoginId: loginCredentials?.loginId,
       disabledFeatureFlags: disabledFeatureFlags,
       setupCompleted: values[_setupCompletedKey] == 'true',
       calendarImportSettings: GakujoCalendarImportSettings.fromJson(

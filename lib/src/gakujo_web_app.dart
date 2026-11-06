@@ -1536,7 +1536,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
       ],
       clearDraftsBefore: _clearSyncedDraftsBefore,
-      loginId: () => _appSettings.loginCredentials?.loginId,
+      loginId: () => _appSettings.savedLoginId,
       accountHash: () => _activeLoginAccount,
       canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
@@ -2462,7 +2462,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             GakujoFeatureFlag.loginAutofill,
           );
           _appSettings = _appSettings.copyWith(
-            loginCredentials: credentials,
+            savedLoginId: credentials.loginId,
             disabledFeatureFlags: {
               for (final flag in _appSettings.disabledFeatureFlags)
                 if (flag != GakujoFeatureFlag.loginAutofill) flag,
@@ -2671,7 +2671,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                   if (mounted) {
                                     setState(() {
                                       _appSettings = _appSettings.copyWith(
-                                        loginCredentials: null,
+                                        savedLoginId: null,
                                       );
                                     });
                                   }
@@ -3128,7 +3128,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
                       onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
                       onRequireAccount: () {
-                        final saved = starSyncAccountHash(_appSettings.loginCredentials?.loginId);
+                        final saved = starSyncAccountHash(_appSettings.savedLoginId);
                         if (saved == null) throw const StarSyncAccountRequiredException();
                         if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
                         return _starSyncEngine.requireAccount();
@@ -5670,7 +5670,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final canAutoLogin = _appSettings.isFeatureEnabled(
           GakujoFeatureFlag.loginAutofill,
         ) &&
-        (_appSettings.loginCredentials?.isComplete ?? false);
+        _appSettings.hasLoginCredentials;
     _showSnackBar(
       canAutoLogin
           ? 'ログインが切れました。自動ログイン後に前のページへ戻ります'
@@ -6240,7 +6240,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         // Autofill always submits the saved login ID; some of its fallbacks
         // (form.submit) fire no event the login observer could see.
         final account = starSyncAccountHash(
-          _appSettings.loginCredentials?.loginId,
+          _appSettings.savedLoginId,
         );
         if (account != null) _submitLoginAccount(account);
       }
@@ -6598,7 +6598,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // campussmart.do can reveal the login form dynamically, so the injected
     // script positively identifies the login DOM before filling or submitting.
     try {
-      final credentials = _appSettings.loginCredentials;
+      final credentials = await _appSettingsStore.loadLoginCredentials();
+      if (!stillCurrent() ||
+          !_appSettings.isFeatureEnabled(GakujoFeatureFlag.loginAutofill)) {
+        return;
+      }
       if (kDebugMode) {
         debugPrint(
           'MoreBetterGakujo inject login autofill '
@@ -6611,7 +6615,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       }
       final script = LoginAutofillAssistScript.build(
-        credentials: credentials == null
+        credentials: credentials == null || !credentials.isComplete
             ? null
             : GakujoLoginAutofillCredentials(
                 loginId: credentials.loginId,
@@ -7438,7 +7442,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 name: 'MoreBetterGakujo');
           }
         }
-        _appSettings = _appSettings.copyWith(loginCredentials: null);
+        _appSettings = _appSettings.copyWith(savedLoginId: null);
         _starSyncLoad = null;
       });
       await _localPrefsStore.clear();

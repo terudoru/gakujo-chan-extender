@@ -154,7 +154,7 @@ void main() {
     expect(storage.readAllCount, 1);
     expect(storage.readKeys, isEmpty);
     expect(settings.pageMode, GakujoPageMode.desktop);
-    expect(settings.loginCredentials?.loginId, 'student');
+    expect(settings.savedLoginId, 'student');
     expect(settings.setupCompleted, isTrue);
   });
 
@@ -192,8 +192,35 @@ void main() {
     final settings = await store.load();
 
     expect(settings.pageMode, GakujoPageMode.mobile);
-    expect(settings.loginCredentials?.loginId, 'student');
-    expect(settings.loginCredentials?.password, 'secret');
+    expect(settings.savedLoginId, 'student');
+  });
+
+  test('credentials are loaded on demand with tombstone and legacy semantics', () async {
+    final storage = _TrackingSecureStorage({
+      'more_better_gakujo_login_credentials_v2':
+          '{"version":1,"loginId":" student ","password":"secret"}',
+      'more_better_gakujo_login_id': 'legacy',
+      'more_better_gakujo_login_password': 'legacy-secret',
+    });
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+
+    final settings = await store.load();
+    expect(settings.savedLoginId, 'student');
+    expect(settings.hasLoginCredentials, isTrue);
+    final credentials = await store.loadLoginCredentials();
+    expect(credentials?.loginId, 'student');
+    expect(credentials?.password, 'secret');
+    // The authoritative v2 record is present, so legacy keys are not read.
+    expect(storage.readKeys, ['more_better_gakujo_login_credentials_v2']);
+
+    storage.values['more_better_gakujo_login_credentials_v2'] =
+        '{"version":1,"cleared":true}';
+    expect(await store.loadLoginCredentials(), isNull);
+    storage.values.remove('more_better_gakujo_login_credentials_v2');
+    final legacy = await store.loadLoginCredentials();
+    expect(legacy?.loginId, 'legacy');
+    expect(legacy?.password, 'legacy-secret');
+    expect(storage.values, isNot(contains('more_better_gakujo_login_credentials_v2')));
   });
 
   test('load migrates a complete legacy login pair into one record', () async {
@@ -205,8 +232,8 @@ void main() {
 
     final settings = await store.load();
 
-    expect(settings.loginCredentials?.loginId, 'student');
-    expect(settings.loginCredentials?.password, 'old-secret');
+    expect(settings.savedLoginId, 'student');
+    expect((await store.loadLoginCredentials())?.password, 'old-secret');
     expect(
       storage.values['more_better_gakujo_login_credentials_v2'],
       contains('old-secret'),
@@ -237,8 +264,8 @@ void main() {
 
     storage.writeErrorKey = null;
     final settings = await store.load();
-    expect(settings.loginCredentials?.loginId, 'old-student');
-    expect(settings.loginCredentials?.password, 'old-secret');
+    expect(settings.savedLoginId, 'old-student');
+    expect((await store.loadLoginCredentials())?.password, 'old-secret');
   });
 
   test('failed legacy cleanup cannot create mixed login credentials', () async {
@@ -255,8 +282,8 @@ void main() {
     );
     final settings = await store.load();
 
-    expect(settings.loginCredentials?.loginId, 'new-student');
-    expect(settings.loginCredentials?.password, 'new-secret');
+    expect(settings.savedLoginId, 'new-student');
+    expect((await store.loadLoginCredentials())?.password, 'new-secret');
     expect(
       storage.values['more_better_gakujo_login_password'],
       'old-secret',
@@ -274,7 +301,7 @@ void main() {
     await expectLater(store.clearLoginCredentials(), throwsA(isA<Object>()));
     final settings = await store.load();
 
-    expect(settings.loginCredentials, isNull);
+    expect(settings.savedLoginId, isNull);
     expect(storage.values, isNot(contains('more_better_gakujo_login_id')));
     expect(
       storage.values['more_better_gakujo_login_password'],
@@ -294,7 +321,7 @@ void main() {
     final store = GakujoAppSettingsStore(secureStorage: storage);
     await expectLater(store.clearLoginCredentials(), throwsStateError);
     expect(storage.values, isNot(contains('more_better_gakujo_login_password')));
-    expect((await store.load()).loginCredentials, isNull);
+    expect((await store.load()).savedLoginId, isNull);
   });
 
   test('malformed credential record does not revive a legacy pair', () async {
@@ -308,7 +335,7 @@ void main() {
 
     final settings = await store.load();
 
-    expect(settings.loginCredentials, isNull);
+    expect(settings.savedLoginId, isNull);
     expect(
       settings.calendarImportSettings.termTarget,
       GakujoCalendarTermTarget.third,

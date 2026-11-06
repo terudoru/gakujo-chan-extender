@@ -6,6 +6,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/bundled_secure_storage.dart';
 
 void main() {
+  test('secret keys bypass the bundle cache while normal keys remain cached', () async {
+    final backing = _MemorySecureStorage({
+      'bundle': '{"normal":"value","secret":"first"}',
+    });
+    final storage = BundledSecureStorage(
+      storage: backing,
+      bundleKey: 'bundle',
+      uncachedKeys: {'secret'},
+    );
+
+    expect(await storage.read(key: 'normal'), 'value');
+    expect(await storage.read(key: 'normal'), 'value');
+    expect(backing.readKeys.length, 1);
+    expect(await storage.read(key: 'secret'), 'first');
+    backing.values['bundle'] = '{"normal":"changed","secret":"second"}';
+    expect(await storage.read(key: 'secret'), 'second');
+    expect(backing.readKeys.length, 3);
+    expect(await storage.containsKey(key: 'secret'), isTrue);
+    expect(backing.readKeys.length, 4);
+    expect(await storage.readAll(), {'normal': 'value', 'secret': 'second'});
+
+    await storage.write(key: 'secret', value: 'third');
+    expect(await storage.read(key: 'secret'), 'third');
+    expect(await storage.readAll(), {'normal': 'changed', 'secret': 'third'});
+  });
+
   test('stores multiple logical keys in one physical secure-storage item',
       () async {
     final backing = _MemorySecureStorage();
