@@ -32,7 +32,7 @@ class TwoFactorSecretSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          'QRコード横の長いBase32文字列を保存します。6桁コードではありません。保存済みの秘密鍵は表示しません。\n取得方法: https://github.com/koji-genba/gakujo-chan-extender#2段階認証自動入力',
+          'QRコード横の長いBase32文字列を保存します。6桁コードではありません。保存済みの秘密鍵は表示しません。\n注意: 秘密鍵を保存すると、パスワードと2段階認証の両方がこの端末にそろいます。端末やその保存データが他人の手に渡ると2段階認証の保護は効かないため、共用の端末では保存しないでください。\n取得方法: https://github.com/koji-genba/gakujo-chan-extender#2段階認証自動入力',
         ),
         const SizedBox(height: 12),
         TextField(

@@ -36,10 +36,7 @@ void main() {
     const settings = GakujoAppSettings(
       downloadSaveMode: DownloadSaveMode.flatWithPickerEachTime,
       pageMode: GakujoPageMode.mobile,
-      loginCredentials: GakujoLoginCredentials(
-        loginId: 'student',
-        password: 'secret-password',
-      ),
+      savedLoginId: 'student',
       disabledFeatureFlags: {
         GakujoFeatureFlag.gpaDisplay,
         GakujoFeatureFlag.reportTools,
@@ -62,7 +59,7 @@ void main() {
     expect(loadedSettings?.downloadSaveMode,
         DownloadSaveMode.flatWithPickerEachTime);
     expect(loadedSettings?.pageMode, GakujoPageMode.mobile);
-    expect(loadedSettings?.loginCredentials, isNull);
+    expect(loadedSettings?.savedLoginId, isNull);
     expect(
       loadedSettings?.disabledFeatureFlags,
       {GakujoFeatureFlag.gpaDisplay, GakujoFeatureFlag.reportTools},
@@ -85,6 +82,7 @@ void main() {
       ).readAsString(),
     ) as Map<String, dynamic>;
     expect(json.containsKey('loginCredentials'), isFalse);
+    expect(json.containsKey('savedLoginId'), isFalse);
     expect(json.containsKey('loginId'), isFalse);
     expect(json.containsKey('password'), isFalse);
     expect(json.containsKey('lastPageUrl'), isFalse);
@@ -312,10 +310,7 @@ void main() {
     const prefs = GakujoLocalPrefs(
       appSettings: GakujoAppSettings(
         pageMode: GakujoPageMode.mobile,
-        loginCredentials: GakujoLoginCredentials(
-          loginId: 'student',
-          password: 'secret-password',
-        ),
+        savedLoginId: 'student',
         disabledFeatureFlags: {GakujoFeatureFlag.gpaDisplay},
         setupCompleted: true,
       ),
@@ -325,7 +320,7 @@ void main() {
 
     expect(settings.pageMode, GakujoPageMode.mobile);
     expect(settings.setupCompleted, isTrue);
-    expect(settings.loginCredentials, isNull);
+    expect(settings.savedLoginId, isNull);
     expect(
       settings.disabledFeatureFlags,
       containsAll({
@@ -431,10 +426,7 @@ void main() {
       ),
     );
     const secureSettings = GakujoAppSettings(
-      loginCredentials: GakujoLoginCredentials(
-        loginId: 'student',
-        password: 'password',
-      ),
+      savedLoginId: 'student',
       disabledFeatureFlags: {GakujoFeatureFlag.twoFactorAutofill},
       messageExcludeKeywords: ['古い設定'],
     );
@@ -446,7 +438,7 @@ void main() {
 
     expect(merged.pageMode, secureSettings.pageMode);
     expect(merged.messageExcludeKeywords, ['アンケート']);
-    expect(merged.loginCredentials?.loginId, 'student');
+    expect(merged.savedLoginId, 'student');
     expect(merged.disabledFeatureFlags, secureSettings.disabledFeatureFlags);
   });
 

@@ -46,7 +46,7 @@ class GakujoLocalPrefsStore {
   Future<void> saveAppSettings(GakujoAppSettings settings) {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
-        appSettings: settings.copyWith(loginCredentials: null),
+        appSettings: settings.copyWith(savedLoginId: null),
         lastGpa: current?.lastGpa,
         externalServiceNoticeDismissed:
             current?.externalServiceNoticeDismissed ?? false,
@@ -279,7 +279,7 @@ GakujoAppSettings macosStartupSettingsFromLocalPrefs(
 ) {
   final settings = prefs?.appSettings ?? const GakujoAppSettings();
   return settings.copyWith(
-    loginCredentials: null,
+    savedLoginId: null,
     disabledFeatureFlags: {
       ...settings.disabledFeatureFlags,
       GakujoFeatureFlag.loginAutofill,

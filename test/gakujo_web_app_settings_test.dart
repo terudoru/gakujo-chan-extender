@@ -194,10 +194,7 @@ void main() {
       },
     );
     const loaded = GakujoAppSettings(
-      loginCredentials: GakujoLoginCredentials(
-        loginId: 'student',
-        password: 'password',
-      ),
+      savedLoginId: 'student',
       disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
       calendarImportSettings: GakujoCalendarImportSettings(
         method: GakujoCalendarImportMethod.icsFile,
@@ -222,7 +219,7 @@ void main() {
       changedFeatureFlags: {GakujoFeatureFlag.uploadCompression},
     );
 
-    expect(settings.loginCredentials, same(loaded.loginCredentials));
+    expect(settings.savedLoginId, same(loaded.savedLoginId));
     expect(
         settings.calendarImportSettings, same(loaded.calendarImportSettings));
     expect(
@@ -366,7 +363,7 @@ void main() {
       );
 
       expect(fallback, same(startup));
-      expect(fallback.loginCredentials, isNull);
+      expect(fallback.savedLoginId, isNull);
       expect(
           fallback.isFeatureEnabled(GakujoFeatureFlag.loginAutofill), isFalse);
       expect(fallback.isFeatureEnabled(GakujoFeatureFlag.twoFactorAutofill),
@@ -407,7 +404,7 @@ void main() {
 
       expect(fallback.pageMode, GakujoPageMode.desktop);
       expect(fallback.setupCompleted, isFalse);
-      expect(fallback.loginCredentials, isNull);
+      expect(fallback.savedLoginId, isNull);
       expect(
           fallback.disabledFeatureFlags,
           error is TimeoutException
@@ -693,8 +690,8 @@ void main() {
     );
     final settings = await store.load();
 
-    expect(settings.loginCredentials?.loginId, 'student');
-    expect(settings.loginCredentials?.password, 'password');
+    expect(settings.savedLoginId, 'student');
+    expect((await store.loadLoginCredentials())?.password, 'password');
     expect(settings.disabledFeatureFlags, {
       GakujoFeatureFlag.twoFactorAutofill,
       GakujoFeatureFlag.gpaDisplay,

@@ -7,10 +7,12 @@ class BundledSecureStorage extends FlutterSecureStorage {
   BundledSecureStorage({
     required this._storage,
     required this._bundleKey,
-  });
+    Set<String> uncachedKeys = const {},
+  }) : _uncachedKeys = Set<String>.unmodifiable(uncachedKeys);
 
   final FlutterSecureStorage _storage;
   final String _bundleKey;
+  final Set<String> _uncachedKeys;
   Future<Map<String, String>>? _pendingRead;
   Map<String, String>? _cachedValues;
   Future<void> _pendingWrite = Future<void>.value();
@@ -35,39 +37,28 @@ class BundledSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    final values = await _readBundle(
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
+    final values = await (_uncachedKeys.contains(key)
+        ? _readFreshBundle(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          )
+        : _readBundle(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          ));
     return values[key];
   }
 
   @override
   Future<Map<String, String>> readAll({
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) {
-    return _readBundle(
-      iOptions: iOptions,
-      aOptions: aOptions,
-      lOptions: lOptions,
-      webOptions: webOptions,
-      mOptions: mOptions,
-      wOptions: wOptions,
-    );
-  }
-
-  @override
-  Future<bool> containsKey({
-    required String key,
     AppleOptions? iOptions,
     AndroidOptions? aOptions,
     LinuxOptions? lOptions,
@@ -83,6 +74,49 @@ class BundledSecureStorage extends FlutterSecureStorage {
       mOptions: mOptions,
       wOptions: wOptions,
     );
+    if (_uncachedKeys.isNotEmpty) {
+      final fresh = await _readFreshBundle(
+        iOptions: iOptions,
+        aOptions: aOptions,
+        lOptions: lOptions,
+        webOptions: webOptions,
+        mOptions: mOptions,
+        wOptions: wOptions,
+      );
+      for (final key in _uncachedKeys) {
+        if (fresh.containsKey(key)) values[key] = fresh[key]!;
+      }
+    }
+    return values;
+  }
+
+  @override
+  Future<bool> containsKey({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final values = await (_uncachedKeys.contains(key)
+        ? _readFreshBundle(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          )
+        : _readBundle(
+            iOptions: iOptions,
+            aOptions: aOptions,
+            lOptions: lOptions,
+            webOptions: webOptions,
+            mOptions: mOptions,
+            wOptions: wOptions,
+          ));
     return values.containsKey(key);
   }
 
@@ -187,7 +221,7 @@ class BundledSecureStorage extends FlutterSecureStorage {
       webOptions: webOptions,
       mOptions: mOptions,
       wOptions: wOptions,
-    );
+    ).then(_withoutUncachedKeys);
     _pendingRead = read;
     return read.then((values) {
       _cachedValues = Map<String, String>.from(values);
@@ -195,6 +229,30 @@ class BundledSecureStorage extends FlutterSecureStorage {
     }).whenComplete(() {
       _pendingRead = null;
     });
+  }
+
+  Map<String, String> _withoutUncachedKeys(Map<String, String> values) {
+    return Map<String, String>.from(values)
+      ..removeWhere((key, _) => _uncachedKeys.contains(key));
+  }
+
+  Future<Map<String, String>> _readFreshBundle({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    await _pendingWrite;
+    return _readBundleUncached(
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
   }
 
   Future<Map<String, String>> _readBundleUncached({
@@ -305,7 +363,7 @@ class BundledSecureStorage extends FlutterSecureStorage {
         Error.throwWithStackTrace(writeError, writeStackTrace);
       }
     }
-    _cachedValues = snapshot;
+    _cachedValues = _withoutUncachedKeys(snapshot);
     _pendingRead = null;
   }
 

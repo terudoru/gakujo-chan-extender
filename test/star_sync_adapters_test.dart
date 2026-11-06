@@ -11,14 +11,12 @@ void main() {
 
   test('portable settings ignore credentials and non-portable fields', () {
     final current = GakujoAppSettings(
-      loginCredentials: const GakujoLoginCredentials(
-        loginId: 'id',
-        password: 'secret',
-      ),
+      savedLoginId: 'id',
       disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
     );
     final exported = exportStarSyncPortableSettings(current);
     expect(exported.keys, isNot(contains('loginCredentials')));
+    expect(exported.keys, isNot(contains('savedLoginId')));
     expect(
       exported['disabledFeatureFlags'],
       isNot(contains(GakujoFeatureFlag.messageStars.storageValue)),
@@ -34,7 +32,7 @@ void main() {
     expect(imported.pageMode, isNull);
     expect(imported.disabledFeatureFlags, isNull);
     expect(imported.messageExcludeKeywords, ['exam']);
-    expect(current.loginCredentials!.password, 'secret');
+    expect(current.savedLoginId, 'id');
   });
 
   test('settings clear only unchanged portable values to defaults', () {
