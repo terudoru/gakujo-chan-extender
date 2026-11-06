@@ -146,6 +146,48 @@ void main() {
     expect((jsonDecode(await file.readAsString()) as Map).containsKey('lastPageUrl'), isFalse);
   });
 
+  test('external service notice flag defaults to false and is omitted',
+      () async {
+    await store.saveLastGpa(3.0);
+    expect((await store.load())!.externalServiceNoticeDismissed, isFalse);
+    final raw = jsonDecode(
+      File('${directory.path}/local_prefs.json').readAsStringSync(),
+    ) as Map<String, dynamic>;
+    expect(raw.containsKey('externalServiceNoticeDismissed'), isFalse);
+  });
+
+  test('external service notice flag survives other writes', () async {
+    await store.saveAppSettings(const GakujoAppSettings(setupCompleted: true));
+    await store.saveLastGpa(2.5);
+    await store.saveExternalServiceNoticeDismissed(true);
+    var loaded = (await store.load())!;
+    expect(loaded.externalServiceNoticeDismissed, isTrue);
+    expect(loaded.lastGpa, 2.5);
+    expect(loaded.appSettings!.setupCompleted, isTrue);
+
+    await store.saveAppSettings(const GakujoAppSettings());
+    await store.saveLastGpa(3.5);
+    loaded = (await store.load())!;
+    expect(loaded.externalServiceNoticeDismissed, isTrue);
+    expect(loaded.lastGpa, 3.5);
+
+    await store.saveExternalServiceNoticeDismissed(false);
+    loaded = (await store.load())!;
+    expect(loaded.externalServiceNoticeDismissed, isFalse);
+    expect(loaded.lastGpa, 3.5);
+  });
+
+  test('external service notice flag survives partial settings keys', () async {
+    File('${directory.path}/local_prefs.json').writeAsStringSync(
+      jsonEncode({'version': 1, 'pageMode': 'mobile'}),
+    );
+    await store.saveExternalServiceNoticeDismissed(true);
+    await store.saveLastGpa(1.0);
+    final loaded = (await store.load())!;
+    expect(loaded.externalServiceNoticeDismissed, isTrue);
+    expect(loaded.appSettingsKeys, {'pageMode'});
+  });
+
   test('saveLastGpa preserves settings', () async {
     await store.saveAppSettings(const GakujoAppSettings(
       pageMode: GakujoPageMode.mobile,

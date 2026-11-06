@@ -29,6 +29,7 @@ import 'base32.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
+import 'external_service_notice.dart';
 import 'gakujo_activity_store.dart';
 import 'gakujo_activity_classifier.dart';
 import 'gakujo_academic_calendar.dart';
@@ -1427,6 +1428,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
   double? _reportedGpa;
+  bool _externalServiceNoticeDismissed = false;
   String? _currentCourseName;
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
@@ -1904,6 +1906,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   height: _toolbarButtonExtent,
                 ),
               ),
+            IconButton(
+              tooltip: 'AKIKO（空き講義室検索・外部サービス）',
+              onPressed: () => unawaited(_openAkiko()),
+              icon: const Icon(Icons.meeting_room_outlined),
+              iconSize: _toolbarIconSize,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: _toolbarButtonExtent,
+                height: _toolbarButtonExtent,
+              ),
+            ),
             IconButton(
               tooltip: '設定',
               onPressed: _isSettingsDialogOpen
@@ -3000,6 +3013,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   icon: Icons.event_available_outlined,
                   child: AppIntegrationSection(
                     onScheduleIntegration: _showScheduleIntegrationDialog,
+                  ),
+                ),
+                SettingsExpansionSection(
+                  title: '外部サービス',
+                  icon: Icons.open_in_new,
+                  child: SwitchListTile(
+                    title: const Text('外部サービスを開く前に確認する'),
+                    subtitle: const Text('AKIKO（空き講義室検索）'),
+                    value: !_externalServiceNoticeDismissed,
+                    onChanged: (confirm) async {
+                      await _setExternalServiceNoticeDismissed(!confirm);
+                      if (dialogContext.mounted) setDialogState(() {});
+                    },
                   ),
                 ),
                 if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars) &&
@@ -6251,14 +6277,54 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _openAkiko() async {
+    if (!_externalServiceNoticeDismissed) {
+      final result = await showExternalServiceNoticeDialog(context);
+      if (result == null || !mounted) return;
+      if (result.dontShowAgain) {
+        await _setExternalServiceNoticeDismissed(true);
+      }
+    }
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(akikoServiceUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object {
+      launched = false;
+    }
+    if (!launched) _showSnackBar('AKIKOを開けませんでした');
+  }
+
+  Future<void> _setExternalServiceNoticeDismissed(bool dismissed) async {
+    if (mounted) {
+      setState(() => _externalServiceNoticeDismissed = dismissed);
+    }
+    try {
+      await _localPrefsStore.saveExternalServiceNoticeDismissed(dismissed);
+    } on Object catch (error, stackTrace) {
+      // The choice still applies for this run; opening must not be blocked.
+      developer.log(
+        'Failed to save external service notice preference',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   Future<void> _restoreSavedGpa() async {
     try {
-      final lastGpa = (await _localPrefsStore.load())?.lastGpa;
-      if (mounted && _reportedGpa == null && lastGpa != null) {
-        setState(() {
-          _reportedGpa = lastGpa;
-        });
-      }
+      final prefs = await _localPrefsStore.load();
+      final lastGpa = prefs?.lastGpa;
+      if (!mounted) return;
+      setState(() {
+        if (_reportedGpa == null && lastGpa != null) _reportedGpa = lastGpa;
+        if (prefs?.externalServiceNoticeDismissed ?? false) {
+          _externalServiceNoticeDismissed = true;
+        }
+      });
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to restore saved GPA',
