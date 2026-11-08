@@ -336,6 +336,7 @@ class GakujoNotificationService {
 
   /// Reads the OS state without displaying a permission prompt.
   Future<bool?> checkPermission() async {
+    if (defaultTargetPlatform == TargetPlatform.linux) return null;
     bool? granted;
     try {
       granted = await _channel.invokeMethod<bool>('checkPermission');
@@ -377,6 +378,7 @@ class GakujoNotificationService {
   /// until [forgetRefusal] or [checkPermission] observes a grant: reminders are
   /// rebooked by background refreshes, which should not keep raising prompts.
   Future<bool> requestPermission() async {
+    if (defaultTargetPlatform == TargetPlatform.linux) return false;
     if (_permissionRefused) {
       return false;
     }

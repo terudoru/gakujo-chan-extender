@@ -393,6 +393,9 @@ class FeatureFlagsSection extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
             subtitle: switch (flag) {
+              GakujoFeatureFlag.deadlineNotifications
+                  when defaultTargetPlatform == TargetPlatform.linux =>
+                const Text('Linux では OS の通知に対応していません。'),
               GakujoFeatureFlag.messageStars =>
                 const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。'),
               GakujoFeatureFlag.uploadCompression =>
@@ -400,7 +403,10 @@ class FeatureFlagsSection extends StatelessWidget {
               _ => null,
             },
             value: settings.isFeatureEnabled(flag),
-            onChanged: (value) => onChanged(flag, value ?? true),
+            onChanged: defaultTargetPlatform == TargetPlatform.linux &&
+                    flag == GakujoFeatureFlag.deadlineNotifications
+                ? null
+                : (value) => onChanged(flag, value ?? true),
           ),
       ],
     );
@@ -468,6 +474,11 @@ class NotificationTopicsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      return const Text(
+        'Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。',
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

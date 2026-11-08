@@ -810,7 +810,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
     try {
       final cookies = await WebViewCookieManager().getCookies(
-        domain: Uri(scheme: uri.scheme, host: uri.host),
+        domain: cookieQueryUri(uri),
       );
       final requestPath = uri.path.isEmpty ? '/' : uri.path;
       final pairs = <String>[];
@@ -1032,6 +1032,16 @@ class _JavaScriptTextInputDialogState
     );
   }
 }
+
+/// The URL to ask the WebView's cookie store with. WebKitGTK and Android filter
+/// by path, so asking with the origin alone misses cookies scoped to a sub-path.
+@visibleForTesting
+Uri cookieQueryUri(Uri url) => Uri(
+  scheme: url.scheme,
+  host: url.host,
+  port: url.hasPort ? url.port : null,
+  path: url.path.isEmpty ? '/' : url.path,
+);
 
 @visibleForTesting
 bool cookiePathMatches(String requestPath, String cookiePath) {

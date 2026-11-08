@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -110,6 +111,66 @@ void main() {
     await tester.tap(find.text('このまま続ける'));
     await tester.pumpAndSettle();
     expect(result, isFalse);
+  });
+
+  testWidgets('Linux explains unavailable notifications; Windows keeps controls',
+      (tester) async {
+    final permission = ValueNotifier<bool?>(false);
+    final keywords = TextEditingController();
+    try {
+      Future<void> show(TargetPlatform platform) async {
+        debugDefaultTargetPlatformOverride = platform;
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Column(children: [
+                FeatureFlagsSection(
+                  settings: const GakujoAppSettings(),
+                  onChanged: (_, _) {},
+                ),
+                NotificationTopicsSection(
+                  topics: const {},
+                  messages: const GakujoMessageNotificationSettings(),
+                  notificationsEnabled: true,
+                  notificationPermission: permission,
+                  onOpenNotificationSettings: () {},
+                  onChanged: (_, _) {},
+                  onMessagesChanged: (_) async => true,
+                  keywordController: keywords,
+                  canAddKeyword: false,
+                  onKeywordInputChanged: (_) {},
+                  preferences: const GakujoNotificationPreferences(),
+                  onPreferencesChanged: (_) async {},
+                  knownCourses: const [],
+                ),
+              ]),
+            ),
+          ),
+        ));
+      }
+
+      await show(TargetPlatform.linux);
+      expect(find.text('Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。'), findsOneWidget);
+      expect(find.text('端末の設定で通知が許可されていません'), findsNothing);
+      expect(find.text('端末の通知設定を開く'), findsNothing);
+      expect(find.text('締切前のリマインド'), findsNothing);
+      expect(tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, '提出期限のOS通知'),
+      ).onChanged, isNull);
+
+      await show(TargetPlatform.windows);
+      expect(find.text('チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'), findsOneWidget);
+      expect(find.text('端末の設定で通知が許可されていません'), findsOneWidget);
+      expect(find.text('締切前のリマインド'), findsOneWidget);
+      expect(tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, '提出期限のOS通知'),
+      ).onChanged, isNotNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      await tester.pumpWidget(const SizedBox.shrink());
+      permission.dispose();
+      keywords.dispose();
+    }
   });
 
   testWidgets('notification denial warning follows permission and app settings',

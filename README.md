@@ -40,6 +40,7 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret`）
 - パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
 - Linux では QR コードの読み取りは使えない
+- Linux では OS の通知に対応していない。提出期限はアプリ内で確認する
 
 ### iOS/iPadOS
 
