@@ -1130,6 +1130,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
     )) {
+      // Saving is still on, but the Google sign-in behind it has gone.
+      if (_driveDownloadPreference.enabled && !_driveDownloadsSuspended &&
+          _appSettingsLoaded && _starSyncGoogleAuth.currentEmail == null && mounted) {
+        _showSnackBar('Google のログインが切れたため、Google ドライブに保存できませんでした。設定からもう一度ログインしてください');
+      }
       return;
     }
     if (!_driveDownloadsEnabled) {
