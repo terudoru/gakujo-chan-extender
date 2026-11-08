@@ -49,6 +49,7 @@ enum StarSyncGoogleAuthErrorKind {
   revoked,
   permissionDenied,
   browserUnavailable,
+  storageUnavailable,
   cancelled,
   network,
   failed,

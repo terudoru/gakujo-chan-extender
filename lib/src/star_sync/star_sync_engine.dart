@@ -1800,7 +1800,9 @@ class StarSyncEngine {
         return const StarSyncResult();
       }
       state.status = StarSyncStatus.error;
-      state.lastError = 'Google に接続できませんでした';
+      state.lastError = error.kind == StarSyncGoogleAuthErrorKind.storageUnavailable
+          ? 'この端末の安全な保存領域を使えないため、Google に接続できません'
+          : 'Google に接続できませんでした';
       await _saveState();
       rethrow;
     } on Object catch (error) {

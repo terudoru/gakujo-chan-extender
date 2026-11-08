@@ -37,6 +37,9 @@ String _errorText(Object error) {
       StarSyncGoogleAuthErrorKind.revoked => 'Google のログインが切れました。もう一度ログインしてください',
       StarSyncGoogleAuthErrorKind.permissionDenied => 'Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください',
       StarSyncGoogleAuthErrorKind.browserUnavailable => 'ブラウザを開けませんでした。既定のブラウザの設定を確認してください',
+      StarSyncGoogleAuthErrorKind.storageUnavailable => defaultTargetPlatform == TargetPlatform.linux
+          ? 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えないため、Google にログインできません。保管サービスを有効にしてから、もう一度お試しください'
+          : 'この端末の安全な保存領域を使えないため、Google にログインできません',
       StarSyncGoogleAuthErrorKind.network => '接続できませんでした',
       StarSyncGoogleAuthErrorKind.notSignedIn => 'Google にログインしてください',
       StarSyncGoogleAuthErrorKind.failed || StarSyncGoogleAuthErrorKind.cancelled => 'Google へのログインに失敗しました',

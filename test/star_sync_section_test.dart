@@ -831,6 +831,28 @@ void main() {
     expect(find.text('Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください'), findsOneWidget);
   });
 
+  for (final platform in [TargetPlatform.linux, TargetPlatform.windows]) {
+    testWidgets('Google storage error is shown on $platform', (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        final status = ValueNotifier(const StarSyncStatusSnapshot(
+          enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+        addTearDown(status.dispose);
+        await tester.pumpWidget(section(status, google: true,
+          onGoogleReSignIn: () async => throw const StarSyncGoogleAuthException(
+            StarSyncGoogleAuthErrorKind.storageUnavailable),
+        ));
+        await tester.tap(find.text('Google に再ログイン'));
+        await tester.pump();
+        expect(find.text(platform == TargetPlatform.linux
+          ? 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えないため、Google にログインできません。保管サービスを有効にしてから、もう一度お試しください'
+          : 'この端末の安全な保存領域を使えないため、Google にログインできません'), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
+
   testWidgets('lost Google sign in offers re-login', (tester) async {
     final status = ValueNotifier(
       const StarSyncStatusSnapshot(

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
@@ -10,6 +11,9 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_desktop_
 
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
+  bool failRead = false;
+  bool failWrite = false;
+  bool failDelete = false;
 
   @override
   Future<String?> read({
@@ -20,7 +24,11 @@ class _Storage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async => values[key];
+  }) async {
+    if (failRead) throw PlatformException(code: 'KeyringLocked');
+    return values[key];
+  }
+
   @override
   Future<void> write({
     required String key,
@@ -32,6 +40,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (failWrite) throw PlatformException(code: 'KeyringLocked');
     if (value == null) {
       values.remove(key);
     } else {
@@ -49,6 +58,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (failDelete) throw PlatformException(code: 'KeyringLocked');
     values.remove(key);
   }
 }
@@ -300,6 +310,40 @@ void main() {
     expect(await makeAuth().signIn(), 'user@example.com');
   });
 
+  test(
+    'sign in reports unavailable storage without setting credentials',
+    () async {
+      storage.failWrite = true;
+      final auth = makeAuth();
+      await expectLater(
+        auth.signIn(),
+        throwsA(
+          isA<StarSyncGoogleAuthException>().having(
+            (e) => e.kind,
+            'kind',
+            StarSyncGoogleAuthErrorKind.storageUnavailable,
+          ),
+        ),
+      );
+      expect(auth.currentEmail, isNull);
+      expect(storage.values, isEmpty);
+    },
+  );
+
+  test('restore reports unavailable storage', () async {
+    storage.failRead = true;
+    await expectLater(
+      makeAuth().restore(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.storageUnavailable,
+        ),
+      ),
+    );
+  });
+
   test('refreshes 60 seconds before expiry and on demand', () async {
     final auth = makeAuth();
     await auth.signIn();
@@ -324,6 +368,25 @@ void main() {
       ),
     );
     expect(storage.values, isEmpty);
+  });
+
+  test('invalid grant clears memory even when deletion fails', () async {
+    final auth = makeAuth();
+    await auth.signIn();
+    revoked = true;
+    storage.failDelete = true;
+    await expectLater(
+      auth.accessToken(forceRefresh: true),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.revoked,
+        ),
+      ),
+    );
+    expect(auth.currentEmail, isNull);
+    expect(storage.values, contains(starSyncGoogleTokenKey));
   });
 
   test('incremental scopes persist and reject another account', () async {
@@ -369,6 +432,30 @@ void main() {
     await auth.signOut();
     expect(storage.values, isEmpty);
   });
+
+  for (final failRevocation in [false, true]) {
+    test(
+      'sign out reports failed deletion with revocation failure $failRevocation',
+      () async {
+        final auth = makeAuth();
+        await auth.signIn();
+        revokeFails = failRevocation;
+        storage.failDelete = true;
+        await expectLater(
+          auth.signOut(),
+          throwsA(
+            isA<StarSyncGoogleAuthException>().having(
+              (e) => e.kind,
+              'kind',
+              StarSyncGoogleAuthErrorKind.storageUnavailable,
+            ),
+          ),
+        );
+        expect(auth.currentEmail, isNull);
+        expect(storage.values, contains(starSyncGoogleTokenKey));
+      },
+    );
+  }
 
   test('failed revocation still deletes local credentials', () async {
     final auth = makeAuth();

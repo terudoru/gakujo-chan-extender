@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -82,8 +83,13 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         if (decoded['error'] == 'invalid_grant' && clearOnInvalidGrant) {
-          await storage.delete(key: starSyncGoogleTokenKey);
-          _clear();
+          try {
+            await storage.delete(key: starSyncGoogleTokenKey);
+          } catch (_) {
+            // The grant is revoked even if local deletion fails.
+          } finally {
+            _clear();
+          }
           throw const StarSyncGoogleAuthException(
             StarSyncGoogleAuthErrorKind.revoked,
           );
@@ -132,7 +138,14 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   @override
   Future<String?> restore() async {
-    final stored = await storage.read(key: starSyncGoogleTokenKey);
+    String? stored;
+    try {
+      stored = await storage.read(key: starSyncGoogleTokenKey);
+    } on PlatformException {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.storageUnavailable,
+      );
+    }
     if (stored == null) {
       _clear();
       return null;
@@ -339,14 +352,20 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           expires <= 0) {
         throw const FormatException();
       }
-      await storage.write(
-        key: starSyncGoogleTokenKey,
-        value: jsonEncode({
-          'refreshToken': refresh,
-          'email': payload['email'],
-          'scopes': granted.toList(),
-        }),
-      );
+      try {
+        await storage.write(
+          key: starSyncGoogleTokenKey,
+          value: jsonEncode({
+            'refreshToken': refresh,
+            'email': payload['email'],
+            'scopes': granted.toList(),
+          }),
+        );
+      } on PlatformException {
+        throw const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.storageUnavailable,
+        );
+      }
       _setAccess(data);
       _refreshToken = refresh;
       _email = payload['email'] as String;
@@ -401,6 +420,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   @override
   Future<void> signOut() async {
     var revocationFailed = false;
+    var deleteFailed = false;
     try {
       var refresh = _refreshToken;
       if (refresh == null) {
@@ -419,8 +439,18 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     } catch (_) {
       revocationFailed = true;
     } finally {
-      _clear();
-      await storage.delete(key: starSyncGoogleTokenKey);
+      try {
+        await storage.delete(key: starSyncGoogleTokenKey);
+      } catch (_) {
+        deleteFailed = true;
+      } finally {
+        _clear();
+      }
+    }
+    if (deleteFailed) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.storageUnavailable,
+      );
     }
     if (revocationFailed) throw const StarSyncGoogleRevocationException();
   }
