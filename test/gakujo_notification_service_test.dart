@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
@@ -15,6 +16,24 @@ void main() {
 
   tearDown(() {
     messenger.setMockMethodCallHandler(channel, null);
+  });
+
+  test('Linux does not call the notification permission channel', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return false;
+    });
+    try {
+      final service = GakujoNotificationService();
+      expect(await service.checkPermission(), isNull);
+      expect(await service.requestPermission(), isFalse);
+      expect(service.permissionGranted.value, isNull);
+      expect(calls, isEmpty);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   test('requestPermission returns native permission result', () async {

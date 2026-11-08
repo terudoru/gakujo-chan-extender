@@ -173,6 +173,17 @@ void main() {
     });
   });
 
+  test('cookie store queries keep the path but drop the query', () {
+    expect(
+      cookieQueryUri(Uri.parse('https://example.test/campusweb/file.do?id=1#x')),
+      Uri.parse('https://example.test/campusweb/file.do'),
+    );
+    expect(
+      cookieQueryUri(Uri.parse('http://127.0.0.1:8080')),
+      Uri.parse('http://127.0.0.1:8080/'),
+    );
+  });
+
   test('cookiePathMatches follows RFC6265 path boundaries', () {
     expect(cookiePathMatches('/foo', '/foo'), isTrue);
     expect(cookiePathMatches('/foo/bar', '/foo'), isTrue);
