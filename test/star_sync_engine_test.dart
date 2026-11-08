@@ -153,6 +153,7 @@ class _Transport implements StarSyncTransport {
   List<int>? overwriteKeyring;
   bool revoked = false;
   bool authFailure = false;
+  StarSyncTransportErrorKind? driveFailure;
   Completer<void>? devicePut;
   void Function(String, int)? onGet;
 
@@ -165,6 +166,13 @@ class _Transport implements StarSyncTransport {
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
     lists++;
+    if (driveFailure != null) {
+      throw StarSyncTransportException(
+        driveFailure!,
+        'Drive rejected request',
+        statusCode: 403,
+      );
+    }
     if (authFailure) {
       throw const StarSyncTransportException(
         StarSyncTransportErrorKind.auth,
@@ -3410,6 +3418,28 @@ void main() {
       expect(engine.status.value.cooldownUntil, isNull);
     },
   );
+
+  test('Drive storage full sets an error and cooldown', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithPairing(
+      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    );
+    remote.driveFailure = StarSyncTransportErrorKind.storageFull;
+    await expectLater(
+      engine.syncNow(),
+      throwsA(isA<StarSyncTransportException>()),
+    );
+    expect(engine.status.value.status, StarSyncStatus.error);
+    expect(engine.status.value.cooldownUntil, isNotNull);
+    engine.dispose();
+  });
 
   test('revoked Google credentials request sign in without cooldown', () async {
     final remote = _Transport();

@@ -6,9 +6,36 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('native folder retains upload bytes', () async {
+    const channel = MethodChannel('net.yoshida.morebettergakujo/downloads');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'saveDownloadedFileToConfiguredFolder');
+      expect(call.arguments['bytes'], bytes);
+      return {'fileName': 'file.pdf', 'courseName': 'Course', 'location': '/provider/file.pdf'};
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final service = FileSystemGakujoDownloadService(
+      usesNativeDownloadRoot: true,
+      authenticatedBytesLoader: (request, {userAgent}) async => AuthenticatedDownloadedFile(
+        bytes: bytes, finalUrl: request.url, mimeType: 'application/pdf'),
+    );
+    final result = await service.download(
+      const GakujoDownloadRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+        method: 'GET', fileName: 'file.pdf', courseName: 'Course', formFields: {},
+      ),
+      saveMode: DownloadSaveMode.flatToConfiguredFolder,
+    );
+    expect(result.uploadBytes, bytes);
+  });
+
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
   });
@@ -230,6 +257,7 @@ void main() {
       );
 
       expect(result.fileName, '画面表示の講義資料.pdf');
+      expect(result.uploadBytes, isNull);
       expect(await File(result.location!).readAsBytes(), [1, 2, 3]);
     } finally {
       if (await directory.exists()) {

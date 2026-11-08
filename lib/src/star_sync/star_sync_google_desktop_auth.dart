@@ -53,6 +53,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   String? _accessToken;
   DateTime? _expiresAt;
   Set<String> _scopes = {};
+  Completer<String>? _pendingAuthorization;
 
   static Future<bool> _launch(Uri uri) =>
       launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -167,6 +168,18 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
+  void cancelPendingSignIn() {
+    final pending = _pendingAuthorization;
+    if (pending != null && !pending.isCompleted) {
+      pending.completeError(
+        const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      );
+    }
+  }
+
+  @override
   Future<String> signIn() => _authorize(starSyncGoogleScopes);
 
   @override
@@ -196,42 +209,51 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         .encode(sha256.convert(ascii.encode(verifier)).bytes)
         .replaceAll('=', '');
     HttpServer? server;
+    Completer<String>? result;
     try {
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final redirect = 'http://127.0.0.1:${server.port}';
-      final result = Completer<String>();
+      final pending = Completer<String>();
+      result = pending;
+      _pendingAuthorization = pending;
       server.listen((request) async {
-        final params = request.uri.queryParameters;
-        final matching = request.uri.path == '/' && params['state'] == state;
-        final valid = matching && params['code']?.isNotEmpty == true;
-        request.response.headers.contentType = ContentType(
-          'text',
-          'html',
-          charset: 'utf-8',
-        );
-        request.response.statusCode = request.uri.path != '/'
-            ? 404
-            : valid
-            ? 200
-            : 400;
-        request.response.write(
-          valid
-              ? '<!doctype html><meta charset="utf-8">接続しました。このタブを閉じてアプリに戻ってください。'
-              : '<!doctype html><meta charset="utf-8">接続できませんでした。アプリに戻ってください。',
-        );
-        await request.response.close();
-        if (matching && !result.isCompleted) {
-          if (valid) {
-            result.complete(params['code']!);
-          } else {
-            result.completeError(
-              StarSyncGoogleAuthException(
-                params['error'] == 'access_denied' && params['state'] == state
-                    ? StarSyncGoogleAuthErrorKind.cancelled
-                    : StarSyncGoogleAuthErrorKind.failed,
-              ),
-            );
+        try {
+          final params = request.uri.queryParameters;
+          final matching = request.uri.path == '/' && params['state'] == state;
+          final valid = matching && params['code']?.isNotEmpty == true;
+          request.response.headers.contentType = ContentType(
+            'text',
+            'html',
+            charset: 'utf-8',
+          );
+          request.response.statusCode = request.uri.path != '/'
+              ? 404
+              : valid
+              ? 200
+              : 400;
+          request.response.write(
+            valid
+                ? '<!doctype html><meta charset="utf-8">接続しました。このタブを閉じてアプリに戻ってください。'
+                : '<!doctype html><meta charset="utf-8">接続できませんでした。アプリに戻ってください。',
+          );
+          await request.response.close();
+          if (matching && !pending.isCompleted) {
+            if (valid) {
+              pending.complete(params['code']!);
+            } else {
+              pending.completeError(
+                StarSyncGoogleAuthException(
+                  params['error'] == 'access_denied' && params['state'] == state
+                      ? StarSyncGoogleAuthErrorKind.cancelled
+                      : StarSyncGoogleAuthErrorKind.failed,
+                ),
+              );
+            }
           }
+        } on HttpException {
+          // The browser may close the connection before receiving the page.
+        } on SocketException {
+          // The browser may close the connection before receiving the page.
         }
       });
       final uri = authorizationEndpoint.replace(
@@ -252,13 +274,13 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         _launcher(uri).then((opened) {
           if (!opened) {
             throw const StarSyncGoogleAuthException(
-              StarSyncGoogleAuthErrorKind.failed,
+              StarSyncGoogleAuthErrorKind.browserUnavailable,
               'Could not open browser',
             );
           }
           return opened;
         }),
-        result.future,
+        pending.future,
       ], eagerError: true).timeout(const Duration(minutes: 5));
       final code = results[1] as String;
       final data = await _post(tokenEndpoint, {
@@ -303,8 +325,13 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
                 .where((s) => s.isNotEmpty)
                 .map((s) => _googleScopeAliases[s] ?? s)
                 .toSet()
-          : scopes.toSet();
-      if (!granted.containsAll(scopes)) throw const FormatException();
+          : scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
+      final requested = scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
+      if (!granted.containsAll(requested)) {
+        throw const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.permissionDenied,
+        );
+      }
       final token = data['access_token'];
       final expires = data['expires_in'];
       if (token is! String ||
@@ -341,6 +368,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         'Invalid identity response',
       );
     } finally {
+      if (identical(_pendingAuthorization, result)) {
+        _pendingAuthorization = null;
+      }
       await server?.close(force: true);
     }
   }

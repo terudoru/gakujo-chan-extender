@@ -3088,6 +3088,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
+                      onGoogleCancelSignIn: _starSyncGoogleAuth.cancelPendingSignIn,
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
                         try {
@@ -5864,7 +5865,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         }
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
-          throw StateError('Google Drive permission was not granted');
+          throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.permissionDenied);
         }
         if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
         final email = _starSyncGoogleAuth.currentEmail;

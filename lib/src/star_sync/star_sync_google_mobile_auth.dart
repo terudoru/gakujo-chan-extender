@@ -55,6 +55,9 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   });
 
   @override
+  void cancelPendingSignIn() {}
+
+  @override
   Future<String> signIn() => _guard(() async {
     await _initialize();
     _account = await GoogleSignIn.instance.authenticate(

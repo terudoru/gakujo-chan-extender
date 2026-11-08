@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -66,6 +67,7 @@ void main() {
   String? challenge;
   var incremental = false;
   var changedAccount = false;
+  var omitScope = false;
 
   setUp(() async {
     storage = _Storage();
@@ -79,6 +81,7 @@ void main() {
     challenge = null;
     incremental = false;
     changedAccount = false;
+    omitScope = false;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     endpoint = Uri.parse('http://127.0.0.1:${server.port}');
     server.listen((request) async {
@@ -131,9 +134,10 @@ void main() {
             // Google returns `email` as its full URL.
             'scope': [
               for (final scope in starSyncGoogleScopes)
-                scope == 'email'
-                    ? 'https://www.googleapis.com/auth/userinfo.email'
-                    : scope,
+                if (!omitScope || scope != 'email')
+                  scope == 'email'
+                      ? 'https://www.googleapis.com/auth/userinfo.email'
+                      : scope,
               if (incremental) googleDriveFileScope,
             ].join(' '),
             'id_token': 'header.$payload.signature',
@@ -197,6 +201,81 @@ void main() {
       return true;
     },
   );
+
+  test('unticked scope reports permission denied', () async {
+    omitScope = true;
+    await expectLater(
+      makeAuth().signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.permissionDenied,
+        ),
+      ),
+    );
+  });
+
+  test('unavailable browser reports its own error', () async {
+    final auth = StarSyncGoogleDesktopAuth(
+      config: const StarSyncGoogleAuthConfig(
+        desktopClientId: 'client',
+        desktopClientSecret: 'secret',
+      ),
+      storage: storage,
+      launcher: (_) async => false,
+    );
+    await expectLater(
+      auth.signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.browserUnavailable,
+        ),
+      ),
+    );
+  });
+
+  test('cancel closes loopback server and is harmless when idle', () async {
+    final launched = Completer<Uri>();
+    final auth = StarSyncGoogleDesktopAuth(
+      config: const StarSyncGoogleAuthConfig(
+        desktopClientId: 'client',
+        desktopClientSecret: 'secret',
+      ),
+      storage: storage,
+      launcher: (uri) async {
+        launched.complete(uri);
+        return true;
+      },
+    );
+    auth.cancelPendingSignIn();
+    final signIn = auth.signIn();
+    final failure = expectLater(
+      signIn,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    final uri = await launched.future;
+    auth.cancelPendingSignIn();
+    await failure.timeout(const Duration(seconds: 2));
+    auth.cancelPendingSignIn();
+    final client = HttpClient();
+    try {
+      await expectLater(
+        client.getUrl(Uri.parse(uri.queryParameters['redirect_uri']!)),
+        throwsA(isA<SocketException>()),
+      );
+    } finally {
+      client.close(force: true);
+    }
+  });
 
   test('sign in stores refresh token and parses email', () async {
     final auth = makeAuth();

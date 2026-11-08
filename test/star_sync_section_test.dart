@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
 
 void main() {
@@ -38,6 +42,7 @@ void main() {
     Future<Map<String, int?>> Function()? onLocalCollectionCounts,
     Future<Map<String, String>> Function()? onSnapshotLocalStars,
     Future<void> Function()? onGoogleReSignIn,
+    VoidCallback? onGoogleCancelSignIn,
     Future<void> Function()? onResumeKeepingLocal,
     Future<void> Function()? onResumeDiscardingLocal,
     Future<StarSyncPairingSetup> Function({
@@ -78,6 +83,7 @@ void main() {
               }) async => StarSyncPairingSetup.created,
           onGoogleSignOut: () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
+          onGoogleCancelSignIn: onGoogleCancelSignIn,
           onLocalStarCount: onLocalStarCount ?? () async => 0,
           onLocalCollectionCounts: onLocalCollectionCounts,
           onSnapshotLocalStars:
@@ -708,6 +714,121 @@ void main() {
     await tester.pumpAndSettle();
     expect(resets, 1);
     expect(cleared, {'id': 'time'});
+  });
+
+  testWidgets('desktop initial sign-in can be cancelled', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: false));
+    addTearDown(status.dispose);
+    final pending = Completer<StarSyncPairingSetup>();
+    var cancelled = false;
+    await tester.pumpWidget(section(status, googleAvailable: true,
+      onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
+          required expectedGeneration}) => pending.future,
+      onGoogleCancelSignIn: () {
+        cancelled = true;
+        pending.completeError(const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.cancelled));
+      },
+    ));
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('含めて同期する'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('キャンセル'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pump();
+    expect(cancelled, isTrue);
+    expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('desktop re-sign-in can be cancelled', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+    addTearDown(status.dispose);
+    final pending = Completer<void>();
+    var cancelled = false;
+    await tester.pumpWidget(section(status, google: true,
+      onGoogleReSignIn: () => pending.future,
+      onGoogleCancelSignIn: () {
+        cancelled = true;
+        pending.completeError(const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.cancelled));
+      },
+    ));
+    await tester.tap(find.text('Google に再ログイン'));
+    await tester.pump();
+    expect(find.text('キャンセル'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pump();
+    expect(cancelled, isTrue);
+    expect(find.text('キャンセル'), findsNothing);
+    expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('desktop Drive download permission can be cancelled', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: false));
+      addTearDown(status.dispose);
+      final pending = Completer<void>();
+      await tester.pumpWidget(section(status, googleAvailable: true,
+        onDriveDownloadsChanged: (value) {
+          expect(value, isTrue);
+          return pending.future;
+        },
+        onGoogleCancelSignIn: () => pending.completeError(
+          const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled)),
+      ));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pump();
+      expect(find.text('キャンセル'), findsOneWidget);
+      await tester.tap(find.text('キャンセル'));
+      await tester.pump();
+      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
+      expect(find.text('キャンセル'), findsNothing);
+      expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('Google permission error is shown', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true,
+      onGoogleReSignIn: () async => throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.permissionDenied),
+    ));
+    await tester.tap(find.text('Google に再ログイン'));
+    await tester.pump();
+    expect(find.text('Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください'), findsOneWidget);
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {

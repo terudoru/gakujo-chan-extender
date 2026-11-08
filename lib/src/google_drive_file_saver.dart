@@ -19,6 +19,7 @@ class GoogleDriveFileSaver {
     HttpClient Function()? httpClientFactory,
     Uri? apiBase,
     Future<void> Function(Duration)? delay,
+    DateTime Function()? clock,
     StarSyncQuotaMeter? quotaMeter,
     FlutterSecureStorage? secureStorage,
     required this.account,
@@ -27,6 +28,7 @@ class GoogleDriveFileSaver {
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _base = apiBase ?? Uri.parse('https://www.googleapis.com'),
        _delay = delay ?? Future<void>.delayed,
+       _clock = clock ?? DateTime.now,
        _quotaMeter = quotaMeter ?? StarSyncQuotaMeter.shared,
        _storage = secureStorage ?? SecureStorageFactory.create() {
     if (account.isEmpty) throw ArgumentError('Missing Google account');
@@ -42,6 +44,7 @@ class GoogleDriveFileSaver {
   final void Function()? onPendingCheck;
   final Uri _base;
   final Future<void> Function(Duration) _delay;
+  final DateTime Function() _clock;
   final Map<String, String> _folders = {};
   final Set<String> _createdFolders = {};
   final Random _random = Random.secure();
@@ -68,6 +71,7 @@ class GoogleDriveFileSaver {
     List<int> body = const [],
     bool retryNetwork = true,
     bool retryStatus = true,
+    void Function()? onAttempt,
   }) async {
     var refreshed = false;
     var retries = 0;
@@ -86,6 +90,7 @@ class GoogleDriveFileSaver {
         automatic: Zone.current[#driveSaveAutomatic] == true,
       );
       try {
+        onAttempt?.call();
         response = await starSyncRequest(
           _client,
           method,
@@ -107,8 +112,17 @@ class GoogleDriveFileSaver {
         refreshed = true;
         continue;
       }
+      if (response.statusCode == 403 &&
+          googleDriveErrorReason(response) == 'storageQuotaExceeded') {
+        throw const GoogleDriveStorageFull();
+      }
+      if (response.statusCode == 403 &&
+          googleDriveErrorReason(response) == 'domainPolicy') {
+        throw const GoogleDriveDisabled();
+      }
       if (retryStatus &&
-          (response.statusCode == 429 || response.statusCode >= 500) &&
+          (response.statusCode == 429 || response.statusCode >= 500 ||
+              isGoogleDriveRateLimit(response)) &&
           retries < 3) {
         await _backoff(retries++);
         continue;
@@ -222,7 +236,8 @@ class GoogleDriveFileSaver {
         await _backoff(retries++);
         continue;
       }
-      if ((response.statusCode == 429 || response.statusCode >= 500) &&
+      if ((response.statusCode == 429 || response.statusCode >= 500 ||
+              isGoogleDriveRateLimit(response)) &&
           retries < 3) {
         await _backoff(retries++);
         continue;
@@ -240,7 +255,7 @@ class GoogleDriveFileSaver {
         return;
       }
       _folders.removeWhere((_, value) => value == folder || value == root);
-      if (await _hasChildren(folder)) return;
+      if (await _hasChildren(folder) != false) return;
       await _request(
         'DELETE',
         _uri('/drive/v3/files/${Uri.encodeComponent(folder)}'),
@@ -250,17 +265,17 @@ class GoogleDriveFileSaver {
     }
   }
 
-  Future<bool> _hasChildren(String folder) async {
-    final result = _json(
-      await _request(
-        'GET',
-        _uri('/drive/v3/files', {
-          'q': "'${_escape(folder)}' in parents and trashed=false",
-          'fields': 'files(id)',
-          'pageSize': '1',
-        }),
-      ),
+  Future<bool?> _hasChildren(String folder) async {
+    final response = await _request(
+      'GET',
+      _uri('/drive/v3/files', {
+        'q': "'${_escape(folder)}' in parents and trashed=false",
+        'fields': 'files(id)',
+        'pageSize': '1',
+      }),
     );
+    if (response.statusCode == 404) return null;
+    final result = _json(response);
     final files = result['files'];
     if (files is! List) throw const FormatException('Invalid Drive file list');
     return files.isNotEmpty;
@@ -342,15 +357,21 @@ class GoogleDriveFileSaver {
     if (entry['id'] != null) {
       ids.add(entry['id']!);
     } else {
-      final started = DateTime.parse(entry['started']!).toUtc();
-      for (final file in await _list(entry['name']!, parent)) {
+      final started = DateTime.tryParse(entry['started']!)?.toUtc();
+      var files = <Map<String, dynamic>>[];
+      try {
+        files = await _list(entry['name']!, parent);
+      } on StarSyncTransportException catch (error) {
+        if (error.kind != StarSyncTransportErrorKind.notFound) rethrow;
+      }
+      for (final file in files) {
         final created = DateTime.tryParse(file['createdTime'] as String? ?? '');
         final properties = file['appProperties'];
         if (file['name'] == entry['name'] &&
             file['size'] == entry['size'] &&
             file['md5Checksum'] == entry['md5'] &&
             created != null &&
-            !created.toUtc().isBefore(started) &&
+            (started == null || !created.toUtc().isBefore(started)) &&
             properties is Map &&
             properties['mbgUpload'] == entry['uploadKey']) {
           ids.add(_id(file));
@@ -358,7 +379,7 @@ class GoogleDriveFileSaver {
       }
     }
     if (entry['id'] == null && ids.isEmpty) {
-      throw StateError('Pending upload not yet found');
+      throw _PendingUploadNotFound();
     }
     if (private) return true;
     _folders.removeWhere((_, value) => value == parent || value == root);
@@ -372,7 +393,7 @@ class GoogleDriveFileSaver {
     // A course folder this upload created inherits a root shared meanwhile;
     // its name is course information too. Folders that already existed may
     // hold other files and are left alone.
-    if (entry['createdParent'] == '1' && !await _hasChildren(parent)) {
+    if (entry['createdParent'] == '1' && await _hasChildren(parent) == false) {
       final deleted = await _request(
         'DELETE',
         _uri('/drive/v3/files/${Uri.encodeComponent(parent)}'),
@@ -394,9 +415,28 @@ class GoogleDriveFileSaver {
         final remaining = List<Map<String, String>>.of(entries)..remove(entry);
         await _savePendingChecks(remaining);
         entries.remove(entry);
-      } on Object catch (error, stack) {
-        failure ??= error;
-        failureStack ??= stack;
+      } on Object catch (caught, caughtStack) {
+        var error = caught;
+        var stack = caughtStack;
+        if (error is _PendingUploadNotFound) {
+          final started = DateTime.tryParse(entry['started']!);
+          if (started == null || _clock().difference(started) > const Duration(hours: 24)) {
+            try {
+              final remaining = List<Map<String, String>>.of(entries)..remove(entry);
+              await _savePendingChecks(remaining);
+              entries.remove(entry);
+              continue;
+            } on Object catch (removeError, removeStack) {
+              error = removeError;
+              stack = removeStack;
+            }
+          }
+        }
+        if (failure == null ||
+            (failure is _PendingUploadNotFound && error is! _PendingUploadNotFound)) {
+          failure = error;
+          failureStack = stack;
+        }
       }
     }
     if (failure != null) Error.throwWithStackTrace(failure, failureStack!);
@@ -430,7 +470,11 @@ class GoogleDriveFileSaver {
     required bool automatic,
   }) async {
     if (length < 0 || fileName.isEmpty) throw ArgumentError('Invalid file');
-    await processPendingChecks();
+    try {
+      await processPendingChecks();
+    } on _PendingUploadNotFound {
+      // An absent upload does not prevent another save.
+    }
     if ((await _pendingChecks()).length >= 100) {
       throw StateError('Too many pending Drive checks');
     }
@@ -493,7 +537,7 @@ class GoogleDriveFileSaver {
       'size': '$length',
       'md5': checksum,
       'started': DateTime.fromMillisecondsSinceEpoch(
-        (DateTime.now().millisecondsSinceEpoch ~/ 1000) * 1000,
+        (_clock().millisecondsSinceEpoch ~/ 1000) * 1000,
         isUtc: true,
       ).toIso8601String(),
       'uploadKey': List.generate(
@@ -504,6 +548,7 @@ class GoogleDriveFileSaver {
     final entries = await beforeRecord(_pendingChecks);
     entries.add(entry);
     await beforeRecord(() => _savePendingChecks(entries));
+    var finalChunkAttempted = false;
     try {
       final response = await _request(
         'POST',
@@ -538,7 +583,7 @@ class GoogleDriveFileSaver {
           session.hasFragment) {
         throw const FormatException('Invalid upload location');
       }
-      final id = await _upload(session, open, length);
+      final id = await _upload(session, open, length, () => finalChunkAttempted = true);
       entry['id'] = id;
       await _savePendingChecks(entries);
       final private = await _verifyPending(entry);
@@ -549,6 +594,18 @@ class GoogleDriveFileSaver {
     } on GoogleDriveSaveFolderShared {
       rethrow;
     } on Object catch (error) {
+      if (!finalChunkAttempted || error is GoogleDriveStorageFull ||
+          error is GoogleDriveDisabled) {
+        try {
+          final remaining = List<Map<String, String>>.of(entries)..remove(entry);
+          await _savePendingChecks(remaining);
+        } on Object {
+          onPendingCheck?.call();
+          throw GoogleDrivePendingCheckException(error);
+        }
+        if (createdParent) await _dropCreatedFolderIfExposed(root, parent);
+        rethrow;
+      }
       onPendingCheck?.call();
       throw GoogleDrivePendingCheckException(error);
     }
@@ -568,6 +625,7 @@ class GoogleDriveFileSaver {
     Uri session,
     Stream<List<int>> Function() open,
     int total,
+    void Function() onFinalChunk,
   ) async {
     final iterator = StreamIterator<List<int>>(open());
     var pending = <int>[];
@@ -614,6 +672,7 @@ class GoogleDriveFileSaver {
                     : 'bytes ${position + acknowledged}-${position + count - 1}/$total',
               },
               body: chunk.sublist(acknowledged),
+              onAttempt: position + count == total ? onFinalChunk : null,
               retryNetwork: false,
             );
           } on StarSyncTransportException catch (error) {
@@ -677,4 +736,16 @@ class GoogleDrivePendingCheckException implements Exception {
   const GoogleDrivePendingCheckException(this.cause);
 
   final Object cause;
+}
+
+class _PendingUploadNotFound extends StateError {
+  _PendingUploadNotFound() : super('Pending upload not yet found');
+}
+
+class GoogleDriveDisabled implements Exception {
+  const GoogleDriveDisabled();
+}
+
+class GoogleDriveStorageFull implements Exception {
+  const GoogleDriveStorageFull();
 }
