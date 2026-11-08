@@ -153,7 +153,7 @@ flutter build windows --release
 
 ### 本番公開の手順
 
-1. リポジトリの Settings → Pages で Source を「GitHub Actions」にし、Custom domain に `gakujo.terudoru.com` を設定して、pages workflow で `site/` を公開する。Cloudflare の DNS には `gakujo` から `terudoru.github.io` への CNAME を「DNS のみ」で追加する（プロキシを有効にすると GitHub の HTTPS 証明書が発行されないことがある）
+1. リポジトリの Settings → Pages で Source を「GitHub Actions」にし、Custom domain に `gakujo.terudoru.com` を設定して、pages workflow で `site/` を公開する。Cloudflare の DNS には `gakujo` から `terudoru.github.io` への CNAME を「DNS のみ」で追加する（プロキシを有効にすると GitHub の HTTPS 証明書が発行されないことがある） `site/index.html` は `https://terudoru.com/apps/more-better-gakujo-flutter` へ転送するだけで、アプリの説明はそのページで管理する。プライバシーポリシーは `site/privacy.html` のまま公開する
 2. 承認済みドメインには `terudoru.com` を登録する。所有確認は Search Console のドメインプロパティ `terudoru.com` で行い、案内された TXT レコードを Cloudflare の DNS に追加する。確認する Google アカウントは Cloud プロジェクトのオーナーか編集者にする。`terudoru.github.io` のままでは、Search Console で所有権を確認していてもブランドの確認が「ウェブサイトが登録されていません」で通らなかった
 3. Google Auth Platform のブランディングに、アプリ名、サポートメール、ホームページ `https://gakujo.terudoru.com/`、プライバシーポリシー `https://gakujo.terudoru.com/privacy.html`、承認済みドメインを入力する
 4. データアクセスに `openid`、`email`、`drive.appdata`、`drive.file` を登録する（いずれも非機密のスコープ）
