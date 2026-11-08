@@ -5903,6 +5903,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (mounted) _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
           return;
         }
+        // A revoked token clears the auth state; a cached email must not skip sign-in.
+        if (_starSyncGoogleAuth.currentEmail == null) _starSyncGoogleEmail = null;
         _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
         checkCancelled();
         _starSyncGoogleEmail ??= await _signInGoogle();

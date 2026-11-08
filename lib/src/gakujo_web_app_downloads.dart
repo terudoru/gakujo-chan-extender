@@ -1236,7 +1236,13 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       } on GoogleDriveAccountChanged {
         if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on StarSyncGoogleAuthException catch (error) {
-        if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
+        if (error.kind == StarSyncGoogleAuthErrorKind.revoked ||
+            error.kind == StarSyncGoogleAuthErrorKind.notSignedIn) {
+          // `allowed()` is already false here: the revoked token cleared the account.
+          if (_driveUploads.isCurrent(generation) && mounted) {
+            _showSnackBar('Google のログインが切れたため、Google ドライブに保存できませんでした。設定からもう一度ログインしてください');
+          }
+        } else if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
           if (allowed() && mounted) _showSnackBar('Google ドライブへの保存の権限がありません。設定でもう一度オンにしてください');
         } else {
           if (!allowed()) return;
