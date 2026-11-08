@@ -218,6 +218,15 @@ void main() {
     },
   );
 
+  test('an optional scope that is not granted does not fail sign-in', () async {
+    final auth = makeAuth();
+    expect(
+      await auth.signIn(optionalScopes: const [googleDriveFileScope]),
+      isNotEmpty,
+    );
+    expect(await auth.hasScope(googleDriveFileScope), isFalse);
+  });
+
   test('unticked scope reports permission denied', () async {
     omitScope = true;
     await expectLater(

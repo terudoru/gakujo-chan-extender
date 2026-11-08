@@ -5743,7 +5743,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (cancelGeneration != _googleCancelGeneration) {
       throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
     }
-    final email = await _starSyncGoogleAuth.signIn();
+    // Re-login must not lose the Drive permission that saving relies on.
+    final email = await _starSyncGoogleAuth.signIn(
+      optionalScopes: _driveDownloadPreference.enabled
+          ? const [googleDriveFileScope]
+          : const [],
+    );
     final config = _starSyncEngine.config;
     if (config?.backend == StarSyncBackend.googleDrive &&
         config?.googleEmail != email) {
