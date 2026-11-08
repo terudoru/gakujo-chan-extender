@@ -177,7 +177,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - ペアリングコードやパスフレーズを知っている人は、同期データを読める。忘れたときは同期データをリセットしてやり直す（端末の中のスターは残る）
 - Google ドライブで同期するなら、全端末をなくしたときに備えて、「別の端末を追加」のコードを安全な場所に控えておく
 
-任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://terudoru.github.io/gakujo-chan-extender/privacy.html) をご覧ください。
+任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://gakujo.terudoru.com/privacy.html) をご覧ください。
 
 ## バックアップ
 
