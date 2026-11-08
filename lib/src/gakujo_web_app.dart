@@ -1460,7 +1460,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   int _deadlineCount = 0;
   double _desktopZoom = 1.0;
   double _desktopPanZoomStartZoom = 1.0;
-  bool _desktopPanZoomIsPinching = false;
+  final _desktopPanZoomGesture = DesktopPanZoomGesture();
   final _desktopHistorySwipe = DesktopHistorySwipeTracker();
   int? _touchHistorySwipePointer;
   Offset? _touchHistorySwipeStart;
@@ -1489,7 +1489,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   static const double _desktopZoomStep = 0.1;
   static const double _desktopHistorySwipeThreshold = 120;
   static const double _desktopHorizontalSwipeDominance = 1.35;
-  static const double _desktopPinchZoomDeadZone = 0.01;
 
   @override
   void initState() {
@@ -2191,20 +2190,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
     _desktopPanZoomStartZoom = _desktopZoom;
-    _desktopPanZoomIsPinching = false;
+    _desktopPanZoomGesture.reset();
     _desktopZoomOrigin = event.localPosition;
     _resetDesktopHistorySwipe();
   }
 
   void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
     _desktopZoomOrigin = event.localPosition;
-    if ((event.scale - 1).abs() > _desktopPinchZoomDeadZone) {
-      _desktopPanZoomIsPinching = true;
+    if (_desktopPanZoomGesture.update(event.panDelta, event.scale)) {
       unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * event.scale));
-      return;
-    }
-
-    if (_desktopPanZoomIsPinching) {
       return;
     }
 
@@ -2215,7 +2209,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
-    _desktopPanZoomIsPinching = false;
+    _desktopPanZoomGesture.reset();
     _scheduleDesktopHistorySwipeReset();
   }
 
@@ -2227,6 +2221,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         defaultTargetPlatform != TargetPlatform.linux) {
       return;
     }
+    if (!desktopHistorySwipeAllowed(_desktopZoom)) return;
     final direction = _desktopHistorySwipe.add(
       delta,
       positiveIsBack: positiveIsBack,

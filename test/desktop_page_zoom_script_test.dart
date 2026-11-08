@@ -1,10 +1,54 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Offset;
 
 import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('pan gesture locks out scale drift and resets', () {
+    final gesture = DesktopPanZoomGesture();
+    expect(gesture.update(const Offset(12, 0), 1.01), isFalse);
+    expect(gesture.update(const Offset(13, 0), 1.01), isFalse);
+    expect(gesture.update(const Offset(1, 0), 1.05), isFalse);
+    gesture.reset();
+    expect(gesture.update(Offset.zero, 1.03), isTrue);
+    expect(gesture.update(Offset.zero, 1), isTrue);
+    gesture.reset();
+    expect(gesture.update(Offset.zero, 1), isFalse);
+  });
+
+  test('history swipe is allowed only at baseline zoom', () {
+    expect(desktopHistorySwipeAllowed(0.5), isTrue);
+    expect(desktopHistorySwipeAllowed(1.001), isTrue);
+    expect(desktopHistorySwipeAllowed(1.002), isFalse);
+  });
+
+  test('reapply preserves position and waits for scrolling', () async {
+    final result = await Process.run('node', [
+      'test/support/desktop_page_zoom_script_reapply_harness.cts',
+      DesktopPageZoomScript.build(1.5, originX: 400, originY: 300),
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    for (final name in ['shape', 'scroll']) {
+      expect(data[name]['zoom'], closeTo(1.5, 0.0001));
+      expect(data[name]['x'], closeTo(300, 0.0001));
+      expect(data[name]['y'], closeTo(1500, 0.0001));
+      expect(data[name]['minWidth'], '2025px');
+      expect(data[name]['scrollCalls'], 0);
+    }
+    expect(data['unscrolled']['zoom'], closeTo(1, 0.0001));
+    expect(data['unscrolled']['x'], 0);
+    expect(data['unscrolled']['y'], 0);
+    for (final name in ['resize', 'sticky']) {
+      expect(data[name]['zoom'], closeTo(1, 0.0001));
+      expect(data[name]['x'], closeTo(200, 0.0001));
+      expect(data[name]['y'], closeTo(1000, 0.0001));
+      expect(data[name]['scrollCalls'], 1);
+    }
+  });
+
   test('wheel zoom follows delta size and ignores horizontal-only input', () {
     expect(desktopWheelZoom(1, 0), 1);
     expect(desktopWheelZoom(1, -1), closeTo(1.001, .0001));
@@ -87,7 +131,7 @@ void main() {
 
     expect(script, contains('addEventListener("resize"'));
     expect(script, contains('new win.MutationObserver'));
-    expect(script, contains('scheduleReapply(win)'));
+    expect(script, contains('scheduleReapply(win, "shape")'));
   });
 
   test('applies visual zoom only to the top document', () {

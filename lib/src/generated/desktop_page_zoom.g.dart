@@ -14,7 +14,8 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
 (() => {
   // web_scripts/src/desktop_page_zoom/main.ts
   function desktopPageZoom() {
-    var version = 6;
+    var version = 7;
+    var currentCause = "user";
     var initialZoom = __mbgConfig.zoom;
     var initialOrigin = {
       x: __mbgConfig.originX,
@@ -113,7 +114,7 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
         y: Math.max(0, y)
       };
     }
-    function applyZoom(win, zoom) {
+    function applyZoom(win, zoom, cause = currentCause) {
       try {
         var doc = win.document;
         var body = doc && doc.body;
@@ -135,8 +136,12 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
         var size = measuredSize(win);
         var effectiveZoom = effectiveZoomFor(win, zoom, size);
         var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM;
-        if (!isFinite(previousZoom) || previousZoom <= 0) previousZoom = 1;
-        var origin = originFor(win);
+        var hasPreviousZoom = isFinite(previousZoom) && previousZoom > 0;
+        if (cause === "shape" && hasPreviousZoom && (previousScrollX !== 0 || previousScrollY !== 0)) {
+          effectiveZoom = previousZoom;
+        }
+        if (!hasPreviousZoom) previousZoom = 1;
+        var origin = cause === "user" ? originFor(win) : { x: 0, y: 0 };
         if (Math.abs(effectiveZoom - 1) < 1e-3) {
           body.style.transform = "";
           body.style.transformOrigin = "";
@@ -168,20 +173,30 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
     function applyEverywhere(zoom) {
       applyZoom(window, zoom);
     }
-    function setZoom(nextZoom) {
+    function setZoom(nextZoom, cause = "user") {
       var zoom = clamp(nextZoom);
       window.__MBG_PAGE_ZOOM_VALUE = zoom;
       window.__MBG_PAGE_ZOOM_ORIGIN = initialOrigin;
+      currentCause = cause;
       applyEverywhere(zoom);
       return zoom;
     }
-    function scheduleReapply(win) {
+    function scheduleReapply(win, cause) {
       try {
-        win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
-        win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(function() {
+        let reapply2 = function() {
+          if (Date.now() - (win.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
+            win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply2, 150);
+            return;
+          }
+          var resize = win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
+          win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
           var apply = window.__MBG_SET_PAGE_ZOOM || setZoom;
-          apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom);
-        }, 150);
+          apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom, resize ? "resize" : "shape");
+        };
+        var reapply = reapply2;
+        if (cause === "resize") win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
+        win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
+        win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply2, 150);
       } catch (e) {
       }
     }
@@ -214,8 +229,11 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
               }
               event.preventDefault();
             }, { capture: true, passive: false });
+            win.addEventListener("scroll", function() {
+              win.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
+            }, { capture: true, passive: true });
             win.addEventListener("resize", function() {
-              scheduleReapply(win);
+              scheduleReapply(win, "resize");
             }, true);
             if (win.MutationObserver && win.document && win.document.body) {
               win.__MBG_PAGE_ZOOM_OBSERVER = new win.MutationObserver(function(mutations) {
@@ -223,7 +241,7 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
                   if (mutations[m].type === "attributes" && mutations[m].attributeName === "style") {
                     continue;
                   }
-                  scheduleReapply(win);
+                  scheduleReapply(win, "shape");
                   return;
                 }
               });
