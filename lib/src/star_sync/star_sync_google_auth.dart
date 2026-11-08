@@ -47,6 +47,9 @@ class StarSyncGoogleAuthConfig {
 enum StarSyncGoogleAuthErrorKind {
   notSignedIn,
   revoked,
+  permissionDenied,
+  browserUnavailable,
+  storageUnavailable,
   cancelled,
   network,
   failed,
@@ -68,6 +71,7 @@ abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
   Future<String?> restore();
   Future<String> signIn();
+  void cancelPendingSignIn();
   Future<String> accessToken({bool forceRefresh = false});
   Future<bool> hasScope(String scope);
   Future<void> requestScopes(List<String> scopes);

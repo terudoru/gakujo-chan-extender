@@ -41,27 +41,6 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     return _apiBase.replace(path: '$base$path', queryParameters: query);
   }
 
-  bool _isRateLimit(StarSyncHttpResponse response) {
-    if (response.statusCode != 403) return false;
-    try {
-      final json = jsonDecode(utf8.decode(response.bytes));
-      final errors = (json as Map<String, dynamic>)['error'];
-      if (errors is! Map<String, dynamic> || errors['errors'] is! List) {
-        return false;
-      }
-      return (errors['errors'] as List).any(
-        (item) =>
-            item is Map &&
-            (item['reason'] == 'rateLimitExceeded' ||
-                item['reason'] == 'userRateLimitExceeded'),
-      );
-    } on FormatException {
-      return false;
-    } on TypeError {
-      return false;
-    }
-  }
-
   Future<StarSyncHttpResponse> _request(
     String method,
     Uri uri, {
@@ -97,7 +76,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       final retryable =
           response.statusCode == 429 ||
           response.statusCode >= 500 && response.statusCode < 600 ||
-          _isRateLimit(response);
+          isGoogleDriveRateLimit(response);
       if (retryable) {
         if (retries == 3) {
           throw StarSyncTransportException(
@@ -111,6 +90,26 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         );
         retries++;
         continue;
+      }
+      if (response.statusCode == 403 &&
+          googleDriveErrorReason(response) == 'storageQuotaExceeded') {
+        throw const StarSyncTransportException(
+          StarSyncTransportErrorKind.storageFull,
+          'Google Drive storage is full',
+          statusCode: 403,
+        );
+      }
+      if (response.statusCode == 403) {
+        final reason = googleDriveErrorReason(response);
+        if (reason == 'dailyLimitExceeded' || reason == 'domainPolicy') {
+          throw StarSyncTransportException(
+            reason == 'domainPolicy'
+                ? StarSyncTransportErrorKind.driveDisabled
+                : StarSyncTransportErrorKind.server,
+            'Google Drive request rejected ($reason)',
+            statusCode: 403,
+          );
+        }
       }
       return response;
     }

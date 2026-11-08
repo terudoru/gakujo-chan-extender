@@ -1398,13 +1398,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _driveDownloadPreference = DriveDownloadPreference();
   final _driveUploads = DriveDownloadQueue();
   bool _driveDownloadsSuspended = false;
+  bool _driveSwitchSigningIn = false;
   bool get _driveDownloadsEnabled => !_driveDownloadsSuspended && _appSettingsLoaded &&
       _driveDownloadPreference.matches(_driveAccountHash, _starSyncGoogleAuth.currentEmail);
   final _loginIdentity = GakujoLoginIdentity();
   String? get _activeLoginAccount => _loginIdentity.active;
   set _activeLoginAccount(String? value) => _loginIdentity.active = value;
   String? get _driveAccountHash => _activeLoginAccount;
-  late final Future<void> _driveDownloadsLoad;
+  late Future<void> _driveDownloadsLoad;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
@@ -3030,14 +3031,35 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     icon: Icons.cloud_upload_outlined,
                     child: SwitchListTile(
                       title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+                      subtitle: !_driveSwitchSigningIn
+                          ? null
+                          : Row(
+                              children: [
+                                const Expanded(child: LinearProgressIndicator()),
+                                if (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
+                                  TextButton(
+                                    onPressed: _starSyncGoogleAuth.cancelPendingSignIn,
+                                    child: const Text('キャンセル'),
+                                  ),
+                              ],
+                            ),
                       value: _driveDownloadsEnabled,
-                      onChanged: (enabled) async {
+                      onChanged: _driveSwitchSigningIn ? null : (enabled) async {
+                        if (enabled) setDialogState(() => _driveSwitchSigningIn = true);
                         try {
                           if (!enabled) await _warnPendingDriveChecks();
                           await _setDriveDownloadsEnabled(enabled);
-                          if (dialogContext.mounted) setDialogState(() {});
+                        } on StarSyncGoogleAuthException catch (error) {
+                          if (error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
+                            _showSnackBar(starSyncErrorMessage(error));
+                          }
+                        } on StarSyncAccountRequiredException catch (error) {
+                          _showSnackBar(starSyncErrorMessage(error));
                         } on Object {
                           _showSnackBar('Google ドライブの設定を変更できませんでした');
+                        } finally {
+                          _driveSwitchSigningIn = false;
+                          if (dialogContext.mounted) setDialogState(() {});
                         }
                       },
                     ),
@@ -3088,6 +3110,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
+                      onGoogleCancelSignIn: _starSyncGoogleAuth.cancelPendingSignIn,
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
                         try {
@@ -3253,6 +3276,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
       );
     } finally {
+      // A sign-in left waiting would hold the Drive queue for its full timeout.
+      _starSyncGoogleAuth.cancelPendingSignIn();
       await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted) {
         setState(() {
@@ -5760,35 +5785,42 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadDriveDownloadsPreference() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadPreference.load(await _driveDownloadsPreferenceFile());
-      if (_driveDownloadPreference.enabled) {
-        _starSyncGoogleEmail = await _driveDownloadQueue.run(
-          _starSyncGoogleAuth.restore,
-        );
-      }
-      if (_driveDownloadPreference.enabled &&
-          _starSyncGoogleAuth.currentEmail != null &&
-          _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
-        _driveDownloadsSuspended = true;
-        _cancelDriveUploads();
-        await _driveDownloadPreference.save(false, null);
-        if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-      }
-      if (mounted) setState(() {});
+      await _restoreDriveDownloadsAccount();
     } on Object catch (error) {
       developer.log('Failed to load Drive download preference: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
     }
   }
 
+  Future<void> _restoreDriveDownloadsAccount() async {
+    if (_driveDownloadPreference.enabled) {
+      _starSyncGoogleEmail = await _driveDownloadQueue.run(
+        _starSyncGoogleAuth.restore,
+      );
+    }
+    if (_driveDownloadPreference.enabled &&
+        _starSyncGoogleAuth.currentEmail != null &&
+        _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      await _driveDownloadPreference.save(false, null);
+      if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _warnPendingDriveChecks() async {
+    if (!_secureStorageAccessAllowed) return;
     if (await GoogleDriveFileSaver.pendingCheckCount() == 0 || !mounted) return;
     final check = await showPendingDriveCheckConfirmation(context);
     if (check == true) await _retryPendingDriveChecksAtStartup();
   }
 
   Future<void> _retryPendingDriveChecksAtStartup() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadsLoad;
       await _driveDownloadQueue.run(() async {
@@ -5864,7 +5896,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         }
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
-          throw StateError('Google Drive permission was not granted');
+          throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.permissionDenied);
         }
         if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
         final email = _starSyncGoogleAuth.currentEmail;
@@ -7204,6 +7236,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
       await _loadActiveLoginAccount();
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       setState(() {
         _startupPlaceholderFeatureFlags.clear();
         _appSettings = settings;
@@ -7453,6 +7488,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       _startupPlaceholderFeatureFlags.clear();
       setState(() {
         _appSettings = const GakujoAppSettings();

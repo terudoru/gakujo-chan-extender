@@ -38,7 +38,7 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 - x64 の Ubuntu 22.04 以降 / Debian 12 以降を対象とする。`MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` は `sudo apt install ./MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` を実行して入れる
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret`）
-- パスワードの保存には Secret Service（GNOME Keyring / KWallet など）が必要
+- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
 - Linux では QR コードの読み取りは使えない
 
 ### iOS/iPadOS

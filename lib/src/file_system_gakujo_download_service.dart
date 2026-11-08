@@ -266,7 +266,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         'mimeType': mimeType ?? 'application/octet-stream',
       },
     );
-    return GakujoDownloadResult.fromMap(raw);
+    return GakujoDownloadResult.fromMap(raw).withUploadBytes(bytes);
   }
 
   Future<GakujoDownloadResult> _saveToNativeConfiguredFolder({
@@ -287,7 +287,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         'autoSortByCourse': autoSortByCourse,
       },
     );
-    return GakujoDownloadResult.fromMap(raw);
+    return GakujoDownloadResult.fromMap(raw).withUploadBytes(bytes);
   }
 
   Future<GakujoDownloadResult> _saveToPickedFlutterFile({

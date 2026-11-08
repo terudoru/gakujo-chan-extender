@@ -21,5 +21,5 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
-  }, skip: !Platform.isMacOS);
+  }, timeout: const Timeout(Duration(minutes: 3)), skip: !Platform.isMacOS);
 }

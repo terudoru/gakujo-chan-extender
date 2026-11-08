@@ -1744,7 +1744,9 @@ class StarSyncEngine {
           collectionFailures++;
         } on StarSyncTransportException catch (error) {
           if (error.kind == StarSyncTransportErrorKind.auth ||
-              error.kind == StarSyncTransportErrorKind.server) {
+              error.kind == StarSyncTransportErrorKind.server ||
+              error.kind == StarSyncTransportErrorKind.storageFull ||
+              error.kind == StarSyncTransportErrorKind.driveDisabled) {
             collectionTransportFailure ??= error;
           }
           collectionFailures++;
@@ -1798,7 +1800,9 @@ class StarSyncEngine {
         return const StarSyncResult();
       }
       state.status = StarSyncStatus.error;
-      state.lastError = 'Google に接続できませんでした';
+      state.lastError = error.kind == StarSyncGoogleAuthErrorKind.storageUnavailable
+          ? 'この端末の安全な保存領域を使えないため、Google に接続できません'
+          : 'Google に接続できませんでした';
       await _saveState();
       rethrow;
     } on Object catch (error) {
@@ -1812,7 +1816,9 @@ class StarSyncEngine {
         return const StarSyncResult();
       }
       if (error is StarSyncTransportException &&
-          error.kind == StarSyncTransportErrorKind.server) {
+          (error.kind == StarSyncTransportErrorKind.server ||
+              error.kind == StarSyncTransportErrorKind.storageFull ||
+              error.kind == StarSyncTransportErrorKind.driveDisabled)) {
         state.serverFailures++;
         final minutes = min(60, 1 << min(state.serverFailures - 1, 6));
         state.cooldownUntil = _now().add(Duration(minutes: minutes));
@@ -2171,6 +2177,8 @@ class StarSyncEngine {
     if (error is StarSyncTransportException) {
       return switch (error.kind) {
         StarSyncTransportErrorKind.auth => '認証に失敗しました',
+        StarSyncTransportErrorKind.storageFull => 'Google ドライブの空き容量が足りません',
+        StarSyncTransportErrorKind.driveDisabled => '組織の管理者が Google ドライブの利用を制限しています。別の Google アカウントをお試しください',
         StarSyncTransportErrorKind.tls => '証明書を確認できませんでした',
         StarSyncTransportErrorKind.server =>
           'サーバーエラー (HTTP ${error.statusCode})',

@@ -145,6 +145,53 @@ void main() {
     await drive.server.close(force: true);
   });
 
+  test('storage quota failure is distinct from authentication', () async {
+    drive.failures = 1;
+    drive.failureStatus = 403;
+    drive.failureBody = jsonEncode({
+      'error': {
+        'errors': [
+          {'reason': 'storageQuotaExceeded'},
+        ],
+      },
+    });
+    await expectLater(
+      transport.list('stars'),
+      throwsA(
+        isA<StarSyncTransportException>().having(
+          (error) => error.kind,
+          'kind',
+          StarSyncTransportErrorKind.storageFull,
+        ),
+      ),
+    );
+  });
+
+  for (final (reason, kind) in [
+    ('dailyLimitExceeded', StarSyncTransportErrorKind.server),
+    ('domainPolicy', StarSyncTransportErrorKind.driveDisabled),
+  ]) {
+    test('$reason is not an authentication failure', () async {
+      drive.failures = 1;
+      drive.failureStatus = 403;
+      drive.failureBody = jsonEncode({
+        'error': {
+          'errors': [
+            {'reason': reason},
+          ],
+        },
+      });
+      await expectLater(
+        transport.list('stars'),
+        throwsA(
+          isA<StarSyncTransportException>()
+              .having((error) => error.kind, 'kind', kind)
+              .having((error) => error.statusCode, 'statusCode', 403),
+        ),
+      );
+    });
+  }
+
   test('large object requires an increased response limit', () async {
     drive.add('backup/device', List.filled(5 * 1024 * 1024, 7));
     await expectLater(

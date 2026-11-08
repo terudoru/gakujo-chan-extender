@@ -1135,6 +1135,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
     final location = result.location;
+    final uploadBytes = result.uploadBytes;
+    final courseName = result.courseName;
+    final fileName = result.fileName;
     _driveUploads.add((generation) => _driveDownloadQueue.run(() async {
       bool allowed() => _driveUploads.isCurrent(generation) &&
           _driveDownloadsEnabled && _driveAccountHash == account &&
@@ -1142,18 +1145,28 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           _driveDownloadPreference.matches(account, email);
       if (!allowed()) return;
       try {
-        if (location == null || location.isEmpty) {
-          throw StateError('Local file is unavailable');
+        late final int length;
+        late final Stream<List<int>> Function() open;
+        if (uploadBytes != null) {
+          length = uploadBytes.length;
+          open = () => Stream<List<int>>.value(uploadBytes);
+        } else {
+          if (location == null || location.isEmpty) {
+            throw StateError('Local file is unavailable');
+          }
+          final uri = Uri.tryParse(location);
+          final isContent = Platform.isAndroid && uri?.scheme == 'content';
+          const contentService = MethodChannelGakujoDownloadService();
+          final file = isContent
+              ? null
+              : (uri?.scheme == 'file' ? File.fromUri(uri!) : File(location));
+          length = isContent
+              ? await contentService.contentUriSize(location)
+              : await file!.length();
+          open = isContent
+              ? () => contentService.openContentUri(location, length)
+              : file!.openRead;
         }
-        final uri = Uri.tryParse(location);
-        final isContent = Platform.isAndroid && uri?.scheme == 'content';
-        const contentService = MethodChannelGakujoDownloadService();
-        final file = isContent
-            ? null
-            : (uri?.scheme == 'file' ? File.fromUri(uri!) : File(location));
-        final length = isContent
-            ? await contentService.contentUriSize(location)
-            : await file!.length();
         if (GoogleDriveFileSaver.isAutomaticFileTooLarge(length)) {
           throw const GoogleDriveSaveTooLarge();
         }
@@ -1161,7 +1174,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (email == null || _starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
         }
-        await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
+        if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+          throw const StarSyncGoogleAuthException(
+            StarSyncGoogleAuthErrorKind.permissionDenied,
+          );
+        }
         if (!allowed()) return;
         if (_starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
@@ -1186,11 +1203,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           );
         }
         await _googleDriveFileSaver!.saveFile(
-          courseName: result.courseName,
-          fileName: result.fileName,
-          open: isContent
-              ? () => contentService.openContentUri(location, length)
-              : file!.openRead,
+          courseName: courseName,
+          fileName: fileName,
+          open: open,
           length: length,
           automatic: true,
         );
@@ -1207,10 +1222,23 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
           _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
         }
+      } on GoogleDriveStorageFull {
+        if (allowed() && mounted) _showSnackBar('Google ドライブの空き容量が足りないため、保存できませんでした');
+      } on GoogleDriveDisabled {
+        if (allowed() && mounted) _showSnackBar('組織の管理者が Google ドライブの利用を制限しているため、保存できませんでした');
       } on GoogleDrivePendingCheckException {
         // The saver has already shown the pending-verification notice.
       } on GoogleDriveAccountChanged {
         if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
+      } on StarSyncGoogleAuthException catch (error) {
+        if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
+          if (allowed() && mounted) _showSnackBar('Google ドライブへの保存の権限がありません。設定でもう一度オンにしてください');
+        } else {
+          if (!allowed()) return;
+          developer.log('Failed to save download to Google Drive: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+          if (mounted) _showSnackBar('Google ドライブに保存できませんでした');
+        }
       } on Object catch (error) {
         if (!allowed()) return;
         developer.log('Failed to save download to Google Drive: ${error.runtimeType}',

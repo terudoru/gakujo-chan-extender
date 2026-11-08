@@ -16,6 +16,8 @@ import '../star_sync/star_sync_transport.dart';
 import '../star_sync/star_sync_webdav_transport.dart';
 import 'settings_sections.dart';
 
+String starSyncErrorMessage(Object error) => _errorText(error);
+
 String _errorText(Object error) {
   if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
   if (error is StarSyncActiveAccountRequiredException) {
@@ -32,9 +34,24 @@ String _errorText(Object error) {
   if (error is ArgumentError) {
     return 'URLを確認してください（https のみ使えます）';
   }
+  if (error is StarSyncGoogleAuthException) {
+    return switch (error.kind) {
+      StarSyncGoogleAuthErrorKind.revoked => 'Google のログインが切れました。もう一度ログインしてください',
+      StarSyncGoogleAuthErrorKind.permissionDenied => 'Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください',
+      StarSyncGoogleAuthErrorKind.browserUnavailable => 'ブラウザを開けませんでした。既定のブラウザの設定を確認してください',
+      StarSyncGoogleAuthErrorKind.storageUnavailable => defaultTargetPlatform == TargetPlatform.linux
+          ? 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えないため、Google にログインできません。保管サービスを有効にしてから、もう一度お試しください'
+          : 'この端末の安全な保存領域を使えないため、Google にログインできません',
+      StarSyncGoogleAuthErrorKind.network => '接続できませんでした',
+      StarSyncGoogleAuthErrorKind.notSignedIn => 'Google にログインしてください',
+      StarSyncGoogleAuthErrorKind.failed || StarSyncGoogleAuthErrorKind.cancelled => 'Google へのログインに失敗しました',
+    };
+  }
   if (error is StarSyncTransportException) {
     return switch (error.kind) {
       StarSyncTransportErrorKind.auth => '認証に失敗しました',
+      StarSyncTransportErrorKind.storageFull => 'Google ドライブの空き容量が足りません',
+      StarSyncTransportErrorKind.driveDisabled => '組織の管理者が Google ドライブの利用を制限しています。別の Google アカウントをお試しください',
       StarSyncTransportErrorKind.tls => '証明書を確認できませんでした',
       StarSyncTransportErrorKind.server => 'サーバーエラー (HTTP ${error.statusCode})',
       _ => '接続できませんでした',
@@ -133,6 +150,7 @@ class StarSyncSection extends StatefulWidget {
     required this.onGoogleSignIn,
     required this.onGoogleSignOut,
     required this.onGoogleReSignIn,
+    this.onGoogleCancelSignIn,
     required this.onLocalStarCount,
     this.onLocalCollectionCounts,
     required this.onSnapshotLocalStars,
@@ -174,6 +192,7 @@ class StarSyncSection extends StatefulWidget {
   onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
   final Future<void> Function() onGoogleReSignIn;
+  final VoidCallback? onGoogleCancelSignIn;
   final Future<int> Function() onLocalStarCount;
   final Future<Map<String, int?>> Function()? onLocalCollectionCounts;
   final Future<Map<String, String>> Function() onSnapshotLocalStars;
@@ -224,6 +243,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   final _rejoinCode = TextEditingController();
   final _rejoinPassphrase = TextEditingController();
   bool _busy = false;
+  bool _googleSigningIn = false;
   String? _error;
   List<StarSyncBackupInfo>? _backups;
 
@@ -266,11 +286,33 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     try {
       await action();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
+      if (error is! StarSyncGoogleAuthException ||
+          error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
+        if (mounted) setState(() => _error = _errorText(error));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  Future<void> _reSignInGoogle() => _run(() async {
+    setState(() => _googleSigningIn = true);
+    try {
+      await widget.onGoogleReSignIn();
+    } finally {
+      if (mounted) setState(() => _googleSigningIn = false);
+    }
+  });
+
+  Widget _googleProgress() => Row(
+    children: [
+      const Expanded(child: LinearProgressIndicator()),
+      if (_googleSigningIn && widget.onGoogleCancelSignIn != null &&
+          {TargetPlatform.windows, TargetPlatform.macOS, TargetPlatform.linux}
+              .contains(defaultTargetPlatform))
+        TextButton(onPressed: widget.onGoogleCancelSignIn, child: const Text('キャンセル')),
+    ],
+  );
 
   Future<Map<String, String>?> _chooseLocalStars() async {
     final count = await widget.onLocalStarCount();
@@ -356,6 +398,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     final clear = choice;
     setState(() {
       _busy = true;
+      _googleSigningIn = true;
       _error = null;
     });
     var needsCleanup = false;
@@ -365,6 +408,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         expectedAccount: expectedAccount,
         expectedGeneration: expectedGeneration,
       );
+      if (mounted) setState(() => _googleSigningIn = false);
       needsCleanup = result == StarSyncPairingSetup.needsPairingCode;
       if (!mounted) return;
       if (result == StarSyncPairingSetup.needsPairingCode) {
@@ -409,7 +453,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           if (mounted) setState(() => _error = _errorText(error));
         }
       }
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() { _busy = false; _googleSigningIn = false; });
     }
   }
 
@@ -461,7 +505,14 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     value: widget.driveDownloadsEnabled,
     onChanged: _busy
         ? null
-        : (value) => _run(() => widget.onDriveDownloadsChanged!(value)),
+        : (value) => _run(() async {
+            if (value) setState(() => _googleSigningIn = true);
+            try {
+              await widget.onDriveDownloadsChanged!(value);
+            } finally {
+              if (mounted && value) setState(() => _googleSigningIn = false);
+            }
+          }),
   );
 
   Future<void> _restoreBackup(StarSyncBackupInfo backup) async {
@@ -515,7 +566,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '同期した内容は、この端末を使う他の人からも見えます。共用の端末では同期を設定しないでください。',
             ),
             if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
+            if (_busy) _googleProgress(),
             if (status.lastError != null) Text(status.lastError!),
             ExpansionTile(
               title: const Text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'),
@@ -608,9 +659,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             const Text('Google へのログインが切れました。'),
             if (widget.googleEmail() != null) Text(widget.googleEmail()!),
             if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
+            if (_busy) _googleProgress(),
             OutlinedButton(
-              onPressed: _busy ? null : () => _run(widget.onGoogleReSignIn),
+              onPressed: _busy ? null : _reSignInGoogle,
               child: const Text('Google に再ログイン'),
             ),
             OutlinedButton(
@@ -756,7 +807,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               ),
           ],
           if (_error != null) Text(_error!),
-          if (_busy) const LinearProgressIndicator(),
+          if (_busy) _googleProgress(),
           Wrap(
             spacing: 8,
             runSpacing: 8,
