@@ -1406,6 +1406,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   set _activeLoginAccount(String? value) => _loginIdentity.active = value;
   String? get _driveAccountHash => _activeLoginAccount;
   late Future<void> _driveDownloadsLoad;
+  int _googleCancelGeneration = 0;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
@@ -3038,7 +3039,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                 const Expanded(child: LinearProgressIndicator()),
                                 if (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
                                   TextButton(
-                                    onPressed: _starSyncGoogleAuth.cancelPendingSignIn,
+                                    onPressed: _cancelGoogleSignIn,
                                     child: const Text('キャンセル'),
                                   ),
                               ],
@@ -3110,7 +3111,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                       googleEmail: () => _starSyncGoogleEmail,
-                      onGoogleCancelSignIn: _starSyncGoogleAuth.cancelPendingSignIn,
+                      onGoogleCancelSignIn: _cancelGoogleSignIn,
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
                         try {
@@ -3277,7 +3278,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       );
     } finally {
       // A sign-in left waiting would hold the Drive queue for its full timeout.
-      _starSyncGoogleAuth.cancelPendingSignIn();
+      _cancelGoogleSignIn();
       await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted) {
         setState(() {
@@ -5731,7 +5732,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return File(_joinLocalPath(directory.path, 'drive_downloads_enabled'));
   }
 
-  Future<String> _signInGoogle() => _driveDownloadQueue.runExclusive(() async {
+  void _cancelGoogleSignIn() {
+    _googleCancelGeneration++;
+    _starSyncGoogleAuth.cancelPendingSignIn();
+  }
+
+  Future<String> _signInGoogle() {
+    final cancelGeneration = _googleCancelGeneration;
+    return _driveDownloadQueue.runExclusive(() async {
+    if (cancelGeneration != _googleCancelGeneration) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+    }
     final email = await _starSyncGoogleAuth.signIn();
     if (_driveDownloadPreference.enabled &&
         _driveDownloadPreference.boundGoogleEmail != email) {
@@ -5752,7 +5763,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       throw StateError('Google account does not match sync binding');
     }
     return email;
-  });
+    });
+  }
 
   Future<bool> _signOutGoogle({bool warn = true}) async {
     if (warn) {
@@ -5865,6 +5877,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _setDriveDownloadsEnabled(bool enabled) async {
+    final cancelGeneration = _googleCancelGeneration;
+    void checkCancelled() {
+      if (enabled && cancelGeneration != _googleCancelGeneration) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+      }
+    }
+
     if (!enabled) {
       _driveDownloadsSuspended = true;
       _cancelDriveUploads();
@@ -5872,7 +5891,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final generation = _driveUploads.generation;
     await _driveDownloadsLoad;
+    checkCancelled();
     return _driveDownloadQueue.runExclusive(() async {
+      checkCancelled();
       if (enabled) {
         final account = _driveAccountHash;
         if (account == null) throw const StarSyncAccountRequiredException();
@@ -5883,6 +5904,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           return;
         }
         _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
+        checkCancelled();
         _starSyncGoogleEmail ??= await _signInGoogle();
         final currentEmail = _starSyncGoogleAuth.currentEmail;
         if (_driveDownloadPreference.enabled &&
@@ -5894,6 +5916,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (mounted) setState(() {});
           return;
         }
+        checkCancelled();
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
           throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.permissionDenied);
@@ -5901,6 +5924,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
         final email = _starSyncGoogleAuth.currentEmail;
         if (email == null || email != _starSyncGoogleEmail) return;
+        checkCancelled();
         await _driveDownloadPreference.save(true, account, email);
         if (_driveUploads.isCurrent(generation) && _driveAccountHash == account) {
           _driveDownloadsSuspended = false;

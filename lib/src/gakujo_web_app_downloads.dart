@@ -854,6 +854,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
+    try {
+      await _driveDownloadsLoad.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      // The local save must not wait on a keychain prompt.
+    }
     final downloadAccount = _driveAccountHash;
     final downloadEmail = _starSyncGoogleAuth.currentEmail;
     // Any identity change meanwhile bumps this, even if it later changes back:

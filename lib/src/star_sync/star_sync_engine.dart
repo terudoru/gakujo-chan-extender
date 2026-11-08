@@ -1819,6 +1819,10 @@ class StarSyncEngine {
           (error.kind == StarSyncTransportErrorKind.server ||
               error.kind == StarSyncTransportErrorKind.storageFull ||
               error.kind == StarSyncTransportErrorKind.driveDisabled)) {
+        if (error.kind == StarSyncTransportErrorKind.storageFull ||
+            error.kind == StarSyncTransportErrorKind.driveDisabled) {
+          state.pendingLocalChange = true;
+        }
         state.serverFailures++;
         final minutes = min(60, 1 << min(state.serverFailures - 1, 6));
         state.cooldownUntil = _now().add(Duration(minutes: minutes));
