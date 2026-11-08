@@ -10,23 +10,33 @@ class WebviewPanScrollAccumulator {
   /// Matches `kScrollMultiplier` in `windows/webview.cc`.
   static const double unitsPerPixel = 1.5;
 
+  // Must match DesktopPanZoomGesture in the app.
+  static const double pinchScaleDeadZone = 0.02;
+  static const double panLockDistance = 24;
+
   Offset _remainder = Offset.zero;
+  Offset _panTotal = Offset.zero;
+  bool _panLocked = false;
   bool _pinching = false;
 
   /// Forgets motion left over from a previous gesture.
   void reset() {
     _remainder = Offset.zero;
     _pinching = false;
+    _panLocked = false;
+    _panTotal = Offset.zero;
   }
 
   /// A pinch is handled by the app's zoom controller. Do not additionally
   /// send its pan deltas to WebView2 as scroll, including near its end.
   Offset? addPanZoom(Offset panDelta, double scale) {
-    if (_pinching || (scale - 1).abs() > 0.01) {
+    if (_pinching || (!_panLocked && (scale - 1).abs() > pinchScaleDeadZone)) {
       _pinching = true;
       _remainder = Offset.zero;
       return null;
     }
+    _panTotal += panDelta;
+    if (!_panLocked && _panTotal.distance > panLockDistance) _panLocked = true;
     return add(panDelta);
   }
 
