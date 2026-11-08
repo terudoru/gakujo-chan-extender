@@ -5926,6 +5926,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (email == null || email != _starSyncGoogleEmail) return;
         checkCancelled();
         await _driveDownloadPreference.save(true, account, email);
+        if (cancelGeneration != _googleCancelGeneration) {
+          await _driveDownloadPreference.save(false, null);
+          throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+        }
         if (_driveUploads.isCurrent(generation) && _driveAccountHash == account) {
           _driveDownloadsSuspended = false;
         }
