@@ -3053,6 +3053,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           if (error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
                             _showSnackBar(starSyncErrorMessage(error));
                           }
+                        } on StarSyncAccountRequiredException catch (error) {
+                          _showSnackBar(starSyncErrorMessage(error));
                         } on Object {
                           _showSnackBar('Google ドライブの設定を変更できませんでした');
                         } finally {
