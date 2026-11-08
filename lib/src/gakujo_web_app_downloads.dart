@@ -854,6 +854,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
+    try {
+      await _driveDownloadsLoad.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      // The local save must not wait on a keychain prompt.
+    }
     final downloadAccount = _driveAccountHash;
     final downloadEmail = _starSyncGoogleAuth.currentEmail;
     // Any identity change meanwhile bumps this, even if it later changes back:
@@ -1125,6 +1130,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
     )) {
+      // Saving is still on, but the Google sign-in behind it has gone.
+      if (_driveDownloadPreference.enabled && !_driveDownloadsSuspended &&
+          _appSettingsLoaded && _starSyncGoogleAuth.currentEmail == null && mounted) {
+        _showSnackBar('Google のログインが切れたため、Google ドライブに保存できませんでした。設定からもう一度ログインしてください');
+      }
       return;
     }
     if (!_driveDownloadsEnabled) {
@@ -1231,7 +1241,13 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       } on GoogleDriveAccountChanged {
         if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
       } on StarSyncGoogleAuthException catch (error) {
-        if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
+        if (error.kind == StarSyncGoogleAuthErrorKind.revoked ||
+            error.kind == StarSyncGoogleAuthErrorKind.notSignedIn) {
+          // `allowed()` is already false here: the revoked token cleared the account.
+          if (_driveUploads.isCurrent(generation) && mounted) {
+            _showSnackBar('Google のログインが切れたため、Google ドライブに保存できませんでした。設定からもう一度ログインしてください');
+          }
+        } else if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
           if (allowed() && mounted) _showSnackBar('Google ドライブへの保存の権限がありません。設定でもう一度オンにしてください');
         } else {
           if (!allowed()) return;

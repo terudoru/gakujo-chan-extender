@@ -3419,6 +3419,47 @@ void main() {
     },
   );
 
+  test('Drive storage full retries without a local change', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime.utc(2026);
+    _TestTimer? timer;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      now: () => now,
+      timerFactory: (_, callback) => timer = _TestTimer(callback),
+    );
+    await engine.setUpWithPairing(
+      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    );
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isFalse);
+    timer = null;
+    remote.driveFailure = StarSyncTransportErrorKind.storageFull;
+    await expectLater(
+      engine.syncNow(),
+      throwsA(isA<StarSyncTransportException>()),
+    );
+    expect(timer, isNotNull);
+    expect(timer!.isActive, isTrue);
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isTrue);
+    remote.driveFailure = null;
+    now = now.add(const Duration(minutes: 2));
+    final recovered = Completer<void>();
+    engine.status.addListener(() {
+      if (engine.status.value.status == StarSyncStatus.ok && !recovered.isCompleted) {
+        recovered.complete();
+      }
+    });
+    timer!.fire();
+    await recovered.future.timeout(const Duration(seconds: 2));
+    expect(engine.status.value.status, StarSyncStatus.ok);
+    expect(engine.status.value.lastError, isNull);
+    engine.dispose();
+  });
+
   test('Drive storage full sets an error and cooldown', () async {
     final remote = _Transport();
     final storage = _Storage();

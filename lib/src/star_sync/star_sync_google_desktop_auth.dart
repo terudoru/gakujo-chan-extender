@@ -205,7 +205,8 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
-  Future<String> signIn() => _authorize(starSyncGoogleScopes);
+  Future<String> signIn({List<String> optionalScopes = const []}) =>
+      _authorize(starSyncGoogleScopes, optionalScopes: optionalScopes);
 
   @override
   Future<bool> hasScope(String scope) async => _scopes.contains(scope);
@@ -227,6 +228,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   Future<String> _authorize(
     List<String> scopes, {
     String? expectedEmail,
+    List<String> optionalScopes = const [],
   }) async {
     if (_authorizationInProgress) {
       throw const StarSyncGoogleAuthException(
@@ -295,7 +297,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'client_id': config.desktopClientId,
           'redirect_uri': redirect,
           'response_type': 'code',
-          'scope': scopes.join(' '),
+          'scope': [...scopes, ...optionalScopes].join(' '),
           'code_challenge': challenge,
           'code_challenge_method': 'S256',
           'state': state,

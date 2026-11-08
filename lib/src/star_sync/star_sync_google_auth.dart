@@ -70,7 +70,9 @@ class StarSyncGoogleRevocationException implements Exception {
 abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
   Future<String?> restore();
-  Future<String> signIn();
+
+  /// [optionalScopes] are asked for too, but sign-in succeeds without them.
+  Future<String> signIn({List<String> optionalScopes = const []});
   void cancelPendingSignIn();
   Future<String> accessToken({bool forceRefresh = false});
   Future<bool> hasScope(String scope);
