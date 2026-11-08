@@ -262,7 +262,6 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'redirect_uri': redirect,
           'response_type': 'code',
           'scope': scopes.join(' '),
-          if (expectedEmail != null) 'include_granted_scopes': 'true',
           'code_challenge': challenge,
           'code_challenge_method': 'S256',
           'state': state,

@@ -171,7 +171,7 @@ void main() {
           if (incremental) googleDriveFileScope,
         ]),
       );
-      if (incremental) expect(p['include_granted_scopes'], 'true');
+      expect(p.containsKey('include_granted_scopes'), isFalse);
       expect(p['code_challenge_method'], 'S256');
       expect(p['access_type'], 'offline');
       expect(p['prompt'], 'consent');
