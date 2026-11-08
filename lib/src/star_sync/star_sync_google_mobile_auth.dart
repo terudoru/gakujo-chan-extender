@@ -67,6 +67,11 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     _scopes
       ..clear()
       ..addAll(starSyncGoogleScopes);
+    final client = _account!.authorizationClient;
+    final authorization =
+        await client.authorizationForScopes(_scopes.toList()) ??
+        await client.authorizeScopes(_scopes.toList());
+    _token = authorization.accessToken;
     return _account!.email;
   });
 
@@ -88,9 +93,12 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       }
       _token = null;
     }
-    final authorization =
-        await client.authorizationForScopes(_scopes.toList()) ??
-        await client.authorizeScopes(_scopes.toList());
+    final authorization = await client.authorizationForScopes(_scopes.toList());
+    if (authorization == null) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
     return _token = authorization.accessToken;
   });
 

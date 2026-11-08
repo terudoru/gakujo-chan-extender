@@ -25,6 +25,7 @@ void main() {
   var failFirstChunk = false;
   late DateTime now;
   var failCheck = false;
+  var quotaOnCheck = false;
   var failDelete = false;
   late HttpServer server;
   late Uri base;
@@ -60,6 +61,7 @@ void main() {
     failFirstChunk = false;
     now = DateTime.now();
     failCheck = false;
+    quotaOnCheck = false;
     failDelete = false;
     files = [];
     queries = [];
@@ -112,6 +114,12 @@ void main() {
           request.uri.queryParameters['fields'],
           'id,ownedByMe,shared,trashed',
         );
+        if (quotaOnCheck && uploads > 0) {
+          response.statusCode = 403;
+          response.write(jsonEncode({'error': {'errors': [{'reason': 'storageQuotaExceeded'}]}}));
+          await response.close();
+          return;
+        }
         if (failCheck && uploads > 0) {
           response.statusCode = 403;
           await response.close();
@@ -480,6 +488,29 @@ void main() {
       expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
     },
   );
+
+  test('quota error after upload keeps its id until verification succeeds', () async {
+    quotaOnCheck = true;
+    await expectLater(save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    final pending = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+    expect(pending.single['id'], 'uploaded');
+    quotaOnCheck = false;
+    await saver.processPendingChecks();
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('expired unfound upload removes its empty exposed created folder', () async {
+    dropFinal = true;
+    await expectLater(save('Course', 'lost', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    files.removeWhere((file) => file['id'] == 'lost-upload');
+    files.singleWhere((file) => file['name'] == 'More Better Gakujo')['shared'] = true;
+    now = now.add(const Duration(hours: 25));
+    await saver.processPendingChecks();
+    expect(deleted, contains(uploadParent));
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
 
   test('session failure removes pending entry and permits the next save', () async {
     sessionStatus = 500;

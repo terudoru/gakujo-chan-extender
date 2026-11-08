@@ -1174,7 +1174,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (email == null || _starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
         }
-        await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
+        if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+          throw const StarSyncGoogleAuthException(
+            StarSyncGoogleAuthErrorKind.permissionDenied,
+          );
+        }
         if (!allowed()) return;
         if (_starSyncGoogleAuth.currentEmail != email) {
           throw const GoogleDriveAccountChanged();
@@ -1226,6 +1230,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         // The saver has already shown the pending-verification notice.
       } on GoogleDriveAccountChanged {
         if (allowed() && mounted) _showSnackBar('Google アカウントが変わったため、保存を中止しました');
+      } on StarSyncGoogleAuthException catch (error) {
+        if (error.kind == StarSyncGoogleAuthErrorKind.permissionDenied) {
+          if (allowed() && mounted) _showSnackBar('Google ドライブへの保存の権限がありません。設定でもう一度オンにしてください');
+        } else {
+          if (!allowed()) return;
+          developer.log('Failed to save download to Google Drive: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+          if (mounted) _showSnackBar('Google ドライブに保存できませんでした');
+        }
       } on Object catch (error) {
         if (!allowed()) return;
         developer.log('Failed to save download to Google Drive: ${error.runtimeType}',

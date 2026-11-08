@@ -78,6 +78,8 @@ void main() {
   var incremental = false;
   var changedAccount = false;
   var omitScope = false;
+  Completer<void>? tokenStarted;
+  Completer<void>? tokenContinue;
 
   setUp(() async {
     storage = _Storage();
@@ -92,6 +94,8 @@ void main() {
     incremental = false;
     changedAccount = false;
     omitScope = false;
+    tokenStarted = null;
+    tokenContinue = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     endpoint = Uri.parse('http://127.0.0.1:${server.port}');
     server.listen((request) async {
@@ -120,6 +124,8 @@ void main() {
           );
         }
       } else {
+        tokenStarted?.complete();
+        if (tokenContinue != null) await tokenContinue!.future;
         verifier = fields['code_verifier'];
         expect(fields['client_secret'], 'secret');
         expect(fields['code'], 'test-code');
@@ -286,6 +292,91 @@ void main() {
       client.close(force: true);
     }
   });
+
+  test('cancel during token exchange does not store credentials', () async {
+    tokenStarted = Completer<void>();
+    tokenContinue = Completer<void>();
+    final auth = makeAuth();
+    final signIn = auth.signIn();
+    final failure = expectLater(
+      signIn,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    await tokenStarted!.future;
+    auth.cancelPendingSignIn();
+    tokenContinue!.complete();
+    await failure;
+    expect(storage.values, isEmpty);
+    expect(auth.currentEmail, isNull);
+  });
+
+  test('a second authorization does not disturb the first', () async {
+    tokenStarted = Completer<void>();
+    tokenContinue = Completer<void>();
+    final auth = makeAuth();
+    final first = auth.signIn();
+    final firstFailure = expectLater(
+      first,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    await tokenStarted!.future;
+    await expectLater(
+      auth.signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.failed,
+        ),
+      ),
+    );
+    auth.cancelPendingSignIn();
+    tokenContinue!.complete();
+    await firstFailure;
+    expect(storage.values, isEmpty);
+  });
+
+  test(
+    'cancel incremental authorization preserves previous credentials',
+    () async {
+      final auth = makeAuth();
+      await auth.signIn();
+      final previous = storage.values[starSyncGoogleTokenKey];
+      incremental = true;
+      tokenStarted = Completer<void>();
+      tokenContinue = Completer<void>();
+      final request = auth.requestScopes([googleDriveFileScope]);
+      final failure = expectLater(
+        request,
+        throwsA(
+          isA<StarSyncGoogleAuthException>().having(
+            (e) => e.kind,
+            'kind',
+            StarSyncGoogleAuthErrorKind.cancelled,
+          ),
+        ),
+      );
+      await tokenStarted!.future;
+      auth.cancelPendingSignIn();
+      tokenContinue!.complete();
+      await failure;
+      expect(storage.values[starSyncGoogleTokenKey], previous);
+      expect(auth.currentEmail, 'user@example.com');
+      expect(await auth.hasScope(googleDriveFileScope), isFalse);
+    },
+  );
 
   test('sign in stores refresh token and parses email', () async {
     final auth = makeAuth();

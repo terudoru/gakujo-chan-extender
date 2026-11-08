@@ -1404,7 +1404,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? get _activeLoginAccount => _loginIdentity.active;
   set _activeLoginAccount(String? value) => _loginIdentity.active = value;
   String? get _driveAccountHash => _activeLoginAccount;
-  late final Future<void> _driveDownloadsLoad;
+  late Future<void> _driveDownloadsLoad;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
@@ -5761,35 +5761,42 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadDriveDownloadsPreference() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadPreference.load(await _driveDownloadsPreferenceFile());
-      if (_driveDownloadPreference.enabled) {
-        _starSyncGoogleEmail = await _driveDownloadQueue.run(
-          _starSyncGoogleAuth.restore,
-        );
-      }
-      if (_driveDownloadPreference.enabled &&
-          _starSyncGoogleAuth.currentEmail != null &&
-          _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
-        _driveDownloadsSuspended = true;
-        _cancelDriveUploads();
-        await _driveDownloadPreference.save(false, null);
-        if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-      }
-      if (mounted) setState(() {});
+      await _restoreDriveDownloadsAccount();
     } on Object catch (error) {
       developer.log('Failed to load Drive download preference: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
     }
   }
 
+  Future<void> _restoreDriveDownloadsAccount() async {
+    if (_driveDownloadPreference.enabled) {
+      _starSyncGoogleEmail = await _driveDownloadQueue.run(
+        _starSyncGoogleAuth.restore,
+      );
+    }
+    if (_driveDownloadPreference.enabled &&
+        _starSyncGoogleAuth.currentEmail != null &&
+        _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      await _driveDownloadPreference.save(false, null);
+      if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _warnPendingDriveChecks() async {
+    if (!_secureStorageAccessAllowed) return;
     if (await GoogleDriveFileSaver.pendingCheckCount() == 0 || !mounted) return;
     final check = await showPendingDriveCheckConfirmation(context);
     if (check == true) await _retryPendingDriveChecksAtStartup();
   }
 
   Future<void> _retryPendingDriveChecksAtStartup() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadsLoad;
       await _driveDownloadQueue.run(() async {
@@ -7205,6 +7212,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
       await _loadActiveLoginAccount();
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       setState(() {
         _startupPlaceholderFeatureFlags.clear();
         _appSettings = settings;
@@ -7454,6 +7464,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       _startupPlaceholderFeatureFlags.clear();
       setState(() {
         _appSettings = const GakujoAppSettings();

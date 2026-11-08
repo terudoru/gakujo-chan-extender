@@ -55,6 +55,16 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   DateTime? _expiresAt;
   Set<String> _scopes = {};
   Completer<String>? _pendingAuthorization;
+  bool _authorizationInProgress = false;
+  bool _authorizationCancelled = false;
+
+  void _throwIfAuthorizationCancelled() {
+    if (_authorizationCancelled) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.cancelled,
+      );
+    }
+  }
 
   static Future<bool> _launch(Uri uri) =>
       launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -182,6 +192,8 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   @override
   void cancelPendingSignIn() {
+    if (!_authorizationInProgress) return;
+    _authorizationCancelled = true;
     final pending = _pendingAuthorization;
     if (pending != null && !pending.isCompleted) {
       pending.completeError(
@@ -216,6 +228,12 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     List<String> scopes, {
     String? expectedEmail,
   }) async {
+    if (_authorizationInProgress) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.failed,
+        'Authorization already in progress',
+      );
+    }
     final verifier = _random();
     final state = _random();
     final challenge = base64Url
@@ -223,8 +241,11 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         .replaceAll('=', '');
     HttpServer? server;
     Completer<String>? result;
+    _authorizationInProgress = true;
+    _authorizationCancelled = false;
     try {
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _throwIfAuthorizationCancelled();
       final redirect = 'http://127.0.0.1:${server.port}';
       final pending = Completer<String>();
       result = pending;
@@ -295,14 +316,19 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         pending.future,
       ], eagerError: true).timeout(const Duration(minutes: 5));
       final code = results[1] as String;
-      final data = await _post(tokenEndpoint, {
-        'code': code,
-        'client_id': config.desktopClientId,
-        'client_secret': config.desktopClientSecret,
-        'redirect_uri': redirect,
-        'code_verifier': verifier,
-        'grant_type': 'authorization_code',
-      }, clearOnInvalidGrant: false);
+      late final Map<String, dynamic> data;
+      try {
+        data = await _post(tokenEndpoint, {
+          'code': code,
+          'client_id': config.desktopClientId,
+          'client_secret': config.desktopClientSecret,
+          'redirect_uri': redirect,
+          'code_verifier': verifier,
+          'grant_type': 'authorization_code',
+        }, clearOnInvalidGrant: false);
+      } finally {
+        _throwIfAuthorizationCancelled();
+      }
       final refresh = data['refresh_token'];
       final idToken = data['id_token'];
       if (refresh is! String || refresh.isEmpty || idToken is! String) {
@@ -352,7 +378,12 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           expires <= 0) {
         throw const FormatException();
       }
+      await server.close(force: true);
+      server = null;
+      _throwIfAuthorizationCancelled();
       try {
+        final previous = await storage.read(key: starSyncGoogleTokenKey);
+        _throwIfAuthorizationCancelled();
         await storage.write(
           key: starSyncGoogleTokenKey,
           value: jsonEncode({
@@ -361,6 +392,14 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
             'scopes': granted.toList(),
           }),
         );
+        if (_authorizationCancelled) {
+          if (previous == null) {
+            await storage.delete(key: starSyncGoogleTokenKey);
+          } else {
+            await storage.write(key: starSyncGoogleTokenKey, value: previous);
+          }
+          _throwIfAuthorizationCancelled();
+        }
       } on PlatformException {
         throw const StarSyncGoogleAuthException(
           StarSyncGoogleAuthErrorKind.storageUnavailable,
@@ -389,7 +428,11 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       if (identical(_pendingAuthorization, result)) {
         _pendingAuthorization = null;
       }
-      await server?.close(force: true);
+      try {
+        if (server != null) await server.close(force: true);
+      } finally {
+        _authorizationInProgress = false;
+      }
     }
   }
 

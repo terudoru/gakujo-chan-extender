@@ -422,6 +422,9 @@ class GoogleDriveFileSaver {
           final started = DateTime.tryParse(entry['started']!);
           if (started == null || _clock().difference(started) > const Duration(hours: 24)) {
             try {
+              if (entry['createdParent'] == '1') {
+                await _dropCreatedFolderIfExposed(entry['root']!, entry['parent']!);
+              }
               final remaining = List<Map<String, String>>.of(entries)..remove(entry);
               await _savePendingChecks(remaining);
               entries.remove(entry);
@@ -594,8 +597,9 @@ class GoogleDriveFileSaver {
     } on GoogleDriveSaveFolderShared {
       rethrow;
     } on Object catch (error) {
-      if (!finalChunkAttempted || error is GoogleDriveStorageFull ||
-          error is GoogleDriveDisabled) {
+      if (entry['id'] == null &&
+          (!finalChunkAttempted || error is GoogleDriveStorageFull ||
+              error is GoogleDriveDisabled)) {
         try {
           final remaining = List<Map<String, String>>.of(entries)..remove(entry);
           await _savePendingChecks(remaining);
