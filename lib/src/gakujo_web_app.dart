@@ -5744,13 +5744,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
     }
     final email = await _starSyncGoogleAuth.signIn();
-    if (_driveDownloadPreference.enabled &&
-        _driveDownloadPreference.boundGoogleEmail != email) {
-      _driveDownloadsSuspended = true;
-      _cancelDriveUploads();
-      await _driveDownloadPreference.save(false, null);
-      if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-    }
     final config = _starSyncEngine.config;
     if (config?.backend == StarSyncBackend.googleDrive &&
         config?.googleEmail != email) {
@@ -5761,6 +5754,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (mounted) _showSnackBar('同期を設定した Google アカウントでログインしてください');
       }
       throw StateError('Google account does not match sync binding');
+    }
+    if (_driveDownloadPreference.enabled &&
+        _driveDownloadPreference.boundGoogleEmail != email) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      await _driveDownloadPreference.save(false, null);
+      if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
     }
     return email;
     });
