@@ -16,6 +16,8 @@ import '../star_sync/star_sync_transport.dart';
 import '../star_sync/star_sync_webdav_transport.dart';
 import 'settings_sections.dart';
 
+String starSyncErrorMessage(Object error) => _errorText(error);
+
 String _errorText(Object error) {
   if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
   if (error is StarSyncActiveAccountRequiredException) {
