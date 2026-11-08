@@ -5737,7 +5737,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _starSyncGoogleAuth.cancelPendingSignIn();
   }
 
-  Future<String> _signInGoogle() {
+  Future<String> _signInGoogle({bool enablingDriveSaving = false}) {
     final cancelGeneration = _googleCancelGeneration;
     return _driveDownloadQueue.runExclusive(() async {
     if (cancelGeneration != _googleCancelGeneration) {
@@ -5745,7 +5745,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     // Re-login must not lose the Drive permission that saving relies on.
     final email = await _starSyncGoogleAuth.signIn(
-      optionalScopes: _driveDownloadPreference.enabled
+      optionalScopes: enablingDriveSaving || _driveDownloadPreference.enabled
           ? const [googleDriveFileScope]
           : const [],
     );
@@ -5766,12 +5766,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _cancelDriveUploads();
       await _driveDownloadPreference.save(false, null);
       if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-    } else if (_driveDownloadPreference.enabled &&
-        !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
-      _driveDownloadsSuspended = true;
-      _cancelDriveUploads();
-      await _driveDownloadPreference.save(false, null);
-      if (mounted) _showSnackBar('Google ドライブへの保存の権限がなくなったため、保存をオフにしました。必要ならもう一度オンにしてください');
+    } else if (!enablingDriveSaving && _driveDownloadPreference.enabled) {
+      // Only a confirmed refusal turns saving off; a failed check must not undo the sign-in.
+      var granted = true;
+      try {
+        granted = await _starSyncGoogleAuth.hasScope(googleDriveFileScope);
+      } on Object catch (error) {
+        developer.log('Failed to check the Drive permission: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
+      }
+      if (!granted) {
+        _driveDownloadsSuspended = true;
+        _cancelDriveUploads();
+        await _driveDownloadPreference.save(false, null);
+        if (mounted) _showSnackBar('Google ドライブへの保存の権限がなくなったため、保存をオフにしました。必要ならもう一度オンにしてください');
+      }
     }
     return email;
     });
@@ -5918,7 +5927,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (_starSyncGoogleAuth.currentEmail == null) _starSyncGoogleEmail = null;
         _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
         checkCancelled();
-        _starSyncGoogleEmail ??= await _signInGoogle();
+        _starSyncGoogleEmail ??= await _signInGoogle(enablingDriveSaving: true);
         final currentEmail = _starSyncGoogleAuth.currentEmail;
         if (_driveDownloadPreference.enabled &&
             _driveDownloadPreference.boundGoogleEmail != currentEmail) {
@@ -5934,6 +5943,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
           throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.permissionDenied);
         }
+        // Stored scopes say nothing about a grant revoked elsewhere; refreshing does.
+        await _starSyncGoogleAuth.accessToken(forceRefresh: true);
         if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
         final email = _starSyncGoogleAuth.currentEmail;
         if (email == null || email != _starSyncGoogleEmail) return;
