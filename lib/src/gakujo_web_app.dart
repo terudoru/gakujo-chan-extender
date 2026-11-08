@@ -5766,6 +5766,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _cancelDriveUploads();
       await _driveDownloadPreference.save(false, null);
       if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
+    } else if (_driveDownloadPreference.enabled &&
+        !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      await _driveDownloadPreference.save(false, null);
+      if (mounted) _showSnackBar('Google ドライブへの保存の権限がなくなったため、保存をオフにしました。必要ならもう一度オンにしてください');
     }
     return email;
     });

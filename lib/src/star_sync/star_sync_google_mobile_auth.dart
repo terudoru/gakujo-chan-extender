@@ -64,16 +64,27 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       scopeHint: starSyncGoogleScopes,
     );
     final client = account.authorizationClient;
-    final scopes = {...starSyncGoogleScopes, ...optionalScopes}.toList();
     final authorization =
-        await client.authorizationForScopes(scopes) ??
-        await client.authorizeScopes(scopes);
+        await client.authorizationForScopes(starSyncGoogleScopes) ??
+        await client.authorizeScopes(starSyncGoogleScopes);
     // Keep the previous account until this one has been authorized.
     _account = account;
     _token = authorization.accessToken;
     _scopes
       ..clear()
-      ..addAll(scopes);
+      ..addAll(starSyncGoogleScopes);
+    if (optionalScopes.isNotEmpty) {
+      final scopes = {..._scopes, ...optionalScopes}.toList();
+      try {
+        final extended =
+            await client.authorizationForScopes(scopes) ??
+            await client.authorizeScopes(scopes);
+        _token = extended.accessToken;
+        _scopes.addAll(optionalScopes);
+      } on Object {
+        // Refusing an optional scope must not undo the sign-in.
+      }
+    }
     return account.email;
   });
 
