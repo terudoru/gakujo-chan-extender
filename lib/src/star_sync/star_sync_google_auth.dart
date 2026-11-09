@@ -72,7 +72,12 @@ abstract interface class StarSyncGoogleAuth {
   Future<String?> restore();
 
   /// [optionalScopes] are asked for too, but sign-in succeeds without them.
-  Future<String> signIn({List<String> optionalScopes = const []});
+  /// [loginHint] preselects the only account that would be accepted; without
+  /// it the student gets to choose, so a wrong account can be corrected.
+  Future<String> signIn({
+    List<String> optionalScopes = const [],
+    String? loginHint,
+  });
   void cancelPendingSignIn();
   Future<String> accessToken({bool forceRefresh = false});
   Future<bool> hasScope(String scope);

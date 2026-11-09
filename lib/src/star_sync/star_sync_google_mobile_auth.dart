@@ -58,7 +58,10 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   void cancelPendingSignIn() {}
 
   @override
-  Future<String> signIn({List<String> optionalScopes = const []}) => _guard(() async {
+  Future<String> signIn({
+    List<String> optionalScopes = const [],
+    String? loginHint,
+  }) => _guard(() async {
     await _initialize();
     final account = await GoogleSignIn.instance.authenticate(
       scopeHint: starSyncGoogleScopes,

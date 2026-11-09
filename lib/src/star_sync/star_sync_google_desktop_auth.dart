@@ -205,8 +205,14 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
-  Future<String> signIn({List<String> optionalScopes = const []}) =>
-      _authorize(starSyncGoogleScopes, optionalScopes: optionalScopes);
+  Future<String> signIn({
+    List<String> optionalScopes = const [],
+    String? loginHint,
+  }) => _authorize(
+    starSyncGoogleScopes,
+    optionalScopes: optionalScopes,
+    loginHint: loginHint,
+  );
 
   @override
   Future<bool> hasScope(String scope) async => _scopes.contains(scope);
@@ -229,7 +235,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     List<String> scopes, {
     String? expectedEmail,
     List<String> optionalScopes = const [],
+    String? loginHint,
   }) async {
+    final hint = expectedEmail ?? loginHint;
     if (_authorizationInProgress) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.failed,
@@ -302,7 +310,10 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'code_challenge_method': 'S256',
           'state': state,
           'access_type': 'offline',
-          'prompt': 'consent',
+          // Without select_account the browser keeps its current account, and
+          // a student who chose the wrong one could never pick another.
+          'prompt': hint == null ? 'select_account consent' : 'consent',
+          'login_hint': ?hint,
         },
       );
       final results = await Future.wait<Object>([

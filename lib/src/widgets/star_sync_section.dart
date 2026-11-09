@@ -330,7 +330,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           '設定（${collectionCount('settings')}項目）、'
           '下書き（${collectionCount('report-drafts')}件）、'
           '通知済み期限（${collectionCount('notified-deadlines')}件）も含まれます。'
-          '他の人が使っていた端末なら「空にして始める」を選んでください。',
+          '他の人が使っていた端末や、別の Google アカウントで同期したあとで内容を混ぜたくないときは、「空にして始める」を選んでください。',
         ),
         actions: [
           TextButton(
@@ -502,6 +502,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
 
   Widget _driveDownloadsSwitch() => SwitchListTile(
     title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+    subtitle: widget.driveDownloadsEnabled && widget.googleEmail() != null
+        ? Text(
+            widget.isGoogleDrive()
+                ? '保存先: ${widget.googleEmail()!}'
+                : '保存先: ${widget.googleEmail()!}（別のアカウントにするには、一度オフにします）',
+          )
+        : null,
     value: widget.driveDownloadsEnabled,
     onChanged: _busy
         ? null
@@ -659,12 +666,19 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             const Text('Google へのログインが切れました。'),
             if (widget.googleEmail() != null)
               Text('同期に使うアカウント: ${widget.googleEmail()!}'),
+            // Settings from before accounts were recorded can never match one.
+            if (widget.isGoogleDrive() && widget.googleEmail() == null)
+              const Text(
+                'この同期の設定には Google アカウントの情報がないため、再ログインできません。'
+                '「同期を無効にする」を押してから、もう一度設定してください。端末内のスターは残ります。',
+              ),
             if (_error != null) Text(_error!),
             if (_busy) _googleProgress(),
-            OutlinedButton(
-              onPressed: _busy ? null : _reSignInGoogle,
-              child: const Text('Google に再ログイン'),
-            ),
+            if (!widget.isGoogleDrive() || widget.googleEmail() != null)
+              OutlinedButton(
+                onPressed: _busy ? null : _reSignInGoogle,
+                child: const Text('Google に再ログイン'),
+              ),
             OutlinedButton(
               onPressed: _busy
                   ? null
@@ -711,7 +725,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
             ),
           if (widget.isGoogleDrive() && widget.googleEmail() != null)
-            Text(widget.googleEmail()!),
+            Text('${widget.googleEmail()!}（別のアカウントにするには、同期を無効にしてから設定し直します）'),
           if (status.status == StarSyncStatus.needsPairingCode) ...[
             const Text('別の端末で同期データがリセットされました。新しいコードを入力してください。'),
             _PairingInput(controller: _rejoinCode, enabled: !_busy),

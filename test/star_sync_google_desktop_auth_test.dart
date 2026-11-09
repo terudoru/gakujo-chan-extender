@@ -76,6 +76,7 @@ void main() {
   String? verifier;
   String? challenge;
   var incremental = false;
+  Map<String, String>? lastAuthParams;
   var changedAccount = false;
   var omitScope = false;
   Completer<void>? tokenStarted;
@@ -190,7 +191,11 @@ void main() {
       expect(p.containsKey('include_granted_scopes'), isFalse);
       expect(p['code_challenge_method'], 'S256');
       expect(p['access_type'], 'offline');
-      expect(p['prompt'], 'consent');
+      lastAuthParams = p;
+      expect(
+        p['prompt'],
+        p['login_hint'] == null ? 'select_account consent' : 'consent',
+      );
       expect(p['state'], isNotEmpty);
       challenge = p['code_challenge'];
       final redirect = Uri.parse(
@@ -225,6 +230,18 @@ void main() {
       isNotEmpty,
     );
     expect(await auth.hasScope(googleDriveFileScope), isFalse);
+  });
+
+  test('sign-in lets the student choose an account', () async {
+    await makeAuth().signIn();
+    expect(lastAuthParams!['prompt'], 'select_account consent');
+    expect(lastAuthParams!.containsKey('login_hint'), isFalse);
+  });
+
+  test('a bound re-login preselects the only account it accepts', () async {
+    await makeAuth().signIn(loginHint: 'bound@example.test');
+    expect(lastAuthParams!['prompt'], 'consent');
+    expect(lastAuthParams!['login_hint'], 'bound@example.test');
   });
 
   test('unticked scope reports permission denied', () async {
