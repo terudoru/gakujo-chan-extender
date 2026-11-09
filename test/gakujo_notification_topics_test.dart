@@ -528,7 +528,6 @@ void main() {
         failedDownloads: const [],
         favorites: const [],
         deadlines: const [],
-        changes: const [],
         reportLists: const [],
       );
 

@@ -9,7 +9,6 @@ const List<GakujoFeatureFlag> settingsLoginFeatureFlags = [
   GakujoFeatureFlag.loginAutofill,
   GakujoFeatureFlag.twoFactorAutofill,
   GakujoFeatureFlag.sessionExtender,
-  GakujoFeatureFlag.sessionRecoveryGuide,
 ];
 
 const List<GakujoFeatureFlag> settingsGradeFeatureFlags = [
@@ -31,17 +30,11 @@ const List<GakujoFeatureFlag> settingsDownloadFeatureFlags = [
 ];
 
 const List<GakujoFeatureFlag> settingsNotificationFeatureFlags = [
-  GakujoFeatureFlag.deadlineScan,
   GakujoFeatureFlag.deadlineNotifications,
 ];
 
 const List<GakujoFeatureFlag> settingsBackupFeatureFlags = [
   GakujoFeatureFlag.autoBackup,
-];
-
-const List<GakujoFeatureFlag> settingsRecordingFeatureFlags = [
-  GakujoFeatureFlag.activityScan,
-  GakujoFeatureFlag.reportListCache,
 ];
 
 const List<GakujoFeatureFlag> settingsAppFeatureFlags = [
@@ -56,7 +49,6 @@ const List<List<GakujoFeatureFlag>> settingsFeatureFlagGroups = [
   settingsDownloadFeatureFlags,
   settingsNotificationFeatureFlags,
   settingsBackupFeatureFlags,
-  settingsRecordingFeatureFlags,
   settingsAppFeatureFlags,
 ];
 
@@ -454,12 +446,6 @@ class FeatureFlagsSection extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
             subtitle: switch (flag) {
-              GakujoFeatureFlag.activityScan =>
-                const Text('開いたページの内容を記録し、変わった箇所を「変更履歴」に残します。'),
-              GakujoFeatureFlag.reportListCache =>
-                const Text('レポート・小テスト一覧を端末に保存し、「保存済み課題一覧」で見られるようにします。'),
-              GakujoFeatureFlag.deadlineScan =>
-                const Text('レポート・小テストのページから提出期限を読み取ります。通知の元になります。'),
               GakujoFeatureFlag.deadlineNotifications
                   when defaultTargetPlatform == TargetPlatform.linux =>
                 const Text('Linux では OS の通知に対応していません。'),

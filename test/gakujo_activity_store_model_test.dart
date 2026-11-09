@@ -100,28 +100,6 @@ void main() {
     expect(await store.loadNotifiedDeadlineKeys(), {'old', 'concurrent', 'remote'});
   });
 
-  test('activity snapshot round-trips through json', () {
-    final updatedAt = DateTime.utc(2026, 6, 26, 10);
-    final snapshot = GakujoActivitySnapshot(
-      category: 'レポート・小テスト',
-      title: 'レポート提出',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-      contentHash: 'abc',
-      updatedAt: updatedAt,
-      hasUpdate: true,
-      contentPreview: '新着の掲示があります。',
-    );
-
-    final restored = GakujoActivitySnapshot.fromJson(snapshot.toJson());
-
-    expect(restored.category, 'レポート・小テスト');
-    expect(restored.title, 'レポート提出');
-    expect(restored.contentHash, 'abc');
-    expect(restored.updatedAt, updatedAt);
-    expect(restored.hasUpdate, isTrue);
-    expect(restored.contentPreview, '新着の掲示があります。');
-  });
-
   test('deadline entry key is stable', () {
     final entry = GakujoDeadlineEntry(
       title: '課題',
@@ -147,31 +125,6 @@ void main() {
     expect(restored.kind, 'schedule');
     expect(restored.isDeadline, isFalse);
     expect(restored.key, contains('schedule'));
-  });
-
-  test('activity change entries round-trip through json', () {
-    final changedAt = DateTime.utc(2026, 6, 26, 13);
-    final change = GakujoActivityChangeEntry(
-      category: '成績',
-      title: '単位修得状況照会',
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=si',
-      changedAt: changedAt,
-      previousHash: 'before',
-      nextHash: 'after',
-      previousPreview: '以前の内容',
-      nextPreview: '新しい内容',
-    );
-
-    final restored = GakujoActivityChangeEntry.fromJson(change.toJson());
-
-    expect(restored.category, '成績');
-    expect(restored.title, '単位修得状況照会');
-    expect(restored.changedAt, changedAt);
-    expect(restored.previousHash, 'before');
-    expect(restored.nextHash, 'after');
-    expect(restored.previousPreview, '以前の内容');
-    expect(restored.nextPreview, '新しい内容');
   });
 
   test('cached report lists round-trip through json', () {
@@ -207,7 +160,7 @@ void main() {
     expect(restored.addedAt, addedAt);
   });
 
-  test('favorites and changes persist durable links across flow visits',
+  test('favorites persist durable links across flow visits',
       () async {
     const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
     const pages = [
@@ -237,21 +190,10 @@ void main() {
             'addedAt': now.toIso8601String(),
           },
       ]),
-      'more_better_gakujo_activity_changes': jsonEncode([
-        {
-          'category': '連絡通知',
-          'title': '以前の更新',
-          'url': pages[1].url,
-          'changedAt': now.toIso8601String(),
-          'previousHash': 'old',
-          'nextHash': 'new',
-        },
-      ]),
     });
     final store = GakujoActivityStore();
     expect((await store.loadFavorites()).map((page) => page.url),
         unorderedEquals(pages.map((page) => page.url)));
-    expect((await store.loadChanges()).single.title, '以前の更新');
 
     for (final page in pages) {
       await store.addFavorite(GakujoFavoritePage(
@@ -259,297 +201,72 @@ void main() {
         url: page.url.replaceFirst('e1s1', 'e2s1'),
         addedAt: now,
       ));
-      for (final content in ['before', 'after']) {
-        await store.recordSnapshot(
-          category: page.category,
-          title: page.category,
-          url: page.url,
-          content: content,
-        );
-      }
     }
 
     final reloaded = GakujoActivityStore();
     expect((await reloaded.loadFavorites()).map((page) => page.url),
         unorderedEquals(pages.map((page) => page.durable)));
-    final changes = await reloaded.loadChanges();
-    expect(changes.where((entry) => entry.title == '以前の更新'), hasLength(1));
-    expect(
-      changes
-          .where((entry) => entry.title != '以前の更新')
-          .map((entry) => entry.url),
-      unorderedEquals(pages.map((page) => page.durable)),
-    );
   });
 
-  test('recordSnapshot treats the first scan as a baseline', () async {
-    final store = GakujoActivityStore();
-
-    final first = await store.recordSnapshot(
-      category: '成績',
-      title: '単位修得状況照会',
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=si',
-      content: 'GP 3.3',
-    );
-    final second = await store.recordSnapshot(
-      category: '成績',
-      title: '単位修得状況照会',
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=si',
-      content: 'GP 3.7',
-    );
-
-    expect(first.hasUpdate, isFalse);
-    expect(first.contentPreview, 'GP 3.3');
-    expect(second.hasUpdate, isTrue);
-    expect(second.contentPreview, 'GP 3.7');
-    expect(await store.loadChanges(), hasLength(1));
-  });
-
-  test('recordSnapshot stores a readable preview without common page chrome',
-      () async {
-    final store = GakujoActivityStore();
-
-    await store.recordSnapshot(
-      category: '連絡通知',
-      title: '掲示',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-      content: [
-        '[image]',
-        'スマホ版',
-        'HOME',
-        '残り約20分',
-        '授業評価アンケートが登録されました。',
-        '【重要】履修登録について',
-      ].join('\n'),
-    );
-
-    final snapshot = (await store.loadSnapshots()).single;
-    expect(snapshot.contentPreview, contains('授業評価アンケート'));
-    expect(snapshot.contentPreview, contains('履修登録'));
-    expect(snapshot.contentPreview, isNot(contains('スマホ版')));
-    expect(snapshot.contentPreview, isNot(contains('残り約20分')));
-  });
-
-  test('recordSnapshot keeps separate pages in the same category', () async {
-    final store = GakujoActivityStore();
-
-    await store.recordSnapshot(
-      category: 'レポート・小テスト',
-      title: 'レポート一覧',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list',
-      content: '課題A',
-    );
-    await store.recordSnapshot(
-      category: 'レポート・小テスト',
-      title: '小テスト一覧',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/quiz/list',
-      content: '小テストB',
-    );
-
-    final snapshots = await store.loadSnapshots();
-    expect(snapshots, hasLength(2));
-    expect(snapshots.map((snapshot) => snapshot.url), {
-      'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list',
-      'https://gakujo.iess.niigata-u.ac.jp/campusweb/quiz/list',
-    });
-  });
-
-  test('recordSnapshot caps stored baselines to recent pages', () async {
-    final store = GakujoActivityStore();
-
-    for (var i = 0; i < 140; i += 1) {
-      await store.recordSnapshot(
-        category: 'その他',
-        title: 'page $i',
-        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/page-$i',
-        content: 'content $i',
+  test('compact and explicit cleanup delete both retired keys', () async {
+    const snapshots = 'more_better_gakujo_activity_snapshots';
+    const changes = 'more_better_gakujo_activity_changes';
+    for (final compact in [true, false]) {
+      final storage = _FailingReadSecureStorage(
+        initialValues: {snapshots: 'old', changes: 'old'},
+        failingReadKeys: const {},
       );
+      final store = GakujoActivityStore(secureStorage: storage);
+      if (compact) {
+        await store.compact();
+      } else {
+        await store.deleteRetiredData();
+      }
+      expect(storage.values.containsKey(snapshots), isFalse);
+      expect(storage.values.containsKey(changes), isFalse);
     }
-
-    final snapshots = await store.loadSnapshots();
-    expect(snapshots, hasLength(120));
   });
 
-  test('recordSnapshot ignores blank activity content', () async {
+  test('retired cleanup preserves deadlines', () async {
     final store = GakujoActivityStore();
-
-    final snapshot = await store.recordSnapshot(
-      category: 'その他',
-      title: '空ページ',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/blank',
-      content: '   ',
-    );
-
-    expect(snapshot.hasUpdate, isFalse);
-    expect(snapshot.contentHash, isEmpty);
-    expect(await store.loadSnapshots(), isEmpty);
+    await store.mergeDeadlines([
+      GakujoDeadlineEntry(
+        title: 'Report',
+        url: 'https://example.test/report',
+        dueText: '2099/07/01',
+        detectedAt: DateTime.now(),
+      ),
+    ]);
+    await store.deleteRetiredData();
+    expect(await store.loadDeadlines(), hasLength(1));
   });
 
-  test('loadSnapshots drops unusable legacy baselines', () async {
-    const storage = FlutterSecureStorage();
-    await storage.write(
-      key: 'more_better_gakujo_activity_snapshots',
-      value: jsonEncode([
-        {
-          'category': 'その他',
-          'title': '',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/bad',
-          'contentHash': 'abc',
-          'updatedAt': '2099-06-26T00:00:00.000Z',
-          'hasUpdate': true,
-        },
-        {
-          'category': 'その他',
-          'title': 'valid',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/valid',
-          'contentHash': 'def',
-          'updatedAt': '2099-06-26T00:00:00.000Z',
-          'hasUpdate': false,
-        },
-      ]),
+  test('failed retired deletion does not prevent compaction', () async {
+    const snapshots = 'more_better_gakujo_activity_snapshots';
+    const changes = 'more_better_gakujo_activity_changes';
+    final storage = _FailingReadSecureStorage(
+      initialValues: {snapshots: 'old', changes: 'old'},
+      failingReadKeys: const {},
+      failingDeleteKeys: const {snapshots},
     );
-
-    final snapshots = await GakujoActivityStore().loadSnapshots();
-    expect(snapshots, hasLength(1));
-    expect(snapshots.single.title, 'valid');
+    await GakujoActivityStore(secureStorage: storage).compact();
+    expect(storage.values[snapshots], 'old');
+    expect(storage.values.containsKey(changes), isFalse);
   });
 
-  test('loadSnapshots drops noisy generic home portal baselines', () async {
-    const storage = FlutterSecureStorage();
-    await storage.write(
-      key: 'more_better_gakujo_activity_snapshots',
-      value: jsonEncode([
-        {
-          'category': 'スケジュール',
-          'title': 'CampusSquare for WEB [CampusSquare]',
-          'url':
-              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main',
-          'contentHash': 'abc',
-          'updatedAt': DateTime.now().toIso8601String(),
-          'hasUpdate': true,
-          'contentPreview': '吉田 皓彦 さん\nMYスケジュール',
-        },
-        {
-          'category': 'Gakujo',
-          'title': 'CampusSquare for WEB [CampusSquare]',
-          'url':
-              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-          'contentHash': 'def',
-          'updatedAt': DateTime.now().toIso8601String(),
-          'hasUpdate': true,
-          'contentPreview': 'now loading...',
-        },
-        {
-          'category': 'スケジュール',
-          'title': 'CampusSquare for WEB [CampusSquare]',
-          'url':
-              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-          'contentHash': 'old-main',
-          'updatedAt': DateTime.now().toIso8601String(),
-          'hasUpdate': true,
-          'contentPreview': '吉田 皓彦 さん\n前回ログイン日時:\n出欠管理\nフォーラム\n新着情報',
-        },
-        {
-          'category': '成績',
-          'title': '単位修得状況照会',
-          'url':
-              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=si',
-          'contentHash': 'ghi',
-          'updatedAt': DateTime.now().toIso8601String(),
-          'hasUpdate': true,
-          'contentPreview': 'GP 3.3',
-        },
-      ]),
+  test('explicit retired cleanup reports failure after trying both keys', () async {
+    const snapshots = 'more_better_gakujo_activity_snapshots';
+    const changes = 'more_better_gakujo_activity_changes';
+    final storage = _FailingReadSecureStorage(
+      initialValues: {snapshots: 'old', changes: 'old'},
+      failingReadKeys: const {},
+      failingDeleteKeys: const {snapshots},
     );
-
-    final snapshots = await GakujoActivityStore().loadSnapshots();
-    expect(snapshots, hasLength(1));
-    expect(snapshots.single.title, '単位修得状況照会');
-  });
-
-  test('loadSnapshots drops stale legacy baselines', () async {
-    const storage = FlutterSecureStorage();
-    await storage.write(
-      key: 'more_better_gakujo_activity_snapshots',
-      value: jsonEncode([
-        {
-          'category': 'その他',
-          'title': 'old',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/old',
-          'contentHash': 'abc',
-          'updatedAt': DateTime.now()
-              .subtract(const Duration(days: 220))
-              .toIso8601String(),
-          'hasUpdate': true,
-        },
-        {
-          'category': 'その他',
-          'title': 'recent',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/recent',
-          'contentHash': 'def',
-          'updatedAt': DateTime.now()
-              .subtract(const Duration(days: 20))
-              .toIso8601String(),
-          'hasUpdate': false,
-        },
-      ]),
+    await expectLater(
+      GakujoActivityStore(secureStorage: storage).deleteRetiredData(),
+      throwsStateError,
     );
-
-    final snapshots = await GakujoActivityStore().loadSnapshots();
-    expect(snapshots, hasLength(1));
-    expect(snapshots.single.title, 'recent');
-  });
-
-  test('compact removes stale stored activity entries and keeps newest first',
-      () async {
-    const storage = FlutterSecureStorage();
-    await storage.write(
-      key: 'more_better_gakujo_activity_snapshots',
-      value: jsonEncode([
-        {
-          'category': 'その他',
-          'title': 'old',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/old',
-          'contentHash': 'abc',
-          'updatedAt': DateTime.now()
-              .subtract(const Duration(days: 220))
-              .toIso8601String(),
-          'hasUpdate': true,
-        },
-        {
-          'category': 'その他',
-          'title': 'newer',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/newer',
-          'contentHash': 'def',
-          'updatedAt': DateTime.now()
-              .subtract(const Duration(days: 1))
-              .toIso8601String(),
-          'hasUpdate': false,
-        },
-        {
-          'category': 'その他',
-          'title': 'older',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/older',
-          'contentHash': 'ghi',
-          'updatedAt': DateTime.now()
-              .subtract(const Duration(days: 20))
-              .toIso8601String(),
-          'hasUpdate': false,
-        },
-      ]),
-    );
-
-    final store = GakujoActivityStore();
-    await store.compact();
-
-    final snapshots = await store.loadSnapshots();
-    expect(snapshots.map((entry) => entry.title), ['newer', 'older']);
-    final raw = await storage.read(
-      key: 'more_better_gakujo_activity_snapshots',
-    );
-    expect(raw, isNot(contains('"title":"old"')));
+    expect(storage.values.containsKey(changes), isFalse);
   });
 
   test('compact skips failed reads and compacts successful keys', () async {
@@ -595,13 +312,9 @@ void main() {
 
     await GakujoActivityStore(secureStorage: storage).compact();
 
-    expect(storage.writeKeys, contains(snapshotsKey));
+    expect(storage.values.containsKey(snapshotsKey), isFalse);
     expect(storage.writeKeys, isNot(contains(deadlinesKey)));
     expect(storage.values[deadlinesKey], deadlineRaw);
-    final compactedSnapshots =
-        jsonDecode(storage.values[snapshotsKey]!) as List;
-    expect(compactedSnapshots, hasLength(1));
-    expect(compactedSnapshots.single['title'], '保持対象');
   });
 
   test('mergeDeadlines does not overwrite data after a failed read', () async {
@@ -650,30 +363,6 @@ void main() {
 
     expect(storage.writeKeys, isNot(contains(notifiedKeysKey)));
     expect(storage.values[notifiedKeysKey], existingRaw);
-  });
-
-  test('clearSnapshots removes update badges without touching deadlines',
-      () async {
-    final store = GakujoActivityStore();
-    await store.recordSnapshot(
-      category: '連絡通知',
-      title: '掲示',
-      url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-      content: '掲示があります',
-    );
-    await store.mergeDeadlines([
-      GakujoDeadlineEntry(
-        title: '課題',
-        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-        dueText: '提出期限 2099/07/01',
-        detectedAt: DateTime.utc(2026, 6, 26),
-      ),
-    ]);
-
-    await store.clearSnapshots();
-
-    expect(await store.loadSnapshots(), isEmpty);
-    expect(await store.loadDeadlines(), hasLength(1));
   });
 
   group('isDeadlinePassed uses Japan time', () {
@@ -1178,27 +867,9 @@ void main() {
     expect(await store.loadDeadlines(), isEmpty);
   });
 
-  test('loadChanges and report lists drop stale entries', () async {
+  test('report lists drop stale entries', () async {
     final store = GakujoActivityStore();
 
-    await store.replaceChanges([
-      GakujoActivityChangeEntry(
-        category: '連絡通知',
-        title: '古い更新',
-        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/old-change',
-        changedAt: DateTime.now().subtract(const Duration(days: 120)),
-        previousHash: 'before-old',
-        nextHash: 'after-old',
-      ),
-      GakujoActivityChangeEntry(
-        category: '連絡通知',
-        title: '最近の更新',
-        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/recent-change',
-        changedAt: DateTime.now().subtract(const Duration(days: 10)),
-        previousHash: 'before-recent',
-        nextHash: 'after-recent',
-      ),
-    ]);
     await store.replaceReportLists([
       GakujoCachedReportList(
         title: '古いレポート',
@@ -1214,10 +885,7 @@ void main() {
       ),
     ]);
 
-    final changes = await store.loadChanges();
     final reportLists = await store.loadReportLists();
-    expect(changes, hasLength(1));
-    expect(changes.single.title, '最近の更新');
     expect(reportLists, hasLength(1));
     expect(reportLists.single.title, '最近のレポート');
   });
@@ -1252,22 +920,10 @@ void main() {
           items: const ['課題A'],
         ),
     ]);
-    await store.replaceChanges([
-      for (var i = 0; i < 125; i += 1)
-        GakujoActivityChangeEntry(
-          category: '連絡通知',
-          title: '更新$i',
-          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/change-$i',
-          changedAt: base.add(Duration(minutes: i)),
-          previousHash: 'before-$i',
-          nextHash: 'after-$i',
-        ),
-    ]);
 
     final deadlines = await store.loadDeadlines();
     final favorites = await store.loadFavorites();
     final reportLists = await store.loadReportLists();
-    final changes = await store.loadChanges();
     expect(deadlines, hasLength(80));
     expect(deadlines.first.title, '課題84');
     expect(deadlines.last.title, '課題5');
@@ -1277,9 +933,6 @@ void main() {
     expect(reportLists, hasLength(20));
     expect(reportLists.first.title, 'レポート24');
     expect(reportLists.last.title, 'レポート5');
-    expect(changes, hasLength(120));
-    expect(changes.first.title, '更新124');
-    expect(changes.last.title, '更新5');
   });
 
   test('replace methods drop unusable imported activity entries', () async {
@@ -1356,19 +1009,6 @@ void main() {
       ]),
     );
     await storage.write(
-      key: 'more_better_gakujo_activity_changes',
-      value: jsonEncode([
-        {
-          'category': '成績',
-          'title': '単位修得状況照会',
-          'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/grades',
-          'changedAt': '2099-06-26T00:00:00.000Z',
-          'previousHash': '',
-          'nextHash': 'next',
-        },
-      ]),
-    );
-    await storage.write(
       key: 'more_better_gakujo_cached_report_lists',
       value: jsonEncode([
         {
@@ -1383,7 +1023,6 @@ void main() {
     final store = GakujoActivityStore();
     expect(await store.loadDeadlines(), hasLength(1));
     expect(await store.loadFavorites(), isEmpty);
-    expect(await store.loadChanges(), isEmpty);
     expect(await store.loadReportLists(), isEmpty);
   });
 
@@ -1558,38 +1197,6 @@ void main() {
     expect(deadlines, hasLength(80));
     expect(deadlines.first.key, newest.key);
     expect(deadlines.map((entry) => entry.title), isNot(contains('既存課題0')));
-  });
-
-  test('markSnapshotsSeen clears update flags but preserves snapshots',
-      () async {
-    final store = GakujoActivityStore();
-    const url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/notice-list';
-
-    await store.recordSnapshot(
-      category: '連絡通知',
-      title: '掲示',
-      url: url,
-      content: '更新前の掲示',
-    );
-    await store.recordSnapshot(
-      category: '連絡通知',
-      title: '掲示',
-      url: url,
-      content: '更新後の掲示',
-    );
-    final before = (await store.loadSnapshots()).single;
-    expect(before.hasUpdate, isTrue);
-
-    await store.markSnapshotsSeen();
-
-    final after = (await store.loadSnapshots()).single;
-    expect(after.hasUpdate, isFalse);
-    expect(after.contentHash, before.contentHash);
-    expect(after.contentPreview, before.contentPreview);
-    expect(after.updatedAt, before.updatedAt);
-
-    await store.clearSnapshots();
-    expect(await store.loadSnapshots(), isEmpty);
   });
 
   test('favorites can be added, updated by URL, and removed', () async {
@@ -1834,10 +1441,12 @@ class _FailingReadSecureStorage extends FlutterSecureStorage {
   _FailingReadSecureStorage({
     required Map<String, String> initialValues,
     required this.failingReadKeys,
+    this.failingDeleteKeys = const {},
   }) : values = Map<String, String>.from(initialValues);
 
   final Map<String, String> values;
   final Set<String> failingReadKeys;
+  final Set<String> failingDeleteKeys;
   final List<String> writeKeys = [];
 
   @override
@@ -1874,4 +1483,18 @@ class _FailingReadSecureStorage extends FlutterSecureStorage {
       values[key] = value;
     }
   }
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (failingDeleteKeys.contains(key)) throw StateError('delete failed');
+    values.remove(key);
+  }
+
 }

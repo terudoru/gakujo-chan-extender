@@ -11,12 +11,10 @@ class SettingsAction {
     required this.label,
     required this.icon,
     required this.run,
-    this.quiet = false,
   });
   final String label;
   final IconData icon;
   final Future<void> Function() run;
-  final bool quiet;
 }
 
 class SettingsActionGroup extends StatefulWidget {
@@ -68,18 +66,11 @@ class _SettingsActionGroupState extends State<SettingsActionGroup> {
         runSpacing: 8,
         children: [
           for (final action in widget.actions)
-            if (action.quiet)
-              TextButton.icon(
-                onPressed: _dataAction(action.label, action.run),
-                icon: Icon(action.icon),
-                label: Text(action.label),
-              )
-            else
-              OutlinedButton.icon(
-                onPressed: _dataAction(action.label, action.run),
-                icon: Icon(action.icon),
-                label: Text(action.label),
-              ),
+            OutlinedButton.icon(
+              onPressed: _dataAction(action.label, action.run),
+              icon: Icon(action.icon),
+              label: Text(action.label),
+            ),
         ],
       ),
       if (_activeDataAction != null)
@@ -104,21 +95,17 @@ class AppBackupSection extends StatelessWidget {
   const AppBackupSection({
     super.key,
     required this.onCreateBackup,
-    required this.onExportSettings,
-    required this.onImportSettings,
     required this.onImportSettingsFromFile,
   });
   final Future<void> Function() onCreateBackup,
-      onExportSettings,
-      onImportSettings,
       onImportSettingsFromFile;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Text('バックアップと設定の移行', style: Theme.of(context).textTheme.titleSmall),
+      Text('バックアップ', style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
-      const Text('設定、履歴、お気に入り、保存済み課題一覧をコピーします。ログイン情報と2FA秘密鍵は含めません。'),
+      const Text('設定、履歴、お気に入り、保存済み課題一覧をファイルに保存します。ログイン情報と2FA秘密鍵は含めません。'),
       const SizedBox(height: 8),
       SettingsActionGroup(
         actions: [
@@ -126,16 +113,6 @@ class AppBackupSection extends StatelessWidget {
             label: 'バックアップ作成',
             icon: Icons.backup_outlined,
             run: onCreateBackup,
-          ),
-          SettingsAction(
-            label: '設定をコピー',
-            icon: Icons.upload_file,
-            run: onExportSettings,
-          ),
-          SettingsAction(
-            label: 'クリップボードから読み込み',
-            icon: Icons.download,
-            run: onImportSettings,
           ),
           SettingsAction(
             label: 'ファイルから読み込み',
@@ -217,9 +194,8 @@ class AppSupportSection extends StatelessWidget {
   const AppSupportSection({
     super.key,
     required this.onCreateErrorReport,
-    required this.onCopyDiagnostics,
   });
-  final Future<void> Function() onCreateErrorReport, onCopyDiagnostics;
+  final Future<void> Function() onCreateErrorReport;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -232,12 +208,6 @@ class AppSupportSection extends StatelessWidget {
             label: 'エラー報告パッケージ作成',
             icon: Icons.inventory_2_outlined,
             run: onCreateErrorReport,
-          ),
-          SettingsAction(
-            label: '診断情報をコピー',
-            icon: Icons.bug_report_outlined,
-            run: onCopyDiagnostics,
-            quiet: true,
           ),
         ],
       ),
@@ -253,7 +223,6 @@ class AppDataShortcutsSection extends StatelessWidget {
     required this.onShowCourseMaterials,
     required this.onShowCachedReports,
     required this.onShowDrafts,
-    required this.onShowChangeHistory,
     required this.onShowFavorites,
     required this.onShowDataManagement,
   });
@@ -263,7 +232,6 @@ class AppDataShortcutsSection extends StatelessWidget {
   final Future<void> Function() onShowCourseMaterials;
   final Future<void> Function() onShowCachedReports;
   final Future<void> Function() onShowDrafts;
-  final Future<void> Function() onShowChangeHistory;
   final Future<void> Function() onShowFavorites;
   final Future<void> Function() onShowDataManagement;
 
@@ -307,11 +275,6 @@ class AppDataShortcutsSection extends StatelessWidget {
               onPressed: () => unawaited(onShowDrafts()),
               icon: const Icon(Icons.edit_note_outlined),
               label: const Text('下書き'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => unawaited(onShowChangeHistory()),
-              icon: const Icon(Icons.manage_history),
-              label: const Text('変更履歴'),
             ),
             OutlinedButton.icon(
               onPressed: () => unawaited(onShowFavorites()),
