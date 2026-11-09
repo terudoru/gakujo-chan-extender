@@ -85,6 +85,7 @@ import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
+import 'linux_overlay_guard.dart';
 import 'macos_input_focus_service.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
@@ -600,6 +601,7 @@ class GakujoWebApp extends StatefulWidget {
     this._debugAllowed,
     this._gakujoReachable,
     this._updateService,
+    this.linuxOverlayObscured,
   });
 
   final TwoFactorSecretStore? _secretStore;
@@ -612,6 +614,7 @@ class GakujoWebApp extends StatefulWidget {
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
   final AppUpdateService? _updateService;
+  final ValueListenable<bool>? linuxOverlayObscured;
 
   @override
   State<GakujoWebApp> createState() => _GakujoWebAppState();
@@ -2050,7 +2053,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Widget _buildWebViewArea() {
-    final content = Listener(
+    Widget content = Listener(
       onPointerDown: _handleTouchHistorySwipeDown,
       onPointerMove: _handleTouchHistorySwipeMove,
       onPointerUp: _handleTouchHistorySwipeEnd,
@@ -2060,6 +2063,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onError: (message) => _showSnackBar('ファイルを選べませんでした: $message'),
       ),
     );
+
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        widget.linuxOverlayObscured != null) {
+      content = LinuxOverlayGuard(
+        obscured: widget.linuxOverlayObscured!,
+        child: content,
+      );
+    }
 
     if (!_supportsDesktopZoom) {
       return AbsorbPointer(
