@@ -6,6 +6,29 @@
 
 #include <cstring>
 
+namespace {
+constexpr const char* kFlutterTooltipText = "mbg-flutter-tooltip-text";
+constexpr const char* kFlutterTooltipConnected =
+    "mbg-flutter-tooltip-connected";
+
+gboolean flutter_tooltip_query(GtkWidget* widget, gint x, gint y,
+                               gboolean keyboard_mode, GtkTooltip* tooltip,
+                               gpointer) {
+  const char* text = static_cast<const char*>(
+      g_object_get_data(G_OBJECT(widget), kFlutterTooltipText));
+  if (text == nullptr || *text == '\0') {
+    return FALSE;
+  }
+  gtk_tooltip_set_text(tooltip, text);
+  // Each toolbar button is a distinct hover target even though GTK sees the
+  // whole Flutter surface as one widget. Leaving this area repositions the
+  // tooltip instead of retaining the previous button's anchor.
+  GdkRectangle area = {x - 8, y - 8, 16, 16};
+  gtk_tooltip_set_tip_area(tooltip, &area);
+  return TRUE;
+}
+}  // namespace
+
 static void respond_environment_error(FlMethodCall* method_call, GError* error) {
   respond(method_call,
           error_response(linux_environment_error_code(error),
@@ -115,6 +138,35 @@ void root_method_call_cb(FlMethodChannel* channel,
   WebviewAllLinuxPlugin* self = static_cast<WebviewAllLinuxPlugin*>(user_data);
   const gchar* method = fl_method_call_get_name(method_call);
   FlValue* args = fl_method_call_get_args(method_call);
+
+  if (strcmp(method, "setFlutterTooltip") == 0) {
+    FlValue* message = map_lookup(args, "message");
+    if (message != nullptr &&
+        fl_value_get_type(message) != FL_VALUE_TYPE_NULL &&
+        fl_value_get_type(message) != FL_VALUE_TYPE_STRING) {
+      respond(method_call, error_response("invalid_tooltip",
+                                         "Tooltip must be a string or null."));
+      return;
+    }
+    ensure_overlay(self);
+    if (self->flutter_input_widget != nullptr) {
+      GtkWidget* input = self->flutter_input_widget;
+      if (g_object_get_data(G_OBJECT(input), kFlutterTooltipConnected) ==
+          nullptr) {
+        g_signal_connect(input, "query-tooltip", G_CALLBACK(flutter_tooltip_query),
+                         nullptr);
+        g_object_set_data(G_OBJECT(input), kFlutterTooltipConnected,
+                          GINT_TO_POINTER(1));
+      }
+      const char* text = fl_value_to_string_or_null(message);
+      g_object_set_data_full(G_OBJECT(input), kFlutterTooltipText,
+                             g_strdup(text), g_free);
+      gtk_widget_set_has_tooltip(input, text != nullptr && *text != '\0');
+      gtk_widget_trigger_tooltip_query(input);
+    }
+    respond(method_call, success_response());
+    return;
+  }
 
   if (strcmp(method, "ensureEnvironment") == 0 ||
       strcmp(method, "initializeEnvironment") == 0) {

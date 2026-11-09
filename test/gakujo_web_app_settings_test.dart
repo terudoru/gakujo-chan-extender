@@ -14,6 +14,32 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  group('gakujoLoginAutofillStatus', () {
+    const stopped = 'ログインが切れました。自動ログインを止めました。ID とパスワードを入力してください';
+    const missing = 'ログインが切れました。ログイン情報を入力してください';
+
+    test('reports whether a challenge has saved credentials', () {
+      expect(gakujoLoginAutofillStatus('challenge', true),
+          'ログインが切れました。自動ログインしています');
+      expect(gakujoLoginAutofillStatus('challenge', false), missing);
+    });
+
+    test('reports a blocked submit', () {
+      expect(gakujoLoginAutofillStatus('submit-blocked', true), stopped);
+      expect(gakujoLoginAutofillStatus('submit-blocked', false), stopped);
+    });
+
+    test('reports why a ready form was not submitted', () {
+      expect(gakujoLoginAutofillStatus('ready-no-submit', true), stopped);
+      expect(gakujoLoginAutofillStatus('ready-no-submit', false), missing);
+    });
+
+    test('ignores unrelated events', () {
+      expect(gakujoLoginAutofillStatus('start', true), isNull);
+      expect(gakujoLoginAutofillStatus('submit', true), isNull);
+    });
+  });
+
   group('parseManualCalendarDate', () {
     test('normalizes full-width IME input before parsing', () {
       expect(parseCalendarDate('２０２６／０６／１１'), isNull);
