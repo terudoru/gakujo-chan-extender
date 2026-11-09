@@ -105,6 +105,13 @@ class _Transport implements StarSyncTransport {
 }
 
 void main() {
+  test('Google accounts compare without regard to case', () {
+    expect(sameGoogleAccount('User@Example.com', ' user@example.com'), isTrue);
+    expect(sameGoogleAccount('a@example.com', 'b@example.com'), isFalse);
+    expect(sameGoogleAccount(null, 'a@example.com'), isFalse);
+    expect(sameGoogleAccount(null, null), isFalse);
+  });
+
   const config = StarSyncConfig(backend: StarSyncBackend.googleDrive);
   test('backups round trip across devices, enforce account and kind', () async {
     final remote = _Transport();

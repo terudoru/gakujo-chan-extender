@@ -1511,7 +1511,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           final config = _starSyncEngine.config;
           final email = _starSyncGoogleAuth.currentEmail;
           if (config?.backend == StarSyncBackend.googleDrive &&
-              (config?.googleEmail == null || config?.googleEmail != email)) {
+              !sameGoogleAccount(config?.googleEmail, email)) {
             throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
           }
           final token = await _starSyncGoogleAuth.accessToken(forceRefresh: forceRefresh);
@@ -3110,7 +3110,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
-                      googleEmail: () => _starSyncGoogleEmail,
+                      googleEmail: () => _starSyncGoogleEmail ??
+                          (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive
+                              ? _starSyncEngine.config?.googleEmail
+                              : null),
                       onGoogleCancelSignIn: _cancelGoogleSignIn,
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
@@ -5751,12 +5754,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     final config = _starSyncEngine.config;
     if (config?.backend == StarSyncBackend.googleDrive &&
-        config?.googleEmail != email) {
+        !sameGoogleAccount(config?.googleEmail, email)) {
       try {
         await _starSyncGoogleAuth.signOut();
       } finally {
         _starSyncGoogleEmail = null;
-        if (mounted) _showSnackBar('同期を設定した Google アカウントでログインしてください');
+        final expected = config?.googleEmail;
+        if (mounted) {
+          _showSnackBar(expected == null
+              ? '同期を設定した Google アカウントでログインしてください'
+              : 'この同期は $expected で設定されています。同じアカウントでログインするか、同期を無効にしてから設定し直してください');
+        }
       }
       throw StateError('Google account does not match sync binding');
     }

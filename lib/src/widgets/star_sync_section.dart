@@ -657,7 +657,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Google へのログインが切れました。'),
-            if (widget.googleEmail() != null) Text(widget.googleEmail()!),
+            if (widget.googleEmail() != null)
+              Text('同期に使うアカウント: ${widget.googleEmail()!}'),
             if (_error != null) Text(_error!),
             if (_busy) _googleProgress(),
             OutlinedButton(
