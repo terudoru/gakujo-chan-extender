@@ -29,6 +29,7 @@ class TwoFactorSecretStore {
           loginCredentials: old.loginCredentials,
           twoFactorSecret: normalized,
         ),
+        replaceUnreadable: true,
       );
       return;
     }
