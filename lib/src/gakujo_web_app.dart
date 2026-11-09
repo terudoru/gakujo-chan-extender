@@ -5573,7 +5573,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       } on Object catch (error) {
         if (Platform.isAndroid && error is StarSyncGoogleAuthException &&
             error.kind == StarSyncGoogleAuthErrorKind.notSignedIn &&
-            _starSyncGoogleAuth.currentEmail == null) rethrow;
+            _starSyncGoogleAuth.currentEmail == null) {
+          rethrow;
+        }
         developer.log('Failed to check the Drive permission: ${error.runtimeType}',
             name: 'MoreBetterGakujo');
       }
