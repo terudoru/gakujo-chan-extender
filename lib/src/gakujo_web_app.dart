@@ -3034,7 +3034,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
                       subtitle: !_driveSwitchSigningIn
                           ? (_driveDownloadsEnabled && _starSyncGoogleEmail != null
-                              ? Text('保存先: $_starSyncGoogleEmail（別のアカウントにするには、一度オフにします）')
+                              ? Text(_starSyncEngine.config?.backend == StarSyncBackend.googleDrive
+                                  ? '保存先: $_starSyncGoogleEmail（同期と同じアカウントです。変えるには「スター」の機能をオンにして、同期を無効にします）'
+                                  : '保存先: $_starSyncGoogleEmail（別のアカウントにするには、一度オフにします）')
                               : null)
                           : Row(
                               children: [
@@ -3050,7 +3052,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onChanged: _driveSwitchSigningIn ? null : (enabled) async {
                         if (enabled) setDialogState(() => _driveSwitchSigningIn = true);
                         try {
-                          if (!enabled) await _warnPendingDriveChecks();
+                          if (!enabled) await _warnPendingDriveChecksBestEffort();
                           await _setDriveDownloadsEnabled(enabled, byStudentSwitch: true);
                         } on StarSyncGoogleAuthException catch (error) {
                           if (error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
@@ -3075,7 +3077,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       status: _starSyncEngine.status,
                       driveDownloadsEnabled: _driveDownloadsEnabled,
                       onDriveDownloadsChanged: (enabled) async {
-                        if (!enabled) await _warnPendingDriveChecks();
+                        if (!enabled) await _warnPendingDriveChecksBestEffort();
                         await _setDriveDownloadsEnabled(enabled, byStudentSwitch: true);
                         if (dialogContext.mounted) setDialogState(() {});
                       },
@@ -3112,10 +3114,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                       googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
                       isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
-                      googleEmail: () => _starSyncGoogleEmail ??
-                          (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive
+                      // With Google sync set up, only its recorded account counts.
+                      googleEmail: () =>
+                          _starSyncEngine.config?.backend == StarSyncBackend.googleDrive
                               ? _starSyncEngine.config?.googleEmail
-                              : null),
+                              : _starSyncGoogleEmail,
                       onGoogleCancelSignIn: _cancelGoogleSignIn,
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
@@ -5857,6 +5860,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (mounted) setState(() {});
   }
 
+  /// The warning is a courtesy; it must never keep the switch from working.
+  Future<void> _warnPendingDriveChecksBestEffort() async {
+    try {
+      await _warnPendingDriveChecks();
+    } on Object catch (error) {
+      developer.log('Failed to check saved Drive files: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
+    }
+  }
+
   Future<void> _warnPendingDriveChecks() async {
     if (!_secureStorageAccessAllowed) return;
     if (await GoogleDriveFileSaver.pendingCheckCount() == 0 || !mounted) return;
@@ -5910,6 +5923,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _setDriveDownloadsEnabled(bool enabled, {bool byStudentSwitch = false}) async {
+    try {
+      await _applyDriveDownloadsEnabled(enabled, byStudentSwitch: byStudentSwitch);
+    } on Object {
+      // A refused or cancelled attempt must not keep what may be the wrong
+      // account: with the switch off there would be no other way to change it.
+      if (enabled && byStudentSwitch && !_driveDownloadPreference.enabled &&
+          _starSyncEngine.config?.backend != StarSyncBackend.googleDrive &&
+          _starSyncGoogleAuth.currentEmail != null) {
+        try {
+          await _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
+        } on Object catch (error) {
+          developer.log('Failed to sign out of Google: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+        }
+        _starSyncGoogleEmail = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _applyDriveDownloadsEnabled(bool enabled, {required bool byStudentSwitch}) async {
     final cancelGeneration = _googleCancelGeneration;
     void checkCancelled() {
       if (enabled && cancelGeneration != _googleCancelGeneration) {

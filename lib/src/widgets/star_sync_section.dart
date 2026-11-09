@@ -330,7 +330,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           '設定（${collectionCount('settings')}項目）、'
           '下書き（${collectionCount('report-drafts')}件）、'
           '通知済み期限（${collectionCount('notified-deadlines')}件）も含まれます。'
-          '他の人が使っていた端末なら「空にして始める」を選んでください。',
+          '他の人が使っていた端末や、別の Google アカウントで同期したあとで内容を混ぜたくないときは、「空にして始める」を選んでください。',
         ),
         actions: [
           TextButton(
