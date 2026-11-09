@@ -5571,6 +5571,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       try {
         granted = await _starSyncGoogleAuth.hasScope(googleDriveFileScope);
       } on Object catch (error) {
+        if (Platform.isAndroid && error is StarSyncGoogleAuthException &&
+            error.kind == StarSyncGoogleAuthErrorKind.notSignedIn &&
+            _starSyncGoogleAuth.currentEmail == null) rethrow;
         developer.log('Failed to check the Drive permission: ${error.runtimeType}',
             name: 'MoreBetterGakujo');
       }
@@ -5713,10 +5716,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _setDriveDownloadsEnabled(bool enabled, {bool byStudentSwitch = false}) async {
     try {
       await _applyDriveDownloadsEnabled(enabled, byStudentSwitch: byStudentSwitch);
-    } on Object {
+    } on Object catch (error) {
       // A refused or cancelled attempt must not keep what may be the wrong
       // account: with the switch off there would be no other way to change it.
-      if (enabled && byStudentSwitch && !_driveDownloadPreference.enabled &&
+      if (!(Platform.isAndroid && error is StarSyncGoogleAuthException &&
+              error.kind == StarSyncGoogleAuthErrorKind.network) &&
+          enabled && byStudentSwitch && !_driveDownloadPreference.enabled &&
           _starSyncEngine.config == null &&
           _starSyncGoogleAuth.currentEmail != null) {
         try {

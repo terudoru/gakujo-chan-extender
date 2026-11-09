@@ -10,9 +10,12 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   StarSyncGoogleMobileAuth({
     required this.config,
     @visibleForTesting bool? isAndroidOverride,
-  }) : _isAndroid = isAndroidOverride ?? Platform.isAndroid;
+    @visibleForTesting Future<bool> Function()? isGoogleReachableOverride,
+  }) : _isAndroid = isAndroidOverride ?? Platform.isAndroid,
+       _isGoogleReachable = isGoogleReachableOverride ?? _lookupGoogle;
   final StarSyncGoogleAuthConfig config;
   final bool _isAndroid;
+  final Future<bool> Function() _isGoogleReachable;
   static Future<void>? _initialization;
   GoogleSignInAccount? _account;
   String? _restoredEmail;
@@ -25,12 +28,44 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
         serverClientId: _isAndroid ? config.androidServerClientId : null,
       );
 
-  Future<T> _guard<T>(Future<T> Function() action) async {
+  static Future<bool> _lookupGoogle() async {
+    try {
+      final addresses = await InternetAddress.lookup('www.googleapis.com')
+          .timeout(const Duration(seconds: 3));
+      return addresses.isNotEmpty;
+    } on Object {
+      return false;
+    }
+  }
+
+  bool _accountMissing(GoogleSignInException error) {
+    final description = error.description ?? '';
+    return _isAndroid && (description.contains('28433') ||
+        description.contains('Cannot find a matching credential'));
+  }
+
+  void _clearAccount() {
+    _restoredEmail = null;
+    _account = null;
+    _token = null;
+  }
+
+  Future<void> _throwIfOffline() async {
+    if (_isAndroid && currentEmail != null && !await _isGoogleReachable()) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.network);
+    }
+  }
+
+  Future<T> _guard<T>(Future<T> Function() action, {bool detectMissingAccount = false}) async {
     try {
       return await action();
     } on StarSyncGoogleAuthException {
       rethrow;
     } on GoogleSignInException catch (error) {
+      if (detectMissingAccount && _accountMissing(error)) {
+        _clearAccount();
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
+      }
       final kind = error.code == GoogleSignInExceptionCode.canceled
           ? StarSyncGoogleAuthErrorKind.cancelled
           : StarSyncGoogleAuthErrorKind.failed;
@@ -102,10 +137,16 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       try {
         final authorization = await _silentTokens(starSyncGoogleScopes);
         if (authorization == null) {
-          _restoredEmail = null;
+          if (!await _isGoogleReachable()) return _restoredEmail;
+          _clearAccount();
           return null;
         }
         _token = authorization.accessToken;
+      } on GoogleSignInException catch (error) {
+        if (_accountMissing(error)) {
+          _clearAccount();
+          return null;
+        }
       } on Object {
         // Retain the email so a later token request can report the failure.
       }
@@ -167,9 +208,11 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       );
     }
     if (forceRefresh) {
-      final token =
-          _token ??
-          (await _silentTokens(_scopes.toList()))?.accessToken;
+      var token = _token;
+      if (token == null) {
+        token = (await _silentTokens(_scopes.toList()))?.accessToken;
+        if (token == null) await _throwIfOffline();
+      }
       if (token != null) {
         final client = _account?.authorizationClient ?? GoogleSignIn.instance.authorizationClient;
         await client.clearAuthorizationToken(accessToken: token);
@@ -178,19 +221,24 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     }
     final authorization = await _silentTokens(_scopes.toList());
     if (authorization == null) {
+      await _throwIfOffline();
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.notSignedIn,
       );
     }
     return _token = authorization.accessToken;
-  });
+  }, detectMissingAccount: true);
 
   @override
   Future<bool> hasScope(String scope) => _guard(() async {
     final authorization = await _silentTokens([scope]);
-    if (authorization != null) _scopes.add(scope);
+    if (authorization != null) {
+      _scopes.add(scope);
+    } else {
+      await _throwIfOffline();
+    }
     return authorization != null;
-  });
+  }, detectMissingAccount: true);
 
   @override
   Future<void> requestScopes(List<String> scopes) => _guard(() async {
@@ -209,14 +257,19 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     }
     _scopes.addAll(scopes);
     _token = authorization.accessToken;
-  });
+  }, detectMissingAccount: true);
 
   @override
   Future<void> signOut() async {
     try {
       await _initialize();
       if (_account == null && _restoredEmail != null && _isAndroid) {
-        if (await _silentTokens(starSyncGoogleScopes) == null) return;
+        if (await _silentTokens(starSyncGoogleScopes) == null) {
+          if (!await _isGoogleReachable()) {
+            throw const StarSyncGoogleRevocationException();
+          }
+          return;
+        }
         await GoogleSignIn.instance.disconnect();
         return;
       }
