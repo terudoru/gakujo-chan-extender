@@ -342,6 +342,320 @@ class _Collection extends StarSyncCollection {
 void main() {
   const config = StarSyncConfig();
 
+  test('identity gap state round-trips and defaults to false', () {
+    final state = StarSyncState(
+      deviceId: 'device',
+      dataKey: 'key',
+      keyId: 'key',
+      identityGapOnly: true,
+    );
+    final json = state.toJson();
+    expect(StarSyncState.fromJson(json).identityGapOnly, isTrue);
+    json.remove('identityGapOnly');
+    expect(StarSyncState.fromJson(json).identityGapOnly, isFalse);
+  });
+
+  for (final scenario in ['account change', 'restart', 'sync while unknown']) {
+    test('identity gap resolves for the same account: $scenario', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      String? account = 'A';
+      StarSyncEngine make() => StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      var engine = make();
+      await engine.setUpWithDrive(config);
+      await engine.syncNow();
+      if (scenario == 'sync while unknown') {
+        account = null;
+        await engine.syncNow();
+      } else {
+        await engine.runAccountChange(() async => account = null);
+      }
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .identityGapOnly,
+        isTrue,
+      );
+      if (scenario == 'restart') {
+        engine.dispose();
+        engine = make();
+        await engine.load();
+      }
+      if (scenario == 'sync while unknown') {
+        account = 'A';
+      } else {
+        await engine.runAccountChange(() async => account = 'A');
+      }
+      final lists = remote.lists;
+      await engine.syncNow();
+      expect(remote.lists, greaterThan(lists));
+      expect(engine.status.value.status, isNot(StarSyncStatus.accountReturned));
+      final state = StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      );
+      expect(state.localReviewRequired, isFalse);
+      expect(state.identityGapOnly, isFalse);
+      await activity.upsertStarredMessage(GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'star',
+        starredAt: DateTime.utc(2026),
+      ));
+      final puts = remote.puts;
+      await engine.syncNow();
+      expect(remote.puts, greaterThan(puts));
+      engine.dispose();
+    });
+  }
+
+  for (final scenario in ['notified', 'direct', 'scheduled']) {
+    test('star added during identity gap requires review: $scenario', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      String? account = 'A';
+      final engine = StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      await engine.setUpWithDrive(config);
+      await engine.syncNow();
+      await engine.runAccountChange(() async => account = null);
+      if (scenario != 'scheduled') {
+        await activity.upsertStarredMessage(GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'star',
+          starredAt: DateTime.utc(2026),
+        ));
+      }
+      if (scenario == 'notified') {
+        await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      } else if (scenario == 'scheduled') {
+        engine.scheduleSync();
+      }
+      await engine.runAccountChange(() async => account = 'A');
+      final lists = remote.lists;
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(remote.lists, lists);
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .localReviewRequired,
+        isTrue,
+      );
+      engine.dispose();
+    });
+  }
+
+  test('confirmed different account during identity gap requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'B');
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'A');
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .identityGapOnly,
+      isFalse,
+    );
+    engine.dispose();
+  });
+
+  test('failed transition save keeps a different account conservative', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    StarSyncEngine make() => StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    var engine = make();
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async {
+      account = 'B';
+      storage.failWriteKeyOnce = starSyncStateKey;
+    });
+    engine.dispose();
+    account = 'A';
+    engine = make();
+    await engine.load();
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('a failed star read during identity return requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    storage.onStarRead = () => throw StateError('star read failed');
+    await engine.runAccountChange(() async => account = 'A');
+    storage.onStarRead = null;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('local change during a running sync invalidates identity gap', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    remote.listStarted = Completer<void>();
+    remote.listRelease = Completer<void>();
+    final started = remote.listStarted!;
+    final release = remote.listRelease!;
+    final running = engine.syncNow();
+    await started.future;
+    account = null;
+    final local = engine.syncNow(trigger: StarSyncTrigger.localChange);
+    release.complete();
+    await running;
+    await local;
+    account = 'A';
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('local change during account transition requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final change = engine.runAccountChange(() async {
+      account = null;
+      started.complete();
+      await release.future;
+    });
+    await started.future;
+    engine.scheduleSync();
+    release.complete();
+    await change;
+    await engine.runAccountChange(() async => account = 'A');
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('pending change before identity gap is uploaded after return', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    String? account = 'A';
+    var allowed = true;
+    final engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => account,
+      canSync: () => allowed,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.syncNow();
+    await activity.upsertStarredMessage(GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'star',
+      starredAt: DateTime.utc(2026),
+    ));
+    allowed = false;
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .pendingLocalChange,
+      isTrue,
+    );
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'A');
+    allowed = true;
+    final puts = remote.puts;
+    await engine.syncNow();
+    final state = StarSyncState.fromJson(
+      jsonDecode(storage.values[starSyncStateKey]!),
+    );
+    expect(state.localReviewRequired, isFalse);
+    expect(state.pendingLocalChange, isFalse);
+    expect(state.records.containsKey('1|2|3'), isTrue);
+    expect(remote.puts, greaterThan(puts));
+    engine.dispose();
+  });
+
+  test('local change during gap invalidates an earlier pending change', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    var allowed = false;
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      canSync: () => allowed,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    await engine.runAccountChange(() async => account = null);
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    await engine.runAccountChange(() async => account = 'A');
+    allowed = true;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .localReviewRequired,
+      isTrue,
+    );
+    engine.dispose();
+  });
+
   for (final path in ['stars', 'favorites']) {
     test('account change while $path apply waits prevents the write', () async {
       final remote = _Transport();

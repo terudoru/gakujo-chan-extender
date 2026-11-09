@@ -139,6 +139,7 @@ class StarSyncState {
     this.keyringEtag,
     this.pendingLocalChange = false,
     this.localReviewRequired = false,
+    this.identityGapOnly = false,
     this.cooldownUntil,
     this.serverFailures = 0,
     this.backgroundDate,
@@ -170,6 +171,7 @@ class StarSyncState {
   String? keyringEtag;
   bool pendingLocalChange;
   bool localReviewRequired;
+  bool identityGapOnly;
   DateTime? cooldownUntil;
   int serverFailures;
   String? backgroundDate;
@@ -199,6 +201,7 @@ class StarSyncState {
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
     'localReviewRequired': localReviewRequired,
+    'identityGapOnly': identityGapOnly,
     'cooldownUntil': cooldownUntil?.toIso8601String(),
     'serverFailures': serverFailures,
     'backgroundDate': backgroundDate,
@@ -257,6 +260,7 @@ class StarSyncState {
       localReviewRequired:
           json['localReviewRequired'] as bool? ??
           (json['status'] == 'accountMismatch'),
+      identityGapOnly: json['identityGapOnly'] as bool? ?? false,
       cooldownUntil: DateTime.tryParse(json['cooldownUntil'] as String? ?? ''),
       serverFailures: json['serverFailures'] as int? ?? 0,
       backgroundDate: json['backgroundDate'] as String?,
@@ -376,6 +380,7 @@ class StarSyncEngine {
   Future<List<int>> Function()? _pendingAutomaticBackup;
   bool _disposed = false;
   int _accountGeneration = 0;
+  int _gapLocalChangeGeneration = 0;
   int get accountGeneration => _accountGeneration;
 
   static StarSyncTransport _defaultTransport(
@@ -389,27 +394,56 @@ class StarSyncEngine {
         _accountGeneration++;
         final state = _config == null ? null : _state;
         final wasReviewRequired = state?.localReviewRequired ?? false;
+        final wasIdentityGapOnly = state?.identityGapOnly ?? false;
+        final gapLocalChangeGeneration = _gapLocalChangeGeneration;
         if (state != null) {
           state.localReviewRequired = true;
+          if (!wasReviewRequired) state.identityGapOnly = false;
           try {
             await _saveState();
           } on Object {
-            state.localReviewRequired = wasReviewRequired;
+            if (gapLocalChangeGeneration == _gapLocalChangeGeneration) {
+              state.localReviewRequired = wasReviewRequired;
+              state.identityGapOnly = wasIdentityGapOnly;
+            }
             rethrow;
           }
         }
         try {
           return await change();
         } finally {
-          if (state != null &&
-              !wasReviewRequired &&
-              _currentAccount() != null &&
-              _currentAccount() == state.boundAccount) {
-            state.localReviewRequired = false;
-            try {
-              await _saveState();
-            } on Object {
-              state.localReviewRequired = true;
+          if (state != null) {
+            final current = _currentAccount();
+            if (current != null && current == state.boundAccount) {
+              if (!wasReviewRequired &&
+                  gapLocalChangeGeneration == _gapLocalChangeGeneration) {
+                state.localReviewRequired = false;
+                state.identityGapOnly = false;
+                try {
+                  await _saveState();
+                } on Object {
+                  state.localReviewRequired = true;
+                }
+              } else if (state.identityGapOnly) {
+                await _resolveIdentityGap(state);
+              }
+            } else {
+              if (current != null ||
+                  gapLocalChangeGeneration != _gapLocalChangeGeneration) {
+                state.identityGapOnly = false;
+              } else if (!wasReviewRequired) {
+                state.identityGapOnly = true;
+              }
+              try {
+                await _saveState();
+              } on Object {
+                state.identityGapOnly = false;
+                try {
+                  await _saveState();
+                } on Object {
+                  // Keep the in-memory review requirement if saving fails.
+                }
+              }
             }
           }
         }
@@ -690,12 +724,75 @@ class StarSyncEngine {
 
   Future<bool> _accountMatches(StarSyncState state) async {
     final current = _currentAccount();
-    if (current != null && state.boundAccount == current) return true;
+    if (current != null && state.boundAccount == current) {
+      if (state.localReviewRequired && state.identityGapOnly) {
+        await _resolveIdentityGap(state);
+        if (_currentAccount() != current) return _accountMatches(state);
+      }
+      return true;
+    }
     state.status = StarSyncStatus.accountMismatch;
+    if (current == null && !state.localReviewRequired) {
+      state.identityGapOnly = true;
+    } else if (current != null) {
+      state.identityGapOnly = false;
+    }
     state.localReviewRequired = true;
     await _saveState();
     _publish();
     return false;
+  }
+
+  Future<void> _resolveIdentityGap(StarSyncState state) async {
+    try {
+      // The regular loader masks storage read failures.
+      final local = (await activityStore.loadStarredMessagesForBackup())
+          .map((star) => star.id).toSet();
+      final expected = applyStarSyncStateToLocal(
+        state: state.records,
+        local: const [],
+      ).map((star) => star.id).toSet();
+      if (!state.identityGapOnly || _currentAccount() != state.boundAccount) {
+        return;
+      }
+      if (state.pendingLocalChange ||
+          (local.length == expected.length && local.containsAll(expected))) {
+        state.localReviewRequired = false;
+        state.identityGapOnly = false;
+        if (state.status == StarSyncStatus.accountMismatch ||
+            state.status == StarSyncStatus.accountReturned) {
+          state.status = StarSyncStatus.ok;
+        }
+      } else {
+        state.identityGapOnly = false;
+      }
+      await _saveState();
+      _publish();
+    } on Object {
+      state.localReviewRequired = true;
+      state.identityGapOnly = false;
+      try {
+        await _saveState();
+      } on Object {
+        // Keep the in-memory review requirement if saving fails.
+      }
+      _publish();
+    }
+  }
+
+  void _noteUnmatchedLocalChange(StarSyncTrigger trigger) {
+    final state = _state;
+    if (trigger != StarSyncTrigger.localChange || _config == null ||
+        state == null ||
+        (_currentAccount() != null && _currentAccount() == state.boundAccount)) {
+      return;
+    }
+    _gapLocalChangeGeneration++;
+    state.localReviewRequired = true;
+    state.identityGapOnly = false;
+    unawaited(_queue.run(() async {
+      if (identical(_state, state) && _config != null) await _saveState();
+    }).catchError((Object _) {}));
   }
 
   Future<void> _requireBoundAccount() async {
@@ -1084,6 +1181,7 @@ class StarSyncEngine {
         return false;
       }
       if (!await _accountMatches(state)) return false;
+      if (!state.localReviewRequired) return true;
       if (discardLocal) {
         final writeGuard = _writeGuard(state);
         final changed = await activityStore.transformStarredMessages<bool>((
@@ -1119,6 +1217,7 @@ class StarSyncEngine {
         }
       }
       state.localReviewRequired = false;
+      state.identityGapOnly = false;
       state.status = StarSyncStatus.ok;
       await _saveState();
       _publish();
@@ -1130,6 +1229,7 @@ class StarSyncEngine {
   Future<StarSyncResult> syncNow({
     StarSyncTrigger trigger = StarSyncTrigger.manual,
   }) async {
+    _noteUnmatchedLocalChange(trigger);
     if (_running != null) {
       if (trigger == StarSyncTrigger.localChange && _backgroundWake != null) {
         _wakeForLocal = true;
@@ -2087,6 +2187,7 @@ class StarSyncEngine {
     bool Function()? shouldSync,
     void Function(StarSyncResult)? onResult,
   }) {
+    _noteUnmatchedLocalChange(trigger);
     if (_config == null) {
       return;
     }

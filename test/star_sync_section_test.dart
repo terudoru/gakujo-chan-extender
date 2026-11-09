@@ -229,7 +229,7 @@ void main() {
       ),
     );
     expect(
-      find.text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+      find.text('同期が止まっていた間に、この端末でスターや設定などが変わった可能性があります。その変更を同期に含めますか？'),
       findsOneWidget,
     );
     await tester.tap(find.text('含めて再開'));

@@ -425,7 +425,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+            const Text('同期が止まっていた間に、この端末でスターや設定などが変わった可能性があります。その変更を同期に含めますか？'),
             if (_error != null) Text(_error!),
             if (_busy) const LinearProgressIndicator(),
             FilledButton(
