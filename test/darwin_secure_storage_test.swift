@@ -49,7 +49,7 @@ struct DarwinSecureStorageTests {
                 defer { index += 1 }
                 return statuses[index]
             })
-            var deleteParams = KeychainQueryParameters(service: "synthetic.test", usesDataProtectionKeychain: false)
+            var deleteParams = KeychainQueryParameters(service: "synthetic.test", usesDataProtectionKeychain: true)
             deleteParams.useSecureEnclave = enclave
             return (storage.deleteAll(params: deleteParams).status, index)
         }
@@ -65,9 +65,14 @@ struct DarwinSecureStorageTests {
                "Enclave key deletion failures must be reported")
         let complete = runDelete([errSecItemNotFound, errSecSuccess, errSecItemNotFound], enclave: true)
         expect(complete.0 == errSecSuccess && complete.1 == 3, "Missing items count as deleted")
+        var classicCalls = 0
+        let classic = FlutterSecureStorage(keychainDelete: { _ in classicCalls += 1; return errSecSuccess })
+        let classicParams = KeychainQueryParameters(service: "synthetic.test", usesDataProtectionKeychain: false)
+        expect(classic.deleteAll(params: classicParams).status == errSecSuccess && classicCalls == 1,
+               "Traditional macOS keychain deletion must skip the synchronizable query")
         var narrowedCalls = 0
         let narrowed = FlutterSecureStorage(keychainDelete: { _ in narrowedCalls += 1; return errSecSuccess })
-        var narrowedParams = KeychainQueryParameters(service: "synthetic.test", usesDataProtectionKeychain: false)
+        var narrowedParams = KeychainQueryParameters(service: "synthetic.test", usesDataProtectionKeychain: true)
         narrowedParams.useSecureEnclave = true
         narrowedParams.itemLabel = "synthetic label"
         expect(narrowed.deleteAll(params: narrowedParams).status == errSecSuccess && narrowedCalls == 2,

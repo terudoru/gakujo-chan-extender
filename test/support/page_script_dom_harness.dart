@@ -7,6 +7,7 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
   required String feature,
   required String buildScript,
   required String teardownScript,
+  bool runOnce = false,
 }) async {
   final result = await Process.run(
       'node',
@@ -15,6 +16,8 @@ Future<Map<String, dynamic>> evaluatePageScriptLifecycle({
         feature,
         buildScript,
         teardownScript,
+        '',
+        if (runOnce) 'once',
       ],
       stdoutEncoding: utf8,
       stderrEncoding: utf8);

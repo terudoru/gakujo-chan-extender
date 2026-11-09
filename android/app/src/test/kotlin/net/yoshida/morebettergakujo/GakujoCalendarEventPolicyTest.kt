@@ -749,6 +749,18 @@ class GakujoCalendarEventPolicyTest {
     }
 
     @Test
+    fun downloadNamesFitUtf8ComponentLimits() {
+        val name = GakujoDownloadFilePolicy.boundedName("あ".repeat(86) + ".pdf")
+        assertEquals("あ".repeat(78) + ".pdf", name)
+        assertEquals("あ".repeat(78) + ".pdf",
+            GakujoDownloadFilePolicy.boundedName("あ".repeat(78) + "😀.pdf"))
+        assertEquals("講".repeat(80), GakujoDownloadFilePolicy.boundedFolder("講".repeat(90)))
+        val unique = GakujoDownloadFilePolicy.uniqueName(setOf(name), name)
+        assertEquals(true, unique.toByteArray(Charsets.UTF_8).size <= 255)
+        assertEquals(true, unique.endsWith(" (1).pdf"))
+    }
+
+    @Test
     fun downloadNameAllocationSkipsExistingSuffixes() {
         assertEquals(
             "資料 (2).pdf",

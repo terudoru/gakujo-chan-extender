@@ -1,3 +1,25 @@
+# Changelog
+
+## [0.4.3](https://github.com/juliansteenbakker/flutter_secure_storage/compare/flutter_secure_storage_darwin-v0.4.2...flutter_secure_storage_darwin-v0.4.3) (2026-09-16)
+
+
+### Bug Fixes
+
+* **darwin:** find keychain items across accessibility levels ([#1269](https://github.com/juliansteenbakker/flutter_secure_storage/issues/1269)) ([9ae0e42](https://github.com/juliansteenbakker/flutter_secure_storage/commit/9ae0e422d6ad6376ddf7960186d42342b0370baf))
+
+## [0.4.2](https://github.com/juliansteenbakker/flutter_secure_storage/compare/flutter_secure_storage_darwin-v0.4.1...flutter_secure_storage_darwin-v0.4.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **darwin:** skip synchronizable keychain queries when the data protection keychain is off ([0606cb4](https://github.com/juliansteenbakker/flutter_secure_storage/commit/0606cb4e6cfa04dca440b7d3208e2aec2278f1a3))
+
+## 0.4.1
+- Fixed items written by versions prior to 0.3.0 becoming unreadable (and subsequent writes failing with `errSecDuplicateItem`) when no `accessControlFlags` are set. The 0.3.0 fix for `kSecAttrSynchronizable` being dropped caused `read`, `readAll` and `containsKey` to stop querying the legacy `kSecAttrAccessControl` storage envelope that those items were written under; they now fall back to it automatically. ([#1158](https://github.com/juliansteenbakker/flutter_secure_storage/issues/1158))
+
+## 0.4.0
+- Raised minimum iOS deployment target from 12.0 to 13.0 to fix Swift compiler errors when building with Swift Package Manager. CryptoKit (used for Secure Enclave support) requires iOS 13.0+.
+
 ## 0.3.2
 - Fixed `secStoreAvailabilitySink` not being called when protected data availability changes.
 - Fixed `kSecUseDataProtectionKeychain` being added to Keychain queries unconditionally; it is now only set when `useDataProtectionKeychain` is explicitly enabled.

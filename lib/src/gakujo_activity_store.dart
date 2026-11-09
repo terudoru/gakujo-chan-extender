@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_activity_classifier.dart';
@@ -8,51 +8,6 @@ import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
-
-class GakujoActivitySnapshot {
-  const GakujoActivitySnapshot({
-    required this.category,
-    required this.title,
-    required this.url,
-    required this.contentHash,
-    required this.updatedAt,
-    required this.hasUpdate,
-    this.contentPreview = '',
-  });
-
-  final String category;
-  final String title;
-  final String url;
-  final String contentHash;
-  final DateTime updatedAt;
-  final bool hasUpdate;
-  final String contentPreview;
-
-  Map<String, Object?> toJson() {
-    return {
-      'category': category,
-      'title': title,
-      'url': url,
-      'contentHash': contentHash,
-      'updatedAt': updatedAt.toIso8601String(),
-      'hasUpdate': hasUpdate,
-      'contentPreview': contentPreview,
-    };
-  }
-
-  factory GakujoActivitySnapshot.fromJson(Map<dynamic, dynamic> json) {
-    return GakujoActivitySnapshot(
-      category: json['category']?.toString() ?? 'その他',
-      title: json['title']?.toString() ?? '',
-      url: json['url']?.toString() ?? '',
-      contentHash: json['contentHash']?.toString() ?? '',
-      updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
-      hasUpdate: json['hasUpdate'] == true,
-      contentPreview: json['contentPreview']?.toString() ?? '',
-    );
-  }
-}
 
 class GakujoDeadlineEntry {
   const GakujoDeadlineEntry({
@@ -199,55 +154,6 @@ String gakujoMessageLinkFor(String url) {
       'seqNo': seqNo,
     },
   ).toString();
-}
-
-class GakujoActivityChangeEntry {
-  const GakujoActivityChangeEntry({
-    required this.category,
-    required this.title,
-    required this.url,
-    required this.changedAt,
-    required this.previousHash,
-    required this.nextHash,
-    this.previousPreview = '',
-    this.nextPreview = '',
-  });
-
-  final String category;
-  final String title;
-  final String url;
-  final DateTime changedAt;
-  final String previousHash;
-  final String nextHash;
-  final String previousPreview;
-  final String nextPreview;
-
-  Map<String, Object?> toJson() {
-    return {
-      'category': category,
-      'title': title,
-      'url': url,
-      'changedAt': changedAt.toIso8601String(),
-      'previousHash': previousHash,
-      'nextHash': nextHash,
-      'previousPreview': previousPreview,
-      'nextPreview': nextPreview,
-    };
-  }
-
-  factory GakujoActivityChangeEntry.fromJson(Map<dynamic, dynamic> json) {
-    return GakujoActivityChangeEntry(
-      category: json['category']?.toString() ?? 'その他',
-      title: json['title']?.toString() ?? '',
-      url: json['url']?.toString() ?? '',
-      changedAt: DateTime.tryParse(json['changedAt']?.toString() ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
-      previousHash: json['previousHash']?.toString() ?? '',
-      nextHash: json['nextHash']?.toString() ?? '',
-      previousPreview: json['previousPreview']?.toString() ?? '',
-      nextPreview: json['nextPreview']?.toString() ?? '',
-    );
-  }
 }
 
 class GakujoCachedReportList {
@@ -407,7 +313,6 @@ class GakujoActivityStore {
       'more_better_gakujo_whole_assignment_list';
   static const _maxAssignments = 200;
   static const _assignmentRetention = Duration(days: 30);
-  static const _maxSnapshots = 120;
   // 連絡通知 alone can hold hundreds of dated rows, so they get their own
   // share instead of pushing coursework deadlines out.
   static const _maxDeadlines = 80;
@@ -415,12 +320,9 @@ class GakujoActivityStore {
   static const _maxNotifiedDeadlineKeys = 1000;
   static const _maxFavorites = 30;
   static const _maxStarredMessages = 300;
-  static const _maxChanges = 120;
   static const _maxReportLists = 20;
-  static const _snapshotRetention = Duration(days: 180);
   static const _deadlineGracePeriod = Duration(days: 7);
   static const _undatedDeadlineRetention = Duration(days: 90);
-  static const _changeRetention = Duration(days: 90);
   static const _reportListRetention = Duration(days: 60);
 
   final FlutterSecureStorage _secureStorage;
@@ -434,7 +336,6 @@ class GakujoActivityStore {
           _notifiedDeadlineKeysKey,
           _favoritesKey,
           _starredMessagesKey,
-          _changesKey,
           _reportListsKey,
         ],
       );
@@ -450,21 +351,6 @@ class GakujoActivityStore {
       // cached data rather than throwing out of a background scan.
       return const _StorageReadResult.failure(null);
     }
-  }
-
-  Future<List<GakujoActivitySnapshot>> loadSnapshots() {
-    return _enqueue(() async => (await _readSnapshots()).value);
-  }
-
-  Future<_StorageReadResult<List<GakujoActivitySnapshot>>> _readSnapshots() {
-    return _readList(
-      key: _snapshotsKey,
-      fromJson: GakujoActivitySnapshot.fromJson,
-      retain: (snapshot) =>
-          _isUsefulSnapshot(snapshot) && _isRecentSnapshot(snapshot),
-      compare: (a, b) => b.updatedAt.compareTo(a.updatedAt),
-      limit: _maxSnapshots,
-    );
   }
 
   Future<List<GakujoDeadlineEntry>> loadDeadlines() {
@@ -897,26 +783,6 @@ class GakujoActivityStore {
     );
   }
 
-  Future<List<GakujoActivityChangeEntry>> loadChanges() {
-    return _enqueue(() async => (await _readChanges()).value);
-  }
-
-  Future<List<GakujoActivityChangeEntry>> loadChangesForBackup() {
-    return _enqueue(
-      () => _readForBackup(_changesKey, _readChanges),
-    );
-  }
-
-  Future<_StorageReadResult<List<GakujoActivityChangeEntry>>> _readChanges() {
-    return _readList(
-      key: _changesKey,
-      fromJson: GakujoActivityChangeEntry.fromJson,
-      retain: (change) => _isUsefulChange(change) && _isRecentChange(change),
-      compare: (a, b) => b.changedAt.compareTo(a.changedAt),
-      limit: _maxChanges,
-    );
-  }
-
   Future<List<GakujoCachedReportList>> loadReportLists() {
     return _enqueue(() async => (await _readReportLists()).value);
   }
@@ -938,17 +804,36 @@ class GakujoActivityStore {
     );
   }
 
+  Future<void> deleteRetiredData() => _enqueue(() => _deleteRetiredData());
+
+  Future<void> _deleteRetiredData({bool bestEffort = false}) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    for (final key in [_snapshotsKey, _changesKey]) {
+      try {
+        await _secureStorage.delete(key: key);
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+        developer.log('Failed to delete retired activity data',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+    if (!bestEffort && firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+
   Future<void> compact() {
     return _enqueue(_compact);
   }
 
   Future<void> _compact() async {
-    await _compactList(_snapshotsKey, _readSnapshots);
+    await _deleteRetiredData(bestEffort: true);
     await _compactList(_deadlinesKey, _readDeadlines);
     await _compactNotifiedDeadlineKeys();
     await _compactList(_favoritesKey, _readFavorites);
     await _compactList(_starredMessagesKey, _readStarredMessages);
-    await _compactList(_changesKey, _readChanges);
     await _compactList(_reportListsKey, _readReportLists);
     await _compactList(_assignmentsKey, _readAssignments);
   }
@@ -959,129 +844,6 @@ class GakujoActivityStore {
       return;
     }
     await _writeNotifiedDeadlineKeys(notifiedRead.value.toList());
-  }
-
-  Future<GakujoActivitySnapshot> recordSnapshot({
-    required String category,
-    required String title,
-    required String url,
-    required String content,
-  }) {
-    return _enqueue(
-      () => _recordSnapshot(
-        category: category,
-        title: title,
-        url: url,
-        content: content,
-      ),
-    );
-  }
-
-  Future<GakujoActivitySnapshot> _recordSnapshot({
-    required String category,
-    required String title,
-    required String url,
-    required String content,
-  }) async {
-    final preview = _contentPreview(content);
-    if (url.trim().isEmpty || content.trim().isEmpty) {
-      return GakujoActivitySnapshot(
-        category: category,
-        title: title,
-        url: url,
-        contentHash: '',
-        updatedAt: DateTime.now(),
-        hasUpdate: false,
-        contentPreview: preview,
-      );
-    }
-    final hash = sha1.convert(utf8.encode(content)).toString();
-    final now = DateTime.now();
-    final snapshotRead = await _readSnapshots();
-    if (!snapshotRead.isSuccessful) {
-      return GakujoActivitySnapshot(
-        category: category,
-        title: title,
-        url: url,
-        contentHash: hash,
-        updatedAt: now,
-        hasUpdate: false,
-        contentPreview: preview,
-      );
-    }
-    final snapshots = [...snapshotRead.value];
-    final existingIndex = snapshots.indexWhere(
-      (snapshot) => snapshot.category == category && snapshot.url == url,
-    );
-    final existing = existingIndex >= 0 ? snapshots[existingIndex] : null;
-    final existingHadUpdate =
-        existingIndex >= 0 && snapshots[existingIndex].hasUpdate;
-    final hasUpdate = existing != null && existing.contentHash != hash;
-    if (existing != null && existing.contentHash != hash) {
-      await _addChange(
-        GakujoActivityChangeEntry(
-          category: category,
-          title: title,
-          url: durableGakujoLink(gakujoMessageLinkFor(url), category),
-          changedAt: now,
-          previousHash: existing.contentHash,
-          nextHash: hash,
-          previousPreview: existing.contentPreview,
-          nextPreview: preview,
-        ),
-      );
-    }
-    final snapshot = GakujoActivitySnapshot(
-      category: category,
-      title: title,
-      url: url,
-      contentHash: hash,
-      updatedAt: now,
-      hasUpdate: hasUpdate || existingHadUpdate,
-      contentPreview: preview,
-    );
-    if (existingIndex >= 0) {
-      snapshots[existingIndex] = snapshot;
-    } else {
-      snapshots.add(snapshot);
-    }
-    snapshots.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    await _writeList(_snapshotsKey, snapshots.take(_maxSnapshots));
-    return snapshot;
-  }
-
-  Future<void> markSnapshotsSeen() {
-    return _enqueue(_markSnapshotsSeen);
-  }
-
-  Future<void> _markSnapshotsSeen() async {
-    final snapshotRead = await _readSnapshots();
-    if (!snapshotRead.isSuccessful) {
-      return;
-    }
-    final snapshots = snapshotRead.value.where(_isUsefulSnapshot);
-    await _writeList(
-      _snapshotsKey,
-      snapshots
-          .map(
-            (snapshot) => GakujoActivitySnapshot(
-              category: snapshot.category,
-              title: snapshot.title,
-              url: snapshot.url,
-              contentHash: snapshot.contentHash,
-              updatedAt: snapshot.updatedAt,
-              hasUpdate: false,
-              contentPreview: snapshot.contentPreview,
-            ),
-          )
-          .toList(),
-    );
-  }
-
-  Future<void> clearSnapshots() {
-    return _enqueue(
-      () => _secureStorage.delete(key: _snapshotsKey),
-    );
   }
 
   Future<List<GakujoDeadlineEntry>> mergeDeadlines(
@@ -1153,8 +915,6 @@ class GakujoActivityStore {
           _isUsefulDeadline(value) && _isActiveDeadline(value),
         final GakujoFavoritePage value => _isUsefulFavorite(value),
         final GakujoStarredMessage value => value.isValid,
-        final GakujoActivityChangeEntry value =>
-          _isUsefulChange(value) && _isRecentChange(value),
         final GakujoCachedReportList value =>
           _isUsefulReportList(value) && _isRecentReportList(value),
         _ => false,
@@ -1371,22 +1131,6 @@ class GakujoActivityStore {
     );
   }
 
-  Future<void> replaceChanges(List<GakujoActivityChangeEntry> changes) {
-    return _enqueue(() => _replaceChanges(changes));
-  }
-
-  Future<void> _replaceChanges(List<GakujoActivityChangeEntry> changes) {
-    final compacted = changes
-        .where(_isUsefulChange)
-        .where(_isRecentChange)
-        .toList()
-      ..sort((a, b) => b.changedAt.compareTo(a.changedAt));
-    return _writeList(
-      _changesKey,
-      compacted.take(_maxChanges),
-    );
-  }
-
   Future<void> clearReportLists() {
     return _enqueue(() async {
       await _secureStorage.delete(key: _reportListsKey);
@@ -1394,61 +1138,6 @@ class GakujoActivityStore {
       await _secureStorage.delete(key: _assignmentsKey);
       await _secureStorage.delete(key: _wholeAssignmentListKey);
     });
-  }
-
-  Future<void> clearChanges() {
-    return _enqueue(
-      () => _secureStorage.delete(key: _changesKey),
-    );
-  }
-
-  Future<void> _addChange(GakujoActivityChangeEntry entry) async {
-    if (!_isUsefulChange(entry)) {
-      return;
-    }
-    final changeRead = await _readChanges();
-    if (!changeRead.isSuccessful) {
-      return;
-    }
-    final changes = [entry, ...changeRead.value];
-    await _writeList(
-      _changesKey,
-      changes.where(_isRecentChange).take(_maxChanges),
-    );
-  }
-
-  bool _isUsefulSnapshot(GakujoActivitySnapshot snapshot) {
-    return snapshot.url.trim().isNotEmpty &&
-        snapshot.title.trim().isNotEmpty &&
-        snapshot.contentHash.trim().isNotEmpty &&
-        !_isGenericNoiseSnapshot(snapshot) &&
-        snapshot.contentPreview.trim().toLowerCase() != 'now loading...';
-  }
-
-  bool _isGenericNoiseSnapshot(GakujoActivitySnapshot snapshot) {
-    final title = snapshot.title.trim();
-    final category = snapshot.category.trim();
-    final preview = snapshot.contentPreview.trim();
-    final url = snapshot.url.toLowerCase();
-    final isGenericTitle = title == 'Gakujo' ||
-        title == 'CampusSquare for WEB [CampusSquare]' ||
-        title.startsWith('CampusSquare for WEB');
-    if (!isGenericTitle) {
-      return false;
-    }
-
-    final isGenericCategory = category == 'Gakujo' || category == 'スケジュール';
-    final looksLikePortalChrome = preview.contains('前回ログイン日時') ||
-        preview.contains('レポート・小テスト') ||
-        preview.contains('出欠管理') ||
-        preview.contains('新着情報') ||
-        preview.contains('MYスケジュール');
-    final isMainPortalUrl = url.contains('campusportal.do') &&
-        !url.contains('tabid=') &&
-        !url.contains('report') &&
-        !url.contains('keiji') &&
-        !url.contains('schedule');
-    return isGenericCategory && (looksLikePortalChrome || isMainPortalUrl);
   }
 
   bool _isUsefulDeadline(GakujoDeadlineEntry entry) {
@@ -1471,18 +1160,6 @@ class GakujoActivityStore {
     return reportList.url.trim().isNotEmpty &&
         reportList.title.trim().isNotEmpty &&
         reportList.items.any((item) => item.trim().isNotEmpty);
-  }
-
-  bool _isUsefulChange(GakujoActivityChangeEntry change) {
-    return change.url.trim().isNotEmpty &&
-        change.title.trim().isNotEmpty &&
-        change.previousHash.trim().isNotEmpty &&
-        change.nextHash.trim().isNotEmpty;
-  }
-
-  bool _isRecentSnapshot(GakujoActivitySnapshot snapshot) {
-    return snapshot.updatedAt
-        .isAfter(DateTime.now().subtract(_snapshotRetention));
   }
 
   /// Whether the date in [entry] has already passed. Deadlines are kept for
@@ -1509,10 +1186,6 @@ class GakujoActivityStore {
   bool _isRecentReportList(GakujoCachedReportList reportList) {
     return reportList.capturedAt
         .isAfter(DateTime.now().subtract(_reportListRetention));
-  }
-
-  bool _isRecentChange(GakujoActivityChangeEntry change) {
-    return change.changedAt.isAfter(DateTime.now().subtract(_changeRetention));
   }
 
   DateTime? _deadlineDueAt(String text, {required DateTime detectedAt}) {
@@ -1660,48 +1333,6 @@ class GakujoActivityStore {
     }
     // Gakujo's date text is always Japan time, regardless of the device zone.
     return parsed.subtract(const Duration(hours: 9));
-  }
-
-  String _contentPreview(String content) {
-    final lines = content
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((line) => line.isNotEmpty && !_isBoilerplateLine(line))
-        .take(8)
-        .toList();
-    final preview = lines.join('\n');
-    if (preview.length <= 420) {
-      return preview;
-    }
-    return '${preview.substring(0, 420)}...';
-  }
-
-  bool _isBoilerplateLine(String line) {
-    const exact = {
-      '[image]',
-      'スマホ版',
-      'English',
-      'カスタマイズ',
-      'ログアウト',
-      'HOME',
-      '連絡通知',
-      'スケジュール',
-      '休講補講',
-      'シラバス',
-      '履修',
-      '成績',
-      'ダウンロード',
-      'リンク',
-      '各種情報',
-      'NBAS',
-    };
-    if (exact.contains(line)) {
-      return true;
-    }
-    return line.startsWith('Copyright') ||
-        line.startsWith('残り約') ||
-        RegExp(r'^[0-9]{4}年[0-9]{1,2}月$').hasMatch(line) ||
-        RegExp(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(\s|$)').hasMatch(line);
   }
 
   List<T> _decodeList<T>(

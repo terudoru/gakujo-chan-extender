@@ -181,6 +181,29 @@ function submitEvent(form?: any, submitter?: any) {
 }
 
 function behavior() {
+  if (scenario === 'courseNameFileRows') {
+    const rowText = '副専攻授業科目リスト等の変更について（2021.05.20現在）.pdfプレビューを見る 2021年5月20日 - 9999年12月31日 2021年5月20日 112725 令和３年度副専攻授業科目リスト等の変更';
+    const row: any = {innerText: rowText, querySelectorAll() { return []; }};
+    const table: any = {querySelectorAll() { return [row]; }};
+    const selected: any = {innerText: 'ダウンロード'};
+    topDocument.title = 'ダウンロード - 学務情報システム';
+    topDocument.querySelectorAll = selector => selector === 'table' ? [table] :
+      selector === 'tr' ? [row] : selector === '.selected' ? [selected] : [];
+    click(anchor('exports/form.pdf', '資料.pdf', '資料.pdf'));
+    const names: any = [];
+    for (const text of [
+      '科目名：線形代数', '授業科目 ABC123 線形代数', '授業科目名 線形代数',
+      '2023授業科目一覧.pdf プレビューを見る', '科目名：資料.pdf プレビューを見る',
+      '科目名：資料.PDF', '副専攻授業科目リスト等の変更', '授業科目名簿',
+      'ダウンロード入門'
+    ]) {
+      row.innerText = text;
+      topDocument.querySelectorAll = selector => selector === 'tr' ? [row] :
+        selector === '.selected' && text === 'ダウンロード入門' ? [row] : [];
+      names.push(window.__MBG_ESTIMATE_COURSE_NAME());
+    }
+    return {captured, names};
+  }
   if (scenario === 'multiDownloadSubmissions') {
     vm.runInContext(buildScript, context);
     vm.runInContext(buildScript, context);

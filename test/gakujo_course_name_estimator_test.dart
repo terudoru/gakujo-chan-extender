@@ -2,6 +2,38 @@ import 'package:morebettergakujo_flutter/src/gakujo_course_name_estimator.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('rejects file rows and generic download page labels', () {
+    final course = GakujoCourseNameEstimator.estimateFromHtml('''
+      <html><head><title>ダウンロード - 学務情報システム</title></head><body>
+      <div class="selected">ダウンロード</div>
+      <table><tr><td>副専攻授業科目リスト等の変更について（2021.05.20現在）.pdfプレビューを見る
+      2021年5月20日 - 9999年12月31日 2021年5月20日 112725
+      令和３年度副専攻授業科目リスト等の変更</td></tr></table>
+      </body></html>
+    ''');
+    expect(course, '未分類');
+    expect(GakujoCourseNameEstimator.estimateFromCandidates([
+      '2023授業科目一覧.pdf プレビューを見る',
+      '科目名：資料.pdf プレビューを見る',
+      '科目名：資料.PDF',
+      '科目名：線形代数',
+    ]), '線形代数');
+    expect(GakujoCourseNameEstimator.estimateFromCandidates([
+      '2023授業科目一覧.pdf プレビューを見る',
+    ]), '未分類');
+  });
+
+  test('extracts complete labels with separators', () {
+    for (final text in [
+      '科目名：線形代数',
+      '授業科目 ABC123 線形代数',
+      '授業科目名 線形代数',
+    ]) {
+      expect(GakujoCourseNameEstimator.estimateFromCandidates([text]), '線形代数',
+          reason: text);
+    }
+  });
+
   test('estimates a course from headings', () {
     final course = GakujoCourseNameEstimator.estimateFromHtml('''
       <html>

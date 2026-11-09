@@ -3,7 +3,9 @@ export {};
 declare const __mbgConfig: { zoom: number; originX: number | null; originY: number | null };
 
 function desktopPageZoom() {
-  var version = 6;
+  var version = 7;
+  type ZoomCause = 'user' | 'shape' | 'resize';
+  var currentCause: ZoomCause = 'user';
   var initialZoom = __mbgConfig.zoom;
   var initialOrigin = {
     x: __mbgConfig.originX,
@@ -109,7 +111,7 @@ function desktopPageZoom() {
     };
   }
 
-  function applyZoom(win: Window & typeof globalThis, zoom: number) {
+  function applyZoom(win: Window & typeof globalThis, zoom: number, cause: ZoomCause = currentCause) {
     try {
       var doc = win.document;
       var body = doc && doc.body;
@@ -136,8 +138,14 @@ function desktopPageZoom() {
       var size = measuredSize(win);
       var effectiveZoom = effectiveZoomFor(win, zoom, size);
       var previousZoom = win.__MBG_PAGE_EFFECTIVE_ZOOM as number;
-      if (!isFinite(previousZoom) || previousZoom <= 0) previousZoom = 1;
-      var origin = originFor(win);
+      var hasPreviousZoom = isFinite(previousZoom) && previousZoom > 0;
+      // A page that changes shape must not rescale under someone who has
+      // scrolled to a spot. Only the user's zoom and a window resize refit it.
+      if (cause === 'shape' && hasPreviousZoom && (previousScrollX !== 0 || previousScrollY !== 0)) {
+        effectiveZoom = previousZoom;
+      }
+      if (!hasPreviousZoom) previousZoom = 1;
+      var origin = cause === 'user' ? originFor(win) : { x: 0, y: 0 };
       if (Math.abs(effectiveZoom - 1) < 0.001) {
         body.style.transform = '';
         body.style.transformOrigin = '';
@@ -171,21 +179,30 @@ function desktopPageZoom() {
     applyZoom(window, zoom);
   }
 
-  function setZoom(nextZoom: number) {
+  function setZoom(nextZoom: number, cause: ZoomCause = 'user') {
     var zoom = clamp(nextZoom);
     window.__MBG_PAGE_ZOOM_VALUE = zoom;
     window.__MBG_PAGE_ZOOM_ORIGIN = initialOrigin;
+    currentCause = cause;
     applyEverywhere(zoom);
     return zoom;
   }
 
-  function scheduleReapply(win: Window & typeof globalThis) {
+  function scheduleReapply(win: Window & typeof globalThis, cause: ZoomCause) {
     try {
+      if (cause === 'resize') win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
       win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
-      win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(function() {
+      function reapply() {
+        if (Date.now() - (win.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
+          win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply, 150);
+          return;
+        }
+        var resize = win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
+        win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
         var apply = window.__MBG_SET_PAGE_ZOOM || setZoom;
-        apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom);
-      }, 150);
+        apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom, resize ? 'resize' : 'shape');
+      }
+      win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply, 150);
     } catch (e) {}
   }
 
@@ -221,8 +238,12 @@ function desktopPageZoom() {
             event.preventDefault();
           }, { capture: true, passive: false });
 
+          win.addEventListener('scroll', function() {
+            win.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
+          }, { capture: true, passive: true });
+
           win.addEventListener('resize', function() {
-            scheduleReapply(win);
+            scheduleReapply(win, 'resize');
           }, true);
 
           if (win.MutationObserver && win.document && win.document.body) {
@@ -232,7 +253,7 @@ function desktopPageZoom() {
                     mutations[m].attributeName === 'style') {
                   continue;
                 }
-                scheduleReapply(win);
+                scheduleReapply(win, 'shape');
                 return;
               }
             });

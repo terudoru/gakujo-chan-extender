@@ -10,12 +10,22 @@ class GakujoDownloadResult {
     required this.courseName,
     this.location,
     this.alreadySaved = false,
+    this.uploadBytes,
   });
 
   final String fileName;
   final String courseName;
   final String? location;
   final bool alreadySaved;
+  final Uint8List? uploadBytes;
+
+  GakujoDownloadResult withUploadBytes(Uint8List bytes) => GakujoDownloadResult(
+    fileName: fileName,
+    courseName: courseName,
+    location: location,
+    alreadySaved: alreadySaved,
+    uploadBytes: bytes,
+  );
 
   factory GakujoDownloadResult.fromMap(Map<dynamic, dynamic>? raw) {
     final fileName = raw?['fileName']?.toString().trim() ?? '';

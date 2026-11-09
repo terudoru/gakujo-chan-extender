@@ -2,14 +2,6 @@
 
 More Better Gakujo は、新潟大学の学務情報システム（学情）をアプリの中で開き、ログイン、2段階認証、資料の保存を楽にする非公式アプリです。Android、iOS/iPadOS、Windows、macOS、Linux に対応します。新潟大学とも、元のブラウザ拡張の作者とも関係ありません。
 
-## まず覚えること
-
-1. 最新版は [GitHub Releases](https://github.com/terudoru/gakujo-chan-extender/releases) から入手する
-2. 2段階認証を自動入力するには、6桁のコードではなく Base32 形式の秘密鍵を設定画面に保存する
-3. 資料の保存方法は、設定の保存モードで選ぶ
-4. うまく動かないときは、下の「困ったとき」の表を見る
-
-初めて使うときは「入手とインストール」と「初回設定」を読んでください。ほかの節は、必要になったときに開けば足ります。開発やリリース作業の資料は、末尾の「関連資料」にあります。
 
 ## 入手とインストール
 
@@ -38,8 +30,8 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 - x64 の Ubuntu 22.04 以降 / Debian 12 以降を対象とする。`MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` は `sudo apt install ./MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` を実行して入れる
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret`）
-- パスワードの保存には Secret Service（GNOME Keyring / KWallet など）が必要
-- Linux では QR コードの読み取りは使えない
+- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
+- Linux では OS の通知に対応していない。提出期限はアプリ内で確認する
 
 ### iOS/iPadOS
 
@@ -75,7 +67,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - ダウンロードした資料を、科目ごとのフォルダに自動で仕分けて保存する
 - ダウンロード履歴と、授業ごとの資料一覧
 - 連絡通知のスターと、キーワードによる除外
-- 成績・レポート・連絡通知の更新検知と、提出期限の抽出・OS 通知
+- 提出期限の抽出・OS 通知
 - レポート本文の下書きの自動保存
 - 授業予定をカレンダーに追加する（「授業カレンダー連携」の節）
 - スターや設定を複数の端末で共有する（「端末間の同期」の節）。v0.70.6 には含まれていない
@@ -83,7 +75,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - 提出前に、選んだ PDF や画像をプレビューする。PDF は連続スクロール、ページ移動、拡大・縮小、文字検索に対応する
 - 提出済みファイルを、保存せずにプレビューする。PDF、JPEG/PNG/WebP、テキスト、主な音声・動画に対応する。Word/Excel/PowerPoint は本文だけを表示し、書式や画像は再現しない
 - 設定・履歴・お気に入りなどのバックアップと復元
-- GitHub Releases の新しい版の確認
+- GitHub Releases の新しい版の確認。新しい正式版があれば画面の上部で知らせる（pre-release は対象外。確認は1日1回で、設定の機能オン/オフで止められる）
 - マウスの戻る・進むボタンでのページ移動（Windows/macOS）
 
 各機能は、設定の機能オン/オフで個別に止められます。
@@ -102,14 +94,14 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 保存モードは次の3つから選びます。
 
-- 自動仕分けして指定フォルダに保存
-- 自動仕分けせず指定フォルダに保存
-- 自動仕分けせず毎回保存場所を選ぶ
+- 授業ごとに仕分けて指定フォルダに保存
+- 仕分けずに指定フォルダに保存
+- 保存のたびに場所を選ぶ
 
 自動仕分けでは、ページ内の「科目名」欄やファイル名から科目名を判定し、指定フォルダの下に科目名のフォルダを作って保存します。判定できないときは「未分類」フォルダに入ります。
 
 - iOS/iPadOS では、iCloud Drive のフォルダを保存先にすれば自動仕分けを使える
-- Google Drive は、iOS/iPadOS の「ファイル」アプリでフォルダを保存先に指定できないことがある。その場合は「自動仕分けせず毎回保存場所を選ぶ」を使う
+- Google Drive は、iOS/iPadOS の「ファイル」アプリでフォルダを保存先に指定できないことがある。その場合は「保存のたびに場所を選ぶ」を使う
 - Windows では、転送先が変わるダウンロードを安全のためブロックする。通知のリンクを開くときも確認画面が出る
 
 ### 表示モード
@@ -125,8 +117,8 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 | 方法 | 動き |
 |---|---|
 | 自動で選ぶ | Android・iOS・macOS では OS のカレンダーに直接追加する。Windows には安全に書き込める共通のカレンダー API がないので、学情の Google 連携を開き、見つからなければ `.ics` ファイルを書き出して既定のカレンダーアプリで開く |
-| OSカレンダーへ直接追加 | ターム期間、授業のない日、振替日を反映し、まとめて削除もできる。予定には `MBG_UID:` で始まる識別子を入れておき、再実行すると、対象ターム内のこのアプリが入れた予定を消してから入れ直すので、予定は重複しない |
-| 本家Google連携を開く | 学情側の「Googleスケジュール連携」を開く |
+| 端末のカレンダーへ直接追加 | ターム期間、授業のない日、振替日を反映し、まとめて削除もできる。予定には `MBG_UID:` で始まる識別子を入れておき、再実行すると、対象ターム内のこのアプリが入れた予定を消してから入れ直すので、予定は重複しない |
+| 学務のGoogle連携を開く | 学情側の「Googleスケジュール連携」を開く |
 | iCalendarファイルを書き出す | `more-better-gakujo-classes.ics` を書き出す。各授業の `UID` は年度、ターム、授業名、曜日、時限、教室から作るので、書き出し直しても同じ予定として扱われやすい。それでも何度も手動で取り込むと、カレンダーアプリによっては予定が重複する |
 
 予定のタイトル、場所、説明は、学情の Google カレンダー連携のリンクに入っている内容だけを使います。学情側の連携予定がページに見つからないときは、アプリが推測で授業を作らず、学情の「Googleスケジュール連携」を開きます。
@@ -160,24 +152,20 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 この機能は main ブランチにあり、v0.70.6 には含まれていません。
 
-設定の「スターの端末間同期」で、次の項目を同じ人の複数の端末で共有できます。開発者側ではサーバーを用意しません。
+設定の「同期とバックアップ」で、次の項目を同じ人の複数の端末で共有できます。開発者側ではサーバーを用意しません。
 
 - 連絡通知のスター。同期するのは ID と件名だけで、本文は端末の中にだけ残り、通知を開いたときに読み込み直す
 - お気に入り、設定、レポート下書き、通知済みの締切（項目ごとにオン/オフできる）
 
-同期先は次から選びます。
-
-- Google ドライブ：Google アカウントだけで使える。2台目以降は、1台目の「別の端末を追加」に出る QR コードかペアリングコードで参加する。このボタンは、Google の OAuth クライアント ID を組み込んだビルドにだけ出る。v0.70.6 の次のリリースから GitHub Actions のリリースビルドに組み込む予定
-- WebDAV または S3 互換ストレージ：詳細設定から、自分のサーバーの接続情報とパスフレーズを入れる
+同期先は Google ドライブです。同じ Google アカウントでログインするだけで端末間を同期できます。OAuth クライアント ID を組み込まないビルドでは同期を使えません。
 
 使う前に、次の点を確かめてください。
 
 - 同期するには、設定の「ログイン」でログイン ID を保存しておく必要がある。ログイン ID が設定したときと変わると、同期は止まる
 - 共用の端末では同期を設定しない。同期で受け取った内容は、その端末を使うほかの人からも見える
-- ペアリングコードやパスフレーズを知っている人は、同期データを読める。忘れたときは同期データをリセットしてやり直す（端末の中のスターは残る）
-- Google ドライブで同期するなら、全端末をなくしたときに備えて、「別の端末を追加」のコードを安全な場所に控えておく
+- Google ドライブでは暗号化の鍵も同じアカウントのアプリ専用領域に保存するため、Google やアカウントとアプリの Drive 権限にアクセスできる人は同期データを読める
 
-任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://terudoru.github.io/gakujo-chan-extender/privacy.html) をご覧ください。
+任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://gakujo.terudoru.com/privacy.html) をご覧ください。
 
 ## バックアップ
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 abstract interface class StarSyncTransport {
@@ -34,6 +35,8 @@ class StarSyncRemoteObject {
 
 enum StarSyncTransportErrorKind {
   auth,
+  storageFull,
+  driveDisabled,
   notFound,
   alreadyExists,
   network,
@@ -74,19 +77,12 @@ void validateStarSyncPath(String path) {
   }
 }
 
-String? normalizeStarSyncEtag(String? value) {
-  if (value == null) return null;
-  var result = value.trim();
-  if (result.startsWith('W/')) result = result.substring(2).trim();
-  if (result.length >= 2 && result.startsWith('"') && result.endsWith('"')) {
-    result = result.substring(1, result.length - 1);
-  }
-  return result;
-}
-
 const starSyncDefaultMaxBytes = 2 * 1024 * 1024;
 
 const starSyncRequestTimeout = Duration(seconds: 20);
+
+Duration starSyncRequestTimeoutFor(int bodyLength) =>
+    starSyncRequestTimeout + Duration(seconds: bodyLength ~/ (32 * 1024));
 
 class StarSyncHttpResponse {
   const StarSyncHttpResponse(this.statusCode, this.headers, this.bytes);
@@ -95,6 +91,23 @@ class StarSyncHttpResponse {
   final List<int> bytes;
 }
 
+String? googleDriveErrorReason(StarSyncHttpResponse response) {
+  try {
+    final decoded = jsonDecode(utf8.decode(response.bytes));
+    final errors = decoded['error']['errors'];
+    if (errors is! List || errors.isEmpty) return null;
+    final reason = errors.first['reason'];
+    return reason is String ? reason : null;
+  } on Object {
+    return null;
+  }
+}
+
+bool isGoogleDriveRateLimit(StarSyncHttpResponse response) =>
+    response.statusCode == 403 &&
+    (googleDriveErrorReason(response) == 'rateLimitExceeded' ||
+        googleDriveErrorReason(response) == 'userRateLimitExceeded');
+
 Future<StarSyncHttpResponse> starSyncRequest(
   HttpClient client,
   String method,
@@ -102,9 +115,17 @@ Future<StarSyncHttpResponse> starSyncRequest(
   Map<String, String> headers = const {},
   List<int> body = const [],
   int maxBytes = starSyncDefaultMaxBytes,
+  Duration? timeout,
 }) async {
+  HttpClientRequest? activeRequest;
+  var timedOut = false;
   Future<StarSyncHttpResponse> send() async {
     final request = await client.openUrl(method, uri);
+    activeRequest = request;
+    if (timedOut) {
+      request.abort();
+      throw const HttpException('Request timed out');
+    }
     request.followRedirects = false;
     headers.forEach((name, value) => request.headers.set(name, value));
     request.contentLength = body.length;
@@ -124,7 +145,9 @@ Future<StarSyncHttpResponse> starSyncRequest(
   }
 
   try {
-    return await send().timeout(starSyncRequestTimeout);
+    return await send().timeout(
+      timeout ?? starSyncRequestTimeoutFor(body.length),
+    );
   } on HandshakeException {
     throw const StarSyncTransportException(
       StarSyncTransportErrorKind.tls,
@@ -141,6 +164,8 @@ Future<StarSyncHttpResponse> starSyncRequest(
       'Network connection failed',
     );
   } on TimeoutException {
+    timedOut = true;
+    activeRequest?.abort();
     throw const StarSyncTransportException(
       StarSyncTransportErrorKind.network,
       'Request timed out',

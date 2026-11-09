@@ -72,7 +72,6 @@ void main() {
       expect(backup.favorites, isNull);
       expect(backup.deadlines, isNull);
       expect(backup.notifiedDeadlineKeys, isNull);
-      expect(backup.changes, isNull);
       expect(backup.reportLists, isNull);
     });
 
@@ -92,7 +91,6 @@ void main() {
       'downloadHistory',
       'failedDownloads',
       'deadlines',
-      'changes',
       'reportLists',
       'notifiedDeadlineKeys',
     ]) {
@@ -178,7 +176,7 @@ void main() {
         );
         expect(backup.notificationPreferences!.reminderOffsets, expected);
         expect(backup.notificationPreferences!.skipSubmitted, isFalse);
-        expect(backup.notificationPreferences!.mutedCourses, {'科目A'});
+        expect(backup.notificationPreferences!.toJson(), isNot(contains('mutedCourses')));
       }
     });
 
@@ -225,7 +223,6 @@ void main() {
         'deadlines',
         'notifiedDeadlineKeys',
         'failedDownloads',
-        'changes',
         'reportLists',
         'messageExcludeKeywords'
       ]) {
@@ -290,7 +287,7 @@ void main() {
             'calendarTitle': '授業カレンダー',
           },
           'messageExcludeKeywords': ['広告', '重要'],
-          'disabledFeatureFlags': ['gpa_display'],
+          'disabledFeatureFlags': ['upload_compression'],
           'downloadHistory': [
             {
               'fileName': 'report.pdf',
@@ -360,13 +357,12 @@ void main() {
         GakujoCalendarImportMethod.icsFile,
       );
       expect(backup.messageExcludeKeywords, ['広告', '重要']);
-      expect(backup.disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+      expect(backup.disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
       expect(backup.downloadHistory, hasLength(1));
       expect(backup.failedDownloads, hasLength(1));
       expect(backup.failedDownloads?.single.request.formFields, isEmpty);
       expect(backup.favorites, hasLength(1));
       expect(backup.deadlines, hasLength(1));
-      expect(backup.changes, hasLength(1));
       expect(backup.reportLists, hasLength(1));
     });
 
@@ -384,7 +380,6 @@ void main() {
             failedDownloads: const [],
             favorites: const [],
             deadlines: const [],
-            changes: const [],
             reportLists: const [],
           );
           final imported = parseGakujoBackup(jsonEncode(payload));

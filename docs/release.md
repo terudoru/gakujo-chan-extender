@@ -26,6 +26,8 @@ GitHub Releases に配布ファイルを出すメンテナー向けの資料で�
 | `windows` | `.exe`（インストーラー）、`.zip`（ポータブル版） | インストーラーで旧版から更新できること |
 | `linux` | `-linux-x64.tar.gz`、`-linux-amd64.deb` | パッケージの内容、deb のインストール、実行ファイルとライブラリの依存関係 |
 
+アプリの更新通知は、配布ファイルの拡張子で自分の OS 向けのファイルがあるかを判断するので、拡張子を変えるときは `AppUpdateInfo.hasInstallerFor` も直す。iOS 版は IPA を追加した時点で通知される。
+
 macOS の DMG は Developer ID で署名していません。利用者は初回に「プライバシーとセキュリティ」で「このまま開く」を選びます。
 
 ### iOS/iPadOS 版をあとから追加する
@@ -140,7 +142,7 @@ flutter build windows --release
 
 ## Google OAuth クライアント
 
-端末間同期の「Google ドライブで同期」と、ダウンロードの Google ドライブ保存に使います。クライアント ID を組み込まないビルドでは、このボタンは出ず、WebDAV/S3 だけが選べます。リリース workflow は Repository secrets の `GOOGLE_OAUTH_DESKTOP_CLIENT_ID`、`GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET`、`GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID`、`GOOGLE_OAUTH_IOS_CLIENT_ID` から dart-define ファイルと、iOS 用の `GoogleOAuth.xcconfig` を作ります。必要な secret がなければリリースは失敗します。
+端末間同期の「Google ドライブで同期」と、ダウンロードの Google ドライブ保存に使います。クライアント ID を組み込まないビルドでは、同期を使えません。リリース workflow は Repository secrets の `GOOGLE_OAUTH_DESKTOP_CLIENT_ID`、`GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET`、`GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID`、`GOOGLE_OAUTH_IOS_CLIENT_ID` から dart-define ファイルと、iOS 用の `GoogleOAuth.xcconfig` を作ります。必要な secret がなければリリースは失敗します。
 
 1. Google Cloud で External の同意画面を作り、下の「本番公開の手順」に従って本番として公開する。ダウンロードの Google ドライブ保存は、使うときに `drive.file` を追加で求める
 2. Desktop クライアントを作り、Windows/macOS/Linux のビルドで `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_ID=...` と `--dart-define=GOOGLE_OAUTH_DESKTOP_CLIENT_SECRET=...` を渡す。インストール型アプリのシークレットは、Google の扱いでも機密ではない
@@ -153,9 +155,9 @@ flutter build windows --release
 
 ### 本番公開の手順
 
-1. リポジトリの Settings → Pages で Source を「GitHub Actions」にし、pages workflow で `site/` を公開する
-2. `github.io` は公開サフィックスなので、承認済みドメインには `terudoru.github.io` を登録する。所有確認のため、ユーザーサイト用リポジトリ `terudoru/terudoru.github.io` を作り、Search Console の URL プレフィックス `https://terudoru.github.io/` 用の HTML 確認ファイルをそのルートに置く。確認する Google アカウントは Cloud プロジェクトのオーナーか編集者にする
-3. Google Auth Platform のブランディングに、アプリ名、サポートメール、ホームページ `https://terudoru.github.io/gakujo-chan-extender/`、プライバシーポリシー `https://terudoru.github.io/gakujo-chan-extender/privacy.html`、承認済みドメインを入力する
+1. リポジトリの Settings → Pages で Source を「GitHub Actions」にし、Custom domain に `gakujo.terudoru.com` を設定して、pages workflow で `site/` を公開する。Cloudflare の DNS には `gakujo` から `terudoru.github.io` への CNAME を「DNS のみ」で追加する（プロキシを有効にすると GitHub の HTTPS 証明書が発行されないことがある） `site/index.html` は `https://terudoru.com/apps/more-better-gakujo-flutter` へ転送するだけで、アプリの説明はそのページで管理する。プライバシーポリシーは `site/privacy.html` のまま公開する
+2. 承認済みドメインには `terudoru.com` を登録する。所有確認は Search Console のドメインプロパティ `terudoru.com` で行い、案内された TXT レコードを Cloudflare の DNS に追加する。確認する Google アカウントは Cloud プロジェクトのオーナーか編集者にする。`terudoru.github.io` のままでは、Search Console で所有権を確認していてもブランドの確認が「ウェブサイトが登録されていません」で通らなかった
+3. Google Auth Platform のブランディングに、アプリ名、サポートメール、ホームページ `https://gakujo.terudoru.com/`、プライバシーポリシー `https://gakujo.terudoru.com/privacy.html`、承認済みドメインを入力する
 4. データアクセスに `openid`、`email`、`drive.appdata`、`drive.file` を登録する（いずれも非機密のスコープ）
 5. 対象を「本番環境」に公開し、ブランドの確認を申請する
 

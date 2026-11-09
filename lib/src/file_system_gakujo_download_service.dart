@@ -180,7 +180,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
         throw PlatformException(
           code: 'blocked_url',
-          message: 'Gakujo以外のダウンロードをブロックしました',
+          message: '学務情報システム以外のダウンロードをブロックしました',
         );
       }
 
@@ -266,7 +266,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         'mimeType': mimeType ?? 'application/octet-stream',
       },
     );
-    return GakujoDownloadResult.fromMap(raw);
+    return GakujoDownloadResult.fromMap(raw).withUploadBytes(bytes);
   }
 
   Future<GakujoDownloadResult> _saveToNativeConfiguredFolder({
@@ -287,7 +287,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         'autoSortByCourse': autoSortByCourse,
       },
     );
-    return GakujoDownloadResult.fromMap(raw);
+    return GakujoDownloadResult.fromMap(raw).withUploadBytes(bytes);
   }
 
   Future<GakujoDownloadResult> _saveToPickedFlutterFile({
@@ -402,7 +402,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         if (!AllowedWebOrigins.canLoad(uri.toString(), debugAllowed: false)) {
           throw PlatformException(
             code: 'blocked_url',
-            message: 'Gakujo以外へのリダイレクトをブロックしました',
+            message: '学務情報システム以外へのリダイレクトをブロックしました',
           );
         }
 
@@ -447,7 +447,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           )) {
             throw PlatformException(
               code: 'blocked_url',
-              message: 'Gakujo以外へのリダイレクトをブロックしました',
+              message: '学務情報システム以外へのリダイレクトをブロックしました',
             );
           }
           await response.drain<void>().timeout(_requestTimeout);
@@ -462,7 +462,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         if (response.statusCode < 200 || response.statusCode > 299) {
           throw PlatformException(
             code: 'download_failed',
-            message: 'ダウンロードに失敗しました HTTP ${response.statusCode}',
+            message: 'ダウンロードに失敗しました（HTTP ${response.statusCode}）',
           );
         }
 
@@ -473,7 +473,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         if (!AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
           throw PlatformException(
             code: 'blocked_url',
-            message: 'Gakujo以外へのリダイレクトをブロックしました',
+            message: '学務情報システム以外へのリダイレクトをブロックしました',
           );
         }
 

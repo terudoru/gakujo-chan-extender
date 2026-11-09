@@ -515,7 +515,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       }).then(function(buffer) {
         if (cancelled) throw new Error("圧縮を中止しました");
         if (typeof window.Worker !== "function") {
-          throw new Error("このWebViewではPDFを安全に圧縮できません");
+          throw new Error("この環境ではPDFを安全に圧縮できません");
         }
         return new Promise(function(resolve, reject) {
           rejectPending = reject;
@@ -534,7 +534,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
           };
           worker.onerror = function() {
             rejectPending = null;
-            reject(new Error("このWebViewではPDFを安全に圧縮できません"));
+            reject(new Error("この環境ではPDFを安全に圧縮できません"));
           };
           var message = {
             bytes: buffer,
@@ -611,23 +611,23 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
         }
       }
       if (end < 0 || end + 22 > bytes.length || end + 22 + view.getUint16(end + 20, true) !== bytes.length) {
-        throw new Error("文書のZIP構造を確認できません");
+        throw new Error("文書の構造を確認できません");
       }
       var count = view.getUint16(end + 10, true);
       var size = view.getUint32(end + 12, true);
       var offset = view.getUint32(end + 16, true);
       if (view.getUint16(end + 4, true) !== 0 || view.getUint16(end + 6, true) !== 0 || view.getUint16(end + 8, true) !== count || count === 65535 || size === 4294967295 || offset === 4294967295 || count > 5e3 || offset + size > end) {
-        throw new Error("文書のZIP構造が大きすぎるか未対応です");
+        throw new Error("文書の構造が大きすぎるか、対応していない形式です");
       }
       var cursor = offset, limit = offset + size;
       for (var i = 0; i < count; i++) {
         if (cursor + 46 > limit || view.getUint32(cursor, true) !== 33639248 || view.getUint32(cursor + 20, true) === 4294967295 || view.getUint32(cursor + 24, true) === 4294967295 || view.getUint32(cursor + 42, true) === 4294967295) {
-          throw new Error("文書のZIP構造が不正か未対応です");
+          throw new Error("文書の構造が正しくないか、対応していない形式です");
         }
         cursor += 46 + view.getUint16(cursor + 28, true) + view.getUint16(cursor + 30, true) + view.getUint16(cursor + 32, true);
-        if (cursor > limit) throw new Error("文書のZIP構造が不正です");
+        if (cursor > limit) throw new Error("文書の構造が正しくありません");
       }
-      if (cursor !== limit) throw new Error("文書のZIP構造が不正です");
+      if (cursor !== limit) throw new Error("文書の構造が正しくありません");
     }
     function rebuildOffice(buffer, mediaPattern, settings, mimeType, cancelled) {
       validateOfficeDirectory(buffer);
@@ -925,7 +925,7 @@ const String _gakujoUploadCompressionJsPrefix = r'''(function(__mbgConfig) {
       }
       var DataTransferCtor = viewOf(input).DataTransfer || (typeof DataTransfer === "function" ? DataTransfer : null);
       if (typeof DataTransferCtor !== "function") {
-        showStatus(input, "このWebViewではファイルを自動で圧縮できません。", true);
+        showStatus(input, "この環境ではファイルを自動で圧縮できません。", true);
         return;
       }
       event.stopImmediatePropagation();

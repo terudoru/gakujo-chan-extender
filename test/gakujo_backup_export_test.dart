@@ -27,7 +27,7 @@ void main() {
     final payload = buildGakujoBackupPayload(
       appSettings: const GakujoAppSettings(),
       downloadHistory: const [], failedDownloads: const [], favorites: const [],
-      deadlines: const [], changes: const [], reportLists: const [],
+      deadlines: const [], reportLists: const [],
       includeStarredMessages: false,
       starredMessages: [GakujoStarredMessage(
         keijitype: '1', genrecd: '2', seqNo: '3', title: 'notice',
@@ -48,7 +48,7 @@ void main() {
       appSettings: const GakujoAppSettings(),
       downloadHistory: const [], failedDownloads: const [], favorites: const [],
       deadlines: [deadline], notifiedDeadlineKeys: [deadline.key],
-      changes: const [], reportLists: const [],
+      reportLists: const [],
     );
     final text = jsonEncode(payload);
     expect(text, isNot(contains('secret-path')));
@@ -84,7 +84,6 @@ void main() {
       ],
       favorites: const [],
       deadlines: const [],
-      changes: const [],
       reportLists: const [],
       createdAt: DateTime.utc(2026, 7, 16, 13),
     );

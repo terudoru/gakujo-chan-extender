@@ -48,4 +48,22 @@ void main() {
     accumulator.reset();
     expect(accumulator.addPanZoom(const Offset(0, 4), 1), isNotNull);
   });
+  test('established pan keeps scrolling despite scale drift', () {
+    final accumulator = WebviewPanScrollAccumulator();
+    expect(accumulator.addPanZoom(const Offset(0, 25), 1.01), isNotNull);
+    expect(accumulator.addPanZoom(const Offset(0, 4), 1.05), isNotNull);
+  });
+
+  test('early pinch latches even when scale returns to one', () {
+    final accumulator = WebviewPanScrollAccumulator();
+    expect(accumulator.addPanZoom(const Offset(0, 2), 1.03), isNull);
+    expect(accumulator.addPanZoom(const Offset(0, 30), 1), isNull);
+  });
+
+  test('reset clears the pan lock', () {
+    final accumulator = WebviewPanScrollAccumulator();
+    expect(accumulator.addPanZoom(const Offset(0, 25), 1), isNotNull);
+    accumulator.reset();
+    expect(accumulator.addPanZoom(const Offset(0, 2), 1.03), isNull);
+  });
 }

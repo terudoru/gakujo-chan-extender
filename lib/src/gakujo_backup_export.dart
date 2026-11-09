@@ -25,7 +25,6 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
       final deadlines = await activityStore.loadDeadlinesForBackup();
       final notifiedDeadlineKeys =
           await activityStore.loadNotifiedDeadlineKeysForBackup();
-      final changes = await activityStore.loadChangesForBackup();
       final reportLists = await activityStore.loadReportListsForBackup();
       return buildGakujoBackupPayload(
         appSettings: currentSettings(),
@@ -36,7 +35,6 @@ Future<Map<String, Object?>> readGakujoBackupPayload({
         includeStarredMessages: includeStarredMessages,
         deadlines: deadlines,
         notifiedDeadlineKeys: notifiedDeadlineKeys,
-        changes: changes,
         reportLists: reportLists,
       );
     });
@@ -50,7 +48,6 @@ Map<String, Object?> buildGakujoBackupPayload({
   bool includeStarredMessages = true,
   required Iterable<GakujoDeadlineEntry> deadlines,
   Iterable<String> notifiedDeadlineKeys = const [],
-  required Iterable<GakujoActivityChangeEntry> changes,
   required Iterable<GakujoCachedReportList> reportLists,
   DateTime? createdAt,
 }) {
@@ -77,7 +74,6 @@ Map<String, Object?> buildGakujoBackupPayload({
       'starredMessages': starredMessages.map((entry) => entry.toJson()).toList(),
     'deadlines': deadlines.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
     'notifiedDeadlineKeys': notifiedDeadlineKeys.map(sanitizeGakujoNotificationKey).toList(),
-    'changes': changes.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
     'reportLists': reportLists.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
   };
 }

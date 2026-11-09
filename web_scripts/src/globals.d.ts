@@ -148,8 +148,10 @@ interface Window {
   __MBG_PAGE_ZOOM_ORIGIN?: { x: number | null; y: number | null };
   __MBG_PAGE_EFFECTIVE_ZOOM?: number;
   __MBG_PAGE_ZOOM_VALUE?: number;
-  __MBG_SET_PAGE_ZOOM?: (zoom: number) => number;
+  __MBG_SET_PAGE_ZOOM?: (zoom: number, cause?: 'user' | 'shape' | 'resize') => number;
   __MBG_PAGE_ZOOM_REAPPLY_TIMER?: number;
+  __MBG_PAGE_ZOOM_REAPPLY_RESIZE?: boolean;
+  __MBG_PAGE_ZOOM_LAST_SCROLL?: number;
   __MBG_NATIVE_ZOOM_BLOCKERS_ATTACHED?: boolean;
   __MBG_PAGE_ZOOM_OBSERVER?: MutationObserver;
   __MBG_PAGE_ZOOM_VERSION?: number;

@@ -188,7 +188,6 @@ scripts.forEach((script, index) => {
     beforeTitle = oldButton.nextElementSibling === inner.heading;
     oldButton.listeners.click({preventDefault() { prevented = true; }, stopPropagation() { stopped = true; }});
   }
-  if (index === 3) oldButton.listeners.click({preventDefault() {}, stopPropagation() {}});
   if (scenario === 'growingList' && index === 0) {
     inner.headers.find(th => th.textContent === '氏名').textContent = '非表示';
     inner.addRow(507763);

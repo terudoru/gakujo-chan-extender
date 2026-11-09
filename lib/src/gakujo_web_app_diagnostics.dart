@@ -51,7 +51,7 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
         return AlertDialog(
           title: const Text('エラー報告パッケージ'),
           content: const Text(
-            '軽量版は件数と設定状態だけを含みます。詳細版は履歴、URL、失敗ダウンロード、課題キャッシュも含みます。',
+            '軽量版は件数と設定状態だけを含みます。詳細版は履歴、URL、失敗したダウンロード、保存済み課題一覧も含みます。',
           ),
           actions: [
             TextButton(
@@ -72,14 +72,6 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
     );
   }
 
-  Future<void> _copyDiagnosticInfo() async {
-    final payload = await _diagnosticPayload(includeStoredData: false);
-    await Clipboard.setData(
-      ClipboardData(text: const JsonEncoder.withIndent('  ').convert(payload)),
-    );
-    _showSnackBar('診断情報をコピーしました');
-  }
-
   Future<Map<String, Object?>> _diagnosticPayload({
     required bool includeStoredData,
   }) async {
@@ -87,10 +79,8 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
     final historyCount = (await _downloadHistoryStore.load()).length;
     final failedDownloadCount =
         (await _downloadHistoryStore.loadFailedDownloads()).length;
-    final snapshots = await _activityStore.loadSnapshots();
     final deadlines = await _activityStore.loadDeadlines();
     final favorites = await _activityStore.loadFavorites();
-    final changes = await _activityStore.loadChanges();
     final reportLists = await _activityStore.loadReportLists();
     final payload = <String, Object?>{
       'app': 'More Better Gakujo',
@@ -111,11 +101,8 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
       'desktopZoom': _desktopZoom,
       'downloadHistoryCount': historyCount,
       'failedDownloadCount': failedDownloadCount,
-      'unseenUpdateCount':
-          snapshots.where((snapshot) => snapshot.hasUpdate).length,
       'deadlineCount': deadlines.length,
       'favoriteCount': favorites.length,
-      'changeHistoryCount': changes.length,
       'cachedReportListCount': reportLists.length,
     };
     if (includeStoredData) {

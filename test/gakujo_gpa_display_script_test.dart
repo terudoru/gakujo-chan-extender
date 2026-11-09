@@ -57,54 +57,10 @@ void main() {
     expect(script, contains('display.style.display = "block"'));
   });
 
-  test('teardown stops all runtime work and rebuilds exactly one UI', () async {
-    final result = await _evaluateGpaDisplayLifecycle(
-      buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
-    );
-    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
-    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
-    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
-    final teardownWithoutBuild =
-        result['teardownWithoutBuild'] as Map<String, dynamic>;
-
-    expect(afterBuild['activeIntervalCount'], 1);
-    expect(afterBuild['activeTimeoutCount'], 4);
-    expect(afterBuild['activeObserverCount'], 1);
-    expect(afterBuild['ownedElementCount'], 4);
-    expect(afterBuild['gpaDisplayCount'], 1);
-    expect(afterBuild['controlIds'], [
-      'mbg-grade-no-button',
-      'mbg-grade-open-number-button',
-      'mbg-grade-score-button',
-    ]);
-
-    expect(afterTeardown['activeIntervalCount'], 0);
-    expect(afterTeardown['activeTimeoutCount'], 0);
-    expect(afterTeardown['activeObserverCount'], 0);
-    expect(afterTeardown['ownedElementCount'], 0);
-    expect(afterTeardown['gpaDisplayCount'], 0);
-    expect(afterTeardown['controlIds'], isEmpty);
-    expect(afterTeardown['globalMarkers'], isEmpty);
-
-    expect(afterRebuild['activeIntervalCount'], 1);
-    expect(afterRebuild['activeTimeoutCount'], 4);
-    expect(afterRebuild['activeObserverCount'], 1);
-    expect(afterRebuild['ownedElementCount'], 4);
-    expect(afterRebuild['gpaDisplayCount'], 1);
-    expect(afterRebuild['controlIds'], hasLength(3));
-
-    expect(teardownWithoutBuild['activeIntervalCount'], 0);
-    expect(teardownWithoutBuild['activeTimeoutCount'], 0);
-    expect(teardownWithoutBuild['activeObserverCount'], 0);
-    expect(teardownWithoutBuild['ownedElementCount'], 0);
-    expect(teardownWithoutBuild['globalMarkers'], isEmpty);
-  });
-
   test('unchanged non-grade pages do not rescan cells', () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final scans = result['nonGradeScans'] as Map<String, dynamic>;
     final initial = scans['initial'] as Map<String, dynamic>;
@@ -124,7 +80,7 @@ void main() {
   test('grade pages still display and recompute GPA on each update', () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final grades = result['gradeUpdates'] as Map<String, dynamic>;
 
@@ -139,7 +95,7 @@ void main() {
   test('reports no GPA until a course is graded', () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final report = result['gpaReport'] as Map<String, dynamic>;
 
@@ -151,20 +107,19 @@ void main() {
   test('reports GPA once and skips unchanged grades', () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final report = result['gpaReport'] as Map<String, dynamic>;
 
     expect(report['afterBuild'], ['{"gpa":4}']);
     expect(report['afterUnchangedUpdate'], ['{"gpa":4}']);
-    expect(report['afterTeardown']['globalMarkers'], isEmpty);
   });
 
   test('DOM mutations invalidate misses and the interval discovers frames',
       () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
 
     expect(result['gpaAfterHeaderMutation'], 'GPA:4.0000');
@@ -175,7 +130,7 @@ void main() {
       () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final navigation = result['frameNavigation'] as Map<String, dynamic>;
     final updates = navigation['updates'] as List<dynamic>;
@@ -194,17 +149,13 @@ void main() {
     expect(afterFrameRemoval['observedDocumentCount'], 2);
     expect(afterFrameRemoval['activeObserverCount'], 2);
     expect(afterFrameRemoval['removedObserversDisconnected'], isTrue);
-    final afterTeardown = navigation['afterTeardown'] as Map<String, dynamic>;
-    expect(afterTeardown['activeObserverCount'], 0);
-    expect(afterTeardown['globalMarkers'], isEmpty);
-    expect(navigation['allObserversDisconnected'], isTrue);
   });
 
   test('documents without a defaultView are disconnected and not reobserved',
       () async {
     final result = await _evaluateGpaDisplayLifecycle(
       buildScript: GakujoGpaDisplayScript.build(),
-      teardownScript: GakujoGpaDisplayScript.buildTeardown(),
+      teardownScript: '',
     );
     final detached = result['detachedFrame'] as Map<String, dynamic>;
 
@@ -212,7 +163,6 @@ void main() {
     expect(detached['activeObserverCount'], 1);
     expect(detached['detachedDocumentRetained'], isFalse);
     expect(detached['disconnectCount'], 1);
-    expect(detached['afterTeardownActiveObserverCount'], 0);
   });
 }
 

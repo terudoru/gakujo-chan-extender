@@ -93,71 +93,6 @@ class GakujoActivityClassifier {
     return trimmedTitle.isEmpty ? 'Gakujo' : trimmedTitle;
   }
 
-  static String stableContentFor({
-    required String url,
-    required String title,
-    required String text,
-    required String category,
-  }) {
-    final normalizedUrl = url.toLowerCase();
-    final normalizedTitle = _compact(title);
-    final lines = stableLinesFor(text);
-    if (lines.isEmpty) {
-      return '';
-    }
-    if (_looksLikeTransientPage(lines)) {
-      return '';
-    }
-
-    if (_isGenericMainPortal(normalizedUrl, normalizedTitle)) {
-      final noticeLines = _sectionUntil(
-        lines,
-        (line) => line.contains('お知らせ') || line.contains('新着情報'),
-        (line) =>
-            line.contains('MYスケジュール') ||
-            line == 'リンク' ||
-            line == '学生共通リンク' ||
-            line.startsWith('Copyright'),
-      );
-      final concreteNoticeLines = noticeLines.where(_isConcreteNoticeLine);
-      return concreteNoticeLines.take(30).join('\n');
-    }
-
-    if (category == 'スケジュール') {
-      final scheduleLines = _sectionFrom(
-        lines,
-        (line) => line.contains('週間スケジュール') || line.contains('MYスケジュール'),
-      );
-      if (scheduleLines.isNotEmpty) {
-        return scheduleLines.take(80).join('\n');
-      }
-    }
-
-    if (category == '連絡通知') {
-      final messageLines = _sectionUntil(
-        lines,
-        (line) =>
-            line.contains('お知らせ') ||
-            line.contains('新着情報') ||
-            line.contains('掲示一覧') ||
-            line.contains('連絡通知'),
-        (line) =>
-            line.contains('MYスケジュール') ||
-            line == 'リンク' ||
-            line == '学生共通リンク' ||
-            line.startsWith('Copyright'),
-      );
-      if (messageLines.isNotEmpty) {
-        final concreteMessageLines = messageLines.where(
-          (line) => _isConcreteNoticeLine(line) || line.contains('掲示一覧'),
-        );
-        return concreteMessageLines.take(100).join('\n');
-      }
-    }
-
-    return lines.take(120).join('\n');
-  }
-
   static List<String> stableLinesFor(String text) {
     return text
         .split(RegExp(r'[\r\n]+'))
@@ -212,67 +147,6 @@ class GakujoActivityClassifier {
         (normalizedTitle.isEmpty ||
             normalizedTitle == 'gakujo' ||
             normalizedTitle.contains('campussquare'));
-  }
-
-  static Iterable<String> _sectionFrom(
-    List<String> lines,
-    bool Function(String line) startAt,
-  ) {
-    final start = lines.indexWhere(startAt);
-    if (start < 0) {
-      return const [];
-    }
-    return lines.skip(start);
-  }
-
-  static Iterable<String> _sectionUntil(
-    List<String> lines,
-    bool Function(String line) startAt,
-    bool Function(String line) stopAt,
-  ) {
-    final start = lines.indexWhere(startAt);
-    if (start < 0) {
-      return const [];
-    }
-    final result = <String>[];
-    for (final line in lines.skip(start)) {
-      if (result.isNotEmpty && stopAt(line)) {
-        break;
-      }
-      result.add(line);
-    }
-    return result;
-  }
-
-  static bool _looksLikeTransientPage(List<String> lines) {
-    final joined = lines.take(12).join(' ');
-    return joined == 'now loading...' ||
-        joined.contains('Google Authenticatorで発行された6桁の認証コード') ||
-        (joined.contains('ID ※小文字で入力してください') &&
-            joined.contains('パスワード') &&
-            joined.contains('ログイン'));
-  }
-
-  static bool _isConcreteNoticeLine(String line) {
-    if (line == 'お知らせ' || line == '新着情報') {
-      return false;
-    }
-    if (line == 'あなた宛の新着情報があります。') {
-      return false;
-    }
-    if (line == '登録されていません') {
-      return false;
-    }
-    if (line.startsWith('[image]')) {
-      return false;
-    }
-    return line.contains('【') ||
-        line.startsWith('[') ||
-        line.startsWith('新着の') ||
-        line.contains('登録されました') ||
-        line.contains('提出') ||
-        line.contains('締切') ||
-        line.contains('期限');
   }
 
   static bool _isBoilerplateLine(String line) {

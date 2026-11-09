@@ -26,11 +26,6 @@ void main() {
       loadForBackup: (store) => store.loadFavoritesForBackup(),
     ),
     (
-      key: 'more_better_gakujo_activity_changes',
-      loadBestEffort: (store) => store.loadChanges(),
-      loadForBackup: (store) => store.loadChangesForBackup(),
-    ),
-    (
       key: 'more_better_gakujo_cached_report_lists',
       loadBestEffort: (store) => store.loadReportLists(),
       loadForBackup: (store) => store.loadReportListsForBackup(),
@@ -98,16 +93,6 @@ void main() {
           'addedAt': now.toIso8601String(),
         },
       ]),
-      'more_better_gakujo_activity_changes': jsonEncode([
-        {
-          'category': 'Notices',
-          'title': 'Changed notice',
-          'url': 'https://example.test/change',
-          'changedAt': now.toIso8601String(),
-          'previousHash': 'before',
-          'nextHash': 'after',
-        },
-      ]),
       'more_better_gakujo_cached_report_lists': jsonEncode([
         {
           'title': 'Reports',
@@ -121,7 +106,6 @@ void main() {
     final expectedDeadlines = await store.loadDeadlines();
     final expectedNotifiedKeys = await store.loadNotifiedDeadlineKeys();
     final expectedFavorites = await store.loadFavorites();
-    final expectedChanges = await store.loadChanges();
     final expectedReportLists = await store.loadReportLists();
 
     final actual = await store.backupStorage.queue.runExclusive(() async {
@@ -129,7 +113,6 @@ void main() {
         deadlines: await store.loadDeadlinesForBackup(),
         notifiedKeys: await store.loadNotifiedDeadlineKeysForBackup(),
         favorites: await store.loadFavoritesForBackup(),
-        changes: await store.loadChangesForBackup(),
         reportLists: await store.loadReportListsForBackup(),
       );
     }).timeout(const Duration(seconds: 1));
@@ -142,10 +125,6 @@ void main() {
     expect(
       actual.favorites.map((entry) => entry.toJson()).toList(),
       expectedFavorites.map((entry) => entry.toJson()).toList(),
-    );
-    expect(
-      actual.changes.map((entry) => entry.toJson()).toList(),
-      expectedChanges.map((entry) => entry.toJson()).toList(),
     );
     expect(
       actual.reportLists.map((entry) => entry.toJson()).toList(),

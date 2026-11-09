@@ -143,7 +143,6 @@ void main() {
               onKeywordInputChanged: (value) => setState(() => input = value),
               preferences: const GakujoNotificationPreferences(),
               onPreferencesChanged: (_) async {},
-              knownCourses: const [],
             ),
           );
         }),

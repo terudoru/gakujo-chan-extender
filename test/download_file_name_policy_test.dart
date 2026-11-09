@@ -1,7 +1,29 @@
+import 'dart:convert';
+
 import 'package:morebettergakujo_flutter/src/download_file_name_policy.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('bounds UTF-8 names without splitting emoji', () {
+    final japanese = DownloadFileNamePolicy.boundedName('${'あ' * 86}.pdf');
+    expect(utf8.encode(japanese).length, lessThanOrEqualTo(240));
+    expect(japanese, endsWith('.pdf'));
+    final emoji = DownloadFileNamePolicy.boundedName('${'あ' * 78}😀.pdf');
+    expect(emoji, '${'あ' * 78}.pdf');
+    expect(utf8.encode(emoji).length, lessThanOrEqualTo(240));
+    expect(DownloadFileNamePolicy.boundedName('report.pdf'), 'report.pdf');
+    expect(DownloadFileNamePolicy.boundedName('講義資料.pdf'), '講義資料.pdf');
+    final folder = DownloadFileNamePolicy.safeFolderName('講' * 90);
+    expect(utf8.encode(folder).length, lessThanOrEqualTo(240));
+    expect(folder, '講' * 80);
+    final unique = DownloadFileNamePolicy.uniqueName(japanese, {japanese});
+    expect(utf8.encode(unique).length, lessThanOrEqualTo(255));
+    expect(unique, endsWith(' (1).pdf'));
+    final unbounded = '${'あ' * 100}.pdf';
+    final numbered = DownloadFileNamePolicy.uniqueName(unbounded, {unbounded});
+    expect(utf8.encode(numbered).length, lessThanOrEqualTo(255));
+    expect(numbered, endsWith(' (1).pdf'));
+  });
   test('removes bidirectional controls while keeping visible names', () {
     expect(
       DownloadFileNamePolicy.safeFileName(preferredName: 'report\u202Efdp.exe'),
@@ -164,9 +186,12 @@ void main() {
     expect(allocated, '$prefix (1).pdf');
     expect(allocated.codeUnits.any((unit) => unit >= 0xd800 && unit <= 0xdfff),
         isFalse);
-    final intact = '${List.filled(245, 'a').join()}😀wxyz.pdf';
+    final byteLimited = '${List.filled(245, 'a').join()}😀wxyz.pdf';
+    expect(DownloadFileNamePolicy.uniqueName(byteLimited, {byteLimited}),
+        '${List.filled(245, 'a').join()} (1).pdf');
+    final intact = '${List.filled(243, 'a').join()}😀wxyz.pdf';
     expect(DownloadFileNamePolicy.uniqueName(intact, {intact}),
-        '${List.filled(245, 'a').join()}😀 (1).pdf');
+        '${List.filled(243, 'a').join()}😀 (1).pdf');
   });
 
   test('a full-length name without an extension also leaves suffix space', () {

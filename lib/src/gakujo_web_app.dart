@@ -94,6 +94,7 @@ import 'web_view_service.dart';
 import 'windows_webview_authenticated_download.dart';
 import 'widgets/app_about_section.dart';
 import 'widgets/app_data_sections.dart';
+import 'widgets/app_update_banner.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/settings_sections.dart';
@@ -220,19 +221,25 @@ typedef _PageScriptBuilder = String Function();
 final Map<GakujoFeatureFlag, _PageScriptBuilder>
     _originalExtensionFeatureBuilders = {
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.build,
-  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.build,
-  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.build,
-  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.build,
   GakujoFeatureFlag.uploadCompression: GakujoUploadCompressionScript.build,
+};
+
+@visibleForTesting
+Map<String, String Function()> gakujoPageScriptBuilders(
+  GakujoAppSettings settings, {
+  Iterable<String> starredIds = const [],
+}) => {
+  'gpa': GakujoGpaDisplayScript.build,
+  'report': GakujoReportSorterScript.build,
+  'reader': GakujoMessageReaderScript.build,
+  'stars': () => GakujoMessageStarScript.build(starredIds: starredIds),
+  for (final entry in _originalExtensionFeatureBuilders.entries)
+    if (settings.isFeatureEnabled(entry.key)) entry.key.storageValue: entry.value,
 };
 
 final Map<GakujoFeatureFlag, _PageScriptBuilder>
     _originalExtensionFeatureTeardownBuilders = {
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.buildTeardown,
-  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.buildTeardown,
-  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.buildTeardown,
-  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.buildTeardown,
-  GakujoFeatureFlag.gpaDisplay: GakujoGpaDisplayScript.buildTeardown,
   GakujoFeatureFlag.loginAutofill: LoginAutofillAssistScript.buildTeardown,
   GakujoFeatureFlag.twoFactorAutofill: TwoFactorAutofillScript.buildTeardown,
   GakujoFeatureFlag.uploadCompression:
@@ -275,19 +282,6 @@ Map<String, Set<String>?> restoredSyncCollections(
   return {
     if (backup.favorites != null) 'favorites': null,
     if (settings.isNotEmpty) 'settings': settings,
-  };
-}
-
-@visibleForTesting
-Set<GakujoFeatureFlag>? syncRestoreFeatureFlags(
-  Set<GakujoFeatureFlag>? restored,
-  Set<GakujoFeatureFlag> current,
-) {
-  if (restored == null) return null;
-  return {
-    ...restored.where((flag) => flag != GakujoFeatureFlag.messageStars),
-    if (current.contains(GakujoFeatureFlag.messageStars))
-      GakujoFeatureFlag.messageStars,
   };
 }
 
@@ -338,8 +332,14 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload, {
   final flags = result['disabledFeatureFlags'];
   if (flags is List) {
     result['disabledFeatureFlags'] = flags
-        .where((flag) => flag != GakujoFeatureFlag.messageStars.storageValue)
+        .where((flag) => !const {
+          'gpa_display', 'report_tools', 'message_tools', 'message_stars',
+        }.contains(flag))
         .toList();
+  }
+  final preferences = result['notificationPreferences'];
+  if (preferences is Map) {
+    preferences.remove('mutedCourses');
   }
   return result;
 }
@@ -529,7 +529,7 @@ String secureStorageRecoveryGuidance(
   if (platform == TargetPlatform.iOS) {
     return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
         '再試行しても復旧しない場合はアプリを最新版へ更新してください。'
-        '保存領域の破損が疑われる場合に限り「保存データをリセット」を使用してください。'
+        '保存領域が壊れている疑いがあるときだけ「保存データをリセット」を使ってください。'
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
 
@@ -550,11 +550,11 @@ String secureStorageRecoveryGuidance(
   if (platform == TargetPlatform.macOS) {
     return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
         '以前に許可ダイアログを拒否した場合は、キーチェーンアクセス.app でこのアプリのアクセスを許可してから'
-        '再試行してください。それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+        '再試行してください。それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
   return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
-      'それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+      'それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
       'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
@@ -567,7 +567,7 @@ void handleGakujoWebResourceError(
 }) {
   if (error.isForMainFrame && error.isConnectivityError) {
     if (offlineAutoReloads >= 3) {
-      setStatus('読み込めませんでした。接続を確認して再読込を押してください');
+      setStatus('読み込めませんでした。接続を確認して再読み込みを押してください');
       return;
     }
     setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
@@ -577,7 +577,7 @@ void handleGakujoWebResourceError(
   if (!error.isForMainFrame) {
     // The portal iframe can fail offline; reloading could discard its form.
     if (error.isConnectivityError) {
-      setStatus('オフラインのようです。接続が戻ったら再読込してください');
+      setStatus('オフラインのようです。接続が戻ったら再読み込みしてください');
     }
     developer.log(
       'Sub-resource load error: ${error.description}',
@@ -585,7 +585,7 @@ void handleGakujoWebResourceError(
     );
     return;
   }
-  setStatus('読込エラー: ${error.description}');
+  setStatus('読み込みエラー: ${error.description}');
 }
 
 class GakujoWebApp extends StatefulWidget {
@@ -600,6 +600,7 @@ class GakujoWebApp extends StatefulWidget {
     this._initialTwoFactorSecret,
     this._debugAllowed,
     this._gakujoReachable,
+    this._updateService,
   });
 
   final TwoFactorSecretStore? _secretStore;
@@ -611,6 +612,7 @@ class GakujoWebApp extends StatefulWidget {
   final String? _initialTwoFactorSecret;
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
+  final AppUpdateService? _updateService;
 
   @override
   State<GakujoWebApp> createState() => _GakujoWebAppState();
@@ -826,16 +828,6 @@ bool javaScriptResultAsBool(Object? result) {
 bool isCancelledDownloadError(PlatformException error) {
   return error.code == 'cancelled';
 }
-
-@visibleForTesting
-bool shouldReadPageForActivityFeatures(GakujoAppSettings settings) {
-  return settings.isFeatureEnabled(GakujoFeatureFlag.activityScan) ||
-      settings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan) ||
-      settings.isFeatureEnabled(GakujoFeatureFlag.reportListCache);
-}
-
-@visibleForTesting
-bool get activityBellToolbarButtonEnabled => false;
 
 enum GakujoHistoryNavigation {
   back,
@@ -1399,13 +1391,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _driveDownloadPreference = DriveDownloadPreference();
   final _driveUploads = DriveDownloadQueue();
   bool _driveDownloadsSuspended = false;
+  bool _driveSwitchSigningIn = false;
   bool get _driveDownloadsEnabled => !_driveDownloadsSuspended && _appSettingsLoaded &&
       _driveDownloadPreference.matches(_driveAccountHash, _starSyncGoogleAuth.currentEmail);
   final _loginIdentity = GakujoLoginIdentity();
   String? get _activeLoginAccount => _loginIdentity.active;
   set _activeLoginAccount(String? value) => _loginIdentity.active = value;
   String? get _driveAccountHash => _activeLoginAccount;
-  late final Future<void> _driveDownloadsLoad;
+  late Future<void> _driveDownloadsLoad;
+  int _googleCancelGeneration = 0;
   final _driveDownloadQueue = StorageOperationQueue();
   late final StarSyncEngine _starSyncEngine;
   Future<void>? _starSyncLoad;
@@ -1413,6 +1407,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDeadlineNotificationCoordinator
       _deadlineNotificationCoordinator;
   late final AppUpdateService _updateService;
+  AppUpdateInfo? _availableUpdate;
+  DateTime? _nextUpdateCheckAt;
+  bool _isCheckingUpdateInBackground = false;
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
@@ -1458,10 +1455,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
   bool _loginAutofillStorageLoadAttempted = false;
   bool _secureStorageRecoveryDialogVisible = false;
-  int _deadlineCount = 0;
   double _desktopZoom = 1.0;
   double _desktopPanZoomStartZoom = 1.0;
-  bool _desktopPanZoomIsPinching = false;
+  final _desktopPanZoomGesture = DesktopPanZoomGesture();
   final _desktopHistorySwipe = DesktopHistorySwipeTracker();
   int? _touchHistorySwipePointer;
   Offset? _touchHistorySwipeStart;
@@ -1491,7 +1487,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   static const double _desktopZoomStep = 0.1;
   static const double _desktopHistorySwipeThreshold = 120;
   static const double _desktopHorizontalSwipeDominance = 1.35;
-  static const double _desktopPinchZoomDeadZone = 0.01;
 
   @override
   void initState() {
@@ -1506,7 +1501,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _webViewService = platformService.createWebViewService();
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
-    _activityStore = _SyncActivityStore(_scheduleStarSync);
+    _activityStore = _SyncActivityStore(() {
+      if (_activeLoginAccount != null) _scheduleStarSync();
+    });
     _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
@@ -1514,8 +1511,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         accessToken: ({bool forceRefresh = false}) async {
           final config = _starSyncEngine.config;
           final email = _starSyncGoogleAuth.currentEmail;
-          if (config?.backend == StarSyncBackend.googleDrive &&
-              (config?.googleEmail == null || config?.googleEmail != email)) {
+          if (config != null &&
+              !sameGoogleAccount(config.googleEmail, email)) {
             throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
           }
           final token = await _starSyncGoogleAuth.accessToken(forceRefresh: forceRefresh);
@@ -1561,7 +1558,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       activityStore: _activityStore,
       notificationService: _notificationService,
     );
-    _updateService = const AppUpdateService();
+    _updateService = widget._updateService ?? const AppUpdateService();
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
@@ -1595,9 +1592,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       unawaited(_loadDownloadRoot());
       unawaited(_compactStoredData());
     }
-    if (_secureStorageAccessAllowed && activityBellToolbarButtonEnabled) {
-      unawaited(_refreshActivityCounts());
-    }
     _initialPageLoaded = _loadInitialPage();
     _notificationService.setDeadlineNotificationTappedHandler(
       _handleDeadlineNotificationTapped,
@@ -1609,8 +1603,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // after a page-load refresh from stretching the gap to an hour.
     _backgroundRefreshTimer = Timer.periodic(
       const Duration(minutes: 5),
-      (_) => unawaited(_refreshAssignmentsInBackground()),
+      (_) {
+        unawaited(_refreshAssignmentsInBackground());
+        unawaited(_checkForUpdatesInBackground());
+      },
     );
+    unawaited(_checkForUpdatesAfterInitialPage());
   }
 
   @override
@@ -1634,9 +1632,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      unawaited(StarSyncClipboardGuard.instance.clear());
-    }
     // Do not probe the network every few seconds while the app is in the
     // background; check again once it is back.
     if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
@@ -1648,6 +1643,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _offlineRetry.start();
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
+      unawaited(_checkForUpdatesInBackground());
       unawaited(_resumeNotificationsAndRefresh());
       unawaited(_syncStarsInBackground(StarSyncTrigger.resume));
     }
@@ -1668,7 +1664,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool get _canSyncStars => mounted && _appSettingsLoaded &&
-      _secureStorageAccessAllowed && _messageStarsEnabled;
+      _secureStorageAccessAllowed;
 
   static const _activeLoginAccountKey = 'more_better_gakujo_active_login_account';
 
@@ -1769,10 +1765,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       await (_starSyncLoad ??= () async {
         await _starSyncEngine.load();
-        if (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive) {
+        if (_starSyncEngine.config != null) {
           try {
             _starSyncGoogleEmail = await _driveDownloadQueue.run(
-              _starSyncGoogleAuth.restore,
+              () => _starSyncGoogleAuth.restore(
+                expectedEmail: _starSyncEngine.config?.googleEmail,
+              ),
             );
           } on Object catch (error) {
             developer.log('Failed to restore Google sign-in: ${error.runtimeType}',
@@ -1846,9 +1844,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           toolbarHeight: _compactToolbarHeight,
           titleSpacing: 12,
           title: GakujoGpaTaunt(
-            gpa: _appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)
-                ? _reportedGpa
-                : null,
+            gpa: _reportedGpa,
           ),
           centerTitle: false,
           actions: [
@@ -1867,22 +1863,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 _handleToolbarAction(_ToolbarAction.reload),
               ),
             ),
-            if (activityBellToolbarButtonEnabled)
-              IconButton(
-                tooltip: '新着情報・期限・予定',
-                onPressed: () => unawaited(_showActivityDialog()),
-                icon: Badge.count(
-                  count: _deadlineCount,
-                  isLabelVisible: _deadlineCount > 0,
-                  child: const Icon(Icons.notifications_outlined),
-                ),
-                iconSize: _toolbarIconSize,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: _toolbarButtonExtent,
-                  height: _toolbarButtonExtent,
-                ),
-              ),
             if (_supportsDesktopZoom)
               GakujoZoomActions(
                 zoomPercent: (_desktopZoom * 100).round(),
@@ -1896,7 +1876,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   _desktopZoomStep,
                 )),
               ),
-            if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
               IconButton(
                 tooltip: 'スター付き連絡通知',
                 onPressed: _calendarOperationGate.isRunning
@@ -1911,7 +1890,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 ),
               ),
             IconButton(
-              tooltip: 'AKIKO（空き講義室検索・外部サービス）',
+              tooltip: 'AKIKO（空き講義室検索・CIRCLE 運営の外部サービス）',
               onPressed: () => unawaited(_openAkiko()),
               icon: const Icon(Icons.meeting_room_outlined),
               iconSize: _toolbarIconSize,
@@ -1953,8 +1932,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
                   ),
-                  if (_appSettings
-                      .isFeatureEnabled(GakujoFeatureFlag.messageStars))
                     const PopupMenuItem<Object>(
                       value: _ToolbarAction.messageStars,
                       child: Text('スター付き連絡通知'),
@@ -1970,7 +1947,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   const PopupMenuDivider(),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.reload,
-                    child: Text('再読込'),
+                    child: Text('再読み込み'),
                   ),
                 ],
                 onSelected: (selection) =>
@@ -2003,6 +1980,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 ),
               ),
             ),
+            if (_availableUpdate != null &&
+                _appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) &&
+                !compactPreviewForKeyboard)
+              AppUpdateBanner(
+                latestVersion: _availableUpdate!.latestVersion,
+                currentVersion: _availableUpdate!.currentVersion,
+                onOpen: () => unawaited(_openUpdateReleasePage()),
+                onDismiss: () => unawaited(_dismissUpdateNotice()),
+              ),
             Expanded(
               // Android 15+ draws edge to edge; without this the end of a
               // page (often a submit button) stays under the navigation bar.
@@ -2195,20 +2181,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
     _desktopPanZoomStartZoom = _desktopZoom;
-    _desktopPanZoomIsPinching = false;
+    _desktopPanZoomGesture.reset();
     _desktopZoomOrigin = event.localPosition;
     _resetDesktopHistorySwipe();
   }
 
   void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
     _desktopZoomOrigin = event.localPosition;
-    if ((event.scale - 1).abs() > _desktopPinchZoomDeadZone) {
-      _desktopPanZoomIsPinching = true;
+    if (_desktopPanZoomGesture.update(event.panDelta, event.scale)) {
       unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * event.scale));
-      return;
-    }
-
-    if (_desktopPanZoomIsPinching) {
       return;
     }
 
@@ -2219,7 +2200,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
-    _desktopPanZoomIsPinching = false;
+    _desktopPanZoomGesture.reset();
     _scheduleDesktopHistorySwipeReset();
   }
 
@@ -2231,6 +2212,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         defaultTargetPlatform != TargetPlatform.linux) {
       return;
     }
+    if (!desktopHistorySwipeAllowed(_desktopZoom)) return;
     final direction = _desktopHistorySwipe.add(
       delta,
       positiveIsBack: positiveIsBack,
@@ -2534,7 +2516,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return true;
     } on FormatException {
       if (mounted) {
-        _showSnackBar('長いBase32秘密鍵を確認してください');
+        _showSnackBar('2FA秘密鍵（長いBase32文字列）を確認してください');
       }
       return false;
     } on Object catch (error, stackTrace) {
@@ -2587,14 +2569,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordController = TextEditingController();
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
-    final knownCourses = await _knownAssignmentCourses();
+    var starSyncBusy = false;
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
     ModalRoute<void>? dialogRoute;
     try {
       await _prepareSettingsDialogInput();
-      if (_secureStorageAccessAllowed && _messageStarsEnabled) {
+      if (_secureStorageAccessAllowed) {
         await _ensureStarSyncLoaded();
       }
       if (!mounted) {
@@ -2641,10 +2623,57 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
               final selectedPageMode = _appSettings.pageMode;
 
+              Future<void> onFlagChanged(
+                GakujoFeatureFlag flag,
+                bool enabled,
+              ) async {
+                if (!await _trySaveSettings(
+                  () => saveGakujoSettingsChange(
+                    operations: _settingsOperations,
+                    save: () => _appSettingsStore.saveFeatureEnabled(
+                      flag,
+                      enabled: enabled,
+                    ),
+                    currentSettings: () => _appSettings,
+                    update: (settings) => settings.copyWith(
+                      disabledFeatureFlags: {
+                        for (final value in settings.disabledFeatureFlags)
+                          if (value != flag) value,
+                        if (!enabled) flag,
+                      },
+                    ),
+                    apply: (settings) {
+                      _startupPlaceholderFeatureFlags.remove(flag);
+                      if (mounted) {
+                        setState(() => _appSettings = settings);
+                      }
+                    },
+                    mirror: _syncLocalSettingsMirror,
+                  ),
+                )) {
+                  return;
+                }
+                if (!mounted) {
+                  return;
+                }
+                _scheduleStarSync();
+                if (flag == GakujoFeatureFlag.autoBackup) {
+                  _scheduleAutoBackup();
+                }
+                if (dialogContext.mounted) {
+                  setDialogState(() {});
+                }
+                await _applyFeatureFlagRuntimeState(flag, enabled: enabled);
+                if (flag == GakujoFeatureFlag.deadlineNotifications) {
+                  unawaited(_syncReminders());
+                }
+              }
+
               final sections = [
                 SettingsExpansionSection(
                   title: 'ログイン',
                   icon: Icons.account_circle_outlined,
+                  subtitle: 'ログイン情報・2FA・ログイン状態の維持',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2674,7 +2703,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                     enabled: false,
                                   );
                                 } finally {
-                                  TextInput.finishAutofillContext(shouldSave: false);
+                                  TextInput.finishAutofillContext(
+                                    shouldSave: false,
+                                  );
                                   if (mounted) {
                                     setState(() {
                                       _appSettings = _appSettings.copyWith(
@@ -2798,491 +2829,544 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                       ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: 'ログインの補助',
+                        flags: settingsLoginFeatureFlags,
+                      ),
                     ],
                   ),
                 ),
                 SettingsExpansionSection(
-                  title: '保存設定',
-                  icon: Icons.folder_outlined,
-                  child: DownloadDestinationSection(
-                    rootLabel: rootLabel,
-                    isConfigured: _downloadRoot.isConfigured,
-                    saveMode: selectedDownloadSaveMode,
-                    helperText: _downloadDestinationHelperText,
-                    onSaveModeChanged: (mode) async {
-                      if (mode == null) {
-                        return;
-                      }
-                      final saved = await _settingsOperations.runExclusive(() async {
-                        if (!await _trySaveSettings(
-                          () => _appSettingsStore.saveDownloadSaveMode(mode),
-                        )) {
-                          return false;
-                        }
-                        final nextSettings = _appSettings.copyWith(
-                          downloadSaveMode: mode,
-                        );
-                        await _syncLocalSettingsMirror(nextSettings);
-                        if (!mounted) {
-                          return false;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(downloadSaveMode: mode);
-                        });
-                        return true;
-                      });
-                      if (!saved) return;
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onPick: () async {
-                      await refreshDownloadRoot(
-                        _downloadService.pickDownloadRoot,
-                      );
-                    },
-                    onClear: () async {
-                      await refreshDownloadRoot(
-                        _downloadService.clearDownloadRoot,
-                      );
-                    },
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '表示設定',
+                  title: '学務情報システムの画面',
                   icon: Icons.web_asset_outlined,
-                  child: GakujoPageModeSection(
-                    pageMode: selectedPageMode,
-                    onChanged: (mode) async {
-                      if (mode == null) {
-                        return;
-                      }
-                      final saved = await _settingsOperations.runExclusive(() async {
-                        if (!await _trySaveSettings(
-                          () => _appSettingsStore.savePageMode(mode),
-                        )) {
-                          return false;
-                        }
-                        final nextSettings = _appSettings.copyWith(
-                          pageMode: mode,
-                        );
-                        await _syncLocalSettingsMirror(nextSettings);
-                        if (!mounted) {
-                          return false;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(pageMode: mode);
-                        });
-                        return true;
-                      });
-                      if (!saved) return;
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                      await _loadAllowedPageUrl(mode.startUrl);
-                    },
+                  subtitle: '開く画面・自動圧縮・除外キーワード',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      GakujoPageModeSection(
+                        pageMode: selectedPageMode,
+                        onChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          final saved = await _settingsOperations.runExclusive(
+                            () async {
+                              if (!await _trySaveSettings(
+                                () => _appSettingsStore.savePageMode(mode),
+                              )) {
+                                return false;
+                              }
+                              final nextSettings = _appSettings.copyWith(
+                                pageMode: mode,
+                              );
+                              await _syncLocalSettingsMirror(nextSettings);
+                              if (!mounted) {
+                                return false;
+                              }
+                              setState(() {
+                                _appSettings = _appSettings.copyWith(
+                                  pageMode: mode,
+                                );
+                              });
+                              return true;
+                            },
+                          );
+                          if (!saved) return;
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                          await _loadAllowedPageUrl(mode.startUrl);
+                        },
+                      ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: 'レポート',
+                        flags: settingsReportFeatureFlags,
+                      ),
+                      const SizedBox(height: 16),
+                      SettingsExpansionSection(
+                        title: '除外キーワード',
+                        icon: Icons.filter_alt_outlined,
+                        focusNodeOnExpand: messageExcludeKeywordFocusNode,
+                        child: MessageExcludeKeywordsSection(
+                          keywords: _appSettings.messageExcludeKeywords,
+                          controller: messageExcludeKeywordController,
+                          focusNode: messageExcludeKeywordFocusNode,
+                          canAdd: canAddMessageExcludeKeyword,
+                          onChanged: (value) {
+                            messageExcludeKeywordInput = value;
+                            setDialogState(() {});
+                          },
+                          onAdd: () async {
+                            final next = normalizeMessageExcludeKeywords([
+                              ..._appSettings.messageExcludeKeywords,
+                              messageExcludeKeywordInput,
+                            ]);
+                            if (!await _trySaveSettings(
+                              () => _saveMessageExcludeKeywords(next),
+                            )) {
+                              return;
+                            }
+                            messageExcludeKeywordInput = '';
+                            messageExcludeKeywordController.clear();
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                          },
+                          onRemove: (keyword) async {
+                            final next = _appSettings.messageExcludeKeywords
+                                .where((value) => value != keyword)
+                                .toList();
+                            if (!await _trySaveSettings(
+                              () => _saveMessageExcludeKeywords(next),
+                            )) {
+                              return;
+                            }
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
-                  title: '機能設定',
-                  icon: Icons.tune,
-                  child: FeatureFlagsSection(
-                    settings: _appSettings,
-                    onChanged: (flag, enabled) async {
-                      if (!await _trySaveSettings(() =>
-                          saveGakujoSettingsChange(
-                            operations: _settingsOperations,
-                            save: () => _appSettingsStore.saveFeatureEnabled(
-                              flag,
-                              enabled: enabled,
-                            ),
-                            currentSettings: () => _appSettings,
-                            update: (settings) => settings.copyWith(
-                              disabledFeatureFlags: {
-                                for (final value
-                                    in settings.disabledFeatureFlags)
-                                  if (value != flag) value,
-                                if (!enabled) flag,
-                              },
-                            ),
-                            apply: (settings) {
-                              _startupPlaceholderFeatureFlags.remove(flag);
-                              if (mounted) {
-                                setState(() => _appSettings = settings);
+                  title: 'ダウンロード',
+                  icon: Icons.folder_outlined,
+                  subtitle: '保存方法・保存先・Google ドライブ',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: null,
+                        flags: settingsDownloadFeatureFlags,
+                      ),
+                      DownloadDestinationSection(
+                        rootLabel: rootLabel,
+                        isConfigured: _downloadRoot.isConfigured,
+                        saveMode: selectedDownloadSaveMode,
+                        helperText: _downloadDestinationHelperText,
+                        onSaveModeChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          final saved = await _settingsOperations.runExclusive(
+                            () async {
+                              if (!await _trySaveSettings(
+                                () => _appSettingsStore.saveDownloadSaveMode(
+                                  mode,
+                                ),
+                              )) {
+                                return false;
                               }
+                              final nextSettings = _appSettings.copyWith(
+                                downloadSaveMode: mode,
+                              );
+                              await _syncLocalSettingsMirror(nextSettings);
+                              if (!mounted) {
+                                return false;
+                              }
+                              setState(() {
+                                _appSettings = _appSettings.copyWith(
+                                  downloadSaveMode: mode,
+                                );
+                              });
+                              return true;
                             },
-                            mirror: _syncLocalSettingsMirror,
-                          ))) {
-                        return;
-                      }
-                      if (!mounted) {
-                        return;
-                      }
-                      if (flag != GakujoFeatureFlag.messageStars) {
-                        _scheduleStarSync();
-                      }
-                      if (flag == GakujoFeatureFlag.messageStars && enabled) {
-                        unawaited(_syncStarsInBackground());
-                      }
-                      if (flag == GakujoFeatureFlag.autoBackup) {
-                        _scheduleAutoBackup();
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                      await _applyFeatureFlagRuntimeState(
-                        flag,
-                        enabled: enabled,
-                      );
-                      if (flag == GakujoFeatureFlag.deadlineNotifications) {
-                        unawaited(_syncReminders());
-                      }
-                    },
+                          );
+                          if (!saved) return;
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                        },
+                        onPick: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.pickDownloadRoot,
+                          );
+                        },
+                        onClear: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.clearDownloadRoot,
+                          );
+                        },
+                      ),
+                      SettingsActionGroup(
+                        actions: [
+                          SettingsAction(
+                            label: '保存先を確認',
+                            icon: Icons.health_and_safety_outlined,
+                            run: _checkDownloadDestinationHealth,
+                          ),
+                        ],
+                      ),
+                      if (const StarSyncGoogleAuthConfig().isAvailable) ...[
+                        const Divider(height: 32),
+                        DriveDownloadSwitch(
+                          value: _driveDownloadsEnabled,
+                          signingIn: _driveSwitchSigningIn,
+                          enabled: !starSyncBusy,
+                          subtitle:
+                              _driveDownloadsEnabled &&
+                                  _starSyncGoogleEmail != null
+                              ? (_starSyncEngine.config != null
+                                    ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには同期を無効にします'
+                                    : '保存先: $_starSyncGoogleEmail\n別のアカウントにするには、一度オフにします')
+                              : null,
+                          onCancel:
+                              Platform.isWindows ||
+                                  Platform.isMacOS ||
+                                  Platform.isLinux
+                              ? _cancelGoogleSignIn
+                              : null,
+                          onChanged: (enabled) async {
+                            if (enabled) {
+                              setDialogState(
+                                () => _driveSwitchSigningIn = true,
+                              );
+                            }
+                            try {
+                              if (!enabled) {
+                                await _warnPendingDriveChecksBestEffort();
+                              }
+                              await _setDriveDownloadsEnabled(
+                                enabled,
+                                byStudentSwitch: true,
+                              );
+                            } on StarSyncGoogleAuthException catch (error) {
+                              if (error.kind !=
+                                  StarSyncGoogleAuthErrorKind.cancelled) {
+                                _showSnackBar(starSyncErrorMessage(error));
+                              }
+                            } on StarSyncAccountRequiredException catch (
+                              error
+                            ) {
+                              _showSnackBar(starSyncErrorMessage(error));
+                            } on Object {
+                              _showSnackBar('Google ドライブの設定を変更できませんでした');
+                            } finally {
+                              _driveSwitchSigningIn = false;
+                              if (dialogContext.mounted) setDialogState(() {});
+                            }
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
                   title: '通知',
                   icon: Icons.notifications_outlined,
-                  child: NotificationTopicsSection(
-                    topics: _appSettings.notificationTopics,
-                    messages: _appSettings.messageNotification,
-                    preferences: _appSettings.notificationPreferences,
-                    knownCourses: knownCourses,
-                    remindersOnlyWhileOpen: Platform.isWindows,
-                    notificationPermission:
-                        _notificationService.permissionGranted,
-                    onOpenNotificationSettings: Platform.isAndroid ||
-                            Platform.isIOS ||
-                            Platform.isMacOS
-                        ? () => unawaited(
-                              _notificationService.openNotificationSettings(),
-                            )
-                        : null,
-                    onPreferencesChanged: (update) async {
-                      await _saveNotificationPreferences(update);
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                    },
-                    keywordController: messageNotificationKeywordController,
-                    canAddKeyword:
-                        messageNotificationKeywordInput.trim().isNotEmpty,
-                    onKeywordInputChanged: (value) {
-                      messageNotificationKeywordInput = value;
-                      setDialogState(() {});
-                    },
-                    onMessagesChanged: (messages) async {
-                      if (!await _trySaveSettings(
-                        () => _saveMessageNotification(messages),
-                      )) {
-                        return false;
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                      return true;
-                    },
-                    notificationsEnabled: _appSettings.isFeatureEnabled(
-                      GakujoFeatureFlag.deadlineNotifications,
-                    ),
-                    onChanged: (topic, enabled) async {
-                      if (!await _trySaveSettings(
-                          () => _saveNotificationTopics({
-                                for (final value
-                                    in _appSettings.notificationTopics)
-                                  if (value != topic) value,
-                                if (enabled) topic,
-                              }))) {
-                        return;
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                    },
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '連絡通知フィルタ',
-                  icon: Icons.filter_alt_outlined,
-                  focusNodeOnExpand: messageExcludeKeywordFocusNode,
-                  child: MessageExcludeKeywordsSection(
-                    keywords: _appSettings.messageExcludeKeywords,
-                    controller: messageExcludeKeywordController,
-                    focusNode: messageExcludeKeywordFocusNode,
-                    canAdd: canAddMessageExcludeKeyword,
-                    onChanged: (value) {
-                      messageExcludeKeywordInput = value;
-                      setDialogState(() {});
-                    },
-                    onAdd: () async {
-                      final next = normalizeMessageExcludeKeywords([
-                        ..._appSettings.messageExcludeKeywords,
-                        messageExcludeKeywordInput,
-                      ]);
-                      if (!await _trySaveSettings(
-                        () => _saveMessageExcludeKeywords(next),
-                      )) {
-                        return;
-                      }
-                      messageExcludeKeywordInput = '';
-                      messageExcludeKeywordController.clear();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onRemove: (keyword) async {
-                      final next = _appSettings.messageExcludeKeywords
-                          .where((value) => value != keyword)
-                          .toList();
-                      if (!await _trySaveSettings(
-                        () => _saveMessageExcludeKeywords(next),
-                      )) {
-                        return;
-                      }
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: 'データ/履歴',
-                  icon: Icons.storage_outlined,
-                  child: AppDataShortcutsSection(
-                    onShowDownloadHistory: _showDownloadHistoryDialog,
-                    onShowFailedDownloads: _showFailedDownloadsDialog,
-                    onShowCourseMaterials: _showCourseMaterialsDialog,
-                    onShowCachedReports: _showCachedReportsDialog,
-                    onShowDrafts: _showReportDraftsDialog,
-                    onShowChangeHistory: _showChangeHistoryDialog,
-                    onShowFavorites: _showFavoritesDialog,
-                    onShowDataManagement: _showDataManagementDialog,
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '連携',
-                  icon: Icons.event_available_outlined,
-                  child: AppIntegrationSection(
-                    onScheduleIntegration: _showScheduleIntegrationDialog,
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '外部サービス',
-                  icon: Icons.open_in_new,
-                  child: SwitchListTile(
-                    title: const Text('外部サービスを開く前に確認する'),
-                    subtitle: const Text('AKIKO（空き講義室検索）'),
-                    value: !_externalServiceNoticeDismissed,
-                    onChanged: (confirm) async {
-                      await _setExternalServiceNoticeDismissed(!confirm);
-                      if (dialogContext.mounted) setDialogState(() {});
-                    },
-                  ),
-                ),
-                if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars) &&
-                    const StarSyncGoogleAuthConfig().isAvailable)
-                  SettingsExpansionSection(
-                    title: 'Google ドライブ',
-                    icon: Icons.cloud_upload_outlined,
-                    child: SwitchListTile(
-                      title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
-                      value: _driveDownloadsEnabled,
-                      onChanged: (enabled) async {
-                        try {
-                          if (!enabled) await _warnPendingDriveChecks();
-                          await _setDriveDownloadsEnabled(enabled);
-                          if (dialogContext.mounted) setDialogState(() {});
-                        } on Object {
-                          _showSnackBar('Google ドライブの設定を変更できませんでした');
-                        }
-                      },
-                    ),
-                  ),
-                if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
-                  SettingsExpansionSection(
-                    title: 'スターの端末間同期',
-                    icon: Icons.sync,
-                    child: StarSyncSection(
-                      status: _starSyncEngine.status,
-                      driveDownloadsEnabled: _driveDownloadsEnabled,
-                      onDriveDownloadsChanged: (enabled) async {
-                        if (!enabled) await _warnPendingDriveChecks();
-                        await _setDriveDownloadsEnabled(enabled);
-                        if (dialogContext.mounted) setDialogState(() {});
-                      },
-                      onBackup: _uploadSyncBackup,
-                      onListBackups: _starSyncEngine.listBackups,
-                      onRestoreBackup: (id) {
-                        final account = _starSyncEngine.requireAccount();
-                        final generation = _starSyncEngine.accountGeneration;
-                        return _starSyncEngine.runBoundToAccount(
-                          expectedAccount: account,
-                          expectedGeneration: generation,
-                          action: () => _importSettings(() async {
-                            final bytes = await _starSyncEngine.downloadBackup(id);
-                            await _restoreSettingsFromText(
-                              utf8.decode(bytes),
-                              emptyMessage: 'バックアップが空です',
-                              alreadyConfirmed: true,
-                              fromSyncStorage: true,
-                              // A login navigation can end the session while
-                              // the restore waits; check before each write.
-                              beforeWrite: () {
-                                if (!_starSyncEngine.isBoundAccountCurrent(
-                                  expectedAccount: account,
-                                  expectedGeneration: generation,
-                                )) {
-                                  throw const StarSyncAccountMismatchException();
-                                }
-                              },
-                            );
-                          }),
-                        );
-                      },
-                      collectionEnabled: _starSyncEngine.collectionEnabled,
-                      onCollectionChanged: _starSyncEngine.setCollectionEnabled,
-                      googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
-                      isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
-                      googleEmail: () => _starSyncGoogleEmail,
-                      onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
-                        _starSyncGoogleEmail = await _signInGoogle();
-                        try {
-                          return await _starSyncEngine.setUpWithPairing(
-                            StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
-                            clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
-                          );
-                        } on Object {
-                          if (!_starSyncEngine.status.value.enabled) {
-                            await _setDriveDownloadsEnabled(false);
-                            await _signOutGoogle();
-                            _starSyncGoogleEmail = null;
-                          }
-                          rethrow;
-                        }
-                      },
-                      onGoogleSignOut: () async {
-                        try {
-                          // Off first: a failing warning must not leave it on.
-                          await _setDriveDownloadsEnabled(false);
-                          await _warnPendingDriveChecks();
-                        } finally {
-                          await _signOutGoogle(warn: false);
-                          _starSyncGoogleEmail = null;
-                        }
-                      },
-                      onGoogleReSignIn: () async {
-                        _starSyncGoogleEmail = await _signInGoogle();
-                        if (mounted) setState(() {});
-                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
-                      },
-                      onLocalStarCount: _starSyncEngine.localStarCount,
-                      onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
-                      onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
-                      onRequireAccount: () {
-                        final saved = starSyncAccountHash(_appSettings.savedLoginId);
-                        if (saved == null) throw const StarSyncAccountRequiredException();
-                        if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
-                        return _starSyncEngine.requireAccount();
-                      },
-                      onAccountGeneration: () => _starSyncEngine.accountGeneration,
-                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
-                          _starSyncEngine.setUpWithPairing(
-                            StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
-                            resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
-                          ),
-                      onJoinWithCode: (code, {required clearLocalStars, required expectedAccount, required expectedGeneration}) => _starSyncEngine.joinWithPairingCode(
-                        StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail), code,
-                        clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                  subtitle: '提出期限・リマインド・連絡通知',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: null,
+                        flags: settingsNotificationFeatureFlags,
                       ),
-                      onPairingCode: _starSyncEngine.pairingCode,
-                      onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
-                      onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
-                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
-                      },
-                      onSyncNow: () async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
-                      },
-                      onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
-                      onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
-                      onChangePassphrase: (current, next) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.changePassphrase(current, next);
-                      },
-                      onListDevices: () async {
-                        await _ensureStarSyncLoaded();
-                        return _starSyncEngine.listDevices();
-                      },
-                      onDeleteDevice: (id) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.deleteDeviceFile(id);
-                      },
-                      onDisable: ({deleteOwnRemoteFile = false}) async {
-                        await _ensureStarSyncLoaded();
-                        final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
-                        await _starSyncEngine.disable(
-                          deleteOwnRemoteFile: deleteOwnRemoteFile,
-                        );
-                        if (google) {
-                          try {
-                            // Off first: a failing warning must not leave it on.
-                            await _setDriveDownloadsEnabled(false);
-                            await _warnPendingDriveChecks();
-                          } finally {
-                            await _signOutGoogle(warn: false);
-                            _starSyncGoogleEmail = null;
+                      const Divider(height: 32),
+                      NotificationTopicsSection(
+                        topics: _appSettings.notificationTopics,
+                        messages: _appSettings.messageNotification,
+                        preferences: _appSettings.notificationPreferences,
+                        remindersOnlyWhileOpen: Platform.isWindows,
+                        notificationPermission:
+                            _notificationService.permissionGranted,
+                        onOpenNotificationSettings:
+                            Platform.isAndroid ||
+                                Platform.isIOS ||
+                                Platform.isMacOS
+                            ? () => unawaited(
+                                _notificationService.openNotificationSettings(),
+                              )
+                            : null,
+                        onPreferencesChanged: (update) async {
+                          await _saveNotificationPreferences(update);
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
                           }
-                        }
-                      },
-                      onReset: (passphrase) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.resetRemote(passphrase);
-                      },
-                      onRejoin: (passphrase) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.rejoin(passphrase);
-                      },
-                    ),
+                        },
+                        keywordController: messageNotificationKeywordController,
+                        canAddKeyword: messageNotificationKeywordInput
+                            .trim()
+                            .isNotEmpty,
+                        onKeywordInputChanged: (value) {
+                          messageNotificationKeywordInput = value;
+                          setDialogState(() {});
+                        },
+                        onMessagesChanged: (messages) async {
+                          if (!await _trySaveSettings(
+                            () => _saveMessageNotification(messages),
+                          )) {
+                            return false;
+                          }
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
+                          }
+                          return true;
+                        },
+                        notificationsEnabled: _appSettings.isFeatureEnabled(
+                          GakujoFeatureFlag.deadlineNotifications,
+                        ),
+                        onChanged: (topic, enabled) async {
+                          if (!await _trySaveSettings(
+                            () => _saveNotificationTopics({
+                              for (final value
+                                  in _appSettings.notificationTopics)
+                                if (value != topic) value,
+                              if (enabled) topic,
+                            }),
+                          )) {
+                            return;
+                          }
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
+                          }
+                        },
+                      ),
+                    ],
                   ),
+                ),
                 SettingsExpansionSection(
-                  title: 'バックアップ/診断',
-                  icon: Icons.health_and_safety_outlined,
-                  child: AppMaintenanceSection(
-                    onCheckUpdates: _checkForUpdates,
-                    onCreateBackup: _createManualBackup,
-                    onCreateErrorReport: _createErrorReportPackage,
-                    onExportSettings: _exportSettingsToClipboard,
-                    onImportSettings: () async {
-                      await _importSettingsFromClipboard();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onImportSettingsFromFile: () async {
-                      await _importSettingsFromFile();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onCheckDownloadDestination: _checkDownloadDestinationHealth,
-                    onCopyDiagnostics: _copyDiagnosticInfo,
+                  title: '外部連携',
+                  icon: Icons.event_available_outlined,
+                  subtitle: 'カレンダー・外部サービス',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppIntegrationSection(
+                        onScheduleIntegration: _showScheduleIntegrationDialog,
+                      ),
+                      const Divider(height: 32),
+                      Text(
+                        '外部サービス',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('外部サービスを開く前に確認する'),
+                        subtitle: const Text('AKIKO（空き講義室検索・CIRCLE 運営）'),
+                        value: !_externalServiceNoticeDismissed,
+                        onChanged: (confirm) async {
+                          await _setExternalServiceNoticeDismissed(!confirm);
+                          if (dialogContext.mounted) setDialogState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                SettingsExpansionSection(
+                  title: '同期とバックアップ',
+                  icon: Icons.sync,
+                  subtitle: '端末間の同期・バックアップ',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '端末間の同期',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                        StarSyncSection(
+                          status: _starSyncEngine.status,
+                          onBusyChanged: (busy) {
+                            starSyncBusy = busy;
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onBackup: _uploadSyncBackup,
+                          onListBackups: _starSyncEngine.listBackups,
+                          onRestoreBackup: (id) {
+                            final account = _starSyncEngine.requireAccount();
+                            final generation = _starSyncEngine.accountGeneration;
+                            return _starSyncEngine.runBoundToAccount(
+                              expectedAccount: account,
+                              expectedGeneration: generation,
+                              action: () => _importSettings(() async {
+                                final bytes = await _starSyncEngine.downloadBackup(id);
+                                await _restoreSettingsFromText(
+                                  utf8.decode(bytes),
+                                  emptyMessage: 'バックアップが空です',
+                                  alreadyConfirmed: true,
+                                  fromSyncStorage: true,
+                                  // A login navigation can end the session while
+                                  // the restore waits; check before each write.
+                                  beforeWrite: () {
+                                    if (!_starSyncEngine.isBoundAccountCurrent(
+                                      expectedAccount: account,
+                                      expectedGeneration: generation,
+                                    )) {
+                                      throw const StarSyncAccountMismatchException();
+                                    }
+                                  },
+                                );
+                              }),
+                            );
+                          },
+                          collectionEnabled: _starSyncEngine.collectionEnabled,
+                          onCollectionChanged: _starSyncEngine.setCollectionEnabled,
+                          googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
+                          // With Google sync set up, only its recorded account counts.
+                          googleEmail: () =>
+                              _starSyncEngine.config != null
+                                  ? _starSyncEngine.config?.googleEmail
+                                  : _starSyncGoogleEmail,
+                          onGoogleCancelSignIn: _cancelGoogleSignIn,
+                          onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                            _starSyncGoogleEmail = await _signInGoogle();
+                            try {
+                              return await _starSyncEngine.setUpWithDrive(
+                                StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
+                                clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                              );
+                            } on Object {
+                              if (!_starSyncEngine.status.value.enabled) {
+                                await _setDriveDownloadsEnabled(false);
+                                await _signOutGoogle();
+                                _starSyncGoogleEmail = null;
+                              }
+                              rethrow;
+                            }
+                          },
+                          onGoogleSignOut: () async {
+                            try {
+                              // Off first: a failing warning must not leave it on.
+                              await _setDriveDownloadsEnabled(false);
+                              await _warnPendingDriveChecks();
+                            } finally {
+                              await _signOutGoogle(warn: false);
+                              _starSyncGoogleEmail = null;
+                            }
+                          },
+                          onGoogleReSignIn: () async {
+                            _starSyncGoogleEmail = await _signInGoogle();
+                            if (mounted) setState(() {});
+                            await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                          },
+                          onLocalStarCount: _starSyncEngine.localStarCount,
+                          onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
+                          onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
+                          onRequireAccount: () {
+                            final saved = starSyncAccountHash(_appSettings.savedLoginId);
+                            if (saved == null) throw const StarSyncAccountRequiredException();
+                            if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
+                            return _starSyncEngine.requireAccount();
+                          },
+                          onAccountGeneration: () => _starSyncEngine.accountGeneration,
+                          onSetUpWithDrive: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
+                              _starSyncEngine.setUpWithDrive(
+                                StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
+                                resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                              ),
+                          onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
+                          onSyncNow: () async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                          },
+                          onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
+                          onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
+                          onListDevices: () async {
+                            await _ensureStarSyncLoaded();
+                            return _starSyncEngine.listDevices();
+                          },
+                          onDeleteDevice: (id) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.deleteDeviceFile(id);
+                          },
+                          onDisable: ({deleteOwnRemoteFile = false}) async {
+                            await _ensureStarSyncLoaded();
+                            final google = _starSyncEngine.config != null;
+                            await _starSyncEngine.disable(
+                              deleteOwnRemoteFile: deleteOwnRemoteFile,
+                            );
+                            if (google) {
+                              try {
+                                // Off first: a failing warning must not leave it on.
+                                await _setDriveDownloadsEnabled(false);
+                                await _warnPendingDriveChecks();
+                              } finally {
+                                await _signOutGoogle(warn: false);
+                                _starSyncGoogleEmail = null;
+                              }
+                            }
+                          },
+                        ),
+                      const Divider(height: 32),
+                      AppBackupSection(
+                        onCreateBackup: _createManualBackup,
+                        onImportSettingsFromFile: () async {
+                          await _importSettingsFromFile();
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                        },
+                      ),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: null,
+                        flags: settingsBackupFeatureFlags,
+                      ),
+                    ],
+                  ),
+                ),
+                SettingsExpansionSection(
+                  title: '保存データ',
+                  icon: Icons.storage_outlined,
+                  subtitle: '履歴・資料・下書き・お気に入り',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppDataShortcutsSection(
+                        onShowDownloadHistory: _showDownloadHistoryDialog,
+                        onShowFailedDownloads: _showFailedDownloadsDialog,
+                        onShowCourseMaterials: _showCourseMaterialsDialog,
+                        onShowCachedReports: _showCachedReportsDialog,
+                        onShowDrafts: _showReportDraftsDialog,
+                        onShowFavorites: _showFavoritesDialog,
+                        onShowDataManagement: _showDataManagementDialog,
+                      ),
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
                   title: 'このアプリについて',
                   icon: Icons.info_outline,
-                  child: AppAboutSection(
-                    onOpenUrl: (url) => unawaited(
-                      launchUrl(url, mode: LaunchMode.externalApplication),
-                    ),
+                  subtitle: 'バージョン・アップデート・不具合の報告',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppAboutSection(
+                        onOpenUrl: (url) => unawaited(
+                          launchUrl(url, mode: LaunchMode.externalApplication),
+                        ),
+                      ),
+                      const Divider(height: 32),
+                      AppUpdateSection(
+                        settings: _appSettings,
+                        onFlagChanged: onFlagChanged,
+                        onCheckUpdates: _checkForUpdates,
+                      ),
+                      const Divider(height: 32),
+                      AppSupportSection(
+                        onCreateErrorReport: _createErrorReportPackage,
+                      ),
+                    ],
                   ),
                 ),
               ];
@@ -3313,6 +3397,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
       );
     } finally {
+      // A sign-in left waiting would hold the Drive queue for its full timeout.
+      _cancelGoogleSignIn();
       await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted) {
         setState(() {
@@ -3382,7 +3468,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 }
                 if (secret.trim().isNotEmpty &&
                     !Base32.isValid(Base32.normalize(secret))) {
-                  _showSnackBar('長いBase32秘密鍵を確認してください');
+                  _showSnackBar('2FA秘密鍵（長いBase32文字列）を確認してください');
                   return;
                 }
                 setDialogState(() {
@@ -3668,7 +3754,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _downloadHistoryStore.compact(),
         _activityStore.compact(),
       ]);
-      await _refreshActivityCounts();
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to compact stored data',
@@ -3758,237 +3843,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<void> _showChangeHistoryDialog() async {
-    final changes = await _activityStore.loadChanges();
-    if (!mounted) {
-      return;
-    }
-
-    final sorted = [...changes]
-      ..sort((a, b) => b.changedAt.compareTo(a.changedAt));
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('変更履歴'),
-          content: SizedBox(
-            width: 560,
-            child: sorted.isEmpty
-                ? const Text('まだ変更履歴はありません。')
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: sorted.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final change = sorted[index];
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.history),
-                        title: Text(change.category),
-                        subtitle: Text(
-                          '${change.title}\n${_formatDateTime(change.changedAt)}',
-                        ),
-                        isThreeLine: true,
-                        onTap: () {
-                          Navigator.of(dialogContext).pop();
-                          unawaited(_loadAllowedPageUrl(change.url));
-                        },
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: sorted.isEmpty
-                  ? null
-                  : () async {
-                      await _activityStore.clearChanges();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      Navigator.of(dialogContext).pop();
-                      _showSnackBar('変更履歴を削除しました');
-                    },
-              child: const Text('削除'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('閉じる'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _showActivityDialog() async {
-    if (_calendarOperationGate.isRunning) {
-      _showSnackBar('カレンダー連携または再検出を処理中です');
-      return;
-    }
-    var deadlines = await _activityStore.loadDeadlines();
-    if (!mounted) {
-      return;
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        var isScanning = false;
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final datedItems = [...deadlines]
-              ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
-
-            Future<void> rescan() async {
-              if (isScanning) {
-                return;
-              }
-              setDialogState(() {
-                isScanning = true;
-              });
-              String message;
-              try {
-                final result = await _rescanActivityForBell();
-                deadlines = await _activityStore.loadDeadlines();
-                await _refreshActivityCounts();
-                message = result == null
-                    ? 'このページでは再検出できませんでした'
-                    : '再検出しました: ${result.deadlineCount}件';
-              } on Object catch (error, stackTrace) {
-                developer.log(
-                  'Failed to rescan activity from dialog',
-                  name: 'MoreBetterGakujo',
-                  error: error,
-                  stackTrace: stackTrace,
-                );
-                message = '再検出に失敗しました';
-              }
-              if (!mounted || !dialogContext.mounted) {
-                return;
-              }
-              setDialogState(() {
-                isScanning = false;
-              });
-              _showSnackBar(message);
-            }
-
-            return AlertDialog(
-              title: const Text('新着情報・期限・予定'),
-              content: SizedBox(
-                width: 560,
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    Text(
-                      '新着情報・期限・予定',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    if (datedItems.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('表示する新着情報・期限・予定はありません。'),
-                      )
-                    else
-                      for (final item in datedItems)
-                        ListTile(
-                          dense: true,
-                          leading: Icon(_datedActivityIcon(item.kind)),
-                          title: Text(item.title),
-                          subtitle: _datedActivitySubtitle(item),
-                          isThreeLine: true,
-                          onTap: () {
-                            Navigator.of(dialogContext).pop();
-                            unawaited(_openDatedActivityEntry(item));
-                          },
-                        ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton.icon(
-                  onPressed: isScanning ? null : () => unawaited(rescan()),
-                  icon: isScanning
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                  label: Text(isScanning ? '再検出中' : '再検出'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    await Future.wait([
-                      _activityStore.markSnapshotsSeen(),
-                      _activityStore.clearDeadlines(),
-                    ]);
-                    if (!dialogContext.mounted) {
-                      return;
-                    }
-                    Navigator.of(dialogContext).pop();
-                    await _refreshActivityCounts();
-                  },
-                  child: const Text('すべて確認済みにする'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('閉じる'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  IconData _datedActivityIcon(String kind) {
-    switch (kind) {
-      case 'deadline':
-        return Icons.event_note;
-      case 'schedule':
-        return Icons.event_available_outlined;
-      case 'notice':
-        return Icons.campaign_outlined;
-      default:
-        return Icons.info_outline;
-    }
-  }
-
-  String _datedActivityKindLabel(String kind) {
-    switch (kind) {
-      case 'deadline':
-        return '期限';
-      case 'schedule':
-        return '予定';
-      case 'notice':
-        return '新着情報';
-      default:
-        return '情報';
-    }
-  }
-
-  Widget _datedActivitySubtitle(GakujoDeadlineEntry item) {
-    return Text(
-      '${_datedActivityKindLabel(item.kind)}\n${item.dueText}',
-    );
-  }
-
-  Future<void> _openDatedActivityEntry(GakujoDeadlineEntry entry) async {
-    final loading = _loadAllowedPageUrl(entry.url);
-    final navigationRevision = _navigationRevision;
-    await loading;
-    if (entry.isDeadline || gakujoMessageTargetFromUrl(entry.url) != null) {
-      return;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (mounted &&
-        navigationRevision == _navigationRevision &&
-        entry.title.trim().isNotEmpty) {
-      await _quickJumpTo(entry.title);
-    }
-  }
-
   Future<void> _showDataManagementDialog() async {
     final data = await readGakujoSavedData(
       () async => (
@@ -3997,7 +3851,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         favorites: await _activityStore.loadFavoritesForBackup(),
         starredMessages: await _activityStore.loadStarredMessagesForBackup(),
         deadlines: await _activityStore.loadDeadlinesForBackup(),
-        changes: await _activityStore.loadChangesForBackup(),
         reportLists: await _activityStore.loadReportListsForBackup(),
       ),
       showSnackBar: _showSnackBar,
@@ -4011,7 +3864,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
-      await StarSyncClipboardGuard.instance.clear();
       try {
         await _ensureStarSyncLoaded();
       } on Object catch (error) {
@@ -4035,18 +3887,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await Future.wait([
         _downloadHistoryStore.clear(),
         _downloadHistoryStore.clearFailedDownloads(),
-        _activityStore.clearSnapshots(),
+        _activityStore.deleteRetiredData(),
         _activityStore.clearDeadlines(),
         _activityStore.clearNotifiedDeadlineTimes(),
         _activityStore.replaceNotifiedDeadlineKeys(const []),
         StarSyncQuotaMeter.shared.clear(),
-        _activityStore.clearChanges(),
         _activityStore.clearReportLists(),
         _activityStore.replaceFavorites(const []),
         _activityStore.replaceStarredMessages(const []),
       ]);
       await _refreshMessageStars();
-      await _refreshActivityCounts();
       // Reminders booked with the OS were for the assignments just removed;
       // fetch the list again at the next chance.
       _lastAssignmentRefresh = null;
@@ -4071,7 +3921,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     label: 'スター付き連絡通知', count: data.starredMessages.length),
                 _DataCountTile(
                     label: '新着情報・期限・予定', count: data.deadlines.length),
-                _DataCountTile(label: '変更履歴', count: data.changes.length),
                 _DataCountTile(
                     label: '保存済み課題一覧', count: data.reportLists.length),
               ],
@@ -4100,6 +3949,114 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+  }
+
+  Future<void> _checkForUpdatesAfterInitialPage() async {
+    try {
+      await _initialPageLoaded;
+    } catch (_) {
+      // The initial page load reports its own errors.
+    }
+    if (!mounted) return;
+    await _checkForUpdatesInBackground();
+  }
+
+  Future<void> _checkForUpdatesInBackground() async {
+    final now = DateTime.now();
+    if (!mounted ||
+        !_appSettingsLoaded ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
+        _isCheckingUpdateInBackground ||
+        (_nextUpdateCheckAt?.isAfter(now) ?? false)) {
+      return;
+    }
+    _isCheckingUpdateInBackground = true;
+    final previouslyAvailable = _availableUpdate;
+    try {
+      final prefs = await _localPrefsStore.load();
+      if (!mounted) return;
+      if (!isUpdateCheckDue(prefs?.lastUpdateCheckAt, now)) {
+        _nextUpdateCheckAt =
+            prefs!.lastUpdateCheckAt!.add(appUpdateCheckInterval);
+        return;
+      }
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      final info = await _updateService.checkLatestRelease(
+        currentVersion: packageInfo.version,
+      );
+      if (!mounted) return;
+      if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
+          (previouslyAvailable != null &&
+              _availableUpdate != previouslyAvailable)) {
+        return;
+      }
+      if (shouldNotifyAboutUpdate(
+        info,
+        platform: defaultTargetPlatform,
+        dismissedVersion: prefs?.dismissedUpdateVersion,
+      )) {
+        setState(() => _availableUpdate = info);
+      } else {
+        if (_availableUpdate != null) {
+          setState(() => _availableUpdate = null);
+        }
+        await _localPrefsStore.saveUpdateCheck(checkedAt: now);
+        if (!mounted) return;
+      }
+      _nextUpdateCheckAt = now.add(appUpdateCheckInterval);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to check for application updates in background',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _nextUpdateCheckAt = now.add(const Duration(hours: 1));
+    } finally {
+      _isCheckingUpdateInBackground = false;
+    }
+  }
+
+  Future<void> _dismissUpdateNotice() async {
+    final info = _availableUpdate;
+    if (info == null) return;
+    setState(() => _availableUpdate = null);
+    try {
+      await _localPrefsStore.saveUpdateCheck(
+        checkedAt: DateTime.now(),
+        dismissedVersion: info.latestVersion,
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to save dismissed update notice',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _openUpdateReleasePage() async {
+    final info = _availableUpdate;
+    if (info == null) return;
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(info.releaseUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to open update release page',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    if (mounted && !launched) {
+      _showSnackBar('リリースページを開けませんでした');
+    }
   }
 
   Future<void> _checkForUpdates() async {
@@ -4219,7 +4176,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _showSnackBar('バックアップを保存しました: $destination');
     } on Object catch (error, stackTrace) {
       if (error is PlatformException && isCancelledDownloadError(error)) {
-        _showSnackBar('バックアップの保存をキャンセルしました（アプリ内には作成済みです）');
+        _showSnackBar('バックアップの保存をキャンセルしました。アプリ内には作成済みです');
         return;
       }
       developer.log(
@@ -4333,7 +4290,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               content: SizedBox(
                 width: 520,
                 child: favorites.isEmpty
-                    ? const Text('ページ操作から現在のページを追加できます。')
+                    ? const Text('メニューの「お気に入りに追加」で、開いているページを追加できます。')
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: favorites.length,
@@ -4403,7 +4360,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       case _ToolbarAction.reload:
         if (_calendarOperationGate.isRunning) {
-          _showSnackBar('カレンダー連携または再検出の完了後に再読込してください');
+          _showSnackBar('カレンダー連携または再検出の完了後に再読み込みしてください');
           return;
         }
         _beginNavigation();
@@ -4717,7 +4674,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         stackTrace: stackTrace,
       );
       if (navigationRevision == _navigationRevision) {
-        _setStatus('読込エラー: $error');
+        _setStatus('読み込みエラー: $error');
       }
     }
   }
@@ -4966,151 +4923,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return false;
   }
 
-  Future<void> _refreshActivityCounts() async {
-    try {
-      final deadlines = await _activityStore.loadDeadlines();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _deadlineCount = deadlines.length;
-      });
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to refresh activity counts',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
-  Future<_ActivityScanResult?> _scanCurrentActionablePageActivity() async {
-    final url = await _currentActionableUrl();
-    if (url == null) {
-      return null;
-    }
-    return _scanCurrentPageActivity(url);
-  }
-
-  Future<_ActivityScanResult?> _rescanActivityForBell() async {
-    if (!_tryStartPageNavigationOperation()) {
-      _showSnackBar('カレンダー連携または再検出を処理中です');
-      return null;
-    }
-    String? originalUrl;
-    try {
-      originalUrl = await _currentActionableUrl();
-      var combinedResult = await _scanCurrentActionablePageActivity();
-      if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
-        return combinedResult;
-      }
-
-      final currentUrl = (await _currentActionableUrl())?.toLowerCase() ?? '';
-      if (!currentUrl.contains('report') && !currentUrl.contains('enq')) {
-        combinedResult = _mergeActivityScanResults(
-          combinedResult,
-          await _scanQuickJumpPageForBell(
-            label: 'レポート',
-          ),
-        );
-      }
-
-      final isMessagePage = currentUrl.contains('tabid=kj') ||
-          currentUrl.contains('keiji') ||
-          currentUrl.contains('message');
-      if (!isMessagePage) {
-        combinedResult = _mergeActivityScanResults(
-          combinedResult,
-          await _scanQuickJumpPageForBell(
-            label: '連絡通知',
-          ),
-        );
-      }
-
-      return combinedResult;
-    } finally {
-      try {
-        await _restorePageAfterBellScan(originalUrl);
-      } finally {
-        await _finishPageNavigationOperation();
-      }
-    }
-  }
-
-  Future<void> _restorePageAfterBellScan(String? originalUrl) async {
-    if (!mounted ||
-        originalUrl == null ||
-        !AllowedWebOrigins.canLoad(originalUrl, debugAllowed: _debugAllowed)) {
-      return;
-    }
-    final currentUrl = await _currentActionableUrl();
-    if (currentUrl == originalUrl) {
-      return;
-    }
-    final pageFinished = _waitForNextPageFinished(
-      timeout: const Duration(seconds: 8),
-    );
-    await _loadAllowedPageUrl(
-      originalUrl,
-      ownsPageNavigationOperation: true,
-    );
-    await pageFinished;
-  }
-
-  Future<_ActivityScanResult?> _scanQuickJumpPageForBell({
-    required String label,
-  }) async {
-    final finished = _waitForNextPageFinished();
-    final jumped = await _quickJumpTo(
-      label,
-      ownsPageNavigationOperation: true,
-    );
-    if (!jumped) {
-      return null;
-    }
-
-    await finished;
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    final nextUrl = await _currentActionableUrl();
-    if (nextUrl == null) {
-      return null;
-    }
-    return _scanCurrentPageActivity(nextUrl);
-  }
-
-  _ActivityScanResult? _mergeActivityScanResults(
-    _ActivityScanResult? a,
-    _ActivityScanResult? b,
-  ) {
-    if (a == null) {
-      return b;
-    }
-    if (b == null) {
-      return a;
-    }
-    return _ActivityScanResult(
-      updateCount: a.updateCount + b.updateCount,
-      deadlineCount: a.deadlineCount + b.deadlineCount,
-    );
-  }
-
-  Future<_ActivityScanResult?> _scanCurrentPageActivity(String url) async {
-    final shouldRecordActivity =
-        _appSettings.isFeatureEnabled(GakujoFeatureFlag.activityScan);
-    final shouldScanDeadlines =
-        _appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan);
-    final shouldCacheReports =
-        _appSettings.isFeatureEnabled(GakujoFeatureFlag.reportListCache);
-    if (!shouldReadPageForActivityFeatures(_appSettings)) {
-      return null;
-    }
+  Future<void> _scanCurrentPageActivity(String url) async {
     if (!AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
-      return null;
+      return;
     }
     final result = await _readPageTextForActivity();
     if (result == null) {
-      return null;
+      return;
     }
 
     final category = GakujoActivityClassifier.categoryFor(
@@ -5124,23 +4943,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       text: result.text,
       category: category,
     );
-    final content = GakujoActivityClassifier.stableContentFor(
-      url: url,
-      title: result.title,
-      text: result.text,
-      category: category,
-    );
-    GakujoActivitySnapshot? snapshot;
-    if (shouldRecordActivity && content.trim().isNotEmpty) {
-      snapshot = await _activityStore.recordSnapshot(
-        category: category,
-        title: title,
-        url: url,
-        content: content,
-      );
-    }
-    var newDeadlineCount = 0;
-    if (shouldScanDeadlines) {
+    {
       final assignments = [
         for (final row in result.reportItems)
           ?GakujoAssignment.fromReportRow(
@@ -5165,13 +4968,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         messageItems: result.messageItems,
         assignments: assignments,
       );
-      final newDeadlines = await _activityStore.mergeDeadlines(
+      await _activityStore.mergeDeadlines(
         extractedDeadlines,
       );
-      newDeadlineCount = newDeadlines.length;
       await _notifyPendingDeadlines();
     }
-    if (category == 'レポート・小テスト' && shouldCacheReports) {
+    if (category == 'レポート・小テスト') {
       final capturedAt = DateTime.now();
       // Parsed rows read better than page lines, which include tab labels,
       // sort buttons and table headers.
@@ -5198,11 +5000,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ),
       );
     }
-    await _refreshActivityCounts();
-    return _ActivityScanResult(
-      updateCount: snapshot?.hasUpdate == true ? 1 : 0,
-      deadlineCount: newDeadlineCount,
-    );
   }
 
   Future<_PageTextSnapshot?> _readPageTextForActivity() async {
@@ -5462,8 +5259,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool allowPermissionRequest = true,
   }) async {
     if (!_canRunPageScripts ||
-        _calendarOperationGate.isRunning ||
-        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineScan)) {
+        _calendarOperationGate.isRunning) {
       return;
     }
     final now = DateTime.now();
@@ -5560,21 +5356,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               item is Map ? item['url']?.toString() ?? '' : ''),
       ],
     );
-  }
-
-  Future<List<String>> _knownAssignmentCourses() async {
-    try {
-      final assignments = await _activityStore.loadAssignments();
-      return {
-        for (final assignment in assignments)
-          if (assignment.course.trim().isNotEmpty) assignment.course.trim(),
-        // Keep a muted course listed so it can be turned back on.
-        ..._appSettings.notificationPreferences.mutedCourses,
-      }.toList()
-        ..sort();
-    } on Object {
-      return const [];
-    }
   }
 
   Future<void> _syncReminders({bool allowPermissionRequest = true}) {
@@ -5707,11 +5488,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _pendingLoginRestoreUrl = recoveryUrl;
       _loginRestoreAttempted = false;
     }
-    if (!_appSettings.isFeatureEnabled(
-      GakujoFeatureFlag.sessionRecoveryGuide,
-    )) {
-      return;
-    }
     _setStatus('ログインが切れた可能性があります: ${_displayUrl(url)}');
     if (!mounted ||
         recoveryUrl == null ||
@@ -5743,14 +5519,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return AllowedWebOrigins.isLoginOrTimeoutPage(url);
   }
 
-  Future<void> _exportSettingsToClipboard() async {
-    final payload = await _backupPayload(includeStarredMessages: false);
-    await Clipboard.setData(
-      ClipboardData(text: const JsonEncoder.withIndent('  ').convert(payload)),
-    );
-    _showSnackBar('設定をクリップボードにコピーしました');
-  }
-
   Future<Map<String, Object?>> _backupPayload({bool includeStarredMessages = true}) => _backupOperations.run(
         () => readGakujoBackupPayload(
           currentSettings: () => _settingsForPersistence(_appSettings),
@@ -5766,28 +5534,70 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return File(_joinLocalPath(directory.path, 'drive_downloads_enabled'));
   }
 
-  Future<String> _signInGoogle() => _driveDownloadQueue.runExclusive(() async {
-    final email = await _starSyncGoogleAuth.signIn();
+  void _cancelGoogleSignIn() {
+    _googleCancelGeneration++;
+    _starSyncGoogleAuth.cancelPendingSignIn();
+  }
+
+  Future<String> _signInGoogle({bool enablingDriveSaving = false}) {
+    final cancelGeneration = _googleCancelGeneration;
+    return _driveDownloadQueue.runExclusive(() async {
+    if (cancelGeneration != _googleCancelGeneration) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+    }
+    final config = _starSyncEngine.config;
+    // Re-login must not lose the Drive permission that saving relies on.
+    final email = await _starSyncGoogleAuth.signIn(
+      optionalScopes: enablingDriveSaving || _driveDownloadPreference.enabled
+          ? const [googleDriveFileScope]
+          : const [],
+      loginHint: config?.googleEmail,
+    );
+    if (config != null &&
+        !sameGoogleAccount(config.googleEmail, email)) {
+      try {
+        await _starSyncGoogleAuth.signOut();
+      } finally {
+        _starSyncGoogleEmail = null;
+        final expected = config.googleEmail;
+        if (mounted) {
+          _showSnackBar(expected == null
+              ? 'この同期の設定には Google アカウントの情報がありません。同期を無効にしてから、もう一度設定してください'
+              : 'この同期は $expected で設定されています。同じアカウントでログインするか、同期を無効にしてから設定し直してください');
+        }
+      }
+      throw StateError('Google account does not match sync binding');
+    }
     if (_driveDownloadPreference.enabled &&
         _driveDownloadPreference.boundGoogleEmail != email) {
       _driveDownloadsSuspended = true;
       _cancelDriveUploads();
       await _driveDownloadPreference.save(false, null);
       if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-    }
-    final config = _starSyncEngine.config;
-    if (config?.backend == StarSyncBackend.googleDrive &&
-        config?.googleEmail != email) {
+    } else if (!enablingDriveSaving && _driveDownloadPreference.enabled) {
+      // Only a confirmed refusal turns saving off; a failed check must not undo the sign-in.
+      var granted = true;
       try {
-        await _starSyncGoogleAuth.signOut();
-      } finally {
-        _starSyncGoogleEmail = null;
-        if (mounted) _showSnackBar('同期を設定した Google アカウントでログインしてください');
+        granted = await _starSyncGoogleAuth.hasScope(googleDriveFileScope);
+      } on Object catch (error) {
+        if (Platform.isAndroid && error is StarSyncGoogleAuthException &&
+            error.kind == StarSyncGoogleAuthErrorKind.notSignedIn &&
+            _starSyncGoogleAuth.currentEmail == null) {
+          rethrow;
+        }
+        developer.log('Failed to check the Drive permission: ${error.runtimeType}',
+            name: 'MoreBetterGakujo');
       }
-      throw StateError('Google account does not match sync binding');
+      if (!granted) {
+        _driveDownloadsSuspended = true;
+        _cancelDriveUploads();
+        await _driveDownloadPreference.save(false, null);
+        if (mounted) _showSnackBar('Google ドライブへの保存の権限がなくなったため、保存をオフにしました。必要ならもう一度オンにしてください');
+      }
     }
     return email;
-  });
+    });
+  }
 
   Future<bool> _signOutGoogle({bool warn = true}) async {
     if (warn) {
@@ -5820,41 +5630,63 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _loadDriveDownloadsPreference() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadPreference.load(await _driveDownloadsPreferenceFile());
-      if (_driveDownloadPreference.enabled) {
-        _starSyncGoogleEmail = await _driveDownloadQueue.run(
-          _starSyncGoogleAuth.restore,
-        );
-      }
-      if (_driveDownloadPreference.enabled &&
-          _starSyncGoogleAuth.currentEmail != null &&
-          _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
-        _driveDownloadsSuspended = true;
-        _cancelDriveUploads();
-        await _driveDownloadPreference.save(false, null);
-        if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
-      }
-      if (mounted) setState(() {});
+      await _restoreDriveDownloadsAccount();
     } on Object catch (error) {
       developer.log('Failed to load Drive download preference: ${error.runtimeType}',
           name: 'MoreBetterGakujo');
     }
   }
 
+  Future<void> _restoreDriveDownloadsAccount() async {
+    if (_driveDownloadPreference.enabled) {
+      _starSyncGoogleEmail = await _driveDownloadQueue.run(
+        () => _starSyncGoogleAuth.restore(
+          expectedEmail: _driveDownloadPreference.boundGoogleEmail,
+        ),
+      );
+    }
+    if (_driveDownloadPreference.enabled &&
+        _starSyncGoogleAuth.currentEmail != null &&
+        _driveDownloadPreference.boundGoogleEmail != _starSyncGoogleAuth.currentEmail) {
+      _driveDownloadsSuspended = true;
+      _cancelDriveUploads();
+      await _driveDownloadPreference.save(false, null);
+      if (mounted) _showSnackBar('Google アカウントが変わったため、Google ドライブへの保存を停止しました。もう一度オンにしてください');
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// The warning is a courtesy; it must never keep the switch from working.
+  Future<void> _warnPendingDriveChecksBestEffort() async {
+    try {
+      await _warnPendingDriveChecks();
+    } on Object catch (error) {
+      developer.log('Failed to check saved Drive files: ${error.runtimeType}',
+          name: 'MoreBetterGakujo');
+    }
+  }
+
   Future<void> _warnPendingDriveChecks() async {
+    if (!_secureStorageAccessAllowed) return;
     if (await GoogleDriveFileSaver.pendingCheckCount() == 0 || !mounted) return;
     final check = await showPendingDriveCheckConfirmation(context);
     if (check == true) await _retryPendingDriveChecksAtStartup();
   }
 
   Future<void> _retryPendingDriveChecksAtStartup() async {
+    if (!_secureStorageAccessAllowed) return;
     try {
       await _driveDownloadsLoad;
       await _driveDownloadQueue.run(() async {
         if (await GoogleDriveFileSaver.pendingCheckCount() == 0) return;
         final email = _starSyncGoogleAuth.currentEmail ??
-            await _starSyncGoogleAuth.restore();
+            await _starSyncGoogleAuth.restore(
+              expectedEmail: _driveDownloadPreference.boundGoogleEmail ??
+                  _starSyncEngine.config?.googleEmail,
+            );
         if (email == null ||
             !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
           return;
@@ -5892,7 +5724,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _setDriveDownloadsEnabled(bool enabled) async {
+  Future<void> _setDriveDownloadsEnabled(bool enabled, {bool byStudentSwitch = false}) async {
+    try {
+      await _applyDriveDownloadsEnabled(enabled, byStudentSwitch: byStudentSwitch);
+    } on Object catch (error) {
+      // A refused or cancelled attempt must not keep what may be the wrong
+      // account: with the switch off there would be no other way to change it.
+      if (!(Platform.isAndroid && error is StarSyncGoogleAuthException &&
+              error.kind == StarSyncGoogleAuthErrorKind.network) &&
+          enabled && byStudentSwitch && !_driveDownloadPreference.enabled &&
+          _starSyncEngine.config == null &&
+          _starSyncGoogleAuth.currentEmail != null) {
+        try {
+          await _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
+        } on Object catch (error) {
+          developer.log('Failed to sign out of Google: ${error.runtimeType}',
+              name: 'MoreBetterGakujo');
+        }
+        _starSyncGoogleEmail = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _applyDriveDownloadsEnabled(bool enabled, {required bool byStudentSwitch}) async {
+    final cancelGeneration = _googleCancelGeneration;
+    void checkCancelled() {
+      if (enabled && cancelGeneration != _googleCancelGeneration) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+      }
+    }
+
     if (!enabled) {
       _driveDownloadsSuspended = true;
       _cancelDriveUploads();
@@ -5900,7 +5762,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final generation = _driveUploads.generation;
     await _driveDownloadsLoad;
+    checkCancelled();
     return _driveDownloadQueue.runExclusive(() async {
+      checkCancelled();
       if (enabled) {
         final account = _driveAccountHash;
         if (account == null) throw const StarSyncAccountRequiredException();
@@ -5910,8 +5774,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (mounted) _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
           return;
         }
-        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
-        _starSyncGoogleEmail ??= await _signInGoogle();
+        // A revoked token clears the auth state; a cached email must not skip sign-in.
+        if (_starSyncGoogleAuth.currentEmail == null) _starSyncGoogleEmail = null;
+        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore(
+          expectedEmail: _starSyncEngine.config?.googleEmail ??
+              _driveDownloadPreference.boundGoogleEmail,
+        );
+        checkCancelled();
+        _starSyncGoogleEmail ??= await _signInGoogle(enablingDriveSaving: true);
         final currentEmail = _starSyncGoogleAuth.currentEmail;
         if (_driveDownloadPreference.enabled &&
             _driveDownloadPreference.boundGoogleEmail != currentEmail) {
@@ -5922,19 +5792,41 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (mounted) setState(() {});
           return;
         }
+        checkCancelled();
         await _starSyncGoogleAuth.requestScopes([googleDriveFileScope]);
         if (!await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
-          throw StateError('Google Drive permission was not granted');
+          throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.permissionDenied);
         }
+        // Stored scopes say nothing about a grant revoked elsewhere; refreshing does.
+        await _starSyncGoogleAuth.accessToken(forceRefresh: true);
         if (!_driveUploads.isCurrent(generation) || _driveAccountHash != account) return;
         final email = _starSyncGoogleAuth.currentEmail;
         if (email == null || email != _starSyncGoogleEmail) return;
+        checkCancelled();
         await _driveDownloadPreference.save(true, account, email);
+        if (cancelGeneration != _googleCancelGeneration) {
+          await _driveDownloadPreference.save(false, null);
+          throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+        }
         if (_driveUploads.isCurrent(generation) && _driveAccountHash == account) {
           _driveDownloadsSuspended = false;
         }
       } else {
         await _driveDownloadPreference.save(false, null);
+        // With no sync tied to this account, turning saving off is the way to
+        // change it; staying signed in would bring the same account back.
+        if (_starSyncEngine.config == null &&
+            byStudentSwitch &&
+            _starSyncGoogleAuth.currentEmail != null) {
+          try {
+            await _starSyncGoogleAuth.signOut();
+          } on Object catch (error) {
+            developer.log('Failed to sign out of Google: ${error.runtimeType}',
+                name: 'MoreBetterGakujo');
+            if (mounted) _showSnackBar(googleRevocationUnconfirmedMessage);
+          }
+          _starSyncGoogleEmail = null;
+        }
       }
       if (mounted) setState(() {});
     });
@@ -5972,9 +5864,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _importSettingsFromClipboard() =>
-      _importSettings(_restoreSettingsFromClipboard);
-
   Future<void> _importSettingsFromFile() =>
       _importSettings(_restoreSettingsFromFile);
 
@@ -5991,14 +5880,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     } finally {
       _isImportingSettings = false;
     }
-  }
-
-  Future<void> _restoreSettingsFromClipboard() async {
-    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-    await _restoreSettingsFromText(
-      text ?? '',
-      emptyMessage: 'クリップボードに設定JSONがありません',
-    );
   }
 
   Future<void> _restoreSettingsFromFile() async {
@@ -6193,9 +6074,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       late GakujoAppSettings nextSettings;
       final restoredCollections = restoredSyncCollections(backup, backupKeys);
       await _starSyncEngine.withBulkReplace(() => _settingsOperations.runExclusive(() async {
-        final restoredFlags = fromSyncStorage
-            ? syncRestoreFeatureFlags(backup.disabledFeatureFlags, _appSettings.disabledFeatureFlags)
-            : backup.disabledFeatureFlags;
         final restoreBackup = GakujoBackupImport(
           version: backup.version,
           downloadSaveMode: backup.downloadSaveMode,
@@ -6206,7 +6084,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           notificationTopics: backup.notificationTopics,
           messageNotification: restoredMessageNotification(backup, backupKeys),
           notificationPreferences: backup.notificationPreferences,
-          disabledFeatureFlags: restoredFlags,
+          disabledFeatureFlags: backup.disabledFeatureFlags,
           downloadHistory: backup.downloadHistory,
           failedDownloads: backup.failedDownloads,
           favorites: backup.favorites,
@@ -6215,7 +6093,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               : backup.starredMessages,
           deadlines: backup.deadlines,
           notifiedDeadlineKeys: backup.notifiedDeadlineKeys,
-          changes: backup.changes,
           reportLists: backup.reportLists,
         );
         await restoreGakujoBackup(
@@ -6230,7 +6107,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         nextSettings = _appSettings.copyWith(
           downloadSaveMode: backup.downloadSaveMode,
           pageMode: backup.pageMode,
-          disabledFeatureFlags: restoredFlags,
+          disabledFeatureFlags: backup.disabledFeatureFlags,
           setupCompleted: backup.setupCompleted,
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
@@ -6261,17 +6138,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         nextSettings,
       );
       await _injectMessageFilterIfAllowed();
-      await _refreshActivityCounts();
       await _refreshMessageStars();
       if (backup.starredMessages != null) _scheduleStarSync();
       // The imported notification choices decide which reminders to book.
       unawaited(_syncReminders());
       _scheduleAutoBackup();
-      _showSnackBar('設定をインポートしました');
+      _showSnackBar('設定を読み込みました');
     } on BackupRollbackException {
       _showSnackBar('設定の復元に失敗し、一部の変更を元に戻せませんでした。保存先を確認してください');
     } on Object {
-      _showSnackBar('設定のインポートに失敗しました');
+      _showSnackBar('設定の読み込みに失敗しました');
     }
   }
 
@@ -6455,13 +6331,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _injectGpaDisplayIfAllowed() async {
-    if (!_canRunPageScripts ||
-        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)) {
+    if (!_canRunPageScripts) {
       return;
     }
 
     try {
-      await _controller.runJavaScript(GakujoGpaDisplayScript.build());
+      await _controller.runJavaScript(
+        gakujoPageScriptBuilders(_appSettings)['gpa']!(),
+      );
     } catch (error, stackTrace) {
       developer.log(
         'Failed to inject GPA display script',
@@ -6486,14 +6363,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
     }
 
+    unawaited(_injectMessageStars());
+    final builders = gakujoPageScriptBuilders(_appSettings);
+    for (final builder in [
+      builders['report']!,
+      builders['reader']!,
+    ]) {
+      try {
+        await _controller.runJavaScript(builder());
+      } catch (error, stackTrace) {
+        developer.log('Failed to inject page feature',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+
     for (final flag in _originalExtensionFeatureBuilders.keys) {
       if (!_appSettings.isFeatureEnabled(flag)) {
-        continue;
-      }
-      // Stars are read from the keychain first, which can wait on a macOS
-      // access dialog; the scripts after them must not wait too.
-      if (flag == GakujoFeatureFlag.messageStars) {
-        unawaited(_applyFeatureFlagRuntimeState(flag, enabled: true));
         continue;
       }
       await _applyFeatureFlagRuntimeState(flag, enabled: true);
@@ -6504,24 +6389,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
-    if (!enabled && flag == GakujoFeatureFlag.messageStars) {
-      _starSyncEngine.pauseTimers();
-    }
-    if (!enabled && flag == GakujoFeatureFlag.gpaDisplay && mounted) {
-      setState(() {
-        _reportedGpa = null;
-      });
-      unawaited(_localPrefsStore.saveLastGpa(null).catchError(
-        (Object error, StackTrace stackTrace) {
-          developer.log(
-            'Failed to clear last GPA',
-            name: 'MoreBetterGakujo',
-            error: error,
-            stackTrace: stackTrace,
-          );
-        },
-      ));
-    }
     final controller = _controller;
     if (flag == GakujoFeatureFlag.downloadCapture &&
         controller is WindowsGakujoWebViewController) {
@@ -6539,15 +6406,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _injectTwoFactorAutofillIfAllowed();
       return;
     }
-    if (enabled && flag == GakujoFeatureFlag.gpaDisplay) {
-      await _injectGpaDisplayIfAllowed();
-      return;
-    }
-    if (enabled && flag == GakujoFeatureFlag.messageStars) {
-      await _injectMessageStars();
-      return;
-    }
-
     final _PageScriptBuilder? builder;
     if (flag == GakujoFeatureFlag.downloadCapture) {
       builder = enabled
@@ -6583,9 +6441,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final wasEnabled = previousSettings.isFeatureEnabled(flag);
       final isEnabled = nextSettings.isFeatureEnabled(flag);
       if (wasEnabled != isEnabled) {
-        if (flag == GakujoFeatureFlag.messageStars && isEnabled) {
-          unawaited(_syncStarsInBackground());
-        }
         await _applyFeatureFlagRuntimeState(
           flag,
           enabled: isEnabled,
@@ -6974,7 +6829,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _lastAllowedPageUrl = url;
           }
           unawaited(_refreshNavigationState());
-          _setStatus('読込中: ${_displayUrl(url)}');
+          _setStatus('読み込み中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
           final navigationRevision = _navigationRevision;
@@ -7286,6 +7141,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
       await _loadActiveLoginAccount();
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       setState(() {
         _startupPlaceholderFeatureFlags.clear();
         _appSettings = settings;
@@ -7296,9 +7154,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _syncLocalSettingsMirror(settings);
       await _loadDownloadRoot();
       unawaited(_compactStoredData());
-      if (activityBellToolbarButtonEnabled) {
-        unawaited(_refreshActivityCounts());
-      }
       _scheduleAutoBackup();
       // The macOS startup mirror must not read the secure activity store.
       unawaited(_syncReminders());
@@ -7439,7 +7294,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           title: const Text('保存データをリセットしますか'),
           content: const Text(
             '安全な保存領域に保存したログイン情報、2FA秘密鍵、設定、履歴データを削除します。'
-            '削除後はログイン情報と2FA設定を入れ直してください。',
+            '削除後はログイン情報と2FA設定を入力し直してください。',
           ),
           actions: [
             TextButton(
@@ -7464,7 +7319,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
-      await StarSyncClipboardGuard.instance.clear();
       try {
         await _warnPendingDriveChecks();
       } on Object catch (error) {
@@ -7546,12 +7400,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
       _secureStorageAccessAllowed = true;
+      if (Platform.isMacOS) {
+        _driveDownloadsLoad = _loadDriveDownloadsPreference();
+      }
       _startupPlaceholderFeatureFlags.clear();
       setState(() {
         _appSettings = const GakujoAppSettings();
         _appSettingsLoaded = true;
         _reportedGpa = null;
-        _deadlineCount = 0;
       });
       await _applyFeatureFlagRuntimeState(
         GakujoFeatureFlag.downloadCapture,
@@ -7561,7 +7417,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _setStatus('保存データをリセットしました');
       _showSnackBar(revocationUnconfirmed
           ? '保存データをリセットしました。$googleRevocationUnconfirmedMessage'
-          : '保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
+          : '保存データをリセットしました。ログイン情報と2FA設定を入力し直してください');
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to reset secure storage',
@@ -8014,7 +7870,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final labeledLines = lines
         .where(
           (line) => RegExp(
-            r'授業科目名|授業科目|科目名|授業名|講義名|科目\s*[:：]',
+            r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]|\s)|科目\s*[:：])',
           ).hasMatch(line),
         )
         .toList();
@@ -8027,6 +7883,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   bool _isUsefulCourseName(String value) => isUsefulGakujoCourseName(value);
 }
+
+/// Whether [url] is Gakujo's shared downloads tab.
+@visibleForTesting
+bool isGakujoSharedDownloadsUrl(String? url) =>
+    url != null && Uri.tryParse(url)?.queryParameters['tabId'] == 'sd';
 
 /// Whether [value] can name a course folder. Page labels and the titles of
 /// error or notice pages (expired flow, timeout, offline) are not courses;
@@ -8041,6 +7902,7 @@ bool isUsefulGakujoCourseName(String value) {
   }
 
   const genericPageLabels = {
+    'ダウンロード',
     '開設一覧',
     '連絡通知',
     '掲示一覧',
@@ -8060,6 +7922,7 @@ bool isUsefulGakujoCourseName(String value) {
   if (RegExp(
     r'有効期限|タイムアウト|インターネットに接続|接続できません|'
     r'ページを表示できません|webpage not available|ログイン|ログアウト|'
+    r'^now loading|'
     r'^(?:エラー|error)',
   ).hasMatch(lower)) {
     return false;

@@ -1,7 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
@@ -10,8 +8,6 @@ import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
-import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
-import 'package:morebettergakujo_flutter/src/widgets/settings_sections.dart';
 
 void main() {
   test('message JSON round trip retains stable identity and displayed fields',
@@ -78,14 +74,14 @@ void main() {
         (await store.loadStarredMessages()).map((entry) => entry.seqNo), ['2']);
   });
 
-  test('backup export, import and restore retain messages and disabled flag',
+  test('backup export, import and restore retain messages and a disabled flag',
       () async {
     final source = _Storage();
     final activity = GakujoActivityStore(secureStorage: source);
     await activity.upsertStarredMessage(_message(1, body: 'バックアップ本文'));
     final payload = await readGakujoBackupPayload(
       currentSettings: () => const GakujoAppSettings(
-        disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+        disabledFeatureFlags: {GakujoFeatureFlag.uploadCompression},
       ),
       settingsStore: GakujoAppSettingsStore(secureStorage: source),
       historyStore: GakujoDownloadHistoryStore(secureStorage: source),
@@ -108,7 +104,7 @@ void main() {
         (await activity.loadStarredMessages()).single.toJson());
     expect(
         (await targetSettings.load())
-            .isFeatureEnabled(GakujoFeatureFlag.messageStars),
+            .isFeatureEnabled(GakujoFeatureFlag.uploadCompression),
         isFalse);
     // Older v2 backups omit this optional key and must preserve saved stars.
     await restoreGakujoBackup(
@@ -157,70 +153,6 @@ void main() {
         ),
         throwsStateError);
     expect(storage.values, original);
-  });
-
-  test('message stars default on and the macOS settings mirror retains opt out',
-      () async {
-    final storage = _Storage();
-    final settings = GakujoAppSettingsStore(secureStorage: storage);
-    expect(
-        const GakujoAppSettings()
-            .isFeatureEnabled(GakujoFeatureFlag.messageStars),
-        isTrue);
-    expect(
-        (await settings.load())
-            .isFeatureEnabled(GakujoFeatureFlag.messageStars),
-        isTrue);
-    expect(GakujoFeatureFlag.messageStars.label, '連絡通知のスター');
-    expect(GakujoFeatureFlagLabels.fromStorageValue('message_stars'),
-        GakujoFeatureFlag.messageStars);
-    final activity = GakujoActivityStore(secureStorage: storage);
-    await activity.upsertStarredMessage(_message(1));
-    await settings.saveFeatureEnabled(GakujoFeatureFlag.messageStars,
-        enabled: false);
-    expect((await activity.loadStarredMessages()).length, 1);
-    final directory =
-        await Directory.systemTemp.createTemp('message-stars-prefs-');
-    try {
-      final mirror = GakujoLocalPrefsStore(directory: directory);
-      await mirror.saveAppSettings(await settings.load());
-      expect(
-          (await mirror.load())!
-              .appSettings!
-              .isFeatureEnabled(GakujoFeatureFlag.messageStars),
-          isFalse);
-    } finally {
-      await directory.delete(recursive: true);
-    }
-  });
-
-  testWidgets('settings exposes the default-on star switch and its description',
-      (tester) async {
-    GakujoFeatureFlag? changedFlag;
-    bool? enabled;
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-      body: SingleChildScrollView(
-          child: FeatureFlagsSection(
-        settings: const GakujoAppSettings(),
-        onChanged: (flag, value) {
-          changedFlag = flag;
-          enabled = value;
-        },
-      )),
-    )));
-    final label = find.text('連絡通知のスター');
-    expect(label, findsOneWidget);
-    expect(find.text('連絡通知にスターを付け、保存した内容をあとから参照できます。'), findsOneWidget);
-    final tile = tester.widget<CheckboxListTile>(find.ancestor(
-      of: label,
-      matching: find.byType(CheckboxListTile),
-    ));
-    expect(tile.value, isTrue);
-    await tester.ensureVisible(label);
-    await tester.tap(label);
-    expect(changedFlag, GakujoFeatureFlag.messageStars);
-    expect(enabled, isFalse);
   });
 }
 

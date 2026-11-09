@@ -2,41 +2,13 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart' as hashes;
 import 'package:cryptography/cryptography.dart';
 
-import '../base32.dart';
 import 'star_sync_document.dart';
 export 'star_sync_document.dart' show StarSyncFormatException;
 
-class StarSyncWrongPassphraseException implements Exception {
-  const StarSyncWrongPassphraseException();
-}
-
 class StarSyncDecryptException implements Exception {
   const StarSyncDecryptException();
-}
-
-class StarSyncKdfParams {
-  const StarSyncKdfParams({
-    this.memoryKiB = 19456,
-    this.iterations = 2,
-    this.parallelism = 1,
-  });
-  final int memoryKiB;
-  final int iterations;
-  final int parallelism;
-
-  void _validate() {
-    if (memoryKiB > 65536 ||
-        iterations > 10 ||
-        parallelism > 4 ||
-        parallelism < 1 ||
-        iterations < 1 ||
-        memoryKiB < 8 * parallelism) {
-      throw const StarSyncFormatException('Invalid KDF parameters');
-    }
-  }
 }
 
 String _encode(List<int> bytes) => base64Encode(bytes);
@@ -70,96 +42,40 @@ bool _validKeyId(String value) {
 }
 
 class StarSyncKeyring {
-  StarSyncKeyring({
-    required this.keyId,
-    required this.params,
-    required List<int> salt,
-    required List<int> nonce,
-    required List<int> wrappedKey,
-  }) : mode = 'passphrase',
-       salt = List.unmodifiable(salt),
-       nonce = List.unmodifiable(nonce),
-       wrappedKey = List.unmodifiable(wrappedKey);
+  StarSyncKeyring._legacy({required this.keyId, required this.mode})
+    : dataKey = const [];
 
-  StarSyncKeyring.pairing({required this.keyId})
-    : mode = 'pairing',
-      params = const StarSyncKdfParams(),
-      salt = const [],
-      nonce = const [],
-      wrappedKey = const [];
+  StarSyncKeyring.drive({required this.keyId, required List<int> dataKey})
+    : mode = 'drive', dataKey = List.unmodifiable(dataKey);
 
   static const int schema = 1;
   final String mode;
   final String keyId;
-  final StarSyncKdfParams params;
-  final List<int> salt;
-  final List<int> nonce;
-  final List<int> wrappedKey;
+  final List<int> dataKey;
 
   Map<String, Object?> toJson() => {
     'schema': schema,
     'keyId': keyId,
     'mode': mode,
-    if (mode == 'passphrase')
-      'kdf': {
-        'name': 'argon2id',
-        'memoryKiB': params.memoryKiB,
-        'iterations': params.iterations,
-        'parallelism': params.parallelism,
-      },
-    if (mode == 'passphrase') 'salt': _encode(salt),
-    if (mode == 'passphrase') 'nonce': _encode(nonce),
-    if (mode == 'passphrase') 'wrappedKey': _encode(wrappedKey),
+    if (mode == 'drive') 'dataKey': _encode(dataKey),
   };
 
   static StarSyncKeyring fromJson(Object? value) {
-    if (value is! Map ||
-        value['schema'] != schema ||
-        value['keyId'] is! String ||
-        !_validKeyId(value['keyId'] as String)) {
+    if (value is! Map || value['schema'] != schema ||
+        value['keyId'] is! String || !_validKeyId(value['keyId'] as String)) {
       throw const StarSyncFormatException();
     }
     final mode = value.containsKey('mode') ? value['mode'] : 'passphrase';
-    if (mode == 'pairing') {
-      if (value.length != 3) throw const StarSyncFormatException();
-      return StarSyncKeyring.pairing(keyId: value['keyId'] as String);
+    if (mode is String && mode != 'drive') {
+      return StarSyncKeyring._legacy(keyId: value['keyId'] as String, mode: mode);
     }
-    if (mode != 'passphrase' ||
-        value['kdf'] is! Map ||
-        value.keys.any(
-          (key) => !{
-            'schema',
-            'keyId',
-            'mode',
-            'kdf',
-            'salt',
-            'nonce',
-            'wrappedKey',
-          }.contains(key),
-        )) {
-      throw const StarSyncFormatException();
+    if (mode == 'drive' && value.length == 4) {
+      return StarSyncKeyring.drive(
+        keyId: value['keyId'] as String,
+        dataKey: _decode(value['dataKey'], 32),
+      );
     }
-    final kdf = value['kdf'] as Map;
-    if (kdf.length != 4 ||
-        kdf['name'] != 'argon2id' ||
-        kdf['memoryKiB'] is! int ||
-        kdf['iterations'] is! int ||
-        kdf['parallelism'] is! int) {
-      throw const StarSyncFormatException();
-    }
-    final params = StarSyncKdfParams(
-      memoryKiB: kdf['memoryKiB'] as int,
-      iterations: kdf['iterations'] as int,
-      parallelism: kdf['parallelism'] as int,
-    );
-    params._validate();
-    return StarSyncKeyring(
-      keyId: value['keyId'] as String,
-      params: params,
-      salt: _decode(value['salt'], 16),
-      nonce: _decode(value['nonce'], 12),
-      wrappedKey: _decode(value['wrappedKey'], 48),
-    );
+    throw const StarSyncFormatException();
   }
 }
 
@@ -168,167 +84,12 @@ List<int> _randomBytes(int length) {
   return List<int>.generate(length, (_) => random.nextInt(256));
 }
 
-({StarSyncKeyring keyring, List<int> dataKey}) createStarSyncPairingKeyring() {
+({StarSyncKeyring keyring, List<int> dataKey}) createStarSyncDriveKeyring() {
+  final dataKey = _randomBytes(32);
   return (
-    keyring: StarSyncKeyring.pairing(keyId: _keyId(_randomBytes(16))),
-    dataKey: _randomBytes(32),
+    keyring: StarSyncKeyring.drive(keyId: _keyId(_randomBytes(16)), dataKey: dataKey),
+    dataKey: dataKey,
   );
-}
-
-String _encodeBase32(List<int> bytes) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  var buffer = 0;
-  var bits = 0;
-  final result = StringBuffer();
-  for (final byte in bytes) {
-    buffer = (buffer << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      result.write(alphabet[(buffer >> bits) & 31]);
-    }
-    buffer &= (1 << bits) - 1;
-  }
-  if (bits > 0) result.write(alphabet[(buffer << (5 - bits)) & 31]);
-  return result.toString();
-}
-
-String encodeStarSyncPairingCode(String keyId, List<int> dataKey) {
-  if (!_validKeyId(keyId) ||
-      dataKey.length != 32 ||
-      dataKey.any((byte) => byte < 0 || byte > 255)) {
-    throw const StarSyncFormatException();
-  }
-  final payload = <int>[
-    ...ascii.encode('MBGP'),
-    1,
-    ...base64Url.decode(base64Url.normalize(keyId)),
-    ...dataKey,
-  ];
-  final encoded = _encodeBase32([
-    ...payload,
-    ...hashes.sha256.convert(payload).bytes.take(2),
-  ]);
-  return [
-    for (var i = 0; i < encoded.length; i += 4)
-      encoded.substring(i, min(i + 4, encoded.length)),
-  ].join('-');
-}
-
-({String keyId, List<int> dataKey}) decodeStarSyncPairingCode(String code) {
-  var normalized = Base32.normalize(code);
-  if (normalized.startsWith('MBGSTAR:')) normalized = normalized.substring(8);
-  try {
-    if (!RegExp(r'^[A-Z2-7]{88}$').hasMatch(normalized)) {
-      throw const StarSyncFormatException();
-    }
-    final bytes = Base32.decode(normalized);
-    if (bytes.length != 55 ||
-        _encodeBase32(bytes) != normalized ||
-        bytes[0] != 77 ||
-        bytes[1] != 66 ||
-        bytes[2] != 71 ||
-        bytes[3] != 80 ||
-        bytes[4] != 1) {
-      throw const StarSyncFormatException();
-    }
-    final digest = hashes.sha256.convert(bytes.sublist(0, 53)).bytes;
-    if (bytes[53] != digest[0] || bytes[54] != digest[1]) {
-      throw const StarSyncFormatException();
-    }
-    return (
-      keyId: _keyId(bytes.sublist(5, 21)),
-      dataKey: bytes.sublist(21, 53),
-    );
-  } on FormatException {
-    throw const StarSyncFormatException();
-  }
-}
-
-Future<SecretKey> _derive(
-  String passphrase,
-  List<int> salt,
-  StarSyncKdfParams params,
-) {
-  params._validate();
-  return Argon2id(
-    memory: params.memoryKiB,
-    iterations: params.iterations,
-    parallelism: params.parallelism,
-    hashLength: 32,
-  ).deriveKey(secretKey: SecretKey(utf8.encode(passphrase)), nonce: salt);
-}
-
-Future<StarSyncKeyring> _wrap(
-  SecretKey dataKey,
-  String keyId,
-  String passphrase,
-  StarSyncKdfParams params,
-) async {
-  final keyBytes = await starSyncKeyBytes(dataKey);
-  final salt = _randomBytes(16);
-  final nonce = _randomBytes(12);
-  final wrappingKey = await _derive(passphrase, salt, params);
-  final box = await AesGcm.with256bits().encrypt(
-    keyBytes,
-    secretKey: wrappingKey,
-    nonce: nonce,
-    aad: utf8.encode('mbg-star-keyring:$keyId'),
-  );
-  return StarSyncKeyring(
-    keyId: keyId,
-    params: params,
-    salt: salt,
-    nonce: nonce,
-    wrappedKey: [...box.cipherText, ...box.mac.bytes],
-  );
-}
-
-Future<({StarSyncKeyring keyring, SecretKey dataKey})> createStarSyncKeyring(
-  String passphrase, {
-  StarSyncKdfParams params = const StarSyncKdfParams(),
-}) async {
-  final dataKey = SecretKey(_randomBytes(32));
-  final keyring = await _wrap(
-    dataKey,
-    _keyId(_randomBytes(16)),
-    passphrase,
-    params,
-  );
-  return (keyring: keyring, dataKey: dataKey);
-}
-
-Future<SecretKey> unwrapStarSyncKeyring(
-  StarSyncKeyring keyring,
-  String passphrase,
-) async {
-  final checked = StarSyncKeyring.fromJson(keyring.toJson());
-  if (checked.mode != 'passphrase') throw StateError('Pairing keyring');
-  final wrappingKey = await _derive(passphrase, checked.salt, checked.params);
-  try {
-    final bytes = await AesGcm.with256bits().decrypt(
-      SecretBox(
-        checked.wrappedKey.sublist(0, 32),
-        nonce: checked.nonce,
-        mac: Mac(checked.wrappedKey.sublist(32)),
-      ),
-      secretKey: wrappingKey,
-      aad: utf8.encode('mbg-star-keyring:${checked.keyId}'),
-    );
-    return starSyncKeyFromBytes(bytes);
-  } on SecretBoxAuthenticationError {
-    throw const StarSyncWrongPassphraseException();
-  }
-}
-
-Future<StarSyncKeyring> rewrapStarSyncKeyring(
-  SecretKey dataKey,
-  StarSyncKeyring old,
-  String newPassphrase, {
-  StarSyncKdfParams? params,
-}) {
-  if (old.mode != 'passphrase') throw StateError('Pairing keyring');
-  return _wrap(dataKey, old.keyId, newPassphrase, params ?? old.params);
 }
 
 Future<List<int>> starSyncKeyBytes(SecretKey key) async {

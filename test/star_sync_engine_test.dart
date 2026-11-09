@@ -22,6 +22,7 @@ class _Storage extends FlutterSecureStorage {
   bool failStarWriteOnce = false;
   bool failStateAfterStarWrite = false;
   String? failWriteKeyOnce;
+  String? failDeleteKey;
   void Function()? onStarRead;
 
   @override
@@ -79,6 +80,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (key == failDeleteKey) throw StateError('delete failed');
     values.remove(key);
   }
 }
@@ -153,6 +155,7 @@ class _Transport implements StarSyncTransport {
   List<int>? overwriteKeyring;
   bool revoked = false;
   bool authFailure = false;
+  StarSyncTransportErrorKind? driveFailure;
   Completer<void>? devicePut;
   void Function(String, int)? onGet;
 
@@ -165,6 +168,13 @@ class _Transport implements StarSyncTransport {
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
     lists++;
+    if (driveFailure != null) {
+      throw StarSyncTransportException(
+        driveFailure!,
+        'Drive rejected request',
+        statusCode: 403,
+      );
+    }
     if (authFailure) {
       throw const StarSyncTransportException(
         StarSyncTransportErrorKind.auth,
@@ -330,8 +340,321 @@ class _Collection extends StarSyncCollection {
 }
 
 void main() {
-  const config = StarSyncConfig(backend: StarSyncBackend.webDav);
-  const kdf = StarSyncKdfParams(memoryKiB: 8, iterations: 1);
+  const config = StarSyncConfig();
+
+  test('identity gap state round-trips and defaults to false', () {
+    final state = StarSyncState(
+      deviceId: 'device',
+      dataKey: 'key',
+      keyId: 'key',
+      identityGapOnly: true,
+    );
+    final json = state.toJson();
+    expect(StarSyncState.fromJson(json).identityGapOnly, isTrue);
+    json.remove('identityGapOnly');
+    expect(StarSyncState.fromJson(json).identityGapOnly, isFalse);
+  });
+
+  for (final scenario in ['account change', 'restart', 'sync while unknown']) {
+    test('identity gap resolves for the same account: $scenario', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      String? account = 'A';
+      StarSyncEngine make() => StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      var engine = make();
+      await engine.setUpWithDrive(config);
+      await engine.syncNow();
+      if (scenario == 'sync while unknown') {
+        account = null;
+        await engine.syncNow();
+      } else {
+        await engine.runAccountChange(() async => account = null);
+      }
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .identityGapOnly,
+        isTrue,
+      );
+      if (scenario == 'restart') {
+        engine.dispose();
+        engine = make();
+        await engine.load();
+      }
+      if (scenario == 'sync while unknown') {
+        account = 'A';
+      } else {
+        await engine.runAccountChange(() async => account = 'A');
+      }
+      final lists = remote.lists;
+      await engine.syncNow();
+      expect(remote.lists, greaterThan(lists));
+      expect(engine.status.value.status, isNot(StarSyncStatus.accountReturned));
+      final state = StarSyncState.fromJson(
+        jsonDecode(storage.values[starSyncStateKey]!),
+      );
+      expect(state.localReviewRequired, isFalse);
+      expect(state.identityGapOnly, isFalse);
+      await activity.upsertStarredMessage(GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'star',
+        starredAt: DateTime.utc(2026),
+      ));
+      final puts = remote.puts;
+      await engine.syncNow();
+      expect(remote.puts, greaterThan(puts));
+      engine.dispose();
+    });
+  }
+
+  for (final scenario in ['notified', 'direct', 'scheduled']) {
+    test('star added during identity gap requires review: $scenario', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      String? account = 'A';
+      final engine = StarSyncEngine(
+        activityStore: activity,
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      await engine.setUpWithDrive(config);
+      await engine.syncNow();
+      await engine.runAccountChange(() async => account = null);
+      if (scenario != 'scheduled') {
+        await activity.upsertStarredMessage(GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'star',
+          starredAt: DateTime.utc(2026),
+        ));
+      }
+      if (scenario == 'notified') {
+        await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      } else if (scenario == 'scheduled') {
+        engine.scheduleSync();
+      }
+      await engine.runAccountChange(() async => account = 'A');
+      final lists = remote.lists;
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(remote.lists, lists);
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .localReviewRequired,
+        isTrue,
+      );
+      engine.dispose();
+    });
+  }
+
+  test('confirmed different account during identity gap requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'B');
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'A');
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .identityGapOnly,
+      isFalse,
+    );
+    engine.dispose();
+  });
+
+  test('failed transition save keeps a different account conservative', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    StarSyncEngine make() => StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    var engine = make();
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async {
+      account = 'B';
+      storage.failWriteKeyOnce = starSyncStateKey;
+    });
+    engine.dispose();
+    account = 'A';
+    engine = make();
+    await engine.load();
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('a failed star read during identity return requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.runAccountChange(() async => account = null);
+    storage.onStarRead = () => throw StateError('star read failed');
+    await engine.runAccountChange(() async => account = 'A');
+    storage.onStarRead = null;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('local change during a running sync invalidates identity gap', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    remote.listStarted = Completer<void>();
+    remote.listRelease = Completer<void>();
+    final started = remote.listStarted!;
+    final release = remote.listRelease!;
+    final running = engine.syncNow();
+    await started.future;
+    account = null;
+    final local = engine.syncNow(trigger: StarSyncTrigger.localChange);
+    release.complete();
+    await running;
+    await local;
+    account = 'A';
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('local change during account transition requires review', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final change = engine.runAccountChange(() async {
+      account = null;
+      started.complete();
+      await release.future;
+    });
+    await started.future;
+    engine.scheduleSync();
+    release.complete();
+    await change;
+    await engine.runAccountChange(() async => account = 'A');
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    engine.dispose();
+  });
+
+  test('pending change before identity gap is uploaded after return', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final activity = GakujoActivityStore(secureStorage: storage);
+    String? account = 'A';
+    var allowed = true;
+    final engine = StarSyncEngine(
+      activityStore: activity,
+      secureStorage: storage,
+      loginId: () => account,
+      canSync: () => allowed,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.syncNow();
+    await activity.upsertStarredMessage(GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: '3',
+      title: 'star',
+      starredAt: DateTime.utc(2026),
+    ));
+    allowed = false;
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .pendingLocalChange,
+      isTrue,
+    );
+    await engine.runAccountChange(() async => account = null);
+    await engine.runAccountChange(() async => account = 'A');
+    allowed = true;
+    final puts = remote.puts;
+    await engine.syncNow();
+    final state = StarSyncState.fromJson(
+      jsonDecode(storage.values[starSyncStateKey]!),
+    );
+    expect(state.localReviewRequired, isFalse);
+    expect(state.pendingLocalChange, isFalse);
+    expect(state.records.containsKey('1|2|3'), isTrue);
+    expect(remote.puts, greaterThan(puts));
+    engine.dispose();
+  });
+
+  test('local change during gap invalidates an earlier pending change', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    String? account = 'A';
+    var allowed = false;
+    final engine = StarSyncEngine(
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      loginId: () => account,
+      canSync: () => allowed,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(config);
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    await engine.runAccountChange(() async => account = null);
+    await engine.syncNow(trigger: StarSyncTrigger.localChange);
+    await engine.runAccountChange(() async => account = 'A');
+    allowed = true;
+    await engine.syncNow();
+    expect(engine.status.value.status, StarSyncStatus.accountReturned);
+    expect(
+      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+          .localReviewRequired,
+      isTrue,
+    );
+    engine.dispose();
+  });
 
   for (final path in ['stars', 'favorites']) {
     test('account change while $path apply waits prevents the write', () async {
@@ -351,12 +674,11 @@ void main() {
         secureStorage: storage,
         transportFactory: (_) => remote,
         collections: [StarSyncFavoritesCollection(activity)],
-        kdfParams: kdf,
       );
       final source = make(sourceStorage, sourceActivity, () => 'student');
       final target = make(targetStorage, targetActivity, () => account);
-      await source.setUp(config, 'pass');
-      await target.setUp(config, 'pass');
+      await source.setUpWithDrive(config);
+      await target.setUpWithDrive(config);
       if (path == 'stars') {
         await sourceActivity.upsertStarredMessage(
           GakujoStarredMessage(
@@ -396,15 +718,12 @@ void main() {
 
   test('failed installation removes both keys and keeps local stars', () async {
     for (final mode in [
-      'passphrase',
-      'passphrase reset',
-      'pairing',
-      'pairing reset',
+      'drive',
+      'drive reset',
       'join',
     ]) {
       for (final failedKey in [starSyncStateKey, starSyncConfigKey]) {
         final remote = _Transport();
-        String? code;
         if (mode == 'join') {
           final firstStorage = _Storage();
           final first = StarSyncEngine(
@@ -413,8 +732,7 @@ void main() {
             secureStorage: firstStorage,
             transportFactory: (_) => remote,
           );
-          await first.setUpWithPairing(config);
-          code = await first.pairingCode();
+          await first.setUpWithDrive(config);
           first.dispose();
         }
         final storage = _Storage();
@@ -434,34 +752,23 @@ void main() {
           activityStore: activity,
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
         );
         storage.failWriteKeyOnce = failedKey;
         final Future<void> setup;
         switch (mode) {
-          case 'passphrase':
-          case 'passphrase reset':
-            setup = engine.setUp(
-              config,
-              'pass',
-              resetExisting: mode == 'passphrase reset',
-              clearLocalStars: await engine.snapshotLocalStars(),
-            );
-          case 'pairing':
-          case 'pairing reset':
+          case 'drive':
+          case 'drive reset':
             setup = engine
-                .setUpWithPairing(
+                .setUpWithDrive(
                   config,
-                  resetExisting: mode == 'pairing reset',
+                  resetExisting: mode == 'drive reset',
                   clearLocalStars: await engine.snapshotLocalStars(),
                 )
                 .then((_) {});
           default:
-            setup = engine.joinWithPairingCode(
-              config,
-              code!,
-              clearLocalStars: await engine.snapshotLocalStars(),
-            );
+            setup = engine.setUpWithDrive(
+              config, clearLocalStars: await engine.snapshotLocalStars(),
+            ).then((_) {});
         }
         await expectLater(setup, throwsStateError);
         expect(engine.status.value.enabled, isFalse);
@@ -476,9 +783,8 @@ void main() {
   });
 
   test('setup clears only the stars captured at the choice', () async {
-    for (final mode in ['passphrase', 'pairing', 'join']) {
+    for (final mode in ['drive', 'join']) {
       final remote = _Transport();
-      String? code;
       if (mode == 'join') {
         final firstStorage = _Storage();
         final first = StarSyncEngine(
@@ -487,8 +793,7 @@ void main() {
           secureStorage: firstStorage,
           transportFactory: (_) => remote,
         );
-        await first.setUpWithPairing(config);
-        code = await first.pairingCode();
+        await first.setUpWithDrive(config);
         first.dispose();
       }
       final storage = _Storage();
@@ -498,7 +803,6 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       GakujoStarredMessage star(String id) => GakujoStarredMessage(
         keijitype: '1',
@@ -512,16 +816,10 @@ void main() {
       expect(snapshot, {'1|2|3': DateTime.utc(2026).toIso8601String()});
       await activity.upsertStarredMessage(star('4'));
       switch (mode) {
-        case 'passphrase':
-          await engine.setUp(config, 'pass', clearLocalStars: snapshot);
-        case 'pairing':
-          await engine.setUpWithPairing(config, clearLocalStars: snapshot);
+        case 'drive':
+          await engine.setUpWithDrive(config, clearLocalStars: snapshot);
         case 'join':
-          await engine.joinWithPairingCode(
-            config,
-            code!,
-            clearLocalStars: snapshot,
-          );
+          await engine.setUpWithDrive(config, clearLocalStars: snapshot);
       }
       expect((await activity.loadStarredMessages()).map((star) => star.seqNo), [
         '4',
@@ -541,7 +839,6 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       GakujoStarredMessage star(DateTime time) => GakujoStarredMessage(
         keijitype: '1',
@@ -554,7 +851,7 @@ void main() {
       final snapshot = await engine.snapshotLocalStars();
       storage.failStateAfterStarWrite = true;
       await expectLater(
-        engine.setUp(config, 'pass', clearLocalStars: snapshot),
+        engine.setUpWithDrive(config, clearLocalStars: snapshot),
         throwsStateError,
       );
       expect(await activity.loadStarredMessages(), isEmpty);
@@ -598,7 +895,6 @@ void main() {
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     await activity.upsertStarredMessage(
       GakujoStarredMessage(
@@ -611,9 +907,7 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUp(
-        config,
-        'pass',
+      engine.setUpWithDrive(config,
         clearLocalStars: await engine.snapshotLocalStars(),
       ),
       throwsStateError,
@@ -668,10 +962,9 @@ void main() {
           factories++;
           return remote;
         },
-        kdfParams: kdf,
       );
       final first = makeEngine();
-      await first.setUp(config, 'pass');
+      await first.setUpWithDrive(config);
       first.dispose();
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
@@ -735,23 +1028,22 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       active = null;
       await expectLater(
-        engine.setUp(config, 'pass'),
+        engine.setUpWithDrive(config),
         throwsA(isA<StarSyncActiveAccountRequiredException>()),
       );
       active = starSyncAccountHash('B');
       await expectLater(
-        engine.setUp(config, 'pass'),
+        engine.setUpWithDrive(config),
         throwsA(isA<StarSyncActiveAccountRequiredException>()),
       );
       expect(remote.lists, 0);
       expect(remote.puts, 0);
       expect(remote.gets, isEmpty);
       active = starSyncAccountHash('A');
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       final lists = remote.lists;
       final puts = remote.puts;
       final gets = Map<String, int>.of(remote.gets);
@@ -788,7 +1080,6 @@ void main() {
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     await activity.upsertStarredMessage(
       GakujoStarredMessage(
@@ -801,9 +1092,7 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUp(
-        config,
-        'pass',
+      engine.setUpWithDrive(config,
         clearLocalStars: await engine.snapshotLocalStars(),
       ),
       throwsStateError,
@@ -828,7 +1117,7 @@ void main() {
   test(
     'setup generation rejects an account that changed and returned',
     () async {
-      for (final pairing in [false, true]) {
+      for (final drive in [false, true]) {
         final storage = _Storage();
         final remote = _Transport();
         var account = 'A';
@@ -837,7 +1126,6 @@ void main() {
           activityStore: GakujoActivityStore(secureStorage: storage),
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
         );
         final expectedAccount = engine.requireAccount();
         final generation = engine.accountGeneration;
@@ -845,20 +1133,18 @@ void main() {
         final release = Completer<void>();
         remote.getStarted = started;
         remote.getRelease = release;
-        final Future<void> setup = pairing
+        final Future<void> setup = drive
             ? engine
-                  .setUpWithPairing(
+                  .setUpWithDrive(
                     config,
                     expectedAccount: expectedAccount,
                     expectedGeneration: generation,
                   )
                   .then((_) {})
-            : engine.setUp(
-                config,
-                'pass',
+            : engine.setUpWithDrive(config,
                 expectedAccount: expectedAccount,
                 expectedGeneration: generation,
-              );
+              ).then((_) {});
         await started.future;
         await engine.runAccountChange(() async => account = 'B');
         await engine.runAccountChange(() async => account = 'A');
@@ -886,9 +1172,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: firstStorage),
       secureStorage: firstStorage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await first.setUp(config, 'pass');
+    await first.setUpWithDrive(config);
     first.dispose();
     var account = 'A';
     final engine = StarSyncEngine(
@@ -896,7 +1181,6 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final expectedAccount = engine.requireAccount();
     final generation = engine.accountGeneration;
@@ -905,12 +1189,10 @@ void main() {
     remote.getStarted = started;
     remote.getRelease = release;
     final puts = remote.puts;
-    final setup = engine.setUp(
-      config,
-      'pass',
+    final setup = engine.setUpWithDrive(config,
       expectedAccount: expectedAccount,
       expectedGeneration: generation,
-    );
+    ).then((_) {});
     await started.future;
     await engine.runAccountChange(() async => account = 'B');
     await engine.runAccountChange(() async => account = 'A');
@@ -931,9 +1213,8 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => _Transport(),
-        kdfParams: kdf,
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       final generation = engine.accountGeneration;
       final boundAccount = engine.requireAccount();
       final started = Completer<void>();
@@ -982,9 +1263,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => _Transport(),
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     final generation = engine.accountGeneration;
     final boundAccount = engine.requireAccount();
     bool current() => engine.isBoundAccountCurrent(
@@ -1011,9 +1291,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     remote.listStarted = Completer<void>();
     remote.listRelease = Completer<void>();
     final started = remote.listStarted!;
@@ -1041,9 +1320,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     remote.listStarted = Completer<void>();
     remote.listRelease = Completer<void>();
     final started = remote.listStarted!;
@@ -1074,9 +1352,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => _Transport(),
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await expectLater(
       engine.runAccountChange(() async {
         account = 'B';
@@ -1100,9 +1377,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     var called = false;
     storage.failWriteKeyOnce = starSyncStateKey;
     await expectLater(
@@ -1133,7 +1409,7 @@ void main() {
   });
 
   test('setup rejects an account changed during sign-in', () async {
-    for (final mode in ['passphrase', 'pairing', 'join']) {
+    for (final mode in ['drive', 'join']) {
       final storage = _Storage();
       final remote = _Transport();
       var account = 'A';
@@ -1143,7 +1419,6 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
@@ -1158,28 +1433,19 @@ void main() {
       account = 'B';
       final Future<void> setup;
       switch (mode) {
-        case 'passphrase':
-          setup = engine.setUp(
-            config,
-            'pass',
-            clearLocalStars: await engine.snapshotLocalStars(),
-            expectedAccount: expectedAccount,
-          );
-        case 'pairing':
+        case 'drive':
           setup = engine
-              .setUpWithPairing(
+              .setUpWithDrive(
                 config,
                 clearLocalStars: await engine.snapshotLocalStars(),
                 expectedAccount: expectedAccount,
               )
               .then((_) {});
         default:
-          setup = engine.joinWithPairingCode(
-            config,
-            'invalid',
-            clearLocalStars: await engine.snapshotLocalStars(),
+          setup = engine.setUpWithDrive(
+            config, clearLocalStars: await engine.snapshotLocalStars(),
             expectedAccount: expectedAccount,
-          );
+          ).then((_) {});
       }
       await expectLater(
         setup,
@@ -1194,7 +1460,7 @@ void main() {
   });
 
   test('setup rechecks account before clearing or installing', () async {
-    for (final pairing in [false, true]) {
+    for (final drive in [false, true]) {
       final remote = _Transport();
       final storage = _Storage();
       final activity = GakujoActivityStore(secureStorage: storage);
@@ -1204,7 +1470,6 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
@@ -1219,15 +1484,13 @@ void main() {
       remote.listRelease = Completer<void>();
       final started = remote.listStarted!;
       final release = remote.listRelease!;
-      final setup = pairing
-          ? engine.setUpWithPairing(
+      final setup = drive
+          ? engine.setUpWithDrive(
               config,
               resetExisting: true,
               clearLocalStars: await engine.snapshotLocalStars(),
             )
-          : engine.setUp(
-              config,
-              'pass',
+          : engine.setUpWithDrive(config,
               resetExisting: true,
               clearLocalStars: await engine.snapshotLocalStars(),
             );
@@ -1246,7 +1509,7 @@ void main() {
     }
   });
 
-  test('pairing join rechecks the account before installation', () async {
+  test('drive join rechecks the account before installation', () async {
     final remote = _Transport();
     final first = _Storage();
     final second = _Storage();
@@ -1256,8 +1519,7 @@ void main() {
       secureStorage: first,
       transportFactory: (_) => remote,
     );
-    await a.setUpWithPairing(config);
-    final code = await a.pairingCode();
+    await a.setUpWithDrive(config);
     var account = 'student';
     final activity = GakujoActivityStore(secureStorage: second);
     await activity.upsertStarredMessage(
@@ -1279,10 +1541,8 @@ void main() {
     remote.listRelease = Completer<void>();
     final started = remote.listStarted!;
     final release = remote.listRelease!;
-    final joining = b.joinWithPairingCode(
-      config,
-      code,
-      clearLocalStars: await b.snapshotLocalStars(),
+    final joining = b.setUpWithDrive(
+      config, clearLocalStars: await b.snapshotLocalStars(),
     );
     await started.future;
     await b.runAccountChange(() async {
@@ -1306,10 +1566,9 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       timerFactory: (_, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     engine.scheduleSync();
     await engine.resetInMemory();
     expect(timer!.isActive, isFalse);
@@ -1331,11 +1590,10 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         now: () => now,
         timerFactory: (_, callback) => timer = _TestTimer(callback),
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       remote.serverFailures = 1;
       await expectLater(
         engine.syncNow(trigger: StarSyncTrigger.localChange),
@@ -1363,7 +1621,6 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     GakujoStarredMessage star(int id) => GakujoStarredMessage(
       keijitype: '1',
@@ -1374,10 +1631,10 @@ void main() {
     );
     final a = make(first);
     final b = make(second);
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     await a.activityStore.upsertStarredMessage(star(0));
     await a.syncNow();
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     await b.activityStore.replaceStarredMessages(
       List.generate(300, (i) => star(i + 1)),
     );
@@ -1409,15 +1666,7 @@ void main() {
         },
       );
       await expectLater(
-        engine.setUp(config, 'passphrase'),
-        throwsA(isA<StarSyncAccountRequiredException>()),
-      );
-      await expectLater(
-        engine.setUpWithPairing(config),
-        throwsA(isA<StarSyncAccountRequiredException>()),
-      );
-      await expectLater(
-        engine.joinWithPairingCode(config, 'invalid'),
+        engine.setUpWithDrive(config),
         throwsA(isA<StarSyncAccountRequiredException>()),
       );
       expect(storage.values, isEmpty);
@@ -1441,9 +1690,8 @@ void main() {
           transports++;
           return remote;
         },
-        kdfParams: kdf,
       );
-      await engine.setUp(config, 'correct horse');
+      await engine.setUpWithDrive(config);
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
           keijitype: '1',
@@ -1473,27 +1721,7 @@ void main() {
           before,
         );
         await expectLater(
-          engine.pairingCode(),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.rejoinWithPairingCode('invalid'),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.rejoin('passphrase'),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.changePassphrase('old', 'new'),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.resetRemote('passphrase'),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.resetRemoteWithPairing(),
+          engine.resetRemoteWithDrive(),
           throwsA(isA<StarSyncAccountMismatchException>()),
         );
       }
@@ -1519,9 +1747,8 @@ void main() {
       secureStorage: storage,
       loginId: () => account,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     final puts = remote.puts;
     final deletes = remote.deletes;
     await engine.runAccountChange(() async {
@@ -1550,12 +1777,11 @@ void main() {
       secureStorage: storage,
       loginId: () => 'A',
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites, settings, drafts, deadlines],
     );
     final snapshot = await engine.snapshotLocalStars();
     favorites.entries!['new'] = 'later';
-    await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+    await engine.setUpWithDrive(config, clearLocalStars: snapshot);
     expect(favorites.entries, {'new': 'later'});
     expect(settings.entries, isEmpty);
     expect(drafts.entries, isEmpty);
@@ -1582,10 +1808,9 @@ void main() {
       secureStorage: storage,
       loginId: () => 'A',
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await engine.setCollectionEnabled('favorites', false);
     final snapshot = await engine.snapshotLocalStars();
     final encoded = snapshot.values.singleWhere(
@@ -1593,7 +1818,7 @@ void main() {
     );
     expect(jsonDecode(encoded)['favorites'], {'old': 'favorite'});
     remote.files.removeWhere((key, _) => key.startsWith('sync/'));
-    await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+    await engine.setUpWithDrive(config, clearLocalStars: snapshot);
     expect(favorites.entries, isEmpty);
     engine.dispose();
   });
@@ -1612,7 +1837,6 @@ void main() {
         secureStorage: storage,
         loginId: () => 'A',
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         now: () => cutoff,
         collections: [drafts],
         clearDraftsBefore: (time) async {
@@ -1627,7 +1851,7 @@ void main() {
       );
       var engine = makeEngine();
       final snapshot = await engine.snapshotLocalStars();
-      await engine.setUp(config, 'pass', clearLocalStars: snapshot);
+      await engine.setUpWithDrive(config, clearLocalStars: snapshot);
       expect(await engine.prepareLocalDrafts(), isFalse);
       expect(
         remote.files.keys.where((key) => key.startsWith('sync/report-drafts/')),
@@ -1667,10 +1891,9 @@ void main() {
       secureStorage: storage,
       loginId: () => account,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites, settings, drafts, deadlines],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await engine.runAccountChange(() async {
       account = 'B';
     });
@@ -1711,7 +1934,6 @@ void main() {
       secureStorage: storage,
       loginId: () => account,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     GakujoStarredMessage star(String title, String body) =>
         GakujoStarredMessage(
@@ -1722,7 +1944,7 @@ void main() {
           body: body,
           starredAt: DateTime.utc(2026),
         );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await activity.upsertStarredMessage(star('A title', 'A body'));
     await engine.syncNow();
     await engine.runAccountChange(() async {
@@ -1750,7 +1972,6 @@ void main() {
       secureStorage: storage,
       loginId: () => account,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     GakujoStarredMessage star(String id, String title, String body) =>
         GakujoStarredMessage(
@@ -1765,7 +1986,7 @@ void main() {
           postedAt: 'posted',
           starredAt: DateTime.utc(2026),
         );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await activity.replaceStarredMessages([
       star('1', 'same', 'original'),
       star('2', 'original', 'original'),
@@ -1806,7 +2027,6 @@ void main() {
         secureStorage: storage,
         loginId: () => account,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       GakujoStarredMessage star(String id) => GakujoStarredMessage(
         keijitype: '1',
@@ -1816,7 +2036,7 @@ void main() {
         starredAt: DateTime.utc(2026),
       );
       var engine = make();
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       await activity.upsertStarredMessage(star('1'));
       await engine.syncNow();
       account = 'B';
@@ -1865,9 +2085,8 @@ void main() {
         transports++;
         return remote;
       },
-      kdfParams: kdf,
     );
-    await make().setUp(config, 'correct horse');
+    await make().setUpWithDrive(config);
     final state =
         jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     state.remove('boundAccount');
@@ -1889,9 +2108,8 @@ void main() {
       secureStorage: storage,
       loginId: () => 'student',
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     final state =
         jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
     final document = StarSyncDocument(
@@ -1920,9 +2138,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     final gets = Map<String, int>.from(remote.gets);
     final puts = remote.puts;
     await engine.syncNow();
@@ -1958,8 +2175,8 @@ void main() {
           return timer = _TestTimer(callback);
         },
       );
-      await engine.setUpWithPairing(
-        const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+      await engine.setUpWithDrive(
+        const StarSyncConfig(),
       );
       await meter.charge(14950);
       final lists = remote.lists;
@@ -2002,8 +2219,8 @@ void main() {
       now: () => now,
       timerFactory: (duration, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUpWithPairing(
-      const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+    await engine.setUpWithDrive(
+      const StarSyncConfig(),
     );
     await meter.charge(14950);
     var builds = 0;
@@ -2034,13 +2251,12 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       now: () => now,
       random: Random(4),
       delay: (duration) async => delays.add(duration),
     );
     var engine = make();
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     var lists = remote.lists;
     await engine.syncNow(trigger: StarSyncTrigger.resume);
     expect(remote.lists, lists);
@@ -2074,11 +2290,10 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         now: () => now,
         delay: (_) async {},
       );
-      await engine.setUp(config, 'correct horse');
+      await engine.setUpWithDrive(config);
       remote.serverFailures = 2;
       await expectLater(
         engine.syncNow(),
@@ -2121,7 +2336,6 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       now: () => now,
       random: Random(3),
       delay: (duration) {
@@ -2129,7 +2343,7 @@ void main() {
         return waiting.future;
       },
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     now = now.add(const Duration(minutes: 2));
     final startup = engine.syncNow(trigger: StarSyncTrigger.startup);
     expect((await entered.future).inMilliseconds, inInclusiveRange(0, 90000));
@@ -2149,16 +2363,14 @@ void main() {
       activityStore: activityA,
       secureStorage: storageA,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       loginId: () => 'student',
       activityStore: activityB,
       secureStorage: storageB,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await a.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -2169,7 +2381,7 @@ void main() {
       ),
     );
     await a.syncNow();
-    await b.setUp(config, 'correct horse');
+    await b.setUpWithDrive(config);
     expect((await activityB.loadStarredMessages()).single.title, 'Title');
     await activityA.removeStarredMessage('1|2|3');
     await a.syncNow();
@@ -2189,7 +2401,6 @@ void main() {
           activityStore: activity,
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
         );
     final a = make(storageA, activityA);
     final b = make(storageB, activityB);
@@ -2200,8 +2411,8 @@ void main() {
       title: 'A',
       starredAt: DateTime.utc(2026),
     );
-    await a.setUp(config, 'pass');
-    await b.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
     storageB.failStateAfterStarWrite = true;
@@ -2232,11 +2443,10 @@ void main() {
           activityStore: activity,
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
         );
     final a = make(storageA, activityA);
     final b = make(storageB, activityB);
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -2247,7 +2457,7 @@ void main() {
       ),
     );
     await a.syncNow();
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -2296,7 +2506,6 @@ void main() {
           activityStore: activity,
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
         );
     final a = make(storageA, activityA);
     final b = make(storageB, activityB);
@@ -2307,8 +2516,8 @@ void main() {
       title: 'A',
       starredAt: DateTime.utc(2026),
     );
-    await a.setUp(config, 'pass');
-    await b.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
     storageB.failStateAfterStarWrite = true;
@@ -2337,6 +2546,16 @@ void main() {
     expect(restored.id, star.id);
   });
 
+  test('legacy sync status loads and is saved under the new name', () {
+    for (final status in ['needsPairingCode', 'needsPassphrase']) {
+      final state = StarSyncState(deviceId: 'd', dataKey: 'key', keyId: 'id');
+      final json = state.toJson()..['status'] = status;
+      final loaded = StarSyncState.fromJson(json);
+      expect(loaded.status, StarSyncStatus.needsLegacyReset);
+      expect(loaded.toJson()['status'], 'needsLegacyReset');
+    }
+  });
+
   test('legacy pendingApply is ignored when loading state', () {
     final state = StarSyncState(deviceId: 'd', dataKey: 'key', keyId: 'id');
     final json = state.toJson()..['pendingApply'] = true;
@@ -2356,7 +2575,6 @@ void main() {
       activityStore: activityA,
       secureStorage: storageA,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       loginId: () => 'student',
@@ -2364,10 +2582,9 @@ void main() {
       secureStorage: storageB,
       transportFactory: (_) => remote,
       onLocalStarsChanged: () => callbacks++,
-      kdfParams: kdf,
     );
-    await a.setUp(config, 'correct horse');
-    await b.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -2384,40 +2601,60 @@ void main() {
     expect(callbacks, 1);
   });
 
-  test('wrong passphrase does not persist configuration or state', () async {
-    final remote = _Transport();
-    final first = _Storage();
-    final second = _Storage();
-    await StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: first),
-      secureStorage: first,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    ).setUp(config, 'correct horse');
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: second),
-      secureStorage: second,
-      transportFactory: (_) => remote,
-      kdfParams: kdf,
-    );
-    await expectLater(
-      engine.setUp(config, 'wrong password'),
-      throwsA(isA<StarSyncWrongPassphraseException>()),
-    );
-    expect(second.values, isEmpty);
+  test('retired stored configurations are deleted without touching stars', () async {
+    for (final backend in ['webDav', 's3']) {
+      final storage = _Storage();
+      final activity = GakujoActivityStore(secureStorage: storage);
+      await activity.upsertStarredMessage(GakujoStarredMessage(
+        keijitype: '1', genrecd: '2', seqNo: '3', title: 'kept',
+        starredAt: DateTime.utc(2026),
+      ));
+      final stars = storage.values['more_better_gakujo_starred_messages'];
+      storage.values[starSyncConfigKey] = jsonEncode({
+        'backend': backend, backend: {'password': 'sensitive'},
+      });
+      storage.values[starSyncStateKey] = '{"dataKey":"sensitive"}';
+      final engine = StarSyncEngine(activityStore: activity, secureStorage: storage);
+      await engine.load();
+      expect(engine.status.value.status, StarSyncStatus.disabled);
+      expect(engine.config, isNull);
+      expect(storage.values.containsKey(starSyncConfigKey), isFalse);
+      expect(storage.values.containsKey(starSyncStateKey), isFalse);
+      expect(storage.values['more_better_gakujo_starred_messages'], stars);
+      expect((await activity.loadStarredMessages()).single.title, 'kept');
+      engine.dispose();
+    }
   });
+
+  test('retired configuration deletion failure keeps sync disabled', () async {
+    for (final failedKey in [starSyncConfigKey, starSyncStateKey]) {
+      final storage = _Storage();
+      storage.values[starSyncConfigKey] = '{"backend":"s3"}';
+      storage.values[starSyncStateKey] = '{"dataKey":"sensitive"}';
+      storage.failDeleteKey = failedKey;
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+      );
+      await engine.load();
+      expect(engine.status.value.status, StarSyncStatus.disabled);
+      expect(engine.config, isNull);
+      expect(storage.values.containsKey(
+        failedKey == starSyncConfigKey ? starSyncStateKey : starSyncConfigKey,
+      ), isFalse);
+      engine.dispose();
+    }
+  });
+
   test('corrupt stored state is removed and reported', () async {
     final storage = _Storage();
-    storage.values[starSyncConfigKey] = '{}';
+    storage.values[starSyncConfigKey] = jsonEncode(config.toJson());
     storage.values[starSyncStateKey] = '{broken';
     final engine = StarSyncEngine(
       loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => _Transport(),
-      kdfParams: kdf,
     );
     await engine.load();
     // The Google quota record lives in its own key and is kept on purpose.
@@ -2436,12 +2673,11 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final a = make(first);
     final b = make(second);
-    await a.setUp(config, 'correct horse');
-    await b.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     final deviceA =
         (jsonDecode(first.values[starSyncStateKey]!) as Map)['deviceId'];
     final path = 'stars/devices/$deviceA';
@@ -2464,16 +2700,14 @@ void main() {
         activityStore: activity,
         secureStorage: first,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
       final b = StarSyncEngine(
         loginId: () => 'student',
         activityStore: GakujoActivityStore(secureStorage: second),
         secureStorage: second,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
-      await a.setUp(config, 'correct horse');
+      await a.setUpWithDrive(config);
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
           keijitype: '1',
@@ -2484,7 +2718,7 @@ void main() {
         ),
       );
       await a.syncNow();
-      await b.setUp(config, 'correct horse');
+      await b.setUpWithDrive(config);
       await a.disable();
       await activity.replaceStarredMessages(const []);
       await b.syncNow();
@@ -2499,7 +2733,7 @@ void main() {
     },
   );
 
-  test('reset requires the other device to rejoin', () async {
+  test('reset lets the other device automatically adopt the new key', () async {
     final remote = _Transport();
     StarSyncEngine make() {
       final storage = _Storage();
@@ -2508,27 +2742,24 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
     }
 
     final a = make();
     final b = make();
-    await a.setUp(config, 'correct horse');
-    await b.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     final otherFiles = remote.files.keys
         .where((path) => path.startsWith('stars/devices/'))
         .toSet();
-    await a.resetRemote('new passphrase');
+    await a.resetRemoteWithDrive();
     // B's file is erased; only A's own file is uploaded again under the new key.
     expect(otherFiles.where(remote.files.containsKey), hasLength(1));
     await b.syncNow();
-    expect(b.status.value.status, StarSyncStatus.needsPassphrase);
-    await b.rejoin('new passphrase');
     expect(b.status.value.status, StarSyncStatus.ok);
   });
 
-  for (final resetMode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
+  for (final resetMode in ['drive', 'setupDrive']) {
     test(
       'reset $resetMode sweeps only retired key files for seven days',
       () async {
@@ -2540,28 +2771,23 @@ void main() {
           activityStore: GakujoActivityStore(secureStorage: storage),
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
           now: () => now,
         );
-        await engine.setUp(config, 'old');
+        await engine.setUpWithDrive(config);
         final oldState = StarSyncState.fromJson(
           jsonDecode(storage.values[starSyncStateKey]!),
         );
         switch (resetMode) {
-          case 'passphrase':
-            await engine.resetRemote('new');
-          case 'pairing':
-            await engine.resetRemoteWithPairing();
-          case 'setup':
-            await engine.setUp(config, 'new', resetExisting: true);
-          case 'setupPairing':
-            await engine.setUpWithPairing(config, resetExisting: true);
+          case 'drive':
+            await engine.resetRemoteWithDrive();
+          case 'setupDrive':
+            await engine.setUpWithDrive(config, resetExisting: true);
         }
         final state = StarSyncState.fromJson(
           jsonDecode(storage.values[starSyncStateKey]!),
         );
         expect(state.retiredKeyIds.keys, contains(oldState.keyId));
-        final unrelated = createStarSyncPairingKeyring();
+        final unrelated = createStarSyncDriveKeyring();
         Future<List<int>> file(String id, String keyId, List<int> key) =>
             encryptStarSyncFile(
               dataKey: starSyncKeyFromBytes(key),
@@ -2601,7 +2827,7 @@ void main() {
     );
   }
 
-  for (final mode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
+  for (final mode in ['drive', 'setupDrive']) {
     test('reset $mode recovers from a malformed keyring', () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -2610,19 +2836,14 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
-      await engine.setUp(config, 'old');
+      await engine.setUpWithDrive(config);
       remote.files['stars/keyring.json'] = utf8.encode('{broken');
       switch (mode) {
-        case 'passphrase':
-          await engine.resetRemote('new');
-        case 'pairing':
-          await engine.resetRemoteWithPairing();
-        case 'setup':
-          await engine.setUp(config, 'new', resetExisting: true);
-        case 'setupPairing':
-          await engine.setUpWithPairing(config, resetExisting: true);
+        case 'drive':
+          await engine.resetRemoteWithDrive();
+        case 'setupDrive':
+          await engine.setUpWithDrive(config, resetExisting: true);
       }
       final keyring = StarSyncKeyring.fromJson(
         jsonDecode(utf8.decode(remote.files['stars/keyring.json']!)),
@@ -2644,13 +2865,12 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'old');
+    await engine.setUpWithDrive(config);
     final old = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    await engine.resetRemoteWithPairing();
+    await engine.resetRemoteWithDrive();
     final current = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
@@ -2680,11 +2900,10 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
-    final old = createStarSyncPairingKeyring();
+    final old = createStarSyncDriveKeyring();
     const path = 'stars/devices/old';
     remote.files[path] = await encryptStarSyncFile(
       dataKey: starSyncKeyFromBytes(old.dataKey),
@@ -2702,10 +2921,10 @@ void main() {
     remote.files[ownPath] = oldOwnFile;
     final currentKeyring = remote.files['stars/keyring.json']!;
     remote.files['stars/keyring.json'] = utf8.encode(
-      jsonEncode(old.keyring.toJson()),
+      jsonEncode({'schema': 1, 'keyId': old.keyring.keyId, 'mode': 'pairing'}),
     );
     await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
+    expect(engine.status.value.status, StarSyncStatus.needsLegacyReset);
     expect(remote.files.containsKey(path), isTrue);
     remote.files['stars/keyring.json'] = currentKeyring;
     expect((await engine.syncNow()).skippedFiles, 0);
@@ -2723,9 +2942,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
     final corrupted = await encryptStarSyncFile(
       dataKey: starSyncKeyFromBytes(base64Decode(state['dataKey'] as String)),
@@ -2755,9 +2973,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     expect(engine.status.value.enabled, isTrue);
     expect(engine.status.value.status, StarSyncStatus.error);
     expect(engine.status.value.lastError, isNotNull);
@@ -2772,9 +2989,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     remote.files['stars/devices/other'] = [1, 2, 3];
     expect((await engine.syncNow()).skippedFiles, 1);
   });
@@ -2788,17 +3004,15 @@ void main() {
       secureStorage: first,
       transportFactory: (_) => remote,
       loginId: () => 'first',
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second,
       transportFactory: (_) => remote,
       loginId: () => 'second',
-      kdfParams: kdf,
     );
-    await a.setUp(config, 'correct horse');
-    await b.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     expect((await b.syncNow()).skippedFiles, 1);
   });
 
@@ -2811,9 +3025,8 @@ void main() {
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     final started = Completer<void>();
     final release = Completer<void>();
     remote.listStarted = started;
@@ -2843,14 +3056,13 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
     }
 
-    await make().setUp(config, 'correct horse');
+    await make().setUpWithDrive(config);
     remote.simulateKeyringRace = true;
     final b = make();
-    await b.setUp(config, 'correct horse');
+    await b.setUpWithDrive(config);
     expect(b.status.value.status, StarSyncStatus.ok);
     expect((await b.listDevices()).length, 2);
   });
@@ -2866,16 +3078,14 @@ void main() {
       activityStore: activityA,
       secureStorage: first,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       loginId: () => 'student',
       activityStore: activityB,
       secureStorage: second,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await a.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -2886,7 +3096,7 @@ void main() {
       ),
     );
     await a.syncNow();
-    await b.setUp(config, 'correct horse');
+    await b.setUpWithDrive(config);
     await b.markBulkReplace();
     await activityB.replaceStarredMessages(const []);
     await b.syncNow();
@@ -2904,14 +3114,12 @@ void main() {
       activityStore: activityA,
       secureStorage: first,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       loginId: () => 'student',
       activityStore: activityB,
       secureStorage: second,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final star = GakujoStarredMessage(
       keijitype: '1',
@@ -2920,10 +3128,10 @@ void main() {
       title: 'Backup title',
       starredAt: DateTime.utc(2026),
     );
-    await a.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
-    await b.setUp(config, 'correct horse');
+    await b.setUpWithDrive(config);
     await activityA.removeStarredMessage(star.id);
     await a.syncNow();
     await b.syncNow();
@@ -2957,14 +3165,12 @@ void main() {
       activityStore: activityA,
       secureStorage: first,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     final b = StarSyncEngine(
       loginId: () => 'student',
       activityStore: activityB,
       secureStorage: second,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
     GakujoStarredMessage star(String id) => GakujoStarredMessage(
       keijitype: '1',
@@ -2973,10 +3179,10 @@ void main() {
       title: id,
       starredAt: DateTime.utc(2026),
     );
-    await a.setUp(config, 'correct horse');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star('3'));
     await a.syncNow();
-    await b.setUp(config, 'correct horse');
+    await b.setUpWithDrive(config);
     await activityA.removeStarredMessage('1|2|3');
     await activityB.upsertStarredMessage(star('4'));
     await a.syncNow();
@@ -3001,9 +3207,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'correct horse');
+    await engine.setUpWithDrive(config);
     await engine.disable(deleteOwnRemoteFile: true);
     expect(remote.deletes, 1);
   });
@@ -3018,9 +3223,8 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
-      await engine.setUp(config, 'old');
+      await engine.setUpWithDrive(config);
       final oldKeyring = List<int>.of(remote.files['stars/keyring.json']!);
       final oldDevices = remote.files.keys
           .where((p) => p.startsWith('stars/devices/'))
@@ -3036,9 +3240,7 @@ void main() {
         ),
       );
       expect(await engine.localStarCount(), 1);
-      await engine.setUp(
-        config,
-        'new',
+      await engine.setUpWithDrive(config,
         resetExisting: true,
         clearLocalStars: await engine.snapshotLocalStars(),
       );
@@ -3060,9 +3262,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: first),
       secureStorage: first,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await a.setUp(config, 'same');
+    await a.setUpWithDrive(config);
     final keyring = List<int>.of(remote.files['stars/keyring.json']!);
     remote.files.clear();
     remote.overwriteKeyring = keyring;
@@ -3072,43 +3273,13 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await b.setUp(config, 'same');
-    expect(await b.pairingCode(), await a.pairingCode());
+    await b.setUpWithDrive(config);
+    expect(
+      StarSyncState.fromJson(jsonDecode(second.values[starSyncStateKey]!)).dataKey,
+      StarSyncState.fromJson(jsonDecode(first.values[starSyncStateKey]!)).dataKey,
+    );
   });
-
-  test(
-    'overwritten keyring with another passphrase is not installed',
-    () async {
-      final remote = _Transport();
-      final first = _Storage();
-      final a = StarSyncEngine(
-        loginId: () => 'student',
-        activityStore: GakujoActivityStore(secureStorage: first),
-        secureStorage: first,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-      );
-      await a.setUp(config, 'other');
-      final keyring = List<int>.of(remote.files['stars/keyring.json']!);
-      remote.files.clear();
-      remote.overwriteKeyring = keyring;
-      final second = _Storage();
-      final b = StarSyncEngine(
-        loginId: () => 'student',
-        activityStore: GakujoActivityStore(secureStorage: second),
-        secureStorage: second,
-        transportFactory: (_) => remote,
-        kdfParams: kdf,
-      );
-      await expectLater(
-        b.setUp(config, 'pass'),
-        throwsA(isA<StarSyncWrongPassphraseException>()),
-      );
-      expect(second.values, isEmpty);
-    },
-  );
 
   test('disable does not wait for background jitter', () async {
     final remote = _Transport();
@@ -3120,14 +3291,13 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       now: () => DateTime.utc(2026).add(const Duration(minutes: 3)),
       delay: (_) {
         delayStarted.complete();
         return release.future;
       },
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     final state = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
@@ -3150,9 +3320,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     for (final previous in [false, true]) {
       if (previous) await engine.markBulkReplace();
       await expectLater(
@@ -3175,10 +3344,9 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await engine.markBulkReplace(
       starIdsAfterRestore: {'old-star'},
       collections: const {'favorites': null},
@@ -3230,11 +3398,10 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [favorites],
       );
       final engine = make();
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       favorites.entries = {'deleted': 'value', 'omitted': 'keep'};
       await engine.syncNow();
       await engine.markBulkReplace(
@@ -3267,10 +3434,9 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [settings],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     settings.entries = {'restored': 1, 'omitted': 2};
     await engine.syncNow();
     await engine.markBulkReplace(
@@ -3299,14 +3465,13 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [drafts],
       );
     }
 
     final a = make(draftsA);
     final b = make(draftsB);
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     draftsA.entries = {'draft': List.filled(3 * 1024 * 1024, 'x').join()};
     await a.syncNow();
     final path = remote.files.keys.singleWhere(
@@ -3314,7 +3479,7 @@ void main() {
     );
     final before = List<int>.of(remote.files[path]!);
     expect(before.length, greaterThan(starSyncDefaultMaxBytes));
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     expect(draftsB.entries!['draft'], draftsA.entries!['draft']);
     draftsA.entries = {'draft': List.filled(9 * 1024 * 1024, 'x').join()};
     await a.syncNow();
@@ -3334,11 +3499,10 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       now: () => now,
       timerFactory: (_, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     await engine.activityStore.upsertStarredMessage(
       GakujoStarredMessage(
         keijitype: '1',
@@ -3374,9 +3538,8 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       final puts = remote.puts;
       final before = storage.values['more_better_gakujo_starred_messages'];
       storage.onStarRead = () {
@@ -3400,8 +3563,8 @@ void main() {
         secureStorage: storage,
         transportFactory: (_) => remote,
       );
-      await engine.setUpWithPairing(
-        const StarSyncConfig(backend: StarSyncBackend.googleDrive),
+      await engine.setUpWithDrive(
+        const StarSyncConfig(),
       );
       remote.authFailure = true;
       await engine.syncNow();
@@ -3411,6 +3574,69 @@ void main() {
     },
   );
 
+  test('Drive storage full retries without a local change', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    var now = DateTime.utc(2026);
+    _TestTimer? timer;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      now: () => now,
+      timerFactory: (_, callback) => timer = _TestTimer(callback),
+    );
+    await engine.setUpWithDrive(
+      const StarSyncConfig(),
+    );
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isFalse);
+    timer = null;
+    remote.driveFailure = StarSyncTransportErrorKind.storageFull;
+    await expectLater(
+      engine.syncNow(),
+      throwsA(isA<StarSyncTransportException>()),
+    );
+    expect(timer, isNotNull);
+    expect(timer!.isActive, isTrue);
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isTrue);
+    remote.driveFailure = null;
+    now = now.add(const Duration(minutes: 2));
+    final recovered = Completer<void>();
+    engine.status.addListener(() {
+      if (engine.status.value.status == StarSyncStatus.ok && !recovered.isCompleted) {
+        recovered.complete();
+      }
+    });
+    timer!.fire();
+    await recovered.future.timeout(const Duration(seconds: 2));
+    expect(engine.status.value.status, StarSyncStatus.ok);
+    expect(engine.status.value.lastError, isNull);
+    engine.dispose();
+  });
+
+  test('Drive storage full sets an error and cooldown', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+    );
+    await engine.setUpWithDrive(
+      const StarSyncConfig(),
+    );
+    remote.driveFailure = StarSyncTransportErrorKind.storageFull;
+    await expectLater(
+      engine.syncNow(),
+      throwsA(isA<StarSyncTransportException>()),
+    );
+    expect(engine.status.value.status, StarSyncStatus.error);
+    expect(engine.status.value.cooldownUntil, isNotNull);
+    engine.dispose();
+  });
+
   test('revoked Google credentials request sign in without cooldown', () async {
     final remote = _Transport();
     final storage = _Storage();
@@ -3419,9 +3645,8 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     remote.revoked = true;
     await engine.syncNow();
     expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
@@ -3443,18 +3668,17 @@ void main() {
           activityStore: GakujoActivityStore(secureStorage: storage),
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
           collections: [drafts, seen],
         );
       }
 
       final a = make(localA, growA);
       final b = make(localB, growB);
-      await a.setUp(config, 'pass');
+      await a.setUpWithDrive(config);
       localA.entries!['one'] = {'b': 2, 'a': 1};
       growA.entries!['seen'] = true;
       await a.syncNow();
-      await b.setUp(config, 'pass');
+      await b.setUpWithDrive(config);
       expect(localB.entries, {
         'one': {'a': 1, 'b': 2},
       });
@@ -3483,10 +3707,9 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       collection.entries = {'present': 'same', 'omitted': 'keep'};
       await engine.syncNow();
       Map state() =>
@@ -3523,7 +3746,6 @@ void main() {
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites],
     );
 
@@ -3536,11 +3758,11 @@ void main() {
     );
     final a = make(storageA, activityA, favoritesA);
     final b = make(storageB, activityB, favoritesB);
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     favoritesA.entries = {'deleted': 'delete', 'omitted': 'keep'};
     await activityA.replaceStarredMessages([star('1'), star('2')]);
     await a.syncNow();
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     await b.withBulkReplace(() async {
       favoritesB.entries = {'deleted': 'delete', 'new': 'new'};
       await activityB.replaceStarredMessages([star('1'), star('3')]);
@@ -3583,10 +3805,9 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites, drafts],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     favorites.entries = {'f': 'one'};
     drafts.entries = {'d': 'old'};
     await engine.syncNow();
@@ -3621,10 +3842,9 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [favorites, settings],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     favorites.entries = {'f': 'favorite'};
     settings.entries = {'notificationTopics': 'topics', 'other': 'setting'};
     await engine.syncNow();
@@ -3666,7 +3886,6 @@ void main() {
           activityStore: activity,
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
           collections: [_Collection('settings')],
         );
     final a = make(storageA, activityA);
@@ -3678,10 +3897,10 @@ void main() {
       title: 'Star',
       starredAt: DateTime.utc(2026),
     );
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     await activityB.removeStarredMessage(star.id);
     await b.withBulkReplace(
       () async {},
@@ -3707,10 +3926,9 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [settings],
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       settings.entries = {'a': 1, 'b': 2, 'omitted': 3};
       await engine.syncNow();
       Map state() =>
@@ -3750,10 +3968,9 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       final before = jsonDecode(
         storage.values[starSyncStateKey]!,
       )['collectionStates']['drafts'];
@@ -3800,7 +4017,6 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [collection],
       timerFactory: (delay, callback) {
         delays.add(delay);
@@ -3809,7 +4025,7 @@ void main() {
         return timer;
       },
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     collection.rejectApply = true;
     for (var i = 0; i < 7; i++) {
       await engine.syncNow();
@@ -3857,7 +4073,6 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [data],
         timerFactory: timed
             ? (delay, callback) {
@@ -3872,8 +4087,8 @@ void main() {
 
     final first = make(firstData);
     final second = make(secondData, timed: true);
-    await first.setUp(config, 'pass');
-    await second.setUp(config, 'pass');
+    await first.setUpWithDrive(config);
+    await second.setUpWithDrive(config);
     firstData.entries = {'draft': 'remote'};
     await first.syncNow();
     secondData.entries = null;
@@ -3914,10 +4129,9 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       collection.entries = {'a': 3, 'b': 3, 'c': 3, 'old': 1};
       await engine.syncNow();
       expect(collection.entries, {'a': 3, 'b': 3});
@@ -3953,7 +4167,6 @@ void main() {
           activityStore: GakujoActivityStore(secureStorage: storage),
           secureStorage: storage,
           transportFactory: (_) => remote,
-          kdfParams: kdf,
           collections: [settings, favorites],
         );
       }
@@ -3978,8 +4191,8 @@ void main() {
         ),
         favoritesB,
       );
-      await a.setUp(config, 'pass');
-      await b.setUp(config, 'pass');
+      await a.setUpWithDrive(config);
+      await b.setUpWithDrive(config);
       expect(settingsB['messageExcludeKeywords'], ['custom']);
       expect(settingsB['notificationTopics'], ['local-only']);
       expect(favoritesB.entries, {'a': 'A', 'b': 'B', 'shared': 'B'});
@@ -4020,15 +4233,14 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
       );
     }
 
     final a = make();
     a.registerCollection(settings(() => valuesA, (value) => valuesA = value));
-    await a.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
     final b = make();
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     b.registerCollection(settings(() => valuesB, (value) => valuesB = value));
     await b.withBulkReplace(
       () async {},
@@ -4056,15 +4268,14 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
     }
 
     final a = make(aData);
     final b = make(bData);
-    await a.setUp(config, 'pass');
-    await b.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     aData.entries!['draft'] = 'remote';
     await a.syncNow();
     final before = Map<String, List<int>>.from(remote.files);
@@ -4094,15 +4305,14 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
     }
 
     final a = make(ca);
     final b = make(cb);
-    await a.setUp(config, 'pass');
-    await b.setUp(config, 'pass');
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
     ca.entries!['key'] = 'A';
     cb.entries!['key'] = 'B';
     await a.syncNow();
@@ -4132,10 +4342,9 @@ void main() {
         activityStore: activity,
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [broken, good],
       );
-      await engine.setUp(config, 'pass');
+      await engine.setUpWithDrive(config);
       await activity.upsertStarredMessage(
         GakujoStarredMessage(
           keijitype: '1',
@@ -4164,12 +4373,11 @@ void main() {
       activityStore: GakujoActivityStore(secureStorage: storage),
       secureStorage: storage,
       transportFactory: (_) => remote,
-      kdfParams: kdf,
       collections: [collection],
     );
-    await engine.setUp(config, 'pass');
+    await engine.setUpWithDrive(config);
     remote.files['sync/drafts/old-device'] = [1];
-    await engine.resetRemote('new-pass');
+    await engine.resetRemoteWithDrive();
     expect(remote.files.containsKey('sync/drafts/old-device'), isFalse);
   });
 
@@ -4184,14 +4392,13 @@ void main() {
         activityStore: GakujoActivityStore(secureStorage: storage),
         secureStorage: storage,
         transportFactory: (_) => remote,
-        kdfParams: kdf,
         collections: [collection],
       );
     }
 
-    await make('first', ca).setUp(config, 'pass');
+    await make('first', ca).setUpWithDrive(config);
     final b = make('second', cb);
-    await b.setUp(config, 'pass');
+    await b.setUpWithDrive(config);
     expect((await b.syncNow()).skippedFiles, 2);
     expect(cb.entries, isEmpty);
   });
