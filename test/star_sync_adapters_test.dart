@@ -9,6 +9,16 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('portable settings ignore flags retired on this device', () {
+    final imported = importStarSyncPortableSettings(const GakujoAppSettings(), {
+      'disabledFeatureFlags': [
+        'activity_scan', 'deadline_scan', 'report_list_cache',
+        'session_recovery_guide', 'gpa_display',
+      ],
+    });
+    expect(imported.disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+  });
+
   test('portable settings ignore credentials and non-portable fields', () {
     final current = GakujoAppSettings(
       savedLoginId: 'id',

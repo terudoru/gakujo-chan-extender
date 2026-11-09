@@ -20,6 +20,18 @@ void main() {
     }
   });
 
+  test('local settings ignore retired disabled flags', () async {
+    final file = File('${directory.path}/local_prefs.json');
+    await file.writeAsString(jsonEncode({
+      'disabledFeatureFlags': [
+        'activity_scan', 'deadline_scan', 'report_list_cache',
+        'session_recovery_guide', 'gpa_display',
+      ],
+    }));
+    expect((await store.load())?.appSettings?.disabledFeatureFlags,
+        {GakujoFeatureFlag.gpaDisplay});
+  });
+
   test('update check fields survive other saves and partial settings', () async {
     final file = File('${directory.path}/local_prefs.json');
     await file.writeAsString(jsonEncode({'pageMode': 'mobile'}));

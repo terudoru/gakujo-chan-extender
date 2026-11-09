@@ -112,7 +112,7 @@ void main() {
     expect(sameGoogleAccount(null, null), isFalse);
   });
 
-  const config = StarSyncConfig(backend: StarSyncBackend.googleDrive);
+  const config = StarSyncConfig();
   test('backups round trip across devices, enforce account and kind', () async {
     final remote = _Transport();
     var now = DateTime.utc(2026, 1, 1);

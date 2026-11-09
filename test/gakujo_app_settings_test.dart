@@ -10,6 +10,14 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('retired disabled flags are ignored when loading secure settings', () async {
+    final store = GakujoAppSettingsStore(secureStorage: _TrackingSecureStorage({
+      'more_better_gakujo_disabled_feature_flags':
+          'activity_scan,deadline_scan,report_list_cache,session_recovery_guide,gpa_display',
+    }));
+    expect((await store.load()).disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+  });
+
   test('message exclude keywords are normalized and persisted', () async {
     final storage = _TrackingSecureStorage({});
     final store = GakujoAppSettingsStore(secureStorage: storage);

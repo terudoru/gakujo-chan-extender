@@ -72,7 +72,6 @@ void main() {
       expect(backup.favorites, isNull);
       expect(backup.deadlines, isNull);
       expect(backup.notifiedDeadlineKeys, isNull);
-      expect(backup.changes, isNull);
       expect(backup.reportLists, isNull);
     });
 
@@ -92,7 +91,6 @@ void main() {
       'downloadHistory',
       'failedDownloads',
       'deadlines',
-      'changes',
       'reportLists',
       'notifiedDeadlineKeys',
     ]) {
@@ -225,7 +223,6 @@ void main() {
         'deadlines',
         'notifiedDeadlineKeys',
         'failedDownloads',
-        'changes',
         'reportLists',
         'messageExcludeKeywords'
       ]) {
@@ -366,7 +363,6 @@ void main() {
       expect(backup.failedDownloads?.single.request.formFields, isEmpty);
       expect(backup.favorites, hasLength(1));
       expect(backup.deadlines, hasLength(1));
-      expect(backup.changes, hasLength(1));
       expect(backup.reportLists, hasLength(1));
     });
 
@@ -384,7 +380,6 @@ void main() {
             failedDownloads: const [],
             favorites: const [],
             deadlines: const [],
-            changes: const [],
             reportLists: const [],
           );
           final imported = parseGakujoBackup(jsonEncode(payload));

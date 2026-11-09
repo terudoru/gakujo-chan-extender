@@ -65,6 +65,33 @@ void main() {
     ],
   };
 
+  test('old backup ignores retired fields and restores remaining data', () async {
+    final storage = _Storage({});
+    final backup = parseGakujoBackup(jsonEncode({
+      'version': 2,
+      'changes': 'ignored even if malformed',
+      'snapshots': [null],
+      'disabledFeatureFlags': [
+        'activity_scan', 'deadline_scan', 'report_list_cache',
+        'session_recovery_guide', 'gpa_display',
+      ],
+      'favorites': validCollections['favorites'],
+    }));
+    await _restoreActivityBackup(storage, backup);
+    expect((await GakujoAppSettingsStore(secureStorage: storage).load())
+        .disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+    expect(await GakujoActivityStore(secureStorage: storage).loadFavorites(),
+        hasLength(1));
+    final retiredOnly = parseGakujoBackup(jsonEncode({
+      'version': 2,
+      'disabledFeatureFlags': [
+        'activity_scan', 'deadline_scan', 'report_list_cache',
+        'session_recovery_guide',
+      ],
+    }));
+    expect(retiredOnly.disabledFeatureFlags, isEmpty);
+  });
+
   test('legacy notification topic restores the message choice', () async {
     final storage = _Storage({});
     final settings = GakujoAppSettingsStore(secureStorage: storage);
@@ -128,7 +155,6 @@ void main() {
     'failedDownloads',
     'favorites',
     'deadlines',
-    'changes',
     'reportLists',
   ]) {
     test('URL filtering cannot turn $key into an empty replacement', () async {
@@ -213,7 +239,6 @@ void main() {
     ('downloadHistory', 'savedAt', _historyKey),
     ('failedDownloads', 'failedAt', 'more_better_gakujo_failed_downloads'),
     ('deadlines', 'dueText', 'more_better_gakujo_deadlines'),
-    ('changes', 'changedAt', 'more_better_gakujo_activity_changes'),
     ('reportLists', 'capturedAt', 'more_better_gakujo_cached_report_lists'),
   ]) {
     test('restores valid $key even when retention expires every record',
@@ -263,7 +288,6 @@ void main() {
     expect(await activity.loadStarredMessages(), isEmpty);
     expect(await activity.loadDeadlines(), isEmpty);
     expect(await activity.loadNotifiedDeadlineKeys(), isEmpty);
-    expect(await activity.loadChanges(), isEmpty);
     expect(await activity.loadReportLists(), isEmpty);
   });
 
@@ -272,7 +296,6 @@ void main() {
     _favoritesKey,
     'more_better_gakujo_deadlines',
     _notifiedKeysKey,
-    'more_better_gakujo_activity_changes',
     'more_better_gakujo_cached_report_lists',
   ]) {
     test('backup fails on unreadable $key and releases all stores', () async {
@@ -396,7 +419,7 @@ void main() {
       final storage = _Storage({
         _notifiedKeysKey: ?originalKeys,
       })
-        ..failWriteKey = 'more_better_gakujo_activity_changes';
+        ..failWriteKey = 'more_better_gakujo_cached_report_lists';
       final before = Map<String, String>.of(storage.values);
       await expectLater(
         _restoreActivityBackup(
@@ -404,7 +427,7 @@ void main() {
           const GakujoBackupImport(
             version: 2,
             notifiedDeadlineKeys: ['restored', 'reminder|99'],
-            changes: [],
+            reportLists: [],
           ),
         ),
         throwsStateError,

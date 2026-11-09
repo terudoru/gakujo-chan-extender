@@ -77,16 +77,6 @@ void validateStarSyncPath(String path) {
   }
 }
 
-String? normalizeStarSyncEtag(String? value) {
-  if (value == null) return null;
-  var result = value.trim();
-  if (result.startsWith('W/')) result = result.substring(2).trim();
-  if (result.length >= 2 && result.startsWith('"') && result.endsWith('"')) {
-    result = result.substring(1, result.length - 1);
-  }
-  return result;
-}
-
 const starSyncDefaultMaxBytes = 2 * 1024 * 1024;
 
 const starSyncRequestTimeout = Duration(seconds: 20);

@@ -63,16 +63,8 @@ void main() {
       title: 'CampusSquare for WEB [CampusSquare]',
       text: 'HOME\n連絡通知\nスケジュール\nMYスケジュール\n2026年6月',
     );
-    final content = GakujoActivityClassifier.stableContentFor(
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main',
-      title: 'CampusSquare for WEB [CampusSquare]',
-      text: 'HOME\n連絡通知\nスケジュール\nMYスケジュール\n2026年6月',
-      category: category,
-    );
 
     expect(category, 'Gakujo');
-    expect(content, isEmpty);
   });
 
   test('extracts a readable notice from the generic home portal', () {
@@ -109,20 +101,9 @@ Copyright(c) 2001- NS Solutions Corporation All rights reserved.
       text: text,
       category: category,
     );
-    final content = GakujoActivityClassifier.stableContentFor(
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main',
-      title: 'CampusSquare for WEB [CampusSquare]',
-      text: text,
-      category: category,
-    );
 
     expect(category, '連絡通知');
     expect(title, 'お知らせ');
-    expect(content, contains('マイナー・プログラム'));
-    expect(content, isNot(contains('吉田 皓彦')));
-    expect(content, isNot(contains('スマホ版')));
-    expect(content, isNot(contains('残り約20分')));
   });
 
   test('extracts only concrete home notices before the schedule section', () {
@@ -156,37 +137,7 @@ Mon Tue Wed Thu Fri Sat Sun
       text: text,
       category: category,
     );
-    final content = GakujoActivityClassifier.stableContentFor(
-      url:
-          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main',
-      title: 'CampusSquare for WEB [CampusSquare]',
-      text: text,
-      category: category,
-    );
 
     expect(title, '新着情報');
-    expect(content, contains('新着のトピックがあります。'));
-    expect(content, contains('授業評価アンケートが登録されました。'));
-    expect(content, isNot(contains('あなた宛の新着情報があります。')));
-    expect(content, isNot(contains('MYスケジュール')));
-    expect(content, isNot(contains('1 2 3 4 5 6 7')));
-    expect(content, isNot(contains('物理学基礎')));
-  });
-
-  test('ignores transient login and loading pages', () {
-    for (final text in [
-      'now loading...',
-      'Google Authenticatorで発行された6桁の認証コードを入力してください。\nログイン\n戻る',
-      'ID ※小文字で入力してください。\nパスワード\nログイン',
-    ]) {
-      final content = GakujoActivityClassifier.stableContentFor(
-        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
-        title: 'CampusSquare for WEB [CampusSquare]',
-        text: text,
-        category: 'Gakujo',
-      );
-
-      expect(content, isEmpty);
-    }
   });
 }

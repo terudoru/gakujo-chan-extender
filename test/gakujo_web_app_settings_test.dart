@@ -1052,51 +1052,6 @@ void main() {
     expect(guidance, isNot(contains('保存データをリセット')));
   });
 
-  test('activity page reading follows independent feature toggles', () {
-    expect(
-      shouldReadPageForActivityFeatures(const GakujoAppSettings()),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.reportListCache,
-          },
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.deadlineScan,
-          },
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.deadlineScan,
-            GakujoFeatureFlag.reportListCache,
-          },
-        ),
-      ),
-      isFalse,
-    );
-  });
-
-  test('activity bell toolbar button is removed', () {
-    expect(activityBellToolbarButtonEnabled, isFalse);
-  });
-
   test('edge swipes map to browser back and forward navigation', () {
     expect(
       gakujoEdgeSwipeNavigation(
@@ -1654,11 +1609,8 @@ void main() {
     var checkedUpdates = false;
     var createdBackup = false;
     var createdReport = false;
-    var exported = false;
-    var imported = false;
     var importedFromFile = false;
     var checked = false;
-    var diagnostics = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1673,12 +1625,6 @@ void main() {
             onCreateBackup: () async {
               createdBackup = true;
             },
-            onExportSettings: () async {
-              exported = true;
-            },
-            onImportSettings: () async {
-              imported = true;
-            },
             onImportSettingsFromFile: () async {
               importedFromFile = true;
             },
@@ -1688,14 +1634,13 @@ void main() {
             onCreateErrorReport: () async {
               createdReport = true;
             },
-            onCopyDiagnostics: () async { diagnostics = true; },
           ),
           ])),
         ),
       ),
     );
 
-    expect(find.text('バックアップと設定の移行'), findsOneWidget);
+    expect(find.text('バックアップ'), findsOneWidget);
     expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
     expect(find.text('ファイルから読み込み'), findsOneWidget);
 
@@ -1704,12 +1649,6 @@ void main() {
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, '設定をコピー'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定をコピー'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'クリップボードから読み込み'));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'クリップボードから読み込み'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
@@ -1720,19 +1659,13 @@ void main() {
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(TextButton, '診断情報をコピー'));
-    await tester.tap(find.widgetWithText(TextButton, '診断情報をコピー'));
-    await tester.pumpAndSettle();
     await tester.pump();
 
     expect(checkedUpdates, isTrue);
     expect(createdBackup, isTrue);
     expect(createdReport, isTrue);
-    expect(exported, isTrue);
-    expect(imported, isTrue);
     expect(importedFromFile, isTrue);
     expect(checked, isTrue);
-    expect(diagnostics, isTrue);
   });
 
   testWidgets('update check button reports progress and blocks duplicate taps',
@@ -1787,7 +1720,6 @@ void main() {
             onShowCourseMaterials: () async => calls.add('materials'),
             onShowCachedReports: () async => calls.add('reports'),
             onShowDrafts: () async => calls.add('drafts'),
-            onShowChangeHistory: () async => calls.add('changes'),
             onShowFavorites: () async => calls.add('favorites'),
             onShowDataManagement: () async => calls.add('data'),
           ),
@@ -1800,7 +1732,6 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, '授業ごとの資料'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存済み課題一覧'));
     await tester.tap(find.widgetWithText(OutlinedButton, '下書き'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '変更履歴'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'お気に入り'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'データ管理'));
     await tester.pump();
@@ -1813,7 +1744,6 @@ void main() {
         'materials',
         'reports',
         'drafts',
-        'changes',
         'favorites',
         'data'
       ],

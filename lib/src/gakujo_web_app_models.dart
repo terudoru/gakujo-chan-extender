@@ -76,16 +76,6 @@ class _MessageActivityCandidate {
   }
 }
 
-class _ActivityScanResult {
-  const _ActivityScanResult({
-    required this.updateCount,
-    required this.deadlineCount,
-  });
-
-  final int updateCount;
-  final int deadlineCount;
-}
-
 class _ResolvedCalendarTerm {
   const _ResolvedCalendarTerm({
     required this.termRange,

@@ -13,15 +13,6 @@ void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
     bool boundEmailMissing = false,
-    Future<void> Function(
-      StarSyncConfig,
-      String, {
-      required bool resetExisting,
-      required Map<String, String> clearLocalStars,
-      required String expectedAccount,
-      required int expectedGeneration,
-    })?
-    onSetUp,
     bool Function(String)? collectionEnabled,
     Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
@@ -63,7 +54,6 @@ void main() {
           collectionEnabled: collectionEnabled,
           onCollectionChanged: onCollectionChanged,
           googleAvailable: googleAvailable,
-          isGoogleDrive: () => google,
           googleEmail: () => boundEmailMissing
               ? null
               : google
@@ -94,25 +84,12 @@ void main() {
                 required expectedGeneration,
               }) async => StarSyncDriveSetup.created,
           onResetWithDrive: () async {},
-          onSetUp:
-              onSetUp ??
-              (
-                _,
-                _, {
-                required resetExisting,
-                required clearLocalStars,
-                required expectedAccount,
-                required expectedGeneration,
-              }) async {},
           onSyncNow: () async {},
           onResumeKeepingLocal: onResumeKeepingLocal ?? () async {},
           onResumeDiscardingLocal: onResumeDiscardingLocal ?? () async {},
-          onChangePassphrase: (_, _) async {},
           onListDevices: () async => <StarSyncDeviceInfo>[],
           onDeleteDevice: (_) async {},
           onDisable: ({deleteOwnRemoteFile = false}) async {},
-          onReset: (_) async {},
-          onRejoin: (_) async {},
         ),
       ),
     ),
@@ -288,36 +265,14 @@ void main() {
     expect(find.text('一部の端末のデータを読めませんでした（2台）'), findsNothing);
   });
 
-  testWidgets('a typed passphrase is cleared when the rejoin state ends', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.needsPassphrase,
-      ),
-    );
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    await tester.enterText(find.widgetWithText(TextField, 'パスフレーズ'), 'secret');
-    expect(find.text('secret'), findsOneWidget);
-    // Disabled through another path, then asked again later.
-    status.value = const StarSyncStatusSnapshot();
-    await tester.pump();
-    status.value = const StarSyncStatusSnapshot(
-      enabled: true,
-      status: StarSyncStatus.needsPassphrase,
-    );
-    await tester.pump();
-    expect(find.text('secret'), findsNothing);
-  });
-
   testWidgets('disabled state offers setup', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status));
     expect(find.text('Google ドライブで同期'), findsNothing);
-    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
-    await tester.pumpAndSettle();
-    expect(find.text('同期を設定'), findsOneWidget);
+    expect(find.text('このビルドでは Google ドライブ同期を使えません。'), findsOneWidget);
+    expect(find.textContaining('共用の端末'), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
     await tester.pumpWidget(section(status, googleAvailable: true));
     expect(find.text('Google ドライブで同期'), findsOneWidget);
   });
@@ -344,62 +299,6 @@ void main() {
     expect(find.text('同期を使うには、設定の「ログイン」でログインIDを保存してください。'), findsOneWidget);
   });
 
-  testWidgets('setup validates passphrases and switches backend', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1200, 1200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final status = ValueNotifier(const StarSyncStatusSnapshot());
-    addTearDown(status.dispose);
-    var calls = 0;
-    await tester.pumpWidget(
-      section(
-        status,
-        onSetUp:
-            (
-              _,
-              _, {
-              required resetExisting,
-              required clearLocalStars,
-              required expectedAccount,
-              required expectedGeneration,
-            }) async {
-              calls++;
-            },
-      ),
-    );
-    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('同期を設定'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('含めて同期する'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('パスフレーズは10文字以上で入力してください'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextField, 'パスフレーズ'),
-      'abcdefghij',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextField, 'パスフレーズ（確認）'),
-      'abcdefghik',
-    );
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('パスフレーズが一致しません'), findsOneWidget);
-    expect(calls, 0);
-    await tester.tap(find.text('S3互換'));
-    await tester.pumpAndSettle();
-    expect(find.text('エンドポイント'), findsOneWidget);
-    expect(find.text('リージョン'), findsOneWidget);
-    expect(find.text('バケット'), findsOneWidget);
-    expect(find.text('アクセスキーID'), findsOneWidget);
-    expect(find.text('シークレットアクセスキー'), findsOneWidget);
-  });
-
   testWidgets('enabled state shows last sync time', (tester) async {
     final status = ValueNotifier(
       StarSyncStatusSnapshot(
@@ -423,19 +322,6 @@ void main() {
     final hour = until.hour.toString().padLeft(2, '0');
     final minute = until.minute.toString().padLeft(2, '0');
     expect(find.text('混雑のため、$hour:$minute まで同期を控えています'), findsOneWidget);
-  });
-
-  testWidgets('needs passphrase offers rejoin', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.needsPassphrase,
-      ),
-    );
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    expect(find.widgetWithText(TextField, 'パスフレーズ'), findsOneWidget);
-    expect(find.text('再接続'), findsOneWidget);
   });
 
   testWidgets('account mismatch offers only disable', (tester) async {
@@ -776,10 +662,5 @@ void main() {
     expect(find.text('同期を無効にする'), findsOneWidget);
   });
 
-  testWidgets('add device is hidden for WebDAV', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    expect(find.text('別の端末を追加'), findsNothing);
-  });
+
 }
