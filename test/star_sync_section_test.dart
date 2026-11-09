@@ -14,6 +14,7 @@ import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
 void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
+    bool boundEmailMissing = false,
     Future<void> Function(
       StarSyncConfig,
       String, {
@@ -73,7 +74,11 @@ void main() {
           onCollectionChanged: onCollectionChanged,
           googleAvailable: googleAvailable,
           isGoogleDrive: () => google,
-          googleEmail: () => google ? 'user@example.com' : null,
+          googleEmail: () => boundEmailMissing
+              ? null
+              : google
+              ? 'user@example.com'
+              : null,
           onGoogleSignIn:
               onGoogleSignIn ??
               ({
@@ -863,6 +868,20 @@ void main() {
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
     expect(find.text('同期に使うアカウント: user@example.com'), findsOneWidget);
+  });
+
+  testWidgets('settings with no recorded account send the student to re-setup', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsGoogleSignIn,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true, boundEmailMissing: true));
+    expect(find.textContaining('再ログインできません'), findsOneWidget);
+    expect(find.text('Google に再ログイン'), findsNothing);
+    expect(find.text('同期を無効にする'), findsOneWidget);
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {

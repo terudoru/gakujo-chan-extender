@@ -5762,7 +5762,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final expected = config?.googleEmail;
         if (mounted) {
           _showSnackBar(expected == null
-              ? '同期を設定した Google アカウントでログインしてください'
+              ? 'この同期の設定には Google アカウントの情報がありません。同期を無効にしてから、もう一度設定してください'
               : 'この同期は $expected で設定されています。同じアカウントでログインするか、同期を無効にしてから設定し直してください');
         }
       }

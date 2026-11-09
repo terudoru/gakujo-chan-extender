@@ -659,12 +659,19 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             const Text('Google へのログインが切れました。'),
             if (widget.googleEmail() != null)
               Text('同期に使うアカウント: ${widget.googleEmail()!}'),
+            // Settings from before accounts were recorded can never match one.
+            if (widget.isGoogleDrive() && widget.googleEmail() == null)
+              const Text(
+                'この同期の設定には Google アカウントの情報がないため、再ログインできません。'
+                '「同期を無効にする」を押してから、もう一度設定してください。端末内のスターは残ります。',
+              ),
             if (_error != null) Text(_error!),
             if (_busy) _googleProgress(),
-            OutlinedButton(
-              onPressed: _busy ? null : _reSignInGoogle,
-              child: const Text('Google に再ログイン'),
-            ),
+            if (!widget.isGoogleDrive() || widget.googleEmail() != null)
+              OutlinedButton(
+                onPressed: _busy ? null : _reSignInGoogle,
+                child: const Text('Google に再ログイン'),
+              ),
             OutlinedButton(
               onPressed: _busy
                   ? null
