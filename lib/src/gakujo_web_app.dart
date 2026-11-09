@@ -7845,7 +7845,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final labeledLines = lines
         .where(
           (line) => RegExp(
-            r'授業科目名|授業科目|科目名|授業名|講義名|科目\s*[:：]',
+            r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]|\s)|科目\s*[:：])',
           ).hasMatch(line),
         )
         .toList();
@@ -7858,6 +7858,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   bool _isUsefulCourseName(String value) => isUsefulGakujoCourseName(value);
 }
+
+/// Whether [url] is Gakujo's shared downloads tab.
+@visibleForTesting
+bool isGakujoSharedDownloadsUrl(String? url) =>
+    url != null && Uri.tryParse(url)?.queryParameters['tabId'] == 'sd';
 
 /// Whether [value] can name a course folder. Page labels and the titles of
 /// error or notice pages (expired flow, timeout, offline) are not courses;
@@ -7872,6 +7877,7 @@ bool isUsefulGakujoCourseName(String value) {
   }
 
   const genericPageLabels = {
+    'ダウンロード',
     '開設一覧',
     '連絡通知',
     '掲示一覧',
@@ -7891,6 +7897,7 @@ bool isUsefulGakujoCourseName(String value) {
   if (RegExp(
     r'有効期限|タイムアウト|インターネットに接続|接続できません|'
     r'ページを表示できません|webpage not available|ログイン|ログアウト|'
+    r'^now loading|'
     r'^(?:エラー|error)',
   ).hasMatch(lower)) {
     return false;

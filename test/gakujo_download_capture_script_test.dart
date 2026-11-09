@@ -303,6 +303,23 @@ void main() {
     ]);
   });
 
+  test('ignores file rows and page labels when capturing a course', () async {
+    final result = await _evaluateBehavior('courseNameFileRows');
+    final captured = result['captured'] as List;
+    expect(captured.single['courseName'], '未分類');
+    expect(result['names'], [
+      '線形代数',
+      '線形代数',
+      '線形代数',
+      '未分類',
+      '未分類',
+      '未分類',
+      '未分類',
+      '未分類',
+      'ダウンロード入門',
+    ]);
+  });
+
   for (final scenario in ['inlineSubmit', 'inlineSubmitEvent']) {
     test('$scenario captures fields after the page onclick prepares the form',
         () async {
