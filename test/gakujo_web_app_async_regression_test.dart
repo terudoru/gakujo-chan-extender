@@ -287,7 +287,7 @@ void main() {
           onDownload: (_) => fail('Blocked downloads must not be fetched'),
           showSnackBar: messages.add,
         );
-        expect(messages, ['Gakujo以外のダウンロードをブロックしました']);
+        expect(messages, ['学務情報システム以外のダウンロードをブロックしました']);
       });
     }
 
@@ -469,7 +469,7 @@ void main() {
             isConnectivityError: true,
           ),
           offlineAutoReloads: reloads,
-          expectedStatuses: ['オフラインのようです。接続が戻ったら再読込してください'],
+          expectedStatuses: ['オフラインのようです。接続が戻ったら再読み込みしてください'],
         );
       }
     });
@@ -498,14 +498,14 @@ void main() {
       checkError(
         error,
         offlineAutoReloads: 3,
-        expectedStatuses: ['読み込めませんでした。接続を確認して再読込を押してください'],
+        expectedStatuses: ['読み込めませんでした。接続を確認して再読み込みを押してください'],
       );
     });
 
     test('other main-frame errors retain their error status', () {
       checkError(
         const GakujoWebResourceError(description: 'certificate failure'),
-        expectedStatuses: ['読込エラー: certificate failure'],
+        expectedStatuses: ['読み込みエラー: certificate failure'],
       );
     });
 
@@ -513,10 +513,10 @@ void main() {
         () {
       checkError(
         const GakujoWebResourceError(
-          description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+          description: '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
         ),
         expectedStatuses: [
-          '読込エラー: 表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+          '読み込みエラー: 表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
         ],
       );
     });

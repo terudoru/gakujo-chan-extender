@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// AKIKO, a free-classroom search run by a student group unrelated to this
+/// AKIKO, a free-classroom search run by CIRCLE, a group unrelated to this
 /// app or to Niigata University's Gakujo system.
 const akikoServiceUrl = 'https://akiko.niigata-circle.com/';
 
@@ -43,8 +43,8 @@ class _ExternalServiceNoticeDialogState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'AKIKO（新潟大学 空き講義室検索）は学生団体が運営する外部サービスで、'
-            'このアプリや学務情報システムとは関係ありません。外部ブラウザで開きます。',
+            'AKIKO は、新潟大学の空き講義室を検索できる外部サービスです。'
+            'CIRCLE という団体が運営しており、このアプリや学務情報システムとは関係ありません。外部ブラウザで開きます。',
           ),
           const SizedBox(height: 8),
           SelectableText(

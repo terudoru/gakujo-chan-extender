@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
-  const fallback = 'スケジュールページで再実行してください';
+  const fallback = 'スケジュールページでもう一度実行してください';
 
   test('calendar import explains an expired login', () {
     expect(

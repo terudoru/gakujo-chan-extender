@@ -354,7 +354,7 @@ void main() {
     // The local data choice is always asked now (settings always exist).
     await tester.tap(find.text('含めて同期する'));
     await tester.pumpAndSettle();
-    expect(find.text('同期を使うには、設定の『ログイン』でログインIDを保存してください。'), findsOneWidget);
+    expect(find.text('同期を使うには、設定の「ログイン」でログインIDを保存してください。'), findsOneWidget);
   });
 
   testWidgets('setup validates passphrases and switches backend', (

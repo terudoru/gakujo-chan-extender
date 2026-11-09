@@ -88,7 +88,7 @@ class _AppMaintenanceSectionState extends State<AppMaintenanceSection> {
         ),
         const SizedBox(height: 8),
         const Text(
-          '設定、履歴、お気に入り、課題キャッシュをコピーします。ログイン情報と2FA秘密鍵は含めません。',
+          '設定、履歴、お気に入り、保存済み課題一覧をコピーします。ログイン情報と2FA秘密鍵は含めません。',
         ),
         const SizedBox(height: 8),
         Wrap(
@@ -198,7 +198,7 @@ class AppDataShortcutsSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        const Text('保存済みデータ、履歴、一覧キャッシュを確認します。'),
+        const Text('保存したデータ、履歴、課題一覧を確認します。'),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -269,7 +269,7 @@ class AppIntegrationSection extends StatelessWidget {
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
-        const Text('Gakujoの情報を外部アプリと連携します。'),
+        const Text('学務情報システムの情報を外部アプリと連携します。'),
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,

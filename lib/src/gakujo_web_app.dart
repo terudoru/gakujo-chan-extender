@@ -528,7 +528,7 @@ String secureStorageRecoveryGuidance(
   if (platform == TargetPlatform.iOS) {
     return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
         '再試行しても復旧しない場合はアプリを最新版へ更新してください。'
-        '保存領域の破損が疑われる場合に限り「保存データをリセット」を使用してください。'
+        '保存領域が壊れている疑いがあるときだけ「保存データをリセット」を使ってください。'
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
 
@@ -549,11 +549,11 @@ String secureStorageRecoveryGuidance(
   if (platform == TargetPlatform.macOS) {
     return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
         '以前に許可ダイアログを拒否した場合は、キーチェーンアクセス.app でこのアプリのアクセスを許可してから'
-        '再試行してください。それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+        '再試行してください。それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
   return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
-      'それでも不可なら「保存データをリセット」で保存領域を作り直せます。'
+      'それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
       'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
@@ -566,7 +566,7 @@ void handleGakujoWebResourceError(
 }) {
   if (error.isForMainFrame && error.isConnectivityError) {
     if (offlineAutoReloads >= 3) {
-      setStatus('読み込めませんでした。接続を確認して再読込を押してください');
+      setStatus('読み込めませんでした。接続を確認して再読み込みを押してください');
       return;
     }
     setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
@@ -576,7 +576,7 @@ void handleGakujoWebResourceError(
   if (!error.isForMainFrame) {
     // The portal iframe can fail offline; reloading could discard its form.
     if (error.isConnectivityError) {
-      setStatus('オフラインのようです。接続が戻ったら再読込してください');
+      setStatus('オフラインのようです。接続が戻ったら再読み込みしてください');
     }
     developer.log(
       'Sub-resource load error: ${error.description}',
@@ -584,7 +584,7 @@ void handleGakujoWebResourceError(
     );
     return;
   }
-  setStatus('読込エラー: ${error.description}');
+  setStatus('読み込みエラー: ${error.description}');
 }
 
 class GakujoWebApp extends StatefulWidget {
@@ -1908,7 +1908,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 ),
               ),
             IconButton(
-              tooltip: 'AKIKO（空き講義室検索・外部サービス）',
+              tooltip: 'AKIKO（空き講義室検索・CIRCLE 運営の外部サービス）',
               onPressed: () => unawaited(_openAkiko()),
               icon: const Icon(Icons.meeting_room_outlined),
               iconSize: _toolbarIconSize,
@@ -1967,7 +1967,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   const PopupMenuDivider(),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.reload,
-                    child: Text('再読込'),
+                    child: Text('再読み込み'),
                   ),
                 ],
                 onSelected: (selection) =>
@@ -2527,7 +2527,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return true;
     } on FormatException {
       if (mounted) {
-        _showSnackBar('長いBase32秘密鍵を確認してください');
+        _showSnackBar('2FA秘密鍵（長いBase32文字列）を確認してください');
       }
       return false;
     } on Object catch (error, stackTrace) {
@@ -3017,7 +3017,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   icon: Icons.open_in_new,
                   child: SwitchListTile(
                     title: const Text('外部サービスを開く前に確認する'),
-                    subtitle: const Text('AKIKO（空き講義室検索）'),
+                    subtitle: const Text('AKIKO（空き講義室検索・CIRCLE 運営）'),
                     value: !_externalServiceNoticeDismissed,
                     onChanged: (confirm) async {
                       await _setExternalServiceNoticeDismissed(!confirm);
@@ -3035,8 +3035,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       subtitle: !_driveSwitchSigningIn
                           ? (_driveDownloadsEnabled && _starSyncGoogleEmail != null
                               ? Text(_starSyncEngine.config?.backend == StarSyncBackend.googleDrive
-                                  ? '保存先: $_starSyncGoogleEmail（同期と同じアカウントです。変えるには「スター」の機能をオンにして、同期を無効にします）'
-                                  : '保存先: $_starSyncGoogleEmail（別のアカウントにするには、一度オフにします）')
+                                  ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには「スター」の機能をオンにして、同期を無効にします'
+                                  : '保存先: $_starSyncGoogleEmail\n別のアカウントにするには、一度オフにします')
                               : null)
                           : Row(
                               children: [
@@ -3356,7 +3356,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 }
                 if (secret.trim().isNotEmpty &&
                     !Base32.isValid(Base32.normalize(secret))) {
-                  _showSnackBar('長いBase32秘密鍵を確認してください');
+                  _showSnackBar('2FA秘密鍵（長いBase32文字列）を確認してください');
                   return;
                 }
                 setDialogState(() {
@@ -4193,7 +4193,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _showSnackBar('バックアップを保存しました: $destination');
     } on Object catch (error, stackTrace) {
       if (error is PlatformException && isCancelledDownloadError(error)) {
-        _showSnackBar('バックアップの保存をキャンセルしました（アプリ内には作成済みです）');
+        _showSnackBar('バックアップの保存をキャンセルしました。アプリ内には作成済みです');
         return;
       }
       developer.log(
@@ -4307,7 +4307,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               content: SizedBox(
                 width: 520,
                 child: favorites.isEmpty
-                    ? const Text('ページ操作から現在のページを追加できます。')
+                    ? const Text('メニューの「お気に入りに追加」で、開いているページを追加できます。')
                     : ListView.separated(
                         shrinkWrap: true,
                         itemCount: favorites.length,
@@ -4377,7 +4377,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       case _ToolbarAction.reload:
         if (_calendarOperationGate.isRunning) {
-          _showSnackBar('カレンダー連携または再検出の完了後に再読込してください');
+          _showSnackBar('カレンダー連携または再検出の完了後に再読み込みしてください');
           return;
         }
         _beginNavigation();
@@ -4691,7 +4691,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         stackTrace: stackTrace,
       );
       if (navigationRevision == _navigationRevision) {
-        _setStatus('読込エラー: $error');
+        _setStatus('読み込みエラー: $error');
       }
     }
   }
@@ -6352,11 +6352,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // The imported notification choices decide which reminders to book.
       unawaited(_syncReminders());
       _scheduleAutoBackup();
-      _showSnackBar('設定をインポートしました');
+      _showSnackBar('設定を読み込みました');
     } on BackupRollbackException {
       _showSnackBar('設定の復元に失敗し、一部の変更を元に戻せませんでした。保存先を確認してください');
     } on Object {
-      _showSnackBar('設定のインポートに失敗しました');
+      _showSnackBar('設定の読み込みに失敗しました');
     }
   }
 
@@ -7037,7 +7037,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             _lastAllowedPageUrl = url;
           }
           unawaited(_refreshNavigationState());
-          _setStatus('読込中: ${_displayUrl(url)}');
+          _setStatus('読み込み中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
           final navigationRevision = _navigationRevision;
@@ -7505,7 +7505,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           title: const Text('保存データをリセットしますか'),
           content: const Text(
             '安全な保存領域に保存したログイン情報、2FA秘密鍵、設定、履歴データを削除します。'
-            '削除後はログイン情報と2FA設定を入れ直してください。',
+            '削除後はログイン情報と2FA設定を入力し直してください。',
           ),
           actions: [
             TextButton(
@@ -7619,7 +7619,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _setStatus('保存データをリセットしました');
       _showSnackBar(revocationUnconfirmed
           ? '保存データをリセットしました。$googleRevocationUnconfirmedMessage'
-          : '保存データをリセットしました。ログイン情報と2FA設定を入れ直してください');
+          : '保存データをリセットしました。ログイン情報と2FA設定を入力し直してください');
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to reset secure storage',
