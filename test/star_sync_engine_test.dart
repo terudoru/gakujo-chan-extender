@@ -406,13 +406,12 @@ void main() {
     for (final mode in [
       'passphrase',
       'passphrase reset',
-      'pairing',
-      'pairing reset',
+      'drive',
+      'drive reset',
       'join',
     ]) {
       for (final failedKey in [starSyncStateKey, starSyncConfigKey]) {
         final remote = _Transport();
-        String? code;
         if (mode == 'join') {
           final firstStorage = _Storage();
           final first = StarSyncEngine(
@@ -421,8 +420,7 @@ void main() {
             secureStorage: firstStorage,
             transportFactory: (_) => remote,
           );
-          await first.setUpWithPairing(config);
-          code = await first.pairingCode();
+          await first.setUpWithDrive(config);
           first.dispose();
         }
         final storage = _Storage();
@@ -455,21 +453,19 @@ void main() {
               resetExisting: mode == 'passphrase reset',
               clearLocalStars: await engine.snapshotLocalStars(),
             );
-          case 'pairing':
-          case 'pairing reset':
+          case 'drive':
+          case 'drive reset':
             setup = engine
-                .setUpWithPairing(
+                .setUpWithDrive(
                   config,
-                  resetExisting: mode == 'pairing reset',
+                  resetExisting: mode == 'drive reset',
                   clearLocalStars: await engine.snapshotLocalStars(),
                 )
                 .then((_) {});
           default:
-            setup = engine.joinWithPairingCode(
-              config,
-              code!,
-              clearLocalStars: await engine.snapshotLocalStars(),
-            );
+            setup = engine.setUpWithDrive(
+              config, clearLocalStars: await engine.snapshotLocalStars(),
+            ).then((_) {});
         }
         await expectLater(setup, throwsStateError);
         expect(engine.status.value.enabled, isFalse);
@@ -484,9 +480,8 @@ void main() {
   });
 
   test('setup clears only the stars captured at the choice', () async {
-    for (final mode in ['passphrase', 'pairing', 'join']) {
+    for (final mode in ['passphrase', 'drive', 'join']) {
       final remote = _Transport();
-      String? code;
       if (mode == 'join') {
         final firstStorage = _Storage();
         final first = StarSyncEngine(
@@ -495,8 +490,7 @@ void main() {
           secureStorage: firstStorage,
           transportFactory: (_) => remote,
         );
-        await first.setUpWithPairing(config);
-        code = await first.pairingCode();
+        await first.setUpWithDrive(config);
         first.dispose();
       }
       final storage = _Storage();
@@ -522,14 +516,10 @@ void main() {
       switch (mode) {
         case 'passphrase':
           await engine.setUp(config, 'pass', clearLocalStars: snapshot);
-        case 'pairing':
-          await engine.setUpWithPairing(config, clearLocalStars: snapshot);
+        case 'drive':
+          await engine.setUpWithDrive(config, clearLocalStars: snapshot);
         case 'join':
-          await engine.joinWithPairingCode(
-            config,
-            code!,
-            clearLocalStars: snapshot,
-          );
+          await engine.setUpWithDrive(config, clearLocalStars: snapshot);
       }
       expect((await activity.loadStarredMessages()).map((star) => star.seqNo), [
         '4',
@@ -836,7 +826,7 @@ void main() {
   test(
     'setup generation rejects an account that changed and returned',
     () async {
-      for (final pairing in [false, true]) {
+      for (final drive in [false, true]) {
         final storage = _Storage();
         final remote = _Transport();
         var account = 'A';
@@ -853,9 +843,9 @@ void main() {
         final release = Completer<void>();
         remote.getStarted = started;
         remote.getRelease = release;
-        final Future<void> setup = pairing
+        final Future<void> setup = drive
             ? engine
-                  .setUpWithPairing(
+                  .setUpWithDrive(
                     config,
                     expectedAccount: expectedAccount,
                     expectedGeneration: generation,
@@ -1141,7 +1131,7 @@ void main() {
   });
 
   test('setup rejects an account changed during sign-in', () async {
-    for (final mode in ['passphrase', 'pairing', 'join']) {
+    for (final mode in ['passphrase', 'drive', 'join']) {
       final storage = _Storage();
       final remote = _Transport();
       var account = 'A';
@@ -1173,21 +1163,19 @@ void main() {
             clearLocalStars: await engine.snapshotLocalStars(),
             expectedAccount: expectedAccount,
           );
-        case 'pairing':
+        case 'drive':
           setup = engine
-              .setUpWithPairing(
+              .setUpWithDrive(
                 config,
                 clearLocalStars: await engine.snapshotLocalStars(),
                 expectedAccount: expectedAccount,
               )
               .then((_) {});
         default:
-          setup = engine.joinWithPairingCode(
-            config,
-            'invalid',
-            clearLocalStars: await engine.snapshotLocalStars(),
+          setup = engine.setUpWithDrive(
+            config, clearLocalStars: await engine.snapshotLocalStars(),
             expectedAccount: expectedAccount,
-          );
+          ).then((_) {});
       }
       await expectLater(
         setup,
@@ -1202,7 +1190,7 @@ void main() {
   });
 
   test('setup rechecks account before clearing or installing', () async {
-    for (final pairing in [false, true]) {
+    for (final drive in [false, true]) {
       final remote = _Transport();
       final storage = _Storage();
       final activity = GakujoActivityStore(secureStorage: storage);
@@ -1227,8 +1215,8 @@ void main() {
       remote.listRelease = Completer<void>();
       final started = remote.listStarted!;
       final release = remote.listRelease!;
-      final setup = pairing
-          ? engine.setUpWithPairing(
+      final setup = drive
+          ? engine.setUpWithDrive(
               config,
               resetExisting: true,
               clearLocalStars: await engine.snapshotLocalStars(),
@@ -1254,7 +1242,7 @@ void main() {
     }
   });
 
-  test('pairing join rechecks the account before installation', () async {
+  test('drive join rechecks the account before installation', () async {
     final remote = _Transport();
     final first = _Storage();
     final second = _Storage();
@@ -1264,8 +1252,7 @@ void main() {
       secureStorage: first,
       transportFactory: (_) => remote,
     );
-    await a.setUpWithPairing(config);
-    final code = await a.pairingCode();
+    await a.setUpWithDrive(config);
     var account = 'student';
     final activity = GakujoActivityStore(secureStorage: second);
     await activity.upsertStarredMessage(
@@ -1287,10 +1274,8 @@ void main() {
     remote.listRelease = Completer<void>();
     final started = remote.listStarted!;
     final release = remote.listRelease!;
-    final joining = b.joinWithPairingCode(
-      config,
-      code,
-      clearLocalStars: await b.snapshotLocalStars(),
+    final joining = b.setUpWithDrive(
+      config, clearLocalStars: await b.snapshotLocalStars(),
     );
     await started.future;
     await b.runAccountChange(() async {
@@ -1421,11 +1406,7 @@ void main() {
         throwsA(isA<StarSyncAccountRequiredException>()),
       );
       await expectLater(
-        engine.setUpWithPairing(config),
-        throwsA(isA<StarSyncAccountRequiredException>()),
-      );
-      await expectLater(
-        engine.joinWithPairingCode(config, 'invalid'),
+        engine.setUpWithDrive(config),
         throwsA(isA<StarSyncAccountRequiredException>()),
       );
       expect(storage.values, isEmpty);
@@ -1481,14 +1462,6 @@ void main() {
           before,
         );
         await expectLater(
-          engine.pairingCode(),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
-          engine.rejoinWithPairingCode('invalid'),
-          throwsA(isA<StarSyncAccountMismatchException>()),
-        );
-        await expectLater(
           engine.rejoin('passphrase'),
           throwsA(isA<StarSyncAccountMismatchException>()),
         );
@@ -1501,7 +1474,7 @@ void main() {
           throwsA(isA<StarSyncAccountMismatchException>()),
         );
         await expectLater(
-          engine.resetRemoteWithPairing(),
+          engine.resetRemoteWithDrive(),
           throwsA(isA<StarSyncAccountMismatchException>()),
         );
       }
@@ -1966,7 +1939,7 @@ void main() {
           return timer = _TestTimer(callback);
         },
       );
-      await engine.setUpWithPairing(
+      await engine.setUpWithDrive(
         const StarSyncConfig(backend: StarSyncBackend.googleDrive),
       );
       await meter.charge(14950);
@@ -2010,7 +1983,7 @@ void main() {
       now: () => now,
       timerFactory: (duration, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUpWithPairing(
+    await engine.setUpWithDrive(
       const StarSyncConfig(backend: StarSyncBackend.googleDrive),
     );
     await meter.charge(14950);
@@ -2345,6 +2318,14 @@ void main() {
     expect(restored.id, star.id);
   });
 
+  test('legacy sync status loads and is saved under the new name', () {
+    final state = StarSyncState(deviceId: 'd', dataKey: 'key', keyId: 'id');
+    final json = state.toJson()..['status'] = 'needsPairingCode';
+    final loaded = StarSyncState.fromJson(json);
+    expect(loaded.status, StarSyncStatus.needsLegacyReset);
+    expect(loaded.toJson()['status'], 'needsLegacyReset');
+  });
+
   test('legacy pendingApply is ignored when loading state', () {
     final state = StarSyncState(deviceId: 'd', dataKey: 'key', keyId: 'id');
     final json = state.toJson()..['pendingApply'] = true;
@@ -2536,7 +2517,7 @@ void main() {
     expect(b.status.value.status, StarSyncStatus.ok);
   });
 
-  for (final resetMode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
+  for (final resetMode in ['passphrase', 'drive', 'setup', 'setupDrive']) {
     test(
       'reset $resetMode sweeps only retired key files for seven days',
       () async {
@@ -2558,18 +2539,18 @@ void main() {
         switch (resetMode) {
           case 'passphrase':
             await engine.resetRemote('new');
-          case 'pairing':
-            await engine.resetRemoteWithPairing();
+          case 'drive':
+            await engine.resetRemoteWithDrive();
           case 'setup':
             await engine.setUp(config, 'new', resetExisting: true);
-          case 'setupPairing':
-            await engine.setUpWithPairing(config, resetExisting: true);
+          case 'setupDrive':
+            await engine.setUpWithDrive(config, resetExisting: true);
         }
         final state = StarSyncState.fromJson(
           jsonDecode(storage.values[starSyncStateKey]!),
         );
         expect(state.retiredKeyIds.keys, contains(oldState.keyId));
-        final unrelated = createStarSyncPairingKeyring();
+        final unrelated = createStarSyncDriveKeyring();
         Future<List<int>> file(String id, String keyId, List<int> key) =>
             encryptStarSyncFile(
               dataKey: starSyncKeyFromBytes(key),
@@ -2609,7 +2590,7 @@ void main() {
     );
   }
 
-  for (final mode in ['passphrase', 'pairing', 'setup', 'setupPairing']) {
+  for (final mode in ['passphrase', 'drive', 'setup', 'setupDrive']) {
     test('reset $mode recovers from a malformed keyring', () async {
       final remote = _Transport();
       final storage = _Storage();
@@ -2625,12 +2606,12 @@ void main() {
       switch (mode) {
         case 'passphrase':
           await engine.resetRemote('new');
-        case 'pairing':
-          await engine.resetRemoteWithPairing();
+        case 'drive':
+          await engine.resetRemoteWithDrive();
         case 'setup':
           await engine.setUp(config, 'new', resetExisting: true);
-        case 'setupPairing':
-          await engine.setUpWithPairing(config, resetExisting: true);
+        case 'setupDrive':
+          await engine.setUpWithDrive(config, resetExisting: true);
       }
       final keyring = StarSyncKeyring.fromJson(
         jsonDecode(utf8.decode(remote.files['stars/keyring.json']!)),
@@ -2658,7 +2639,7 @@ void main() {
     final old = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
-    await engine.resetRemoteWithPairing();
+    await engine.resetRemoteWithDrive();
     final current = StarSyncState.fromJson(
       jsonDecode(storage.values[starSyncStateKey]!),
     );
@@ -2692,7 +2673,7 @@ void main() {
     );
     await engine.setUp(config, 'pass');
     final state = jsonDecode(storage.values[starSyncStateKey]!) as Map;
-    final old = createStarSyncPairingKeyring();
+    final old = createStarSyncDriveKeyring();
     const path = 'stars/devices/old';
     remote.files[path] = await encryptStarSyncFile(
       dataKey: starSyncKeyFromBytes(old.dataKey),
@@ -2710,10 +2691,10 @@ void main() {
     remote.files[ownPath] = oldOwnFile;
     final currentKeyring = remote.files['stars/keyring.json']!;
     remote.files['stars/keyring.json'] = utf8.encode(
-      jsonEncode(old.keyring.toJson()),
+      jsonEncode(StarSyncKeyring.pairing(keyId: old.keyring.keyId).toJson()),
     );
     await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.needsPairingCode);
+    expect(engine.status.value.status, StarSyncStatus.needsLegacyReset);
     expect(remote.files.containsKey(path), isTrue);
     remote.files['stars/keyring.json'] = currentKeyring;
     expect((await engine.syncNow()).skippedFiles, 0);
@@ -3083,7 +3064,10 @@ void main() {
       kdfParams: kdf,
     );
     await b.setUp(config, 'same');
-    expect(await b.pairingCode(), await a.pairingCode());
+    expect(
+      StarSyncState.fromJson(jsonDecode(second.values[starSyncStateKey]!)).dataKey,
+      StarSyncState.fromJson(jsonDecode(first.values[starSyncStateKey]!)).dataKey,
+    );
   });
 
   test(
@@ -3408,7 +3392,7 @@ void main() {
         secureStorage: storage,
         transportFactory: (_) => remote,
       );
-      await engine.setUpWithPairing(
+      await engine.setUpWithDrive(
         const StarSyncConfig(backend: StarSyncBackend.googleDrive),
       );
       remote.authFailure = true;
@@ -3432,7 +3416,7 @@ void main() {
       now: () => now,
       timerFactory: (_, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUpWithPairing(
+    await engine.setUpWithDrive(
       const StarSyncConfig(backend: StarSyncBackend.googleDrive),
     );
     expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isFalse);
@@ -3469,7 +3453,7 @@ void main() {
       secureStorage: storage,
       transportFactory: (_) => remote,
     );
-    await engine.setUpWithPairing(
+    await engine.setUpWithDrive(
       const StarSyncConfig(backend: StarSyncBackend.googleDrive),
     );
     remote.driveFailure = StarSyncTransportErrorKind.storageFull;

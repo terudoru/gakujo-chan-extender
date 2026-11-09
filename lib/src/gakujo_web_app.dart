@@ -1641,9 +1641,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
-      unawaited(StarSyncClipboardGuard.instance.clear());
-    }
     // Do not probe the network every few seconds while the app is in the
     // background; check again once it is back.
     if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
@@ -3143,7 +3140,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         _starSyncGoogleEmail = await _signInGoogle();
                         try {
-                          return await _starSyncEngine.setUpWithPairing(
+                          return await _starSyncEngine.setUpWithDrive(
                             StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
                             clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                           );
@@ -3181,18 +3178,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         return _starSyncEngine.requireAccount();
                       },
                       onAccountGeneration: () => _starSyncEngine.accountGeneration,
-                      onSetUpWithPairing: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
-                          _starSyncEngine.setUpWithPairing(
+                      onSetUpWithDrive: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
+                          _starSyncEngine.setUpWithDrive(
                             StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
                             resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                           ),
-                      onJoinWithCode: (code, {required clearLocalStars, required expectedAccount, required expectedGeneration}) => _starSyncEngine.joinWithPairingCode(
-                        StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail), code,
-                        clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
-                      ),
-                      onPairingCode: _starSyncEngine.pairingCode,
-                      onRejoinWithCode: _starSyncEngine.rejoinWithPairingCode,
-                      onResetWithPairing: _starSyncEngine.resetRemoteWithPairing,
+                      onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
                       onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
                         await _ensureStarSyncLoaded();
                         await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
@@ -4005,7 +3996,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
-      await StarSyncClipboardGuard.instance.clear();
       try {
         await _ensureStarSyncLoaded();
       } on Object catch (error) {
@@ -7658,7 +7648,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
-      await StarSyncClipboardGuard.instance.clear();
       try {
         await _warnPendingDriveChecks();
       } on Object catch (error) {

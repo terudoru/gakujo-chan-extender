@@ -39,7 +39,6 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret`）
 - パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
-- Linux では QR コードの読み取りは使えない
 - Linux では OS の通知に対応していない。提出期限はアプリ内で確認する
 
 ### iOS/iPadOS
@@ -168,15 +167,15 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 同期先は次から選びます。
 
-- Google ドライブ：Google アカウントだけで使える。2台目以降は、1台目の「別の端末を追加」に出る QR コードかペアリングコードで参加する。このボタンは、Google の OAuth クライアント ID を組み込んだビルドにだけ出る。v0.70.6 の次のリリースから GitHub Actions のリリースビルドに組み込む予定
+- Google ドライブ：同じ Google アカウントでログインするだけで端末間を同期できる。このボタンは Google の OAuth クライアント ID を組み込んだビルドにだけ出る。v0.70.6 の次のリリースから GitHub Actions のリリースビルドに組み込む予定
 - WebDAV または S3 互換ストレージ：詳細設定から、自分のサーバーの接続情報とパスフレーズを入れる
 
 使う前に、次の点を確かめてください。
 
 - 同期するには、設定の「ログイン」でログイン ID を保存しておく必要がある。ログイン ID が設定したときと変わると、同期は止まる
 - 共用の端末では同期を設定しない。同期で受け取った内容は、その端末を使うほかの人からも見える
-- ペアリングコードやパスフレーズを知っている人は、同期データを読める。忘れたときは同期データをリセットしてやり直す（端末の中のスターは残る）
-- Google ドライブで同期するなら、全端末をなくしたときに備えて、「別の端末を追加」のコードを安全な場所に控えておく
+- WebDAV / S3 のパスフレーズを知っている人は同期データを読める。忘れたときは同期データをリセットしてやり直す（端末の中のスターは残る）
+- Google ドライブでは暗号化の鍵も同じアカウントのアプリ専用領域に保存するため、Google やアカウントとアプリの Drive 権限にアクセスできる人は同期データを読める
 
 任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://gakujo.terudoru.com/privacy.html) をご覧ください。
 
