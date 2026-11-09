@@ -6783,7 +6783,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_protectedSecretPromptGate.reportReadError()) {
       developer.log('Failed to read protected secrets', name: 'MoreBetterGakujo',
           error: error.runtimeType, stackTrace: stackTrace);
-      if (mounted) _showSnackBar('保存したログイン情報を読み出せません。設定を確認してください');
+      if (mounted) _showSnackBar('保存したログイン情報を読み出せません。設定の「ログイン」でもう一度保存してください');
     }
   }
 
