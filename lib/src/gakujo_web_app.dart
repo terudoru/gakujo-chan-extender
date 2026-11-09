@@ -97,6 +97,7 @@ import 'widgets/app_data_sections.dart';
 import 'widgets/app_update_banner.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
+import 'widgets/linux_native_toolbar_tooltips.dart';
 import 'widgets/settings_sections.dart';
 import 'widgets/star_sync_section.dart';
 
@@ -1887,7 +1888,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         unawaited(_handleSystemBack());
       },
       child: Scaffold(
-        appBar: compactPreviewForKeyboard ? null : AppBar(
+        appBar: compactPreviewForKeyboard ? null : _wrapToolbar(AppBar(
           toolbarHeight: _compactToolbarHeight,
           titleSpacing: 12,
           title: GakujoGpaTaunt(
@@ -2002,7 +2003,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ),
             ),
           ],
-        ),
+        )),
         body: Column(
           children: [
             if (!compactPreviewForKeyboard) Material(
@@ -2049,6 +2050,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           ],
         ),
       ),
+    );
+  }
+
+  PreferredSizeWidget _wrapToolbar(PreferredSizeWidget toolbar) {
+    if (defaultTargetPlatform != TargetPlatform.linux) return toolbar;
+    return PreferredSize(
+      preferredSize: toolbar.preferredSize,
+      child: LinuxNativeToolbarTooltips(child: toolbar),
     );
   }
 
