@@ -19,7 +19,7 @@ if [[ "$tag_version" != "$version" ]]; then
   exit 1
 fi
 deb_version="${release_tag#v}"
-deb_version="${deb_version//-/~}"
+deb_version="${deb_version//-/\~}"
 
 bundle="build/linux/x64/release/bundle"
 if [ ! -d "$bundle" ] || [ ! -f "$bundle/morebettergakujo_flutter" ]; then
