@@ -305,9 +305,47 @@ void main() {
     final b = StarSyncEngine(loginId: () => 'student',
       activityStore: GakujoActivityStore(secureStorage: second),
       secureStorage: second, googleDriveTransport: () => remote);
-    await expectLater(b.setUpWithDrive(config), throwsA(isA<StarSyncKeyringMismatchException>()));
+    expect(await b.setUpWithDrive(config), StarSyncDriveSetup.needsLegacyReset);
     expect(remote.files, before);
     expect(b.status.value.enabled, isFalse);
+    expect(
+      await b.setUpWithDrive(config, resetExisting: true),
+      StarSyncDriveSetup.created,
+    );
+    expect(b.status.value.enabled, isTrue);
+  });
+
+  test('malformed Drive keyring offers re-creation and overwrites nothing', () async {
+    final remote = _Transport();
+    final first = _Storage();
+    final a = StarSyncEngine(loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: first),
+      secureStorage: first, googleDriveTransport: () => remote);
+    await a.setUpWithDrive(config);
+    remote.files['stars/keyring.json'] = utf8.encode('{not json');
+    final before = {for (final entry in remote.files.entries) entry.key: List<int>.of(entry.value)};
+    final second = _Storage();
+    final b = StarSyncEngine(loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: second),
+      secureStorage: second, googleDriveTransport: () => remote);
+    expect(await b.setUpWithDrive(config), StarSyncDriveSetup.needsLegacyReset);
+    expect(remote.files, before);
+  });
+
+  test('device files without a key are not stranded by a new key', () async {
+    final remote = _Transport();
+    final first = _Storage();
+    final a = StarSyncEngine(loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: first),
+      secureStorage: first, googleDriveTransport: () => remote);
+    await a.setUpWithDrive(config);
+    remote.files.remove('stars/keyring.json');
+    final second = _Storage();
+    final b = StarSyncEngine(loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: second),
+      secureStorage: second, googleDriveTransport: () => remote);
+    expect(await b.setUpWithDrive(config), StarSyncDriveSetup.needsLegacyReset);
+    expect(remote.files.containsKey('stars/keyring.json'), isFalse);
   });
 
   test('legacy key holder upgrades and a new device joins', () async {

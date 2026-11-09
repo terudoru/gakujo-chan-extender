@@ -1032,6 +1032,21 @@ class StarSyncEngine {
           ? await _deleteRemoteData(transport, account)
           : null;
       var remote = await transport.get(_keyringPath);
+      // Device files with no key mean an interrupted reset or lost key. A new
+      // key would strand them, so only an explicit re-creation may proceed.
+      if (remote == null &&
+          !resetExisting &&
+          (await transport.list(_deviceDirectory)).isNotEmpty) {
+        // Another device may be mid-setup; recreating would delete its data.
+        // A new transport looks again rather than reusing a cached listing.
+        final recheck = _transportFactory(config);
+        try {
+          remote = await recheck.get(_keyringPath);
+        } finally {
+          recheck.close();
+        }
+        if (remote == null) return StarSyncDriveSetup.needsLegacyReset;
+      }
       if (remote == null) {
         final created = createStarSyncDriveKeyring();
         final drive = StarSyncKeyring.drive(
@@ -1056,11 +1071,20 @@ class StarSyncEngine {
       } else if (resetExisting) {
         throw StarSyncSetupRaceException();
       }
-      final stored = StarSyncKeyring.fromJson(jsonDecode(utf8.decode(remote.bytes)));
+      final StarSyncKeyring stored;
+      try {
+        stored = StarSyncKeyring.fromJson(jsonDecode(utf8.decode(remote.bytes)));
+      } on Object catch (error) {
+        if (error is StarSyncTransportException) rethrow;
+        return StarSyncDriveSetup.needsLegacyReset;
+      }
       _setupAccount(account, expectedGeneration);
-      if (stored.mode == 'pairing') return StarSyncDriveSetup.needsLegacyReset;
-      if (stored.mode != 'drive') throw const StarSyncFormatException();
-      await _verifyDriveKey(transport, stored, (keyId: stored.keyId, dataKey: stored.dataKey));
+      if (stored.mode != 'drive') return StarSyncDriveSetup.needsLegacyReset;
+      try {
+        await _verifyDriveKey(transport, stored, (keyId: stored.keyId, dataKey: stored.dataKey));
+      } on StarSyncKeyringMismatchException {
+        return StarSyncDriveSetup.needsLegacyReset;
+      }
       await _installDriveKey(
         config,
         stored.keyId,

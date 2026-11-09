@@ -352,7 +352,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             title: const Text('以前の同期データが見つかりました'),
-            content: const Text('古い方式で保存されているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
+            content: const Text('古い方式で保存されているか壊れているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
               FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('作り直す')),
@@ -649,7 +649,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           if (widget.isGoogleDrive() && widget.googleEmail() != null)
             Text('${widget.googleEmail()!}（別のアカウントにするには、同期を無効にしてから設定し直します）'),
           if (status.status == StarSyncStatus.needsLegacyReset) ...[
-            const Text('古い方式で保存されているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
+            const Text('古い方式で保存されているか壊れているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
             OutlinedButton(onPressed: _busy ? null : _resetDrive, child: const Text('作り直す')),
           ],
           if (status.status == StarSyncStatus.needsPassphrase) ...[

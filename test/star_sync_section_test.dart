@@ -447,7 +447,7 @@ void main() {
     ));
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
-    expect(find.textContaining('古い方式で保存されているため'), findsOneWidget);
+    expect(find.textContaining('古い方式で保存されているか壊れているため'), findsOneWidget);
     expect(find.text('作り直す'), findsOneWidget);
   });
 
