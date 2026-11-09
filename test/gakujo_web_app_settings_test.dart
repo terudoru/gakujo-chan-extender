@@ -155,7 +155,7 @@ void main() {
       expect(find.text('端末の通知設定を開く'), findsNothing);
       expect(find.text('締切前のリマインド'), findsNothing);
       expect(tester.widget<CheckboxListTile>(
-        find.widgetWithText(CheckboxListTile, '提出期限のOS通知'),
+        find.widgetWithText(CheckboxListTile, '提出期限の通知'),
       ).onChanged, isNull);
 
       await show(TargetPlatform.windows);
@@ -163,7 +163,7 @@ void main() {
       expect(find.text('端末の設定で通知が許可されていません'), findsOneWidget);
       expect(find.text('締切前のリマインド'), findsOneWidget);
       expect(tester.widget<CheckboxListTile>(
-        find.widgetWithText(CheckboxListTile, '提出期限のOS通知'),
+        find.widgetWithText(CheckboxListTile, '提出期限の通知'),
       ).onChanged, isNotNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;
@@ -1300,7 +1300,7 @@ void main() {
 
     final reloadButton = find.widgetWithIcon(IconButton, Icons.refresh);
     expect(tester.getSize(reloadButton), const Size(40, 40));
-    expect(find.byTooltip('再読込'), findsOneWidget);
+    expect(find.byTooltip('再読み込み'), findsOneWidget);
     await tester.tap(reloadButton);
     expect(reloadCount, 1);
   });
@@ -1853,9 +1853,9 @@ void main() {
 
     expect(find.text('ダウンロード設定'), findsOneWidget);
     expect(find.text('ファイル保存モード'), findsOneWidget);
-    expect(find.text('自動仕分け+指定場所保存'), findsOneWidget);
-    expect(find.text('自動仕分けなし+指定場所保存'), findsOneWidget);
-    expect(find.text('自動仕分けなし+適宜保存場所指定'), findsOneWidget);
+    expect(find.text('授業ごとに仕分けて指定フォルダに保存'), findsOneWidget);
+    expect(find.text('仕分けずに指定フォルダに保存'), findsOneWidget);
+    expect(find.text('保存のたびに場所を選ぶ'), findsOneWidget);
     expect(find.text('保存先フォルダ'), findsOneWidget);
     expect(find.text('未設定'), findsOneWidget);
     expect(find.text('フォルダを選択'), findsOneWidget);

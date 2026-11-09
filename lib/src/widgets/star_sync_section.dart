@@ -18,10 +18,10 @@ String starSyncErrorMessage(Object error) => _errorText(error);
 String _errorText(Object error) {
   if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
   if (error is StarSyncActiveAccountRequiredException) {
-    return '学情にログインしてから設定してください';
+    return '学務情報システムにログインしてから設定してください';
   }
   if (error is StarSyncAccountRequiredException) {
-    return '同期を使うには、設定の『ログイン』でログインIDを保存してください。';
+    return '同期を使うには、設定の「ログイン」でログインIDを保存してください。';
   }
   if (error is StarSyncKeyringMismatchException) return '同期データの鍵が一致しません';
   if (error is FormatException || error is StarSyncFormatException) {
@@ -262,7 +262,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           'この端末に残っているお気に入り（${collectionCount('favorites')}件）、'
           '設定（${collectionCount('settings')}項目）、'
           '下書き（${collectionCount('report-drafts')}件）、'
-          '通知済み期限（${collectionCount('notified-deadlines')}件）も含まれます。'
+          '通知済みの締切（${collectionCount('notified-deadlines')}件）も含まれます。'
           '他の人が使っていた端末や、別の Google アカウントで同期したあとで内容を混ぜたくないときは、「空にして始める」を選んでください。',
         ),
         actions: [
@@ -425,7 +425,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         ? Text(
             widget.isGoogleDrive()
                 ? '保存先: ${widget.googleEmail()!}'
-                : '保存先: ${widget.googleEmail()!}（別のアカウントにするには、一度オフにします）',
+                : '保存先: ${widget.googleEmail()!}\n別のアカウントにするには、一度オフにします',
           )
         : null,
     value: widget.driveDownloadsEnabled,
@@ -514,7 +514,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(status.activeAccountUnknown
-                ? '学情へのログイン状態を確認できないため、同期を停止しています。学情にログインすると再開します'
+                ? '学務情報システムへのログイン状態を確認できないため、同期を停止しています。学務情報システムにログインすると再開します'
                 : 'ログインIDが同期を設定したときと違うため、同期を停止しています。'),
             OutlinedButton(
               onPressed: _busy
@@ -647,7 +647,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
             ),
           if (widget.isGoogleDrive() && widget.googleEmail() != null)
-            Text('${widget.googleEmail()!}（別のアカウントにするには、同期を無効にしてから設定し直します）'),
+            Text('${widget.googleEmail()!}\n別のアカウントにするには、同期を無効にしてから設定し直します。'),
           if (status.status == StarSyncStatus.needsLegacyReset) ...[
             const Text('古い方式で保存されているか壊れているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
             OutlinedButton(onPressed: _busy ? null : _resetDrive, child: const Text('作り直す')),
@@ -933,7 +933,7 @@ class _SetupDialogState extends State<_SetupDialog> {
   Future<void> _reset() async {
     final confirmed = await _confirmReset(
       context,
-      '同期データをリセットすると、他の端末ではパスフレーズの入力し直しが必要になります。この端末のスターはそのまま残ります。',
+      '同期データをリセットすると、他の端末ではパスフレーズを入力し直す必要があります。この端末のスターはそのまま残ります。',
     );
     if (confirmed == true && mounted) await _submit(resetExisting: true);
   }

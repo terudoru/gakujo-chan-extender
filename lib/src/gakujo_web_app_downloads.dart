@@ -14,7 +14,7 @@ Future<void> handleGakujoNativeDownload(
     return;
   }
   if (!AllowedWebOrigins.canLoad(download.url, debugAllowed: false)) {
-    showSnackBar('Gakujo以外のダウンロードをブロックしました');
+    showSnackBar('学務情報システム以外のダウンロードをブロックしました');
     return;
   }
   // Only Gakujo's GET attachment links can be replayed without a POST body.
@@ -293,7 +293,7 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
 }) async {
   if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
     throw PlatformException(
-        code: 'blocked_url', message: 'Gakujo以外のダウンロードをブロックしました');
+        code: 'blocked_url', message: '学務情報システム以外のダウンロードをブロックしました');
   }
   final directory = await (temporaryRoot ?? Directory.systemTemp)
       .createTemp('mbg-webview-download-');
@@ -326,11 +326,11 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
     if (decoded['blocked'] == true ||
         !AllowedWebOrigins.canLoad(finalUrl, debugAllowed: false)) {
       throw PlatformException(
-          code: 'blocked_url', message: 'Gakujo以外へのリダイレクトをブロックしました');
+          code: 'blocked_url', message: '学務情報システム以外へのリダイレクトをブロックしました');
     }
     if (status < 200 || status > 299 || decoded['ok'] != true) {
       throw PlatformException(
-          code: 'download_failed', message: 'ダウンロードに失敗しました HTTP $status');
+          code: 'download_failed', message: 'ダウンロードに失敗しました（HTTP $status）');
     }
     final mimeType =
         decoded['mimeType']?.toString().split(';').first.trim().toLowerCase();
@@ -439,7 +439,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       });
       final needsRoot = _appSettings.downloadSaveMode.needsConfiguredRoot;
       if (!needsRoot) {
-        _showSnackBar('現在の保存方式では固定保存先は不要です');
+        _showSnackBar('現在の保存モードでは、保存先フォルダの設定は不要です');
       } else if (root.isConfigured) {
         _showSnackBar('保存先は利用できます: ${root.displayName ?? root.path ?? '設定済み'}');
       } else {
@@ -620,7 +620,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                           }
                           setDialogState(() {});
                         },
-                  child: const Text('キューを削除'),
+                  child: const Text('一覧を削除'),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
@@ -835,14 +835,14 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       debugAllowed: _debugAllowed,
     )) {
       _setStatus('ブロック: ${_displayUrl(request.url)}');
-      _showSnackBar('Gakujo以外のダウンロードをブロックしました');
+      _showSnackBar('学務情報システム以外のダウンロードをブロックしました');
       return;
     }
 
     final operationKey = _downloadOperationGate.tryStart(request);
     if (operationKey == null) {
       if (_downloadOperationGate.atCapacity) {
-        _showSnackBar('同時に実行できるダウンロード数の上限です');
+        _showSnackBar('同時に実行できるダウンロード数の上限に達しました');
         return;
       }
       if (kDebugMode) {
@@ -1007,7 +1007,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
     _setStatus('保存エラー: $message');
     _showSnackBar(
-      queued ? '保存できませんでした。失敗キューに追加しました: $message' : '保存できませんでした: $message',
+      queued ? '保存できませんでした。「失敗したダウンロード」に追加しました: $message' : '保存できませんでした: $message',
     );
   }
 
@@ -1030,7 +1030,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (defaultTargetPlatform != TargetPlatform.iOS) {
       return null;
     }
-    return 'iCloud Drive はフォルダ指定と自動仕分けに対応します。Google Drive に保存する場合は「自動仕分けなし+適宜保存場所指定」を使います。';
+    return 'iCloud Drive はフォルダの指定と授業ごとの仕分けに対応します。Google ドライブに保存する場合は「保存のたびに場所を選ぶ」を使います。';
   }
 
   Future<String?> _cookieHeader(String url) async {
@@ -1079,7 +1079,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (!AllowedWebOrigins.canLoad(request.url, debugAllowed: false)) {
       throw PlatformException(
         code: 'blocked_url',
-        message: 'Gakujo以外のダウンロードをブロックしました',
+        message: '学務情報システム以外のダウンロードをブロックしました',
       );
     }
 

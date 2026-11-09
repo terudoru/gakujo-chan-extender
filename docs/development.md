@@ -173,7 +173,7 @@ flutter build apk --debug
 | 保存先の状態の確認 | 設定画面と保存の直前に保存先を確かめ、設定し直しが必要なら案内する | `lib/src/gakujo_web_app.dart`, `lib/src/file_system_gakujo_download_service.dart` |
 | 学情メニューへのクイックジャンプ | 成績、レポート、連絡通知、ダウンロード、シラバス、スケジュールへメニューから移る | `lib/src/gakujo_web_app.dart` |
 | バックアップ対象の拡張 | ログイン情報と2段階認証の秘密鍵を除いたまま、機能の設定、履歴、お気に入り、課題のキャッシュ、変更履歴も移せる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_download_history_store.dart`, `lib/src/gakujo_web_app.dart` |
-| アプリ内の更新確認 | 動いているアプリの版と GitHub Releases の最新版を比べ、新しい版があれば配布ページを開ける | `lib/src/app_update_service.dart`, `lib/src/gakujo_web_app.dart` |
+| アプリ内の更新確認 | GitHub Releases の最新版を1日1回自動で確認し、新しい版があればバナーから配布ページを開ける。手動でも確認できる | `lib/src/app_update_service.dart`, `lib/src/gakujo_web_app.dart`, `lib/src/widgets/app_update_banner.dart` |
 | 自動バックアップ | 設定、履歴、お気に入り、課題のキャッシュ、変更履歴を定期的にローカルの JSON に保存する。機能の設定でオフにできる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
 | 課題の期限の OS 通知 | 新しい提出期限を見つけたら OS の通知を出す。Android/iOS/macOS はネイティブの通知、Windows は標準のダイアログで通知する。機能の設定でオフにできる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_notification_service.dart`, `android/app/src/main/kotlin/net/yoshida/morebettergakujo/MainActivity.kt`, `ios/Runner/AppDelegate.swift`, `macos/Runner/AppDelegate.swift`, `windows/runner/flutter_window.cpp` |
 | エラー報告パッケージ | 軽量版か詳細版を選び、診断情報を JSON ファイルに保存して、同じ内容をクリップボードにもコピーする | `lib/src/gakujo_web_app.dart` |

@@ -337,7 +337,7 @@ void main() {
       await emit('processFailed', 1);
       await emit('processFailed', 1);
       expect(calls.where((call) => call.method == 'loadUrl'), hasLength(3));
-      expect(errors.single.description, '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください');
+      expect(errors.single.description, '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください');
       expect(errors.single.isConnectivityError, isFalse);
       await emit('loadingStateChanged', windows.LoadingState.loading.index);
       await emit('loadingStateChanged',

@@ -913,7 +913,7 @@ class MainActivity : FlutterActivity() {
         }
         val rawUrl = args["url"]?.toString()
         if (!isAllowedGakujoUrl(rawUrl)) {
-            result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
+            result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
             return
         }
 
@@ -956,7 +956,7 @@ class MainActivity : FlutterActivity() {
         }
         val rawUrl = args["url"]?.toString()
         if (!isAllowedGakujoUrl(rawUrl)) {
-            result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
+            result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
             return
         }
         if (isPickerActive()) {
@@ -1035,11 +1035,11 @@ class MainActivity : FlutterActivity() {
                 )
             }
             if (responseCode !in 200..299) {
-                throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
             }
             val finalUrl = connection.url.toString()
             if (!isAllowedGakujoUrl(finalUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
@@ -1145,11 +1145,11 @@ class MainActivity : FlutterActivity() {
                 )
             }
             if (responseCode !in 200..299) {
-                throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
             }
             val finalUrl = connection.url.toString()
             if (!isAllowedGakujoUrl(finalUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
@@ -1263,7 +1263,7 @@ class MainActivity : FlutterActivity() {
 
         for (redirectCount in 0..GakujoDownloadRedirectPolicy.maxRedirects) {
             if (!GakujoDownloadRedirectPolicy.isAllowedUrl(currentUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
@@ -1295,7 +1295,7 @@ class MainActivity : FlutterActivity() {
             if (!GakujoDownloadRedirectPolicy.isRedirectStatus(responseCode)) {
                 if (responseCode !in 200..299) {
                     connection.disconnect()
-                    throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                    throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
                 }
                 return connection
             }
@@ -1311,7 +1311,7 @@ class MainActivity : FlutterActivity() {
             )
             connection.disconnect()
             if (nextUrl == null) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
             if (redirectCount == GakujoDownloadRedirectPolicy.maxRedirects) {
                 throw IllegalStateException("リダイレクト回数が上限を超えました")
