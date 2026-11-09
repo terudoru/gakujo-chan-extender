@@ -400,6 +400,8 @@ class FeatureFlagsSection extends StatelessWidget {
                 const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。'),
               GakujoFeatureFlag.uploadCompression =>
                 const Text('5MBを超えるファイルを提出前に圧縮します。オフでもプレビューできます。'),
+              GakujoFeatureFlag.updateNotice =>
+                const Text('1日1回 GitHub で新しい版を確認し、あれば画面の上部で知らせます。'),
               _ => null,
             },
             value: settings.isFeatureEnabled(flag),

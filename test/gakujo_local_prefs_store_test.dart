@@ -20,6 +20,45 @@ void main() {
     }
   });
 
+  test('update check fields survive other saves and partial settings', () async {
+    final file = File('${directory.path}/local_prefs.json');
+    await file.writeAsString(jsonEncode({'pageMode': 'mobile'}));
+    final checkedAt = DateTime(2026, 1, 2, 3, 4);
+    await store.saveUpdateCheck(checkedAt: checkedAt, dismissedVersion: 'v2');
+    var loaded = await store.load();
+    expect(loaded?.lastUpdateCheckAt, checkedAt);
+    expect(loaded?.dismissedUpdateVersion, 'v2');
+    expect(loaded?.appSettingsKeys, {'pageMode'});
+    await store.saveLastGpa(3.5);
+    await store.saveExternalServiceNoticeDismissed(true);
+    loaded = await store.load();
+    expect(loaded?.lastUpdateCheckAt, checkedAt);
+    expect(loaded?.dismissedUpdateVersion, 'v2');
+    expect(loaded?.appSettingsKeys, {'pageMode'});
+    await store.saveAppSettings(const GakujoAppSettings());
+    loaded = await store.load();
+    expect(loaded?.lastUpdateCheckAt, checkedAt);
+    expect(loaded?.dismissedUpdateVersion, 'v2');
+    final later = checkedAt.add(const Duration(days: 1));
+    await store.saveUpdateCheck(checkedAt: later);
+    expect((await store.load())?.dismissedUpdateVersion, 'v2');
+    await store.saveUpdateCheck(dismissedVersion: 'v3');
+    loaded = await store.load();
+    expect(loaded?.lastUpdateCheckAt, later);
+    expect(loaded?.dismissedUpdateVersion, 'v3');
+  });
+
+  test('invalid update check fields decode to null', () async {
+    final file = File('${directory.path}/local_prefs.json');
+    await file.writeAsString(jsonEncode({
+      'lastUpdateCheckAtMillis': '123',
+      'dismissedUpdateVersion': 42,
+    }));
+    final loaded = await store.load();
+    expect(loaded?.lastUpdateCheckAt, isNull);
+    expect(loaded?.dismissedUpdateVersion, isNull);
+  });
+
   test('clear also removes temporary copies left by an interrupted write', () async {
     await store.saveLastGpa(3.5);
     final file = File('${directory.path}/local_prefs.json');

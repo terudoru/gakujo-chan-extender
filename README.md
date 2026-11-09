@@ -84,7 +84,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - 提出前に、選んだ PDF や画像をプレビューする。PDF は連続スクロール、ページ移動、拡大・縮小、文字検索に対応する
 - 提出済みファイルを、保存せずにプレビューする。PDF、JPEG/PNG/WebP、テキスト、主な音声・動画に対応する。Word/Excel/PowerPoint は本文だけを表示し、書式や画像は再現しない
 - 設定・履歴・お気に入りなどのバックアップと復元
-- GitHub Releases の新しい版の確認
+- GitHub Releases の新しい版の確認。新しい正式版があれば画面の上部で知らせる（pre-release は対象外。確認は1日1回で、設定の機能オン/オフで止められる）
 - マウスの戻る・進むボタンでのページ移動（Windows/macOS）
 
 各機能は、設定の機能オン/オフで個別に止められます。

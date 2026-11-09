@@ -9,12 +9,46 @@ class AppUpdateInfo {
     required this.latestVersion,
     required this.releaseUrl,
     required this.hasUpdate,
+    this.assetNames = const [],
   });
 
   final String currentVersion;
   final String latestVersion;
   final String releaseUrl;
   final bool hasUpdate;
+  final List<String> assetNames;
+
+  // iOS builds are attached later, so the latest release may lack an installer.
+  bool hasInstallerFor(TargetPlatform platform) {
+    final suffixes = switch (platform) {
+      TargetPlatform.android => ['.apk'],
+      TargetPlatform.iOS => ['.ipa'],
+      TargetPlatform.macOS => ['.dmg'],
+      TargetPlatform.windows => ['.exe', '.zip'],
+      TargetPlatform.linux => ['.tar.gz', '.deb'],
+      TargetPlatform.fuchsia => <String>[],
+    };
+    return assetNames.any((name) =>
+        suffixes.any((suffix) => name.toLowerCase().endsWith(suffix)));
+  }
+}
+
+const appUpdateCheckInterval = Duration(hours: 24);
+
+bool isUpdateCheckDue(DateTime? lastCheckedAt, DateTime now) {
+  return lastCheckedAt == null ||
+      lastCheckedAt.isAfter(now) ||
+      now.difference(lastCheckedAt) >= appUpdateCheckInterval;
+}
+
+bool shouldNotifyAboutUpdate(
+  AppUpdateInfo info, {
+  required TargetPlatform platform,
+  String? dismissedVersion,
+}) {
+  return info.hasUpdate &&
+      info.hasInstallerFor(platform) &&
+      info.latestVersion != dismissedVersion;
 }
 
 class AppUpdateService {
@@ -52,12 +86,28 @@ class AppUpdateService {
       }
       final tag = decoded['tag_name']?.toString() ?? '';
       final latest = _normalizeVersion(tag);
+      // releases/latest already skips these; a release marked by mistake or a
+      // change on GitHub's side must still not reach students as an update.
+      final isPrerelease = decoded['prerelease'] == true ||
+          decoded['draft'] == true ||
+          latest.contains('-');
+      final assets = decoded['assets'];
+      final assetNames = assets is List
+          ? assets
+              .whereType<Map>()
+              .where((asset) =>
+                  !asset.containsKey('state') || asset['state'] == 'uploaded')
+              .map((asset) => asset['name'])
+              .whereType<String>()
+              .toList()
+          : <String>[];
       return AppUpdateInfo(
+        assetNames: assetNames,
         currentVersion: currentVersion,
         latestVersion: tag.isEmpty ? latest : tag,
         releaseUrl: decoded['html_url']?.toString() ??
             'https://github.com/$owner/$repository/releases',
-        hasUpdate:
+        hasUpdate: !isPrerelease &&
             _compareVersions(latest, _normalizeVersion(currentVersion)) > 0,
       );
     } finally {
