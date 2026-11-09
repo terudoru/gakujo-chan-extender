@@ -14,6 +14,10 @@ enum StarSyncStatus {
   accountReturned,
 }
 
+/// Google addresses are not case-sensitive, and stored and returned spellings can differ.
+bool sameGoogleAccount(String? a, String? b) =>
+    a != null && b != null && a.trim().toLowerCase() == b.trim().toLowerCase();
+
 class StarSyncConfig {
   const StarSyncConfig({
     required this.backend,
