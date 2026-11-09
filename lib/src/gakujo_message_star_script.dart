@@ -1,7 +1,6 @@
 import 'generated/message_star.g.dart';
 import 'generated/message_star_open.g.dart';
 import 'generated/message_star_refresh.g.dart';
-import 'generated/message_star_teardown.g.dart';
 
 class GakujoMessageStarScript {
   const GakujoMessageStarScript._();
@@ -13,8 +12,6 @@ class GakujoMessageStarScript {
 
   static String buildRefresh(Iterable<String> starredIds) =>
       gakujoMessageStarRefreshJs({'ids': starredIds.toList()});
-
-  static String buildTeardown() => gakujoMessageStarTeardownJs;
 
   static String buildOpen({
     required String keijitype,

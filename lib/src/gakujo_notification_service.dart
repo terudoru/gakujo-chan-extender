@@ -206,7 +206,6 @@ List<GakujoReminder> planReminders({
         ? GakujoNotificationTopic.survey
         : GakujoNotificationTopic.coursework;
     return topics.contains(topic) &&
-        !preferences.isMuted(assignment.course) &&
         !(preferences.skipSubmitted && assignment.isSubmitted) &&
         assignment.dueAt.isAfter(now);
   }
@@ -636,8 +635,7 @@ class GakujoDeadlineNotificationCoordinator {
           : _activityStore.isDeadlinePassed(entry, now: _now())) {
         continue;
       }
-      if (preferences.isMuted(assignment?.course ?? entry.course) ||
-          (preferences.skipSubmitted && (assignment?.isSubmitted ?? false))) {
+      if (preferences.skipSubmitted && (assignment?.isSubmitted ?? false)) {
         continue;
       }
       final key = deadlineNotificationKey(entry, assignment,
@@ -744,7 +742,6 @@ class GakujoDeadlineNotificationCoordinator {
       final assignment = current;
       if (assignment == null ||
           (preferences.skipSubmitted && assignment.isSubmitted) ||
-          preferences.isMuted(assignment.course) ||
           !topics.contains(assignment.isSurvey
               ? GakujoNotificationTopic.survey
               : GakujoNotificationTopic.coursework) ||

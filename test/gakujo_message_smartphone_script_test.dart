@@ -134,11 +134,10 @@ void main() {
         GakujoMessageStarScript.build(),
         GakujoMessageStarScript.buildRefresh(['1|40|508182']),
         GakujoMessageStarScript.build(starredIds: ['1|40|508182']),
-        GakujoMessageStarScript.buildTeardown(),
         GakujoMessageStarScript.build(),
       ]);
-      expect(result['counts'], [160, 160, 160, 0, 160]);
-      expect(result['pressed'], ['false', 'true', 'true', null, 'false']);
+      expect(result['counts'], [160, 160, 160, 160]);
+      expect(result['pressed'], ['false', 'true', 'true', 'false']);
       expect(result['inside'], isTrue);
       expect(result['beforeTitle'], isTrue);
       expect(result['prevented'], isTrue);
@@ -146,13 +145,13 @@ void main() {
       expect(result['navigations'], 0);
       expect(result['timerReadsUnchanged'], isTrue);
       expect(result['rowTextUnchanged'], isTrue);
-      expect(result['intervalCounts'], [1, 1, 1, 0, 1]);
-      expect(result['listenerCounts'], [1, 1, 1, 0, 1]);
-      expect(result['styleCounts'], [1, 1, 1, 0, 1]);
-      expect(result['listenerAddCounts'], [1, 1, 1, 1, 2]);
+      expect(result['intervalCounts'], [1, 1, 1, 1]);
+      expect(result['listenerCounts'], [1, 1, 1, 1]);
+      expect(result['styleCounts'], [1, 1, 1, 1]);
+      expect(result['listenerAddCounts'], [1, 1, 1, 1]);
       if (scenario == 'topWithIframe' || scenario == 'iframe') {
-        expect(result['otherListenerCounts'], [1, 1, 1, 0, 1]);
-        expect(result['otherButtonCounts'], [0, 0, 0, 0, 0]);
+        expect(result['otherListenerCounts'], [1, 1, 1, 1]);
+        expect(result['otherButtonCounts'], [0, 0, 0, 0]);
       }
       expect((result['messages'] as List).single, {
         'action': 'toggle',
@@ -206,15 +205,14 @@ void main() {
     final result = await _evaluate('documents', 'bothDocuments', [
       GakujoMessageStarScript.build(),
       GakujoMessageStarScript.buildRefresh(['1|40|508182']),
-      GakujoMessageStarScript.buildTeardown(),
       GakujoMessageStarScript.build(),
     ]);
-    expect(result['counts'], [160, 160, 0, 160]);
-    expect(result['otherButtonCounts'], [160, 160, 0, 160]);
-    expect(result['listenerCounts'], [1, 1, 0, 1]);
-    expect(result['otherListenerCounts'], [1, 1, 0, 1]);
-    expect(result['styleCounts'], [1, 1, 0, 1]);
-    expect(result['otherStyleCounts'], [1, 1, 0, 1]);
+    expect(result['counts'], [160, 160, 160]);
+    expect(result['otherButtonCounts'], [160, 160, 160]);
+    expect(result['listenerCounts'], [1, 1, 1]);
+    expect(result['otherListenerCounts'], [1, 1, 1]);
+    expect(result['styleCounts'], [1, 1, 1]);
+    expect(result['otherStyleCounts'], [1, 1, 1]);
     expect(result['timerReadsUnchanged'], isTrue);
     expect(result['messages'][0]['title'], _title);
     expect(result['messages'][1]['title'], 'フレームの連絡通知');

@@ -20,7 +20,6 @@ void main() {
             GakujoMessageStarScript.build(),
             GakujoMessageStarScript.buildRefresh(['1|40|507762']),
             GakujoMessageStarScript.build(starredIds: ['1|40|507762']),
-            GakujoMessageStarScript.buildTeardown(),
             GakujoMessageStarScript.build(),
           ],
           scenario);
@@ -29,12 +28,12 @@ void main() {
       expect(result['stopped'], isTrue);
       expect(result['label'], 'スター: 授業のお知らせ');
       expect(result['buttonTitle'], 'スター: 授業のお知らせ');
-      expect(result['counts'], [1, 1, 1, 0, 1]);
-      expect(result['buttonTexts'], ['', '', '', null, '']);
-      expect(result['pressedStates'], ['false', 'true', 'true', null, 'false']);
-      expect(result['styleCounts'], [1, 1, 1, 0, 1]);
+      expect(result['counts'], [1, 1, 1, 1]);
+      expect(result['buttonTexts'], ['', '', '', '']);
+      expect(result['pressedStates'], ['false', 'true', 'true', 'false']);
+      expect(result['styleCounts'], [1, 1, 1, 1]);
       expect(result['outerStyleCounts'],
-          scenario == 'iframe' ? [0, 0, 0, 0, 0] : [1, 1, 1, 0, 1]);
+          scenario == 'iframe' ? [0, 0, 0, 0] : [1, 1, 1, 1]);
       expect(
         (result['styleTexts'] as List).whereType<String>(),
         everyElement(allOf(
@@ -45,8 +44,8 @@ void main() {
       );
       expect(result['rowTexts'], everyElement(result['originalRowText']));
       expect(result['originalRowText'], isNot(contains(RegExp('[☆★]'))));
-      expect(result['intervalCounts'], [1, 1, 1, 0, 1]);
-      expect(result['listenerCounts'], [1, 1, 1, 0, 1]);
+      expect(result['intervalCounts'], [1, 1, 1, 1]);
+      expect(result['listenerCounts'], [1, 1, 1, 1]);
       final payload = (result['messages'] as List).first as Map;
       expect(payload, {
         'action': 'toggle',

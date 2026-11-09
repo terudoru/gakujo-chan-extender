@@ -89,10 +89,6 @@ extension GakujoPageModeLabels on GakujoPageMode {
 
 enum GakujoFeatureFlag {
   downloadCapture,
-  gpaDisplay,
-  reportTools,
-  messageTools,
-  messageStars,
   sessionExtender,
   loginAutofill,
   twoFactorAutofill,
@@ -307,10 +303,6 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   String get label {
     return switch (this) {
       GakujoFeatureFlag.downloadCapture => '資料のダウンロードをアプリで保存',
-      GakujoFeatureFlag.gpaDisplay => 'GPA表示',
-      GakujoFeatureFlag.reportTools => 'レポート並び替え',
-      GakujoFeatureFlag.messageTools => '連絡通知の一括既読',
-      GakujoFeatureFlag.messageStars => '連絡通知のスター',
       GakujoFeatureFlag.sessionExtender => 'セッション自動延長',
       GakujoFeatureFlag.loginAutofill => 'ログイン補助',
       GakujoFeatureFlag.twoFactorAutofill => '2FA自動入力',
@@ -324,10 +316,6 @@ extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   String get storageValue {
     return switch (this) {
       GakujoFeatureFlag.downloadCapture => 'download_capture',
-      GakujoFeatureFlag.gpaDisplay => 'gpa_display',
-      GakujoFeatureFlag.reportTools => 'report_tools',
-      GakujoFeatureFlag.messageTools => 'message_tools',
-      GakujoFeatureFlag.messageStars => 'message_stars',
       GakujoFeatureFlag.sessionExtender => 'session_extender',
       GakujoFeatureFlag.loginAutofill => 'login_autofill',
       GakujoFeatureFlag.twoFactorAutofill => 'two_factor_autofill',
@@ -609,7 +597,6 @@ extension GakujoReminderOffsetLabels on GakujoReminderOffset {
 class GakujoNotificationPreferences {
   const GakujoNotificationPreferences({
     this.skipSubmitted = true,
-    this.mutedCourses = const {},
     this.reminderOffsets = defaultReminderOffsets,
   });
 
@@ -621,28 +608,15 @@ class GakujoNotificationPreferences {
   /// Leave out assignments the レポート・小テスト list shows as handed in.
   final bool skipSubmitted;
 
-  /// Courses whose deadlines and reminders are not notified.
-  final Set<String> mutedCourses;
-
   /// Empty when reminders are off.
   final Set<GakujoReminderOffset> reminderOffsets;
 
-  bool isMuted(String course) {
-    final compact = course.replaceAll(RegExp(r'\s+'), '');
-    return compact.isNotEmpty &&
-        mutedCourses.any(
-          (muted) => muted.replaceAll(RegExp(r'\s+'), '') == compact,
-        );
-  }
-
   GakujoNotificationPreferences copyWith({
     bool? skipSubmitted,
-    Set<String>? mutedCourses,
     Set<GakujoReminderOffset>? reminderOffsets,
   }) {
     return GakujoNotificationPreferences(
       skipSubmitted: skipSubmitted ?? this.skipSubmitted,
-      mutedCourses: mutedCourses ?? this.mutedCourses,
       reminderOffsets: reminderOffsets ?? this.reminderOffsets,
     );
   }
@@ -650,7 +624,6 @@ class GakujoNotificationPreferences {
   Map<String, Object?> toJson() {
     return {
       'skipSubmitted': skipSubmitted,
-      'mutedCourses': mutedCourses.toList()..sort(),
       'reminderOffsets': [
         for (final offset in GakujoReminderOffset.values)
           if (reminderOffsets.contains(offset)) offset.storageValue,
@@ -673,7 +646,6 @@ class GakujoNotificationPreferences {
     if (decoded is! Map) {
       return const GakujoNotificationPreferences();
     }
-    final muted = decoded['mutedCourses'];
     final offsets = decoded['reminderOffsets'];
     final recognizedOffsets = offsets is List
         ? {
@@ -683,12 +655,6 @@ class GakujoNotificationPreferences {
         : defaultReminderOffsets;
     return GakujoNotificationPreferences(
       skipSubmitted: decoded['skipSubmitted'] != false,
-      mutedCourses: muted is List
-          ? {
-              for (final value in muted)
-                if (value.toString().trim().isNotEmpty) value.toString().trim(),
-            }
-          : const {},
       reminderOffsets:
           offsets is List && offsets.isNotEmpty && recognizedOffsets.isEmpty
               ? fallbackForUnrecognizedReminderOffsets ?? recognizedOffsets

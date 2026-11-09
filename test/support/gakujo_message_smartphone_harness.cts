@@ -237,7 +237,6 @@ scripts.forEach((script: any, index: any) => {
     beforeTitle = staleButton.nextElementSibling === inner.heading;
     event = click(staleButton);
   }
-  if (index === 3 && staleButton) click(staleButton);
 });
 let capture, remembered, oldListenerRemoved, oldButtonCount, detailCounts: any = [];
 let rememberedTitles, removedFrameListener, removedFrameButtons, remainingTopButtons;

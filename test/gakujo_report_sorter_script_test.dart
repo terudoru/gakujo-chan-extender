@@ -65,37 +65,9 @@ void main() {
   }
 })();
 ''',
-      teardownScript: GakujoReportSorterScript.buildTeardown(),
+      teardownScript: '',
+      runOnce: true,
     );
-  });
-
-  test('teardown stops polling, removes controls, and is idempotent', () async {
-    final result = await evaluatePageScriptLifecycle(
-      feature: 'report',
-      buildScript: GakujoReportSorterScript.build(),
-      teardownScript: GakujoReportSorterScript.buildTeardown(),
-    );
-    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
-    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
-    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
-    final teardownWithoutBuild =
-        result['teardownWithoutBuild'] as Map<String, dynamic>;
-
-    expect(afterBuild['activeIntervalCount'], 1);
-    expect(afterBuild['ownedElementCount'], 3);
-    expect(afterBuild['controlIds'], [
-      'mbg-report-title-button',
-      'mbg-report-number-button',
-      'mbg-report-date-button',
-    ]);
-    expect(afterTeardown['activeIntervalCount'], 0);
-    expect(afterTeardown['ownedElementCount'], 0);
-    expect(afterTeardown['controlIds'], isEmpty);
-    expect(afterTeardown['globalMarkers'], isEmpty);
-    expect(afterRebuild['activeIntervalCount'], 1);
-    expect(afterRebuild['ownedElementCount'], 3);
-    expect(teardownWithoutBuild['activeIntervalCount'], 0);
-    expect(teardownWithoutBuild['ownedElementCount'], 0);
   });
 
   test('yearless range ends inherit the start year and roll across New Year',
@@ -175,7 +147,8 @@ void main() {
   }
 })();
 ''',
-      teardownScript: GakujoReportSorterScript.buildTeardown(),
+      teardownScript: '',
+      runOnce: true,
     );
   });
 
@@ -223,7 +196,8 @@ void main() {
   }
 })();
 ''',
-      teardownScript: GakujoReportSorterScript.buildTeardown(),
+      teardownScript: '',
+      runOnce: true,
     );
   });
 }
@@ -261,6 +235,7 @@ Future<void> _expectDeadlineOrder({
   }
 })();
 ''',
-    teardownScript: GakujoReportSorterScript.buildTeardown(),
+    teardownScript: '',
+    runOnce: true,
   );
 }

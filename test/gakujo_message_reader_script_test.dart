@@ -304,7 +304,6 @@ void main() {
       expect(result['statusText'], '3件を既読にしました（失敗0件）');
       expect(result['reloadCount'], 1);
       expect(result['ownedElementCount'], 4);
-      expect(result['ownedAfterTeardown'], 0);
     });
 
     test('does not add controls to a smartphone genre list (frame: $frame)',
@@ -349,59 +348,6 @@ void main() {
     ]);
     expect(result['statusText'], '2件を既読にしました（失敗0件）');
   });
-
-  test('disabling during a read prevents further requests and late controls',
-      () async {
-    final result = await evaluateMessageReaderScript(
-      buildScript: GakujoMessageReaderScript.build(),
-      fetchStatuses: [200, 200, 200],
-      teardownScript: GakujoMessageReaderScript.buildTeardown(),
-      teardownDuringRead: true,
-    );
-    expect(result['fetchCallCount'], 1);
-    expect(result['reloadCount'], 0);
-    expect(result['ownedElementCount'], 0);
-  });
-
-  test('disabling after reading cancels the delayed page reload', () async {
-    final result = await evaluateMessageReaderScript(
-      buildScript: GakujoMessageReaderScript.build(),
-      fetchStatuses: [200],
-      teardownScript: GakujoMessageReaderScript.buildTeardown(),
-      teardownAfterRead: true,
-    );
-    expect(result['reloadCount'], 0);
-    expect(result['ownedElementCount'], 0);
-  });
-
-  test('teardown stops polling, removes controls, and is idempotent', () async {
-    final result = await evaluatePageScriptLifecycle(
-      feature: 'message',
-      buildScript: GakujoMessageReaderScript.build(),
-      teardownScript: GakujoMessageReaderScript.buildTeardown(),
-    );
-    final afterBuild = result['afterBuild'] as Map<String, dynamic>;
-    final afterTeardown = result['afterTeardown'] as Map<String, dynamic>;
-    final afterRebuild = result['afterRebuild'] as Map<String, dynamic>;
-    final teardownWithoutBuild =
-        result['teardownWithoutBuild'] as Map<String, dynamic>;
-
-    expect(afterBuild['activeIntervalCount'], 1);
-    expect(afterBuild['ownedElementCount'], 3);
-    expect(afterBuild['controlIds'], [
-      'mbg-read-button',
-      'mbg-read-num-input',
-      'mbg-read-status',
-    ]);
-    expect(afterTeardown['activeIntervalCount'], 0);
-    expect(afterTeardown['ownedElementCount'], 0);
-    expect(afterTeardown['controlIds'], isEmpty);
-    expect(afterTeardown['globalMarkers'], isEmpty);
-    expect(afterRebuild['activeIntervalCount'], 1);
-    expect(afterRebuild['ownedElementCount'], 3);
-    expect(teardownWithoutBuild['activeIntervalCount'], 0);
-    expect(teardownWithoutBuild['ownedElementCount'], 0);
-  });
 }
 
 Future<Map<String, dynamic>> _evaluateSmartphoneReader({
@@ -416,7 +362,7 @@ Future<Map<String, dynamic>> _evaluateSmartphoneReader({
       ..writeAsStringSync(
         jsonEncode({
           'script': GakujoMessageReaderScript.build(),
-          'teardown': GakujoMessageReaderScript.buildTeardown(),
+          'teardown': '',
           'frame': frame,
           'unread': unread,
           'messageUrls': messageUrls,

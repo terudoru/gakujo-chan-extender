@@ -220,19 +220,25 @@ typedef _PageScriptBuilder = String Function();
 final Map<GakujoFeatureFlag, _PageScriptBuilder>
     _originalExtensionFeatureBuilders = {
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.build,
-  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.build,
-  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.build,
-  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.build,
   GakujoFeatureFlag.uploadCompression: GakujoUploadCompressionScript.build,
+};
+
+@visibleForTesting
+Map<String, String Function()> gakujoPageScriptBuilders(
+  GakujoAppSettings settings, {
+  Iterable<String> starredIds = const [],
+}) => {
+  'gpa': GakujoGpaDisplayScript.build,
+  'report': GakujoReportSorterScript.build,
+  'reader': GakujoMessageReaderScript.build,
+  'stars': () => GakujoMessageStarScript.build(starredIds: starredIds),
+  for (final entry in _originalExtensionFeatureBuilders.entries)
+    if (settings.isFeatureEnabled(entry.key)) entry.key.storageValue: entry.value,
 };
 
 final Map<GakujoFeatureFlag, _PageScriptBuilder>
     _originalExtensionFeatureTeardownBuilders = {
   GakujoFeatureFlag.sessionExtender: GakujoSessionExtenderScript.buildTeardown,
-  GakujoFeatureFlag.reportTools: GakujoReportSorterScript.buildTeardown,
-  GakujoFeatureFlag.messageTools: GakujoMessageReaderScript.buildTeardown,
-  GakujoFeatureFlag.messageStars: GakujoMessageStarScript.buildTeardown,
-  GakujoFeatureFlag.gpaDisplay: GakujoGpaDisplayScript.buildTeardown,
   GakujoFeatureFlag.loginAutofill: LoginAutofillAssistScript.buildTeardown,
   GakujoFeatureFlag.twoFactorAutofill: TwoFactorAutofillScript.buildTeardown,
   GakujoFeatureFlag.uploadCompression:
@@ -275,19 +281,6 @@ Map<String, Set<String>?> restoredSyncCollections(
   return {
     if (backup.favorites != null) 'favorites': null,
     if (settings.isNotEmpty) 'settings': settings,
-  };
-}
-
-@visibleForTesting
-Set<GakujoFeatureFlag>? syncRestoreFeatureFlags(
-  Set<GakujoFeatureFlag>? restored,
-  Set<GakujoFeatureFlag> current,
-) {
-  if (restored == null) return null;
-  return {
-    ...restored.where((flag) => flag != GakujoFeatureFlag.messageStars),
-    if (current.contains(GakujoFeatureFlag.messageStars))
-      GakujoFeatureFlag.messageStars,
   };
 }
 
@@ -338,8 +331,14 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload, {
   final flags = result['disabledFeatureFlags'];
   if (flags is List) {
     result['disabledFeatureFlags'] = flags
-        .where((flag) => flag != GakujoFeatureFlag.messageStars.storageValue)
+        .where((flag) => !const {
+          'gpa_display', 'report_tools', 'message_tools', 'message_stars',
+        }.contains(flag))
         .toList();
+  }
+  final preferences = result['notificationPreferences'];
+  if (preferences is Map) {
+    preferences.remove('mutedCourses');
   }
   return result;
 }
@@ -1661,7 +1660,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   bool get _canSyncStars => mounted && _appSettingsLoaded &&
-      _secureStorageAccessAllowed && _messageStarsEnabled;
+      _secureStorageAccessAllowed;
 
   static const _activeLoginAccountKey = 'more_better_gakujo_active_login_account';
 
@@ -1841,9 +1840,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           toolbarHeight: _compactToolbarHeight,
           titleSpacing: 12,
           title: GakujoGpaTaunt(
-            gpa: _appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)
-                ? _reportedGpa
-                : null,
+            gpa: _reportedGpa,
           ),
           centerTitle: false,
           actions: [
@@ -1875,7 +1872,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   _desktopZoomStep,
                 )),
               ),
-            if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
               IconButton(
                 tooltip: 'スター付き連絡通知',
                 onPressed: _calendarOperationGate.isRunning
@@ -1932,8 +1928,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
                   ),
-                  if (_appSettings
-                      .isFeatureEnabled(GakujoFeatureFlag.messageStars))
                     const PopupMenuItem<Object>(
                       value: _ToolbarAction.messageStars,
                       child: Text('スター付き連絡通知'),
@@ -2568,7 +2562,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageExcludeKeywordController = TextEditingController();
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
-    final knownCourses = await _knownAssignmentCourses();
     var starSyncBusy = false;
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
@@ -2576,7 +2569,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     ModalRoute<void>? dialogRoute;
     try {
       await _prepareSettingsDialogInput();
-      if (_secureStorageAccessAllowed && _messageStarsEnabled) {
+      if (_secureStorageAccessAllowed) {
         await _ensureStarSyncLoaded();
       }
       if (!mounted) {
@@ -2656,12 +2649,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 if (!mounted) {
                   return;
                 }
-                if (flag != GakujoFeatureFlag.messageStars) {
-                  _scheduleStarSync();
-                }
-                if (flag == GakujoFeatureFlag.messageStars && enabled) {
-                  unawaited(_syncStarsInBackground());
-                }
+                _scheduleStarSync();
                 if (flag == GakujoFeatureFlag.autoBackup) {
                   _scheduleAutoBackup();
                 }
@@ -2799,7 +2787,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: '学務情報システムの画面',
                   icon: Icons.web_asset_outlined,
-                  subtitle: '表示版・GPA・レポート・連絡通知',
+                  subtitle: '開く画面・自動圧縮・除外キーワード',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2843,23 +2831,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       FeatureFlagsSection(
                         settings: _appSettings,
                         onChanged: onFlagChanged,
-                        title: '成績',
-                        flags: settingsGradeFeatureFlags,
-                      ),
-                      const SizedBox(height: 16),
-                      FeatureFlagsSection(
-                        settings: _appSettings,
-                        onChanged: onFlagChanged,
                         title: 'レポート',
                         flags: settingsReportFeatureFlags,
                       ),
                       const SizedBox(height: 16),
-                      FeatureFlagsSection(
-                        settings: _appSettings,
-                        onChanged: onFlagChanged,
-                        title: '連絡通知',
-                        flags: settingsMessageFeatureFlags,
-                      ),
                       SettingsExpansionSection(
                         title: '除外キーワード',
                         icon: Icons.filter_alt_outlined,
@@ -2991,9 +2966,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               _driveDownloadsEnabled &&
                                   _starSyncGoogleEmail != null
                               ? (_starSyncEngine.config != null
-                                    ? (_messageStarsEnabled
-                                          ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには同期を無効にします'
-                                          : '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには「連絡通知のスター」をオンにして、同期を無効にします')
+                                    ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには同期を無効にします'
                                     : '保存先: $_starSyncGoogleEmail\n別のアカウントにするには、一度オフにします')
                               : null,
                           onCancel:
@@ -3040,7 +3013,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: '通知',
                   icon: Icons.notifications_outlined,
-                  subtitle: '提出期限・リマインド・科目・連絡通知',
+                  subtitle: '提出期限・リマインド・連絡通知',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -3055,7 +3028,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         topics: _appSettings.notificationTopics,
                         messages: _appSettings.messageNotification,
                         preferences: _appSettings.notificationPreferences,
-                        knownCourses: knownCourses,
                         remindersOnlyWhileOpen: Platform.isWindows,
                         notificationPermission:
                             _notificationService.permissionGranted,
@@ -3155,7 +3127,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 8),
-                      if (_messageStarsEnabled)
                         StarSyncSection(
                           status: _starSyncEngine.status,
                           onBusyChanged: (busy) {
@@ -3278,9 +3249,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               }
                             }
                           },
-                        )
-                      else
-                        const Text('「学務情報システムの画面」の「連絡通知のスター」をオンにすると使えます。'),
+                        ),
                       const Divider(height: 32),
                       AppBackupSection(
                         onCreateBackup: _createManualBackup,
@@ -5334,21 +5303,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<List<String>> _knownAssignmentCourses() async {
-    try {
-      final assignments = await _activityStore.loadAssignments();
-      return {
-        for (final assignment in assignments)
-          if (assignment.course.trim().isNotEmpty) assignment.course.trim(),
-        // Keep a muted course listed so it can be turned back on.
-        ..._appSettings.notificationPreferences.mutedCourses,
-      }.toList()
-        ..sort();
-    } on Object {
-      return const [];
-    }
-  }
-
   Future<void> _syncReminders({bool allowPermissionRequest = true}) {
     return _deadlineNotificationCoordinator.syncReminders(
       notificationsEnabled: _appSettings.isFeatureEnabled(
@@ -5573,7 +5527,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       } on Object catch (error) {
         if (Platform.isAndroid && error is StarSyncGoogleAuthException &&
             error.kind == StarSyncGoogleAuthErrorKind.notSignedIn &&
-            _starSyncGoogleAuth.currentEmail == null) rethrow;
+            _starSyncGoogleAuth.currentEmail == null) {
+          rethrow;
+        }
         developer.log('Failed to check the Drive permission: ${error.runtimeType}',
             name: 'MoreBetterGakujo');
       }
@@ -6063,9 +6019,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       late GakujoAppSettings nextSettings;
       final restoredCollections = restoredSyncCollections(backup, backupKeys);
       await _starSyncEngine.withBulkReplace(() => _settingsOperations.runExclusive(() async {
-        final restoredFlags = fromSyncStorage
-            ? syncRestoreFeatureFlags(backup.disabledFeatureFlags, _appSettings.disabledFeatureFlags)
-            : backup.disabledFeatureFlags;
         final restoreBackup = GakujoBackupImport(
           version: backup.version,
           downloadSaveMode: backup.downloadSaveMode,
@@ -6076,7 +6029,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           notificationTopics: backup.notificationTopics,
           messageNotification: restoredMessageNotification(backup, backupKeys),
           notificationPreferences: backup.notificationPreferences,
-          disabledFeatureFlags: restoredFlags,
+          disabledFeatureFlags: backup.disabledFeatureFlags,
           downloadHistory: backup.downloadHistory,
           failedDownloads: backup.failedDownloads,
           favorites: backup.favorites,
@@ -6099,7 +6052,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         nextSettings = _appSettings.copyWith(
           downloadSaveMode: backup.downloadSaveMode,
           pageMode: backup.pageMode,
-          disabledFeatureFlags: restoredFlags,
+          disabledFeatureFlags: backup.disabledFeatureFlags,
           setupCompleted: backup.setupCompleted,
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
@@ -6323,13 +6276,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _injectGpaDisplayIfAllowed() async {
-    if (!_canRunPageScripts ||
-        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.gpaDisplay)) {
+    if (!_canRunPageScripts) {
       return;
     }
 
     try {
-      await _controller.runJavaScript(GakujoGpaDisplayScript.build());
+      await _controller.runJavaScript(
+        gakujoPageScriptBuilders(_appSettings)['gpa']!(),
+      );
     } catch (error, stackTrace) {
       developer.log(
         'Failed to inject GPA display script',
@@ -6354,14 +6308,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
     }
 
+    unawaited(_injectMessageStars());
+    final builders = gakujoPageScriptBuilders(_appSettings);
+    for (final builder in [
+      builders['report']!,
+      builders['reader']!,
+    ]) {
+      try {
+        await _controller.runJavaScript(builder());
+      } catch (error, stackTrace) {
+        developer.log('Failed to inject page feature',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+
     for (final flag in _originalExtensionFeatureBuilders.keys) {
       if (!_appSettings.isFeatureEnabled(flag)) {
-        continue;
-      }
-      // Stars are read from the keychain first, which can wait on a macOS
-      // access dialog; the scripts after them must not wait too.
-      if (flag == GakujoFeatureFlag.messageStars) {
-        unawaited(_applyFeatureFlagRuntimeState(flag, enabled: true));
         continue;
       }
       await _applyFeatureFlagRuntimeState(flag, enabled: true);
@@ -6372,24 +6334,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     GakujoFeatureFlag flag, {
     required bool enabled,
   }) async {
-    if (!enabled && flag == GakujoFeatureFlag.messageStars) {
-      _starSyncEngine.pauseTimers();
-    }
-    if (!enabled && flag == GakujoFeatureFlag.gpaDisplay && mounted) {
-      setState(() {
-        _reportedGpa = null;
-      });
-      unawaited(_localPrefsStore.saveLastGpa(null).catchError(
-        (Object error, StackTrace stackTrace) {
-          developer.log(
-            'Failed to clear last GPA',
-            name: 'MoreBetterGakujo',
-            error: error,
-            stackTrace: stackTrace,
-          );
-        },
-      ));
-    }
     final controller = _controller;
     if (flag == GakujoFeatureFlag.downloadCapture &&
         controller is WindowsGakujoWebViewController) {
@@ -6407,15 +6351,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _injectTwoFactorAutofillIfAllowed();
       return;
     }
-    if (enabled && flag == GakujoFeatureFlag.gpaDisplay) {
-      await _injectGpaDisplayIfAllowed();
-      return;
-    }
-    if (enabled && flag == GakujoFeatureFlag.messageStars) {
-      await _injectMessageStars();
-      return;
-    }
-
     final _PageScriptBuilder? builder;
     if (flag == GakujoFeatureFlag.downloadCapture) {
       builder = enabled
@@ -6451,9 +6386,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final wasEnabled = previousSettings.isFeatureEnabled(flag);
       final isEnabled = nextSettings.isFeatureEnabled(flag);
       if (wasEnabled != isEnabled) {
-        if (flag == GakujoFeatureFlag.messageStars && isEnabled) {
-          unawaited(_syncStarsInBackground());
-        }
         await _applyFeatureFlagRuntimeState(
           flag,
           enabled: isEnabled,

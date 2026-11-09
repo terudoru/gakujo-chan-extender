@@ -790,7 +790,7 @@ void main() {
       });
     }
 
-    test('late reminders respect topics, muted courses and submitted status',
+    test('late reminders respect topics and submitted status',
         () async {
       final store = GakujoActivityStore();
       await store.mergeAssignments([
@@ -801,10 +801,6 @@ void main() {
       final first = coordinator(store);
 
       await sync(first, topics: {});
-      await sync(
-        first,
-        preferences: const GakujoNotificationPreferences(mutedCourses: {'科目'}),
-      );
       expect(shown(), isEmpty);
 
       await sync(first, topics: {GakujoNotificationTopic.survey});

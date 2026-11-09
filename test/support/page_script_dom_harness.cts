@@ -309,6 +309,11 @@ async function main() {
   const injectedPage: any = createPage();
   run(buildScript, injectedPage);
 
+  if (process.argv[6] === 'once') {
+    process.stdout.write(JSON.stringify({afterBuild: injectedPage.snapshot()}));
+    return;
+  }
+
   if (scenario) {
     const input: any = injectedPage.context.document.getElementById(
       'mbg-read-num-input'
