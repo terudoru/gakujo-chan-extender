@@ -8,7 +8,7 @@ enum StarSyncStatus {
   ok,
   error,
   needsPassphrase,
-  needsPairingCode,
+  needsLegacyReset,
   needsGoogleSignIn,
   accountMismatch,
   accountReturned,

@@ -52,7 +52,7 @@ void main() {
   });
 
   test('file key id is read from a well formed header only', () async {
-    final created = createStarSyncPairingKeyring();
+    final created = createStarSyncDriveKeyring();
     final bytes = await encryptStarSyncFile(
       dataKey: starSyncKeyFromBytes(created.dataKey),
       keyId: created.keyring.keyId,
@@ -171,8 +171,8 @@ void main() {
     final created = await createStarSyncKeyring('password', params: fast);
     final legacy = created.keyring.toJson()..remove('mode');
     expect(StarSyncKeyring.fromJson(legacy).mode, 'passphrase');
-    final pairing = createStarSyncPairingKeyring();
-    final json = pairing.keyring.toJson();
+    final pairing = createStarSyncDriveKeyring();
+    final json = StarSyncKeyring.pairing(keyId: pairing.keyring.keyId).toJson();
     expect(json.keys.toSet(), {'schema', 'keyId', 'mode'});
     expect(StarSyncKeyring.fromJson(json).mode, 'pairing');
     json['salt'] = 'unexpected';
@@ -182,22 +182,31 @@ void main() {
     );
   });
 
-  test('pairing code normalization and checksum', () {
-    final pairing = createStarSyncPairingKeyring();
-    final code = encodeStarSyncPairingCode(
-      pairing.keyring.keyId,
-      pairing.dataKey,
+  test('drive keyring round trips and rejects malformed data', () {
+    final created = createStarSyncDriveKeyring();
+    final drive = StarSyncKeyring.drive(
+      keyId: created.keyring.keyId,
+      dataKey: created.dataKey,
     );
-    final decoded = decodeStarSyncPairingCode('mbgstar: ${code.toLowerCase()}');
-    expect(decoded.keyId, pairing.keyring.keyId);
-    expect(decoded.dataKey, pairing.dataKey);
-    final plain = code.replaceAll('-', '');
-    final last = plain[plain.length - 1];
-    final changed =
-        plain.substring(0, plain.length - 1) + (last == 'A' ? 'B' : 'A');
-    expect(
-      () => decodeStarSyncPairingCode(changed),
-      throwsA(isA<StarSyncFormatException>()),
-    );
+    final json = drive.toJson();
+    expect(json.keys.toSet(), {'schema', 'keyId', 'mode', 'dataKey'});
+    final parsed = StarSyncKeyring.fromJson(json);
+    expect(parsed.mode, 'drive');
+    expect(parsed.keyId, drive.keyId);
+    expect(parsed.dataKey, created.dataKey);
+    for (final invalid in [
+      {...json, 'dataKey': base64Encode(List<int>.filled(31, 0))},
+      {...json, 'dataKey': 'invalid!'},
+      {...json, 'dataKey': null},
+      {...json, 'extra': true},
+      {...json, 'keyId': 'invalid'},
+    ]) {
+      expect(
+        () => StarSyncKeyring.fromJson(invalid),
+        throwsA(isA<StarSyncFormatException>()),
+      );
+    }
   });
+
+
 }
