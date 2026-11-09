@@ -140,6 +140,77 @@ void main() {
     expect((await vault.read())?.loginCredentials, record);
   });
 
+  test('saving login replaces unreadable data and clears lost 2FA metadata', () async {
+    await state.write(const SecretProtectionInfo(
+      enabled: true, loginId: 'old', hasTwoFactorSecret: true,
+    ));
+    protected.values[protectedSecretsKey] = 'invalid';
+    final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+
+    await settings.saveLoginCredentials(loginId: 'student', password: 'test-password');
+
+    vault.clearCache();
+    expect((await vault.read())?.loginCredentials, record);
+    expect((await vault.read())?.twoFactorSecret, isNull);
+    expect((await state.read()).hasTwoFactorSecret, isFalse);
+  });
+
+  test('saving 2FA replaces unreadable data and clears lost login metadata', () async {
+    await state.write(const SecretProtectionInfo(
+      enabled: true, loginId: 'student', hasTwoFactorSecret: true,
+    ));
+    protected.values[protectedSecretsKey] = 'invalid';
+    final twoFactor = TwoFactorSecretStore(secureStorage: normal, protectionState: state);
+
+    await twoFactor.save(secret);
+
+    vault.clearCache();
+    expect((await vault.read())?.twoFactorSecret, secret);
+    expect((await vault.read())?.loginCredentials, isNull);
+    expect((await state.read()).loginId, isNull);
+  });
+
+  for (final message in ['authentication error [5]', 'authentication error [7]']) {
+    test('saving never overwrites on authentication error: $message', () async {
+      await controller.enable();
+      vault.clearCache();
+      final before = Map<String, String>.of(protected.values);
+      final error = PlatformException(code: 'auth', message: message);
+      protected.readError = error;
+      final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+      await expectLater(
+        settings.saveLoginCredentials(loginId: 'new', password: 'new-password'),
+        throwsA(same(error)),
+      );
+      expect(protected.values, before);
+    });
+
+    test('saving 2FA never overwrites on authentication error: $message', () async {
+      await controller.enable();
+      vault.clearCache();
+      final before = Map<String, String>.of(protected.values);
+      final error = PlatformException(code: 'auth', message: message);
+      protected.readError = error;
+      final twoFactor = TwoFactorSecretStore(secureStorage: normal, protectionState: state);
+      await expectLater(twoFactor.save(secret), throwsA(same(error)));
+      expect(protected.values, before);
+    });
+  }
+
+  test('a storage FormatException is not treated as a corrupt vault', () async {
+    await state.write(const SecretProtectionInfo(enabled: true));
+    protected.values[protectedSecretsKey] = 'unchanged';
+    final error = FormatException('storage failure');
+    protected.readError = error;
+    final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+
+    await expectLater(
+      settings.saveLoginCredentials(loginId: 'new', password: 'new-password'),
+      throwsA(same(error)),
+    );
+    expect(protected.values[protectedSecretsKey], 'unchanged');
+  });
+
   test('disable with a missing vault clears normal secrets', () async {
     await state.write(const SecretProtectionInfo(enabled: true));
 

@@ -113,7 +113,12 @@ class ProtectedSecretsVault {
     clearCache();
     final raw = await _storage.read(key: protectedSecretsKey);
     if (raw == null) return null;
-    final value = ProtectedSecrets.decode(raw);
+    final ProtectedSecrets value;
+    try {
+      value = ProtectedSecrets.decode(raw);
+    } on FormatException {
+      throw const ProtectedSecretsUnreadable();
+    }
     _remember(value);
     return value;
   }
@@ -133,8 +138,15 @@ class ProtectedSecretsVault {
   Future<ProtectedSecrets> update(
     ProtectedSecrets Function(ProtectedSecrets current) change, {
     Future<void> Function(ProtectedSecrets committed)? onCommitted,
+    bool replaceUnreadable = false,
   }) => _enqueue(() async {
-    final current = await _read() ?? const ProtectedSecrets();
+    ProtectedSecrets current;
+    try {
+      current = await _read() ?? const ProtectedSecrets();
+    } on ProtectedSecretsUnreadable {
+      if (!replaceUnreadable) rethrow;
+      current = const ProtectedSecrets();
+    }
     final value = change(current);
     await _write(value);
     if (onCommitted != null) await onCommitted(value);
@@ -209,9 +221,11 @@ class SecretProtectionState {
   /// value inside the same queued operation, so concurrent login and 2FA
   /// updates cannot leave stale metadata behind.
   Future<ProtectedSecrets> updateSecrets(
-    ProtectedSecrets Function(ProtectedSecrets current) change,
-  ) => vault.update(
+    ProtectedSecrets Function(ProtectedSecrets current) change, {
+    bool replaceUnreadable = false,
+  }) => vault.update(
     change,
+    replaceUnreadable: replaceUnreadable,
     onCommitted: (value) => write(
       SecretProtectionInfo(
         enabled: true,

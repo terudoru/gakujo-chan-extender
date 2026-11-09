@@ -1023,6 +1023,7 @@ class GakujoAppSettingsStore {
             loginCredentials: record,
             twoFactorSecret: old.twoFactorSecret,
           ),
+          replaceUnreadable: true,
         );
         return;
       }

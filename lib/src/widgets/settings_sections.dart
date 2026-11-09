@@ -120,7 +120,7 @@ class SecretProtectionSection extends StatelessWidget {
   Widget build(BuildContext context) => SwitchListTile(
     title: const Text('ログイン情報を使うときに本人確認する'),
     subtitle: Text(isAndroid
-      ? 'アプリを起動して最初にログイン情報を使うときに、指紋・顔・端末のPINで確認します。本人確認をキャンセルすると、そのときは自動ログインしません。'
+      ? 'Android 11以降で利用できます。指紋・顔または端末のPINなどで本人確認します。キャンセルすると自動ログインを一時停止します。'
       : '自動ログインのたびにFace ID・Touch ID・パスコードで確認します。本人確認をキャンセルすると、そのときは自動ログインしません。'),
     value: enabled,
     onChanged: onChanged,

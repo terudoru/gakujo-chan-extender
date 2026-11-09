@@ -517,6 +517,16 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "net.yoshida.morebettergakujo/device_auth_support"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "supportsDeviceCredential" -> result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             DEBUG_LAUNCH_CHANNEL
         ).setMethodCallHandler { call, result ->
             when (call.method) {

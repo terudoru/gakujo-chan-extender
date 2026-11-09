@@ -42,8 +42,8 @@ class ProtectedSecretPageProbe {
     return false;
   }
   return find(window, []);
-})(''' + jsonEncode({
+})(''' '${jsonEncode({
     'kind': kind,
     'inputName': TwoFactorAutofillScript.inputName,
-  }) + ');';
+  })});';
 }
