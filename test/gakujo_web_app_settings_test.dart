@@ -14,6 +14,44 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
+  group('protected secret prompt gate', () {
+    test('late form claims at most once on its navigation', () {
+      final gate = ProtectedSecretPromptGate();
+      expect(gate.claimLateLoad(1), isFalse);
+      gate.waitingForForm(1);
+      expect(gate.claimLateLoad(2), isFalse);
+      expect(gate.claimLateLoad(1), isTrue);
+      expect(gate.claimLateLoad(1), isFalse);
+      gate.waitingForForm(2);
+      expect(gate.claimInitialLoad(2), isTrue);
+      expect(gate.claimLateLoad(2), isFalse);
+    });
+
+    test('cancellation survives navigation until background or explicit reset', () {
+      final gate = ProtectedSecretPromptGate();
+      gate.cancel();
+      gate.waitingForForm(2);
+      expect(gate.claimLateLoad(2), isFalse);
+      gate.resume();
+      expect(gate.paused, isTrue);
+      gate.background();
+      gate.resume();
+      expect(gate.claimLateLoad(2), isTrue);
+      gate.cancel();
+      gate.reset();
+      expect(gate.paused, isFalse);
+    });
+
+    test('read errors are reported once for the lifetime of the gate', () {
+      final gate = ProtectedSecretPromptGate();
+      expect(gate.reportReadError(), isTrue);
+      gate.reset();
+      gate.background();
+      gate.resume();
+      expect(gate.reportReadError(), isFalse);
+    });
+  });
+
   group('gakujoLoginAutofillStatus', () {
     const stopped = 'ログインが切れました。自動ログインを止めました。ID とパスワードを入力してください';
     const missing = 'ログインが切れました。ログイン情報を入力してください';

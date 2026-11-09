@@ -22,6 +22,10 @@ void main() {
     const excludedKeys = {
       'more_better_gakujo_secure_storage_bundle_v1',
       'more_better_gakujo_migration_completed_v1',
+      // Device-authentication protection exists only on Android and iOS.
+      'more_better_gakujo_protected',
+      'more_better_gakujo_protected_secrets_v1',
+      'more_better_gakujo_secret_protection_v1',
     };
     final storageKeys = <String>{};
     for (final file in Directory('lib/src').listSync(recursive: true)) {

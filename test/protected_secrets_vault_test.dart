@@ -1,0 +1,338 @@
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/protected_secrets_vault.dart';
+import 'package:morebettergakujo_flutter/src/two_factor_secret_store.dart';
+
+const record = '{"version":1,"loginId":"student","password":"test-password"}';
+const secret = 'JBSWY3DPEHPK3PXP';
+
+void main() {
+  late MemoryStorage normal;
+  late MemoryStorage protected;
+  late ProtectedSecretsVault vault;
+  late SecretProtectionState state;
+  late SecretProtectionController controller;
+  late DateTime now;
+
+  setUp(() {
+    normal = MemoryStorage({
+      loginRecordKey: record,
+      twoFactorSecretKey: secret,
+      loginIdKey: 'old',
+      loginPasswordKey: 'old-password',
+    });
+    protected = MemoryStorage();
+    now = DateTime(2026);
+    vault = ProtectedSecretsVault(storage: protected, clock: () => now);
+    state = SecretProtectionState(
+      storage: normal,
+      vault: vault,
+      supported: true,
+    );
+    controller = SecretProtectionController(state);
+  });
+  tearDown(() => vault.clearCache());
+
+  test(
+    'enable verifies and moves both fields, then disable restores them',
+    () async {
+      await controller.enable();
+      expect((await state.read()).enabled, isTrue);
+      expect(normal.values[loginRecordKey], loginTombstone);
+      expect(normal.values.containsKey(loginIdKey), isFalse);
+      expect(normal.values.containsKey(loginPasswordKey), isFalse);
+      expect(normal.values.containsKey(twoFactorSecretKey), isFalse);
+      expect((await vault.read())?.loginCredentials, record);
+      expect((await vault.read())?.twoFactorSecret, secret);
+      await controller.disable();
+      expect(normal.values[loginRecordKey], record);
+      expect(normal.values[twoFactorSecretKey], secret);
+      expect((await state.read()).enabled, isFalse);
+      expect(protected.values.containsKey(protectedSecretsKey), isFalse);
+    },
+  );
+
+  test(
+    'failed write and failed verification preserve normal storage',
+    () async {
+      final before = Map<String, String>.of(normal.values);
+      protected.failWrite = true;
+      await expectLater(controller.enable(), throwsA(isA<Object>()));
+      expect(normal.values, before);
+      expect((await state.read()).enabled, isFalse);
+      protected.failWrite = false;
+      protected.mismatch = true;
+      await expectLater(controller.enable(), throwsA(isA<Object>()));
+      expect(normal.values, before);
+      expect((await state.read()).enabled, isFalse);
+    },
+  );
+
+  test(
+    'settings and presence never read vault, shared cache expires',
+    () async {
+      await controller.enable();
+      vault.clearCache();
+      protected.reads = 0;
+      final settings = GakujoAppSettingsStore(
+        secureStorage: normal,
+        protectionState: state,
+      );
+      final twoFactor = TwoFactorSecretStore(
+        secureStorage: normal,
+        protectionState: state,
+      );
+      expect((await settings.load()).savedLoginId, 'student');
+      expect(await twoFactor.hasSecret(), isTrue);
+      expect(protected.reads, 0);
+      expect((await settings.loadLoginCredentials())?.loginId, 'student');
+      expect(await twoFactor.load(), secret);
+      expect(protected.reads, 1);
+      now = now.add(const Duration(seconds: 91));
+      expect(await twoFactor.load(), secret);
+      expect(protected.reads, 2);
+    },
+  );
+
+  test('concurrent login and two-factor saves preserve both values', () async {
+    await state.write(const SecretProtectionInfo(enabled: true));
+    final settings = GakujoAppSettingsStore(
+      secureStorage: normal,
+      protectionState: state,
+    );
+    final twoFactor = TwoFactorSecretStore(
+      secureStorage: normal,
+      protectionState: state,
+    );
+
+    await Future.wait([
+      settings.saveLoginCredentials(
+        loginId: 'student',
+        password: 'test-password',
+      ),
+      twoFactor.save(secret),
+    ]);
+
+    vault.clearCache();
+    final saved = await vault.read();
+    expect(saved?.loginCredentials, record);
+    expect(saved?.twoFactorSecret, secret);
+  });
+
+  test('saving with protection enabled creates a missing vault', () async {
+    await state.write(const SecretProtectionInfo(enabled: true));
+    final settings = GakujoAppSettingsStore(
+      secureStorage: normal,
+      protectionState: state,
+    );
+
+    await settings.saveLoginCredentials(
+      loginId: 'student',
+      password: 'test-password',
+    );
+
+    expect(protected.values.containsKey(protectedSecretsKey), isTrue);
+    vault.clearCache();
+    expect((await vault.read())?.loginCredentials, record);
+  });
+
+  test('saving login replaces unreadable data and clears lost 2FA metadata', () async {
+    await state.write(const SecretProtectionInfo(
+      enabled: true, loginId: 'old', hasTwoFactorSecret: true,
+    ));
+    protected.values[protectedSecretsKey] = 'invalid';
+    final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+
+    await settings.saveLoginCredentials(loginId: 'student', password: 'test-password');
+
+    vault.clearCache();
+    expect((await vault.read())?.loginCredentials, record);
+    expect((await vault.read())?.twoFactorSecret, isNull);
+    expect((await state.read()).hasTwoFactorSecret, isFalse);
+  });
+
+  test('saving 2FA replaces unreadable data and clears lost login metadata', () async {
+    await state.write(const SecretProtectionInfo(
+      enabled: true, loginId: 'student', hasTwoFactorSecret: true,
+    ));
+    protected.values[protectedSecretsKey] = 'invalid';
+    final twoFactor = TwoFactorSecretStore(secureStorage: normal, protectionState: state);
+
+    await twoFactor.save(secret);
+
+    vault.clearCache();
+    expect((await vault.read())?.twoFactorSecret, secret);
+    expect((await vault.read())?.loginCredentials, isNull);
+    expect((await state.read()).loginId, isNull);
+  });
+
+  for (final message in ['authentication error [5]', 'authentication error [7]']) {
+    test('saving never overwrites on authentication error: $message', () async {
+      await controller.enable();
+      vault.clearCache();
+      final before = Map<String, String>.of(protected.values);
+      final error = PlatformException(code: 'auth', message: message);
+      protected.readError = error;
+      final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+      await expectLater(
+        settings.saveLoginCredentials(loginId: 'new', password: 'new-password'),
+        throwsA(same(error)),
+      );
+      expect(protected.values, before);
+    });
+
+    test('saving 2FA never overwrites on authentication error: $message', () async {
+      await controller.enable();
+      vault.clearCache();
+      final before = Map<String, String>.of(protected.values);
+      final error = PlatformException(code: 'auth', message: message);
+      protected.readError = error;
+      final twoFactor = TwoFactorSecretStore(secureStorage: normal, protectionState: state);
+      await expectLater(twoFactor.save(secret), throwsA(same(error)));
+      expect(protected.values, before);
+    });
+  }
+
+  test('a storage FormatException is not treated as a corrupt vault', () async {
+    await state.write(const SecretProtectionInfo(enabled: true));
+    protected.values[protectedSecretsKey] = 'unchanged';
+    final error = FormatException('storage failure');
+    protected.readError = error;
+    final settings = GakujoAppSettingsStore(secureStorage: normal, protectionState: state);
+
+    await expectLater(
+      settings.saveLoginCredentials(loginId: 'new', password: 'new-password'),
+      throwsA(same(error)),
+    );
+    expect(protected.values[protectedSecretsKey], 'unchanged');
+  });
+
+  test('disable with a missing vault clears normal secrets', () async {
+    await state.write(const SecretProtectionInfo(enabled: true));
+
+    await controller.disable();
+
+    expect(normal.values[loginRecordKey], loginTombstone);
+    expect(normal.values.containsKey(twoFactorSecretKey), isFalse);
+    expect((await state.read()).enabled, isFalse);
+    expect(protected.values.containsKey(protectedSecretsKey), isFalse);
+  });
+
+  for (final message in [
+    'authentication error [5]',
+    'authentication error [10]',
+    'authentication error [13]',
+    '-128',
+    'user cancel',
+  ]) {
+    test('disable preserves the vault on cancellation: $message', () async {
+      await controller.enable();
+      vault.clearCache();
+      final before = Map<String, String>.of(protected.values);
+      final error = PlatformException(code: 'auth', message: message);
+      protected.readError = error;
+
+      await expectLater(controller.disable(), throwsA(same(error)));
+      expect((await state.read()).enabled, isTrue);
+      expect(protected.values, before);
+      expect(normal.values[loginRecordKey], loginTombstone);
+    });
+  }
+
+  test('unrelated errors are not authentication cancellations', () {
+    expect(isAuthenticationCancellation(PlatformException(code: 'other')), isFalse);
+    expect(isAuthenticationCancellation(StateError('user cancel')), isFalse);
+  });
+
+  test('unreadable vault is typed and discard clears all secrets', () async {
+    await controller.enable();
+    vault.clearCache();
+    protected.failRead = true;
+    await expectLater(
+      controller.disable(),
+      throwsA(isA<ProtectedSecretsUnreadable>()),
+    );
+    protected.failRead = false;
+    await controller.disableAndDiscard();
+    expect((await state.read()).enabled, isFalse);
+    expect(normal.values[loginRecordKey], loginTombstone);
+    expect(normal.values.containsKey(twoFactorSecretKey), isFalse);
+    expect(protected.values.containsKey(protectedSecretsKey), isFalse);
+  });
+}
+
+class MemoryStorage extends FlutterSecureStorage {
+  MemoryStorage([Map<String, String>? initial])
+    : values = Map.of(initial ?? {});
+  final Map<String, String> values;
+  int reads = 0;
+  bool failWrite = false;
+  bool failRead = false;
+  Object? readError;
+  bool mismatch = false;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    reads++;
+    if (readError != null) throw readError!;
+    if (failRead) throw StateError('read failed');
+    if (mismatch && key == protectedSecretsKey) {
+      return jsonEncode({'version': 1});
+    }
+    return values[key];
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (failWrite) throw StateError('write failed');
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
+
+  @override
+  Future<Map<String, String>> readAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => Map.of(values);
+}

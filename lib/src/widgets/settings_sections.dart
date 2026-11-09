@@ -108,6 +108,25 @@ class TwoFactorSecretSection extends StatelessWidget {
   }
 }
 
+class SecretProtectionSection extends StatelessWidget {
+  const SecretProtectionSection({super.key, required this.enabled,
+    required this.isAndroid, required this.onChanged});
+
+  final bool enabled;
+  final bool isAndroid;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    title: const Text('ログイン情報を使うときに本人確認する'),
+    subtitle: Text(isAndroid
+      ? 'Android 11以降で利用できます。指紋・顔または端末のPINなどで本人確認します。キャンセルすると自動ログインを一時停止します。'
+      : '自動ログインのたびにFace ID・Touch ID・パスコードで確認します。本人確認をキャンセルすると、そのときは自動ログインしません。'),
+    value: enabled,
+    onChanged: onChanged,
+  );
+}
+
 class LoginCredentialsSection extends StatelessWidget {
   const LoginCredentialsSection({
     super.key,
