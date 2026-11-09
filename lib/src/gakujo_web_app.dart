@@ -620,6 +620,20 @@ class GakujoWebApp extends StatefulWidget {
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
 
 @visibleForTesting
+String? gakujoLoginAutofillStatus(String event, bool hasCredentials) {
+  if (event == 'submit-blocked' ||
+      (event == 'ready-no-submit' && hasCredentials)) {
+    return 'ログインが切れました。自動ログインを止めました。ID とパスワードを入力してください';
+  }
+  if (event == 'challenge' || event == 'ready-no-submit') {
+    return hasCredentials
+        ? 'ログインが切れました。自動ログインしています'
+        : 'ログインが切れました。ログイン情報を入力してください';
+  }
+  return null;
+}
+
+@visibleForTesting
 Future<void> gakujoWaitForDialogDismissal(ModalRoute<void>? route) async {
   if (route != null) {
     await route.completed;
@@ -1479,6 +1493,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   int? _pendingPageFinishedNavigationRevision;
+  int? _loginAutofillStoppedNavigationRevision;
+  bool _deferLoginAutofillDuringSetup = false;
 
   static const double _minimumDesktopZoom = 0.5;
   static const double _maximumDesktopZoom = 2.0;
@@ -2424,6 +2440,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<bool> _saveLoginCredentialsInput({
     required String loginId,
     required String password,
+    bool applyToCurrentPage = true,
   }) async {
     try {
       return await _starSyncEngine.runAccountChange(() => _settingsOperations.runExclusive(() async {
@@ -2459,10 +2476,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
         }
         _showSnackBar('ログイン情報を保存しました');
-        await _applyFeatureFlagRuntimeState(
-          GakujoFeatureFlag.loginAutofill,
-          enabled: true,
-        );
+        if (applyToCurrentPage) {
+          await _applyFeatureFlagRuntimeState(
+            GakujoFeatureFlag.loginAutofill,
+            enabled: true,
+          );
+        }
         return true;
       }));
     } on Object catch (error, stackTrace) {
@@ -3419,11 +3438,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 setDialogState(() {
                   isCompleting = true;
                 });
+                _deferLoginAutofillDuringSetup = true;
                 try {
                   if (loginId.isNotEmpty) {
                     if (!await _saveLoginCredentialsInput(
                       loginId: loginId,
                       password: password,
+                      applyToCurrentPage: false,
                     )) {
                       return;
                     }
@@ -3516,8 +3537,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
                     );
                   }
+                  _deferLoginAutofillDuringSetup = false;
                   await _loadAllowedPageUrl(selectedPageMode.startUrl);
                 } finally {
+                  _deferLoginAutofillDuringSetup = false;
                   if (dialogContext.mounted) {
                     setDialogState(() {
                       isCompleting = false;
@@ -6135,11 +6158,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _pendingLoginRestoreUrl = recoveryUrl;
           _loginRestoreAttempted = false;
         }
-        _setStatus(
-          decoded['hasCredentials'] == true
-              ? 'ログインが切れました。自動ログインしています'
-              : 'ログインが切れました。ログイン情報を入力してください',
-        );
+      }
+      if (decoded is Map && decoded['event'] is String) {
+        final event = decoded['event'] as String;
+        final hasCredentials = decoded['hasCredentials'] == true;
+        final status = gakujoLoginAutofillStatus(event, hasCredentials);
+        if (event == 'submit-blocked' ||
+            (event == 'ready-no-submit' && hasCredentials)) {
+          _loginAutofillStoppedNavigationRevision = _navigationRevision;
+        }
+        if (status != null &&
+            !(event == 'challenge' && hasCredentials &&
+                _loginAutofillStoppedNavigationRevision == _navigationRevision)) {
+          _setStatus(status);
+        }
       }
     } on FormatException {
       // Older injected scripts may still send a plain diagnostic message.
@@ -6438,6 +6470,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final url = _currentPageUrl;
     final navigationRevision = _navigationRevision;
     bool stillCurrent() =>
+        !_deferLoginAutofillDuringSetup &&
         url != null &&
         _isCurrentPageCallback(url, navigationRevision) &&
         AllowedWebOrigins.canAutofill(_currentPageUrl, debugAllowed: false);
