@@ -1,10 +1,18 @@
 # flutter_secure_storage_darwin (vendored)
 
-Upstream: https://github.com/juliansteenbakker/flutter_secure_storage, version 0.3.2,
+Upstream: https://github.com/juliansteenbakker/flutter_secure_storage, version 0.4.3,
 BSD 3-Clause (see `LICENSE`).
 
-More Better Gakujo patch: `readAll` retries `errSecParam` with an attributes-only
-query, then reads each value individually for traditional macOS keychain support.
+Local patches in `FlutterSecureStorage.swift`:
+- Retry traditional macOS keychain bulk reads without data, then read items individually.
+- Reject invalid access controls and propagate keychain errors; strip result keys from mutations.
+- Update existing items without destructive delete, including other synchronizable states.
+- Preserve Secure Enclave wrapping keys and report cryptographic or partial deletion failures.
+- Delete all applicable synchronizable variants without masking errors; preserve shared enclave keys on narrowed deletion.
+
+The upstream pubspec's `resolution: workspace` is omitted because this vendored
+path dependency is not part of the upstream Dart workspace.
+
 Original upstream README follows.
 
 ---
@@ -41,6 +49,22 @@ If you have set your application up to use App Groups then you will need to add 
 ```
 
 If you are configuring this value through XCode then the string you set in the Keychain Sharing section would simply read "aoeu" with XCode appending the `$(AppIdentifierPrefix)` when it saves the configuration.
+
+### macOS: Keychain Sharing requires provisioning
+
+Adding `keychain-access-groups` enables Keychain Sharing, which requires a provisioning profile. On a free (non-Program) Apple Developer account, Xcode responds by embedding a machine-specific development provisioning profile, so the built app will only launch on the Mac that built it, and can't be distributed to other Macs (for example as a signed `.app`/`.dmg` outside the App Store).
+
+If your app doesn't actually need Keychain Sharing (no App Group, no sharing items with another app of yours), you can avoid the entitlement entirely by disabling the data protection keychain on macOS instead:
+
+```dart
+final storage = Platform.isMacOS
+    ? const FlutterSecureStorage(
+        mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+      )
+    : const FlutterSecureStorage();
+```
+
+This falls back to the legacy (non-data-protection) Keychain, which doesn't require `keychain-access-groups` or a provisioning profile.
 
 ## Usage
 
