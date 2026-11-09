@@ -1497,7 +1497,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _webViewService = platformService.createWebViewService();
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
-    _activityStore = _SyncActivityStore(_scheduleStarSync);
+    _activityStore = _SyncActivityStore(() {
+      if (_activeLoginAccount != null) _scheduleStarSync();
+    });
     _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
