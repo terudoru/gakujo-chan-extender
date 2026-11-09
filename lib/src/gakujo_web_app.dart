@@ -93,6 +93,7 @@ import 'web_view_service.dart';
 import 'windows_webview_authenticated_download.dart';
 import 'widgets/app_about_section.dart';
 import 'widgets/app_data_sections.dart';
+import 'widgets/app_update_banner.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/settings_sections.dart';
@@ -599,6 +600,7 @@ class GakujoWebApp extends StatefulWidget {
     this._initialTwoFactorSecret,
     this._debugAllowed,
     this._gakujoReachable,
+    this._updateService,
   });
 
   final TwoFactorSecretStore? _secretStore;
@@ -610,6 +612,7 @@ class GakujoWebApp extends StatefulWidget {
   final String? _initialTwoFactorSecret;
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
+  final AppUpdateService? _updateService;
 
   @override
   State<GakujoWebApp> createState() => _GakujoWebAppState();
@@ -1414,6 +1417,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDeadlineNotificationCoordinator
       _deadlineNotificationCoordinator;
   late final AppUpdateService _updateService;
+  AppUpdateInfo? _availableUpdate;
+  DateTime? _nextUpdateCheckAt;
+  bool _isCheckingUpdateInBackground = false;
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
@@ -1557,7 +1563,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       activityStore: _activityStore,
       notificationService: _notificationService,
     );
-    _updateService = const AppUpdateService();
+    _updateService = widget._updateService ?? const AppUpdateService();
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
@@ -1606,8 +1612,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // after a page-load refresh from stretching the gap to an hour.
     _backgroundRefreshTimer = Timer.periodic(
       const Duration(minutes: 5),
-      (_) => unawaited(_refreshAssignmentsInBackground()),
+      (_) {
+        unawaited(_refreshAssignmentsInBackground());
+        unawaited(_checkForUpdatesInBackground());
+      },
     );
+    unawaited(_checkForUpdatesAfterInitialPage());
   }
 
   @override
@@ -1645,6 +1655,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _offlineRetry.start();
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
+      unawaited(_checkForUpdatesInBackground());
       unawaited(_resumeNotificationsAndRefresh());
       unawaited(_syncStarsInBackground(StarSyncTrigger.resume));
     }
@@ -2000,6 +2011,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 ),
               ),
             ),
+            if (_availableUpdate != null &&
+                _appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) &&
+                !compactPreviewForKeyboard)
+              AppUpdateBanner(
+                latestVersion: _availableUpdate!.latestVersion,
+                currentVersion: _availableUpdate!.currentVersion,
+                onOpen: () => unawaited(_openUpdateReleasePage()),
+                onDismiss: () => unawaited(_dismissUpdateNotice()),
+              ),
             Expanded(
               // Android 15+ draws edge to edge; without this the end of a
               // page (often a submit button) stays under the navigation bar.
@@ -4074,6 +4094,114 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
+  }
+
+  Future<void> _checkForUpdatesAfterInitialPage() async {
+    try {
+      await _initialPageLoaded;
+    } catch (_) {
+      // The initial page load reports its own errors.
+    }
+    if (!mounted) return;
+    await _checkForUpdatesInBackground();
+  }
+
+  Future<void> _checkForUpdatesInBackground() async {
+    final now = DateTime.now();
+    if (!mounted ||
+        !_appSettingsLoaded ||
+        !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
+        _isCheckingUpdateInBackground ||
+        (_nextUpdateCheckAt?.isAfter(now) ?? false)) {
+      return;
+    }
+    _isCheckingUpdateInBackground = true;
+    final previouslyAvailable = _availableUpdate;
+    try {
+      final prefs = await _localPrefsStore.load();
+      if (!mounted) return;
+      if (!isUpdateCheckDue(prefs?.lastUpdateCheckAt, now)) {
+        _nextUpdateCheckAt =
+            prefs!.lastUpdateCheckAt!.add(appUpdateCheckInterval);
+        return;
+      }
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      final info = await _updateService.checkLatestRelease(
+        currentVersion: packageInfo.version,
+      );
+      if (!mounted) return;
+      if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
+          (previouslyAvailable != null &&
+              _availableUpdate != previouslyAvailable)) {
+        return;
+      }
+      if (shouldNotifyAboutUpdate(
+        info,
+        platform: defaultTargetPlatform,
+        dismissedVersion: prefs?.dismissedUpdateVersion,
+      )) {
+        setState(() => _availableUpdate = info);
+      } else {
+        if (_availableUpdate != null) {
+          setState(() => _availableUpdate = null);
+        }
+        await _localPrefsStore.saveUpdateCheck(checkedAt: now);
+        if (!mounted) return;
+      }
+      _nextUpdateCheckAt = now.add(appUpdateCheckInterval);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to check for application updates in background',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _nextUpdateCheckAt = now.add(const Duration(hours: 1));
+    } finally {
+      _isCheckingUpdateInBackground = false;
+    }
+  }
+
+  Future<void> _dismissUpdateNotice() async {
+    final info = _availableUpdate;
+    if (info == null) return;
+    setState(() => _availableUpdate = null);
+    try {
+      await _localPrefsStore.saveUpdateCheck(
+        checkedAt: DateTime.now(),
+        dismissedVersion: info.latestVersion,
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to save dismissed update notice',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _openUpdateReleasePage() async {
+    final info = _availableUpdate;
+    if (info == null) return;
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(info.releaseUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to open update release page',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    if (mounted && !launched) {
+      _showSnackBar('リリースページを開けませんでした');
+    }
   }
 
   Future<void> _checkForUpdates() async {
