@@ -29,7 +29,7 @@ void main() {
   ) async {
     await openDialog(tester);
     expect(find.text('外部サービスを開きます'), findsOneWidget);
-    expect(find.textContaining('学生団体が運営する外部サービス'), findsOneWidget);
+    expect(find.textContaining('CIRCLE という団体が運営'), findsOneWidget);
     expect(find.text(akikoServiceUrl), findsOneWidget);
     expect(find.text('再度表示しない'), findsOneWidget);
   });

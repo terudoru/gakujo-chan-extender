@@ -15,9 +15,9 @@ enum DownloadSaveMode {
 extension DownloadSaveModeLabels on DownloadSaveMode {
   String get label {
     return switch (this) {
-      DownloadSaveMode.autoSortToConfiguredFolder => '自動仕分け+指定場所保存',
-      DownloadSaveMode.flatToConfiguredFolder => '自動仕分けなし+指定場所保存',
-      DownloadSaveMode.flatWithPickerEachTime => '自動仕分けなし+適宜保存場所指定',
+      DownloadSaveMode.autoSortToConfiguredFolder => '授業ごとに仕分けて指定フォルダに保存',
+      DownloadSaveMode.flatToConfiguredFolder => '仕分けずに指定フォルダに保存',
+      DownloadSaveMode.flatWithPickerEachTime => '保存のたびに場所を選ぶ',
     };
   }
 
@@ -117,8 +117,8 @@ extension GakujoCalendarImportMethodLabels on GakujoCalendarImportMethod {
   String get label {
     return switch (this) {
       GakujoCalendarImportMethod.automatic => '自動で選ぶ',
-      GakujoCalendarImportMethod.deviceCalendar => 'OSカレンダーへ直接追加',
-      GakujoCalendarImportMethod.officialGoogle => '本家Google連携を開く',
+      GakujoCalendarImportMethod.deviceCalendar => '端末のカレンダーへ直接追加',
+      GakujoCalendarImportMethod.officialGoogle => '学務のGoogle連携を開く',
       GakujoCalendarImportMethod.icsFile => 'iCalendarファイルを書き出す',
     };
   }
@@ -310,19 +310,19 @@ class GakujoCalendarImportSettings {
 extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   String get label {
     return switch (this) {
-      GakujoFeatureFlag.downloadCapture => '資料ダウンロード捕捉',
+      GakujoFeatureFlag.downloadCapture => '資料のダウンロードをアプリで保存',
       GakujoFeatureFlag.gpaDisplay => 'GPA表示',
       GakujoFeatureFlag.reportTools => 'レポート並び替え',
-      GakujoFeatureFlag.messageTools => '連絡通知一括既読',
+      GakujoFeatureFlag.messageTools => '連絡通知の一括既読',
       GakujoFeatureFlag.messageStars => '連絡通知のスター',
       GakujoFeatureFlag.sessionExtender => 'セッション自動延長',
       GakujoFeatureFlag.loginAutofill => 'ログイン補助',
       GakujoFeatureFlag.twoFactorAutofill => '2FA自動入力',
-      GakujoFeatureFlag.activityScan => '更新検知',
-      GakujoFeatureFlag.deadlineScan => '提出期限抽出',
-      GakujoFeatureFlag.deadlineNotifications => '提出期限のOS通知',
+      GakujoFeatureFlag.activityScan => '更新の検出',
+      GakujoFeatureFlag.deadlineScan => '提出期限の読み取り',
+      GakujoFeatureFlag.deadlineNotifications => '提出期限の通知',
       GakujoFeatureFlag.reportListCache => '課題一覧の保存',
-      GakujoFeatureFlag.sessionRecoveryGuide => 'セッション復帰ガイド',
+      GakujoFeatureFlag.sessionRecoveryGuide => 'ログイン切れの案内',
       GakujoFeatureFlag.autoBackup => '自動バックアップ（スター付き通知を除く）',
       GakujoFeatureFlag.uploadCompression => '5MB超の添付ファイルを自動圧縮',
       GakujoFeatureFlag.updateNotice => 'アップデートの通知',

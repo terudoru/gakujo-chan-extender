@@ -237,7 +237,7 @@ class UnsupportedGakujoCalendarService extends GakujoCalendarService {
     String? uidNamespace,
   }) {
     throw MissingPluginException(
-      'OSカレンダー直接連携はこのプラットフォームでは未対応です',
+      'この環境では端末のカレンダーと直接連携できません',
     );
   }
 
@@ -248,7 +248,7 @@ class UnsupportedGakujoCalendarService extends GakujoCalendarService {
     String? calendarTitle,
   }) {
     throw MissingPluginException(
-      'OSカレンダー直接連携はこのプラットフォームでは未対応です',
+      'この環境では端末のカレンダーと直接連携できません',
     );
   }
 }

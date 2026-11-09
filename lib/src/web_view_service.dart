@@ -734,7 +734,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
               mainFrameConnectivityFailed = true;
               delegate.onWebResourceError?.call(
                 const GakujoWebResourceError(
-                  description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+                  description: '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
                 ),
               );
               return;
@@ -1293,7 +1293,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
           _rendererRecoveryStopped = true;
           _delegate?.onWebResourceError?.call(
             const GakujoWebResourceError(
-              description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+              description: '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
             ),
           );
         }
