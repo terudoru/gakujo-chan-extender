@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'base32.dart';
@@ -14,6 +15,15 @@ const loginIdKey = 'more_better_gakujo_login_id';
 const loginPasswordKey = 'more_better_gakujo_login_password';
 const twoFactorSecretKey = 'more_better_gakujo_2fa_secret';
 const loginTombstone = '{"version":1,"cleared":true}';
+
+bool isAuthenticationCancellation(Object error) {
+  if (error is! PlatformException) return false;
+  final detail = '${error.code} ${error.message} ${error.details}'.toLowerCase();
+  return detail.contains('authentication error [5]') ||
+      detail.contains('authentication error [10]') ||
+      detail.contains('authentication error [13]') ||
+      detail.contains('-128') || detail.contains('user cancel');
+}
 
 FlutterSecureStorage createProtectedSecretStorage() {
   if (Platform.isIOS) {
@@ -297,7 +307,8 @@ class SecretProtectionController {
     ProtectedSecrets value;
     try {
       value = await state.vault.read() ?? const ProtectedSecrets();
-    } on Object {
+    } on Object catch (error) {
+      if (isAuthenticationCancellation(error)) rethrow;
       throw const ProtectedSecretsUnreadable();
     }
     await state.storage.write(

@@ -74,6 +74,7 @@ import 'gakujo_upload_preview_script.dart';
 import 'google_drive_file_saver.dart';
 import 'platform/platform_service.dart';
 import 'secure_storage_factory.dart';
+import 'protected_secret_page_probe.dart';
 import 'protected_secrets_vault.dart';
 import 'secure_storage_transaction.dart';
 import 'star_sync/star_sync_engine.dart';
@@ -6490,19 +6491,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleAuthenticationCancellation(Object error, int revision) {
-    if (error is! PlatformException) return;
-    final detail = '${error.code} ${error.message} ${error.details}'.toLowerCase();
-    final cancelled = detail.contains('authentication error [5]') ||
-        detail.contains('authentication error [10]') ||
-        detail.contains('authentication error [13]') ||
-        detail.contains('-128') || detail.contains('user cancel');
-    if (!cancelled ||
+    if (!isAuthenticationCancellation(error) ||
         revision != _navigationRevision ||
         _authenticationCancelledRevision == revision) {
       return;
     }
     _authenticationCancelledRevision = revision;
     if (mounted) _showSnackBar('本人確認がキャンセルされたため自動ログインしませんでした');
+  }
+
+  Future<bool> _hasProtectedSecretForm(String script) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(script);
+      return _boolFromJavaScriptResult(result);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to probe protected secret form',
+        name: 'MoreBetterGakujo',
+        error: error.runtimeType,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
   }
 
   Future<void> _injectLoginAutofillAssistIfAllowed() async {
@@ -6524,10 +6534,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // campussmart.do can reveal the login form dynamically, so the injected
     // script positively identifies the login DOM before filling or submitting.
     try {
-      final credentials = await _appSettingsStore.loadLoginCredentials().catchError((Object error) {
-        _handleAuthenticationCancellation(error, navigationRevision);
-        throw error;
-      });
+      final protectionEnabled =
+          (await _appSettingsStore.protectionState.read()).enabled;
+      if (!stillCurrent()) return;
+      var hasForm = true;
+      if (protectionEnabled) {
+        hasForm = await _hasProtectedSecretForm(ProtectedSecretPageProbe.login());
+        if (!stillCurrent()) return;
+      }
+      final credentials = hasForm
+          ? await _appSettingsStore.loadLoginCredentials().catchError((Object error) {
+              _handleAuthenticationCancellation(error, navigationRevision);
+              throw error;
+            })
+          : null;
       if (!stillCurrent() ||
           !_appSettings.isFeatureEnabled(GakujoFeatureFlag.loginAutofill)) {
         return;
@@ -6629,6 +6649,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     try {
+      final protectionEnabled =
+          (await _appSettingsStore.protectionState.read()).enabled;
+      if (!stillCurrent()) return;
+      if (protectionEnabled) {
+        final hasForm = await _hasProtectedSecretForm(
+          ProtectedSecretPageProbe.twoFactor(),
+        );
+        if (!stillCurrent() || !hasForm) return;
+      }
       final secret = await _secretStore.load().catchError((Object error) {
         _handleAuthenticationCancellation(error, navigationRevision);
         throw error;
