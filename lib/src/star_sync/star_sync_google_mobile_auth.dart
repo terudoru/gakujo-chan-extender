@@ -264,7 +264,14 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     try {
       await _initialize();
       if (_account == null && _restoredEmail != null && _isAndroid) {
-        if (await _silentTokens(starSyncGoogleScopes) == null) {
+        GoogleSignInClientAuthorization? authorization;
+        try {
+          authorization = await _silentTokens(starSyncGoogleScopes);
+        } on GoogleSignInException catch (error) {
+          if (_accountMissing(error)) return;
+          rethrow;
+        }
+        if (authorization == null) {
           if (!await _isGoogleReachable()) {
             throw const StarSyncGoogleRevocationException();
           }
