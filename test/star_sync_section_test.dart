@@ -506,7 +506,7 @@ void main() {
     );
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
-    expect(find.text('user@example.com'), findsOneWidget);
+    expect(find.textContaining('user@example.com'), findsOneWidget);
     expect(find.text('パスフレーズを変更'), findsNothing);
     await tester.tap(find.text('別の端末を追加'));
     await tester.pumpAndSettle();
@@ -882,6 +882,13 @@ void main() {
     expect(find.textContaining('再ログインできません'), findsOneWidget);
     expect(find.text('Google に再ログイン'), findsNothing);
     expect(find.text('同期を無効にする'), findsOneWidget);
+  });
+
+  testWidgets('sync screen says how to change the account', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.textContaining('別のアカウントにするには、同期を無効にしてから'), findsOneWidget);
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {

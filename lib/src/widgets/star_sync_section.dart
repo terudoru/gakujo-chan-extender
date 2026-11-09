@@ -502,6 +502,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
 
   Widget _driveDownloadsSwitch() => SwitchListTile(
     title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+    subtitle: widget.driveDownloadsEnabled && widget.googleEmail() != null
+        ? Text(
+            widget.isGoogleDrive()
+                ? '保存先: ${widget.googleEmail()!}'
+                : '保存先: ${widget.googleEmail()!}（別のアカウントにするには、一度オフにします）',
+          )
+        : null,
     value: widget.driveDownloadsEnabled,
     onChanged: _busy
         ? null
@@ -718,7 +725,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
             ),
           if (widget.isGoogleDrive() && widget.googleEmail() != null)
-            Text(widget.googleEmail()!),
+            Text('${widget.googleEmail()!}（別のアカウントにするには、同期を無効にしてから設定し直します）'),
           if (status.status == StarSyncStatus.needsPairingCode) ...[
             const Text('別の端末で同期データがリセットされました。新しいコードを入力してください。'),
             _PairingInput(controller: _rejoinCode, enabled: !_busy),
