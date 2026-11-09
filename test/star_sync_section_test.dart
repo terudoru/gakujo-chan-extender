@@ -853,6 +853,18 @@ void main() {
     });
   }
 
+  testWidgets('lost Google sign in names the account sync uses', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsGoogleSignIn,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.text('同期に使うアカウント: user@example.com'), findsOneWidget);
+  });
+
   testWidgets('lost Google sign in offers re-login', (tester) async {
     final status = ValueNotifier(
       const StarSyncStatusSnapshot(
