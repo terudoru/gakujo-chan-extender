@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:isolate';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -17,9 +16,7 @@ import 'star_sync_document.dart';
 import 'star_sync_google_auth.dart';
 import 'star_sync_google_drive_transport.dart';
 import 'star_sync_quota_meter.dart';
-import 'star_sync_s3_transport.dart';
 import 'star_sync_transport.dart';
-import 'star_sync_webdav_transport.dart';
 
 const starSyncConfigKey = 'more_better_gakujo_star_sync_config';
 const starSyncStateKey = 'more_better_gakujo_star_sync_state';
@@ -32,43 +29,6 @@ const starSyncPendingDraftClearKey = 'more_better_gakujo_pending_draft_clear';
 const _deferredDraftClearKey = '\u0000draft-clear-before';
 
 class _CollectionTooLarge implements Exception {}
-
-Future<String> _createKeyringJson(
-  String passphrase,
-  int memory,
-  int iterations,
-  int parallelism,
-) => Isolate.run(() async {
-  final created = await createStarSyncKeyring(
-    passphrase,
-    params: StarSyncKdfParams(
-      memoryKiB: memory,
-      iterations: iterations,
-      parallelism: parallelism,
-    ),
-  );
-  return jsonEncode(created.keyring.toJson());
-});
-
-Future<List<int>> _unwrapKeyBytes(String encoded, String passphrase) =>
-    Isolate.run(() async {
-      final keyring = StarSyncKeyring.fromJson(jsonDecode(encoded));
-      return starSyncKeyBytes(await unwrapStarSyncKeyring(keyring, passphrase));
-    });
-
-Future<String> _rewrapKeyringJson(
-  String encoded,
-  List<int> bytes,
-  String passphrase,
-) => Isolate.run(() async {
-  final keyring = StarSyncKeyring.fromJson(jsonDecode(encoded));
-  final result = await rewrapStarSyncKeyring(
-    starSyncKeyFromBytes(bytes),
-    keyring,
-    passphrase,
-  );
-  return jsonEncode(result.toJson());
-});
 
 enum StarSyncTrigger { localChange, startup, resume, manual }
 
@@ -279,7 +239,8 @@ class StarSyncState {
       ),
       lastError: json['lastError'] as String?,
       status: StarSyncStatus.values.byName(
-        json['status'] == 'needsPairingCode' ? 'needsLegacyReset' : json['status'] as String,
+        (json['status'] == 'needsPairingCode' || json['status'] == 'needsPassphrase')
+            ? 'needsLegacyReset' : json['status'] as String,
       ),
       pendingBulkReplace: json['pendingBulkReplace'] as bool? ?? false,
       pendingBulkReplaceStarIds: (json['pendingBulkReplaceStarIds'] as List?)
@@ -328,7 +289,6 @@ class StarSyncEngine {
     this.canSync,
     this.onLocalStarsChanged,
     this.clearDraftsBefore,
-    this.kdfParams = const StarSyncKdfParams(),
     List<StarSyncCollection> collections = const [],
   }) : _collections = List.of(collections),
        _storage = secureStorage ?? SecureStorageFactory.create(),
@@ -395,7 +355,6 @@ class StarSyncEngine {
   final bool Function()? canSync;
   final void Function()? onLocalStarsChanged;
   final Future<bool> Function(DateTime)? clearDraftsBefore;
-  final StarSyncKdfParams kdfParams;
   final StorageOperationQueue _queue = StorageOperationQueue();
   final ValueNotifier<StarSyncStatusSnapshot> _status = ValueNotifier(
     const StarSyncStatusSnapshot(),
@@ -422,13 +381,8 @@ class StarSyncEngine {
   static StarSyncTransport _defaultTransport(
     StarSyncConfig config,
     StarSyncTransport Function()? googleDriveTransport,
-  ) => switch (config.backend) {
-    StarSyncBackend.webDav => StarSyncWebDavTransport(config.webDav!),
-    StarSyncBackend.s3 => StarSyncS3Transport(config.s3!),
-    StarSyncBackend.googleDrive =>
-      googleDriveTransport?.call() ??
-          (throw StateError('Google Drive transport is not configured')),
-  };
+  ) => googleDriveTransport?.call() ??
+      (throw StateError('Google Drive transport is not configured'));
 
   Future<T> runAccountChange<T>(Future<T> Function() change) =>
       _queue.runExclusive(() async {
@@ -492,8 +446,6 @@ class StarSyncEngine {
   });
 
   Future<void> load() => _queue.run(() async {
-    // The Drive quota record only matters for the Google backend; a broken
-    // record must never stop a WebDAV/S3 configuration from loading.
     try {
       await _quotaMeter.currentUsage();
     } on Object catch (error) {
@@ -505,12 +457,23 @@ class StarSyncEngine {
       if (config == null && state == null) {
         return;
       }
-      if (config == null || state == null) {
-        throw const FormatException();
+      if (config == null) throw const FormatException();
+      final configJson = jsonDecode(config) as Map<String, dynamic>;
+      if (configJson['backend'] != 'googleDrive') {
+        _config = null;
+        _state = null;
+        for (final key in [starSyncConfigKey, starSyncStateKey]) {
+          try {
+            await _storage.delete(key: key);
+          } on Object catch (error) {
+            debugPrint('Could not delete retired sync data: ${error.runtimeType}');
+          }
+        }
+        _publish();
+        return;
       }
-      final parsedConfig = StarSyncConfig.fromJson(
-        jsonDecode(config) as Map<String, dynamic>,
-      );
+      final parsedConfig = StarSyncConfig.fromJson(configJson);
+      if (state == null) throw const FormatException();
       final stateJson = jsonDecode(state) as Map<String, dynamic>;
       final parsedState = StarSyncState.fromJson(stateJson);
       _config = parsedConfig;
@@ -532,10 +495,6 @@ class StarSyncEngine {
         await _finishPendingLocalClear();
       } on Object {
         return;
-      }
-      if (parsedConfig.backend != StarSyncBackend.googleDrive) {
-        final transport = _transportFactory(parsedConfig);
-        transport.close();
       }
       _scheduleCooldown(parsedState);
       _scheduleApplyRetry(parsedState);
@@ -906,75 +865,6 @@ class StarSyncEngine {
     if (state != null && !await _accountMatches(state)) return false;
     await _storage.delete(key: starSyncPendingDraftClearKey);
     return true;
-  }
-
-  Future<void> setUp(
-    StarSyncConfig config,
-    String passphrase, {
-    bool resetExisting = false,
-    Map<String, String> clearLocalStars = const {},
-    String? expectedAccount,
-    int? expectedGeneration,
-  }) async {
-    final account = _setupAccount(expectedAccount, expectedGeneration);
-    final transport = _transportFactory(config);
-    try {
-      _setupAccount(account, expectedGeneration);
-      await transport.ensureDirectory(_deviceDirectory);
-      final retiredKeyId = resetExisting
-          ? await _deleteRemoteData(transport, account)
-          : null;
-      var remote = await transport.get(_keyringPath);
-      if (remote == null) {
-        final memory = kdfParams.memoryKiB;
-        final iterations = kdfParams.iterations;
-        final parallelism = kdfParams.parallelism;
-        final data = utf8.encode(
-          await _createKeyringJson(passphrase, memory, iterations, parallelism),
-        );
-        try {
-          _setupAccount(account, expectedGeneration);
-          await transport.put(_keyringPath, data, createOnly: true);
-          remote = await transport.get(_keyringPath);
-        } on StarSyncTransportException catch (error) {
-          if (error.kind != StarSyncTransportErrorKind.alreadyExists) {
-            rethrow;
-          }
-          remote = await transport.get(_keyringPath);
-        }
-      }
-      if (remote == null) {
-        throw StateError('Keyring missing');
-      }
-      final bytes = remote.bytes;
-      final keyBytes = await _unwrapKeyBytes(utf8.decode(bytes), passphrase);
-      final keyring = StarSyncKeyring.fromJson(jsonDecode(utf8.decode(bytes)));
-      final random = Random.secure();
-      final deviceId = base64UrlEncode(
-        List<int>.generate(16, (_) => random.nextInt(256)),
-      ).replaceAll('=', '');
-      await _queue.run(() async {
-        if (_currentAccount() != account ||
-            (expectedGeneration != null &&
-                accountGeneration != expectedGeneration)) {
-          throw const StarSyncAccountMismatchException();
-        }
-        await _install(
-          config,
-          StarSyncState(
-            deviceId: deviceId,
-            dataKey: base64Encode(keyBytes),
-            keyId: keyring.keyId,
-            boundAccount: account,
-            retiredKeyIds: {?retiredKeyId: _now()},
-          ),
-          pendingLocalClear: clearLocalStars,
-        );
-      });
-    } finally {
-      transport.close();
-    }
-    await _syncAfterSetup();
   }
 
   Future<void> _syncAfterSetup() async {
@@ -1360,7 +1250,6 @@ class StarSyncEngine {
         return const StarSyncResult();
       }
       if (trigger != StarSyncTrigger.manual &&
-          config.backend == StarSyncBackend.googleDrive &&
           !await _quotaMeter.allowsAutomatic(100)) {
         if (trigger == StarSyncTrigger.localChange) {
           state.pendingLocalChange = true;
@@ -1484,29 +1373,34 @@ class StarSyncEngine {
         final keyring = StarSyncKeyring.fromJson(
           jsonDecode(utf8.decode(keyObject.bytes)),
         );
-        if (config.backend == StarSyncBackend.googleDrive && keyring.mode == 'drive') {
-          if (keyring.keyId != state.keyId || base64Encode(keyring.dataKey) != state.dataKey) {
-            await _verifyDriveKey(transport, keyring,
-                (keyId: keyring.keyId, dataKey: keyring.dataKey));
-            if (!await _accountMatches(state)) return const StarSyncResult();
-            state
-              ..dataKey = base64Encode(keyring.dataKey)
-              ..keyId = keyring.keyId
-              ..keyringEtag = null
-              ..remoteCache = {}
-              ..collectionStates = _invalidateCollectionCaches(state.collectionStates)
-              ..lastUploadedHash = null
-              ..status = StarSyncStatus.ok;
-          }
-        } else if (keyring.keyId != state.keyId) {
-          state.status = keyring.mode == 'pairing'
-              ? StarSyncStatus.needsLegacyReset
-              : StarSyncStatus.needsPassphrase;
+        // A device that still holds a pairing key can publish it for the others.
+        final legacyHolder =
+            keyring.mode == 'pairing' && keyring.keyId == state.keyId;
+        if (keyring.mode != 'drive' && !legacyHolder) {
+          state.status = StarSyncStatus.needsLegacyReset;
           state.keyringEtag = null;
           await _saveState();
           return const StarSyncResult();
         }
-        if (config.backend == StarSyncBackend.googleDrive && keyring.mode == 'pairing') {
+        if (!legacyHolder &&
+            (keyring.keyId != state.keyId ||
+                base64Encode(keyring.dataKey) != state.dataKey)) {
+          await _verifyDriveKey(transport, keyring,
+              (keyId: keyring.keyId, dataKey: keyring.dataKey));
+          if (!await _accountMatches(state)) return const StarSyncResult();
+          state
+            ..dataKey = base64Encode(keyring.dataKey)
+            ..keyId = keyring.keyId
+            ..keyringEtag = null
+            ..remoteCache = {}
+            ..collectionStates = _invalidateCollectionCaches(state.collectionStates)
+            ..lastUploadedHash = null
+            ..status = StarSyncStatus.ok;
+        }
+        if (state.status == StarSyncStatus.needsLegacyReset) {
+          state.status = StarSyncStatus.ok;
+        }
+        if (legacyHolder) {
           try {
             final latest = await _readKeyring(transport);
             if (latest.mode == 'pairing' && latest.keyId == state.keyId) {
@@ -1802,8 +1696,7 @@ class StarSyncEngine {
       await _saveState();
       rethrow;
     } on Object catch (error) {
-      if (config.backend == StarSyncBackend.googleDrive &&
-          error is StarSyncTransportException &&
+      if (error is StarSyncTransportException &&
           error.kind == StarSyncTransportErrorKind.auth) {
         state.status = StarSyncStatus.needsGoogleSignIn;
         state.lastError = 'Google へのログインが必要です';
@@ -2394,104 +2287,6 @@ class StarSyncEngine {
     return StarSyncKeyring.fromJson(jsonDecode(utf8.decode(object.bytes)));
   }
 
-  Future<List<int>> _unwrap(StarSyncKeyring keyring, String passphrase) =>
-      _unwrapKeyBytes(jsonEncode(keyring.toJson()), passphrase);
-
-  Future<void> changePassphrase(String current, String next) =>
-      _queue.run(() async {
-        await _requireBoundAccount();
-        final transport = _transportFactory(_config!);
-        try {
-          final keyring = await _readKeyring(transport);
-          if (keyring.mode == 'pairing') throw StateError('Keyring is not passphrase-based');
-          final bytes = await _unwrap(keyring, current);
-          final encoded = jsonEncode(keyring.toJson());
-          final wrapped = utf8.encode(
-            await _rewrapKeyringJson(encoded, bytes, next),
-          );
-          await _requireBoundAccount();
-          _assertCurrentAccount(_state!);
-          await transport.put(_keyringPath, wrapped);
-        } finally {
-          transport.close();
-        }
-      });
-
-  Future<void> rejoin(String passphrase) async {
-    await _queue.run(() async {
-      await _requireBoundAccount();
-      final transport = _transportFactory(_config!);
-      try {
-        final keyring = await _readKeyring(transport);
-        final bytes = await _unwrap(keyring, passphrase);
-        _state!
-          ..dataKey = base64Encode(bytes)
-          ..keyId = keyring.keyId
-          ..keyringEtag = null
-          ..remoteCache = {}
-          ..collectionStates = _invalidateCollectionCaches(
-            _state!.collectionStates,
-          )
-          ..lastUploadedHash = null
-          ..status = StarSyncStatus.ok;
-        await _saveState();
-      } finally {
-        transport.close();
-      }
-    });
-    await syncNow();
-  }
-
-  Future<void> resetRemote(String newPassphrase) async {
-    await _queue.run(() async {
-      await _requireBoundAccount();
-      final transport = _transportFactory(_config!);
-      try {
-        final retiredKeyId = await _deleteRemoteData(
-          transport,
-          _state!.boundAccount ??
-              (throw const StarSyncAccountMismatchException()),
-        );
-        if (retiredKeyId != null) _state!.retiredKeyIds[retiredKeyId] = _now();
-        final memory = kdfParams.memoryKiB;
-        final iterations = kdfParams.iterations;
-        final parallelism = kdfParams.parallelism;
-        final created = await _createKeyringJson(
-          newPassphrase,
-          memory,
-          iterations,
-          parallelism,
-        );
-        await _requireBoundAccount();
-        _assertCurrentAccount(_state!);
-        await transport.put(
-          _keyringPath,
-          utf8.encode(created),
-          createOnly: true,
-        );
-        final stored = await transport.get(_keyringPath);
-        if (stored == null) throw StateError('missing keyring');
-        final encoded = utf8.decode(stored.bytes);
-        final keyBytes = await _unwrapKeyBytes(encoded, newPassphrase);
-        _state!
-          ..dataKey = base64Encode(keyBytes)
-          ..keyId = StarSyncKeyring.fromJson(jsonDecode(encoded)).keyId
-          ..keyringEtag = null
-          ..remoteCache = {}
-          ..collectionStates = _invalidateCollectionCaches(
-            _state!.collectionStates,
-          )
-          ..lastUploadedHash = null
-          ..lastBackupUploadAt = null
-          ..status = StarSyncStatus.ok;
-        await _saveState();
-      } finally {
-        transport.close();
-      }
-    });
-    await syncNow();
-  }
-
   Future<List<StarSyncDeviceInfo>> listDevices() => _queue.run(() async {
     await _requireBoundAccount();
     final transport = _transportFactory(_config!);
@@ -2562,8 +2357,7 @@ class StarSyncEngine {
           _pendingAutomaticBackup = null;
           return false;
         }
-        if (_config?.backend == StarSyncBackend.googleDrive &&
-            !await _quotaMeter.allowsAutomatic(100)) {
+        if (!await _quotaMeter.allowsAutomatic(100)) {
           _pendingAutomaticBackup = build;
           unawaited(_scheduleQuotaRetry());
           _publish();

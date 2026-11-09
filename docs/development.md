@@ -157,8 +157,6 @@ flutter build apk --debug
 | 設定のエクスポート/インポート | 保存モードと表示モードをクリップボード経由で移す | `lib/src/gakujo_web_app.dart` |
 | 診断情報のコピー | 問題の報告用に、機密情報を含めない範囲で環境と状態をコピーする | `lib/src/gakujo_web_app.dart` |
 | ログイン状態からの復帰 | ログイン後に前回のページへ戻れるよう、保存したページを復帰の候補にする | `lib/src/gakujo_last_page_store.dart`, `lib/src/gakujo_web_app.dart` |
-| 更新通知と差分の検知 | 成績、レポート、連絡通知、スケジュールなどの本文のハッシュを保存し、内容が変わったら未処理として表示する | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
-| 未読・未処理のリスト | 変化があったページと、検出した提出期限をツールバーからまとめて見られる | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
 | 提出期限の抽出 | ページ本文から、期限・締切・提出を含む日付の行を取り出し、アプリ内の期限リストに出す | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
 | お気に入り | 今のページをお気に入りに入れ、あとでツールバーから開く | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
 | 今のページの URL の操作 | URL のコピーと、外部ブラウザでの表示 | `lib/src/gakujo_web_app.dart` |
@@ -167,17 +165,16 @@ flutter build apk --debug
 | セッション切れからの復帰ガイド | セッション切れらしい画面に移ったとき、再ログイン後に直前のページへ戻る案内を出す | `lib/src/gakujo_web_app.dart` |
 | ダウンロード後のクイック操作 | 保存場所が分かる環境では、保存完了の通知からファイルを外部アプリで開ける | `lib/src/gakujo_web_app.dart` |
 | 課題・レポート一覧のローカル保存 | レポートや小テストのページから課題の行を取り出し、あとでアプリ内から見られるよう保存する | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
-| 通知・課題・成績の変更履歴 | 本文のハッシュの変化を履歴として残し、メニューから見られる | `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_web_app.dart` |
 | 初回セットアップ | 初回起動時に、表示モード、保存方式、保存先、機能のオン/オフをまとめて設定する | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
-| 機能のオン/オフ | ダウンロードの捕捉、GPA 表示、並べ替え、更新検知、自動入力などを個別に切り替える | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
+| 機能のオン/オフ | ダウンロードの捕捉、GPA 表示、並べ替え、自動入力などを個別に切り替える | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
 | 保存先の状態の確認 | 設定画面と保存の直前に保存先を確かめ、設定し直しが必要なら案内する | `lib/src/gakujo_web_app.dart`, `lib/src/file_system_gakujo_download_service.dart` |
 | 学情メニューへのクイックジャンプ | 成績、レポート、連絡通知、ダウンロード、シラバス、スケジュールへメニューから移る | `lib/src/gakujo_web_app.dart` |
-| バックアップ対象の拡張 | ログイン情報と2段階認証の秘密鍵を除いたまま、機能の設定、履歴、お気に入り、課題のキャッシュ、変更履歴も移せる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_download_history_store.dart`, `lib/src/gakujo_web_app.dart` |
+| バックアップ対象の拡張 | ログイン情報と2段階認証の秘密鍵を除いたまま、機能の設定、履歴、お気に入り、課題のキャッシュも移せる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_activity_store.dart`, `lib/src/gakujo_download_history_store.dart`, `lib/src/gakujo_web_app.dart` |
 | アプリ内の更新確認 | GitHub Releases の最新版を1日1回自動で確認し、新しい版があればバナーから配布ページを開ける。手動でも確認できる | `lib/src/app_update_service.dart`, `lib/src/gakujo_web_app.dart`, `lib/src/widgets/app_update_banner.dart` |
-| 自動バックアップ | 設定、履歴、お気に入り、課題のキャッシュ、変更履歴を定期的にローカルの JSON に保存する。機能の設定でオフにできる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
+| 自動バックアップ | 設定、履歴、お気に入り、課題のキャッシュを定期的にローカルの JSON に保存する。機能の設定でオフにできる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_web_app.dart` |
 | 課題の期限の OS 通知 | 新しい提出期限を見つけたら OS の通知を出す。Android/iOS/macOS はネイティブの通知、Windows は標準のダイアログで通知する。機能の設定でオフにできる | `lib/src/gakujo_app_settings.dart`, `lib/src/gakujo_notification_service.dart`, `android/app/src/main/kotlin/net/yoshida/morebettergakujo/MainActivity.kt`, `ios/Runner/AppDelegate.swift`, `macos/Runner/AppDelegate.swift`, `windows/runner/flutter_window.cpp` |
 | エラー報告パッケージ | 軽量版か詳細版を選び、診断情報を JSON ファイルに保存して、同じ内容をクリップボードにもコピーする | `lib/src/gakujo_web_app.dart` |
-| データ管理画面 | 履歴、失敗キュー、お気に入り、期限、変更履歴、課題のキャッシュの件数を見て、まとめて削除できる | `lib/src/gakujo_web_app.dart` |
+| データ管理画面 | 履歴、失敗キュー、お気に入り、期限、課題のキャッシュの件数を見て、まとめて削除できる | `lib/src/gakujo_web_app.dart` |
 | 端末間の同期 | 設計は [star-sync.md](star-sync.md) | `lib/src/star_sync/`, `lib/src/widgets/star_sync_section.dart` |
 
 ## PDF ビューア
@@ -208,16 +205,9 @@ flutter build apk --debug
 - 代替フォントがあっても、フォントを埋め込んでいない文書の字形や組版が意図どおりになるとは限らない。フォントを埋め込んだ文書のほうが確実
 - ライセンスと PDFium の第三者の告知は `tools/pdf_preview/licenses/` にある
 
-## 端末間同期の実サービスでのテスト
+## 端末間同期のテスト
 
-通常の `flutter test` では、`dart:io` の `HttpServer` で立てた偽の WebDAV/S3 サーバーを相手にします。実際のサーバーを相手にするテストは、環境変数を設定したときだけ動きます。
-
-| テスト | 環境変数 |
-|---|---|
-| `test/star_sync_live_s3_test.dart` | `STAR_SYNC_LIVE_S3_ENDPOINT`、`STAR_SYNC_LIVE_S3_REGION`、`STAR_SYNC_LIVE_S3_BUCKET`、`STAR_SYNC_LIVE_S3_ACCESS_KEY`、`STAR_SYNC_LIVE_S3_SECRET_KEY`、`STAR_SYNC_LIVE_S3_PATH_STYLE` |
-| `test/star_sync_live_webdav_test.dart` | `STAR_SYNC_LIVE_WEBDAV_URL`、`STAR_SYNC_LIVE_WEBDAV_USER`、`STAR_SYNC_LIVE_WEBDAV_PASSWORD` |
-
-これまでに確かめたサーバーは、[star-sync.md](star-sync.md) の「確認できた範囲」にあります。
+通常の `flutter test` では、偽の Google ドライブ API を使い、通信と2端末間の同期を確かめます。
 
 ## `scripts/` の一覧
 

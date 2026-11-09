@@ -1505,8 +1505,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         accessToken: ({bool forceRefresh = false}) async {
           final config = _starSyncEngine.config;
           final email = _starSyncGoogleAuth.currentEmail;
-          if (config?.backend == StarSyncBackend.googleDrive &&
-              !sameGoogleAccount(config?.googleEmail, email)) {
+          if (config != null &&
+              !sameGoogleAccount(config.googleEmail, email)) {
             throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
           }
           final token = await _starSyncGoogleAuth.accessToken(forceRefresh: forceRefresh);
@@ -1760,7 +1760,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       await (_starSyncLoad ??= () async {
         await _starSyncEngine.load();
-        if (_starSyncEngine.config?.backend == StarSyncBackend.googleDrive) {
+        if (_starSyncEngine.config != null) {
           try {
             _starSyncGoogleEmail = await _driveDownloadQueue.run(
               _starSyncGoogleAuth.restore,
@@ -2986,8 +2986,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           subtitle:
                               _driveDownloadsEnabled &&
                                   _starSyncGoogleEmail != null
-                              ? (_starSyncEngine.config?.backend ==
-                                        StarSyncBackend.googleDrive
+                              ? (_starSyncEngine.config != null
                                     ? (_messageStarsEnabled
                                           ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには同期を無効にします'
                                           : '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには「連絡通知のスター」をオンにして、同期を無効にします')
@@ -3191,10 +3190,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           collectionEnabled: _starSyncEngine.collectionEnabled,
                           onCollectionChanged: _starSyncEngine.setCollectionEnabled,
                           googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
-                          isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
                           // With Google sync set up, only its recorded account counts.
                           googleEmail: () =>
-                              _starSyncEngine.config?.backend == StarSyncBackend.googleDrive
+                              _starSyncEngine.config != null
                                   ? _starSyncEngine.config?.googleEmail
                                   : _starSyncGoogleEmail,
                           onGoogleCancelSignIn: _cancelGoogleSignIn,
@@ -3202,7 +3200,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             _starSyncGoogleEmail = await _signInGoogle();
                             try {
                               return await _starSyncEngine.setUpWithDrive(
-                                StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
+                                StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
                                 clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                               );
                             } on Object {
@@ -3241,24 +3239,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           onAccountGeneration: () => _starSyncEngine.accountGeneration,
                           onSetUpWithDrive: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
                               _starSyncEngine.setUpWithDrive(
-                                StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
+                                StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
                                 resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                               ),
                           onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
-                          onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
-                            await _ensureStarSyncLoaded();
-                            await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
-                          },
                           onSyncNow: () async {
                             await _ensureStarSyncLoaded();
                             await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                           },
                           onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
                           onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
-                          onChangePassphrase: (current, next) async {
-                            await _ensureStarSyncLoaded();
-                            await _starSyncEngine.changePassphrase(current, next);
-                          },
                           onListDevices: () async {
                             await _ensureStarSyncLoaded();
                             return _starSyncEngine.listDevices();
@@ -3269,7 +3259,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           },
                           onDisable: ({deleteOwnRemoteFile = false}) async {
                             await _ensureStarSyncLoaded();
-                            final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
+                            final google = _starSyncEngine.config != null;
                             await _starSyncEngine.disable(
                               deleteOwnRemoteFile: deleteOwnRemoteFile,
                             );
@@ -3283,14 +3273,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                 _starSyncGoogleEmail = null;
                               }
                             }
-                          },
-                          onReset: (passphrase) async {
-                            await _ensureStarSyncLoaded();
-                            await _starSyncEngine.resetRemote(passphrase);
-                          },
-                          onRejoin: (passphrase) async {
-                            await _ensureStarSyncLoaded();
-                            await _starSyncEngine.rejoin(passphrase);
                           },
                         )
                       else
@@ -5556,17 +5538,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       optionalScopes: enablingDriveSaving || _driveDownloadPreference.enabled
           ? const [googleDriveFileScope]
           : const [],
-      loginHint: config?.backend == StarSyncBackend.googleDrive
-          ? config?.googleEmail
-          : null,
+      loginHint: config?.googleEmail,
     );
-    if (config?.backend == StarSyncBackend.googleDrive &&
-        !sameGoogleAccount(config?.googleEmail, email)) {
+    if (config != null &&
+        !sameGoogleAccount(config.googleEmail, email)) {
       try {
         await _starSyncGoogleAuth.signOut();
       } finally {
         _starSyncGoogleEmail = null;
-        final expected = config?.googleEmail;
+        final expected = config.googleEmail;
         if (mounted) {
           _showSnackBar(expected == null
               ? 'この同期の設定には Google アカウントの情報がありません。同期を無効にしてから、もう一度設定してください'
@@ -5728,7 +5708,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // A refused or cancelled attempt must not keep what may be the wrong
       // account: with the switch off there would be no other way to change it.
       if (enabled && byStudentSwitch && !_driveDownloadPreference.enabled &&
-          _starSyncEngine.config?.backend != StarSyncBackend.googleDrive &&
+          _starSyncEngine.config == null &&
           _starSyncGoogleAuth.currentEmail != null) {
         try {
           await _driveDownloadQueue.runExclusive(_starSyncGoogleAuth.signOut);
@@ -5807,7 +5787,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _driveDownloadPreference.save(false, null);
         // With no sync tied to this account, turning saving off is the way to
         // change it; staying signed in would bring the same account back.
-        if (_starSyncEngine.config?.backend != StarSyncBackend.googleDrive &&
+        if (_starSyncEngine.config == null &&
             byStudentSwitch &&
             _starSyncGoogleAuth.currentEmail != null) {
           try {
