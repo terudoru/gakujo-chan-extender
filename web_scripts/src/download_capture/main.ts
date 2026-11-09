@@ -354,7 +354,7 @@ function downloadCapture() {
           }
           for (var same = courseIndex + 1; same < cells.length; same += 1) {
             var sameRowValue = textOf(cells[same]);
-            if (sameRowValue) {
+            if (sameRowValue && !isIgnoredCourseName(normalizeCourseName(sameRowValue))) {
               return sameRowValue;
             }
           }
@@ -364,7 +364,7 @@ function downloadCapture() {
               continue;
             }
             var value = textOf(nextCells[courseIndex]);
-            if (value) {
+            if (value && !isIgnoredCourseName(normalizeCourseName(value))) {
               return value;
             }
           }
@@ -393,6 +393,9 @@ function downloadCapture() {
 
   function normalizeCourseName(text: string) {
     var normalized = (text || '').replace(/\s+/g, ' ').trim();
+    if (isFileRow(normalized)) {
+      return '未分類';
+    }
     var extracted = extractCourseNameFromText(normalized);
     if (extracted) {
       return extracted;
@@ -413,12 +416,19 @@ function downloadCapture() {
 
   function extractCourseNameFromText(text: string) {
     var normalized = (text || '').replace(/\s+/g, ' ').trim();
-    var labeledMatch = normalized.match(/(?:授業科目名|授業科目|科目名|授業名|講義名|科目\s*[:：])\s*[:：]?\s*(?:[A-Z0-9]{4,}\s+)?(.+)$/i);
+    var labeledMatch = normalized.match(/(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:[A-Z0-9]{4,}\s+)?(.+)$/i);
     if (!labeledMatch) {
+      return '';
+    }
+    if (isFileRow(labeledMatch[1])) {
       return '';
     }
     var extracted = trimAtKnownFieldLabel(labeledMatch[1].trim());
     return isIgnoredCourseName(extracted) ? '' : extracted;
+  }
+
+  function isFileRow(text: string) {
+    return /プレビューを見る|\.(?:pdf|docx?|xlsx?|pptx?|zip|txt|csv)(?:\s|$)/i.test(text);
   }
 
   function trimAtKnownFieldLabel(text: string) {
@@ -427,11 +437,16 @@ function downloadCapture() {
   }
 
   function isIgnoredCourseName(text: string) {
-    if (!text || text.length > 100) {
+    if (!text || text.length > 100 || isFileRow(text)) {
       return true;
     }
     var lower = (text || '').toLowerCase();
+    if (lower.indexOf('now loading') === 0) {
+      return true;
+    }
     var genericPageLabels = [
+      '未分類',
+      'ダウンロード',
       '開設一覧',
       '連絡通知',
       '掲示一覧',

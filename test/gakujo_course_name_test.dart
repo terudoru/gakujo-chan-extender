@@ -2,6 +2,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
+  test('only the exact download page label is ignored', () {
+    expect(isUsefulGakujoCourseName('ダウンロード'), isFalse);
+    expect(isUsefulGakujoCourseName('ダウンロード入門'), isTrue);
+    expect(isUsefulGakujoCourseName('now loading'), isFalse);
+    expect(isUsefulGakujoCourseName('Now Loading...'), isFalse);
+    expect(isGakujoSharedDownloadsUrl('https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=sd'), isTrue);
+    expect(isGakujoSharedDownloadsUrl('https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=home'), isFalse);
+    expect(isGakujoSharedDownloadsUrl(null), isFalse);
+  });
+
   test('error and notice page titles are not course names', () {
     for (final title in [
       'ページの有効期限ぎれ',

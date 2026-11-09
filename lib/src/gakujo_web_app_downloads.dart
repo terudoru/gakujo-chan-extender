@@ -869,7 +869,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       if (!_isUsefulCourseName(request.courseName)) {
         final pageCourseName =
             await _estimateCourseNameFromPage(await _controller.getTitle());
-        final cachedCourseName = _currentCourseName;
+        // The shared downloads tab belongs to no course, so the last course
+        // page's name does not apply here.
+        final cachedCourseName = isGakujoSharedDownloadsUrl(await _controller.currentUrl())
+            ? null
+            : _currentCourseName;
         final courseName = _isUsefulCourseName(pageCourseName)
             ? pageCourseName
             : _isUsefulCourseName(cachedCourseName ?? '')
