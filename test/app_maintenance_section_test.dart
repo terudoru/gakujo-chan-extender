@@ -11,20 +11,16 @@ Widget section(
         Future<void> Function()? export}) =>
     MaterialApp(
         home: Scaffold(
-      body: AppMaintenanceSection(
-        onCheckUpdates: () async {},
+      body: AppBackupSection(
         onCreateBackup: () async {},
-        onCreateErrorReport: () async {},
         onExportSettings: export ?? () async {},
         onImportSettings: import,
         onImportSettingsFromFile: importFromFile ?? () async {},
-        onCheckDownloadDestination: () async {},
-        onCopyDiagnostics: () async {},
       ),
     ));
 
 void main() {
-  for (final importLabel in ['設定を読み込み', 'ファイルから読み込み']) {
+  for (final importLabel in ['クリップボードから読み込み', 'ファイルから読み込み']) {
     testWidgets('$importLabel runs once and blocks related backup actions',
         (tester) async {
       final pending = Completer<void>();
@@ -45,10 +41,10 @@ void main() {
       pressed();
       pressed();
       await tester.pump();
-      expect(clipboardImports, importLabel == '設定を読み込み' ? 1 : 0);
+      expect(clipboardImports, importLabel == 'クリップボードから読み込み' ? 1 : 0);
       expect(fileImports, importLabel == 'ファイルから読み込み' ? 1 : 0);
       for (final label in [
-        '設定を読み込み',
+        'クリップボードから読み込み',
         'ファイルから読み込み',
         '設定をコピー',
         'バックアップ作成',
@@ -75,7 +71,7 @@ void main() {
         throw PlatformException(code: 'clipboard_unavailable');
       }
     }));
-    final button = find.widgetWithText(OutlinedButton, '設定を読み込み');
+    final button = find.widgetWithText(OutlinedButton, 'クリップボードから読み込み');
     await tester.tap(button);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -89,7 +85,7 @@ void main() {
       (tester) async {
     final pending = Completer<void>();
     await tester.pumpWidget(section(import: () => pending.future));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'クリップボードから読み込み'));
     await tester.pumpWidget(const SizedBox.shrink());
     pending.completeError(PlatformException(code: 'clipboard_unavailable'));
     await tester.pumpAndSettle();

@@ -7,6 +7,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
+import 'package:morebettergakujo_flutter/src/widgets/settings_sections.dart';
 
 void main() {
   Widget section(
@@ -25,8 +26,7 @@ void main() {
     Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
     bool google = false,
-    bool driveDownloadsEnabled = false,
-    Future<void> Function(bool)? onDriveDownloadsChanged,
+    ValueChanged<bool>? onBusyChanged,
     Future<void> Function()? onBackup,
     Future<List<StarSyncBackupInfo>> Function()? onListBackups,
     Future<void> Function(String)? onRestoreBackup,
@@ -56,8 +56,7 @@ void main() {
       body: SingleChildScrollView(
         child: StarSyncSection(
           status: status,
-          driveDownloadsEnabled: driveDownloadsEnabled,
-          onDriveDownloadsChanged: onDriveDownloadsChanged,
+          onBusyChanged: onBusyChanged,
           onBackup: onBackup,
           onListBackups: onListBackups,
           onRestoreBackup: onRestoreBackup,
@@ -161,36 +160,46 @@ void main() {
     expect(selected, 'b');
   });
 
-  testWidgets('Drive download switch follows availability and granted state', (
+  testWidgets('Drive download switch renders value and invokes callback', (tester) async {
+    bool? requested;
+    Widget drive(bool value) => MaterialApp(home: Scaffold(body: DriveDownloadSwitch(
+      value: value, signingIn: false, enabled: true, onChanged: (value) => requested = value,
+    )));
+    await tester.pumpWidget(drive(false));
+    await tester.tap(find.byType(SwitchListTile));
+    expect(requested, isTrue);
+    await tester.pumpWidget(drive(true));
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isTrue);
+  });
+
+  testWidgets('busy is set while an action runs and cleared on dispose', (
     tester,
   ) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot());
-    addTearDown(status.dispose);
-    bool? requested;
-    Future<void> change(bool value) async {
-      requested = value;
-    }
-
-    await tester.pumpWidget(section(status, onDriveDownloadsChanged: change));
-    expect(find.byType(SwitchListTile), findsNothing);
-    await tester.pumpWidget(
-      section(status, googleAvailable: true, onDriveDownloadsChanged: change),
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.accountReturned,
+      ),
     );
-    await tester.tap(find.byType(SwitchListTile));
-    await tester.pumpAndSettle();
-    expect(requested, isTrue);
+    final busy = <bool>[];
+    final pending = Completer<void>();
     await tester.pumpWidget(
       section(
         status,
-        googleAvailable: true,
-        driveDownloadsEnabled: true,
-        onDriveDownloadsChanged: change,
+        onBusyChanged: busy.add,
+        onResumeKeepingLocal: () => pending.future,
       ),
     );
-    expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
-      isTrue,
-    );
+    await tester.tap(find.text('含めて再開'));
+    await tester.pump();
+    expect(busy, [true]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+    expect(busy, [true, false]);
+    pending.complete();
+    await tester.pump();
+    expect(busy, [true, false]);
+    status.dispose();
   });
 
   testWidgets('collection switches invoke the callback', (tester) async {
@@ -663,35 +672,15 @@ void main() {
   });
 
   testWidgets('desktop Drive download permission can be cancelled', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    try {
-      final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: false));
-      addTearDown(status.dispose);
-      final pending = Completer<void>();
-      await tester.pumpWidget(section(status, googleAvailable: true,
-        onDriveDownloadsChanged: (value) {
-          expect(value, isTrue);
-          return pending.future;
-        },
-        onGoogleCancelSignIn: () => pending.completeError(
-          const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled)),
-      ));
-      await tester.tap(find.byType(SwitchListTile));
-      await tester.pump();
-      expect(find.text('キャンセル'), findsOneWidget);
-      await tester.tap(find.text('キャンセル'));
-      await tester.pump();
-      expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isFalse);
-      expect(find.text('キャンセル'), findsNothing);
-      expect(find.text('Google へのログインに失敗しました'), findsNothing);
-    } finally {
-      try {
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-      } finally {
-        debugDefaultTargetPlatformOverride = null;
-      }
-    }
+    var cancelled = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: DriveDownloadSwitch(
+      value: false, signingIn: true, enabled: true, onChanged: (_) {},
+      onCancel: () => cancelled = true,
+    ))));
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    expect(cancelled, isTrue);
   });
 
   testWidgets('Google permission error is shown', (tester) async {
