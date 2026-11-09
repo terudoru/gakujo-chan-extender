@@ -25,11 +25,12 @@ void main() {
     await file.writeAsString(jsonEncode({
       'disabledFeatureFlags': [
         'activity_scan', 'deadline_scan', 'report_list_cache',
-        'session_recovery_guide', 'gpa_display',
+        'session_recovery_guide', 'gpa_display', 'report_tools',
+        'message_tools', 'message_stars', 'upload_compression',
       ],
     }));
     expect((await store.load())?.appSettings?.disabledFeatureFlags,
-        {GakujoFeatureFlag.gpaDisplay});
+        {GakujoFeatureFlag.uploadCompression});
   });
 
   test('update check fields survive other saves and partial settings', () async {
@@ -89,8 +90,8 @@ void main() {
       pageMode: GakujoPageMode.mobile,
       savedLoginId: 'student',
       disabledFeatureFlags: {
-        GakujoFeatureFlag.gpaDisplay,
-        GakujoFeatureFlag.reportTools,
+        GakujoFeatureFlag.uploadCompression,
+        GakujoFeatureFlag.updateNotice,
       },
       setupCompleted: true,
       calendarImportSettings: GakujoCalendarImportSettings(
@@ -113,7 +114,7 @@ void main() {
     expect(loadedSettings?.savedLoginId, isNull);
     expect(
       loadedSettings?.disabledFeatureFlags,
-      {GakujoFeatureFlag.gpaDisplay, GakujoFeatureFlag.reportTools},
+      {GakujoFeatureFlag.uploadCompression, GakujoFeatureFlag.updateNotice},
     );
     expect(loadedSettings?.setupCompleted, isTrue);
     expect(
@@ -362,7 +363,7 @@ void main() {
       appSettings: GakujoAppSettings(
         pageMode: GakujoPageMode.mobile,
         savedLoginId: 'student',
-        disabledFeatureFlags: {GakujoFeatureFlag.gpaDisplay},
+        disabledFeatureFlags: {GakujoFeatureFlag.uploadCompression},
         setupCompleted: true,
       ),
     );
@@ -375,7 +376,7 @@ void main() {
     expect(
       settings.disabledFeatureFlags,
       containsAll({
-        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.uploadCompression,
         GakujoFeatureFlag.loginAutofill,
         GakujoFeatureFlag.twoFactorAutofill,
       }),
@@ -404,7 +405,7 @@ void main() {
     const localSettings = GakujoAppSettings(
       disabledFeatureFlags: {
         GakujoFeatureFlag.loginAutofill,
-        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.uploadCompression,
       },
     );
     final startup = macosStartupSettingsFromLocalPrefs(
@@ -470,7 +471,7 @@ void main() {
       appSettings: GakujoAppSettings(
         pageMode: GakujoPageMode.mobile,
         disabledFeatureFlags: {
-          GakujoFeatureFlag.gpaDisplay,
+          GakujoFeatureFlag.uploadCompression,
           GakujoFeatureFlag.loginAutofill,
         },
         messageExcludeKeywords: ['アンケート'],
@@ -522,7 +523,6 @@ void main() {
       ),
       notificationPreferences: GakujoNotificationPreferences(
         skipSubmitted: false,
-        mutedCourses: {'科目'},
         reminderOffsets: {GakujoReminderOffset.threeDays},
       ),
     );
@@ -546,7 +546,7 @@ void main() {
       () async {
     await File('${directory.path}/${GakujoLocalPrefsStore.fileName}')
         .writeAsString('{"version":1,"messageExcludeKeywords":[]}');
-    const preferences = GakujoNotificationPreferences(mutedCourses: {'科目'});
+    const preferences = GakujoNotificationPreferences(skipSubmitted: false);
     final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
       secureSettings: const GakujoAppSettings(
         messageExcludeKeywords: ['広告'],

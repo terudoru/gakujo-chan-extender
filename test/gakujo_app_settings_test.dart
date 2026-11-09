@@ -13,9 +13,9 @@ void main() {
   test('retired disabled flags are ignored when loading secure settings', () async {
     final store = GakujoAppSettingsStore(secureStorage: _TrackingSecureStorage({
       'more_better_gakujo_disabled_feature_flags':
-          'activity_scan,deadline_scan,report_list_cache,session_recovery_guide,gpa_display',
+          'activity_scan,deadline_scan,report_list_cache,session_recovery_guide,gpa_display,report_tools,message_tools,message_stars,upload_compression',
     }));
-    expect((await store.load()).disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+    expect((await store.load()).disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
   });
 
   test('message exclude keywords are normalized and persisted', () async {
@@ -357,11 +357,11 @@ void main() {
 
     await Future.wait([
       store.saveFeatureEnabled(
-        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.uploadCompression,
         enabled: false,
       ),
       store.saveFeatureEnabled(
-        GakujoFeatureFlag.reportTools,
+        GakujoFeatureFlag.updateNotice,
         enabled: false,
       ),
     ]);
@@ -370,8 +370,8 @@ void main() {
     expect(
       settings.disabledFeatureFlags,
       containsAll({
-        GakujoFeatureFlag.gpaDisplay,
-        GakujoFeatureFlag.reportTools,
+        GakujoFeatureFlag.uploadCompression,
+        GakujoFeatureFlag.updateNotice,
       }),
     );
   });

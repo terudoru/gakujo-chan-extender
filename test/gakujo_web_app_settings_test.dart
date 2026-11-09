@@ -141,7 +141,6 @@ void main() {
                   onKeywordInputChanged: (_) {},
                   preferences: const GakujoNotificationPreferences(),
                   onPreferencesChanged: (_) async {},
-                  knownCourses: const [],
                 ),
               ]),
             ),
@@ -157,6 +156,8 @@ void main() {
       expect(tester.widget<CheckboxListTile>(
         find.widgetWithText(CheckboxListTile, '提出期限の通知'),
       ).onChanged, isNull);
+
+      expect(find.text('科目ごとの通知'), findsNothing);
 
       await show(TargetPlatform.windows);
       expect(find.text('チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'), findsOneWidget);
@@ -203,7 +204,6 @@ void main() {
               onKeywordInputChanged: (_) {},
               preferences: const GakujoNotificationPreferences(),
               onPreferencesChanged: (_) async {},
-              knownCourses: const [],
             ),
           ),
         ),
@@ -240,7 +240,7 @@ void main() {
     const mirrored = GakujoAppSettings(
       disabledFeatureFlags: {
         GakujoFeatureFlag.loginAutofill,
-        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.updateNotice,
       },
     );
     final startup = macosStartupSettingsFromLocalPrefs(
@@ -256,7 +256,7 @@ void main() {
     );
     const loaded = GakujoAppSettings(
       savedLoginId: 'student',
-      disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+      disabledFeatureFlags: {GakujoFeatureFlag.downloadCapture},
       calendarImportSettings: GakujoCalendarImportSettings(
         method: GakujoCalendarImportMethod.icsFile,
       ),
@@ -268,7 +268,6 @@ void main() {
       ),
       notificationPreferences: GakujoNotificationPreferences(
         skipSubmitted: false,
-        mutedCourses: {'科目'},
         reminderOffsets: {GakujoReminderOffset.threeHours},
       ),
     );
@@ -293,7 +292,7 @@ void main() {
     expect(settings.pageMode, wizard.pageMode);
     expect(settings.disabledFeatureFlags, {
       GakujoFeatureFlag.loginAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.updateNotice,
       GakujoFeatureFlag.uploadCompression,
     });
     expect(settings.setupCompleted, isTrue);
@@ -393,7 +392,7 @@ void main() {
         pageMode: GakujoPageMode.mobile,
         disabledFeatureFlags: {
           GakujoFeatureFlag.loginAutofill,
-          GakujoFeatureFlag.gpaDisplay,
+          GakujoFeatureFlag.uploadCompression,
           GakujoFeatureFlag.deadlineNotifications,
         },
         setupCompleted: true,
@@ -408,7 +407,6 @@ void main() {
         ),
         notificationPreferences: GakujoNotificationPreferences(
           skipSubmitted: false,
-          mutedCourses: {'科目'},
           reminderOffsets: {GakujoReminderOffset.threeHours},
         ),
       );
@@ -566,7 +564,7 @@ void main() {
       );
     }
 
-    final first = toggle(GakujoFeatureFlag.messageStars, firstSave.future);
+    final first = toggle(GakujoFeatureFlag.downloadCapture, firstSave.future);
     final second =
         toggle(GakujoFeatureFlag.uploadCompression, secondSave.future);
     firstSave.complete();
@@ -577,7 +575,7 @@ void main() {
     await first;
 
     final expected = {
-      GakujoFeatureFlag.messageStars,
+      GakujoFeatureFlag.downloadCapture,
       GakujoFeatureFlag.uploadCompression,
     };
     expect(settings.disabledFeatureFlags, expected);
@@ -642,7 +640,6 @@ void main() {
               onKeywordInputChanged: (value) => setState(() => input = value),
               preferences: const GakujoNotificationPreferences(),
               onPreferencesChanged: (_) async {},
-              knownCourses: const [],
             ),
           );
         }),
@@ -740,7 +737,7 @@ void main() {
     await store.saveDisabledFeatureFlags({
       GakujoFeatureFlag.loginAutofill,
       GakujoFeatureFlag.twoFactorAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.uploadCompression,
     });
     await store.saveSetupCompleted(true);
 
@@ -755,7 +752,7 @@ void main() {
     expect((await store.loadLoginCredentials())?.password, 'password');
     expect(settings.disabledFeatureFlags, {
       GakujoFeatureFlag.twoFactorAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.uploadCompression,
     });
     expect(settings.setupCompleted, isTrue);
   });
@@ -807,7 +804,6 @@ void main() {
               pending.add(saved);
               return saved;
             },
-            knownCourses: const [],
           ),
         ),
       ),

@@ -12,7 +12,7 @@ void _checkAccount(bool Function()? stillCurrent) {
   }
 }
 
-// The exporter must exclude messageStars from disabledFeatureFlags. Credentials,
+// Credentials,
 // 2FA secrets, download paths and save mode, and page mode are not portable.
 const starSyncPortableSettingKeys = <String>[
   'disabledFeatureFlags',
@@ -28,7 +28,6 @@ Map<String, Object?> exportStarSyncPortableSettings(
 ) => {
   'disabledFeatureFlags':
       settings.disabledFeatureFlags
-          .where((flag) => flag != GakujoFeatureFlag.messageStars)
           .map((flag) => flag.storageValue)
           .toList()
         ..sort(),
@@ -51,25 +50,6 @@ GakujoBackupImport importStarSyncPortableSettings(
               starSyncCanonicalJson(before[key]))
         key: incoming[key],
   };
-  if (changed.containsKey('disabledFeatureFlags')) {
-    final flags = changed['disabledFeatureFlags'];
-    if (flags is! List) throw const FormatException('Invalid feature flags');
-    final portableFlags = flags
-        .where((value) => value != GakujoFeatureFlag.messageStars.storageValue)
-        .toList();
-    if (starSyncCanonicalJson(portableFlags) ==
-        starSyncCanonicalJson(before['disabledFeatureFlags'])) {
-      changed.remove('disabledFeatureFlags');
-    } else {
-      changed['disabledFeatureFlags'] = [
-        ...portableFlags,
-        if (current.disabledFeatureFlags.contains(
-          GakujoFeatureFlag.messageStars,
-        ))
-          GakujoFeatureFlag.messageStars.storageValue,
-      ];
-    }
-  }
   final parsed = parseGakujoBackup(
     jsonEncode({'version': 2, ...changed}),
     currentReminderOffsets: current.notificationPreferences.reminderOffsets,

@@ -497,15 +497,12 @@ void main() {
       );
     });
 
-    test('a muted course is left out', () async {
-      expect(
-        await notify(
-          const GakujoNotificationPreferences(
-            mutedCourses: {'情報処理概論Ａ II'},
-          ),
-        ),
-        isEmpty,
-      );
+    test('legacy muted course now receives its notification', () async {
+      final preferences = GakujoNotificationPreferences.fromJson({
+        'mutedCourses': [open.course],
+      });
+      expect(preferences.toJson(), isNot(contains('mutedCourses')));
+      expect(await notify(preferences), [fromList(open).title]);
     });
   });
 
@@ -547,7 +544,7 @@ void main() {
       expect(reminders.first.body, '情報処理概論Ａ II　10/28 16:31まで');
     });
 
-    test('follow the chosen times, topics and courses', () {
+    test('follow the chosen times and topics', () {
       expect(
         plan(
           const GakujoNotificationPreferences(
@@ -564,14 +561,6 @@ void main() {
         plan(
           const GakujoNotificationPreferences(),
           topics: {GakujoNotificationTopic.survey},
-        ),
-        isEmpty,
-      );
-      expect(
-        plan(
-          const GakujoNotificationPreferences(
-            mutedCourses: {'情報処理概論Ａ II'},
-          ),
         ),
         isEmpty,
       );
@@ -696,13 +685,11 @@ void main() {
     await store.saveNotificationPreferences(
       const GakujoNotificationPreferences(
         skipSubmitted: false,
-        mutedCourses: {'知的財産概論'},
         reminderOffsets: {GakujoReminderOffset.threeHours},
       ),
     );
     final loaded = (await store.load()).notificationPreferences;
     expect(loaded.skipSubmitted, isFalse);
-    expect(loaded.mutedCourses, {'知的財産概論'});
     expect(loaded.reminderOffsets, {GakujoReminderOffset.threeHours});
   });
 
@@ -748,13 +735,11 @@ void main() {
     const chosen = GakujoAppSettings(
       notificationPreferences: GakujoNotificationPreferences(
         skipSubmitted: false,
-        mutedCourses: {'知的財産概論'},
         reminderOffsets: {GakujoReminderOffset.threeDays},
       ),
     );
     void expectChosen(GakujoNotificationPreferences? restored) {
       expect(restored?.skipSubmitted, isFalse);
-      expect(restored?.mutedCourses, {'知的財産概論'});
       expect(restored?.reminderOffsets, {GakujoReminderOffset.threeDays});
     }
 

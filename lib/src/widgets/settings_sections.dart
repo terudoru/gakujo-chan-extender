@@ -11,18 +11,8 @@ const List<GakujoFeatureFlag> settingsLoginFeatureFlags = [
   GakujoFeatureFlag.sessionExtender,
 ];
 
-const List<GakujoFeatureFlag> settingsGradeFeatureFlags = [
-  GakujoFeatureFlag.gpaDisplay,
-];
-
 const List<GakujoFeatureFlag> settingsReportFeatureFlags = [
-  GakujoFeatureFlag.reportTools,
   GakujoFeatureFlag.uploadCompression,
-];
-
-const List<GakujoFeatureFlag> settingsMessageFeatureFlags = [
-  GakujoFeatureFlag.messageTools,
-  GakujoFeatureFlag.messageStars,
 ];
 
 const List<GakujoFeatureFlag> settingsDownloadFeatureFlags = [
@@ -43,9 +33,7 @@ const List<GakujoFeatureFlag> settingsAppFeatureFlags = [
 
 const List<List<GakujoFeatureFlag>> settingsFeatureFlagGroups = [
   settingsLoginFeatureFlags,
-  settingsGradeFeatureFlags,
   settingsReportFeatureFlags,
-  settingsMessageFeatureFlags,
   settingsDownloadFeatureFlags,
   settingsNotificationFeatureFlags,
   settingsBackupFeatureFlags,
@@ -449,8 +437,6 @@ class FeatureFlagsSection extends StatelessWidget {
               GakujoFeatureFlag.deadlineNotifications
                   when defaultTargetPlatform == TargetPlatform.linux =>
                 const Text('Linux では OS の通知に対応していません。'),
-              GakujoFeatureFlag.messageStars =>
-                const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。'),
               GakujoFeatureFlag.uploadCompression =>
                 const Text('5MBを超えるファイルを提出前に圧縮します。オフでもプレビューできます。'),
               GakujoFeatureFlag.updateNotice =>
@@ -485,7 +471,6 @@ class NotificationTopicsSection extends StatelessWidget {
     required this.onKeywordInputChanged,
     required this.preferences,
     required this.onPreferencesChanged,
-    required this.knownCourses,
     this.remindersOnlyWhileOpen = false,
     this.notificationPermission,
     this.onOpenNotificationSettings,
@@ -494,9 +479,6 @@ class NotificationTopicsSection extends StatelessWidget {
   final GakujoNotificationPreferences preferences;
   final Future<void> Function(NotificationPreferencesUpdate update)
       onPreferencesChanged;
-
-  /// Courses met on the レポート・小テスト list, for per-course choices.
-  final List<String> knownCourses;
 
   /// The OS cannot book reminders ahead here; they come from the open app.
   final bool remindersOnlyWhileOpen;
@@ -622,35 +604,6 @@ class NotificationTopicsSection extends StatelessWidget {
               ),
           ],
         ),
-        const SizedBox(height: 12),
-        Text(
-          '科目ごとの通知',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 4),
-        if (knownCourses.isEmpty)
-          const Text('レポート・小テスト一覧を一度開くと、科目がここに並びます。')
-        else
-          for (final course in knownCourses)
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(course),
-              value: !preferences.isMuted(course),
-              onChanged: notificationsEnabled
-                  ? (notify) => unawaited(
-                        onPreferencesChanged(
-                          (current) => current.copyWith(
-                            mutedCourses: {
-                              for (final value in current.mutedCourses)
-                                if (value != course) value,
-                              if (!notify) course,
-                            },
-                          ),
-                        ),
-                      )
-                  : null,
-            ),
         const SizedBox(height: 12),
         Text(
           '連絡通知',

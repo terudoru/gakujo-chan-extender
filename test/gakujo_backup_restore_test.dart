@@ -73,13 +73,14 @@ void main() {
       'snapshots': [null],
       'disabledFeatureFlags': [
         'activity_scan', 'deadline_scan', 'report_list_cache',
-        'session_recovery_guide', 'gpa_display',
+        'session_recovery_guide', 'gpa_display', 'report_tools',
+        'message_tools', 'message_stars', 'upload_compression',
       ],
       'favorites': validCollections['favorites'],
     }));
     await _restoreActivityBackup(storage, backup);
     expect((await GakujoAppSettingsStore(secureStorage: storage).load())
-        .disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+        .disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
     expect(await GakujoActivityStore(secureStorage: storage).loadFavorites(),
         hasLength(1));
     final retiredOnly = parseGakujoBackup(jsonEncode({

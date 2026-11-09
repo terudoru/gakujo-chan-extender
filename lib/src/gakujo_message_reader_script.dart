@@ -1,5 +1,4 @@
 import 'generated/message_reader.g.dart';
-import 'generated/message_reader_teardown.g.dart';
 
 class GakujoMessageReaderScript {
   const GakujoMessageReaderScript._();
@@ -8,7 +7,4 @@ class GakujoMessageReaderScript {
     return gakujoMessageReaderJs;
   }
 
-  static String buildTeardown() {
-    return gakujoMessageReaderTeardownJs;
-  }
 }

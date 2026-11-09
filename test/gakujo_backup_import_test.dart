@@ -176,7 +176,7 @@ void main() {
         );
         expect(backup.notificationPreferences!.reminderOffsets, expected);
         expect(backup.notificationPreferences!.skipSubmitted, isFalse);
-        expect(backup.notificationPreferences!.mutedCourses, {'科目A'});
+        expect(backup.notificationPreferences!.toJson(), isNot(contains('mutedCourses')));
       }
     });
 
@@ -287,7 +287,7 @@ void main() {
             'calendarTitle': '授業カレンダー',
           },
           'messageExcludeKeywords': ['広告', '重要'],
-          'disabledFeatureFlags': ['gpa_display'],
+          'disabledFeatureFlags': ['upload_compression'],
           'downloadHistory': [
             {
               'fileName': 'report.pdf',
@@ -357,7 +357,7 @@ void main() {
         GakujoCalendarImportMethod.icsFile,
       );
       expect(backup.messageExcludeKeywords, ['広告', '重要']);
-      expect(backup.disabledFeatureFlags, {GakujoFeatureFlag.gpaDisplay});
+      expect(backup.disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
       expect(backup.downloadHistory, hasLength(1));
       expect(backup.failedDownloads, hasLength(1));
       expect(backup.failedDownloads?.single.request.formFields, isEmpty);

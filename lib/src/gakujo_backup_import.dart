@@ -193,6 +193,10 @@ GakujoBackupImport parseGakujoBackup(
                 'deadline_scan',
                 'report_list_cache',
                 'session_recovery_guide',
+                'gpa_display',
+                'report_tools',
+                'message_tools',
+                'message_stars',
               }.contains(value)).map(
                 GakujoFeatureFlagLabels.fromStorageValue,
               ).toList(),
