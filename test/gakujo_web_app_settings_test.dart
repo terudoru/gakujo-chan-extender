@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -112,6 +113,67 @@ void main() {
     expect(result, isFalse);
   });
 
+  testWidgets('Linux explains unavailable notifications; Windows keeps controls',
+      (tester) async {
+    final permission = ValueNotifier<bool?>(false);
+    final keywords = TextEditingController();
+    try {
+      Future<void> show(TargetPlatform platform) async {
+        debugDefaultTargetPlatformOverride = platform;
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Column(children: [
+                FeatureFlagsSection(
+                  settings: const GakujoAppSettings(),
+                  onChanged: (_, _) {},
+                ),
+                NotificationTopicsSection(
+                  topics: const {},
+                  messages: const GakujoMessageNotificationSettings(),
+                  notificationsEnabled: true,
+                  notificationPermission: permission,
+                  onOpenNotificationSettings: () {},
+                  onChanged: (_, _) {},
+                  onMessagesChanged: (_) async => true,
+                  keywordController: keywords,
+                  canAddKeyword: false,
+                  onKeywordInputChanged: (_) {},
+                  preferences: const GakujoNotificationPreferences(),
+                  onPreferencesChanged: (_) async {},
+                ),
+              ]),
+            ),
+          ),
+        ));
+      }
+
+      await show(TargetPlatform.linux);
+      expect(find.text('Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。'), findsOneWidget);
+      expect(find.text('端末の設定で通知が許可されていません'), findsNothing);
+      expect(find.text('端末の通知設定を開く'), findsNothing);
+      expect(find.text('締切前のリマインド'), findsNothing);
+      expect(tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, '提出期限の通知'),
+      ).onChanged, isNull);
+
+      expect(find.text('科目ごとの通知'), findsNothing);
+
+      await show(TargetPlatform.windows);
+      expect(find.text('チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'), findsOneWidget);
+      expect(find.text('端末の設定で通知が許可されていません'), findsOneWidget);
+      expect(find.text('締切前のリマインド'), findsOneWidget);
+      expect(tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, '提出期限の通知'),
+      ).onChanged, isNotNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      await tester.pumpWidget(const SizedBox.shrink());
+      permission.dispose();
+      keywords.dispose();
+    }
+  });
+
   testWidgets('notification denial warning follows permission and app settings',
       (tester) async {
     final permission = ValueNotifier<bool?>(null);
@@ -142,7 +204,6 @@ void main() {
               onKeywordInputChanged: (_) {},
               preferences: const GakujoNotificationPreferences(),
               onPreferencesChanged: (_) async {},
-              knownCourses: const [],
             ),
           ),
         ),
@@ -179,7 +240,7 @@ void main() {
     const mirrored = GakujoAppSettings(
       disabledFeatureFlags: {
         GakujoFeatureFlag.loginAutofill,
-        GakujoFeatureFlag.gpaDisplay,
+        GakujoFeatureFlag.updateNotice,
       },
     );
     final startup = macosStartupSettingsFromLocalPrefs(
@@ -195,7 +256,7 @@ void main() {
     );
     const loaded = GakujoAppSettings(
       savedLoginId: 'student',
-      disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+      disabledFeatureFlags: {GakujoFeatureFlag.downloadCapture},
       calendarImportSettings: GakujoCalendarImportSettings(
         method: GakujoCalendarImportMethod.icsFile,
       ),
@@ -207,7 +268,6 @@ void main() {
       ),
       notificationPreferences: GakujoNotificationPreferences(
         skipSubmitted: false,
-        mutedCourses: {'科目'},
         reminderOffsets: {GakujoReminderOffset.threeHours},
       ),
     );
@@ -232,7 +292,7 @@ void main() {
     expect(settings.pageMode, wizard.pageMode);
     expect(settings.disabledFeatureFlags, {
       GakujoFeatureFlag.loginAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.updateNotice,
       GakujoFeatureFlag.uploadCompression,
     });
     expect(settings.setupCompleted, isTrue);
@@ -332,7 +392,7 @@ void main() {
         pageMode: GakujoPageMode.mobile,
         disabledFeatureFlags: {
           GakujoFeatureFlag.loginAutofill,
-          GakujoFeatureFlag.gpaDisplay,
+          GakujoFeatureFlag.uploadCompression,
           GakujoFeatureFlag.deadlineNotifications,
         },
         setupCompleted: true,
@@ -347,7 +407,6 @@ void main() {
         ),
         notificationPreferences: GakujoNotificationPreferences(
           skipSubmitted: false,
-          mutedCourses: {'科目'},
           reminderOffsets: {GakujoReminderOffset.threeHours},
         ),
       );
@@ -505,7 +564,7 @@ void main() {
       );
     }
 
-    final first = toggle(GakujoFeatureFlag.messageStars, firstSave.future);
+    final first = toggle(GakujoFeatureFlag.downloadCapture, firstSave.future);
     final second =
         toggle(GakujoFeatureFlag.uploadCompression, secondSave.future);
     firstSave.complete();
@@ -516,7 +575,7 @@ void main() {
     await first;
 
     final expected = {
-      GakujoFeatureFlag.messageStars,
+      GakujoFeatureFlag.downloadCapture,
       GakujoFeatureFlag.uploadCompression,
     };
     expect(settings.disabledFeatureFlags, expected);
@@ -581,7 +640,6 @@ void main() {
               onKeywordInputChanged: (value) => setState(() => input = value),
               preferences: const GakujoNotificationPreferences(),
               onPreferencesChanged: (_) async {},
-              knownCourses: const [],
             ),
           );
         }),
@@ -679,7 +737,7 @@ void main() {
     await store.saveDisabledFeatureFlags({
       GakujoFeatureFlag.loginAutofill,
       GakujoFeatureFlag.twoFactorAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.uploadCompression,
     });
     await store.saveSetupCompleted(true);
 
@@ -694,7 +752,7 @@ void main() {
     expect((await store.loadLoginCredentials())?.password, 'password');
     expect(settings.disabledFeatureFlags, {
       GakujoFeatureFlag.twoFactorAutofill,
-      GakujoFeatureFlag.gpaDisplay,
+      GakujoFeatureFlag.uploadCompression,
     });
     expect(settings.setupCompleted, isTrue);
   });
@@ -746,7 +804,6 @@ void main() {
               pending.add(saved);
               return saved;
             },
-            knownCourses: const [],
           ),
         ),
       ),
@@ -991,51 +1048,6 @@ void main() {
     expect(guidance, isNot(contains('保存データをリセット')));
   });
 
-  test('activity page reading follows independent feature toggles', () {
-    expect(
-      shouldReadPageForActivityFeatures(const GakujoAppSettings()),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.reportListCache,
-          },
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.deadlineScan,
-          },
-        ),
-      ),
-      isTrue,
-    );
-    expect(
-      shouldReadPageForActivityFeatures(
-        const GakujoAppSettings(
-          disabledFeatureFlags: {
-            GakujoFeatureFlag.activityScan,
-            GakujoFeatureFlag.deadlineScan,
-            GakujoFeatureFlag.reportListCache,
-          },
-        ),
-      ),
-      isFalse,
-    );
-  });
-
-  test('activity bell toolbar button is removed', () {
-    expect(activityBellToolbarButtonEnabled, isFalse);
-  });
-
   test('edge swipes map to browser back and forward navigation', () {
     expect(
       gakujoEdgeSwipeNavigation(
@@ -1239,7 +1251,7 @@ void main() {
 
     final reloadButton = find.widgetWithIcon(IconButton, Icons.refresh);
     expect(tester.getSize(reloadButton), const Size(40, 40));
-    expect(find.byTooltip('再読込'), findsOneWidget);
+    expect(find.byTooltip('再読み込み'), findsOneWidget);
     await tester.tap(reloadButton);
     expect(reloadCount, 1);
   });
@@ -1335,6 +1347,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SettingsExpansionSection(
+            subtitle: 'セクションの説明',
             title: '連絡通知フィルタ',
             icon: Icons.filter_alt_outlined,
             focusNodeOnExpand: focusNode,
@@ -1356,6 +1369,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final editableText = tester.widget<EditableText>(find.byType(EditableText));
+    expect(find.text('セクションの説明'), findsOneWidget);
     expect(editableText.focusNode.hasFocus, isTrue);
 
     tester.testTextInput.enterText('集中講義');
@@ -1591,67 +1605,63 @@ void main() {
     var checkedUpdates = false;
     var createdBackup = false;
     var createdReport = false;
-    var exported = false;
-    var imported = false;
     var importedFromFile = false;
     var checked = false;
-    var diagnostics = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AppMaintenanceSection(
+          body: SingleChildScrollView(child: Column(children: [
+          AppUpdateSection(settings: const GakujoAppSettings(), onFlagChanged: (_, _) {},
             onCheckUpdates: () async {
               checkedUpdates = true;
             },
+          ),
+          AppBackupSection(
             onCreateBackup: () async {
               createdBackup = true;
-            },
-            onCreateErrorReport: () async {
-              createdReport = true;
-            },
-            onExportSettings: () async {
-              exported = true;
-            },
-            onImportSettings: () async {
-              imported = true;
             },
             onImportSettingsFromFile: () async {
               importedFromFile = true;
             },
-            onCheckDownloadDestination: () async {
-              checked = true;
-            },
-            onCopyDiagnostics: () async {
-              diagnostics = true;
+          ),
+          SettingsActionGroup(actions: [SettingsAction(label: '保存先を確認', icon: Icons.health_and_safety_outlined, run: () async { checked = true; })]),
+          AppSupportSection(
+            onCreateErrorReport: () async {
+              createdReport = true;
             },
           ),
+          ])),
         ),
       ),
     );
 
-    expect(find.text('バックアップと診断'), findsOneWidget);
+    expect(find.text('バックアップ'), findsOneWidget);
     expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
     expect(find.text('ファイルから読み込み'), findsOneWidget);
 
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定をコピー'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存先を確認'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
-    await tester.tap(find.widgetWithText(TextButton, '診断情報をコピー'));
+    await tester.pumpAndSettle();
     await tester.pump();
 
     expect(checkedUpdates, isTrue);
     expect(createdBackup, isTrue);
     expect(createdReport, isTrue);
-    expect(exported, isTrue);
-    expect(imported, isTrue);
     expect(importedFromFile, isTrue);
     expect(checked, isTrue);
-    expect(diagnostics, isTrue);
   });
 
   testWidgets('update check button reports progress and blocks duplicate taps',
@@ -1661,18 +1671,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AppMaintenanceSection(
+          body: AppUpdateSection(
+            settings: const GakujoAppSettings(),
+            onFlagChanged: (_, _) {},
             onCheckUpdates: () {
               checkCount += 1;
               return pendingCheck.future;
             },
-            onCreateBackup: () async {},
-            onCreateErrorReport: () async {},
-            onExportSettings: () async {},
-            onImportSettings: () async {},
-            onImportSettingsFromFile: () async {},
-            onCheckDownloadDestination: () async {},
-            onCopyDiagnostics: () async {},
           ),
         ),
       ),
@@ -1711,7 +1716,6 @@ void main() {
             onShowCourseMaterials: () async => calls.add('materials'),
             onShowCachedReports: () async => calls.add('reports'),
             onShowDrafts: () async => calls.add('drafts'),
-            onShowChangeHistory: () async => calls.add('changes'),
             onShowFavorites: () async => calls.add('favorites'),
             onShowDataManagement: () async => calls.add('data'),
           ),
@@ -1724,7 +1728,6 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, '授業ごとの資料'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存済み課題一覧'));
     await tester.tap(find.widgetWithText(OutlinedButton, '下書き'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '変更履歴'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'お気に入り'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'データ管理'));
     await tester.pump();
@@ -1737,7 +1740,6 @@ void main() {
         'materials',
         'reports',
         'drafts',
-        'changes',
         'favorites',
         'data'
       ],
@@ -1790,11 +1792,11 @@ void main() {
       ),
     );
 
-    expect(find.text('ダウンロード設定'), findsOneWidget);
+    expect(find.text('保存方法と保存先'), findsOneWidget);
     expect(find.text('ファイル保存モード'), findsOneWidget);
-    expect(find.text('自動仕分け+指定場所保存'), findsOneWidget);
-    expect(find.text('自動仕分けなし+指定場所保存'), findsOneWidget);
-    expect(find.text('自動仕分けなし+適宜保存場所指定'), findsOneWidget);
+    expect(find.text('授業ごとに仕分けて指定フォルダに保存'), findsOneWidget);
+    expect(find.text('仕分けずに指定フォルダに保存'), findsOneWidget);
+    expect(find.text('保存のたびに場所を選ぶ'), findsOneWidget);
     expect(find.text('保存先フォルダ'), findsOneWidget);
     expect(find.text('未設定'), findsOneWidget);
     expect(find.text('フォルダを選択'), findsOneWidget);

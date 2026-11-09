@@ -2,40 +2,46 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../star_sync/star_sync_config.dart';
 import '../star_sync/star_sync_crypto.dart';
 import '../star_sync/star_sync_engine.dart';
 import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_quota_meter.dart';
-import '../star_sync/star_sync_s3_transport.dart';
 import '../star_sync/star_sync_transport.dart';
-import '../star_sync/star_sync_webdav_transport.dart';
-import 'settings_sections.dart';
+
+String starSyncErrorMessage(Object error) => _errorText(error);
 
 String _errorText(Object error) {
   if (error is StarSyncQuotaExceeded) return starSyncGoogleQuotaMessage;
   if (error is StarSyncActiveAccountRequiredException) {
-    return '学情にログインしてから設定してください';
+    return '学務情報システムにログインしてから設定してください';
   }
   if (error is StarSyncAccountRequiredException) {
-    return '同期を使うには、設定の『ログイン』でログインIDを保存してください。';
+    return '同期を使うには、設定の「ログイン」でログインIDを保存してください。';
   }
-  if (error is StarSyncPairingMismatchException) return 'コードが一致しません';
+  if (error is StarSyncKeyringMismatchException) return '同期データの鍵が一致しません';
   if (error is FormatException || error is StarSyncFormatException) {
-    return 'コードの形式が正しくありません';
+    return '同期データの形式が正しくありません';
   }
-  if (error is StarSyncWrongPassphraseException) return 'パスフレーズが違います';
-  if (error is ArgumentError) {
-    return 'URLを確認してください（https のみ使えます）';
+  if (error is StarSyncGoogleAuthException) {
+    return switch (error.kind) {
+      StarSyncGoogleAuthErrorKind.revoked => 'Google のログインが切れました。もう一度ログインしてください',
+      StarSyncGoogleAuthErrorKind.permissionDenied => 'Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください',
+      StarSyncGoogleAuthErrorKind.browserUnavailable => 'ブラウザを開けませんでした。既定のブラウザの設定を確認してください',
+      StarSyncGoogleAuthErrorKind.storageUnavailable => defaultTargetPlatform == TargetPlatform.linux
+          ? 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えないため、Google にログインできません。保管サービスを有効にしてから、もう一度お試しください'
+          : 'この端末の安全な保存領域を使えないため、Google にログインできません',
+      StarSyncGoogleAuthErrorKind.network => '接続できませんでした',
+      StarSyncGoogleAuthErrorKind.notSignedIn => 'Google にログインしてください',
+      StarSyncGoogleAuthErrorKind.failed || StarSyncGoogleAuthErrorKind.cancelled => 'Google へのログインに失敗しました',
+    };
   }
   if (error is StarSyncTransportException) {
     return switch (error.kind) {
       StarSyncTransportErrorKind.auth => '認証に失敗しました',
-      StarSyncTransportErrorKind.tls => '証明書を確認できませんでした',
+      StarSyncTransportErrorKind.storageFull => 'Google ドライブの空き容量が足りません',
+      StarSyncTransportErrorKind.driveDisabled => '組織の管理者が Google ドライブの利用を制限しています。別の Google アカウントをお試しください',
       StarSyncTransportErrorKind.server => 'サーバーエラー (HTTP ${error.statusCode})',
       _ => '接続できませんでした',
     };
@@ -49,124 +55,49 @@ String _date(DateTime date) {
   return '${d.year}/${two(d.month)}/${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
 }
 
-class StarSyncClipboardGuard {
-  StarSyncClipboardGuard({
-    Future<String?> Function()? read,
-    Future<void> Function(String)? write,
-  }) : _read = read ?? _readClipboard,
-       _write = write ?? _writeClipboard;
-
-  static final instance = StarSyncClipboardGuard();
-  final Future<String?> Function() _read;
-  final Future<void> Function(String) _write;
-  Timer? _timer;
-  int _generation = 0;
-  String? _pendingCode;
-
-  static Future<String?> _readClipboard() async =>
-      (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-  static Future<void> _writeClipboard(String value) =>
-      Clipboard.setData(ClipboardData(text: value));
-
-  Future<void> copy(String code) async {
-    final generation = ++_generation;
-    _timer?.cancel();
-    _pendingCode = code;
-    await _write(code);
-    if (generation != _generation) {
-      if (_pendingCode == null &&
-          await _read() == code &&
-          _pendingCode == null) {
-        await _write('');
-      }
-      return;
-    }
-    _timer = Timer(const Duration(seconds: 60), () async {
-      await clear();
-    });
-  }
-
-  Future<void> clear() async {
-    final code = _pendingCode;
-    final generation = ++_generation;
-    _timer?.cancel();
-    _pendingCode = null;
-    if (code == null) return;
-    final contents = await _read();
-    if (generation == _generation && contents == code) await _write('');
-  }
-}
-
-Future<bool?> _confirmReset(BuildContext context, String message) =>
-    showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('同期データをリセット'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('キャンセル'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('リセット'),
-          ),
-        ],
-      ),
-    );
-
 class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
     required this.status,
-    this.driveDownloadsEnabled = false,
-    this.onDriveDownloadsChanged,
+    this.onBusyChanged,
     this.onBackup,
     this.onListBackups,
     this.onRestoreBackup,
     this.collectionEnabled,
     this.onCollectionChanged,
     required this.googleAvailable,
-    required this.isGoogleDrive,
     required this.googleEmail,
     required this.onGoogleSignIn,
     required this.onGoogleSignOut,
     required this.onGoogleReSignIn,
+    this.onGoogleCancelSignIn,
     required this.onLocalStarCount,
     this.onLocalCollectionCounts,
     required this.onSnapshotLocalStars,
     required this.onRequireAccount,
     required this.onAccountGeneration,
-    required this.onSetUpWithPairing,
-    required this.onJoinWithCode,
-    required this.onPairingCode,
-    required this.onRejoinWithCode,
-    required this.onResetWithPairing,
-    required this.onSetUp,
+    required this.onSetUpWithDrive,
+    required this.onResetWithDrive,
     required this.onSyncNow,
     required this.onResumeKeepingLocal,
     required this.onResumeDiscardingLocal,
-    required this.onChangePassphrase,
     required this.onListDevices,
     required this.onDeleteDevice,
     required this.onDisable,
-    required this.onReset,
-    required this.onRejoin,
   });
 
   final ValueListenable<StarSyncStatusSnapshot> status;
-  final bool driveDownloadsEnabled;
-  final Future<void> Function(bool)? onDriveDownloadsChanged;
+  /// The Drive switch elsewhere on the screen must wait while this section
+  /// signs in or sets up, or turning it off could sign out mid-setup.
+  final ValueChanged<bool>? onBusyChanged;
   final Future<void> Function()? onBackup;
   final Future<List<StarSyncBackupInfo>> Function()? onListBackups;
   final Future<void> Function(String)? onRestoreBackup;
   final bool Function(String)? collectionEnabled;
   final Future<void> Function(String, bool)? onCollectionChanged;
   final bool googleAvailable;
-  final bool Function() isGoogleDrive;
   final String? Function() googleEmail;
-  final Future<StarSyncPairingSetup> Function({
+  final Future<StarSyncDriveSetup> Function({
     required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
@@ -174,87 +105,51 @@ class StarSyncSection extends StatefulWidget {
   onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
   final Future<void> Function() onGoogleReSignIn;
+  final VoidCallback? onGoogleCancelSignIn;
   final Future<int> Function() onLocalStarCount;
   final Future<Map<String, int?>> Function()? onLocalCollectionCounts;
   final Future<Map<String, String>> Function() onSnapshotLocalStars;
   final String Function() onRequireAccount;
   final int Function() onAccountGeneration;
-  final Future<StarSyncPairingSetup> Function({
+  final Future<StarSyncDriveSetup> Function({
     required bool resetExisting,
     required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
   })
-  onSetUpWithPairing;
-  final Future<void> Function(
-    String, {
-    required Map<String, String> clearLocalStars,
-    required String expectedAccount,
-    required int expectedGeneration,
-  })
-  onJoinWithCode;
-  final Future<String> Function() onPairingCode;
-  final Future<void> Function(String) onRejoinWithCode;
-  final Future<String> Function() onResetWithPairing;
-  final Future<void> Function(
-    StarSyncConfig,
-    String, {
-    required bool resetExisting,
-    required Map<String, String> clearLocalStars,
-    required String expectedAccount,
-    required int expectedGeneration,
-  })
-  onSetUp;
+  onSetUpWithDrive;
+  final Future<void> Function() onResetWithDrive;
   final Future<void> Function() onSyncNow;
   final Future<void> Function() onResumeKeepingLocal;
   final Future<void> Function() onResumeDiscardingLocal;
-  final Future<void> Function(String, String) onChangePassphrase;
   final Future<List<StarSyncDeviceInfo>> Function() onListDevices;
   final Future<void> Function(String) onDeleteDevice;
   final Future<void> Function({required bool deleteOwnRemoteFile}) onDisable;
-  final Future<void> Function(String) onReset;
-  final Future<void> Function(String) onRejoin;
 
   @override
   State<StarSyncSection> createState() => _StarSyncSectionState();
 }
 
 class _StarSyncSectionState extends State<StarSyncSection> {
-  // Separate fields: a passphrase must never reappear in the visible code box.
-  final _rejoinCode = TextEditingController();
-  final _rejoinPassphrase = TextEditingController();
-  bool _busy = false;
+  bool _busyValue = false;
+  bool get _busy => _busyValue;
+  set _busy(bool value) {
+    if (value != _busyValue) widget.onBusyChanged?.call(value);
+    _busyValue = value;
+  }
+  bool _googleSigningIn = false;
   String? _error;
   List<StarSyncBackupInfo>? _backups;
 
   @override
-  void initState() {
-    super.initState();
-    widget.status.addListener(_clearRejoinWhenNotAsked);
-  }
-
-  @override
-  void didUpdateWidget(StarSyncSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.status != widget.status) {
-      oldWidget.status.removeListener(_clearRejoinWhenNotAsked);
-      widget.status.addListener(_clearRejoinWhenNotAsked);
-    }
-  }
-
-  /// Whatever path leaves the rejoin state (disable, reset, re-sign-in), a
-  /// typed code or passphrase must not wait there for the next person.
-  void _clearRejoinWhenNotAsked() {
-    final status = widget.status.value.status;
-    if (status != StarSyncStatus.needsPairingCode) _rejoinCode.clear();
-    if (status != StarSyncStatus.needsPassphrase) _rejoinPassphrase.clear();
-  }
-
-  @override
   void dispose() {
-    widget.status.removeListener(_clearRejoinWhenNotAsked);
-    _rejoinCode.dispose();
-    _rejoinPassphrase.dispose();
+    if (_busyValue) {
+      // The tree is locked here; tell the screen once this frame is done.
+      final onBusyChanged = widget.onBusyChanged;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onBusyChanged?.call(false);
+      });
+    }
     super.dispose();
   }
 
@@ -266,11 +161,33 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     try {
       await action();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
+      if (error is! StarSyncGoogleAuthException ||
+          error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
+        if (mounted) setState(() => _error = _errorText(error));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  Future<void> _reSignInGoogle() => _run(() async {
+    setState(() => _googleSigningIn = true);
+    try {
+      await widget.onGoogleReSignIn();
+    } finally {
+      if (mounted) setState(() => _googleSigningIn = false);
+    }
+  });
+
+  Widget _googleProgress() => Row(
+    children: [
+      const Expanded(child: LinearProgressIndicator()),
+      if (_googleSigningIn && widget.onGoogleCancelSignIn != null &&
+          {TargetPlatform.windows, TargetPlatform.macOS, TargetPlatform.linux}
+              .contains(defaultTargetPlatform))
+        TextButton(onPressed: widget.onGoogleCancelSignIn, child: const Text('キャンセル')),
+    ],
+  );
 
   Future<Map<String, String>?> _chooseLocalStars() async {
     final count = await widget.onLocalStarCount();
@@ -287,8 +204,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           'この端末に残っているお気に入り（${collectionCount('favorites')}件）、'
           '設定（${collectionCount('settings')}項目）、'
           '下書き（${collectionCount('report-drafts')}件）、'
-          '通知済み期限（${collectionCount('notified-deadlines')}件）も含まれます。'
-          '他の人が使っていた端末なら「空にして始める」を選んでください。',
+          '通知済みの締切（${collectionCount('notified-deadlines')}件）も含まれます。'
+          '他の人が使っていた端末や、別の Google アカウントで同期したあとで内容を混ぜたくないときは、「空にして始める」を選んでください。',
         ),
         actions: [
           TextButton(
@@ -313,27 +230,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     return clear ? await snapshot! : {};
   }
 
-  Future<void> _startAdvanced() async {
-    try {
-      final expectedAccount = widget.onRequireAccount();
-      final expectedGeneration = widget.onAccountGeneration();
-      final clear = await _chooseLocalStars();
-      if (clear == null || !mounted) return;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => _SetupDialog(
-          onSetUp: widget.onSetUp,
-          clearLocalStars: clear,
-          expectedAccount: expectedAccount,
-          expectedGeneration: expectedGeneration,
-        ),
-      );
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-    }
-  }
-
   Future<void> _startGoogle() async {
     // Ask before showing progress, or the bar keeps animating behind it.
     String expectedAccount;
@@ -356,6 +252,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     final clear = choice;
     setState(() {
       _busy = true;
+      _googleSigningIn = true;
       _error = null;
     });
     var needsCleanup = false;
@@ -365,30 +262,30 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         expectedAccount: expectedAccount,
         expectedGeneration: expectedGeneration,
       );
-      needsCleanup = result == StarSyncPairingSetup.needsPairingCode;
+      if (mounted) setState(() => _googleSigningIn = false);
+      needsCleanup = result == StarSyncDriveSetup.needsLegacyReset;
       if (!mounted) return;
-      if (result == StarSyncPairingSetup.needsPairingCode) {
-        // The dialog has its own progress state while it joins.
+      if (result == StarSyncDriveSetup.needsLegacyReset) {
+        // Ask before showing progress, or the bar keeps animating behind it.
         setState(() => _busy = false);
-        final joined = await showDialog<bool>(
+        final confirmed = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
-          builder: (_) => _PairingJoinDialog(
-            onJoin: (code) => widget.onJoinWithCode(
-              code,
-              clearLocalStars: clear,
-              expectedAccount: expectedAccount,
-              expectedGeneration: expectedGeneration,
-            ),
-            onReset: () => widget.onSetUpWithPairing(
-              resetExisting: true,
-              clearLocalStars: clear,
-              expectedAccount: expectedAccount,
-              expectedGeneration: expectedGeneration,
-            ),
+          builder: (context) => AlertDialog(
+            title: const Text('以前の同期データが見つかりました'),
+            content: const Text('古い方式で保存されているか壊れているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('キャンセル')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('作り直す')),
+            ],
           ),
         );
-        if (joined != true) return;
+        if (confirmed != true) return;
+        if (mounted) setState(() => _busy = true);
+        await widget.onSetUpWithDrive(
+          resetExisting: true, clearLocalStars: clear,
+          expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+        );
       }
       needsCleanup = false;
       if (mounted) {
@@ -409,33 +306,17 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           if (mounted) setState(() => _error = _errorText(error));
         }
       }
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() { _busy = false; _googleSigningIn = false; });
     }
   }
 
-  Future<void> _showCode([String? code]) async {
-    try {
-      final value = code ?? await widget.onPairingCode();
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (_) => _PairingCodeDialog(
-          code: value,
-          onCopy: StarSyncClipboardGuard.instance.copy,
-        ),
-      );
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-    }
-  }
-
-  Future<void> _resetPairing() async {
+  Future<void> _resetDrive() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('同期データをリセット'),
         content: const Text(
-          '同期先のデータを削除して作り直します。他の端末では新しいコードが必要です。端末内のスターは残ります。',
+          '同期先のデータを削除して作り直します。他の端末は自動的に追従します。端末内のスターは残ります。',
         ),
         actions: [
           TextButton(
@@ -451,18 +332,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     );
     if (confirmed != true || !mounted) return;
     await _run(() async {
-      final code = await widget.onResetWithPairing();
-      await _showCode(code);
+      await widget.onResetWithDrive();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('他の端末も自動的に新しい同期データに追従します')));
+      }
     });
   }
-
-  Widget _driveDownloadsSwitch() => SwitchListTile(
-    title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
-    value: widget.driveDownloadsEnabled,
-    onChanged: _busy
-        ? null
-        : (value) => _run(() => widget.onDriveDownloadsChanged!(value)),
-  );
 
   Future<void> _restoreBackup(StarSyncBackupInfo backup) async {
     final confirmed = await showDialog<bool>(
@@ -494,15 +370,19 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     valueListenable: widget.status,
     builder: (context, status, _) {
       if (!status.enabled) {
+        if (!widget.googleAvailable) {
+          return const Text('このビルドでは Google ドライブ同期を使えません。');
+        }
         return Column(
+          spacing: 8,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.googleAvailable &&
-                widget.onDriveDownloadsChanged != null)
-              _driveDownloadsSwitch(),
             if (widget.googleAvailable) ...[
               const Text(
                 'スター（IDと件名のみ）を、あなたの Google ドライブのアプリ専用領域に暗号化して保存し、端末間で共有します。',
+              ),
+              const Text(
+                '同期データは暗号化しますが、鍵も同じ Google アカウントのアプリ専用領域に保存します。同じアカウントでログインするだけで、他の端末と同期できます。',
               ),
               const SizedBox(height: 8),
               FilledButton(
@@ -515,17 +395,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '同期した内容は、この端末を使う他の人からも見えます。共用の端末では同期を設定しないでください。',
             ),
             if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
+            if (_busy) _googleProgress(),
             if (status.lastError != null) Text(status.lastError!),
-            ExpansionTile(
-              title: const Text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'),
-              children: [
-                OutlinedButton(
-                  onPressed: _busy ? null : _startAdvanced,
-                  child: const Text('同期を設定'),
-                ),
-              ],
-            ),
           ],
         );
       }
@@ -534,7 +405,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(status.activeAccountUnknown
-                ? '学情へのログイン状態を確認できないため、同期を停止しています。学情にログインすると再開します'
+                ? '学務情報システムへのログイン状態を確認できないため、同期を停止しています。学務情報システムにログインすると再開します'
                 : 'ログインIDが同期を設定したときと違うため、同期を停止しています。'),
             OutlinedButton(
               onPressed: _busy
@@ -554,7 +425,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+            const Text('同期が止まっていた間に、この端末でスターや設定などが変わった可能性があります。その変更を同期に含めますか？'),
             if (_error != null) Text(_error!),
             if (_busy) const LinearProgressIndicator(),
             FilledButton(
@@ -606,13 +477,21 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Google へのログインが切れました。'),
-            if (widget.googleEmail() != null) Text(widget.googleEmail()!),
+            if (widget.googleEmail() != null)
+              Text('同期に使うアカウント: ${widget.googleEmail()!}'),
+            // Settings from before accounts were recorded can never match one.
+            if (widget.googleEmail() == null)
+              const Text(
+                'この同期の設定には Google アカウントの情報がないため、再ログインできません。'
+                '「同期を無効にする」を押してから、もう一度設定してください。端末内のスターは残ります。',
+              ),
             if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
-            OutlinedButton(
-              onPressed: _busy ? null : () => _run(widget.onGoogleReSignIn),
-              child: const Text('Google に再ログイン'),
-            ),
+            if (_busy) _googleProgress(),
+            if (widget.googleEmail() != null)
+              OutlinedButton(
+                onPressed: _busy ? null : _reSignInGoogle,
+                child: const Text('Google に再ログイン'),
+              ),
             OutlinedButton(
               onPressed: _busy
                   ? null
@@ -638,17 +517,16 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     : '最終同期: ${_date(status.lastSyncAt!)}');
       final cooldown = status.cooldownUntil?.toLocal();
       return Column(
+        spacing: 8,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(line),
-          if (widget.isGoogleDrive()) ...[
             Text(
               '本日の利用量: ${status.googleQuotaUsed} / 15,000',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (status.googleQuotaSoftLimited)
               const Text('直近24時間の利用量が上限に達したため、自動同期を一時停止しています'),
-          ],
           if (warning != null)
             Text(
               warning,
@@ -658,41 +536,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             Text(
               '混雑のため、${cooldown.hour.toString().padLeft(2, '0')}:${cooldown.minute.toString().padLeft(2, '0')} まで同期を控えています',
             ),
-          if (widget.isGoogleDrive() && widget.googleEmail() != null)
-            Text(widget.googleEmail()!),
-          if (status.status == StarSyncStatus.needsPairingCode) ...[
-            const Text('別の端末で同期データがリセットされました。新しいコードを入力してください。'),
-            _PairingInput(controller: _rejoinCode, enabled: !_busy),
-            OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => _run(() async {
-                      final code = _rejoinCode.text;
-                      // A code holds the data key; do not leave it on screen.
-                      _rejoinCode.clear();
-                      await widget.onRejoinWithCode(code);
-                    }),
-              child: const Text('再接続'),
-            ),
-          ],
-          if (status.status == StarSyncStatus.needsPassphrase) ...[
-            const Text('別の端末で同期データがリセットされたか、鍵が変更されました。'),
-            TextField(
-              controller: _rejoinPassphrase,
-              enabled: !_busy,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'パスフレーズ'),
-            ),
-            OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => _run(() async {
-                      final passphrase = _rejoinPassphrase.text;
-                      _rejoinPassphrase.clear();
-                      await widget.onRejoin(passphrase);
-                    }),
-              child: const Text('再接続'),
-            ),
+          if (widget.googleEmail() != null)
+            Text('${widget.googleEmail()!}\n別のアカウントにするには、同期を無効にしてから設定し直します。'),
+          if (status.status == StarSyncStatus.needsLegacyReset) ...[
+            const Text('古い方式で保存されているか壊れているため、この端末からは読み込めません。同期データを作り直すと、古い同期データは消えます。この端末のスターは残ります。'),
+            OutlinedButton(onPressed: _busy ? null : _resetDrive, child: const Text('作り直す')),
           ],
           if (widget.collectionEnabled != null &&
               widget.onCollectionChanged != null) ...[
@@ -714,8 +562,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       }),
               ),
           ],
-          if (widget.googleAvailable && widget.onDriveDownloadsChanged != null)
-            _driveDownloadsSwitch(),
           if (widget.onBackup != null &&
               widget.onListBackups != null &&
               widget.onRestoreBackup != null) ...[
@@ -738,9 +584,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                 ),
               ],
             ),
-            if (widget.isGoogleDrive())
-              const Text(
-                'バックアップは同期の鍵で暗号化されます。すべての端末を失った場合に備えて、『別の端末を追加』のコードを安全な場所に保管してください。',
+            const Text(
+                'バックアップは同期の鍵で暗号化されます。',
               ),
             if (_backups != null && _backups!.isEmpty)
               const Text('バックアップはありません'),
@@ -756,7 +601,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               ),
           ],
           if (_error != null) Text(_error!),
-          if (_busy) const LinearProgressIndicator(),
+          if (_busy) _googleProgress(),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -767,27 +612,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     : () => _run(widget.onSyncNow),
                 child: const Text('今すぐ同期'),
               ),
-              if (widget.isGoogleDrive())
-                OutlinedButton(
-                  onPressed: _busy ? null : () => _showCode(),
-                  child: const Text('別の端末を追加'),
-                ),
-              if (!widget.isGoogleDrive())
-                OutlinedButton(
-                  onPressed: _busy
-                      ? null
-                      : () => showDialog<void>(
-                          context: context,
-                          barrierDismissible: false,
-                          builder: (_) => _PassphraseDialog(
-                            title: 'パスフレーズを変更',
-                            currentRequired: true,
-                            action: (current, next) =>
-                                widget.onChangePassphrase(current, next),
-                          ),
-                        ),
-                  child: const Text('パスフレーズを変更'),
-                ),
               OutlinedButton(
                 onPressed: _busy
                     ? null
@@ -801,12 +625,16 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       ),
                 child: const Text('端末の一覧'),
               ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
               OutlinedButton(
                 onPressed: _busy
                     ? null
                     : () {
-                        _rejoinCode.clear();
-                        _rejoinPassphrase.clear();
                         unawaited(showDialog<void>(
                           context: context,
                           barrierDismissible: false,
@@ -819,17 +647,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               OutlinedButton(
                 onPressed: _busy
                     ? null
-                    : widget.isGoogleDrive()
-                    ? _resetPairing
-                    : () => showDialog<void>(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) => _PassphraseDialog(
-                          title: '同期データをリセット',
-                          warning: '同期先のデータを削除して作り直します。他の端末はパスフレーズの再入力が必要になります。端末内のスターは残ります。',
-                          action: (_, next) => widget.onReset(next),
-                        ),
-                      ),
+                    : _resetDrive,
                 child: const Text('同期データをリセット'),
               ),
             ],
@@ -837,513 +655,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         ],
       );
     },
-  );
-}
-
-class _PairingInput extends StatelessWidget {
-  const _PairingInput({required this.controller, required this.enabled});
-  final TextEditingController controller;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      TextField(
-        controller: controller,
-        enabled: enabled,
-        style: const TextStyle(fontFamily: 'monospace'),
-        decoration: const InputDecoration(labelText: '同期コード'),
-      ),
-      if (!kIsWeb &&
-          (defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.iOS))
-        TextButton(
-          onPressed: !enabled
-              ? null
-              : () async {
-                  final value = await Navigator.of(context).push<String>(
-                    MaterialPageRoute(builder: (_) => const _PairingScanner()),
-                  );
-                  if (value != null && context.mounted) {
-                    controller.text = value;
-                  }
-                },
-          child: const Text('QRコードを読み取る'),
-        ),
-    ],
-  );
-}
-
-class _PairingScanner extends StatefulWidget {
-  const _PairingScanner();
-  @override
-  State<_PairingScanner> createState() => _PairingScannerState();
-}
-
-class _PairingScannerState extends State<_PairingScanner> {
-  bool _found = false;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('QRコードを読み取る')),
-    body: MobileScanner(
-      onDetect: (capture) {
-        if (_found) return;
-        for (final barcode in capture.barcodes) {
-          final value = barcode.rawValue;
-          if (value != null && value.startsWith('mbgstar:')) {
-            _found = true;
-            Navigator.pop(context, value);
-            break;
-          }
-        }
-      },
-    ),
-  );
-}
-
-class _PairingJoinDialog extends StatefulWidget {
-  const _PairingJoinDialog({required this.onJoin, required this.onReset});
-  final Future<void> Function(String) onJoin;
-  final Future<StarSyncPairingSetup> Function() onReset;
-  @override
-  State<_PairingJoinDialog> createState() => _PairingJoinDialogState();
-}
-
-class _PairingJoinDialogState extends State<_PairingJoinDialog> {
-  final _code = TextEditingController();
-  bool _busy = false;
-  String? _error;
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      decodeStarSyncPairingCode(_code.text);
-      await widget.onJoin(_code.text);
-      if (mounted) Navigator.pop(context, true);
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _reset() async {
-    final confirmed = await _confirmReset(
-      context,
-      '同期データをリセットすると、他の端末ではコードの入力し直しが必要になります。この端末のスターはそのまま残ります。',
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.onReset();
-      if (mounted) Navigator.pop(context, true);
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('同期コードを入力'),
-    content: SizedBox(
-      width: 480,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'この Google アカウントには、すでに別の端末の同期データがあります。その端末の「別の端末を追加」に表示されるコードを入力してください。',
-          ),
-          _PairingInput(controller: _code, enabled: !_busy),
-          TextButton(
-            onPressed: _busy ? null : _reset,
-            child: const Text('コードがない場合：同期データをリセットして新しく始める'),
-          ),
-          if (_error != null) Text(_error!),
-          if (_busy) const LinearProgressIndicator(),
-        ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context, false),
-        child: const Text('キャンセル'),
-      ),
-      FilledButton(onPressed: _busy ? null : _submit, child: const Text('接続')),
-    ],
-  );
-}
-
-class _PairingCodeDialog extends StatefulWidget {
-  const _PairingCodeDialog({required this.code, required this.onCopy});
-  final String code;
-  final Future<void> Function(String) onCopy;
-
-  @override
-  State<_PairingCodeDialog> createState() => _PairingCodeDialogState();
-}
-
-class _PairingCodeDialogState extends State<_PairingCodeDialog> {
-  bool _copied = false;
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('別の端末を追加'),
-    content: SizedBox(
-      width: 420,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            QrImageView(data: 'mbgstar:${widget.code}', size: 220),
-            SelectableText(
-              widget.code,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
-            TextButton.icon(
-              onPressed: () async {
-                await widget.onCopy(widget.code);
-                if (mounted) setState(() => _copied = true);
-              },
-              icon: const Icon(Icons.copy),
-              label: const Text('コピー'),
-            ),
-            if (_copied) const Text('コピーしました。60秒後にクリップボードから消去します。'),
-            const Text('このコードを知っている人は同期データを読めます。共有しないでください。'),
-          ],
-        ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('閉じる'),
-      ),
-    ],
-  );
-}
-
-class _SetupDialog extends StatefulWidget {
-  const _SetupDialog({
-    required this.onSetUp,
-    required this.clearLocalStars,
-    required this.expectedAccount,
-    required this.expectedGeneration,
-  });
-  final Map<String, String> clearLocalStars;
-  final String expectedAccount;
-  final int expectedGeneration;
-  final Future<void> Function(
-    StarSyncConfig,
-    String, {
-    required bool resetExisting,
-    required Map<String, String> clearLocalStars,
-    required String expectedAccount,
-    required int expectedGeneration,
-  })
-  onSetUp;
-  @override
-  State<_SetupDialog> createState() => _SetupDialogState();
-}
-
-class _SetupDialogState extends State<_SetupDialog> {
-  final _url = TextEditingController();
-  final _user = TextEditingController();
-  final _password = TextEditingController();
-  final _region = TextEditingController();
-  final _bucket = TextEditingController();
-  final _prefix = TextEditingController();
-  final _access = TextEditingController();
-  final _secret = TextEditingController();
-  final _pass = TextEditingController();
-  final _confirm = TextEditingController();
-  StarSyncBackend _backend = StarSyncBackend.webDav;
-  bool _pathStyle = true;
-  bool _wrongPassphrase = false;
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    for (final c in [
-      _url,
-      _user,
-      _password,
-      _region,
-      _bucket,
-      _prefix,
-      _access,
-      _secret,
-      _pass,
-      _confirm,
-    ]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  Future<void> _submit({bool resetExisting = false}) async {
-    final validation = _validatePassphrase(_pass.text, _confirm.text);
-    if (validation != null) {
-      setState(() => _error = validation);
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final Uri uri;
-      try {
-        uri = Uri.parse(_url.text.trim());
-      } on FormatException {
-        throw ArgumentError('Invalid URL');
-      }
-      validateStarSyncEndpoint(uri);
-      final config = _backend == StarSyncBackend.webDav
-          ? StarSyncConfig(
-              backend: _backend,
-              webDav: StarSyncWebDavConfig(
-                baseUrl: uri,
-                username: _user.text,
-                password: _password.text,
-              ),
-            )
-          : StarSyncConfig(
-              backend: _backend,
-              s3: StarSyncS3Config(
-                endpoint: uri,
-                region: _region.text.trim(),
-                bucket: _bucket.text.trim(),
-                prefix: _prefix.text.trim(),
-                accessKeyId: _access.text,
-                secretAccessKey: _secret.text,
-                pathStyle: _pathStyle,
-              ),
-            );
-      await widget.onSetUp(
-        config,
-        _pass.text,
-        resetExisting: resetExisting,
-        clearLocalStars: widget.clearLocalStars,
-        expectedAccount: widget.expectedAccount,
-        expectedGeneration: widget.expectedGeneration,
-      );
-      if (mounted) Navigator.pop(context);
-    } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = _errorText(error);
-          _wrongPassphrase = error is StarSyncWrongPassphraseException;
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _reset() async {
-    final confirmed = await _confirmReset(
-      context,
-      '同期データをリセットすると、他の端末ではパスフレーズの入力し直しが必要になります。この端末のスターはそのまま残ります。',
-    );
-    if (confirmed == true && mounted) await _submit(resetExisting: true);
-  }
-
-  Widget _field(
-    TextEditingController controller,
-    String label, {
-    bool obscure = false,
-    String? helper,
-  }) => TextField(
-    controller: controller,
-    enabled: !_busy,
-    obscureText: obscure,
-    decoration: InputDecoration(labelText: label, helperText: helper),
-  );
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('同期を設定'),
-    content: SizedBox(
-      width: 480,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            IgnorePointer(
-              ignoring: _busy,
-              child: SettingsRadioGroup<StarSyncBackend>(
-                groupValue: _backend,
-                values: const [StarSyncBackend.webDav, StarSyncBackend.s3],
-                labelFor: (value) =>
-                    value == StarSyncBackend.webDav ? 'WebDAV' : 'S3互換',
-                onChanged: (value) {
-                  if (value != null) setState(() => _backend = value);
-                },
-                decoration: const InputDecoration(labelText: '接続方式'),
-              ),
-            ),
-            _field(
-              _url,
-              _backend == StarSyncBackend.webDav ? 'URL' : 'エンドポイント',
-            ),
-            if (_backend == StarSyncBackend.webDav) ...[
-              _field(_user, 'ユーザー名'),
-              _field(_password, 'パスワード', obscure: true),
-            ] else ...[
-              _field(_region, 'リージョン', helper: 'Cloudflare R2 は auto'),
-              _field(_bucket, 'バケット'),
-              _field(_prefix, 'プレフィックス（任意）'),
-              _field(_access, 'アクセスキーID'),
-              _field(_secret, 'シークレットアクセスキー', obscure: true),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('パス形式のURLを使う'),
-                value: _pathStyle,
-                onChanged: _busy
-                    ? null
-                    : (value) => setState(() => _pathStyle = value ?? true),
-              ),
-            ],
-            _field(_pass, 'パスフレーズ', obscure: true),
-            _field(_confirm, 'パスフレーズ（確認）', obscure: true),
-            const SizedBox(height: 12),
-            const Text('パスフレーズを忘れると同期データは復元できません。端末内のスターは残ります。'),
-            if (_wrongPassphrase)
-              TextButton(
-                onPressed: _busy ? null : _reset,
-                child: const Text('パスフレーズを忘れた場合：同期データをリセットして新しく始める'),
-              ),
-            if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
-          ],
-        ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context),
-        child: const Text('キャンセル'),
-      ),
-      FilledButton(onPressed: _busy ? null : _submit, child: const Text('接続')),
-    ],
-  );
-}
-
-String? _validatePassphrase(String pass, String confirmation) {
-  if (pass.length < 10) return 'パスフレーズは10文字以上で入力してください';
-  if (pass != confirmation) return 'パスフレーズが一致しません';
-  return null;
-}
-
-class _PassphraseDialog extends StatefulWidget {
-  const _PassphraseDialog({
-    required this.title,
-    required this.action,
-    this.currentRequired = false,
-    this.warning,
-  });
-  final String title;
-  final bool currentRequired;
-  final String? warning;
-  final Future<void> Function(String, String) action;
-  @override
-  State<_PassphraseDialog> createState() => _PassphraseDialogState();
-}
-
-class _PassphraseDialogState extends State<_PassphraseDialog> {
-  final _current = TextEditingController();
-  final _next = TextEditingController();
-  final _confirm = TextEditingController();
-  bool _busy = false;
-  String? _error;
-  @override
-  void dispose() {
-    _current.dispose();
-    _next.dispose();
-    _confirm.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final validation = _validatePassphrase(_next.text, _confirm.text);
-    if (validation != null) {
-      setState(() => _error = validation);
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await widget.action(_current.text, _next.text);
-      if (mounted) Navigator.pop(context);
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.title),
-    content: SizedBox(
-      width: 420,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.warning != null) Text(widget.warning!),
-            if (widget.currentRequired)
-              TextField(
-                controller: _current,
-                enabled: !_busy,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: '現在のパスフレーズ'),
-              ),
-            TextField(
-              controller: _next,
-              enabled: !_busy,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: '新しいパスフレーズ'),
-            ),
-            TextField(
-              controller: _confirm,
-              enabled: !_busy,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: '新しいパスフレーズ（確認）'),
-            ),
-            if (_error != null) Text(_error!),
-            if (_busy) const LinearProgressIndicator(),
-          ],
-        ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context),
-        child: const Text('キャンセル'),
-      ),
-      FilledButton(
-        onPressed: _busy ? null : _submit,
-        child: Text(widget.title),
-      ),
-    ],
   );
 }
 

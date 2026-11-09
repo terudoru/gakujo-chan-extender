@@ -35,10 +35,12 @@ class DownloadFileNamePolicy {
   /// Longest file name kept, in UTF-16 units. Windows and most providers stop
   /// at 255 per component; the margin leaves room for a ' (n)' suffix.
   static const maxFileNameLength = 200;
+  static const maxFileNameBytes = 240;
 
   /// Shortens the base name (never the extension) to [maxFileNameLength].
   static String boundedName(String name) {
-    if (name.length <= maxFileNameLength) {
+    if (name.length <= maxFileNameLength &&
+        utf8.encode(name).length <= maxFileNameBytes) {
       return name;
     }
     final dot = name.lastIndexOf('.');
@@ -47,14 +49,19 @@ class DownloadFileNamePolicy {
     final base = hasExtension ? name.substring(0, dot) : name;
     final extension = hasExtension ? name.substring(dot) : '';
     final limit = maxFileNameLength - extension.length;
+    final byteLimit = maxFileNameBytes - utf8.encode(extension).length;
     final shortened = StringBuffer();
+    var bytes = 0;
     // Dart lengths count UTF-16 units; never cut between a surrogate pair.
     for (final rune in base.runes) {
       final character = String.fromCharCode(rune);
-      if (shortened.length + character.length > limit) {
+      final characterBytes = utf8.encode(character).length;
+      if (shortened.length + character.length > limit ||
+          bytes + characterBytes > byteLimit) {
         break;
       }
       shortened.write(character);
+      bytes += characterBytes;
     }
     var cut = shortened.toString();
     if (!hasExtension) {
@@ -78,7 +85,19 @@ class DownloadFileNamePolicy {
     if (candidate == 'リスト等の変更') {
       return downloadsFolderName;
     }
-    return candidate;
+    if (utf8.encode(candidate).length <= maxFileNameBytes) {
+      return candidate;
+    }
+    final shortened = StringBuffer();
+    var bytes = 0;
+    for (final rune in candidate.runes) {
+      final character = String.fromCharCode(rune);
+      final characterBytes = utf8.encode(character).length;
+      if (bytes + characterBytes > maxFileNameBytes) break;
+      shortened.write(character);
+      bytes += characterBytes;
+    }
+    return shortened.toString().replaceAll(RegExp(r'[ .]+$'), '');
   }
 
   static String courseFolderName({
@@ -111,22 +130,29 @@ class DownloadFileNamePolicy {
 
   static String numberedName(String desiredName, int index) {
     final dot = desiredName.lastIndexOf('.');
-    final hasExtension = dot > 0 && dot < desiredName.length - 1;
+    final suffix = ' ($index)';
+    final hasExtension = dot > 0 && dot < desiredName.length - 1 &&
+        utf8.encode(desiredName.substring(dot)).length <= 255 - suffix.length;
     final base = hasExtension ? desiredName.substring(0, dot) : desiredName;
     final extension = hasExtension ? desiredName.substring(dot) : '';
-    final suffix = ' ($index)';
     final limit = 255 - suffix.length - extension.length;
-    if (base.length <= limit) {
+    final byteLimit =
+        255 - utf8.encode(suffix).length - utf8.encode(extension).length;
+    if (base.length <= limit && utf8.encode(base).length <= byteLimit) {
       return '$base$suffix$extension';
     }
     final shortened = StringBuffer();
+    var bytes = 0;
     // Dart lengths count UTF-16 units; never cut between a surrogate pair.
     for (final rune in base.runes) {
       final character = String.fromCharCode(rune);
-      if (shortened.length + character.length > limit) {
+      final characterBytes = utf8.encode(character).length;
+      if (shortened.length + character.length > limit ||
+          bytes + characterBytes > byteLimit) {
         break;
       }
       shortened.write(character);
+      bytes += characterBytes;
     }
     return '$shortened$suffix$extension';
   }

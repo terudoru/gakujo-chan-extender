@@ -48,11 +48,6 @@ Future<void> restoreGakujoBackup({
     'notifiedDeadlineKeys',
     backup.notifiedDeadlineKeys,
   );
-  final changes = validateGakujoBackupCollection(
-    'changes',
-    backup.changes,
-    retain: (entry) => isAllowedUrl(entry.url),
-  );
   final reportLists = validateGakujoBackupCollection(
     'reportLists',
     backup.reportLists,
@@ -134,10 +129,6 @@ Future<void> restoreGakujoBackup({
     if (notifiedDeadlineKeys != null) {
       beforeWrite?.call();
       await activityStore.replaceNotifiedDeadlineKeys(notifiedDeadlineKeys);
-    }
-    if (changes != null) {
-      beforeWrite?.call();
-      await activityStore.replaceChanges(changes);
     }
     if (reportLists != null) {
       beforeWrite?.call();

@@ -5,6 +5,41 @@ import 'package:flutter/material.dart';
 
 import '../gakujo_app_settings.dart';
 
+const List<GakujoFeatureFlag> settingsLoginFeatureFlags = [
+  GakujoFeatureFlag.loginAutofill,
+  GakujoFeatureFlag.twoFactorAutofill,
+  GakujoFeatureFlag.sessionExtender,
+];
+
+const List<GakujoFeatureFlag> settingsReportFeatureFlags = [
+  GakujoFeatureFlag.uploadCompression,
+];
+
+const List<GakujoFeatureFlag> settingsDownloadFeatureFlags = [
+  GakujoFeatureFlag.downloadCapture,
+];
+
+const List<GakujoFeatureFlag> settingsNotificationFeatureFlags = [
+  GakujoFeatureFlag.deadlineNotifications,
+];
+
+const List<GakujoFeatureFlag> settingsBackupFeatureFlags = [
+  GakujoFeatureFlag.autoBackup,
+];
+
+const List<GakujoFeatureFlag> settingsAppFeatureFlags = [
+  GakujoFeatureFlag.updateNotice,
+];
+
+const List<List<GakujoFeatureFlag>> settingsFeatureFlagGroups = [
+  settingsLoginFeatureFlags,
+  settingsReportFeatureFlags,
+  settingsDownloadFeatureFlags,
+  settingsNotificationFeatureFlags,
+  settingsBackupFeatureFlags,
+  settingsAppFeatureFlags,
+];
+
 class TwoFactorSecretSection extends StatelessWidget {
   const TwoFactorSecretSection({
     super.key,
@@ -32,13 +67,13 @@ class TwoFactorSecretSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          'QRコード横の長いBase32文字列を保存します。6桁コードではありません。保存済みの秘密鍵は表示しません。\n注意: 秘密鍵を保存すると、パスワードと2段階認証の両方がこの端末にそろいます。端末やその保存データが他人の手に渡ると2段階認証の保護は効かないため、共用の端末では保存しないでください。\n取得方法: https://github.com/koji-genba/gakujo-chan-extender#2段階認証自動入力',
+          'QRコード横の長いBase32文字列を保存します。6桁コードではありません。保存済みの秘密鍵は表示しません。\n注意: 秘密鍵を保存すると、パスワードと2段階認証の両方がこの端末にそろいます。端末やその保存データが他人の手に渡ると2段階認証では防げないため、共用の端末では保存しないでください。\n取得方法: https://github.com/koji-genba/gakujo-chan-extender#2段階認証自動入力',
         ),
         const SizedBox(height: 12),
         TextField(
           controller: controller,
           decoration: const InputDecoration(
-            labelText: '長いBase32 2FA秘密鍵',
+            labelText: '2FA秘密鍵（長いBase32文字列）',
             border: OutlineInputBorder(),
           ),
           obscureText: true,
@@ -199,7 +234,7 @@ class DownloadDestinationSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'ダウンロード設定',
+          '保存方法と保存先',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
@@ -298,9 +333,11 @@ class SettingsExpansionSection extends StatelessWidget {
     required this.child,
     this.initiallyExpanded = false,
     this.focusNodeOnExpand,
+    this.subtitle,
   });
 
   final String title;
+  final String? subtitle;
   final IconData icon;
   final Widget child;
   final bool initiallyExpanded;
@@ -311,6 +348,7 @@ class SettingsExpansionSection extends StatelessWidget {
     return ExpansionTile(
       leading: Icon(icon),
       title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle!),
       initiallyExpanded: initiallyExpanded,
       maintainState: true,
       tilePadding: EdgeInsets.zero,
@@ -372,8 +410,12 @@ class FeatureFlagsSection extends StatelessWidget {
     super.key,
     required this.settings,
     required this.onChanged,
+    this.flags = GakujoFeatureFlag.values,
+    this.title = '機能のオン/オフ',
   });
 
+  final List<GakujoFeatureFlag> flags;
+  final String? title;
   final GakujoAppSettings settings;
   final void Function(GakujoFeatureFlag flag, bool enabled) onChanged;
 
@@ -382,25 +424,30 @@ class FeatureFlagsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '機能のオン/オフ',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        for (final flag in GakujoFeatureFlag.values)
+        if (title != null) ...[
+          Text(title!, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+        ],
+        for (final flag in flags)
           CheckboxListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
             subtitle: switch (flag) {
-              GakujoFeatureFlag.messageStars =>
-                const Text('連絡通知にスターを付け、保存した内容をあとから参照できます。'),
+              GakujoFeatureFlag.deadlineNotifications
+                  when defaultTargetPlatform == TargetPlatform.linux =>
+                const Text('Linux では OS の通知に対応していません。'),
               GakujoFeatureFlag.uploadCompression =>
                 const Text('5MBを超えるファイルを提出前に圧縮します。オフでもプレビューできます。'),
+              GakujoFeatureFlag.updateNotice =>
+                const Text('1日1回 GitHub で新しい版を確認し、あれば画面の上部で知らせます。'),
               _ => null,
             },
             value: settings.isFeatureEnabled(flag),
-            onChanged: (value) => onChanged(flag, value ?? true),
+            onChanged: defaultTargetPlatform == TargetPlatform.linux &&
+                    flag == GakujoFeatureFlag.deadlineNotifications
+                ? null
+                : (value) => onChanged(flag, value ?? true),
           ),
       ],
     );
@@ -424,7 +471,6 @@ class NotificationTopicsSection extends StatelessWidget {
     required this.onKeywordInputChanged,
     required this.preferences,
     required this.onPreferencesChanged,
-    required this.knownCourses,
     this.remindersOnlyWhileOpen = false,
     this.notificationPermission,
     this.onOpenNotificationSettings,
@@ -433,9 +479,6 @@ class NotificationTopicsSection extends StatelessWidget {
   final GakujoNotificationPreferences preferences;
   final Future<void> Function(NotificationPreferencesUpdate update)
       onPreferencesChanged;
-
-  /// Courses met on the レポート・小テスト list, for per-course choices.
-  final List<String> knownCourses;
 
   /// The OS cannot book reminders ahead here; they come from the open app.
   final bool remindersOnlyWhileOpen;
@@ -468,18 +511,23 @@ class NotificationTopicsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      return const Text(
+        'Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。',
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'OSに通知する内容',
+          '端末に通知する内容',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
         Text(
           notificationsEnabled
               ? 'チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'
-              : '「機能設定」で「提出期限のOS通知」がオフのため、通知は出ません。',
+              : '「提出期限の通知」がオフのため、通知は出ません。',
         ),
         if (notificationsEnabled && notificationPermission != null)
           ValueListenableBuilder<bool?>(
@@ -530,7 +578,7 @@ class NotificationTopicsSection extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           remindersOnlyWhileOpen
-              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間に届き、閉じている間に過ぎたものは次に開いたときに知らせます。'
+              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間に届きます。閉じている間に通知の時刻を過ぎたものは、次に開いたときに知らせます。'
               : '未提出の課題を締切の前にもう一度知らせます。アプリを閉じていても届きます。',
         ),
         Wrap(
@@ -558,41 +606,12 @@ class NotificationTopicsSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          '科目ごとの通知',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 4),
-        if (knownCourses.isEmpty)
-          const Text('レポート・小テスト一覧を一度開くと、科目がここに並びます。')
-        else
-          for (final course in knownCourses)
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(course),
-              value: !preferences.isMuted(course),
-              onChanged: notificationsEnabled
-                  ? (notify) => unawaited(
-                        onPreferencesChanged(
-                          (current) => current.copyWith(
-                            mutedCourses: {
-                              for (final value in current.mutedCourses)
-                                if (value != course) value,
-                              if (!notify) course,
-                            },
-                          ),
-                        ),
-                      )
-                  : null,
-            ),
-        const SizedBox(height: 12),
-        Text(
           '連絡通知',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 4),
         const Text(
-          '全学への案内が多いため、通知するものを絞れます。切り替えた後に届いた連絡通知から通知します。',
+          '全学への案内が多いため、通知するものを絞れます。設定を切り替えた後に届いた連絡通知から通知します。',
         ),
         RadioGroup<GakujoMessageNotificationMode>(
           groupValue: messages.mode,
@@ -651,8 +670,8 @@ class NotificationTopicsSection extends StatelessWidget {
           Text(
             messages.keywords.isEmpty
                 ? 'キーワードが未設定のため、連絡通知は通知されません。'
-                : '表題・ジャンル・差出人などにいずれかを含む連絡通知を通知します。'
-                    '「授業連絡」で授業の連絡だけになります。',
+                : 'いずれかのキーワードを表題・ジャンル・差出人などに含む連絡通知を通知します。'
+                    '「授業連絡」だけを登録すると、授業の連絡だけを通知します。',
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -714,7 +733,7 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          '連絡通知タブの通知一覧で、タイトルや行の文字に含まれるキーワードを非表示にします。',
+          '連絡通知タブの通知一覧で、タイトルや行の文字にキーワードを含む通知を非表示にします。',
         ),
         const SizedBox(height: 12),
         Row(
@@ -764,4 +783,43 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
       ],
     );
   }
+}
+
+class DriveDownloadSwitch extends StatelessWidget {
+  const DriveDownloadSwitch({
+    super.key,
+    required this.value,
+    required this.signingIn,
+    required this.enabled,
+    required this.onChanged,
+    this.subtitle,
+    this.onCancel,
+  });
+
+  final bool value;
+  final bool signingIn;
+  final bool enabled;
+  final String? subtitle;
+  final ValueChanged<bool> onChanged;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+    subtitle: signingIn
+        ? Row(
+            children: [
+              const Expanded(child: LinearProgressIndicator()),
+              if (onCancel != null)
+                TextButton(onPressed: onCancel, child: const Text('キャンセル')),
+            ],
+          )
+        : subtitle == null
+        ? null
+        : Text(subtitle!),
+    value: value,
+    onChanged: signingIn || !enabled ? null : onChanged,
+  );
 }

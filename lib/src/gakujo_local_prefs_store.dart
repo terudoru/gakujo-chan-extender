@@ -12,6 +12,8 @@ class GakujoLocalPrefs {
     this.appSettingsKeys,
     this.lastGpa,
     this.externalServiceNoticeDismissed = false,
+    this.lastUpdateCheckAt,
+    this.dismissedUpdateVersion,
   });
 
   final GakujoAppSettings? appSettings;
@@ -20,6 +22,8 @@ class GakujoLocalPrefs {
   final double? lastGpa;
   // Set when the user chose not to see the external-service notice again.
   final bool externalServiceNoticeDismissed;
+  final DateTime? lastUpdateCheckAt;
+  final String? dismissedUpdateVersion;
 }
 
 class GakujoLocalPrefsStore {
@@ -46,6 +50,8 @@ class GakujoLocalPrefsStore {
   Future<void> saveAppSettings(GakujoAppSettings settings) {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
+        lastUpdateCheckAt: current?.lastUpdateCheckAt,
+        dismissedUpdateVersion: current?.dismissedUpdateVersion,
         appSettings: settings.copyWith(savedLoginId: null),
         lastGpa: current?.lastGpa,
         externalServiceNoticeDismissed:
@@ -57,6 +63,8 @@ class GakujoLocalPrefsStore {
   Future<void> saveLastGpa(double? gpa) {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
+        lastUpdateCheckAt: current?.lastUpdateCheckAt,
+        dismissedUpdateVersion: current?.dismissedUpdateVersion,
         appSettings: current?.appSettings,
         appSettingsKeys: current?.appSettingsKeys,
         lastGpa: gpa,
@@ -69,10 +77,30 @@ class GakujoLocalPrefsStore {
   Future<void> saveExternalServiceNoticeDismissed(bool dismissed) {
     return _enqueueUpdate((current) {
       return GakujoLocalPrefs(
+        lastUpdateCheckAt: current?.lastUpdateCheckAt,
+        dismissedUpdateVersion: current?.dismissedUpdateVersion,
         appSettings: current?.appSettings,
         appSettingsKeys: current?.appSettingsKeys,
         lastGpa: current?.lastGpa,
         externalServiceNoticeDismissed: dismissed,
+      );
+    });
+  }
+
+  Future<void> saveUpdateCheck({
+    DateTime? checkedAt,
+    String? dismissedVersion,
+  }) {
+    return _enqueueUpdate((current) {
+      return GakujoLocalPrefs(
+        appSettings: current?.appSettings,
+        appSettingsKeys: current?.appSettingsKeys,
+        lastGpa: current?.lastGpa,
+        externalServiceNoticeDismissed:
+            current?.externalServiceNoticeDismissed ?? false,
+        lastUpdateCheckAt: checkedAt ?? current?.lastUpdateCheckAt,
+        dismissedUpdateVersion:
+            dismissedVersion ?? current?.dismissedUpdateVersion,
       );
     });
   }
@@ -193,6 +221,11 @@ class GakujoLocalPrefsStore {
         'notificationPreferences': settings.notificationPreferences.toJson(),
       },
       if (prefs.lastGpa != null) 'lastGpa': prefs.lastGpa,
+      if (prefs.lastUpdateCheckAt != null)
+        'lastUpdateCheckAtMillis':
+            prefs.lastUpdateCheckAt!.millisecondsSinceEpoch,
+      if (prefs.dismissedUpdateVersion != null)
+        'dismissedUpdateVersion': prefs.dismissedUpdateVersion,
       if (prefs.externalServiceNoticeDismissed)
         'externalServiceNoticeDismissed': true,
     };
@@ -201,6 +234,8 @@ class GakujoLocalPrefsStore {
       encoded.removeWhere((key, _) =>
           key != 'version' &&
           key != 'lastGpa' &&
+          key != 'lastUpdateCheckAtMillis' &&
+          key != 'dismissedUpdateVersion' &&
           key != 'externalServiceNoticeDismissed' &&
           !keys.contains(key));
     }
@@ -236,6 +271,8 @@ class GakujoLocalPrefsStore {
       _ => const <String>[],
     };
     final lastGpa = raw['lastGpa'];
+    final checkedAtMillis = raw['lastUpdateCheckAtMillis'];
+    final dismissedVersion = raw['dismissedUpdateVersion'];
     return GakujoLocalPrefs(
       appSettingsKeys: settingsKeys.where(raw.containsKey).toSet(),
       appSettings: hasSettings
@@ -264,6 +301,12 @@ class GakujoLocalPrefsStore {
               ),
             )
           : null,
+      lastUpdateCheckAt: checkedAtMillis is int &&
+              checkedAtMillis.abs() <= 8640000000000000
+          ? DateTime.fromMillisecondsSinceEpoch(checkedAtMillis)
+          : null,
+      dismissedUpdateVersion:
+          dismissedVersion is String ? dismissedVersion : null,
       lastGpa:
           lastGpa is num && lastGpa.isFinite && lastGpa >= 0 && lastGpa <= 5
               ? lastGpa.toDouble()

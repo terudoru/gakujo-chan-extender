@@ -47,6 +47,9 @@ class StarSyncGoogleAuthConfig {
 enum StarSyncGoogleAuthErrorKind {
   notSignedIn,
   revoked,
+  permissionDenied,
+  browserUnavailable,
+  storageUnavailable,
   cancelled,
   network,
   failed,
@@ -66,8 +69,16 @@ class StarSyncGoogleRevocationException implements Exception {
 
 abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
-  Future<String?> restore();
-  Future<String> signIn();
+  Future<String?> restore({String? expectedEmail});
+
+  /// [optionalScopes] are asked for too, but sign-in succeeds without them.
+  /// [loginHint] preselects the only account that would be accepted; without
+  /// it the student gets to choose, so a wrong account can be corrected.
+  Future<String> signIn({
+    List<String> optionalScopes = const [],
+    String? loginHint,
+  });
+  void cancelPendingSignIn();
   Future<String> accessToken({bool forceRefresh = false});
   Future<bool> hasScope(String scope);
   Future<void> requestScopes(List<String> scopes);

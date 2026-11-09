@@ -1,34 +1,27 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
-import 'package:morebettergakujo_flutter/src/star_sync/star_sync_crypto.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 import 'package:morebettergakujo_flutter/src/widgets/star_sync_section.dart';
+import 'package:morebettergakujo_flutter/src/widgets/settings_sections.dart';
 
 void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
-    Future<void> Function(
-      StarSyncConfig,
-      String, {
-      required bool resetExisting,
-      required Map<String, String> clearLocalStars,
-      required String expectedAccount,
-      required int expectedGeneration,
-    })?
-    onSetUp,
+    bool boundEmailMissing = false,
     bool Function(String)? collectionEnabled,
     Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
     bool google = false,
-    bool driveDownloadsEnabled = false,
-    Future<void> Function(bool)? onDriveDownloadsChanged,
+    ValueChanged<bool>? onBusyChanged,
     Future<void> Function()? onBackup,
     Future<List<StarSyncBackupInfo>> Function()? onListBackups,
     Future<void> Function(String)? onRestoreBackup,
-    Future<StarSyncPairingSetup> Function({
+    Future<StarSyncDriveSetup> Function({
       required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
@@ -38,93 +31,65 @@ void main() {
     Future<Map<String, int?>> Function()? onLocalCollectionCounts,
     Future<Map<String, String>> Function()? onSnapshotLocalStars,
     Future<void> Function()? onGoogleReSignIn,
+    Future<void> Function()? onGoogleSignOut,
+    VoidCallback? onGoogleCancelSignIn,
     Future<void> Function()? onResumeKeepingLocal,
     Future<void> Function()? onResumeDiscardingLocal,
-    Future<StarSyncPairingSetup> Function({
+    Future<StarSyncDriveSetup> Function({
       required bool resetExisting,
       required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
     })?
-    onSetUpWithPairing,
-    Future<void> Function(
-      String, {
-      required Map<String, String> clearLocalStars,
-      required String expectedAccount,
-      required int expectedGeneration,
-    })?
-    onJoin,
+    onSetUpWithDrive,
   }) => MaterialApp(
     home: Scaffold(
       body: SingleChildScrollView(
         child: StarSyncSection(
           status: status,
-          driveDownloadsEnabled: driveDownloadsEnabled,
-          onDriveDownloadsChanged: onDriveDownloadsChanged,
+          onBusyChanged: onBusyChanged,
           onBackup: onBackup,
           onListBackups: onListBackups,
           onRestoreBackup: onRestoreBackup,
           collectionEnabled: collectionEnabled,
           onCollectionChanged: onCollectionChanged,
           googleAvailable: googleAvailable,
-          isGoogleDrive: () => google,
-          googleEmail: () => google ? 'user@example.com' : null,
+          googleEmail: () => boundEmailMissing
+              ? null
+              : google
+              ? 'user@example.com'
+              : null,
           onGoogleSignIn:
               onGoogleSignIn ??
               ({
                 required clearLocalStars,
                 required expectedAccount,
                 required expectedGeneration,
-              }) async => StarSyncPairingSetup.created,
-          onGoogleSignOut: () async {},
+              }) async => StarSyncDriveSetup.created,
+          onGoogleSignOut: onGoogleSignOut ?? () async {},
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
+          onGoogleCancelSignIn: onGoogleCancelSignIn,
           onLocalStarCount: onLocalStarCount ?? () async => 0,
           onLocalCollectionCounts: onLocalCollectionCounts,
           onSnapshotLocalStars:
               onSnapshotLocalStars ?? () async => {'id': 'time'},
           onRequireAccount: () => 'account',
           onAccountGeneration: () => 7,
-          onSetUpWithPairing:
-              onSetUpWithPairing ??
+          onSetUpWithDrive:
+              onSetUpWithDrive ??
               ({
                 required resetExisting,
                 required clearLocalStars,
                 required expectedAccount,
                 required expectedGeneration,
-              }) async => StarSyncPairingSetup.created,
-          onJoinWithCode:
-              onJoin ??
-              (
-                _, {
-                required clearLocalStars,
-                required expectedAccount,
-                required expectedGeneration,
-              }) async {},
-          onPairingCode: () async => encodeStarSyncPairingCode(
-            'AAAAAAAAAAAAAAAAAAAAAA',
-            List.filled(32, 1),
-          ),
-          onRejoinWithCode: (_) async {},
-          onResetWithPairing: () async => '',
-          onSetUp:
-              onSetUp ??
-              (
-                _,
-                _, {
-                required resetExisting,
-                required clearLocalStars,
-                required expectedAccount,
-                required expectedGeneration,
-              }) async {},
+              }) async => StarSyncDriveSetup.created,
+          onResetWithDrive: () async {},
           onSyncNow: () async {},
           onResumeKeepingLocal: onResumeKeepingLocal ?? () async {},
           onResumeDiscardingLocal: onResumeDiscardingLocal ?? () async {},
-          onChangePassphrase: (_, _) async {},
           onListDevices: () async => <StarSyncDeviceInfo>[],
           onDeleteDevice: (_) async {},
           onDisable: ({deleteOwnRemoteFile = false}) async {},
-          onReset: (_) async {},
-          onRejoin: (_) async {},
         ),
       ),
     ),
@@ -172,36 +137,46 @@ void main() {
     expect(selected, 'b');
   });
 
-  testWidgets('Drive download switch follows availability and granted state', (
+  testWidgets('Drive download switch renders value and invokes callback', (tester) async {
+    bool? requested;
+    Widget drive(bool value) => MaterialApp(home: Scaffold(body: DriveDownloadSwitch(
+      value: value, signingIn: false, enabled: true, onChanged: (value) => requested = value,
+    )));
+    await tester.pumpWidget(drive(false));
+    await tester.tap(find.byType(SwitchListTile));
+    expect(requested, isTrue);
+    await tester.pumpWidget(drive(true));
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value, isTrue);
+  });
+
+  testWidgets('busy is set while an action runs and cleared on dispose', (
     tester,
   ) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot());
-    addTearDown(status.dispose);
-    bool? requested;
-    Future<void> change(bool value) async {
-      requested = value;
-    }
-
-    await tester.pumpWidget(section(status, onDriveDownloadsChanged: change));
-    expect(find.byType(SwitchListTile), findsNothing);
-    await tester.pumpWidget(
-      section(status, googleAvailable: true, onDriveDownloadsChanged: change),
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.accountReturned,
+      ),
     );
-    await tester.tap(find.byType(SwitchListTile));
-    await tester.pumpAndSettle();
-    expect(requested, isTrue);
+    final busy = <bool>[];
+    final pending = Completer<void>();
     await tester.pumpWidget(
       section(
         status,
-        googleAvailable: true,
-        driveDownloadsEnabled: true,
-        onDriveDownloadsChanged: change,
+        onBusyChanged: busy.add,
+        onResumeKeepingLocal: () => pending.future,
       ),
     );
-    expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
-      isTrue,
-    );
+    await tester.tap(find.text('含めて再開'));
+    await tester.pump();
+    expect(busy, [true]);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+    expect(busy, [true, false]);
+    pending.complete();
+    await tester.pump();
+    expect(busy, [true, false]);
+    status.dispose();
   });
 
   testWidgets('collection switches invoke the callback', (tester) async {
@@ -254,7 +229,7 @@ void main() {
       ),
     );
     expect(
-      find.text('ログインIDが一時的に変わっていました。その間にこの端末で付け外ししたスターを同期に含めますか？'),
+      find.text('同期が止まっていた間に、この端末でスターや設定などが変わった可能性があります。その変更を同期に含めますか？'),
       findsOneWidget,
     );
     await tester.tap(find.text('含めて再開'));
@@ -290,36 +265,14 @@ void main() {
     expect(find.text('一部の端末のデータを読めませんでした（2台）'), findsNothing);
   });
 
-  testWidgets('a typed passphrase is cleared when the rejoin state ends', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.needsPassphrase,
-      ),
-    );
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    await tester.enterText(find.widgetWithText(TextField, 'パスフレーズ'), 'secret');
-    expect(find.text('secret'), findsOneWidget);
-    // Disabled through another path, then asked again later.
-    status.value = const StarSyncStatusSnapshot();
-    await tester.pump();
-    status.value = const StarSyncStatusSnapshot(
-      enabled: true,
-      status: StarSyncStatus.needsPassphrase,
-    );
-    await tester.pump();
-    expect(find.text('secret'), findsNothing);
-  });
-
   testWidgets('disabled state offers setup', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status));
     expect(find.text('Google ドライブで同期'), findsNothing);
-    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
-    await tester.pumpAndSettle();
-    expect(find.text('同期を設定'), findsOneWidget);
+    expect(find.text('このビルドでは Google ドライブ同期を使えません。'), findsOneWidget);
+    expect(find.textContaining('共用の端末'), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
     await tester.pumpWidget(section(status, googleAvailable: true));
     expect(find.text('Google ドライブで同期'), findsOneWidget);
   });
@@ -343,63 +296,7 @@ void main() {
     // The local data choice is always asked now (settings always exist).
     await tester.tap(find.text('含めて同期する'));
     await tester.pumpAndSettle();
-    expect(find.text('同期を使うには、設定の『ログイン』でログインIDを保存してください。'), findsOneWidget);
-  });
-
-  testWidgets('setup validates passphrases and switches backend', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1200, 1200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final status = ValueNotifier(const StarSyncStatusSnapshot());
-    addTearDown(status.dispose);
-    var calls = 0;
-    await tester.pumpWidget(
-      section(
-        status,
-        onSetUp:
-            (
-              _,
-              _, {
-              required resetExisting,
-              required clearLocalStars,
-              required expectedAccount,
-              required expectedGeneration,
-            }) async {
-              calls++;
-            },
-      ),
-    );
-    await tester.tap(find.text('詳細設定：自分のサーバーを使う（WebDAV / S3互換）'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('同期を設定'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('含めて同期する'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('パスフレーズは10文字以上で入力してください'), findsOneWidget);
-    await tester.enterText(
-      find.widgetWithText(TextField, 'パスフレーズ'),
-      'abcdefghij',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextField, 'パスフレーズ（確認）'),
-      'abcdefghik',
-    );
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('パスフレーズが一致しません'), findsOneWidget);
-    expect(calls, 0);
-    await tester.tap(find.text('S3互換'));
-    await tester.pumpAndSettle();
-    expect(find.text('エンドポイント'), findsOneWidget);
-    expect(find.text('リージョン'), findsOneWidget);
-    expect(find.text('バケット'), findsOneWidget);
-    expect(find.text('アクセスキーID'), findsOneWidget);
-    expect(find.text('シークレットアクセスキー'), findsOneWidget);
+    expect(find.text('同期を使うには、設定の「ログイン」でログインIDを保存してください。'), findsOneWidget);
   });
 
   testWidgets('enabled state shows last sync time', (tester) async {
@@ -427,168 +324,55 @@ void main() {
     expect(find.text('混雑のため、$hour:$minute まで同期を控えています'), findsOneWidget);
   });
 
-  testWidgets('needs passphrase offers rejoin', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.needsPassphrase,
-      ),
-    );
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    expect(find.widgetWithText(TextField, 'パスフレーズ'), findsOneWidget);
-    expect(find.text('再接続'), findsOneWidget);
-  });
-
-  testWidgets('Google join validates and submits pairing code', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot());
-    addTearDown(status.dispose);
-    String? joined;
-    var mismatch = true;
-    final code = encodeStarSyncPairingCode(
-      'AAAAAAAAAAAAAAAAAAAAAA',
-      List.filled(32, 1),
-    );
-    await tester.pumpWidget(
-      section(
-        status,
-        googleAvailable: true,
-        onGoogleSignIn: ({
-          required clearLocalStars,
-          required expectedAccount,
-          required expectedGeneration,
-        }) async => StarSyncPairingSetup.needsPairingCode,
-        onJoin:
-            (
-              value, {
-              required clearLocalStars,
-              required expectedAccount,
-              required expectedGeneration,
-            }) async {
-              expect(expectedAccount, 'account');
-              expect(expectedGeneration, 7);
-              if (mismatch) throw const StarSyncPairingMismatchException();
-              joined = value;
-            },
-      ),
-    );
-    await tester.tap(find.text('Google ドライブで同期'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('含めて同期する'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('コードの形式が正しくありません'), findsOneWidget);
-    await tester.enterText(find.widgetWithText(TextField, '同期コード'), code);
-    await tester.tap(find.text('接続'));
-    await tester.pump();
-    expect(find.text('コードが一致しません'), findsOneWidget);
-    mismatch = false;
-    await tester.tap(find.text('接続'));
-    await tester.pumpAndSettle();
-    expect(joined, code);
-  });
-
-  testWidgets('Google account and pairing QR are shown', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(enabled: true, status: StarSyncStatus.ok),
-    );
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status, google: true));
-    expect(find.text('user@example.com'), findsOneWidget);
-    expect(find.text('パスフレーズを変更'), findsNothing);
-    await tester.tap(find.text('別の端末を追加'));
-    await tester.pumpAndSettle();
-    expect(find.byType(QrImageView), findsOneWidget);
-    expect(find.byType(SelectableText), findsOneWidget);
-  });
-
   testWidgets('account mismatch offers only disable', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.accountMismatch,
-      ),
-    );
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.accountMismatch,
+    ));
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
     expect(find.text('ログインIDが同期を設定したときと違うため、同期を停止しています。'), findsOneWidget);
     expect(find.text('同期を無効にする'), findsOneWidget);
     expect(find.text('今すぐ同期'), findsNothing);
-    expect(find.text('別の端末を追加'), findsNothing);
     expect(find.text('同期データをリセット'), findsNothing);
   });
 
-  for (final replaceClipboard in [false, true]) {
-    testWidgets(
-      'pairing clipboard is cleared only if unchanged: $replaceClipboard',
-      (tester) async {
-        String? clipboard;
-        final messenger =
-            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-        messenger.setMockMethodCallHandler(SystemChannels.platform, (
-          call,
-        ) async {
-          if (call.method == 'Clipboard.setData') {
-            clipboard = (call.arguments as Map)['text'] as String?;
-          } else if (call.method == 'Clipboard.getData') {
-            return <String, dynamic>{'text': clipboard};
-          }
-          return null;
-        });
-        addTearDown(
-          () =>
-              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
-        );
-        final status = ValueNotifier(
-          const StarSyncStatusSnapshot(
-            enabled: true,
-            status: StarSyncStatus.ok,
-          ),
-        );
-        addTearDown(status.dispose);
-        await tester.pumpWidget(section(status, google: true));
-        await tester.tap(find.text('別の端末を追加'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('コピー'));
-        await tester.pump();
-        expect(clipboard, isNotEmpty);
-        expect(find.text('コピーしました。60秒後にクリップボードから消去します。'), findsOneWidget);
-        await tester.pumpWidget(const SizedBox());
-        if (replaceClipboard) clipboard = 'something else';
-        await tester.pump(const Duration(seconds: 60));
-        await tester.pump();
-        expect(clipboard, replaceClipboard ? 'something else' : '');
-      },
-    );
-  }
-
-  test('clipboard guard clears only the pending code on demand', () async {
-    String? clipboard;
-    final guard = StarSyncClipboardGuard(
-      read: () async => clipboard,
-      write: (value) async => clipboard = value,
-    );
-    await guard.copy('pairing code');
-    await guard.clear();
-    expect(clipboard, '');
-    await guard.copy('pairing code');
-    clipboard = 'other content';
-    await guard.clear();
-    expect(clipboard, 'other content');
-  });
-
-  testWidgets('pairing reset requires a new code', (tester) async {
-    final status = ValueNotifier(
-      const StarSyncStatusSnapshot(
-        enabled: true,
-        status: StarSyncStatus.needsPairingCode,
-      ),
-    );
+  testWidgets('legacy data offers recreation', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.needsLegacyReset,
+    ));
     addTearDown(status.dispose);
     await tester.pumpWidget(section(status, google: true));
-    expect(find.widgetWithText(TextField, '同期コード'), findsOneWidget);
-    expect(find.text('再接続'), findsOneWidget);
+    expect(find.textContaining('古い方式で保存されているか壊れているため'), findsOneWidget);
+    expect(find.text('作り直す'), findsOneWidget);
+  });
+
+  testWidgets('Google account appears without an add-device action', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.textContaining('user@example.com'), findsOneWidget);
+    expect(find.text('別の端末を追加'), findsNothing);
+  });
+
+  testWidgets('cancelling legacy recreation signs out', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    var signedOut = false;
+    await tester.pumpWidget(section(
+      status,
+      googleAvailable: true,
+      onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
+        required expectedGeneration}) async => StarSyncDriveSetup.needsLegacyReset,
+      onGoogleSignOut: () async { signedOut = true; },
+    ));
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('含めて同期する'));
+    await tester.pumpAndSettle();
+    expect(find.text('以前の同期データが見つかりました'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pumpAndSettle();
+    expect(signedOut, isTrue);
   });
   testWidgets('shows collection counts even with no stars', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
@@ -636,7 +420,7 @@ void main() {
                 selected = clearLocalStars;
                 expect(expectedAccount, 'account');
                 expect(expectedGeneration, 7);
-                return StarSyncPairingSetup.created;
+                return StarSyncDriveSetup.created;
               },
         ),
       );
@@ -674,8 +458,8 @@ void main() {
           required clearLocalStars,
           required expectedAccount,
           required expectedGeneration,
-        }) async => StarSyncPairingSetup.needsPairingCode,
-        onSetUpWithPairing:
+        }) async => StarSyncDriveSetup.needsLegacyReset,
+        onSetUpWithDrive:
             ({
               required resetExisting,
               required clearLocalStars,
@@ -687,7 +471,7 @@ void main() {
               expect(resetExisting, isTrue);
               cleared = clearLocalStars;
               resets++;
-              return StarSyncPairingSetup.created;
+              return StarSyncDriveSetup.created;
             },
       ),
     );
@@ -695,19 +479,162 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('空にして始める'));
     await tester.pumpAndSettle();
-    final link = find.text('コードがない場合：同期データをリセットして新しく始める');
-    await tester.tap(link);
-    await tester.pumpAndSettle();
+    expect(find.text('以前の同期データが見つかりました'), findsOneWidget);
     expect(resets, 0);
-    await tester.tap(find.text('キャンセル').last);
-    await tester.pumpAndSettle();
-    expect(resets, 0);
-    await tester.tap(link);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('リセット'));
+    await tester.tap(find.text('作り直す'));
     await tester.pumpAndSettle();
     expect(resets, 1);
     expect(cleared, {'id': 'time'});
+  });
+
+  testWidgets('desktop initial sign-in can be cancelled', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: false));
+    addTearDown(status.dispose);
+    final pending = Completer<StarSyncDriveSetup>();
+    var cancelled = false;
+    await tester.pumpWidget(section(status, googleAvailable: true,
+      onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
+          required expectedGeneration}) => pending.future,
+      onGoogleCancelSignIn: () {
+        cancelled = true;
+        pending.completeError(const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.cancelled));
+      },
+    ));
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('含めて同期する'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('キャンセル'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pump();
+    expect(cancelled, isTrue);
+    expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('desktop re-sign-in can be cancelled', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+    addTearDown(status.dispose);
+    final pending = Completer<void>();
+    var cancelled = false;
+    await tester.pumpWidget(section(status, google: true,
+      onGoogleReSignIn: () => pending.future,
+      onGoogleCancelSignIn: () {
+        cancelled = true;
+        pending.completeError(const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.cancelled));
+      },
+    ));
+    await tester.tap(find.text('Google に再ログイン'));
+    await tester.pump();
+    expect(find.text('キャンセル'), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    await tester.pump();
+    expect(cancelled, isTrue);
+    expect(find.text('キャンセル'), findsNothing);
+    expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('desktop Drive download permission can be cancelled', (tester) async {
+    var cancelled = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: DriveDownloadSwitch(
+      value: false, signingIn: true, enabled: true, onChanged: (_) {},
+      onCancel: () => cancelled = true,
+    ))));
+    expect(tester.widget<SwitchListTile>(find.byType(SwitchListTile)).onChanged, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    await tester.tap(find.text('キャンセル'));
+    expect(cancelled, isTrue);
+  });
+
+  testWidgets('Google permission error is shown', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(
+      enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true,
+      onGoogleReSignIn: () async => throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.permissionDenied),
+    ));
+    await tester.tap(find.text('Google に再ログイン'));
+    await tester.pump();
+    expect(find.text('Google ドライブへのアクセスが許可されませんでした。同意画面でチェックを入れて、もう一度お試しください'), findsOneWidget);
+  });
+
+  for (final platform in [TargetPlatform.linux, TargetPlatform.windows]) {
+    testWidgets('Google storage error is shown on $platform', (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        final status = ValueNotifier(const StarSyncStatusSnapshot(
+          enabled: true, status: StarSyncStatus.needsGoogleSignIn));
+        addTearDown(status.dispose);
+        await tester.pumpWidget(section(status, google: true,
+          onGoogleReSignIn: () async => throw const StarSyncGoogleAuthException(
+            StarSyncGoogleAuthErrorKind.storageUnavailable),
+        ));
+        await tester.tap(find.text('Google に再ログイン'));
+        await tester.pump();
+        expect(find.text(platform == TargetPlatform.linux
+          ? 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えないため、Google にログインできません。保管サービスを有効にしてから、もう一度お試しください'
+          : 'この端末の安全な保存領域を使えないため、Google にログインできません'), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
+
+  testWidgets('lost Google sign in names the account sync uses', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsGoogleSignIn,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.text('同期に使うアカウント: user@example.com'), findsOneWidget);
+  });
+
+  testWidgets('settings with no recorded account send the student to re-setup', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsGoogleSignIn,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true, boundEmailMissing: true));
+    expect(find.textContaining('再ログインできません'), findsOneWidget);
+    expect(find.text('Google に再ログイン'), findsNothing);
+    expect(find.text('同期を無効にする'), findsOneWidget);
+  });
+
+  testWidgets('sync screen says how to change the account', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status, google: true));
+    expect(find.textContaining('別のアカウントにするには、同期を無効にしてから'), findsOneWidget);
   });
 
   testWidgets('lost Google sign in offers re-login', (tester) async {
@@ -735,10 +662,5 @@ void main() {
     expect(find.text('同期を無効にする'), findsOneWidget);
   });
 
-  testWidgets('add device is hidden for WebDAV', (tester) async {
-    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
-    addTearDown(status.dispose);
-    await tester.pumpWidget(section(status));
-    expect(find.text('別の端末を追加'), findsNothing);
-  });
+
 }

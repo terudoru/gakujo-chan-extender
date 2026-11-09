@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
@@ -9,6 +11,9 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_desktop_
 
 class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
+  bool failRead = false;
+  bool failWrite = false;
+  bool failDelete = false;
 
   @override
   Future<String?> read({
@@ -19,7 +24,11 @@ class _Storage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async => values[key];
+  }) async {
+    if (failRead) throw PlatformException(code: 'KeyringLocked');
+    return values[key];
+  }
+
   @override
   Future<void> write({
     required String key,
@@ -31,6 +40,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (failWrite) throw PlatformException(code: 'KeyringLocked');
     if (value == null) {
       values.remove(key);
     } else {
@@ -48,6 +58,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (failDelete) throw PlatformException(code: 'KeyringLocked');
     values.remove(key);
   }
 }
@@ -65,7 +76,11 @@ void main() {
   String? verifier;
   String? challenge;
   var incremental = false;
+  Map<String, String>? lastAuthParams;
   var changedAccount = false;
+  var omitScope = false;
+  Completer<void>? tokenStarted;
+  Completer<void>? tokenContinue;
 
   setUp(() async {
     storage = _Storage();
@@ -79,6 +94,9 @@ void main() {
     challenge = null;
     incremental = false;
     changedAccount = false;
+    omitScope = false;
+    tokenStarted = null;
+    tokenContinue = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     endpoint = Uri.parse('http://127.0.0.1:${server.port}');
     server.listen((request) async {
@@ -107,6 +125,8 @@ void main() {
           );
         }
       } else {
+        tokenStarted?.complete();
+        if (tokenContinue != null) await tokenContinue!.future;
         verifier = fields['code_verifier'];
         expect(fields['client_secret'], 'secret');
         expect(fields['code'], 'test-code');
@@ -131,9 +151,10 @@ void main() {
             // Google returns `email` as its full URL.
             'scope': [
               for (final scope in starSyncGoogleScopes)
-                scope == 'email'
-                    ? 'https://www.googleapis.com/auth/userinfo.email'
-                    : scope,
+                if (!omitScope || scope != 'email')
+                  scope == 'email'
+                      ? 'https://www.googleapis.com/auth/userinfo.email'
+                      : scope,
               if (incremental) googleDriveFileScope,
             ].join(' '),
             'id_token': 'header.$payload.signature',
@@ -167,10 +188,14 @@ void main() {
           if (incremental) googleDriveFileScope,
         ]),
       );
-      if (incremental) expect(p['include_granted_scopes'], 'true');
+      expect(p.containsKey('include_granted_scopes'), isFalse);
       expect(p['code_challenge_method'], 'S256');
       expect(p['access_type'], 'offline');
-      expect(p['prompt'], 'consent');
+      lastAuthParams = p;
+      expect(
+        p['prompt'],
+        p['login_hint'] == null ? 'select_account consent' : 'consent',
+      );
       expect(p['state'], isNotEmpty);
       challenge = p['code_challenge'];
       final redirect = Uri.parse(
@@ -198,6 +223,187 @@ void main() {
     },
   );
 
+  test('an optional scope that is not granted does not fail sign-in', () async {
+    final auth = makeAuth();
+    expect(
+      await auth.signIn(optionalScopes: const [googleDriveFileScope]),
+      isNotEmpty,
+    );
+    expect(await auth.hasScope(googleDriveFileScope), isFalse);
+  });
+
+  test('sign-in lets the student choose an account', () async {
+    await makeAuth().signIn();
+    expect(lastAuthParams!['prompt'], 'select_account consent');
+    expect(lastAuthParams!.containsKey('login_hint'), isFalse);
+  });
+
+  test('a bound re-login preselects the only account it accepts', () async {
+    await makeAuth().signIn(loginHint: 'bound@example.test');
+    expect(lastAuthParams!['prompt'], 'consent');
+    expect(lastAuthParams!['login_hint'], 'bound@example.test');
+  });
+
+  test('unticked scope reports permission denied', () async {
+    omitScope = true;
+    await expectLater(
+      makeAuth().signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.permissionDenied,
+        ),
+      ),
+    );
+  });
+
+  test('unavailable browser reports its own error', () async {
+    final auth = StarSyncGoogleDesktopAuth(
+      config: const StarSyncGoogleAuthConfig(
+        desktopClientId: 'client',
+        desktopClientSecret: 'secret',
+      ),
+      storage: storage,
+      launcher: (_) async => false,
+    );
+    await expectLater(
+      auth.signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.browserUnavailable,
+        ),
+      ),
+    );
+  });
+
+  test('cancel closes loopback server and is harmless when idle', () async {
+    final launched = Completer<Uri>();
+    final auth = StarSyncGoogleDesktopAuth(
+      config: const StarSyncGoogleAuthConfig(
+        desktopClientId: 'client',
+        desktopClientSecret: 'secret',
+      ),
+      storage: storage,
+      launcher: (uri) async {
+        launched.complete(uri);
+        return true;
+      },
+    );
+    auth.cancelPendingSignIn();
+    final signIn = auth.signIn();
+    final failure = expectLater(
+      signIn,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    final uri = await launched.future;
+    auth.cancelPendingSignIn();
+    await failure.timeout(const Duration(seconds: 2));
+    auth.cancelPendingSignIn();
+    final client = HttpClient();
+    try {
+      await expectLater(
+        client.getUrl(Uri.parse(uri.queryParameters['redirect_uri']!)),
+        throwsA(isA<SocketException>()),
+      );
+    } finally {
+      client.close(force: true);
+    }
+  });
+
+  test('cancel during token exchange does not store credentials', () async {
+    tokenStarted = Completer<void>();
+    tokenContinue = Completer<void>();
+    final auth = makeAuth();
+    final signIn = auth.signIn();
+    final failure = expectLater(
+      signIn,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    await tokenStarted!.future;
+    auth.cancelPendingSignIn();
+    tokenContinue!.complete();
+    await failure;
+    expect(storage.values, isEmpty);
+    expect(auth.currentEmail, isNull);
+  });
+
+  test('a second authorization does not disturb the first', () async {
+    tokenStarted = Completer<void>();
+    tokenContinue = Completer<void>();
+    final auth = makeAuth();
+    final first = auth.signIn();
+    final firstFailure = expectLater(
+      first,
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.cancelled,
+        ),
+      ),
+    );
+    await tokenStarted!.future;
+    await expectLater(
+      auth.signIn(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.failed,
+        ),
+      ),
+    );
+    auth.cancelPendingSignIn();
+    tokenContinue!.complete();
+    await firstFailure;
+    expect(storage.values, isEmpty);
+  });
+
+  test(
+    'cancel incremental authorization preserves previous credentials',
+    () async {
+      final auth = makeAuth();
+      await auth.signIn();
+      final previous = storage.values[starSyncGoogleTokenKey];
+      incremental = true;
+      tokenStarted = Completer<void>();
+      tokenContinue = Completer<void>();
+      final request = auth.requestScopes([googleDriveFileScope]);
+      final failure = expectLater(
+        request,
+        throwsA(
+          isA<StarSyncGoogleAuthException>().having(
+            (e) => e.kind,
+            'kind',
+            StarSyncGoogleAuthErrorKind.cancelled,
+          ),
+        ),
+      );
+      await tokenStarted!.future;
+      auth.cancelPendingSignIn();
+      tokenContinue!.complete();
+      await failure;
+      expect(storage.values[starSyncGoogleTokenKey], previous);
+      expect(auth.currentEmail, 'user@example.com');
+      expect(await auth.hasScope(googleDriveFileScope), isFalse);
+    },
+  );
+
   test('sign in stores refresh token and parses email', () async {
     final auth = makeAuth();
     expect(await auth.signIn(), 'user@example.com');
@@ -219,6 +425,40 @@ void main() {
   test('stray requests do not abort sign in', () async {
     strayRequests = true;
     expect(await makeAuth().signIn(), 'user@example.com');
+  });
+
+  test(
+    'sign in reports unavailable storage without setting credentials',
+    () async {
+      storage.failWrite = true;
+      final auth = makeAuth();
+      await expectLater(
+        auth.signIn(),
+        throwsA(
+          isA<StarSyncGoogleAuthException>().having(
+            (e) => e.kind,
+            'kind',
+            StarSyncGoogleAuthErrorKind.storageUnavailable,
+          ),
+        ),
+      );
+      expect(auth.currentEmail, isNull);
+      expect(storage.values, isEmpty);
+    },
+  );
+
+  test('restore reports unavailable storage', () async {
+    storage.failRead = true;
+    await expectLater(
+      makeAuth().restore(),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.storageUnavailable,
+        ),
+      ),
+    );
   });
 
   test('refreshes 60 seconds before expiry and on demand', () async {
@@ -245,6 +485,25 @@ void main() {
       ),
     );
     expect(storage.values, isEmpty);
+  });
+
+  test('invalid grant clears memory even when deletion fails', () async {
+    final auth = makeAuth();
+    await auth.signIn();
+    revoked = true;
+    storage.failDelete = true;
+    await expectLater(
+      auth.accessToken(forceRefresh: true),
+      throwsA(
+        isA<StarSyncGoogleAuthException>().having(
+          (e) => e.kind,
+          'kind',
+          StarSyncGoogleAuthErrorKind.revoked,
+        ),
+      ),
+    );
+    expect(auth.currentEmail, isNull);
+    expect(storage.values, contains(starSyncGoogleTokenKey));
   });
 
   test('incremental scopes persist and reject another account', () async {
@@ -290,6 +549,30 @@ void main() {
     await auth.signOut();
     expect(storage.values, isEmpty);
   });
+
+  for (final failRevocation in [false, true]) {
+    test(
+      'sign out reports failed deletion with revocation failure $failRevocation',
+      () async {
+        final auth = makeAuth();
+        await auth.signIn();
+        revokeFails = failRevocation;
+        storage.failDelete = true;
+        await expectLater(
+          auth.signOut(),
+          throwsA(
+            isA<StarSyncGoogleAuthException>().having(
+              (e) => e.kind,
+              'kind',
+              StarSyncGoogleAuthErrorKind.storageUnavailable,
+            ),
+          ),
+        );
+        expect(auth.currentEmail, isNull);
+        expect(storage.values, contains(starSyncGoogleTokenKey));
+      },
+    );
+  }
 
   test('failed revocation still deletes local credentials', () async {
     final auth = makeAuth();

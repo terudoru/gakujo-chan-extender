@@ -9,6 +9,7 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dar
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
 import 'support/memory_secure_storage.dart';
 
@@ -18,7 +19,13 @@ void main() {
   late StarSyncQuotaMeter meter;
   late MemorySecureStorage storage;
   var pendingNotices = 0;
+  var sessionStatus = 200;
+  var sessionReason = '';
+  var sessionFailures = 0;
+  var failFirstChunk = false;
+  late DateTime now;
   var failCheck = false;
+  var quotaOnCheck = false;
   var failDelete = false;
   late HttpServer server;
   late Uri base;
@@ -38,6 +45,8 @@ void main() {
   var refreshes = 0;
   String? shareDuringUpload;
   late List<String> deleted;
+  late Set<String> deletedFolders;
+  String? chunkFailureReason;
   String? uploadName;
   String? uploadParent;
   void Function()? onRequest;
@@ -46,7 +55,13 @@ void main() {
     storage = MemorySecureStorage();
     meter = StarSyncQuotaMeter(storage: storage);
     pendingNotices = 0;
+    sessionStatus = 200;
+    sessionReason = '';
+    sessionFailures = 0;
+    failFirstChunk = false;
+    now = DateTime.now();
     failCheck = false;
+    quotaOnCheck = false;
     failDelete = false;
     files = [];
     queries = [];
@@ -63,6 +78,8 @@ void main() {
     refreshes = 0;
     shareDuringUpload = null;
     deleted = [];
+    deletedFolders = {};
+    chunkFailureReason = null;
     uploadName = null;
     uploadParent = null;
     onRequest = null;
@@ -74,6 +91,7 @@ void main() {
       account: 'user@example.com',
       gakujoAccountHash: 'gakujo-hash',
       onPendingCheck: () => pendingNotices++,
+      clock: () => now,
       apiBase: base,
       delay: (_) async {},
       accessToken: ({bool forceRefresh = false}) async {
@@ -96,6 +114,12 @@ void main() {
           request.uri.queryParameters['fields'],
           'id,ownedByMe,shared,trashed',
         );
+        if (quotaOnCheck && uploads > 0) {
+          response.statusCode = 403;
+          response.write(jsonEncode({'error': {'errors': [{'reason': 'storageQuotaExceeded'}]}}));
+          await response.close();
+          return;
+        }
         if (failCheck && uploads > 0) {
           response.statusCode = 403;
           await response.close();
@@ -104,7 +128,7 @@ void main() {
         final matches = files.where(
           (f) => f['id'] == request.uri.pathSegments.last,
         );
-        if (matches.isEmpty) {
+        if (matches.isEmpty || deletedFolders.contains(request.uri.pathSegments.last)) {
           response.statusCode = 404;
         } else {
           response.write(jsonEncode({'trashed': false, ...matches.single}));
@@ -117,6 +141,11 @@ void main() {
           r"^'((?:\\.|[^'])*)' in parents and trashed=false$",
         ).firstMatch(query);
         if (children != null) {
+          if (deletedFolders.contains(children[1])) {
+            response.statusCode = 404;
+            await response.close();
+            return;
+          }
           response.write(jsonEncode({
             'files': files
                 .where((f) =>
@@ -135,6 +164,11 @@ void main() {
             s.replaceAllMapped(RegExp(r'\\(.)'), (m) => m[1]!);
         final name = unescape(match[1]!);
         final parent = unescape(match[2]!);
+        if (deletedFolders.contains(parent)) {
+          response.statusCode = 404;
+          await response.close();
+          return;
+        }
         response.write(
           jsonEncode({
             'files': files
@@ -142,6 +176,7 @@ void main() {
                   (f) =>
                       f['name'] == name &&
                       f['parent'] == parent &&
+                      !deletedFolders.contains(f['id']) &&
                       f['trashed'] != true &&
                       (!query.startsWith('mimeType=') ||
                           f['mimeType'] ==
@@ -180,6 +215,13 @@ void main() {
       } else if (request.uri.path == '/upload/drive/v3/files') {
         final data = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
         uploads++;
+        if (sessionFailures > 0) {
+          sessionFailures--;
+          response.statusCode = sessionStatus;
+          response.write(jsonEncode({'error': {'errors': [{'reason': sessionReason}]}}));
+          await response.close();
+          return;
+        }
         final pending =
             jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
         expect(pending.last['id'], isNull);
@@ -205,6 +247,17 @@ void main() {
           }
         } else {
           chunks++;
+          if (chunkFailureReason != null) {
+            response.statusCode = 403;
+            response.write(jsonEncode({'error': {'errors': [{'reason': chunkFailureReason}]}}));
+            await response.close();
+            return;
+          }
+          if (failFirstChunk) {
+            response.statusCode = 403;
+            await response.close();
+            return;
+          }
           if (shareDuringUpload != null) {
             files.singleWhere((f) => f['name'] == shareDuringUpload)['shared'] =
                 true;
@@ -435,6 +488,112 @@ void main() {
       expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
     },
   );
+
+  test('quota error after upload keeps its id until verification succeeds', () async {
+    quotaOnCheck = true;
+    await expectLater(save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    final pending = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+    expect(pending.single['id'], 'uploaded');
+    quotaOnCheck = false;
+    await saver.processPendingChecks();
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('expired unfound upload removes its empty exposed created folder', () async {
+    dropFinal = true;
+    await expectLater(save('Course', 'lost', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    files.removeWhere((file) => file['id'] == 'lost-upload');
+    files.singleWhere((file) => file['name'] == 'More Better Gakujo')['shared'] = true;
+    now = now.add(const Duration(hours: 25));
+    await saver.processPendingChecks();
+    expect(deleted, contains(uploadParent));
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('session failure removes pending entry and permits the next save', () async {
+    sessionStatus = 500;
+    sessionFailures = 4;
+    await expectLater(save('Course', 'first', 1),
+        throwsA(isA<StarSyncTransportException>()));
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+    expect(pendingNotices, 0);
+    expect(await save('Course', 'second', 1), 'uploaded');
+  });
+
+  test('non-final chunk failure removes pending entry', () async {
+    failFirstChunk = true;
+    await expectLater(save('Course', 'first', 8 * 1024 * 1024 + 1),
+        throwsA(isA<StarSyncTransportException>()));
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+    expect(pendingNotices, 0);
+    failFirstChunk = false;
+    expect(await save('Course', 'second', 1), 'uploaded');
+  });
+
+  test('unfound upload does not block saves and expires after 24 hours', () async {
+    dropFinal = true;
+    await expectLater(save('Course', 'lost', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    files.removeWhere((file) => file['id'] == 'lost-upload');
+    expect(await save('Course', 'second', 1), 'uploaded');
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+    now = now.add(const Duration(hours: 25));
+    await saver.processPendingChecks();
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('deleted parent does not block a save and missing entry expires', () async {
+    dropFinal = true;
+    await expectLater(save('Course', 'lost', 3),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    deletedFolders.add(uploadParent!);
+    expect(await save('Course', 'second', 1), 'uploaded');
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 1);
+    now = now.add(const Duration(hours: 25));
+    await saver.processPendingChecks();
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  test('known upload in deleted created parent is cleared', () async {
+    failCheck = true;
+    await expectLater(save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    failCheck = false;
+    deletedFolders.add(uploadParent!);
+    await saver.processPendingChecks();
+    expect(deleted, ['uploaded']);
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+  });
+
+  for (final reason in ['storageQuotaExceeded', 'domainPolicy']) {
+    test('$reason on final chunk leaves no pending entry', () async {
+      chunkFailureReason = reason;
+      await expectLater(save('Course', 'file', 1), throwsA(
+        reason == 'domainPolicy' ? isA<GoogleDriveDisabled>() : isA<GoogleDriveStorageFull>()));
+      expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+      expect(pendingNotices, 0);
+    });
+  }
+
+  test('session rate limit is retried', () async {
+    sessionStatus = 403;
+    sessionReason = 'userRateLimitExceeded';
+    sessionFailures = 1;
+    expect(await save('Course', 'file', 1), 'uploaded');
+    expect(uploads, 2);
+  });
+
+  test('storage full removes pending entry', () async {
+    sessionStatus = 403;
+    sessionReason = 'storageQuotaExceeded';
+    sessionFailures = 1;
+    await expectLater(save('Course', 'file', 1),
+        throwsA(isA<GoogleDriveStorageFull>()));
+    expect(await GoogleDriveFileSaver.pendingCheckCount(storage: storage), 0);
+    expect(pendingNotices, 0);
+  });
 
   test('retry only uses the account that owns the pending entry', () async {
     failCheck = true;
@@ -727,6 +886,8 @@ void main() {
 }
 
 class _FakeGoogleAuth implements StarSyncGoogleAuth {
+  @override
+  void cancelPendingSignIn() {}
   String? email = 'first@example.test';
   Completer<String>? pendingToken;
 
@@ -740,9 +901,9 @@ class _FakeGoogleAuth implements StarSyncGoogleAuth {
   @override
   Future<void> requestScopes(List<String> scopes) async {}
   @override
-  Future<String?> restore() async => email;
+  Future<String?> restore({String? expectedEmail}) async => email;
   @override
-  Future<String> signIn() async => email!;
+  Future<String> signIn({List<String> optionalScopes = const [], String? loginHint}) async => email!;
   @override
   Future<void> signOut() async {
     email = null;

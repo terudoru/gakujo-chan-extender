@@ -41,7 +41,6 @@ class GakujoBackupImport {
     this.starredMessages,
     this.deadlines,
     this.notifiedDeadlineKeys,
-    this.changes,
     this.reportLists,
   });
 
@@ -61,7 +60,6 @@ class GakujoBackupImport {
   final List<GakujoStarredMessage>? starredMessages;
   final List<GakujoDeadlineEntry>? deadlines;
   final List<String>? notifiedDeadlineKeys;
-  final List<GakujoActivityChangeEntry>? changes;
   final List<GakujoCachedReportList>? reportLists;
 }
 
@@ -189,10 +187,19 @@ GakujoBackupImport parseGakujoBackup(
               _decodeList(
                 decoded,
                 'disabledFeatureFlags',
-                (value) => GakujoFeatureFlagLabels.fromStorageValue(
-                  value.toString(),
-                ),
-              ),
+                (value) => value.toString(),
+              ).where((value) => !const {
+                'activity_scan',
+                'deadline_scan',
+                'report_list_cache',
+                'session_recovery_guide',
+                'gpa_display',
+                'report_tools',
+                'message_tools',
+                'message_stars',
+              }.contains(value)).map(
+                GakujoFeatureFlagLabels.fromStorageValue,
+              ).toList(),
             )!
                 .whereType<GakujoFeatureFlag>(),
           )
@@ -235,11 +242,6 @@ GakujoBackupImport parseGakujoBackup(
             }),
           )
         : null,
-    changes: _decodeMapList(
-      decoded,
-      'changes',
-      GakujoActivityChangeEntry.fromJson,
-    ),
     reportLists: _decodeMapList(
       decoded,
       'reportLists',
@@ -318,10 +320,6 @@ List<T>? validateGakujoBackupCollection<T>(
       final GakujoDeadlineEntry value => value.title.trim().isNotEmpty &&
           value.url.trim().isNotEmpty &&
           value.dueText.trim().isNotEmpty,
-      final GakujoActivityChangeEntry value => value.title.trim().isNotEmpty &&
-          value.url.trim().isNotEmpty &&
-          value.previousHash.trim().isNotEmpty &&
-          value.nextHash.trim().isNotEmpty,
       final GakujoCachedReportList value => value.title.trim().isNotEmpty &&
           value.url.trim().isNotEmpty &&
           value.items.any((item) => item.trim().isNotEmpty),
@@ -338,7 +336,6 @@ List<T>? validateGakujoBackupCollection<T>(
       'starredMessages': 'スター付き連絡通知',
       'deadlines': '締切',
       'notifiedDeadlineKeys': '通知済みキー',
-      'changes': '変更履歴',
       'reportLists': '課題一覧',
       'messageExcludeKeywords': '除外キーワード',
       'notificationTopics': '通知対象',

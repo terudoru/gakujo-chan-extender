@@ -15,9 +15,9 @@ enum DownloadSaveMode {
 extension DownloadSaveModeLabels on DownloadSaveMode {
   String get label {
     return switch (this) {
-      DownloadSaveMode.autoSortToConfiguredFolder => '自動仕分け+指定場所保存',
-      DownloadSaveMode.flatToConfiguredFolder => '自動仕分けなし+指定場所保存',
-      DownloadSaveMode.flatWithPickerEachTime => '自動仕分けなし+適宜保存場所指定',
+      DownloadSaveMode.autoSortToConfiguredFolder => '授業ごとに仕分けて指定フォルダに保存',
+      DownloadSaveMode.flatToConfiguredFolder => '仕分けずに指定フォルダに保存',
+      DownloadSaveMode.flatWithPickerEachTime => '保存のたびに場所を選ぶ',
     };
   }
 
@@ -89,20 +89,13 @@ extension GakujoPageModeLabels on GakujoPageMode {
 
 enum GakujoFeatureFlag {
   downloadCapture,
-  gpaDisplay,
-  reportTools,
-  messageTools,
-  messageStars,
   sessionExtender,
   loginAutofill,
   twoFactorAutofill,
-  activityScan,
-  deadlineScan,
   deadlineNotifications,
-  reportListCache,
-  sessionRecoveryGuide,
   autoBackup,
   uploadCompression,
+  updateNotice,
 }
 
 enum GakujoCalendarImportMethod {
@@ -116,8 +109,8 @@ extension GakujoCalendarImportMethodLabels on GakujoCalendarImportMethod {
   String get label {
     return switch (this) {
       GakujoCalendarImportMethod.automatic => '自動で選ぶ',
-      GakujoCalendarImportMethod.deviceCalendar => 'OSカレンダーへ直接追加',
-      GakujoCalendarImportMethod.officialGoogle => '本家Google連携を開く',
+      GakujoCalendarImportMethod.deviceCalendar => '端末のカレンダーへ直接追加',
+      GakujoCalendarImportMethod.officialGoogle => '学務のGoogle連携を開く',
       GakujoCalendarImportMethod.icsFile => 'iCalendarファイルを書き出す',
     };
   }
@@ -309,41 +302,27 @@ class GakujoCalendarImportSettings {
 extension GakujoFeatureFlagLabels on GakujoFeatureFlag {
   String get label {
     return switch (this) {
-      GakujoFeatureFlag.downloadCapture => '資料ダウンロード捕捉',
-      GakujoFeatureFlag.gpaDisplay => 'GPA表示',
-      GakujoFeatureFlag.reportTools => 'レポート並び替え',
-      GakujoFeatureFlag.messageTools => '連絡通知一括既読',
-      GakujoFeatureFlag.messageStars => '連絡通知のスター',
+      GakujoFeatureFlag.downloadCapture => '資料のダウンロードをアプリで保存',
       GakujoFeatureFlag.sessionExtender => 'セッション自動延長',
       GakujoFeatureFlag.loginAutofill => 'ログイン補助',
       GakujoFeatureFlag.twoFactorAutofill => '2FA自動入力',
-      GakujoFeatureFlag.activityScan => '更新検知',
-      GakujoFeatureFlag.deadlineScan => '提出期限抽出',
-      GakujoFeatureFlag.deadlineNotifications => '提出期限のOS通知',
-      GakujoFeatureFlag.reportListCache => '課題一覧の保存',
-      GakujoFeatureFlag.sessionRecoveryGuide => 'セッション復帰ガイド',
+      GakujoFeatureFlag.deadlineNotifications => '提出期限の通知',
       GakujoFeatureFlag.autoBackup => '自動バックアップ（スター付き通知を除く）',
       GakujoFeatureFlag.uploadCompression => '5MB超の添付ファイルを自動圧縮',
+      GakujoFeatureFlag.updateNotice => 'アップデートの通知',
     };
   }
 
   String get storageValue {
     return switch (this) {
       GakujoFeatureFlag.downloadCapture => 'download_capture',
-      GakujoFeatureFlag.gpaDisplay => 'gpa_display',
-      GakujoFeatureFlag.reportTools => 'report_tools',
-      GakujoFeatureFlag.messageTools => 'message_tools',
-      GakujoFeatureFlag.messageStars => 'message_stars',
       GakujoFeatureFlag.sessionExtender => 'session_extender',
       GakujoFeatureFlag.loginAutofill => 'login_autofill',
       GakujoFeatureFlag.twoFactorAutofill => 'two_factor_autofill',
-      GakujoFeatureFlag.activityScan => 'activity_scan',
-      GakujoFeatureFlag.deadlineScan => 'deadline_scan',
       GakujoFeatureFlag.deadlineNotifications => 'deadline_notifications',
-      GakujoFeatureFlag.reportListCache => 'report_list_cache',
-      GakujoFeatureFlag.sessionRecoveryGuide => 'session_recovery_guide',
       GakujoFeatureFlag.autoBackup => 'auto_backup',
       GakujoFeatureFlag.uploadCompression => 'upload_compression',
+      GakujoFeatureFlag.updateNotice => 'update_notice',
     };
   }
 
@@ -618,7 +597,6 @@ extension GakujoReminderOffsetLabels on GakujoReminderOffset {
 class GakujoNotificationPreferences {
   const GakujoNotificationPreferences({
     this.skipSubmitted = true,
-    this.mutedCourses = const {},
     this.reminderOffsets = defaultReminderOffsets,
   });
 
@@ -630,28 +608,15 @@ class GakujoNotificationPreferences {
   /// Leave out assignments the レポート・小テスト list shows as handed in.
   final bool skipSubmitted;
 
-  /// Courses whose deadlines and reminders are not notified.
-  final Set<String> mutedCourses;
-
   /// Empty when reminders are off.
   final Set<GakujoReminderOffset> reminderOffsets;
 
-  bool isMuted(String course) {
-    final compact = course.replaceAll(RegExp(r'\s+'), '');
-    return compact.isNotEmpty &&
-        mutedCourses.any(
-          (muted) => muted.replaceAll(RegExp(r'\s+'), '') == compact,
-        );
-  }
-
   GakujoNotificationPreferences copyWith({
     bool? skipSubmitted,
-    Set<String>? mutedCourses,
     Set<GakujoReminderOffset>? reminderOffsets,
   }) {
     return GakujoNotificationPreferences(
       skipSubmitted: skipSubmitted ?? this.skipSubmitted,
-      mutedCourses: mutedCourses ?? this.mutedCourses,
       reminderOffsets: reminderOffsets ?? this.reminderOffsets,
     );
   }
@@ -659,7 +624,6 @@ class GakujoNotificationPreferences {
   Map<String, Object?> toJson() {
     return {
       'skipSubmitted': skipSubmitted,
-      'mutedCourses': mutedCourses.toList()..sort(),
       'reminderOffsets': [
         for (final offset in GakujoReminderOffset.values)
           if (reminderOffsets.contains(offset)) offset.storageValue,
@@ -682,7 +646,6 @@ class GakujoNotificationPreferences {
     if (decoded is! Map) {
       return const GakujoNotificationPreferences();
     }
-    final muted = decoded['mutedCourses'];
     final offsets = decoded['reminderOffsets'];
     final recognizedOffsets = offsets is List
         ? {
@@ -692,12 +655,6 @@ class GakujoNotificationPreferences {
         : defaultReminderOffsets;
     return GakujoNotificationPreferences(
       skipSubmitted: decoded['skipSubmitted'] != false,
-      mutedCourses: muted is List
-          ? {
-              for (final value in muted)
-                if (value.toString().trim().isNotEmpty) value.toString().trim(),
-            }
-          : const {},
       reminderOffsets:
           offsets is List && offsets.isNotEmpty && recognizedOffsets.isEmpty
               ? fallbackForUnrecognizedReminderOffsets ?? recognizedOffsets

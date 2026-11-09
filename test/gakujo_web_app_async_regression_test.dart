@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/allowed_web_origins.dart';
 import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
@@ -11,13 +12,40 @@ import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_gpa_display_script.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_message_reader_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_report_sorter_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_upload_compression_libraries.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  test('page scripts remain selected with retired disabled values', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    try {
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_disabled_feature_flags':
+            'gpa_display,report_tools,message_tools,message_stars,upload_compression',
+      });
+      final oldSettings = await GakujoAppSettingsStore().load();
+      expect(oldSettings.disabledFeatureFlags,
+          {GakujoFeatureFlag.uploadCompression});
+      for (final settings in [const GakujoAppSettings(), oldSettings]) {
+        final scripts = gakujoPageScriptBuilders(settings);
+        expect(scripts['gpa']!(), GakujoGpaDisplayScript.build());
+        expect(scripts['report']!(), GakujoReportSorterScript.build());
+        expect(scripts['reader']!(), GakujoMessageReaderScript.build());
+        expect(scripts['stars']!(), GakujoMessageStarScript.build());
+        expect(scripts.containsKey('upload_compression'),
+            settings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression));
+      }
+    } finally {
+      FlutterSecureStorage.setMockInitialValues({});
+    }
+  });
+
   group('login identity confirmation', () {
     test('failed login and two-factor pages keep a submission pending', () {
       final identity = GakujoLoginIdentity();
@@ -287,7 +315,7 @@ void main() {
           onDownload: (_) => fail('Blocked downloads must not be fetched'),
           showSnackBar: messages.add,
         );
-        expect(messages, ['Gakujo以外のダウンロードをブロックしました']);
+        expect(messages, ['学務情報システム以外のダウンロードをブロックしました']);
       });
     }
 
@@ -469,7 +497,7 @@ void main() {
             isConnectivityError: true,
           ),
           offlineAutoReloads: reloads,
-          expectedStatuses: ['オフラインのようです。接続が戻ったら再読込してください'],
+          expectedStatuses: ['オフラインのようです。接続が戻ったら再読み込みしてください'],
         );
       }
     });
@@ -498,14 +526,14 @@ void main() {
       checkError(
         error,
         offlineAutoReloads: 3,
-        expectedStatuses: ['読み込めませんでした。接続を確認して再読込を押してください'],
+        expectedStatuses: ['読み込めませんでした。接続を確認して再読み込みを押してください'],
       );
     });
 
     test('other main-frame errors retain their error status', () {
       checkError(
         const GakujoWebResourceError(description: 'certificate failure'),
-        expectedStatuses: ['読込エラー: certificate failure'],
+        expectedStatuses: ['読み込みエラー: certificate failure'],
       );
     });
 
@@ -513,10 +541,10 @@ void main() {
         () {
       checkError(
         const GakujoWebResourceError(
-          description: '表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+          description: '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
         ),
         expectedStatuses: [
-          '読込エラー: 表示が繰り返し停止したため再読み込みを止めました。再読込を押してください',
+          '読み込みエラー: 表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
         ],
       );
     });
@@ -1474,15 +1502,11 @@ void main() {
       final twoFactor = gakujoRuntimeTeardownScriptForFeature(
         GakujoFeatureFlag.twoFactorAutofill,
       );
-      final gpa = gakujoRuntimeTeardownScriptForFeature(
-        GakujoFeatureFlag.gpaDisplay,
-      );
 
       expect(login, contains('__MBG_LOGIN_AUTOFILL_DISABLED'));
       expect(login, contains('clearTimeout'));
       expect(twoFactor, contains('__MBG_2FA_AUTOFILL_DISABLED'));
       expect(twoFactor, contains('clearTimeout'));
-      expect(gpa, isNotNull);
     });
 
     test('authenticated reset clears session and document attempt guards',

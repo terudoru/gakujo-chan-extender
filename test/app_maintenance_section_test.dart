@@ -5,59 +5,44 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/widgets/app_data_sections.dart';
 
-Widget section(
-        {required Future<void> Function() import,
-        Future<void> Function()? importFromFile,
-        Future<void> Function()? export}) =>
+const labels = ['バックアップ作成', 'ファイルから読み込み'];
+
+Widget section({
+  required Future<void> Function() create,
+  required Future<void> Function() import,
+}) =>
     MaterialApp(
         home: Scaffold(
-      body: AppMaintenanceSection(
-        onCheckUpdates: () async {},
-        onCreateBackup: () async {},
-        onCreateErrorReport: () async {},
-        onExportSettings: export ?? () async {},
-        onImportSettings: import,
-        onImportSettingsFromFile: importFromFile ?? () async {},
-        onCheckDownloadDestination: () async {},
-        onCopyDiagnostics: () async {},
+      body: AppBackupSection(
+        onCreateBackup: create,
+        onImportSettingsFromFile: import,
       ),
     ));
 
 void main() {
-  for (final importLabel in ['設定を読み込み', 'ファイルから読み込み']) {
-    testWidgets('$importLabel runs once and blocks related backup actions',
+  for (final label in labels) {
+    testWidgets('$label runs once and blocks related backup actions',
         (tester) async {
       final pending = Completer<void>();
-      var clipboardImports = 0;
-      var fileImports = 0;
+      final calls = <String>[];
+      Future<void> run(String action) {
+        calls.add(action);
+        return pending.future;
+      }
       await tester.pumpWidget(section(
-        import: () {
-          clipboardImports++;
-          return pending.future;
-        },
-        importFromFile: () {
-          fileImports++;
-          return pending.future;
-        },
+        create: () => run(labels[0]),
+        import: () => run(labels[1]),
       ));
-      final button = find.widgetWithText(OutlinedButton, importLabel);
+      final button = find.widgetWithText(OutlinedButton, label);
       final pressed = tester.widget<OutlinedButton>(button).onPressed!;
       pressed();
       pressed();
       await tester.pump();
-      expect(clipboardImports, importLabel == '設定を読み込み' ? 1 : 0);
-      expect(fileImports, importLabel == 'ファイルから読み込み' ? 1 : 0);
-      for (final label in [
-        '設定を読み込み',
-        'ファイルから読み込み',
-        '設定をコピー',
-        'バックアップ作成',
-      ]) {
+      expect(calls, [label]);
+      for (final action in labels) {
         expect(
-            tester
-                .widget<OutlinedButton>(
-                    find.widgetWithText(OutlinedButton, label))
-                .onPressed,
+            tester.widget<OutlinedButton>(
+                find.widgetWithText(OutlinedButton, action)).onPressed,
             isNull);
       }
       expect(find.textContaining('処理しています'), findsOneWidget);
@@ -65,34 +50,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
     });
-  }
 
-  testWidgets('clipboard failures are reported and the action can be retried',
-      (tester) async {
-    var attempts = 0;
-    await tester.pumpWidget(section(import: () async {
-      if (++attempts == 1) {
-        throw PlatformException(code: 'clipboard_unavailable');
+    testWidgets('$label failures are reported and can be retried',
+        (tester) async {
+      var attempts = 0;
+      Future<void> run() async {
+        if (++attempts == 1) {
+          throw PlatformException(code: 'unavailable');
+        }
       }
-    }));
-    final button = find.widgetWithText(OutlinedButton, '設定を読み込み');
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.textContaining('完了できませんでした'), findsOneWidget);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(attempts, 2);
-  });
+      await tester.pumpWidget(section(create: run, import: run));
+      final button = find.widgetWithText(OutlinedButton, label);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('完了できませんでした'), findsOneWidget);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(attempts, 2);
+    });
 
-  testWidgets('late failures after closing settings do not update disposed UI',
-      (tester) async {
-    final pending = Completer<void>();
-    await tester.pumpWidget(section(import: () => pending.future));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
-    await tester.pumpWidget(const SizedBox.shrink());
-    pending.completeError(PlatformException(code: 'clipboard_unavailable'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-  });
+    testWidgets('$label late failures do not update disposed UI',
+        (tester) async {
+      final pending = Completer<void>();
+      await tester.pumpWidget(section(
+        create: () => pending.future,
+        import: () => pending.future,
+      ));
+      await tester.tap(find.widgetWithText(OutlinedButton, label));
+      await tester.pumpWidget(const SizedBox.shrink());
+      pending.completeError(PlatformException(code: 'unavailable'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

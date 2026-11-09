@@ -60,11 +60,12 @@ class GakujoCourseNameEstimator {
 
   static String _extractCourseName(String text) {
     final labeledMatch = RegExp(
-      r'(?:授業科目名|授業科目|科目名|授業名|講義名|科目\s*[:：])\s*[:：]?\s*(?:[A-Z0-9]{4,}\s+)?(.+)$',
+      r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:[A-Z0-9]{4,}\s+)?(.+)$',
       caseSensitive: false,
     ).firstMatch(text);
     if (labeledMatch != null) {
-      return _trimAtKnownFieldLabel(labeledMatch.group(1)!.trim());
+      final value = labeledMatch.group(1)!.trim();
+      return _isFileRow(value) ? '' : _trimAtKnownFieldLabel(value);
     }
 
     final codeMatch = RegExp(
@@ -85,6 +86,11 @@ class GakujoCourseNameEstimator {
     return text;
   }
 
+  static bool _isFileRow(String text) => RegExp(
+        r'プレビューを見る|\.(?:pdf|docx?|xlsx?|pptx?|zip|txt|csv)(?:\s|$)',
+        caseSensitive: false,
+      ).hasMatch(text);
+
   static String _trimAtKnownFieldLabel(String text) {
     final match = RegExp(
       r'\s(?:担当教員|担当|教員|曜日|時限|開講|年度|学期|単位|対象|授業コード|科目区分|シラバス|提出期限|課題)(?:\s|$)',
@@ -94,7 +100,11 @@ class GakujoCourseNameEstimator {
   }
 
   static bool _isIgnoredCourseName(String text) {
+    if (_isFileRow(text)) {
+      return true;
+    }
     final genericPageLabels = {
+      'ダウンロード',
       '開設一覧',
       '連絡通知',
       '掲示一覧',
@@ -111,6 +121,9 @@ class GakujoCourseNameEstimator {
     }
 
     final lower = text.toLowerCase();
+    if (lower.startsWith('now loading')) {
+      return true;
+    }
     final ignored = ['学務情報システム', 'more better gakujo', 'campussquare'];
     return ignored.any(lower.contains);
   }

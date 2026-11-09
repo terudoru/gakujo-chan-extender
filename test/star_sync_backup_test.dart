@@ -105,7 +105,14 @@ class _Transport implements StarSyncTransport {
 }
 
 void main() {
-  const config = StarSyncConfig(backend: StarSyncBackend.googleDrive);
+  test('Google accounts compare without regard to case', () {
+    expect(sameGoogleAccount('User@Example.com', ' user@example.com'), isTrue);
+    expect(sameGoogleAccount('a@example.com', 'b@example.com'), isFalse);
+    expect(sameGoogleAccount(null, 'a@example.com'), isFalse);
+    expect(sameGoogleAccount(null, null), isFalse);
+  });
+
+  const config = StarSyncConfig();
   test('backups round trip across devices, enforce account and kind', () async {
     final remote = _Transport();
     var now = DateTime.utc(2026, 1, 1);
@@ -123,10 +130,9 @@ void main() {
     final a = make('first');
     final b = make('first');
     final other = make('other');
-    await a.setUpWithPairing(config);
-    final code = await a.pairingCode();
-    await b.joinWithPairingCode(config, code);
-    await other.joinWithPairingCode(config, code);
+    await a.setUpWithDrive(config);
+    await b.setUpWithDrive(config);
+    await other.setUpWithDrive(config);
     final payload = List<int>.generate(5 * 1024 * 1024, (i) => i % 256);
     var builds = 0;
     final uploads = await Future.wait([
@@ -185,7 +191,7 @@ void main() {
     );
     expect(await a.listBackups(), isEmpty);
     await a.uploadBackup([1, 2, 3]);
-    await a.resetRemoteWithPairing();
+    await a.resetRemoteWithDrive();
     expect(await a.listBackups(), isEmpty);
     expect(await a.uploadAutomaticBackupIfDue(() async => [4]), isTrue);
     a.dispose();

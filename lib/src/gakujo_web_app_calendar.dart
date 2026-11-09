@@ -382,7 +382,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       await _ensureSchedulePageForCalendarImport();
       await _openOfficialGoogleScheduleIntegration(
         showMissingMessage: true,
-        successMessage: '本家Googleスケジュール連携を開きました',
+        successMessage: '学務のGoogleスケジュール連携を開きました',
       );
       return;
     }
@@ -408,7 +408,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final extractedCourses = extraction.courses;
       if (extractedCourses.isEmpty) {
         await _showCalendarSourceMissingMessage(
-          '本家Google連携から取り込める授業が見つかりませんでした。スケジュールページで再実行してください',
+          '学務のGoogle連携から取り込める授業が見つかりませんでした。スケジュールページでもう一度実行してください',
         );
         return;
       }
@@ -509,14 +509,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           termLabel: termLabel,
           calendarName: settings.effectiveCalendarTitle,
           reason: settings.method == GakujoCalendarImportMethod.deviceCalendar
-              ? 'この環境ではOSカレンダー直接追加に未対応のため'
+              ? 'この環境では端末のカレンダーへ直接追加できないため'
               : null,
         );
         return;
       }
       final openedOfficial = await _openOfficialGoogleScheduleIntegration(
         showMissingMessage: false,
-        successMessage: 'この環境ではOSカレンダー直接追加に未対応のため、本家Googleスケジュール連携を開きました',
+        successMessage: 'この環境では端末のカレンダーへ直接追加できないため、学務のGoogleスケジュール連携を開きました',
       );
       if (openedOfficial) {
         keepCurrentPage = true;
@@ -551,13 +551,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             courses.isEmpty ||
             uidNamespace == null ||
             termLabel == null) {
-          _showSnackBar('OSカレンダーに追加できませんでした: ${error.message ?? error.code}');
+          _showSnackBar('端末のカレンダーに追加できませんでした: ${error.message ?? error.code}');
           return;
         }
         final reason = error.code == 'calendar_permission_denied'
             ? 'カレンダーへのアクセスが許可されていないため'
                 '（${gakujoCalendarPermissionSettingsHint()}）'
-            : 'OSカレンダーに追加できなかったため';
+            : '端末のカレンダーに追加できなかったため';
         // The fallback runs inside this catch block, so its own exceptions
         // (notably the user cancelling the save dialog) would otherwise escape
         // unhandled. Swallow cancellation and report only real failures.
@@ -892,7 +892,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                     GakujoCalendarImportSettings.validationCalendarTitle) {
                   ScaffoldMessenger.of(dialogContext).showSnackBar(
                     const SnackBar(
-                      content: Text('「More Better Gakujo 検証」は検証用の予約名です'),
+                      content: Text('「More Better Gakujo 検証」は検証用の名前のため、カレンダー名に使えません'),
                     ),
                   );
                   return;
@@ -914,7 +914,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                     children: [
                       Text(
                         usesWindowsAutomaticImport
-                            ? 'Windowsの自動追加は学務のGoogleカレンダー連携を開きます。学期・休講補講・締切・カレンダー名などの設定を反映するにはICSファイルで保存してください。'
+                            ? 'Windowsで「自動で選ぶ」にすると、学務のGoogleカレンダー連携を開きます。学期・休講補講・締切・カレンダー名などの設定を反映するには、iCalendarファイルを書き出してください。'
                             : '追加する授業予定は学務のGoogle連携から取れたものだけを使い、ターム期間と授業なしの日はMore Better Gakujo側で判定します。',
                       ),
                       const SizedBox(height: 12),
@@ -1057,7 +1057,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           GakujoCalendarImportMethod.officialGoogle) ...[
                         const SizedBox(height: 8),
                         Text(
-                          '本家Google連携を開く場合、日付範囲は学務側の動作に従います。ターム自動判定を使う場合は「自動で選ぶ」か「OSカレンダーへ直接追加」を使ってください。',
+                          '学務のGoogle連携を開く場合、日付範囲は学務側の動作に従います。ターム自動判定を使う場合は「自動で選ぶ」か「端末のカレンダーへ直接追加」を使ってください。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -1065,7 +1065,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                           !usesWindowsAutomaticImport) ...[
                         const SizedBox(height: 8),
                         Text(
-                          'WindowsではOSカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
+                          'Windowsでは端末のカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -1215,7 +1215,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         final uri = Uri.tryParse(integration.url);
         if (uri == null) {
           if (showMissingMessage) {
-            _showSnackBar('本家Google連携のURLを開けませんでした');
+            _showSnackBar('学務のGoogle連携のURLを開けませんでした');
           }
           return false;
         }
@@ -1228,7 +1228,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             _nextPageFinishedCompleter = null;
           }
           if (!launched) {
-            _showSnackBar('本家Google連携を外部ブラウザで開けませんでした');
+            _showSnackBar('学務のGoogle連携を外部ブラウザで開けませんでした');
           }
           return launched;
         }
@@ -1243,7 +1243,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           return true;
         }
         if (showMissingMessage) {
-          _showSnackBar('本家Google連携のURLは許可されていません');
+          _showSnackBar('学務のGoogle連携のURLは許可されていません');
         }
         if (waitForNavigation) {
           _nextPageFinishedCompleter = null;
@@ -1255,13 +1255,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           await pageFinished;
         }
         if (showSuccessMessage) {
-          _showSnackBar(successMessage ?? '本家Googleスケジュール連携を開きました');
+          _showSnackBar(successMessage ?? '学務のGoogleスケジュール連携を開きました');
         }
         return true;
       }
       if (showMissingMessage) {
         await _showCalendarSourceMissingMessage(
-          '本家Googleスケジュール連携が見つかりませんでした。スケジュールタブで実行してください',
+          '学務のGoogleスケジュール連携が見つかりませんでした。スケジュールタブで実行してください',
         );
       }
       if (waitForNavigation) {
@@ -1276,7 +1276,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         stackTrace: stackTrace,
       );
       if (showMissingMessage) {
-        _showSnackBar('本家Googleスケジュール連携を開けませんでした: $error');
+        _showSnackBar('学務のGoogleスケジュール連携を開けませんでした: $error');
       }
       return false;
     }
@@ -1296,7 +1296,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   }) async {
     if (!_calendarService.supportsDirectSync) {
       _showSnackBar(
-        'この環境ではOSカレンダーの一括削除に未対応です。取り込んだ予定はカレンダーアプリ側で削除してください',
+        'この環境では端末のカレンダーから一括で削除できません。取り込んだ予定はカレンダーアプリで削除してください',
       );
       return;
     }
@@ -1491,7 +1491,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       uidNamespace: _calendarValidationUidNamespace,
       termLabel: 'カレンダー連携検証',
       calendarName: _calendarValidationTitle,
-      reason: 'この環境ではOSカレンダー直接連携が未対応のため検証用ICSとして',
+      reason: 'この環境では端末のカレンダーと直接連携できないため検証用のiCalendarファイルとして',
       fileName: 'more-better-gakujo-calendar-validation.ics',
     );
   }
@@ -1501,7 +1501,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   ) async {
     if (!_calendarService.supportsDirectSync) {
       _showSnackBar(
-        'この環境ではOSカレンダーの直接削除に未対応です。取り込んだ検証用ICSはカレンダーアプリ側で削除してください',
+        'この環境では端末のカレンダーから直接削除できません。取り込んだ検証用の予定はカレンダーアプリで削除してください',
       );
       return;
     }

@@ -173,7 +173,7 @@ void main() {
     });
     expect(result['originalsKept'], isTrue);
     expect(result['officeParseCalls'], 0);
-    expect(result['status'], contains('ZIP構造'));
+    expect(result['status'], contains('文書の構造'));
   });
 
   test('rejects oversized image dimensions before invoking the decoder', () async {

@@ -145,6 +145,48 @@ internal object GakujoCalendarIdentityPolicy {
 }
 
 internal object GakujoDownloadFilePolicy {
+    private fun prefixWithin(value: String, unitLimit: Int, byteLimit: Int): String {
+        var end = 0
+        var bytes = 0
+        while (end < value.length) {
+            val codePoint = value.codePointAt(end)
+            val character = String(Character.toChars(codePoint))
+            val characterBytes = character.toByteArray(Charsets.UTF_8).size
+            if (end + character.length > unitLimit || bytes + characterBytes > byteLimit) break
+            end += character.length
+            bytes += characterBytes
+        }
+        return value.substring(0, end)
+    }
+
+    fun boundedName(name: String): String {
+        if (name.length <= 200 && name.toByteArray(Charsets.UTF_8).size <= 240) return name
+        val dot = name.lastIndexOf('.')
+        val hasExtension = dot > 0 && dot < name.length - 1 && name.length - dot <= 16
+        val base = if (hasExtension) name.substring(0, dot) else name
+        val extension = if (hasExtension) name.substring(dot) else ""
+        var cut = prefixWithin(base, 200 - extension.length, 240 - extension.toByteArray(Charsets.UTF_8).size)
+        if (!hasExtension) {
+            val tailDot = cut.lastIndexOf('.')
+            if (tailDot > 0 && cut.length - tailDot <= 16) cut = cut.substring(0, tailDot)
+        }
+        return cut.trimEnd(' ', '.').ifEmpty { "document" } + extension
+    }
+
+    fun boundedFolder(name: String): String =
+        prefixWithin(name, name.length, 240).trimEnd(' ', '.')
+
+    private fun numberedName(desiredName: String, index: Int): String {
+        val suffix = " ($index)"
+        val dot = desiredName.lastIndexOf('.')
+        val hasExtension = dot > 0 && dot < desiredName.length - 1 &&
+            desiredName.substring(dot).toByteArray(Charsets.UTF_8).size <= 255 - suffix.length
+        val base = if (hasExtension) desiredName.substring(0, dot) else desiredName
+        val extension = if (hasExtension) desiredName.substring(dot) else ""
+        return prefixWithin(base, 255 - suffix.length - extension.length,
+            255 - suffix.length - extension.toByteArray(Charsets.UTF_8).size) + suffix + extension
+    }
+
     fun preferredBaseName(
         requestedName: String?,
         dispositionName: String?,
@@ -172,13 +214,9 @@ internal object GakujoDownloadFilePolicy {
             return desiredName
         }
 
-        val dot = desiredName.lastIndexOf('.')
-        val hasExtension = dot > 0 && dot < desiredName.length - 1
-        val base = if (hasExtension) desiredName.substring(0, dot) else desiredName
-        val extension = if (hasExtension) desiredName.substring(dot) else ""
         var index = 1
         while (true) {
-            val candidate = "$base ($index)$extension"
+            val candidate = numberedName(desiredName, index)
             if (!existingNames.contains(candidate)) {
                 return candidate
             }
@@ -191,11 +229,7 @@ internal object GakujoDownloadFilePolicy {
     }
 
     fun duplicateCandidateNames(desiredName: String): Set<String> {
-        val dot = desiredName.lastIndexOf('.')
-        val hasExtension = dot > 0 && dot < desiredName.length - 1
-        val base = if (hasExtension) desiredName.substring(0, dot) else desiredName
-        val extension = if (hasExtension) desiredName.substring(dot) else ""
-        return (listOf(desiredName) + (1..999).map { "$base ($it)$extension" })
+        return (listOf(desiredName) + (1..999).map { numberedName(desiredName, it) })
             .map { it.lowercase(Locale.ROOT) }.toSet()
     }
 }
@@ -879,7 +913,7 @@ class MainActivity : FlutterActivity() {
         }
         val rawUrl = args["url"]?.toString()
         if (!isAllowedGakujoUrl(rawUrl)) {
-            result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
+            result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
             return
         }
 
@@ -922,7 +956,7 @@ class MainActivity : FlutterActivity() {
         }
         val rawUrl = args["url"]?.toString()
         if (!isAllowedGakujoUrl(rawUrl)) {
-            result.error("blocked_url", "Gakujo以外のダウンロードをブロックしました", null)
+            result.error("blocked_url", "学務情報システム以外のダウンロードをブロックしました", null)
             return
         }
         if (isPickerActive()) {
@@ -1001,11 +1035,11 @@ class MainActivity : FlutterActivity() {
                 )
             }
             if (responseCode !in 200..299) {
-                throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
             }
             val finalUrl = connection.url.toString()
             if (!isAllowedGakujoUrl(finalUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
@@ -1111,11 +1145,11 @@ class MainActivity : FlutterActivity() {
                 )
             }
             if (responseCode !in 200..299) {
-                throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
             }
             val finalUrl = connection.url.toString()
             if (!isAllowedGakujoUrl(finalUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val mimeType = connection.contentType?.substringBefore(';')?.ifBlank { null }
@@ -1207,7 +1241,7 @@ class MainActivity : FlutterActivity() {
             dispositionName = sanitizeName(dispositionName),
             urlName = fromUrl
         )
-        return if (hasUsefulExtension(base)) {
+        val name = if (hasUsefulExtension(base)) {
             base
         } else {
             val extension = extensionFromName(dispositionName)
@@ -1215,6 +1249,7 @@ class MainActivity : FlutterActivity() {
                 ?: extensionFromMime(mimeType)
             if (extension == null) base else "$base.$extension"
         }
+        return GakujoDownloadFilePolicy.boundedName(name)
     }
 
     private fun openAllowedDownloadConnection(
@@ -1228,7 +1263,7 @@ class MainActivity : FlutterActivity() {
 
         for (redirectCount in 0..GakujoDownloadRedirectPolicy.maxRedirects) {
             if (!GakujoDownloadRedirectPolicy.isAllowedUrl(currentUrl)) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
 
             val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
@@ -1260,7 +1295,7 @@ class MainActivity : FlutterActivity() {
             if (!GakujoDownloadRedirectPolicy.isRedirectStatus(responseCode)) {
                 if (responseCode !in 200..299) {
                     connection.disconnect()
-                    throw IllegalStateException("ダウンロードに失敗しました HTTP $responseCode")
+                    throw IllegalStateException("ダウンロードに失敗しました（HTTP $responseCode）")
                 }
                 return connection
             }
@@ -1276,7 +1311,7 @@ class MainActivity : FlutterActivity() {
             )
             connection.disconnect()
             if (nextUrl == null) {
-                throw IllegalStateException("Gakujo以外へのリダイレクトをブロックしました")
+                throw IllegalStateException("学務情報システム以外へのリダイレクトをブロックしました")
             }
             if (redirectCount == GakujoDownloadRedirectPolicy.maxRedirects) {
                 throw IllegalStateException("リダイレクト回数が上限を超えました")
@@ -1294,9 +1329,9 @@ class MainActivity : FlutterActivity() {
 
     private fun chooseCourseFolderName(requestedCourseName: String, fileName: String): String {
         if (isUsefulCourseName(requestedCourseName)) {
-            return requestedCourseName
+            return GakujoDownloadFilePolicy.boundedFolder(requestedCourseName)
         }
-        return inferCourseNameFromFileName(fileName) ?: "未分類"
+        return GakujoDownloadFilePolicy.boundedFolder(inferCourseNameFromFileName(fileName) ?: "未分類")
     }
 
     private fun isUsefulCourseName(name: String): Boolean {
@@ -1400,8 +1435,10 @@ class MainActivity : FlutterActivity() {
         val names = GakujoDownloadFilePolicy.duplicateCandidateNames(desiredName)
         val size = newFile.length()
         for (candidate in parent.listFiles()) {
+            val candidateName = candidate.name ?: continue
             if (candidate.uri == newFile.uri || !candidate.isFile ||
-                candidate.name?.lowercase(Locale.ROOT) !in names) {
+                (candidateName.lowercase(Locale.ROOT) !in names &&
+                    GakujoDownloadFilePolicy.boundedName(candidateName).lowercase(Locale.ROOT) !in names)) {
                 continue
             }
             try {

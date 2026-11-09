@@ -63,7 +63,7 @@ class GakujoReloadAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      tooltip: '再読込',
+      tooltip: '再読み込み',
       onPressed: enabled ? onReload : null,
       icon: const Icon(Icons.refresh),
       iconSize: _toolbarIconSize,

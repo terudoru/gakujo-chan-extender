@@ -97,15 +97,6 @@ void main() {
     expect(restoredMessageNotification(backup, {'version'}), isNull);
   });
 
-  test('sync restore merges messageStars from the current settings', () {
-    const star = GakujoFeatureFlag.messageStars;
-    const other = GakujoFeatureFlag.values;
-    final portable = other.where((flag) => flag != star).take(1).toSet();
-    expect(syncRestoreFeatureFlags(portable, {star}), {...portable, star});
-    expect(syncRestoreFeatureFlags({...portable, star}, {}), portable);
-    expect(syncRestoreFeatureFlags(null, {star}), isNull);
-  });
-
   test('portable settings compare against the current snapshot', () {
     final settings = GakujoAppSettings();
     final snapshot = exportStarSyncPortableSettings(settings);
@@ -149,9 +140,10 @@ void main() {
       'downloadSaveMode': 'local',
       'pageMode': 'local',
       'disabledFeatureFlags': [
-        GakujoFeatureFlag.messageStars.storageValue,
+        'gpa_display', 'report_tools', 'message_tools', 'message_stars',
         'other',
       ],
+      'notificationPreferences': {'mutedCourses': ['Course'], 'skipSubmitted': false},
       'nested': {'password': 'hidden', 'accessToken': 'hidden', 'safe': 'kept'},
       'downloadHistory': [
         {'fileName': 'a.pdf', 'location': 'content://downloads/a'},
@@ -171,6 +163,7 @@ void main() {
     expect(portable, isNot(contains('downloadSaveMode')));
     expect(portable, isNot(contains('pageMode')));
     expect(portable['disabledFeatureFlags'], ['other']);
+    expect(portable['notificationPreferences'], {'skipSubmitted': false});
     expect(portable, isNot(contains('nested')));
     expect(portable, isNot(contains('downloadHistory')));
     expect(portable, isNot(contains('failedDownloads')));

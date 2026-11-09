@@ -1,18 +1,16 @@
 part of 'gakujo_web_app.dart';
 
 extension _GakujoWebAppMessageStars on _GakujoWebAppState {
-  bool get _messageStarsEnabled =>
-      _appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars);
-
   Future<void> _injectMessageStars() async {
-    if (!_canRunPageScripts || !_messageStarsEnabled) return;
+    if (!_canRunPageScripts) return;
     try {
       final entries = await _activityStore.loadStarredMessages();
-      if (!mounted || !_canRunPageScripts || !_messageStarsEnabled) return;
+      if (!mounted || !_canRunPageScripts) return;
       await _controller.runJavaScript(
-        GakujoMessageStarScript.build(
+        gakujoPageScriptBuilders(
+          _appSettings,
           starredIds: entries.map((entry) => entry.id),
-        ),
+        )['stars']!(),
       );
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -25,10 +23,10 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   }
 
   Future<void> _refreshMessageStars() async {
-    if (!_canRunPageScripts || !_messageStarsEnabled) return;
+    if (!_canRunPageScripts) return;
     try {
       final entries = await _activityStore.loadStarredMessages();
-      if (!mounted || !_canRunPageScripts || !_messageStarsEnabled) return;
+      if (!mounted || !_canRunPageScripts) return;
       await _controller.runJavaScript(
         GakujoMessageStarScript.buildRefresh(entries.map((entry) => entry.id)),
       );
@@ -59,7 +57,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     }
 
     if (handleReportDraftSavedMessage(message, _scheduleDraftSync)) return;
-    if (!_messageStarsEnabled) return;
     String? action;
     try {
       final data = jsonDecode(message);
@@ -95,7 +92,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   }
 
   Future<void> _showStarredMessagesDialog() async {
-    if (!_messageStarsEnabled) return;
     var entries = await _activityStore.loadStarredMessages();
     var query = '';
     var sort = GakujoStarredMessageSort.starredNewest;

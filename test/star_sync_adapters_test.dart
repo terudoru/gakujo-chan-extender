@@ -9,17 +9,28 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('portable settings ignore flags retired on this device', () {
+    final imported = importStarSyncPortableSettings(const GakujoAppSettings(), {
+      'disabledFeatureFlags': [
+        'activity_scan', 'deadline_scan', 'report_list_cache',
+        'session_recovery_guide', 'gpa_display', 'report_tools',
+        'message_tools', 'message_stars', 'upload_compression',
+      ],
+    });
+    expect(imported.disabledFeatureFlags, {GakujoFeatureFlag.uploadCompression});
+  });
+
   test('portable settings ignore credentials and non-portable fields', () {
     final current = GakujoAppSettings(
       savedLoginId: 'id',
-      disabledFeatureFlags: {GakujoFeatureFlag.messageStars},
+      disabledFeatureFlags: {GakujoFeatureFlag.downloadCapture},
     );
     final exported = exportStarSyncPortableSettings(current);
     expect(exported.keys, isNot(contains('loginCredentials')));
     expect(exported.keys, isNot(contains('savedLoginId')));
     expect(
       exported['disabledFeatureFlags'],
-      isNot(contains(GakujoFeatureFlag.messageStars.storageValue)),
+      contains(GakujoFeatureFlag.downloadCapture.storageValue),
     );
     final imported = importStarSyncPortableSettings(current, {
       'loginCredentials': {'loginId': 'other', 'password': 'other'},
@@ -30,9 +41,29 @@ void main() {
     });
     expect(imported.downloadSaveMode, isNull);
     expect(imported.pageMode, isNull);
-    expect(imported.disabledFeatureFlags, isNull);
+    expect(imported.disabledFeatureFlags, isEmpty);
     expect(imported.messageExcludeKeywords, ['exam']);
     expect(current.savedLoginId, 'id');
+  });
+
+  test('unchanged or missing portable flags do not replace current flags', () {
+    const current = GakujoAppSettings();
+    expect(
+      importStarSyncPortableSettings(current, {'disabledFeatureFlags': []})
+          .disabledFeatureFlags,
+      isNull,
+    );
+    expect(
+      importStarSyncPortableSettings(current, {}).disabledFeatureFlags,
+      isNull,
+    );
+    const withDisabledFlag = GakujoAppSettings(
+      disabledFeatureFlags: {GakujoFeatureFlag.downloadCapture},
+    );
+    expect(
+      importStarSyncPortableSettings(withDisabledFlag, {}).disabledFeatureFlags,
+      isNull,
+    );
   });
 
   test('settings clear only unchanged portable values to defaults', () {
