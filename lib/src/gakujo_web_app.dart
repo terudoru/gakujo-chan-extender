@@ -7768,15 +7768,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     if (defaultTargetPlatform == TargetPlatform.linux) {
-      final pageCovered = _isSettingsDialogOpen ||
-          (widget.linuxOverlayObscured?.value ?? false);
-      if (!pageCovered) {
+      // A closing menu still counts as covering the page, so the strip must be
+      // set then too, or the message would end up behind the page.
+      if (!_isSettingsDialogOpen) {
         setState(() {
           _linuxSnackBar = buildTransientGakujoSnackBar(message, action: action);
         });
-        return;
-      }
-      if (_linuxSnackBar != null) {
+        if (!(widget.linuxOverlayObscured?.value ?? false)) return;
+      } else if (_linuxSnackBar != null) {
         setState(() => _linuxSnackBar = null);
       }
     }
