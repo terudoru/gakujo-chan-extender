@@ -98,6 +98,7 @@ import 'widgets/app_update_banner.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/linux_native_toolbar_tooltips.dart';
+import 'widgets/linux_snack_bar_strip.dart';
 import 'widgets/settings_sections.dart';
 import 'widgets/star_sync_section.dart';
 
@@ -1467,6 +1468,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _currentPageUrl;
   String? _lastAllowedPageUrl;
   String _status = '準備中';
+  SnackBar? _linuxSnackBar;
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _previewNavigationState = 'none';
@@ -2028,6 +2030,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 ),
               ),
             ),
+            if (defaultTargetPlatform == TargetPlatform.linux &&
+                _linuxSnackBar != null)
+              LinuxSnackBarStrip(
+                snackBar: _linuxSnackBar!,
+                onDismiss: () => setState(() => _linuxSnackBar = null),
+              ),
             if (_availableUpdate != null &&
                 _appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) &&
                 !compactPreviewForKeyboard)
@@ -7759,6 +7767,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      // A closing menu still counts as covering the page, so the strip must be
+      // set then too, or the message would end up behind the page.
+      if (!_isSettingsDialogOpen) {
+        setState(() {
+          _linuxSnackBar = buildTransientGakujoSnackBar(message, action: action);
+        });
+        if (!(widget.linuxOverlayObscured?.value ?? false)) return;
+      } else if (_linuxSnackBar != null) {
+        setState(() => _linuxSnackBar = null);
+      }
+    }
     messenger.showSnackBar(
       buildTransientGakujoSnackBar(message, action: action),
     );
