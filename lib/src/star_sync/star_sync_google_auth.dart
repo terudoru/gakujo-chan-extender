@@ -69,7 +69,7 @@ class StarSyncGoogleRevocationException implements Exception {
 
 abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
-  Future<String?> restore();
+  Future<String?> restore({String? expectedEmail});
 
   /// [optionalScopes] are asked for too, but sign-in succeeds without them.
   /// [loginHint] preselects the only account that would be accepted; without

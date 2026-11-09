@@ -1,21 +1,28 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 
 import 'star_sync_google_auth.dart';
 
 class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
-  StarSyncGoogleMobileAuth({required this.config});
+  StarSyncGoogleMobileAuth({
+    required this.config,
+    @visibleForTesting bool? isAndroidOverride,
+  }) : _isAndroid = isAndroidOverride ?? Platform.isAndroid;
   final StarSyncGoogleAuthConfig config;
+  final bool _isAndroid;
   static Future<void>? _initialization;
   GoogleSignInAccount? _account;
+  String? _restoredEmail;
   String? _token;
   final Set<String> _scopes = {...starSyncGoogleScopes};
 
   Future<void> _initialize() => _initialization ??= GoogleSignIn.instance
       .initialize(
         clientId: Platform.isIOS ? config.iosClientId : null,
-        serverClientId: Platform.isAndroid ? config.androidServerClientId : null,
+        serverClientId: _isAndroid ? config.androidServerClientId : null,
       );
 
   Future<T> _guard<T>(Future<T> Function() action) async {
@@ -39,14 +46,74 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     }
   }
 
-  @override
-  String? get currentEmail => _account?.email;
+  Future<GoogleSignInClientAuthorization?> _silentTokens(List<String> scopes) async {
+    final account = _account;
+    if (account != null) {
+      return account.authorizationClient.authorizationForScopes(scopes);
+    }
+    final email = _restoredEmail;
+    if (email == null) return null;
+    final tokens = await GoogleSignInPlatform.instance.clientAuthorizationTokensForScopes(
+      ClientAuthorizationTokensForScopesParameters(
+        request: AuthorizationRequestDetails(
+          scopes: scopes,
+          userId: null,
+          email: email,
+          promptIfUnauthorized: false,
+        ),
+      ),
+    );
+    return tokens == null ? null : GoogleSignInClientAuthorization(accessToken: tokens.accessToken);
+  }
+
+  Future<GoogleSignInClientAuthorization?> _promptTokens(List<String> scopes) async {
+    final account = _account;
+    if (account != null) return account.authorizationClient.authorizeScopes(scopes);
+    final email = _restoredEmail;
+    if (email == null) return null;
+    final tokens = await GoogleSignInPlatform.instance.clientAuthorizationTokensForScopes(
+      ClientAuthorizationTokensForScopesParameters(
+        request: AuthorizationRequestDetails(
+          scopes: scopes,
+          userId: null,
+          email: email,
+          promptIfUnauthorized: true,
+        ),
+      ),
+    );
+    return tokens == null ? null : GoogleSignInClientAuthorization(accessToken: tokens.accessToken);
+  }
 
   @override
-  Future<String?> restore() => _guard(() async {
+  String? get currentEmail => _account?.email ?? _restoredEmail;
+
+  @override
+  Future<String?> restore({String? expectedEmail}) => _guard(() async {
     await _initialize();
+    if (_isAndroid) {
+      _account = null;
+      _restoredEmail = null;
+      _token = null;
+      _scopes
+        ..clear()
+        ..addAll(starSyncGoogleScopes);
+      if (expectedEmail == null || expectedEmail.trim().isEmpty) return null;
+      _restoredEmail = expectedEmail;
+      try {
+        final authorization = await _silentTokens(starSyncGoogleScopes);
+        if (authorization == null) {
+          _restoredEmail = null;
+          return null;
+        }
+        _token = authorization.accessToken;
+      } on Object {
+        // Retain the email so a later token request can report the failure.
+      }
+      return _restoredEmail;
+    }
     final attempt = GoogleSignIn.instance.attemptLightweightAuthentication();
     _account = attempt == null ? null : await attempt;
+    _restoredEmail = null;
     _token = null;
     _scopes
       ..clear()
@@ -72,6 +139,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
         await client.authorizeScopes(starSyncGoogleScopes);
     // Keep the previous account until this one has been authorized.
     _account = account;
+    _restoredEmail = null;
     _token = authorization.accessToken;
     _scopes
       ..clear()
@@ -93,23 +161,22 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
 
   @override
   Future<String> accessToken({bool forceRefresh = false}) => _guard(() async {
-    final account = _account;
-    if (account == null) {
+    if (currentEmail == null) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.notSignedIn,
       );
     }
-    final client = account.authorizationClient;
     if (forceRefresh) {
       final token =
           _token ??
-          (await client.authorizationForScopes(_scopes.toList()))?.accessToken;
+          (await _silentTokens(_scopes.toList()))?.accessToken;
       if (token != null) {
+        final client = _account?.authorizationClient ?? GoogleSignIn.instance.authorizationClient;
         await client.clearAuthorizationToken(accessToken: token);
       }
       _token = null;
     }
-    final authorization = await client.authorizationForScopes(_scopes.toList());
+    final authorization = await _silentTokens(_scopes.toList());
     if (authorization == null) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.notSignedIn,
@@ -120,27 +187,26 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
 
   @override
   Future<bool> hasScope(String scope) => _guard(() async {
-    final account = _account;
-    if (account == null) return false;
-    final authorization = await account.authorizationClient
-        .authorizationForScopes([scope]);
+    final authorization = await _silentTokens([scope]);
     if (authorization != null) _scopes.add(scope);
     return authorization != null;
   });
 
   @override
   Future<void> requestScopes(List<String> scopes) => _guard(() async {
-    final account = _account;
-    if (account == null) {
+    if (currentEmail == null) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.notSignedIn,
       );
     }
     final requested = {..._scopes, ...scopes}.toList();
-    final client = account.authorizationClient;
     final authorization =
-        await client.authorizationForScopes(requested) ??
-        await client.authorizeScopes(requested);
+        await _silentTokens(requested) ?? await _promptTokens(requested);
+    if (authorization == null) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
     _scopes.addAll(scopes);
     _token = authorization.accessToken;
   });
@@ -149,9 +215,13 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   Future<void> signOut() async {
     try {
       await _initialize();
+      if (_account == null && _restoredEmail != null && _isAndroid) {
+        if (await _silentTokens(starSyncGoogleScopes) == null) return;
+        await GoogleSignIn.instance.disconnect();
+        return;
+      }
       if (_account == null) {
-        if (Platform.isAndroid) {
-          // Android disconnect only revokes cached accounts; lightweight auth can show UI.
+        if (_isAndroid) {
           throw const StarSyncGoogleRevocationException();
         }
         final attempt = GoogleSignIn.instance.attemptLightweightAuthentication(
@@ -165,6 +235,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       throw const StarSyncGoogleRevocationException();
     } finally {
       _account = null;
+      _restoredEmail = null;
       _token = null;
     }
   }

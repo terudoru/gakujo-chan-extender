@@ -901,7 +901,7 @@ class _FakeGoogleAuth implements StarSyncGoogleAuth {
   @override
   Future<void> requestScopes(List<String> scopes) async {}
   @override
-  Future<String?> restore() async => email;
+  Future<String?> restore({String? expectedEmail}) async => email;
   @override
   Future<String> signIn({List<String> optionalScopes = const [], String? loginHint}) async => email!;
   @override

@@ -1765,7 +1765,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (_starSyncEngine.config != null) {
           try {
             _starSyncGoogleEmail = await _driveDownloadQueue.run(
-              _starSyncGoogleAuth.restore,
+              () => _starSyncGoogleAuth.restore(
+                expectedEmail: _starSyncEngine.config?.googleEmail,
+              ),
             );
           } on Object catch (error) {
             developer.log('Failed to restore Google sign-in: ${error.runtimeType}',
@@ -5627,7 +5629,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _restoreDriveDownloadsAccount() async {
     if (_driveDownloadPreference.enabled) {
       _starSyncGoogleEmail = await _driveDownloadQueue.run(
-        _starSyncGoogleAuth.restore,
+        () => _starSyncGoogleAuth.restore(
+          expectedEmail: _driveDownloadPreference.boundGoogleEmail,
+        ),
       );
     }
     if (_driveDownloadPreference.enabled &&
@@ -5665,7 +5669,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _driveDownloadQueue.run(() async {
         if (await GoogleDriveFileSaver.pendingCheckCount() == 0) return;
         final email = _starSyncGoogleAuth.currentEmail ??
-            await _starSyncGoogleAuth.restore();
+            await _starSyncGoogleAuth.restore(
+              expectedEmail: _driveDownloadPreference.boundGoogleEmail ??
+                  _starSyncEngine.config?.googleEmail,
+            );
         if (email == null ||
             !await _starSyncGoogleAuth.hasScope(googleDriveFileScope)) {
           return;
@@ -5753,7 +5760,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         }
         // A revoked token clears the auth state; a cached email must not skip sign-in.
         if (_starSyncGoogleAuth.currentEmail == null) _starSyncGoogleEmail = null;
-        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore();
+        _starSyncGoogleEmail ??= await _starSyncGoogleAuth.restore(
+          expectedEmail: _starSyncEngine.config?.googleEmail ??
+              _driveDownloadPreference.boundGoogleEmail,
+        );
         checkCancelled();
         _starSyncGoogleEmail ??= await _signInGoogle(enablingDriveSaving: true);
         final currentEmail = _starSyncGoogleAuth.currentEmail;
