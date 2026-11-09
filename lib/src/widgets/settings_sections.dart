@@ -5,6 +5,61 @@ import 'package:flutter/material.dart';
 
 import '../gakujo_app_settings.dart';
 
+const List<GakujoFeatureFlag> settingsLoginFeatureFlags = [
+  GakujoFeatureFlag.loginAutofill,
+  GakujoFeatureFlag.twoFactorAutofill,
+  GakujoFeatureFlag.sessionExtender,
+  GakujoFeatureFlag.sessionRecoveryGuide,
+];
+
+const List<GakujoFeatureFlag> settingsGradeFeatureFlags = [
+  GakujoFeatureFlag.gpaDisplay,
+];
+
+const List<GakujoFeatureFlag> settingsReportFeatureFlags = [
+  GakujoFeatureFlag.reportTools,
+  GakujoFeatureFlag.uploadCompression,
+];
+
+const List<GakujoFeatureFlag> settingsMessageFeatureFlags = [
+  GakujoFeatureFlag.messageTools,
+  GakujoFeatureFlag.messageStars,
+];
+
+const List<GakujoFeatureFlag> settingsDownloadFeatureFlags = [
+  GakujoFeatureFlag.downloadCapture,
+];
+
+const List<GakujoFeatureFlag> settingsNotificationFeatureFlags = [
+  GakujoFeatureFlag.deadlineScan,
+  GakujoFeatureFlag.deadlineNotifications,
+];
+
+const List<GakujoFeatureFlag> settingsBackupFeatureFlags = [
+  GakujoFeatureFlag.autoBackup,
+];
+
+const List<GakujoFeatureFlag> settingsRecordingFeatureFlags = [
+  GakujoFeatureFlag.activityScan,
+  GakujoFeatureFlag.reportListCache,
+];
+
+const List<GakujoFeatureFlag> settingsAppFeatureFlags = [
+  GakujoFeatureFlag.updateNotice,
+];
+
+const List<List<GakujoFeatureFlag>> settingsFeatureFlagGroups = [
+  settingsLoginFeatureFlags,
+  settingsGradeFeatureFlags,
+  settingsReportFeatureFlags,
+  settingsMessageFeatureFlags,
+  settingsDownloadFeatureFlags,
+  settingsNotificationFeatureFlags,
+  settingsBackupFeatureFlags,
+  settingsRecordingFeatureFlags,
+  settingsAppFeatureFlags,
+];
+
 class TwoFactorSecretSection extends StatelessWidget {
   const TwoFactorSecretSection({
     super.key,
@@ -199,7 +254,7 @@ class DownloadDestinationSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'ダウンロード設定',
+          '保存方法と保存先',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: 8),
@@ -298,9 +353,11 @@ class SettingsExpansionSection extends StatelessWidget {
     required this.child,
     this.initiallyExpanded = false,
     this.focusNodeOnExpand,
+    this.subtitle,
   });
 
   final String title;
+  final String? subtitle;
   final IconData icon;
   final Widget child;
   final bool initiallyExpanded;
@@ -311,6 +368,7 @@ class SettingsExpansionSection extends StatelessWidget {
     return ExpansionTile(
       leading: Icon(icon),
       title: Text(title),
+      subtitle: subtitle == null ? null : Text(subtitle!),
       initiallyExpanded: initiallyExpanded,
       maintainState: true,
       tilePadding: EdgeInsets.zero,
@@ -372,8 +430,12 @@ class FeatureFlagsSection extends StatelessWidget {
     super.key,
     required this.settings,
     required this.onChanged,
+    this.flags = GakujoFeatureFlag.values,
+    this.title = '機能のオン/オフ',
   });
 
+  final List<GakujoFeatureFlag> flags;
+  final String? title;
   final GakujoAppSettings settings;
   final void Function(GakujoFeatureFlag flag, bool enabled) onChanged;
 
@@ -382,17 +444,22 @@ class FeatureFlagsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '機能のオン/オフ',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        for (final flag in GakujoFeatureFlag.values)
+        if (title != null) ...[
+          Text(title!, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+        ],
+        for (final flag in flags)
           CheckboxListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
             subtitle: switch (flag) {
+              GakujoFeatureFlag.activityScan =>
+                const Text('開いたページの内容を記録し、変わった箇所を「変更履歴」に残します。'),
+              GakujoFeatureFlag.reportListCache =>
+                const Text('レポート・小テスト一覧を端末に保存し、「保存済み課題一覧」で見られるようにします。'),
+              GakujoFeatureFlag.deadlineScan =>
+                const Text('レポート・小テストのページから提出期限を読み取ります。通知の元になります。'),
               GakujoFeatureFlag.deadlineNotifications
                   when defaultTargetPlatform == TargetPlatform.linux =>
                 const Text('Linux では OS の通知に対応していません。'),
@@ -492,7 +559,7 @@ class NotificationTopicsSection extends StatelessWidget {
         Text(
           notificationsEnabled
               ? 'チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'
-              : '「機能設定」で「提出期限の通知」がオフのため、通知は出ません。',
+              : '「提出期限の通知」がオフのため、通知は出ません。',
         ),
         if (notificationsEnabled && notificationPermission != null)
           ValueListenableBuilder<bool?>(
@@ -777,4 +844,43 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
       ],
     );
   }
+}
+
+class DriveDownloadSwitch extends StatelessWidget {
+  const DriveDownloadSwitch({
+    super.key,
+    required this.value,
+    required this.signingIn,
+    required this.enabled,
+    required this.onChanged,
+    this.subtitle,
+    this.onCancel,
+  });
+
+  final bool value;
+  final bool signingIn;
+  final bool enabled;
+  final String? subtitle;
+  final ValueChanged<bool> onChanged;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
+    subtitle: signingIn
+        ? Row(
+            children: [
+              const Expanded(child: LinearProgressIndicator()),
+              if (onCancel != null)
+                TextButton(onPressed: onCancel, child: const Text('キャンセル')),
+            ],
+          )
+        : subtitle == null
+        ? null
+        : Text(subtitle!),
+    value: value,
+    onChanged: signingIn || !enabled ? null : onChanged,
+  );
 }

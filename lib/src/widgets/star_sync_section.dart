@@ -86,8 +86,7 @@ class StarSyncSection extends StatefulWidget {
   const StarSyncSection({
     super.key,
     required this.status,
-    this.driveDownloadsEnabled = false,
-    this.onDriveDownloadsChanged,
+    this.onBusyChanged,
     this.onBackup,
     this.onListBackups,
     this.onRestoreBackup,
@@ -120,8 +119,9 @@ class StarSyncSection extends StatefulWidget {
   });
 
   final ValueListenable<StarSyncStatusSnapshot> status;
-  final bool driveDownloadsEnabled;
-  final Future<void> Function(bool)? onDriveDownloadsChanged;
+  /// The Drive switch elsewhere on the screen must wait while this section
+  /// signs in or sets up, or turning it off could sign out mid-setup.
+  final ValueChanged<bool>? onBusyChanged;
   final Future<void> Function()? onBackup;
   final Future<List<StarSyncBackupInfo>> Function()? onListBackups;
   final Future<void> Function(String)? onRestoreBackup;
@@ -177,7 +177,12 @@ class StarSyncSection extends StatefulWidget {
 
 class _StarSyncSectionState extends State<StarSyncSection> {
   final _rejoinPassphrase = TextEditingController();
-  bool _busy = false;
+  bool _busyValue = false;
+  bool get _busy => _busyValue;
+  set _busy(bool value) {
+    if (value != _busyValue) widget.onBusyChanged?.call(value);
+    _busyValue = value;
+  }
   bool _googleSigningIn = false;
   String? _error;
   List<StarSyncBackupInfo>? _backups;
@@ -206,6 +211,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
 
   @override
   void dispose() {
+    if (_busyValue) {
+      // The tree is locked here; tell the screen once this frame is done.
+      final onBusyChanged = widget.onBusyChanged;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onBusyChanged?.call(false);
+      });
+    }
     widget.status.removeListener(_clearRejoinWhenNotAsked);
     _rejoinPassphrase.dispose();
     super.dispose();
@@ -419,28 +431,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     });
   }
 
-  Widget _driveDownloadsSwitch() => SwitchListTile(
-    title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
-    subtitle: widget.driveDownloadsEnabled && widget.googleEmail() != null
-        ? Text(
-            widget.isGoogleDrive()
-                ? '保存先: ${widget.googleEmail()!}'
-                : '保存先: ${widget.googleEmail()!}\n別のアカウントにするには、一度オフにします',
-          )
-        : null,
-    value: widget.driveDownloadsEnabled,
-    onChanged: _busy
-        ? null
-        : (value) => _run(() async {
-            if (value) setState(() => _googleSigningIn = true);
-            try {
-              await widget.onDriveDownloadsChanged!(value);
-            } finally {
-              if (mounted && value) setState(() => _googleSigningIn = false);
-            }
-          }),
-  );
-
   Future<void> _restoreBackup(StarSyncBackupInfo backup) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -472,11 +462,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     builder: (context, status, _) {
       if (!status.enabled) {
         return Column(
+          spacing: 8,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.googleAvailable &&
-                widget.onDriveDownloadsChanged != null)
-              _driveDownloadsSwitch(),
             if (widget.googleAvailable) ...[
               const Text(
                 'スター（IDと件名のみ）を、あなたの Google ドライブのアプリ専用領域に暗号化して保存し、端末間で共有します。',
@@ -626,6 +614,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                     : '最終同期: ${_date(status.lastSyncAt!)}');
       final cooldown = status.cooldownUntil?.toLocal();
       return Column(
+        spacing: 8,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(line),
@@ -691,8 +680,6 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       }),
               ),
           ],
-          if (widget.googleAvailable && widget.onDriveDownloadsChanged != null)
-            _driveDownloadsSwitch(),
           if (widget.onBackup != null &&
               widget.onListBackups != null &&
               widget.onRestoreBackup != null) ...[
@@ -773,6 +760,12 @@ class _StarSyncSectionState extends State<StarSyncSection> {
                       ),
                 child: const Text('端末の一覧'),
               ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
               OutlinedButton(
                 onPressed: _busy
                     ? null

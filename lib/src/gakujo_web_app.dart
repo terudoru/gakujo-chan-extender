@@ -2595,6 +2595,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
     final knownCourses = await _knownAssignmentCourses();
+    var starSyncBusy = false;
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
@@ -2648,10 +2649,62 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               final selectedDownloadSaveMode = _appSettings.downloadSaveMode;
               final selectedPageMode = _appSettings.pageMode;
 
+              Future<void> onFlagChanged(
+                GakujoFeatureFlag flag,
+                bool enabled,
+              ) async {
+                if (!await _trySaveSettings(
+                  () => saveGakujoSettingsChange(
+                    operations: _settingsOperations,
+                    save: () => _appSettingsStore.saveFeatureEnabled(
+                      flag,
+                      enabled: enabled,
+                    ),
+                    currentSettings: () => _appSettings,
+                    update: (settings) => settings.copyWith(
+                      disabledFeatureFlags: {
+                        for (final value in settings.disabledFeatureFlags)
+                          if (value != flag) value,
+                        if (!enabled) flag,
+                      },
+                    ),
+                    apply: (settings) {
+                      _startupPlaceholderFeatureFlags.remove(flag);
+                      if (mounted) {
+                        setState(() => _appSettings = settings);
+                      }
+                    },
+                    mirror: _syncLocalSettingsMirror,
+                  ),
+                )) {
+                  return;
+                }
+                if (!mounted) {
+                  return;
+                }
+                if (flag != GakujoFeatureFlag.messageStars) {
+                  _scheduleStarSync();
+                }
+                if (flag == GakujoFeatureFlag.messageStars && enabled) {
+                  unawaited(_syncStarsInBackground());
+                }
+                if (flag == GakujoFeatureFlag.autoBackup) {
+                  _scheduleAutoBackup();
+                }
+                if (dialogContext.mounted) {
+                  setDialogState(() {});
+                }
+                await _applyFeatureFlagRuntimeState(flag, enabled: enabled);
+                if (flag == GakujoFeatureFlag.deadlineNotifications) {
+                  unawaited(_syncReminders());
+                }
+              }
+
               final sections = [
                 SettingsExpansionSection(
                   title: 'ログイン',
                   icon: Icons.account_circle_outlined,
+                  subtitle: 'ログイン情報・2FA・ログイン状態の維持',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -2681,7 +2734,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                     enabled: false,
                                   );
                                 } finally {
-                                  TextInput.finishAutofillContext(shouldSave: false);
+                                  TextInput.finishAutofillContext(
+                                    shouldSave: false,
+                                  );
                                   if (mounted) {
                                     setState(() {
                                       _appSettings = _appSettings.copyWith(
@@ -2757,515 +2812,598 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                       ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: 'ログインの補助',
+                        flags: settingsLoginFeatureFlags,
+                      ),
                     ],
                   ),
                 ),
                 SettingsExpansionSection(
-                  title: '保存設定',
-                  icon: Icons.folder_outlined,
-                  child: DownloadDestinationSection(
-                    rootLabel: rootLabel,
-                    isConfigured: _downloadRoot.isConfigured,
-                    saveMode: selectedDownloadSaveMode,
-                    helperText: _downloadDestinationHelperText,
-                    onSaveModeChanged: (mode) async {
-                      if (mode == null) {
-                        return;
-                      }
-                      final saved = await _settingsOperations.runExclusive(() async {
-                        if (!await _trySaveSettings(
-                          () => _appSettingsStore.saveDownloadSaveMode(mode),
-                        )) {
-                          return false;
-                        }
-                        final nextSettings = _appSettings.copyWith(
-                          downloadSaveMode: mode,
-                        );
-                        await _syncLocalSettingsMirror(nextSettings);
-                        if (!mounted) {
-                          return false;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(downloadSaveMode: mode);
-                        });
-                        return true;
-                      });
-                      if (!saved) return;
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onPick: () async {
-                      await refreshDownloadRoot(
-                        _downloadService.pickDownloadRoot,
-                      );
-                    },
-                    onClear: () async {
-                      await refreshDownloadRoot(
-                        _downloadService.clearDownloadRoot,
-                      );
-                    },
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '表示設定',
+                  title: '学務情報システムの画面',
                   icon: Icons.web_asset_outlined,
-                  child: GakujoPageModeSection(
-                    pageMode: selectedPageMode,
-                    onChanged: (mode) async {
-                      if (mode == null) {
-                        return;
-                      }
-                      final saved = await _settingsOperations.runExclusive(() async {
-                        if (!await _trySaveSettings(
-                          () => _appSettingsStore.savePageMode(mode),
-                        )) {
-                          return false;
-                        }
-                        final nextSettings = _appSettings.copyWith(
-                          pageMode: mode,
-                        );
-                        await _syncLocalSettingsMirror(nextSettings);
-                        if (!mounted) {
-                          return false;
-                        }
-                        setState(() {
-                          _appSettings = _appSettings.copyWith(pageMode: mode);
-                        });
-                        return true;
-                      });
-                      if (!saved) return;
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                      await _loadAllowedPageUrl(mode.startUrl);
-                    },
+                  subtitle: '表示版・GPA・レポート・連絡通知',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      GakujoPageModeSection(
+                        pageMode: selectedPageMode,
+                        onChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          final saved = await _settingsOperations.runExclusive(
+                            () async {
+                              if (!await _trySaveSettings(
+                                () => _appSettingsStore.savePageMode(mode),
+                              )) {
+                                return false;
+                              }
+                              final nextSettings = _appSettings.copyWith(
+                                pageMode: mode,
+                              );
+                              await _syncLocalSettingsMirror(nextSettings);
+                              if (!mounted) {
+                                return false;
+                              }
+                              setState(() {
+                                _appSettings = _appSettings.copyWith(
+                                  pageMode: mode,
+                                );
+                              });
+                              return true;
+                            },
+                          );
+                          if (!saved) return;
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                          await _loadAllowedPageUrl(mode.startUrl);
+                        },
+                      ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: '成績',
+                        flags: settingsGradeFeatureFlags,
+                      ),
+                      const SizedBox(height: 16),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: 'レポート',
+                        flags: settingsReportFeatureFlags,
+                      ),
+                      const SizedBox(height: 16),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: '連絡通知',
+                        flags: settingsMessageFeatureFlags,
+                      ),
+                      SettingsExpansionSection(
+                        title: '除外キーワード',
+                        icon: Icons.filter_alt_outlined,
+                        focusNodeOnExpand: messageExcludeKeywordFocusNode,
+                        child: MessageExcludeKeywordsSection(
+                          keywords: _appSettings.messageExcludeKeywords,
+                          controller: messageExcludeKeywordController,
+                          focusNode: messageExcludeKeywordFocusNode,
+                          canAdd: canAddMessageExcludeKeyword,
+                          onChanged: (value) {
+                            messageExcludeKeywordInput = value;
+                            setDialogState(() {});
+                          },
+                          onAdd: () async {
+                            final next = normalizeMessageExcludeKeywords([
+                              ..._appSettings.messageExcludeKeywords,
+                              messageExcludeKeywordInput,
+                            ]);
+                            if (!await _trySaveSettings(
+                              () => _saveMessageExcludeKeywords(next),
+                            )) {
+                              return;
+                            }
+                            messageExcludeKeywordInput = '';
+                            messageExcludeKeywordController.clear();
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                          },
+                          onRemove: (keyword) async {
+                            final next = _appSettings.messageExcludeKeywords
+                                .where((value) => value != keyword)
+                                .toList();
+                            if (!await _trySaveSettings(
+                              () => _saveMessageExcludeKeywords(next),
+                            )) {
+                              return;
+                            }
+                            if (!dialogContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
-                  title: '機能設定',
-                  icon: Icons.tune,
-                  child: FeatureFlagsSection(
-                    settings: _appSettings,
-                    onChanged: (flag, enabled) async {
-                      if (!await _trySaveSettings(() =>
-                          saveGakujoSettingsChange(
-                            operations: _settingsOperations,
-                            save: () => _appSettingsStore.saveFeatureEnabled(
-                              flag,
-                              enabled: enabled,
-                            ),
-                            currentSettings: () => _appSettings,
-                            update: (settings) => settings.copyWith(
-                              disabledFeatureFlags: {
-                                for (final value
-                                    in settings.disabledFeatureFlags)
-                                  if (value != flag) value,
-                                if (!enabled) flag,
-                              },
-                            ),
-                            apply: (settings) {
-                              _startupPlaceholderFeatureFlags.remove(flag);
-                              if (mounted) {
-                                setState(() => _appSettings = settings);
+                  title: 'ダウンロード',
+                  icon: Icons.folder_outlined,
+                  subtitle: '保存方法・保存先・Google ドライブ',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: null,
+                        flags: settingsDownloadFeatureFlags,
+                      ),
+                      DownloadDestinationSection(
+                        rootLabel: rootLabel,
+                        isConfigured: _downloadRoot.isConfigured,
+                        saveMode: selectedDownloadSaveMode,
+                        helperText: _downloadDestinationHelperText,
+                        onSaveModeChanged: (mode) async {
+                          if (mode == null) {
+                            return;
+                          }
+                          final saved = await _settingsOperations.runExclusive(
+                            () async {
+                              if (!await _trySaveSettings(
+                                () => _appSettingsStore.saveDownloadSaveMode(
+                                  mode,
+                                ),
+                              )) {
+                                return false;
                               }
+                              final nextSettings = _appSettings.copyWith(
+                                downloadSaveMode: mode,
+                              );
+                              await _syncLocalSettingsMirror(nextSettings);
+                              if (!mounted) {
+                                return false;
+                              }
+                              setState(() {
+                                _appSettings = _appSettings.copyWith(
+                                  downloadSaveMode: mode,
+                                );
+                              });
+                              return true;
                             },
-                            mirror: _syncLocalSettingsMirror,
-                          ))) {
-                        return;
-                      }
-                      if (!mounted) {
-                        return;
-                      }
-                      if (flag != GakujoFeatureFlag.messageStars) {
-                        _scheduleStarSync();
-                      }
-                      if (flag == GakujoFeatureFlag.messageStars && enabled) {
-                        unawaited(_syncStarsInBackground());
-                      }
-                      if (flag == GakujoFeatureFlag.autoBackup) {
-                        _scheduleAutoBackup();
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                      await _applyFeatureFlagRuntimeState(
-                        flag,
-                        enabled: enabled,
-                      );
-                      if (flag == GakujoFeatureFlag.deadlineNotifications) {
-                        unawaited(_syncReminders());
-                      }
-                    },
+                          );
+                          if (!saved) return;
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                        },
+                        onPick: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.pickDownloadRoot,
+                          );
+                        },
+                        onClear: () async {
+                          await refreshDownloadRoot(
+                            _downloadService.clearDownloadRoot,
+                          );
+                        },
+                      ),
+                      SettingsActionGroup(
+                        actions: [
+                          SettingsAction(
+                            label: '保存先を確認',
+                            icon: Icons.health_and_safety_outlined,
+                            run: _checkDownloadDestinationHealth,
+                          ),
+                        ],
+                      ),
+                      if (const StarSyncGoogleAuthConfig().isAvailable) ...[
+                        const Divider(height: 32),
+                        DriveDownloadSwitch(
+                          value: _driveDownloadsEnabled,
+                          signingIn: _driveSwitchSigningIn,
+                          enabled: !starSyncBusy,
+                          subtitle:
+                              _driveDownloadsEnabled &&
+                                  _starSyncGoogleEmail != null
+                              ? (_starSyncEngine.config?.backend ==
+                                        StarSyncBackend.googleDrive
+                                    ? (_messageStarsEnabled
+                                          ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには同期を無効にします'
+                                          : '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには「連絡通知のスター」をオンにして、同期を無効にします')
+                                    : '保存先: $_starSyncGoogleEmail\n別のアカウントにするには、一度オフにします')
+                              : null,
+                          onCancel:
+                              Platform.isWindows ||
+                                  Platform.isMacOS ||
+                                  Platform.isLinux
+                              ? _cancelGoogleSignIn
+                              : null,
+                          onChanged: (enabled) async {
+                            if (enabled) {
+                              setDialogState(
+                                () => _driveSwitchSigningIn = true,
+                              );
+                            }
+                            try {
+                              if (!enabled) {
+                                await _warnPendingDriveChecksBestEffort();
+                              }
+                              await _setDriveDownloadsEnabled(
+                                enabled,
+                                byStudentSwitch: true,
+                              );
+                            } on StarSyncGoogleAuthException catch (error) {
+                              if (error.kind !=
+                                  StarSyncGoogleAuthErrorKind.cancelled) {
+                                _showSnackBar(starSyncErrorMessage(error));
+                              }
+                            } on StarSyncAccountRequiredException catch (
+                              error
+                            ) {
+                              _showSnackBar(starSyncErrorMessage(error));
+                            } on Object {
+                              _showSnackBar('Google ドライブの設定を変更できませんでした');
+                            } finally {
+                              _driveSwitchSigningIn = false;
+                              if (dialogContext.mounted) setDialogState(() {});
+                            }
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
                   title: '通知',
                   icon: Icons.notifications_outlined,
-                  child: NotificationTopicsSection(
-                    topics: _appSettings.notificationTopics,
-                    messages: _appSettings.messageNotification,
-                    preferences: _appSettings.notificationPreferences,
-                    knownCourses: knownCourses,
-                    remindersOnlyWhileOpen: Platform.isWindows,
-                    notificationPermission:
-                        _notificationService.permissionGranted,
-                    onOpenNotificationSettings: Platform.isAndroid ||
-                            Platform.isIOS ||
-                            Platform.isMacOS
-                        ? () => unawaited(
-                              _notificationService.openNotificationSettings(),
-                            )
-                        : null,
-                    onPreferencesChanged: (update) async {
-                      await _saveNotificationPreferences(update);
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                    },
-                    keywordController: messageNotificationKeywordController,
-                    canAddKeyword:
-                        messageNotificationKeywordInput.trim().isNotEmpty,
-                    onKeywordInputChanged: (value) {
-                      messageNotificationKeywordInput = value;
-                      setDialogState(() {});
-                    },
-                    onMessagesChanged: (messages) async {
-                      if (!await _trySaveSettings(
-                        () => _saveMessageNotification(messages),
-                      )) {
-                        return false;
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                      return true;
-                    },
-                    notificationsEnabled: _appSettings.isFeatureEnabled(
-                      GakujoFeatureFlag.deadlineNotifications,
-                    ),
-                    onChanged: (topic, enabled) async {
-                      if (!await _trySaveSettings(
-                          () => _saveNotificationTopics({
-                                for (final value
-                                    in _appSettings.notificationTopics)
-                                  if (value != topic) value,
-                                if (enabled) topic,
-                              }))) {
-                        return;
-                      }
-                      if (dialogContext.mounted) {
-                        setDialogState(() {});
-                      }
-                    },
+                  subtitle: '提出期限・リマインド・科目・連絡通知',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: '提出期限の読み取りと通知',
+                        flags: settingsNotificationFeatureFlags,
+                      ),
+                      const Divider(height: 32),
+                      NotificationTopicsSection(
+                        topics: _appSettings.notificationTopics,
+                        messages: _appSettings.messageNotification,
+                        preferences: _appSettings.notificationPreferences,
+                        knownCourses: knownCourses,
+                        remindersOnlyWhileOpen: Platform.isWindows,
+                        notificationPermission:
+                            _notificationService.permissionGranted,
+                        onOpenNotificationSettings:
+                            Platform.isAndroid ||
+                                Platform.isIOS ||
+                                Platform.isMacOS
+                            ? () => unawaited(
+                                _notificationService.openNotificationSettings(),
+                              )
+                            : null,
+                        onPreferencesChanged: (update) async {
+                          await _saveNotificationPreferences(update);
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
+                          }
+                        },
+                        keywordController: messageNotificationKeywordController,
+                        canAddKeyword: messageNotificationKeywordInput
+                            .trim()
+                            .isNotEmpty,
+                        onKeywordInputChanged: (value) {
+                          messageNotificationKeywordInput = value;
+                          setDialogState(() {});
+                        },
+                        onMessagesChanged: (messages) async {
+                          if (!await _trySaveSettings(
+                            () => _saveMessageNotification(messages),
+                          )) {
+                            return false;
+                          }
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
+                          }
+                          return true;
+                        },
+                        notificationsEnabled: _appSettings.isFeatureEnabled(
+                          GakujoFeatureFlag.deadlineNotifications,
+                        ),
+                        onChanged: (topic, enabled) async {
+                          if (!await _trySaveSettings(
+                            () => _saveNotificationTopics({
+                              for (final value
+                                  in _appSettings.notificationTopics)
+                                if (value != topic) value,
+                              if (enabled) topic,
+                            }),
+                          )) {
+                            return;
+                          }
+                          if (dialogContext.mounted) {
+                            setDialogState(() {});
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
-                  title: '連絡通知フィルタ',
-                  icon: Icons.filter_alt_outlined,
-                  focusNodeOnExpand: messageExcludeKeywordFocusNode,
-                  child: MessageExcludeKeywordsSection(
-                    keywords: _appSettings.messageExcludeKeywords,
-                    controller: messageExcludeKeywordController,
-                    focusNode: messageExcludeKeywordFocusNode,
-                    canAdd: canAddMessageExcludeKeyword,
-                    onChanged: (value) {
-                      messageExcludeKeywordInput = value;
-                      setDialogState(() {});
-                    },
-                    onAdd: () async {
-                      final next = normalizeMessageExcludeKeywords([
-                        ..._appSettings.messageExcludeKeywords,
-                        messageExcludeKeywordInput,
-                      ]);
-                      if (!await _trySaveSettings(
-                        () => _saveMessageExcludeKeywords(next),
-                      )) {
-                        return;
-                      }
-                      messageExcludeKeywordInput = '';
-                      messageExcludeKeywordController.clear();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onRemove: (keyword) async {
-                      final next = _appSettings.messageExcludeKeywords
-                          .where((value) => value != keyword)
-                          .toList();
-                      if (!await _trySaveSettings(
-                        () => _saveMessageExcludeKeywords(next),
-                      )) {
-                        return;
-                      }
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: 'データ/履歴',
-                  icon: Icons.storage_outlined,
-                  child: AppDataShortcutsSection(
-                    onShowDownloadHistory: _showDownloadHistoryDialog,
-                    onShowFailedDownloads: _showFailedDownloadsDialog,
-                    onShowCourseMaterials: _showCourseMaterialsDialog,
-                    onShowCachedReports: _showCachedReportsDialog,
-                    onShowDrafts: _showReportDraftsDialog,
-                    onShowChangeHistory: _showChangeHistoryDialog,
-                    onShowFavorites: _showFavoritesDialog,
-                    onShowDataManagement: _showDataManagementDialog,
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '連携',
+                  title: '外部連携',
                   icon: Icons.event_available_outlined,
-                  child: AppIntegrationSection(
-                    onScheduleIntegration: _showScheduleIntegrationDialog,
-                  ),
-                ),
-                SettingsExpansionSection(
-                  title: '外部サービス',
-                  icon: Icons.open_in_new,
-                  child: SwitchListTile(
-                    title: const Text('外部サービスを開く前に確認する'),
-                    subtitle: const Text('AKIKO（空き講義室検索・CIRCLE 運営）'),
-                    value: !_externalServiceNoticeDismissed,
-                    onChanged: (confirm) async {
-                      await _setExternalServiceNoticeDismissed(!confirm);
-                      if (dialogContext.mounted) setDialogState(() {});
-                    },
-                  ),
-                ),
-                if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars) &&
-                    const StarSyncGoogleAuthConfig().isAvailable)
-                  SettingsExpansionSection(
-                    title: 'Google ドライブ',
-                    icon: Icons.cloud_upload_outlined,
-                    child: SwitchListTile(
-                      title: const Text('ダウンロードしたファイルを Google ドライブにも保存する'),
-                      subtitle: !_driveSwitchSigningIn
-                          ? (_driveDownloadsEnabled && _starSyncGoogleEmail != null
-                              ? Text(_starSyncEngine.config?.backend == StarSyncBackend.googleDrive
-                                  ? '保存先: $_starSyncGoogleEmail\n同期と同じアカウントです。変えるには「スター」の機能をオンにして、同期を無効にします'
-                                  : '保存先: $_starSyncGoogleEmail\n別のアカウントにするには、一度オフにします')
-                              : null)
-                          : Row(
-                              children: [
-                                const Expanded(child: LinearProgressIndicator()),
-                                if (Platform.isWindows || Platform.isMacOS || Platform.isLinux)
-                                  TextButton(
-                                    onPressed: _cancelGoogleSignIn,
-                                    child: const Text('キャンセル'),
-                                  ),
-                              ],
-                            ),
-                      value: _driveDownloadsEnabled,
-                      onChanged: _driveSwitchSigningIn ? null : (enabled) async {
-                        if (enabled) setDialogState(() => _driveSwitchSigningIn = true);
-                        try {
-                          if (!enabled) await _warnPendingDriveChecksBestEffort();
-                          await _setDriveDownloadsEnabled(enabled, byStudentSwitch: true);
-                        } on StarSyncGoogleAuthException catch (error) {
-                          if (error.kind != StarSyncGoogleAuthErrorKind.cancelled) {
-                            _showSnackBar(starSyncErrorMessage(error));
-                          }
-                        } on StarSyncAccountRequiredException catch (error) {
-                          _showSnackBar(starSyncErrorMessage(error));
-                        } on Object {
-                          _showSnackBar('Google ドライブの設定を変更できませんでした');
-                        } finally {
-                          _driveSwitchSigningIn = false;
+                  subtitle: 'カレンダー・外部サービス',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppIntegrationSection(
+                        onScheduleIntegration: _showScheduleIntegrationDialog,
+                      ),
+                      const Divider(height: 32),
+                      Text(
+                        '外部サービス',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      SwitchListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('外部サービスを開く前に確認する'),
+                        subtitle: const Text('AKIKO（空き講義室検索・CIRCLE 運営）'),
+                        value: !_externalServiceNoticeDismissed,
+                        onChanged: (confirm) async {
+                          await _setExternalServiceNoticeDismissed(!confirm);
                           if (dialogContext.mounted) setDialogState(() {});
-                        }
-                      },
-                    ),
+                        },
+                      ),
+                    ],
                   ),
-                if (_appSettings.isFeatureEnabled(GakujoFeatureFlag.messageStars))
-                  SettingsExpansionSection(
-                    title: 'スターの端末間同期',
-                    icon: Icons.sync,
-                    child: StarSyncSection(
-                      status: _starSyncEngine.status,
-                      driveDownloadsEnabled: _driveDownloadsEnabled,
-                      onDriveDownloadsChanged: (enabled) async {
-                        if (!enabled) await _warnPendingDriveChecksBestEffort();
-                        await _setDriveDownloadsEnabled(enabled, byStudentSwitch: true);
-                        if (dialogContext.mounted) setDialogState(() {});
-                      },
-                      onBackup: _uploadSyncBackup,
-                      onListBackups: _starSyncEngine.listBackups,
-                      onRestoreBackup: (id) {
-                        final account = _starSyncEngine.requireAccount();
-                        final generation = _starSyncEngine.accountGeneration;
-                        return _starSyncEngine.runBoundToAccount(
-                          expectedAccount: account,
-                          expectedGeneration: generation,
-                          action: () => _importSettings(() async {
-                            final bytes = await _starSyncEngine.downloadBackup(id);
-                            await _restoreSettingsFromText(
-                              utf8.decode(bytes),
-                              emptyMessage: 'バックアップが空です',
-                              alreadyConfirmed: true,
-                              fromSyncStorage: true,
-                              // A login navigation can end the session while
-                              // the restore waits; check before each write.
-                              beforeWrite: () {
-                                if (!_starSyncEngine.isBoundAccountCurrent(
-                                  expectedAccount: account,
-                                  expectedGeneration: generation,
-                                )) {
-                                  throw const StarSyncAccountMismatchException();
-                                }
-                              },
-                            );
-                          }),
-                        );
-                      },
-                      collectionEnabled: _starSyncEngine.collectionEnabled,
-                      onCollectionChanged: _starSyncEngine.setCollectionEnabled,
-                      googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
-                      isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
-                      // With Google sync set up, only its recorded account counts.
-                      googleEmail: () =>
-                          _starSyncEngine.config?.backend == StarSyncBackend.googleDrive
-                              ? _starSyncEngine.config?.googleEmail
-                              : _starSyncGoogleEmail,
-                      onGoogleCancelSignIn: _cancelGoogleSignIn,
-                      onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
-                        _starSyncGoogleEmail = await _signInGoogle();
-                        try {
-                          return await _starSyncEngine.setUpWithDrive(
-                            StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
-                            clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
-                          );
-                        } on Object {
-                          if (!_starSyncEngine.status.value.enabled) {
-                            await _setDriveDownloadsEnabled(false);
-                            await _signOutGoogle();
-                            _starSyncGoogleEmail = null;
-                          }
-                          rethrow;
-                        }
-                      },
-                      onGoogleSignOut: () async {
-                        try {
-                          // Off first: a failing warning must not leave it on.
-                          await _setDriveDownloadsEnabled(false);
-                          await _warnPendingDriveChecks();
-                        } finally {
-                          await _signOutGoogle(warn: false);
-                          _starSyncGoogleEmail = null;
-                        }
-                      },
-                      onGoogleReSignIn: () async {
-                        _starSyncGoogleEmail = await _signInGoogle();
-                        if (mounted) setState(() {});
-                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
-                      },
-                      onLocalStarCount: _starSyncEngine.localStarCount,
-                      onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
-                      onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
-                      onRequireAccount: () {
-                        final saved = starSyncAccountHash(_appSettings.savedLoginId);
-                        if (saved == null) throw const StarSyncAccountRequiredException();
-                        if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
-                        return _starSyncEngine.requireAccount();
-                      },
-                      onAccountGeneration: () => _starSyncEngine.accountGeneration,
-                      onSetUpWithDrive: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
-                          _starSyncEngine.setUpWithDrive(
-                            StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
-                            resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
-                          ),
-                      onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
-                      onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
-                      },
-                      onSyncNow: () async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
-                      },
-                      onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
-                      onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
-                      onChangePassphrase: (current, next) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.changePassphrase(current, next);
-                      },
-                      onListDevices: () async {
-                        await _ensureStarSyncLoaded();
-                        return _starSyncEngine.listDevices();
-                      },
-                      onDeleteDevice: (id) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.deleteDeviceFile(id);
-                      },
-                      onDisable: ({deleteOwnRemoteFile = false}) async {
-                        await _ensureStarSyncLoaded();
-                        final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
-                        await _starSyncEngine.disable(
-                          deleteOwnRemoteFile: deleteOwnRemoteFile,
-                        );
-                        if (google) {
-                          try {
-                            // Off first: a failing warning must not leave it on.
-                            await _setDriveDownloadsEnabled(false);
-                            await _warnPendingDriveChecks();
-                          } finally {
-                            await _signOutGoogle(warn: false);
-                            _starSyncGoogleEmail = null;
-                          }
-                        }
-                      },
-                      onReset: (passphrase) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.resetRemote(passphrase);
-                      },
-                      onRejoin: (passphrase) async {
-                        await _ensureStarSyncLoaded();
-                        await _starSyncEngine.rejoin(passphrase);
-                      },
-                    ),
-                  ),
+                ),
                 SettingsExpansionSection(
-                  title: 'バックアップ/診断',
-                  icon: Icons.health_and_safety_outlined,
-                  child: AppMaintenanceSection(
-                    onCheckUpdates: _checkForUpdates,
-                    onCreateBackup: _createManualBackup,
-                    onCreateErrorReport: _createErrorReportPackage,
-                    onExportSettings: _exportSettingsToClipboard,
-                    onImportSettings: () async {
-                      await _importSettingsFromClipboard();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onImportSettingsFromFile: () async {
-                      await _importSettingsFromFile();
-                      if (!dialogContext.mounted) {
-                        return;
-                      }
-                      setDialogState(() {});
-                    },
-                    onCheckDownloadDestination: _checkDownloadDestinationHealth,
-                    onCopyDiagnostics: _copyDiagnosticInfo,
+                  title: '同期とバックアップ',
+                  icon: Icons.sync,
+                  subtitle: '端末間の同期・バックアップ・設定の移行',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '端末間の同期',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      if (_messageStarsEnabled)
+                        StarSyncSection(
+                          status: _starSyncEngine.status,
+                          onBusyChanged: (busy) {
+                            starSyncBusy = busy;
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onBackup: _uploadSyncBackup,
+                          onListBackups: _starSyncEngine.listBackups,
+                          onRestoreBackup: (id) {
+                            final account = _starSyncEngine.requireAccount();
+                            final generation = _starSyncEngine.accountGeneration;
+                            return _starSyncEngine.runBoundToAccount(
+                              expectedAccount: account,
+                              expectedGeneration: generation,
+                              action: () => _importSettings(() async {
+                                final bytes = await _starSyncEngine.downloadBackup(id);
+                                await _restoreSettingsFromText(
+                                  utf8.decode(bytes),
+                                  emptyMessage: 'バックアップが空です',
+                                  alreadyConfirmed: true,
+                                  fromSyncStorage: true,
+                                  // A login navigation can end the session while
+                                  // the restore waits; check before each write.
+                                  beforeWrite: () {
+                                    if (!_starSyncEngine.isBoundAccountCurrent(
+                                      expectedAccount: account,
+                                      expectedGeneration: generation,
+                                    )) {
+                                      throw const StarSyncAccountMismatchException();
+                                    }
+                                  },
+                                );
+                              }),
+                            );
+                          },
+                          collectionEnabled: _starSyncEngine.collectionEnabled,
+                          onCollectionChanged: _starSyncEngine.setCollectionEnabled,
+                          googleAvailable: const StarSyncGoogleAuthConfig().isAvailable,
+                          isGoogleDrive: () => _starSyncEngine.config?.backend == StarSyncBackend.googleDrive,
+                          // With Google sync set up, only its recorded account counts.
+                          googleEmail: () =>
+                              _starSyncEngine.config?.backend == StarSyncBackend.googleDrive
+                                  ? _starSyncEngine.config?.googleEmail
+                                  : _starSyncGoogleEmail,
+                          onGoogleCancelSignIn: _cancelGoogleSignIn,
+                          onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                            _starSyncGoogleEmail = await _signInGoogle();
+                            try {
+                              return await _starSyncEngine.setUpWithDrive(
+                                StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
+                                clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                              );
+                            } on Object {
+                              if (!_starSyncEngine.status.value.enabled) {
+                                await _setDriveDownloadsEnabled(false);
+                                await _signOutGoogle();
+                                _starSyncGoogleEmail = null;
+                              }
+                              rethrow;
+                            }
+                          },
+                          onGoogleSignOut: () async {
+                            try {
+                              // Off first: a failing warning must not leave it on.
+                              await _setDriveDownloadsEnabled(false);
+                              await _warnPendingDriveChecks();
+                            } finally {
+                              await _signOutGoogle(warn: false);
+                              _starSyncGoogleEmail = null;
+                            }
+                          },
+                          onGoogleReSignIn: () async {
+                            _starSyncGoogleEmail = await _signInGoogle();
+                            if (mounted) setState(() {});
+                            await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                          },
+                          onLocalStarCount: _starSyncEngine.localStarCount,
+                          onLocalCollectionCounts: _starSyncEngine.localCollectionCounts,
+                          onSnapshotLocalStars: _starSyncEngine.snapshotLocalStars,
+                          onRequireAccount: () {
+                            final saved = starSyncAccountHash(_appSettings.savedLoginId);
+                            if (saved == null) throw const StarSyncAccountRequiredException();
+                            if (_activeLoginAccount != saved) throw const StarSyncActiveAccountRequiredException();
+                            return _starSyncEngine.requireAccount();
+                          },
+                          onAccountGeneration: () => _starSyncEngine.accountGeneration,
+                          onSetUpWithDrive: ({required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) =>
+                              _starSyncEngine.setUpWithDrive(
+                                StarSyncConfig(backend: StarSyncBackend.googleDrive, googleEmail: _starSyncGoogleAuth.currentEmail),
+                                resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
+                              ),
+                          onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
+                          onSetUp: (config, passphrase, {required resetExisting, required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.setUp(config, passphrase, resetExisting: resetExisting, clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration);
+                          },
+                          onSyncNow: () async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
+                          },
+                          onResumeKeepingLocal: _starSyncEngine.resumeKeepingLocal,
+                          onResumeDiscardingLocal: _starSyncEngine.resumeDiscardingLocal,
+                          onChangePassphrase: (current, next) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.changePassphrase(current, next);
+                          },
+                          onListDevices: () async {
+                            await _ensureStarSyncLoaded();
+                            return _starSyncEngine.listDevices();
+                          },
+                          onDeleteDevice: (id) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.deleteDeviceFile(id);
+                          },
+                          onDisable: ({deleteOwnRemoteFile = false}) async {
+                            await _ensureStarSyncLoaded();
+                            final google = _starSyncEngine.config?.backend == StarSyncBackend.googleDrive;
+                            await _starSyncEngine.disable(
+                              deleteOwnRemoteFile: deleteOwnRemoteFile,
+                            );
+                            if (google) {
+                              try {
+                                // Off first: a failing warning must not leave it on.
+                                await _setDriveDownloadsEnabled(false);
+                                await _warnPendingDriveChecks();
+                              } finally {
+                                await _signOutGoogle(warn: false);
+                                _starSyncGoogleEmail = null;
+                              }
+                            }
+                          },
+                          onReset: (passphrase) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.resetRemote(passphrase);
+                          },
+                          onRejoin: (passphrase) async {
+                            await _ensureStarSyncLoaded();
+                            await _starSyncEngine.rejoin(passphrase);
+                          },
+                        )
+                      else
+                        const Text('「学務情報システムの画面」の「連絡通知のスター」をオンにすると使えます。'),
+                      const Divider(height: 32),
+                      AppBackupSection(
+                        onCreateBackup: _createManualBackup,
+                        onExportSettings: _exportSettingsToClipboard,
+                        onImportSettings: () async {
+                          await _importSettingsFromClipboard();
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                        },
+                        onImportSettingsFromFile: () async {
+                          await _importSettingsFromFile();
+                          if (!dialogContext.mounted) {
+                            return;
+                          }
+                          setDialogState(() {});
+                        },
+                      ),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: null,
+                        flags: settingsBackupFeatureFlags,
+                      ),
+                    ],
+                  ),
+                ),
+                SettingsExpansionSection(
+                  title: '保存データ',
+                  icon: Icons.storage_outlined,
+                  subtitle: '履歴・資料・下書き・お気に入り',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppDataShortcutsSection(
+                        onShowDownloadHistory: _showDownloadHistoryDialog,
+                        onShowFailedDownloads: _showFailedDownloadsDialog,
+                        onShowCourseMaterials: _showCourseMaterialsDialog,
+                        onShowCachedReports: _showCachedReportsDialog,
+                        onShowDrafts: _showReportDraftsDialog,
+                        onShowChangeHistory: _showChangeHistoryDialog,
+                        onShowFavorites: _showFavoritesDialog,
+                        onShowDataManagement: _showDataManagementDialog,
+                      ),
+                      const Divider(height: 32),
+                      FeatureFlagsSection(
+                        settings: _appSettings,
+                        onChanged: onFlagChanged,
+                        title: '記録する内容',
+                        flags: settingsRecordingFeatureFlags,
+                      ),
+                    ],
                   ),
                 ),
                 SettingsExpansionSection(
                   title: 'このアプリについて',
                   icon: Icons.info_outline,
-                  child: AppAboutSection(
-                    onOpenUrl: (url) => unawaited(
-                      launchUrl(url, mode: LaunchMode.externalApplication),
-                    ),
+                  subtitle: 'バージョン・アップデート・不具合の報告',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AppAboutSection(
+                        onOpenUrl: (url) => unawaited(
+                          launchUrl(url, mode: LaunchMode.externalApplication),
+                        ),
+                      ),
+                      const Divider(height: 32),
+                      AppUpdateSection(
+                        settings: _appSettings,
+                        onFlagChanged: onFlagChanged,
+                        onCheckUpdates: _checkForUpdates,
+                      ),
+                      const Divider(height: 32),
+                      AppSupportSection(
+                        onCreateErrorReport: _createErrorReportPackage,
+                        onCopyDiagnostics: _copyDiagnosticInfo,
+                      ),
+                    ],
                   ),
                 ),
               ];

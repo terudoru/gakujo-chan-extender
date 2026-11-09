@@ -1396,6 +1396,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SettingsExpansionSection(
+            subtitle: 'セクションの説明',
             title: '連絡通知フィルタ',
             icon: Icons.filter_alt_outlined,
             focusNodeOnExpand: focusNode,
@@ -1417,6 +1418,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final editableText = tester.widget<EditableText>(find.byType(EditableText));
+    expect(find.text('セクションの説明'), findsOneWidget);
     expect(editableText.focusNode.hasFocus, isTrue);
 
     tester.testTextInput.enterText('集中講義');
@@ -1661,15 +1663,15 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AppMaintenanceSection(
+          body: SingleChildScrollView(child: Column(children: [
+          AppUpdateSection(settings: const GakujoAppSettings(), onFlagChanged: (_, _) {},
             onCheckUpdates: () async {
               checkedUpdates = true;
             },
+          ),
+          AppBackupSection(
             onCreateBackup: () async {
               createdBackup = true;
-            },
-            onCreateErrorReport: () async {
-              createdReport = true;
             },
             onExportSettings: () async {
               exported = true;
@@ -1680,29 +1682,47 @@ void main() {
             onImportSettingsFromFile: () async {
               importedFromFile = true;
             },
-            onCheckDownloadDestination: () async {
-              checked = true;
-            },
-            onCopyDiagnostics: () async {
-              diagnostics = true;
-            },
           ),
+          SettingsActionGroup(actions: [SettingsAction(label: '保存先を確認', icon: Icons.health_and_safety_outlined, run: () async { checked = true; })]),
+          AppSupportSection(
+            onCreateErrorReport: () async {
+              createdReport = true;
+            },
+            onCopyDiagnostics: () async { diagnostics = true; },
+          ),
+          ])),
         ),
       ),
     );
 
-    expect(find.text('バックアップと診断'), findsOneWidget);
+    expect(find.text('バックアップと設定の移行'), findsOneWidget);
     expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
     expect(find.text('ファイルから読み込み'), findsOneWidget);
 
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, '設定をコピー'));
     await tester.tap(find.widgetWithText(OutlinedButton, '設定をコピー'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '設定を読み込み'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'クリップボードから読み込み'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'クリップボードから読み込み'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存先を確認'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(TextButton, '診断情報をコピー'));
     await tester.tap(find.widgetWithText(TextButton, '診断情報をコピー'));
+    await tester.pumpAndSettle();
     await tester.pump();
 
     expect(checkedUpdates, isTrue);
@@ -1722,18 +1742,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AppMaintenanceSection(
+          body: AppUpdateSection(
+            settings: const GakujoAppSettings(),
+            onFlagChanged: (_, _) {},
             onCheckUpdates: () {
               checkCount += 1;
               return pendingCheck.future;
             },
-            onCreateBackup: () async {},
-            onCreateErrorReport: () async {},
-            onExportSettings: () async {},
-            onImportSettings: () async {},
-            onImportSettingsFromFile: () async {},
-            onCheckDownloadDestination: () async {},
-            onCopyDiagnostics: () async {},
           ),
         ),
       ),
@@ -1851,7 +1866,7 @@ void main() {
       ),
     );
 
-    expect(find.text('ダウンロード設定'), findsOneWidget);
+    expect(find.text('保存方法と保存先'), findsOneWidget);
     expect(find.text('ファイル保存モード'), findsOneWidget);
     expect(find.text('授業ごとに仕分けて指定フォルダに保存'), findsOneWidget);
     expect(find.text('仕分けずに指定フォルダに保存'), findsOneWidget);
