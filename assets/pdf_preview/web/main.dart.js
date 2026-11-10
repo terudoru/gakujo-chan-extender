@@ -94101,33 +94101,38 @@ A.avz.prototype={
 $0(){return this.a.y=!0},
 $S:0}
 A.avC.prototype={
-$1(a){var s,r,q,p,o,n="ArrayBuffer",m=a.source,l=v.G.window.parent
-if(m==null?l!=null:m!==l)return
-s=a.data
-m=s!=null
-l=!1
-if(m)if(t.m.b(s)){l=A.dD(s,n)
-l=!l}if(l){A.e9(s)
-r=s.type
-q=s.name
-m=!1
-if(r!=null)if(typeof r==="string")if(A.bG(r)==="mbg-preview-title")if(q!=null)m=typeof q==="string"
-if(m){m=this.a
-m.aD(new A.avw(m,B.d.kv(A.bG(q))))}return}if(m){m=A.dD(s,n)
-m=!m}else m=!0
-if(m)return
-p=A.aLZ(t.hA.a(s),0,null)
-m=this.a
-if(m.z||p.length===0||p.byteLength>67108864)return
-m.z=!0
-if(m.y)m.aD(new A.avx(m))
-m.ch=null
-l=A.ld(B.W_,t.X)
-o=new A.RE(p,m.galQ(),!0,!0,new A.nf("preview.pdf",l))
-l=m.ax
-if(l!=null)l.$0()
-m.ax=o.hl().a3(new A.avy())
-m.d.su(o)},
+$1(a){var s,r,q,p,o,n,m,l="ArrayBuffer",k=v.G.window.parent
+if(k!=null)if(a.source!==k){s=a.source
+r=k.top
+r=s==null?r!=null:s!==r
+s=r}else s=!1
+else s=!0
+if(s)return
+q=a.data
+s=q!=null
+r=!1
+if(s)if(t.m.b(q)){r=A.dD(q,l)
+r=!r}if(r){A.e9(q)
+p=q.type
+o=q.name
+s=!1
+if(p!=null)if(typeof p==="string")if(A.bG(p)==="mbg-preview-title")if(o!=null)s=typeof o==="string"
+if(s){s=this.a
+s.aD(new A.avw(s,B.d.kv(A.bG(o))))}return}if(s){s=A.dD(q,l)
+s=!s}else s=!0
+if(s)return
+n=A.aLZ(t.hA.a(q),0,null)
+s=this.a
+if(s.z||n.length===0||n.byteLength>67108864)return
+s.z=!0
+if(s.y)s.aD(new A.avx(s))
+s.ch=null
+r=A.ld(B.W_,t.X)
+m=new A.RE(n,s.galQ(),!0,!0,new A.nf("preview.pdf",r))
+r=s.ax
+if(r!=null)r.$0()
+s.ax=m.hl().a3(new A.avy())
+s.d.su(m)},
 $S:31}
 A.avw.prototype={
 $0(){var s=this.b,r=s.length

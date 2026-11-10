@@ -122,7 +122,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     web.window.addEventListener('mbg-pdf-text-limited', _textLimitListener);
     _previewListener = ((web.Event event) {
       final message = event as web.MessageEvent;
-      if (!identical(message.source, web.window.parent)) return;
+      // The app runs the page script in the top frame while this viewer is
+      // attached to CampusSquare's inner frame, so the browser reports the
+      // top window as the sender. Accept only the parent and its top window.
+      final parent = web.window.parent;
+      if (parent == null ||
+          (!identical(message.source, parent) &&
+              !identical(message.source, parent.top))) {
+        return;
+      }
       final data = message.data;
       if (data != null && data.isA<JSObject>() && !data.isA<JSArrayBuffer>()) {
         final object = data as JSObject;
