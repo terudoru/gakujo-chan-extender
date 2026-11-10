@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'image_view.dart' show previewTitleStyle;
+
 class TextPreview extends StatefulWidget {
   const TextPreview({super.key, required this.title, required this.text, this.note, required this.onMessage});
   final String title;
@@ -78,7 +80,10 @@ class _TextPreviewState extends State<TextPreview> {
     if (matches.isNotEmpty) unawaited(_scrollToCurrent());
   }
 
-  TextStyle get _style => TextStyle(fontSize: _fontSize, fontFamily: _mono ? 'monospace' : null, height: 1.4);
+  // CanvasKit has no system fonts: keep the bundled Japanese UI font and
+  // Unifont as the fallback for every glyph, including the monospace mode.
+  TextStyle get _style => TextStyle(fontSize: _fontSize, height: 1.4,
+      fontFamily: _mono ? 'Unifont' : 'MBGPreviewUI', fontFamilyFallback: const ['Unifont']);
 
   double _height(int index) => _heights.putIfAbsent(index, () {
     final painter = TextPainter(
@@ -92,7 +97,9 @@ class _TextPreviewState extends State<TextPreview> {
   });
 
   Future<void> _scrollToCurrent() async {
-    if (_matches.isEmpty || !_scroll.hasClients || _width <= 0) return;
+    if (_matches.isEmpty || !_scroll.hasClients || _width <= 0) {
+      return;
+    }
     final target = _matches[_current].line;
     final generation = _generation;
     var offset = 0.0;
@@ -101,7 +108,9 @@ class _TextPreviewState extends State<TextPreview> {
       if (i % 500 == 499) {
         await Future<void>.delayed(Duration.zero);
         if (!mounted || generation != _generation || !_scroll.hasClients ||
-            _matches.isEmpty || _matches[_current].line != target) return;
+            _matches.isEmpty || _matches[_current].line != target) {
+          return;
+        }
       }
     }
     if (_scroll.hasClients) _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
@@ -144,14 +153,14 @@ class _TextPreviewState extends State<TextPreview> {
       child: Focus(autofocus: true, child: Scaffold(
         appBar: AppBar(
           toolbarHeight: narrow ? 48 : null,
-          title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: previewTitleStyle),
           actions: [
             IconButton(tooltip: '検索', onPressed: () => setState(() => _searchOpen = !_searchOpen), icon: const Icon(Icons.search)),
             IconButton(tooltip: '縮小', onPressed: () => resize(-2), icon: const Icon(Icons.text_decrease)),
             IconButton(tooltip: '拡大', onPressed: () => resize(2), icon: const Icon(Icons.text_increase)),
             PopupMenuButton<String>(tooltip: 'その他', onSelected: option, itemBuilder: (_) => [
-              CheckedPopupMenuItem(value: 'wrap', checked: _wrap, child: const Text('折り返し')),
-              CheckedPopupMenuItem(value: 'mono', checked: _mono, child: const Text('等幅')),
+              CheckedPopupMenuItem(value: 'wrap', checked: _wrap, child: const Text('折り返し', style: previewTitleStyle)),
+              CheckedPopupMenuItem(value: 'mono', checked: _mono, child: const Text('等幅', style: previewTitleStyle)),
             ]),
             IconButton(tooltip: '閉じる', onPressed: () => widget.onMessage('mbg-preview-close'), icon: const Icon(Icons.close)),
           ],
@@ -167,8 +176,8 @@ class _TextPreviewState extends State<TextPreview> {
         ),
         body: Column(children: [
           if (widget.note != null && widget.note!.isNotEmpty && !_noteDismissed)
-            MaterialBanner(content: Text(widget.note!), actions: [TextButton(onPressed: () => setState(() => _noteDismissed = true), child: const Text('閉じる'))]),
-          if (_limited) const Text('検索結果は10000件まで表示しています。'),
+            MaterialBanner(content: Text(widget.note!, style: previewTitleStyle), actions: [TextButton(onPressed: () => setState(() => _noteDismissed = true), child: const Text('閉じる', style: previewTitleStyle))]),
+          if (_limited) const Text('検索結果は10000件まで表示しています。', style: previewTitleStyle),
           Expanded(child: LayoutBuilder(builder: (context, constraints) {
             final longest = _wrap ? 0 : _longestLine;
             final width = _wrap ? constraints.maxWidth : math.max(constraints.maxWidth, math.min(20000.0, longest * _fontSize * 1.2));

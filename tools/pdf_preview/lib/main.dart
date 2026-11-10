@@ -27,7 +27,12 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ThemeData(fontFamily: 'MBGPreviewUI');
+    // Name the bundled fonts on the whole theme (not only textTheme), so
+    // banners, buttons and menus also fall back to Unifont for any glyph.
+    final theme = ThemeData(
+      fontFamily: 'MBGPreviewUI',
+      fontFamilyFallback: const ['Unifont'],
+    );
     return MaterialApp(
       title: 'PDFプレビュー',
       locale: const Locale('ja'),
