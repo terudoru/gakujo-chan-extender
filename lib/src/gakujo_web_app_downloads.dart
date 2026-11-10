@@ -1222,8 +1222,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           open: open,
           length: length,
           automatic: true,
+          folderId: _driveDownloadPreference.folderIdFor(email),
         );
         if (allowed() && mounted) _showSnackBar('Google ドライブに保存しました');
+      } on GoogleDriveSaveFolderMissing {
+        if (allowed() && mounted) {
+          _showSnackBar('Google ドライブの保存先フォルダが見つからないため、保存できませんでした。設定で保存先を選び直してください');
+        }
+      } on GoogleDriveSaveFolderShared catch (error) {
+        if (allowed() && mounted) _showSnackBar(error.toString());
       } on GoogleDriveSaveTooLarge {
         if (allowed() && mounted) _showSnackBar('ファイルが大きすぎるため、Google ドライブへの自動保存を見送りました');
       } on GoogleDriveSaveSoftLimit {

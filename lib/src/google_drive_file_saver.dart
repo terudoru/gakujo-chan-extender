@@ -13,6 +13,18 @@ import 'star_sync/star_sync_transport.dart';
 
 const googleDrivePendingChecksKey = 'more_better_gakujo_drive_pending_checks';
 
+class GoogleDriveFolder {
+  const GoogleDriveFolder({
+    required this.id,
+    required this.name,
+    required this.path,
+  });
+
+  final String id;
+  final String name;
+  final String path;
+}
+
 class GoogleDriveFileSaver {
   GoogleDriveFileSaver({
     required this._accessToken,
@@ -177,6 +189,92 @@ class GoogleDriveFileSaver {
       page = next as String?;
     } while (page != null && page.isNotEmpty);
     return files;
+  }
+
+  Future<String> _chosenFolder(String id) async {
+    final response = await _request(
+      'GET',
+      _uri('/drive/v3/files/${Uri.encodeComponent(id)}', {
+        'fields': 'id,mimeType,ownedByMe,shared,trashed',
+      }),
+    );
+    if (response.statusCode == 404) throw const GoogleDriveSaveFolderMissing();
+    final file = _json(response);
+    if (file['id'] != id ||
+        file['trashed'] == true ||
+        file['mimeType'] != _folderMime) {
+      throw const GoogleDriveSaveFolderMissing();
+    }
+    if (file['ownedByMe'] != true || file['shared'] != false) {
+      throw const GoogleDriveSaveFolderShared();
+    }
+    return id;
+  }
+
+  Future<List<GoogleDriveFolder>> listFolders() async {
+    final entries = <String, Map<String, dynamic>>{};
+    String? page;
+    do {
+      final result = _json(
+        await _request('GET', _uri('/drive/v3/files', {
+          'q': "mimeType='$_folderMime' and trashed=false",
+          'fields': 'nextPageToken,files(id,name,parents,ownedByMe,shared)',
+          'pageSize': '1000',
+          'pageToken': ?page,
+        })),
+      );
+      final files = result['files'];
+      if (files is! List) throw const FormatException('Invalid Drive file list');
+      for (final item in files) {
+        final file = Map<String, dynamic>.from(item as Map);
+        if (file['ownedByMe'] == true && file['shared'] == false) {
+          if (file['name'] is! String) {
+            throw const FormatException('Missing Drive name');
+          }
+          entries[_id(file)] = file;
+        }
+      }
+      final next = result['nextPageToken'];
+      if (next != null && next is! String) {
+        throw const FormatException('Invalid page token');
+      }
+      page = next as String?;
+    } while (page != null && page.isNotEmpty);
+
+    final folders = <GoogleDriveFolder>[];
+    for (final entry in entries.entries) {
+      final names = <String>[];
+      final seen = <String>{};
+      var id = entry.key;
+      while (entries.containsKey(id) && seen.add(id)) {
+        final file = entries[id]!;
+        names.add(file['name'] as String);
+        final parents = file['parents'];
+        if (parents is! List || parents.isEmpty || parents.first is! String) {
+          break;
+        }
+        id = parents.first as String;
+      }
+      folders.add(
+        GoogleDriveFolder(
+          id: entry.key,
+          name: entry.value['name'] as String,
+          path: names.reversed.join(' / '),
+        ),
+      );
+    }
+    folders.sort((a, b) => a.path.compareTo(b.path));
+    return folders;
+  }
+
+  Future<GoogleDriveFolder> createFolder(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) throw ArgumentError('Empty folder name');
+    final sanitized = trimmed
+        .replaceAll(RegExp(r'[\\/\x00-\x1f\x7f]'), '_')
+        .trim();
+    final id = await _folder(sanitized, 'root');
+    return GoogleDriveFolder(id: id, name: sanitized, path: sanitized);
   }
 
   Future<String> _folder(String name, String parent) async {
@@ -451,6 +549,7 @@ class GoogleDriveFileSaver {
     required Stream<List<int>> Function() open,
     required int length,
     String? mimeType,
+    String? folderId,
     bool automatic = false,
   }) => runZoned(
     () => _saveFile(
@@ -459,6 +558,7 @@ class GoogleDriveFileSaver {
       open: open,
       length: length,
       mimeType: mimeType,
+      folderId: folderId,
       automatic: automatic,
     ),
     zoneValues: {#driveSaveAutomatic: automatic},
@@ -470,6 +570,7 @@ class GoogleDriveFileSaver {
     required Stream<List<int>> Function() open,
     required int length,
     String? mimeType,
+    String? folderId,
     required bool automatic,
   }) async {
     if (length < 0 || fileName.isEmpty) throw ArgumentError('Invalid file');
@@ -492,7 +593,9 @@ class GoogleDriveFileSaver {
     final course = courseName
         .replaceAll(RegExp(r'[\\/\x00-\x1f\x7f]'), '_')
         .trim();
-    final root = await _folder('More Better Gakujo', 'root');
+    final root = folderId == null
+        ? await _folder('More Better Gakujo', 'root')
+        : await _chosenFolder(folderId);
     final parent = await _folder(course.isEmpty ? 'その他' : course, root);
     final createdParent = parent != root && _createdFolders.contains(parent);
     // Until the pending record exists nothing would revisit a course folder
@@ -727,6 +830,13 @@ class GoogleDriveSaveSoftLimit implements Exception {
 
 class GoogleDriveSaveTooLarge implements Exception {
   const GoogleDriveSaveTooLarge();
+}
+
+class GoogleDriveSaveFolderMissing implements Exception {
+  const GoogleDriveSaveFolderMissing();
+
+  @override
+  String toString() => '保存先のフォルダが見つからないため、Google ドライブに保存できませんでした';
 }
 
 class GoogleDriveSaveFolderShared implements Exception {

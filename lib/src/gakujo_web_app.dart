@@ -97,6 +97,7 @@ import 'windows_webview_authenticated_download.dart';
 import 'widgets/app_about_section.dart';
 import 'widgets/app_data_sections.dart';
 import 'widgets/app_update_banner.dart';
+import 'widgets/drive_save_folder_dialog.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/linux_native_toolbar_tooltips.dart';
@@ -3222,6 +3223,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             }
                           },
                         ),
+                        if (_driveDownloadsEnabled && _starSyncGoogleEmail != null)
+                          DriveSaveFolderTile(
+                            name: _driveDownloadPreference.folderNameFor(_starSyncGoogleEmail),
+                            onChange: () async {
+                              await _chooseDriveSaveFolder(dialogContext);
+                              if (dialogContext.mounted) setDialogState(() {});
+                            },
+                          ),
                       ],
                     ],
                   ),
@@ -5791,6 +5800,56 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           includeStarredMessages: includeStarredMessages,
         ),
       );
+
+  Future<void> _chooseDriveSaveFolder(BuildContext dialogContext) async {
+    final email = _starSyncGoogleEmail;
+    if (email == null) return;
+    final saver = GoogleDriveFileSaver(
+      account: email,
+      accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
+        _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
+      ),
+    );
+    try {
+      final result = await showDialog<DriveSaveFolderResult>(
+        context: dialogContext,
+        builder: (_) => DriveSaveFolderDialog(
+          currentId: _driveDownloadPreference.folderIdFor(email),
+          load: () async {
+            try {
+              return await saver.listFolders();
+            } on Object {
+              if (mounted) _showSnackBar('Google ドライブのフォルダ一覧を取得できませんでした');
+              rethrow;
+            }
+          },
+          create: (name) async {
+            try {
+              return await saver.createFolder(name);
+            } on Object {
+              if (mounted) _showSnackBar('Google ドライブのフォルダを作成できませんでした');
+              rethrow;
+            }
+          },
+        ),
+      );
+      if (result == null || !mounted) return;
+      await _driveDownloadQueue.runExclusive(() async {
+        if (!_driveDownloadsEnabled || _starSyncGoogleEmail != email ||
+            _starSyncGoogleAuth.currentEmail != email) {
+          throw const GoogleDriveAccountChanged();
+        }
+        await _driveDownloadPreference.saveFolder(
+          result.folder?.id, result.folder?.name, email,
+        );
+      });
+      if (mounted) setState(() {});
+    } on Object {
+      if (mounted) _showSnackBar('Google ドライブの保存先を変更できませんでした');
+    } finally {
+      saver.close();
+    }
+  }
 
   Future<File> _driveDownloadsPreferenceFile() async {
     final directory = await getApplicationSupportDirectory();
