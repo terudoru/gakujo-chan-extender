@@ -253,16 +253,125 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         setScale: function(scale) { setZoom(scale * 100); }
       });
     }
+    function openFlutterViewer(send: (viewer: Window) => void, onFailure: () => void, onTimeout?: () => void) {
+      flutterViewerActive = true; resizeToolbar();
+      var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
+      var frame = popup ? null : doc.createElement('iframe');
+      var viewer: Window | null = null, popupTimer: number | null = null;
+      var sent = false;
+      if (frame) {
+        frame.setAttribute('title', 'PDFプレビュー');
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
+      }
+      body.style.cssText = 'position:relative;overflow:hidden;flex:1;min-height:0;padding:0';
+      status.style.cssText = 'position:absolute;z-index:1;top:0;left:0;right:0;text-align:center;pointer-events:none';
+      zoomOut.hidden = zoomIn.hidden = true;
+      function onViewerMessage(event: MessageEvent) {
+        if (closed || pdfStopped || event.source !== viewer) return;
+        if (event.data === 'mbg-preview-ready' && !sent) {
+          sent = true;
+          if (watchdog) window.clearTimeout(watchdog);
+          watchdog = window.setTimeout(onTimeout || onFailure, 30000);
+          viewer!.postMessage({type: 'mbg-preview-title', name: file.name}, '*');
+          send(viewer!);
+        } else if (event.data === 'mbg-preview-password-requested' && sent) {
+          if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+          status.textContent = '';
+        } else if (event.data === 'mbg-preview-password-finished' && sent) {
+          armWatchdog();
+        } else if (event.data === 'mbg-preview-loaded' && sent) {
+          if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+          status.textContent = '';
+        } else if (event.data === 'mbg-preview-close') {
+          cleanup();
+        } else if (event.data === 'mbg-preview-failed') {
+          onFailure();
+        }
+      }
+      sourceWindow.addEventListener('message', onViewerMessage);
+      pdfViewerCleanup = function() {
+        sourceWindow.removeEventListener('message', onViewerMessage);
+        if (popupTimer) window.clearInterval(popupTimer);
+        if (frame) frame.remove();
+        else if (viewer) { try { viewer.close(); } catch (_) {} }
+        previewFrame = null;
+      };
+      if (popup) {
+        viewer = sourceWindow.open(window.__MBG_PDF_PREVIEW_URL, '_blank');
+        if (!viewer) { onFailure(); return; }
+        if (!preview.visible) mbgPreviewReport('hidden');
+        popupTimer = window.setInterval(function() {
+          try { if (viewer!.closed) cleanup(); } catch (_) { cleanup(); }
+        }, 500);
+      } else {
+        previewFrame = frame;
+        resizeToolbar();
+        frame!.src = window.__MBG_PDF_PREVIEW_URL!;
+        body.appendChild(frame!);
+        viewer = frame!.contentWindow;
+      }
+    }
+    function showRichPreview(payload: () => Promise<object>, fallback: () => void) {
+      if (!window.__MBG_PDF_PREVIEW_URL && !(window.MbgUploadCompression && window.MbgUploadCompression.postMessage)) { fallback(); return; }
+      var finished = false;
+      function fallbackOnce() {
+        if (closed || pdfStopped || finished) return;
+        finished = true;
+        if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+        if (cancelLibrary) { var cancel = cancelLibrary; cancelLibrary = null; cancel(); }
+        if (pdfViewerCleanup) { var dispose = pdfViewerCleanup; pdfViewerCleanup = null; dispose(); }
+        flutterViewerActive = false; resizeToolbar();
+        body.style.cssText = 'overflow:auto;flex:1;text-align:center;padding:12px';
+        status.style.cssText = ''; zoomOut.hidden = zoomIn.hidden = false;
+        fallback();
+      }
+      if (watchdog) window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(fallbackOnce, 30000);
+      pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
+        if (closed || pdfStopped || finished) return null;
+        if (!window.__MBG_PDF_PREVIEW_URL) { fallbackOnce(); return null; }
+        return payload();
+      }).then(function(message) {
+        if (!message || closed || pdfStopped || finished) return;
+        openFlutterViewer(function(viewer) {
+          var image = message as {data?: ArrayBuffer};
+          if (image.data) viewer.postMessage(message, '*', [image.data]);
+          else viewer.postMessage(message, '*');
+        }, fallbackOnce);
+      }).catch(fallbackOnce);
+    }
+    function showText(text: string, note?: string) {
+      function fallback() {
+        if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+        var pre = doc.createElement('pre');
+        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
+        pre.textContent = text; body.appendChild(pre);
+        enableVisualZoom(pre, true); status.textContent = note || '';
+      }
+      if (text.length > 4000000) { fallback(); return; }
+      showRichPreview(function() { return Promise.resolve({type: 'mbg-preview-text', text: text, note: note}); }, fallback);
+    }
     var extension = (file.name.split('.').pop() || '').toLowerCase();
     if (file.type.indexOf('image/') === 0 || /^(jpg|jpeg|png|webp)$/.test(extension)) {
       mbgValidateImage(file).then(function() {
         if (closed) return;
-        objectUrl = URL.createObjectURL(file);
-        var image = doc.createElement('img'); image.alt = file.name;
-        image.style.cssText = 'width:100%;height:auto';
-        image.onerror = function() { fail(new Error('画像を開けません')); };
-        image.src = objectUrl; body.appendChild(image); status.textContent = '';
-        enableVisualZoom(image, false);
+        function fallback() {
+          objectUrl = URL.createObjectURL(file);
+          var image = doc.createElement('img'); image.alt = file.name;
+          image.style.cssText = 'width:100%;height:auto';
+          image.onerror = function() { fail(new Error('画像を開けません')); };
+          image.src = objectUrl; body.appendChild(image); status.textContent = '';
+          enableVisualZoom(image, false);
+        }
+        if (file.size > 64 * 1024 * 1024) { fallback(); return; }
+        showRichPreview(function() {
+          return file.arrayBuffer().then(function(data) {
+            var b = new Uint8Array(data);
+            var mime = b[0] === 137 ? 'image/png' : b[0] === 255 ? 'image/jpeg' : 'image/webp';
+            return {type: 'mbg-preview-image', data: data, mime: mime};
+          });
+        }, fallback);
       }).catch(fail);
     } else if (file.type === 'application/pdf' || extension === 'pdf') {
       if (file.size > 64 * 1024 * 1024) { fail(new Error('PDFが大きすぎます')); return; }
@@ -280,64 +389,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       }).then(function(bytes) {
         if (closed || pdfStopped || !bytes) return null;
         if (window.__MBG_PDF_PREVIEW_URL) {
-          flutterViewerActive = true; resizeToolbar();
-          var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
-          var frame = popup ? null : doc.createElement('iframe');
-          var viewer: Window | null = null, popupTimer: number | null = null;
-          var sent = false;
-          if (frame) {
-            frame.setAttribute('title', 'PDFプレビュー');
-            frame.setAttribute('sandbox', 'allow-scripts');
-            frame.style.cssText = 'width:100%;height:100%;border:0;display:block';
-          }
-          body.style.cssText = 'position:relative;overflow:hidden;flex:1;min-height:0;padding:0';
-          status.style.cssText = 'position:absolute;z-index:1;top:0;left:0;right:0;text-align:center;pointer-events:none';
-          zoomOut.hidden = zoomIn.hidden = true;
-          function onViewerMessage(event: MessageEvent) {
-            if (closed || pdfStopped || event.source !== viewer) return;
-            if (event.data === 'mbg-preview-ready' && !sent) {
-              sent = true;
-              armWatchdog();
-              viewer!.postMessage({type: 'mbg-preview-title', name: file.name}, '*');
-              viewer!.postMessage(bytes, '*', [bytes!]);
-              bytes = null;
-            } else if (event.data === 'mbg-preview-password-requested' && sent) {
-              if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
-              status.textContent = '';
-            } else if (event.data === 'mbg-preview-password-finished' && sent) {
-              armWatchdog();
-            } else if (event.data === 'mbg-preview-loaded' && sent) {
-              if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
-              status.textContent = '';
-            } else if (event.data === 'mbg-preview-close') {
-              cleanup();
-            } else if (event.data === 'mbg-preview-failed') {
-              fail(new Error('PDFを開けません'));
-            }
-          }
-          sourceWindow.addEventListener('message', onViewerMessage);
-          pdfViewerCleanup = function() {
-            sourceWindow.removeEventListener('message', onViewerMessage);
-            if (popupTimer) window.clearInterval(popupTimer);
-            if (frame) frame.remove();
-            else if (viewer) { try { viewer.close(); } catch (_) {} }
-            previewFrame = null;
-            bytes = null;
-          };
-          if (popup) {
-            viewer = sourceWindow.open(window.__MBG_PDF_PREVIEW_URL, '_blank');
-            if (!viewer) { fail(new Error('PDFプレビューを開けません')); return null; }
-            if (!preview.visible) mbgPreviewReport('hidden');
-            popupTimer = window.setInterval(function() {
-              try { if (viewer!.closed) cleanup(); } catch (_) { cleanup(); }
-            }, 500);
-          } else {
-            previewFrame = frame;
-            resizeToolbar();
-            frame!.src = window.__MBG_PDF_PREVIEW_URL;
-            body.appendChild(frame!);
-            viewer = frame!.contentWindow;
-          }
+          openFlutterViewer(function(viewer) { viewer.postMessage(bytes, '*', [bytes!]); bytes = null; },
+            function() { fail(new Error('PDFを開けません')); }, function() {
+              stopPdf(); flutterViewerActive = false; resizeToolbar();
+              if (!closed) status.textContent = 'プレビューがタイムアウトしました。元のファイルは変更されません。';
+            });
           return null;
         }
         worker = new Worker(window.__MBG_PDF_WORKER_URL!);
@@ -411,13 +467,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         return mbgOfficeText(bytes, extension, function() { return closed || pdfStopped; });
       }).then(function(text) {
         if (closed || pdfStopped || text === null) return;
-        var pre = doc.createElement('pre');
-        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
-        pre.textContent = text;
-        body.appendChild(pre);
-        enableVisualZoom(pre, true);
-        status.textContent = 'テキストのみ表示しています。書式・画像・数式の表示は元の文書と異なります。';
-        if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
+        showText(text, 'テキストのみ表示しています。書式・画像・数式の表示は元の文書と異なります。');
       }).catch(fail);
     } else if (/^(txt|csv|tsv|md|log|json|xml|yaml|yml)$/i.test(extension) ||
         /^text\/(plain|csv|tab-separated-values)$/i.test(file.type) ||
@@ -438,11 +488,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
             text = new TextDecoder('shift_jis', {fatal: true}).decode(data);
           }
         } catch (_) { fail(new Error('テキストの文字コードを読み取れません')); return; }
-        var pre = doc.createElement('pre');
-        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;text-align:left';
-        pre.textContent = text;
-        body.appendChild(pre); status.textContent = '';
-        enableVisualZoom(pre, true);
+        showText(text);
       };
       reader.onerror = function() { reader = null; fail(new Error('テキストを読み込めません')); };
       reader.onabort = function() { reader = null; };

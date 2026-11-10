@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entries: ({ source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true; asset?: false } | { source: string; output: string; asset: true; name?: never; kind?: never; config?: never })[] = [
   { source: 'web_scripts/src/message_star_refresh/main.ts', output: 'lib/src/generated/message_star_refresh.g.dart', name: 'gakujoMessageStarRefreshJs', config: true },
   { source: 'web_scripts/src/course_name_estimate/main.ts', output: 'lib/src/generated/course_name_estimate.g.dart', name: 'gakujoCourseNameEstimateJs', kind: 'expression' },
+  { source: 'web_scripts/src/history_marker/main.ts', output: 'lib/src/generated/history_marker.g.dart', name: 'gakujoHistoryMarkerJs', kind: 'expression', config: true },
   { source: 'web_scripts/src/preview_navigate/main.ts', output: 'lib/src/generated/preview_navigate.g.dart', name: 'gakujoPreviewNavigateJs', kind: 'expression', config: true },
   { source: 'web_scripts/src/pdf_preview_ready/main.ts', output: 'lib/src/generated/pdf_preview_ready.g.dart', name: 'gakujoPdfPreviewReadyJs', kind: 'expression', config: true },
   { source: 'web_scripts/src/navigator_user_agent/main.ts', output: 'lib/src/generated/navigator_user_agent.g.dart', name: 'gakujoNavigatorUserAgentJs', kind: 'expression' },

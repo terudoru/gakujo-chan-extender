@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+
+const require = createRequire(new URL('../web_scripts/package.json', import.meta.url));
+const ts = require('typescript');
+function loadModule(path: string, imports: Record<string, any> = {}) {
+  const source = readFileSync(path, 'utf8');
+  const output = ts.transpileModule(source, { compilerOptions: {
+    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
+  } }).outputText;
+  const exports: any = {};
+  runInNewContext(output, { exports, require: (name: string) => imports[name], Uint8Array, WeakSet });
+  return exports;
+}
+const { historyMarker } = loadModule('web_scripts/src/history_marker/marker.ts');
+
+function documentWithWindow() {
+  const listeners: any[] = [];
+  const loadListeners: any[] = [];
+  const buttons: any[] = [];
+  const history: any = { state: { existing: 42 }, replaceState(value: any) { this.state = value; } };
+  const doc: any = { documentElement: {}, defaultView: { history },
+    addEventListener(type: string, listener: any, capture: boolean) {
+      if (type === 'click') { assert.equal(capture, true); listeners.push(listener); }
+      if (type === 'load') loadListeners.push(listener);
+    },
+    querySelectorAll() { return buttons; },
+  };
+  function button(label: string) {
+    const item: any = { previousElementSibling: { tagName: 'A', textContent: label },
+      closest() { return item; }, click() { listeners.forEach(fn => fn({ target: item })); item.clicked++; }, clicked: 0 };
+    buttons.push(item);
+    return item;
+  }
+  return { doc, history, button, buttons, listeners, loadListeners };
+}
+const top = documentWithWindow();
+const frame = documentWithWindow();
+const messages: string[] = [];
+const crossOrigin = Object.defineProperty({}, 'document', { get() { throw Error('cross origin'); } });
+const win: any = { document: top.doc, history: top.history,
+  frames: [crossOrigin, { document: frame.doc, frames: [] }],
+  crypto: { getRandomValues(bytes: Uint8Array) { bytes.fill(13); } },
+  MbgPreviewNavigation: { postMessage(message: string) { messages.push(message); } },
+  setInterval() { return 1; }, clearInterval() {},
+};
+assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'bad' }), false);
+assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'starred' }), 'ok');
+assert.equal(top.history.state.existing, 42);
+assert.deepEqual(JSON.parse(historyMarker(win, { action: 'read' })), { dialog: 'starred', preview: null });
+assert.equal(historyMarker(win, { action: 'install-preview-tracker' }), 'ok');
+assert.equal(historyMarker(win, { action: 'install-preview-tracker' }), 'ok');
+assert.equal(frame.listeners.length, 1);
+const late = documentWithWindow();
+win.frames.push({ document: late.doc, frames: [] });
+top.loadListeners[0]();
+assert.equal(late.listeners.length, 1);
+const first = frame.button(' first ');
+const second = frame.button(' document.pdf ');
+second.click();
+const token = frame.history.state.__mbgPreview.token;
+assert.equal(frame.history.state.__mbgPreview.index, 1);
+assert.equal(frame.history.state.__mbgPreview.name, 'document.pdf');
+assert.equal(messages[0], 'token:' + token);
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).preview, token);
+assert.equal(historyMarker(win, { action: 'reopen-preview', token: 'bad!' }), false);
+assert.equal(historyMarker(win, { action: 'reopen-preview', token: 'xxxxxxxx' }), false);
+frame.buttons.reverse();
+assert.equal(historyMarker(win, { action: 'reopen-preview', token }), true);
+assert.equal(second.clicked, 2);
+assert.equal(first.clicked, 0);
+frame.buttons.length = 0;
+assert.equal(historyMarker(win, { action: 'reopen-preview', token }), false);

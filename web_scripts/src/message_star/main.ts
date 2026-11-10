@@ -107,7 +107,11 @@ function messageStar() {
     button.setAttribute('data-mbg-message-star', 'true');
     button.setAttribute('aria-label', label);
     button.title = label;
-    button.style.cssText = 'font:inherit;font-size:18px;line-height:1.2;padding:2px 5px;margin-right:4px;cursor:pointer;';
+    // A 36 px target with clear gaps, so a press meant for the star does not
+    // land on the neighbouring checkbox or title link.
+    button.style.cssText = 'font:inherit;font-size:22px;line-height:1;box-sizing:border-box;' +
+      'display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;' +
+      'min-width:36px;min-height:36px;padding:4px 8px;margin:2px 10px 2px 6px;cursor:pointer;touch-action:manipulation;';
     button.addEventListener('click', function(event) {
       event.preventDefault();
       event.stopPropagation();

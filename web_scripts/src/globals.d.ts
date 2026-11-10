@@ -37,6 +37,7 @@ interface MbgSubmitHookOwner {
   original?: MbgSubmitHookFunction;
 }
 interface Window {
+  __MBG_HISTORY_TRACKER_INSTALLED?: boolean;
   __MBG_MESSAGE_READER_WATCH_DISPOSE?: () => void;
   __MBG_REPORT_SORTER_WATCH_DISPOSE?: () => void;
   __MBG_REPORT_DRAFT_WATCH_DISPOSE?: () => void;
