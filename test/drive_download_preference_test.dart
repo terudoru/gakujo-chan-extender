@@ -76,6 +76,42 @@ void main() {
     expect(preference.boundAccount, isNull);
   });
 
+  test('folder persists across reload and toggle changes for its account', () async {
+    final preference = DriveDownloadPreference(storage: storage);
+    await preference.save(true, 'account', 'a@example.com');
+    await preference.saveFolder('folder', 'School', 'a@example.com');
+    await preference.save(false, null);
+    await preference.save(true, 'account', 'a@example.com');
+    final reloaded = DriveDownloadPreference(storage: storage);
+    await reloaded.load(legacy);
+    expect(reloaded.folderIdFor('a@example.com'), 'folder');
+    expect(reloaded.folderNameFor('a@example.com'), 'School');
+    expect(reloaded.folderIdFor('b@example.com'), isNull);
+    expect(reloaded.folderNameFor(null), isNull);
+    await reloaded.clear();
+    expect(reloaded.folderIdFor('a@example.com'), isNull);
+    expect(storage.values, isNot(contains(DriveDownloadPreference.key)));
+  });
+
+  test('old JSON loads and clearing a folder keeps the toggle', () async {
+    await storage.write(
+      key: DriveDownloadPreference.key,
+      value: '{"enabled":true,"boundAccount":"account","boundGoogleEmail":"a@example.com"}',
+    );
+    final preference = DriveDownloadPreference(storage: storage);
+    await preference.load(legacy);
+    expect(preference.enabled, isTrue);
+    expect(preference.folderIdFor('a@example.com'), isNull);
+    await preference.saveFolder('folder', 'School', 'a@example.com');
+    await preference.saveFolder(null, 'ignored', 'a@example.com');
+    final reloaded = DriveDownloadPreference(storage: storage);
+    await reloaded.load(legacy);
+    expect(reloaded.enabled, isTrue);
+    expect(reloaded.folderId, isNull);
+    expect(reloaded.folderName, isNull);
+    expect(reloaded.folderEmail, isNull);
+  });
+
   test('cancellation drops waiting jobs and invalidates the active job', () async {
     final queue = DriveDownloadQueue();
     final started = Completer<void>();

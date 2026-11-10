@@ -112,7 +112,7 @@ void main() {
           request.uri.path != '/drive/v3/files') {
         expect(
           request.uri.queryParameters['fields'],
-          'id,ownedByMe,shared,trashed',
+          anyOf('id,ownedByMe,shared,trashed', 'id,mimeType,ownedByMe,shared,trashed'),
         );
         if (quotaOnCheck && uploads > 0) {
           response.statusCode = 403;
@@ -137,6 +137,21 @@ void main() {
         final query = request.uri.queryParameters['q']!;
         queries.add(query);
         fields.add(request.uri.queryParameters['fields']);
+        if (query == "mimeType='application/vnd.google-apps.folder' and trashed=false") {
+          final folders = files.where((f) =>
+              f['mimeType'] == 'application/vnd.google-apps.folder' &&
+              f['trashed'] != true).map((f) => {
+                ...f,
+                'parents': [f['parent']],
+              }).toList();
+          final second = request.uri.queryParameters['pageToken'] == 'next';
+          response.write(jsonEncode({
+            'files': second ? folders.skip(2).toList() : folders.take(2).toList(),
+            if (!second && folders.length > 2) 'nextPageToken': 'next',
+          }));
+          await response.close();
+          return;
+        }
         final children = RegExp(
           r"^'((?:\\.|[^'])*)' in parents and trashed=false$",
         ).firstMatch(query);
@@ -316,6 +331,99 @@ void main() {
       }
     },
   );
+
+  Map<String, dynamic> folder(String id, String name, String parent, {
+    bool owned = true,
+    bool shared = false,
+    bool trashed = false,
+  }) => {
+    'id': id,
+    'name': name,
+    'parent': parent,
+    'mimeType': 'application/vnd.google-apps.folder',
+    'ownedByMe': owned,
+    'shared': shared,
+    'trashed': trashed,
+    'createdTime': '2026-01-01T00:00:00Z',
+  };
+
+  Future<String> saveChosen(String id) => saver.saveFile(
+    courseName: 'Course',
+    fileName: 'file',
+    folderId: id,
+    length: 1,
+    open: () => Stream.value([0]),
+  );
+
+  test('saves course folder under the selected folder', () async {
+    files.add(folder('chosen', 'Chosen', 'root'));
+    expect(await saveChosen('chosen'), 'uploaded');
+    final course = files.singleWhere((f) => f['name'] == 'Course');
+    expect(course['parent'], 'chosen');
+    expect(uploadParent, course['id']);
+    expect(queries.any((q) => q.contains('More Better Gakujo')), isFalse);
+  });
+
+  test('missing selected folder does not upload', () async {
+    await expectLater(saveChosen('missing'), throwsA(isA<GoogleDriveSaveFolderMissing>()));
+    expect(uploads, 0);
+  });
+
+  test('trashed selected folder does not upload', () async {
+    files.add(folder('chosen', 'Chosen', 'root', trashed: true));
+    await expectLater(saveChosen('chosen'), throwsA(isA<GoogleDriveSaveFolderMissing>()));
+    expect(uploads, 0);
+  });
+
+  test('shared selected folder does not upload', () async {
+    files.add(folder('chosen', 'Chosen', 'root', shared: true));
+    await expectLater(saveChosen('chosen'), throwsA(isA<GoogleDriveSaveFolderShared>()));
+    expect(uploads, 0);
+  });
+
+  test('unowned and non-folder selections do not upload', () async {
+    files.add(folder('unowned', 'Other', 'root', owned: false));
+    files.add({...folder('file', 'File', 'root'), 'mimeType': 'text/plain'});
+    await expectLater(saveChosen('unowned'), throwsA(isA<GoogleDriveSaveFolderShared>()));
+    await expectLater(saveChosen('file'), throwsA(isA<GoogleDriveSaveFolderMissing>()));
+    expect(uploads, 0);
+  });
+
+  test('pending verification records the selected folder as root', () async {
+    files.add(folder('chosen', 'Chosen', 'root'));
+    failCheck = true;
+    await expectLater(saveChosen('chosen'), throwsA(isA<GoogleDrivePendingCheckException>()));
+    final pending = jsonDecode(storage.values[googleDrivePendingChecksKey]!) as List;
+    expect(pending.single['root'], 'chosen');
+  });
+
+  test('lists private owned folders across pages with their paths', () async {
+    files.addAll([
+      folder('child', 'Math', 'parent'),
+      folder('shared', 'Shared', 'root', shared: true),
+      folder('other', 'Other', 'root', owned: false),
+      folder('parent', 'School', 'root'),
+      folder('orphan', 'Orphan', 'shared'),
+    ]);
+    final folders = await saver.listFolders();
+    expect(folders.map((f) => f.path).toList(), ['Orphan', 'School', 'School / Math']);
+    expect(queries, hasLength(2));
+  });
+
+  test('createFolder reuses an existing same-named folder', () async {
+    files.add(folder('existing', 'My Folder', 'root'));
+    final result = await saver.createFolder('  My Folder  ');
+    expect(result.id, 'existing');
+    expect(result.name, 'My Folder');
+    expect(files, hasLength(1));
+  });
+
+  test('createFolder sanitizes names and rejects empty input', () async {
+    final result = await saver.createFolder(' A/B\\C ');
+    expect(result.name, 'A_B_C');
+    expect(files.single['name'], 'A_B_C');
+    await expectLater(saver.createFolder('  '), throwsArgumentError);
+  });
 
   test(
     'matching checksum skipped, same size different content gets suffix',
