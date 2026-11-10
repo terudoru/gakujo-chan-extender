@@ -60,7 +60,14 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
     if (config.action === "read") {
       const kind = (_a = win.history.state) == null ? void 0 : _a.__mbgReturnDialog;
       const preview = documents().map(marker).find((value) => value !== null);
-      return JSON.stringify({ dialog: kinds.indexOf(kind) >= 0 ? kind : null, preview: (preview == null ? void 0 : preview.token) || null });
+      const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      const activeToken = active == null ? void 0 : active.__mbgToken;
+      return JSON.stringify({
+        dialog: kinds.indexOf(kind) >= 0 ? kind : null,
+        preview: (preview == null ? void 0 : preview.token) || null,
+        active: active ? active.visible ? "visible" : "hidden" : "none",
+        activeToken: typeof activeToken === "string" && tokenPattern.test(activeToken) ? activeToken : null
+      });
     }
     if (config.action === "install-preview-tracker") {
       let attach2 = function() {
@@ -82,6 +89,10 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
             doc.defaultView.history.replaceState(Object.assign({}, doc.defaultView.history.state, {
               __mbgPreview: { token, index, name: name(button) }
             }), "");
+            win.setTimeout(() => {
+              const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
+              if (active) active.__mbgToken = token;
+            }, 0);
             try {
               (_c = win.MbgPreviewNavigation) == null ? void 0 : _c.postMessage("token:" + token);
             } catch (_) {

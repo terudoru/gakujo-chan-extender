@@ -39,17 +39,20 @@ function documentWithWindow() {
 const top = documentWithWindow();
 const frame = documentWithWindow();
 const messages: string[] = [];
+const timers: (() => void)[] = [];
 const crossOrigin = Object.defineProperty({}, 'document', { get() { throw Error('cross origin'); } });
 const win: any = { document: top.doc, history: top.history,
   frames: [crossOrigin, { document: frame.doc, frames: [] }],
   crypto: { getRandomValues(bytes: Uint8Array) { bytes.fill(13); } },
   MbgPreviewNavigation: { postMessage(message: string) { messages.push(message); } },
   setInterval() { return 1; }, clearInterval() {},
+  setTimeout(fn: () => void, delay: number) { assert.equal(delay, 0); timers.push(fn); },
 };
 assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'bad' }), false);
 assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'starred' }), 'ok');
 assert.equal(top.history.state.existing, 42);
-assert.deepEqual(JSON.parse(historyMarker(win, { action: 'read' })), { dialog: 'starred', preview: null });
+assert.deepEqual(JSON.parse(historyMarker(win, { action: 'read' })),
+  { dialog: 'starred', preview: null, active: 'none', activeToken: null });
 assert.equal(historyMarker(win, { action: 'install-preview-tracker' }), 'ok');
 assert.equal(historyMarker(win, { action: 'install-preview-tracker' }), 'ok');
 assert.equal(frame.listeners.length, 1);
@@ -61,10 +64,22 @@ const first = frame.button(' first ');
 const second = frame.button(' document.pdf ');
 second.click();
 const token = frame.history.state.__mbgPreview.token;
+// The preview is created by the bubbling click handler after the capture listener.
+win.__MBG_ACTIVE_UPLOAD_PREVIEW = { visible: true };
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).activeToken, null);
+timers.shift()!();
+assert.equal(win.__MBG_ACTIVE_UPLOAD_PREVIEW.__mbgToken, token);
 assert.equal(frame.history.state.__mbgPreview.index, 1);
 assert.equal(frame.history.state.__mbgPreview.name, 'document.pdf');
 assert.equal(messages[0], 'token:' + token);
-assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).preview, token);
+assert.deepEqual(JSON.parse(historyMarker(win, { action: 'read' })),
+  { dialog: 'starred', preview: token, active: 'visible', activeToken: token });
+win.__MBG_ACTIVE_UPLOAD_PREVIEW.visible = false;
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).active, 'hidden');
+win.__MBG_ACTIVE_UPLOAD_PREVIEW.__mbgToken = 'invalid!';
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).activeToken, null);
+delete win.__MBG_ACTIVE_UPLOAD_PREVIEW;
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).active, 'none');
 assert.equal(historyMarker(win, { action: 'reopen-preview', token: 'bad!' }), false);
 assert.equal(historyMarker(win, { action: 'reopen-preview', token: 'xxxxxxxx' }), false);
 frame.buttons.reverse();

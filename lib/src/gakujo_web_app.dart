@@ -7975,6 +7975,57 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<Map<String, dynamic>> _syncHistoryState({int? revision}) async {
+    final expectedRevision = revision ?? _navigationRevision;
+    final markers = await _readHistoryMarkers();
+    if (!mounted || expectedRevision != _navigationRevision) return {};
+    final active = markers['active'];
+    if (active is! String ||
+        !const {'visible', 'hidden', 'none'}.contains(active)) {
+      return {};
+    }
+    final activeToken = markers['activeToken'];
+    final dialog = markers['dialog'];
+    final preview = markers['preview'];
+    _handlePreviewNavigationState(active);
+    setState(() {
+      _activePreviewToken = activeToken is String ? activeToken : null;
+      _returnDialogMarker = dialog is String ? dialog : null;
+      _virtualPreviewForward = active == 'none' && preview is String &&
+          preview == _detachedPreviewToken;
+    });
+    return markers;
+  }
+
+  void _scheduleHistoryStateSync(int revision) {
+    for (final delay in const [
+      Duration(milliseconds: 400),
+      Duration(milliseconds: 1500),
+    ]) {
+      unawaited(Future<void>.delayed(delay, () async {
+        if (!mounted || revision != _navigationRevision) return;
+        await _syncHistoryState(revision: revision);
+        if (!mounted || revision != _navigationRevision) return;
+        await _refreshNavigationState(revision: revision);
+      }));
+    }
+  }
+
+  Future<void> _navigateWebViewHistory({required bool forward}) async {
+    _beginNavigation();
+    final revision = _navigationRevision;
+    if (forward) {
+      await _controller.goForward();
+    } else {
+      await _controller.goBack();
+    }
+    _scheduleHistoryStateSync(revision);
+    await _syncHistoryState(revision: revision);
+    if (mounted && revision == _navigationRevision) {
+      await _refreshNavigationState(revision: revision);
+    }
+  }
+
   Future<void> _finishHistoryMarkers(String url, int revision) async {
     final processing = _messageOpenProcessing;
     if (processing != null) await processing.future;
@@ -7996,15 +8047,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
     }
     if (!_isCurrentPageCallback(url, revision)) return;
-    final markers = await _readHistoryMarkers();
-    if (!_isCurrentPageCallback(url, revision)) return;
-    final dialog = markers['dialog'];
-    final preview = markers['preview'];
-    setState(() {
-      _returnDialogMarker = dialog is String ? dialog : null;
-      _virtualPreviewForward = preview is String &&
-          preview == _detachedPreviewToken;
-    });
+    await _syncHistoryState(revision: revision);
   }
 
   Widget _historyDialogInput({required bool returned, required Widget child}) {
@@ -8068,9 +8111,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _returnedDialogContext = null;
     if (dialogContext.mounted) Navigator.of(dialogContext).pop();
     if (back && await _controller.canGoBack()) {
-      _beginNavigation();
-      await _controller.goBack();
-      await _refreshNavigationState();
+      await _navigateWebViewHistory(forward: false);
     }
   }
 
@@ -8083,21 +8124,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
-    if (await _navigatePreview('back')) {
-      return true;
-    }
-    if (_previewNavigationState == 'hidden' && _activePreviewToken != null) {
-      _detachedPreviewToken = _activePreviewToken;
-    }
-    final markers = await _readHistoryMarkers();
+    final markers = _previewNavigationState == 'visible'
+        ? <String, dynamic>{}
+        : await _syncHistoryState();
     final dialog = markers['dialog'];
-    if (decideGakujoHistoryAction(
-          forward: false,
-          previewState: _previewNavigationState,
-          hasDialog: dialog is String,
-          virtualPreviewForward: false,
-          canNavigate: false,
-        ) == GakujoHistoryAction.dialog) {
+    final action = decideGakujoHistoryAction(
+      forward: false,
+      previewState: _previewNavigationState,
+      hasDialog: dialog is String,
+      activeToken: _activePreviewToken,
+      markerToken:
+          markers['preview'] is String ? markers['preview'] as String : null,
+      detachedToken: _detachedPreviewToken,
+      canGoForward: false,
+      canGoBack: _previewNavigationState != 'visible' &&
+          await _controller.canGoBack(),
+    );
+    if (action == GakujoHistoryAction.preview) {
+      return _navigatePreview('back');
+    }
+    if (action == GakujoHistoryAction.dialog) {
       switch (dialog) {
         case 'starred': unawaited(_showStarredMessagesDialog(returned: true));
         case 'favorites': unawaited(_showFavoritesDialog(returned: true));
@@ -8106,14 +8152,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return true;
     }
     _setPendingMessageUrl(null);
-    if (!await _controller.canGoBack()) {
+    if (action != GakujoHistoryAction.webView) {
       await _refreshNavigationState();
       return false;
     }
-
-    _beginNavigation();
-    await _controller.goBack();
-    await _refreshNavigationState();
+    if (_previewNavigationState == 'hidden' && _activePreviewToken != null) {
+      _detachedPreviewToken = _activePreviewToken;
+    }
+    await _navigateWebViewHistory(forward: false);
     return true;
   }
 
@@ -8135,19 +8181,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
-    if (await _navigatePreview('forward')) {
-      return true;
+    final markers = _previewNavigationState == 'visible'
+        ? <String, dynamic>{}
+        : await _syncHistoryState();
+    final canGoForward = _previewNavigationState != 'visible' &&
+        await _controller.canGoForward();
+    final action = decideGakujoHistoryAction(
+      forward: true,
+      previewState: _previewNavigationState,
+      hasDialog: false,
+      activeToken: _activePreviewToken,
+      markerToken:
+          markers['preview'] is String ? markers['preview'] as String : null,
+      detachedToken: _detachedPreviewToken,
+      canGoForward: canGoForward,
+      canGoBack: false,
+    );
+    if (action == GakujoHistoryAction.preview) {
+      return _navigatePreview('forward');
     }
-    if (_previewNavigationState == 'visible') {
-      return false;
-    }
-    if (decideGakujoHistoryAction(
-          forward: true,
-          previewState: _previewNavigationState,
-          hasDialog: false,
-          virtualPreviewForward: _virtualPreviewForward,
-          canNavigate: false,
-        ) == GakujoHistoryAction.reopenPreview &&
+    if (action == GakujoHistoryAction.reopenPreview &&
         _detachedPreviewToken != null) {
       try {
         final result = await _controller.runJavaScriptReturningResult(
@@ -8167,14 +8220,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
     }
     _setPendingMessageUrl(null);
-    if (!await _controller.canGoForward()) {
+    if (action != GakujoHistoryAction.webView &&
+        !(action == GakujoHistoryAction.reopenPreview && canGoForward)) {
       await _refreshNavigationState();
       return false;
     }
 
-    _beginNavigation();
-    await _controller.goForward();
-    await _refreshNavigationState();
+    await _navigateWebViewHistory(forward: true);
     return true;
   }
 
@@ -8218,10 +8270,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _refreshNavigationState() async {
+  Future<void> _refreshNavigationState({int? revision}) async {
     final canGoBack = await _controller.canGoBack();
     final canGoForward = await _controller.canGoForward();
-    if (!mounted) {
+    if (!mounted || (revision != null && revision != _navigationRevision)) {
       return;
     }
 
