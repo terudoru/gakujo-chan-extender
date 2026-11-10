@@ -784,8 +784,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var file = new File(result.parts, name, {type: type});
       var anchor = doc.createElement('input'); anchor.type = 'hidden'; doc.body.appendChild(anchor);
       var visible = operation.visible;
+      var token = (operation as {__mbgToken?: string}).__mbgToken;
       cleanup(true);
       show(anchor, file, function() { anchor.remove(); }, visible);
+      // Carry the history token of the button that opened this preview.
+      var shown = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      if (token && shown && !shown.__mbgToken) shown.__mbgToken = token;
     }).catch(function(error) {
       window.clearTimeout(timeout);
       if (!closed && error.name !== 'AbortError') status.textContent = 'プレビューできません: ' + (error.message || error);

@@ -1264,10 +1264,13 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         anchor.type = "hidden";
         doc.body.appendChild(anchor);
         var visible = operation.visible;
+        var token = operation.__mbgToken;
         cleanup(true);
         show(anchor, file, function() {
           anchor.remove();
         }, visible);
+        var shown = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+        if (token && shown && !shown.__mbgToken) shown.__mbgToken = token;
       }).catch(function(error) {
         window.clearTimeout(timeout);
         if (!closed && error.name !== "AbortError") status.textContent = "プレビューできません: " + (error.message || error);
