@@ -85,8 +85,26 @@ void main() {
     final relayResponse = await (await client.getUrl(relayUrl)).close();
     final relay = await utf8.decoder.bind(relayResponse).join();
     expect(relayResponse.statusCode, HttpStatus.ok);
-    expect(relay, contains('event.source === window.opener'));
+    expect(relay, contains('if (source === opener) return true;'));
+    expect(relay, contains('return source === opener.top;'));
+    expect(relay, contains('fromOpener(event.source) && event.data instanceof ArrayBuffer'));
     expect(relay, contains('event.data instanceof ArrayBuffer'));
+    expect(relay, contains('event.data.type === "mbg-preview-title"'));
+    expect(relay, contains('typeof event.data.name === "string"'));
+    expect(relay, contains('type: "mbg-preview-title", name: event.data.name'));
+    expect(relay, contains('event.data.indexOf("mbg-preview-") === 0'));
+    final directory = await Directory.systemTemp.createTemp('popup-relay-');
+    try {
+      final script = File('${directory.path}/relay.js');
+      await script.writeAsString(relay);
+      final result = await Process.run('node', [
+        'test/popup_relay_lifecycle.mts',
+        script.path,
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    } finally {
+      await directory.delete(recursive: true);
+    }
   });
 
   test('the viewer files and fallback fonts can be served', () async {

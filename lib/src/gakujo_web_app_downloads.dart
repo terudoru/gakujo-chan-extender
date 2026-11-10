@@ -749,12 +749,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         inject: () async {
           if (kind == 'preview' &&
               (Platform.isWindows || Platform.isAndroid ||
-                  Platform.isMacOS || Platform.isLinux)) {
+                  Platform.isMacOS || Platform.isLinux || Platform.isIOS)) {
             final url = await _pdfPreviewServer.start();
             if (!mounted || !_canRunPageScripts || revision != _navigationRevision) {
               return false;
             }
-            if (Platform.isMacOS) {
+            if (Platform.isMacOS || Platform.isIOS) {
               await const MethodChannel('net.yoshida.morebettergakujo/pdf_preview')
                   .invokeMethod<void>('setViewerURL', url.toString());
               if (!mounted || !_canRunPageScripts || revision != _navigationRevision) return false;
@@ -762,7 +762,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             final result = await _controller.runJavaScriptReturningResult(
               gakujoPdfPreviewReadyJs({
                 'url': url.toString(),
-                'popup': Platform.isMacOS,
+                'popup': Platform.isMacOS || Platform.isIOS,
               }),
             );
             return mounted && revision == _navigationRevision &&
