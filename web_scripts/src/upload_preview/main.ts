@@ -55,6 +55,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (waiters.length === 1) channel.postMessage('preview');
     });
   }
+  // Gakujo sends some attachment names percent-encoded (UTF-8).
+  function mbgDisplayFileName(name: string) {
+    if (!/%[0-9A-Fa-f]{2}/.test(name)) return name;
+    try { return decodeURIComponent(name); } catch (_) { return name; }
+  }
   function documents() {
     var result: Document[] = [], seen = new Set<Document>();
     function visit(doc: Document) {
@@ -75,6 +80,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
     } catch (_) {}
     var previousPreview = owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+    // A remote attachment preview first shows a loader, then hands the file
+    // to this viewer; keep its history token so back/forward can find it.
+    var inheritedToken = previousPreview && previousPreview.__mbgToken;
     if (previousPreview && typeof previousPreview.close === 'function') previousPreview.close();
     var doc = input.ownerDocument;
     var overlay = doc.createElement('div');
@@ -152,7 +160,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       rootViewport.addEventListener('resize', resizeToolbar);
       rootViewport.addEventListener('scroll', resizeToolbar);
     }
-    var title = doc.createElement('strong'); title.textContent = file.name;
+    var title = doc.createElement('strong'); title.textContent = mbgDisplayFileName(file.name);
     title.style.cssText = 'flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     var close = doc.createElement('button'); close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', '閉じる'); close.title = '閉じる';
     var previous = doc.createElement('button'); previous.type = 'button'; previous.textContent = '前へ';
@@ -180,7 +188,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       } catch (_) { detached = true; }
       if (detached) cleanup();
     }, 1000);
-    var preview = {close: cleanup, visible: initiallyVisible !== false, setVisible: setVisible};
+    var preview: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; __mbgToken?: string} =
+      {close: cleanup, visible: initiallyVisible !== false, setVisible: setVisible};
+    if (inheritedToken) preview.__mbgToken = inheritedToken;
     owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
     function setVisible(visible: boolean) {
       if (closed) return;
@@ -273,7 +283,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           sent = true;
           if (watchdog) window.clearTimeout(watchdog);
           watchdog = window.setTimeout(onTimeout || onFailure, 30000);
-          viewer!.postMessage({type: 'mbg-preview-title', name: file.name}, '*');
+          viewer!.postMessage({type: 'mbg-preview-title', name: mbgDisplayFileName(file.name)}, '*');
           send(viewer!);
         } else if (event.data === 'mbg-preview-password-requested' && sent) {
           if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }

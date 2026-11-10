@@ -257,6 +257,14 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         if (waiters.length === 1) channel.postMessage("preview");
       });
     }
+    function mbgDisplayFileName(name) {
+      if (!/%[0-9A-Fa-f]{2}/.test(name)) return name;
+      try {
+        return decodeURIComponent(name);
+      } catch (_) {
+        return name;
+      }
+    }
     function documents() {
       var result = [], seen = /* @__PURE__ */ new Set();
       function visit(doc) {
@@ -281,6 +289,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       } catch (_) {
       }
       var previousPreview = owner.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      var inheritedToken = previousPreview && previousPreview.__mbgToken;
       if (previousPreview && typeof previousPreview.close === "function") previousPreview.close();
       var doc = input.ownerDocument;
       var overlay = doc.createElement("div");
@@ -350,7 +359,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         rootViewport.addEventListener("scroll", resizeToolbar);
       }
       var title = doc.createElement("strong");
-      title.textContent = file.name;
+      title.textContent = mbgDisplayFileName(file.name);
       title.style.cssText = "flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
       var close = doc.createElement("button");
       close.type = "button";
@@ -397,6 +406,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         if (detached) cleanup();
       }, 1e3);
       var preview = { close: cleanup, visible: initiallyVisible !== false, setVisible };
+      if (inheritedToken) preview.__mbgToken = inheritedToken;
       owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
       function setVisible(visible) {
         if (closed) return;
@@ -543,7 +553,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
             sent = true;
             if (watchdog) window.clearTimeout(watchdog);
             watchdog = window.setTimeout(onTimeout || onFailure, 3e4);
-            viewer.postMessage({ type: "mbg-preview-title", name: file.name }, "*");
+            viewer.postMessage({ type: "mbg-preview-title", name: mbgDisplayFileName(file.name) }, "*");
             send(viewer);
           } else if (event.data === "mbg-preview-password-requested" && sent) {
             if (watchdog) {
