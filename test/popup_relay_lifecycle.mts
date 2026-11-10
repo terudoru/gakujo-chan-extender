@@ -4,7 +4,8 @@ import vm from 'node:vm';
 
 const source = (await readFile(process.argv[2] || 'web_scripts/src/popup_relay/main.ts', 'utf8'))
   .replace('export {};', '');
-const opener: any = {messages: [], postMessage(...args: any[]) { this.messages.push(args); }};
+const top: any = {messages: [], postMessage(...args: any[]) { this.messages.push(args); }};
+const opener: any = {top, messages: [], postMessage(...args: any[]) { this.messages.push(args); }};
 const window: any = {opener, messages: [], addEventListener(_name: string, fn: any) { this.listener = fn; },
   postMessage(...args: any[]) { this.messages.push(args); }};
 window.parent = window;
@@ -22,6 +23,12 @@ assert.equal(window.messages[0][0].extra, undefined);
 const bytes = new ArrayBuffer(4);
 window.listener({source: opener, data: bytes});
 assert.equal(window.messages[1][0], bytes);
+// The app's page script runs in the opener's top frame.
+const fromTop = new ArrayBuffer(2);
+window.listener({source: top, data: fromTop});
+assert.equal(window.messages[2][0], fromTop);
+window.listener({source: {top}, data: new ArrayBuffer(1)});
+assert.equal(window.messages.length, 3);
 window.listener({source: window, data: 'mbg-preview-close'});
 assert.equal(opener.messages[0][0], 'mbg-preview-close');
-console.log('Popup relay restricts titles and PDF bytes to the opener.');
+console.log('Popup relay restricts titles and PDF bytes to the opener and its top window.');

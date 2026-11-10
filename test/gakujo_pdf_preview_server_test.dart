@@ -85,7 +85,9 @@ void main() {
     final relayResponse = await (await client.getUrl(relayUrl)).close();
     final relay = await utf8.decoder.bind(relayResponse).join();
     expect(relayResponse.statusCode, HttpStatus.ok);
-    expect(relay, contains('event.source === window.opener'));
+    expect(relay, contains('if (source === opener) return true;'));
+    expect(relay, contains('return source === opener.top;'));
+    expect(relay, contains('fromOpener(event.source) && event.data instanceof ArrayBuffer'));
     expect(relay, contains('event.data instanceof ArrayBuffer'));
     expect(relay, contains('event.data.type === "mbg-preview-title"'));
     expect(relay, contains('typeof event.data.name === "string"'));
