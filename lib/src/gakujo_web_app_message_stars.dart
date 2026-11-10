@@ -91,19 +91,23 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showStarredMessagesDialog() async {
+  Future<void> _showStarredMessagesDialog({bool returned = false}) async {
     var entries = await _activityStore.loadStarredMessages();
     var query = '';
     var sort = GakujoStarredMessageSort.starredNewest;
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext) {
+        if (returned) _returnedDialogContext = dialogContext;
+        return _historyDialogInput(
+          returned: returned,
+          child: StatefulBuilder(
         builder: (context, setDialogState) {
           final visible = queryStarredMessages(entries, query, sort);
           final size = MediaQuery.sizeOf(context);
           return AlertDialog(
-            title: const Text('スター付き連絡通知'),
+            title: _historyDialogTitle('スター付き連絡通知', returned),
             content: SizedBox(
               width: size.width < 650 ? size.width : 900,
               height: size.height * .70,
@@ -196,6 +200,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                                 ),
                                 onTap: () {
                                   Navigator.of(dialogContext).pop();
+                                  _setPendingReturnDialog('starred');
                                   unawaited(_openStarredMessage(entry));
                                 },
                                 trailing: PopupMenuButton<String>(
@@ -237,6 +242,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                                     if (action == 'saved') {
                                       await _showSavedMessage(entry);
                                     } else {
+                                      _setPendingReturnDialog('starred');
                                       await _openStarredMessage(entry);
                                     }
                                   },
@@ -256,8 +262,11 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
             ],
           );
         },
-      ),
+          ),
+        );
+      },
     );
+    if (returned) _returnedDialogContext = null;
   }
 
   Future<void> _showSavedMessage(GakujoStarredMessage entry) async {

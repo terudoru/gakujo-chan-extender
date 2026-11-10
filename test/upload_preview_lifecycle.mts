@@ -39,9 +39,9 @@ const window: any={document:doc,location:{origin:'https://example.invalid'},
 window.top=window;doc.defaultView=window;
 class FileReader {
   [key: string]: any;
- readAsArrayBuffer(){readers++;currentReader=this;}
+ readAsArrayBuffer(file: any){readers++;currentReader=this;this.file=file;}
  abort(){if(this.done)return;this.done=true;readers--;aborted++;this.onabort();}
- finish(){if(this.done)return;this.done=true;readers--;this.result=new ArrayBuffer(4);this.onload();}
+ finish(){if(this.done)return;this.done=true;readers--;this.result=this.file.bytes ? Uint8Array.from(this.file.bytes).buffer : new ArrayBuffer(4);this.onload();}
 }
 class Worker {
   [key: string]: any;constructor(){workers++;}terminate(){workers--;}}
@@ -62,11 +62,17 @@ class PDFViewer {
  set currentPageNumber(page: any){this.page=page;this.events.dispatch('pagechanging',{pageNumber:page});}
  setDocument(pdf: any){if(pdf){activeViewers++;this.events.dispatch('pagesinit',{});this.events.dispatch('pagerendered',{});}else if(!this.closed){this.closed=true;activeViewers--;}}
 }
+class DOMParser {
+  parseFromString() {
+    const paragraph={getElementsByTagNameNS(_: any,name: any){return name==='t' ? [{textContent:'office text'}] : [];}};
+    return {getElementsByTagName(){return [];},getElementsByTagNameNS(_: any,name: any){return name==='p' ? [paragraph] : [];}};
+  }
+}
 const pdf: any={numPages:3};
 window.pdfjsViewer={EventBus,PDFLinkService,PDFFindController,PDFViewer};
 window.pdfjsLib={AnnotationMode:{ENABLE:1},PDFWorker:{fromPort:()=>({})},
  getDocument(options: any){lastOptions=options;return {promise:Promise.resolve(pdf),destroy:()=>Promise.resolve()};}};
-const context: any={window,document:doc,FileReader,Worker,URL:{revokeObjectURL(){}},atob,
+const context: any={window,document:doc,FileReader,Worker,DOMParser,URL:{createObjectURL(){return 'blob:test';},revokeObjectURL(){}},atob,TextDecoder,
  Promise,ArrayBuffer,Uint8Array,DataView,Math,Number,Error};
 vm.runInNewContext(source,context);
 const controls: any=parent.children.filter((node: any) =>node.tagName==='button');assert.equal(controls.length,2);
@@ -196,6 +202,61 @@ assert.match(failedOverlay.children[1].children[0].textContent,/プレビュー�
 const closeButton: any=failedOverlay.children[0].children.at(-1);
 assert.equal(closeButton.textContent,'×');assert.equal(closeButton.attributes['aria-label'],'閉じる');
 closeButton.fire('click');
+const textFile: any={name:'sample.txt',type:'text/plain',bytes:[104,101,108,108,111],size:5};
+inputs[0].files=[textFile];controls[0].fire('click');currentReader.finish();await ticks();
+const textOverlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');
+const textFrame: any=textOverlay.children[1].children.find((x: any) =>x.tagName==='iframe');
+for(const fn of windowListeners.message||[])fn({source:textFrame.contentWindow,data:'mbg-preview-ready'});
+assert.equal(textFrame.contentWindow.messages[1][0].type,'mbg-preview-text');
+assert.equal(textFrame.contentWindow.messages[1][0].text,'hello');
+for(const fn of [...(windowListeners.message||[])])fn({source:textFrame.contentWindow,data:'mbg-preview-failed'});
+assert.equal(textFrame.isConnected,false);
+assert.equal(textOverlay.children[1].children.find((x: any) =>x.tagName==='pre').textContent,'hello');
+assert.equal(textOverlay.children[0].style.display,'flex');
+inputs[0].fire('change');
+window.__MBG_PDF_PREVIEW_POPUP=true;popup.closed=false;popup.messages=[];
+inputs[0].files=[textFile];controls[0].fire('click');currentReader.finish();await ticks();
+for(const fn of windowListeners.message||[])fn({source:popup,data:'mbg-preview-ready'});
+assert.equal(popup.messages[1][0].type,'mbg-preview-text');
+for(const fn of [...(windowListeners.message||[])])fn({source:popup,data:'mbg-preview-failed'});
+const popupTextOverlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');
+assert.equal(popup.closed,true);
+assert.equal(popupTextOverlay.children[1].children.find((x: any) =>x.tagName==='pre').textContent,'hello');
+inputs[0].fire('change');window.__MBG_PDF_PREVIEW_POPUP=false;
+const entry: any={_data:{uncompressedSize:4},internalStream(){const events: any={};return {
+  on(name: any,fn: any){events[name]=fn;return this;},pause(){},resume(){events.data(Uint8Array.from([60,112,47,62]));events.end();}
+};}};
+window.JSZip={loadAsync:()=>Promise.resolve({files:{'word/document.xml':entry}})};
+window['__MBG_UPLOAD_LIBRARY_READY_preview-office']=true;
+inputs[0].files=[{name:'sample.docx',type:'application/octet-stream',size:22,bytes:[80,75,5,6,...new Array(18).fill(0)]}];
+controls[0].fire('click');await ticks();currentReader.finish();await ticks();await ticks();
+const officeOverlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');
+const officeFrame: any=officeOverlay.children[1].children.find((x: any) =>x.tagName==='iframe');
+assert.ok(officeFrame,'extracted Office text uses the viewer');
+for(const fn of windowListeners.message||[])fn({source:officeFrame.contentWindow,data:'mbg-preview-ready'});
+assert.equal(officeFrame.contentWindow.messages[1][0].text,'office text');
+assert.match(officeFrame.contentWindow.messages[1][0].note,/テキストのみ表示/);
+inputs[0].fire('change');
+const png: any=new Blob([Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,73,68,65,84,0,0,0,0])],{type:'image/png'});
+png.name='sample.png';inputs[0].files=[png];controls[0].fire('click');await ticks();
+await new Promise(resolve=>setImmediate(resolve));await ticks();
+const imageOverlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');
+const imageFrame: any=imageOverlay.children[1].children.find((x: any) =>x.tagName==='iframe');
+assert.ok(imageFrame);
+for(const fn of windowListeners.message||[])fn({source:imageFrame.contentWindow,data:'mbg-preview-ready'});
+assert.equal(imageFrame.contentWindow.messages[1][0].type,'mbg-preview-image');
+assert.equal(imageFrame.contentWindow.messages[1][0].mime,'image/png');
+assert.equal(imageFrame.contentWindow.messages[1][2][0],imageFrame.contentWindow.messages[1][0].data);
+for(const fn of [...(windowListeners.message||[])])fn({source:imageFrame.contentWindow,data:'mbg-preview-failed'});
+assert.ok(imageOverlay.children[1].children.find((x: any) =>x.tagName==='img'));
+inputs[0].fire('change');
+inputs[0].files=[textFile];controls[0].fire('click');currentReader.finish();await ticks();
+const timeoutOverlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');
+assert.equal(timers.size,1);[...timers.values()][0]();await ticks();
+assert.equal(timeoutOverlay.children[1].children.find((x: any) =>x.tagName==='pre').textContent,'hello');
+assert.equal(timeoutOverlay.children[0].style.display,'flex');
+inputs[0].fire('change');
+inputs[0].files=[file];
 const childDoc: any={createElement:(tag: any) =>new Element(tag,childDoc)};
 childDoc.body=new Element('body',childDoc);
 const childInput: any=new Element('input',childDoc);childInput.files=[file];childDoc.body.appendChild(childInput);

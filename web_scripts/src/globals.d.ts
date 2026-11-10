@@ -37,6 +37,7 @@ interface MbgSubmitHookOwner {
   original?: MbgSubmitHookFunction;
 }
 interface Window {
+  __MBG_HISTORY_TRACKER_INSTALLED?: boolean;
   __MBG_MESSAGE_READER_WATCH_DISPOSE?: () => void;
   __MBG_REPORT_SORTER_WATCH_DISPOSE?: () => void;
   __MBG_REPORT_DRAFT_WATCH_DISPOSE?: () => void;
@@ -248,7 +249,7 @@ interface Window {
   __MBG_UPLOAD_PREVIEW_LIBRARY_LOADED?: () => void;
   __MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED?: () => void;
   __MBG_PREVIEW_NAVIGATE?: (direction: string) => boolean;
-  __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void};
+  __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; __mbgToken?: string};
   __MBG_OPEN_REMOTE_PREVIEW?: (request: MbgPreviewRequest) => boolean;
   __MBG_PDF_PREVIEW_URL?: string;
   __MBG_PDF_PREVIEW_POPUP?: boolean;

@@ -15,6 +15,8 @@ import 'bounded_text_searcher.dart';
 import 'search_view.dart';
 import 'selection_menu.dart';
 import 'thumbnails_view.dart';
+import 'image_view.dart';
+import 'text_view.dart';
 
 void main(List<String> args) {
   runApp(const MyApp());
@@ -56,6 +58,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   bool _textLimitReached = false;
   bool _receivedDocument = false;
   String _title = 'PDFプレビュー';
+  Uint8List? _imageData;
+  String? _textData;
+  String? _textNote;
   final textSearcher = ValueNotifier<BoundedPdfTextSearcher?>(null);
   final _fontManager = SerialPdfFontManager();
   VoidCallback? _releaseDocument;
@@ -143,6 +148,37 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           setState(() => _title = trimmed.isEmpty
               ? 'PDFプレビュー'
               : trimmed.substring(0, math.min(trimmed.length, 200)));
+        } else if (!_receivedDocument && type != null && type.isA<JSString>()) {
+          final kind = (type as JSString).toDart;
+          if (kind == 'mbg-preview-image') {
+            final raw = object.getProperty<JSAny?>('data'.toJS);
+            final mime = object.getProperty<JSAny?>('mime'.toJS);
+            if (raw != null && raw.isA<JSArrayBuffer>() && mime != null &&
+                mime.isA<JSString>() &&
+                const {'image/png', 'image/jpeg', 'image/webp'}
+                    .contains((mime as JSString).toDart)) {
+              final bytes = (raw as JSArrayBuffer).toDart.asUint8List();
+              if (bytes.isNotEmpty && bytes.lengthInBytes <= 64 * 1024 * 1024) {
+                _receivedDocument = true;
+                setState(() => _imageData = bytes);
+              }
+            }
+          } else if (kind == 'mbg-preview-text') {
+            final raw = object.getProperty<JSAny?>('text'.toJS);
+            final note = object.getProperty<JSAny?>('note'.toJS);
+            if (raw != null && raw.isA<JSString>() &&
+                (note == null || note.isA<JSString>())) {
+              final text = (raw as JSString).toDart;
+              final noteText = note == null ? null : (note as JSString).toDart;
+              if (text.length <= 4000000 && (noteText?.length ?? 0) <= 4000000) {
+                _receivedDocument = true;
+                setState(() { _textData = text; _textNote = noteText; });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _postPreviewMessage('mbg-preview-loaded');
+                });
+              }
+            }
+          }
         }
         return;
       }
@@ -197,8 +233,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   }
 
   void _closePreview() {
-    web.window.parent?.postMessage('mbg-preview-close'.toJS, '*'.toJS);
+    _postPreviewMessage('mbg-preview-close');
   }
+
+  void _postPreviewMessage(String message) =>
+      web.window.parent?.postMessage(message.toJS, '*'.toJS);
 
   static bool determineWhetherMobileDeviceOrNot() {
     final data = MediaQueryData.fromView(
@@ -209,6 +248,13 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (_imageData != null) {
+      return ImagePreview(title: _title, bytes: _imageData!, onMessage: _postPreviewMessage);
+    }
+    if (_textData != null) {
+      return TextPreview(title: _title, text: _textData!, note: _textNote,
+          onMessage: _postPreviewMessage);
+    }
     // Flutter Web's MediaQuery can lag the embedded frame's actual height
     // while Android's keyboard is animating. Use the frame's own viewport.
     final width = web.window.innerWidth;

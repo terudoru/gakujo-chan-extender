@@ -1064,7 +1064,6 @@ bool cookiePathMatches(String requestPath, String cookiePath) {
 
 enum MouseHistoryNavigation { back, forward }
 
-@visibleForTesting
 MouseHistoryNavigation? mouseHistoryNavigation(PointerDownEvent event) {
   if (event.kind != PointerDeviceKind.mouse) {
     return null;

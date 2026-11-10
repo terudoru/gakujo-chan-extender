@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'generated/course_name_estimate.g.dart';
+import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
 import 'generated/navigator_user_agent.g.dart';
 import 'generated/page_text_activity.g.dart';
@@ -52,6 +53,7 @@ import 'gakujo_download_url_policy.dart';
 import 'gakujo_expired_page_recovery_script.dart';
 import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
+import 'gakujo_history_navigation.dart';
 import 'gakujo_last_page_store.dart';
 import 'gakujo_login_observer_script.dart';
 import 'gakujo_local_prefs_store.dart';
@@ -1515,6 +1517,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _previewNavigationState = 'none';
+  String? _activePreviewToken;
+  String? _detachedPreviewToken;
+  bool _virtualPreviewForward = false;
+  String? _returnDialogMarker;
+  String? _pendingReturnDialog;
+  Timer? _pendingReturnDialogTimer;
+  BuildContext? _returnedDialogContext;
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
@@ -1716,6 +1725,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _collectionSyncScheduler.dispose();
     _starSyncEngine.dispose();
     _pendingMessageOpenTimer?.cancel();
+    _pendingReturnDialogTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
@@ -1949,10 +1959,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           centerTitle: false,
           actions: [
             GakujoNavigationActions(
-              canGoBack: (_canGoBack || _previewNavigationState == 'visible') &&
+              canGoBack: (_canGoBack || _returnDialogMarker != null ||
+                      _previewNavigationState == 'visible') &&
                   !_calendarOperationGate.isRunning,
               canGoForward: (_previewNavigationState == 'hidden' ||
-                      (_previewNavigationState == 'none' && _canGoForward)) &&
+                      (_previewNavigationState == 'none' &&
+                          (_canGoForward || _virtualPreviewForward))) &&
                   !_calendarOperationGate.isRunning,
               onBack: () => unawaited(_goBack()),
               onForward: () => unawaited(_goForward()),
@@ -3938,7 +3950,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showCachedReportsDialog() async {
+  Future<void> _showCachedReportsDialog({bool returned = false}) async {
     final reportLists = await _activityStore.loadReportLists();
     if (!mounted) {
       return;
@@ -3949,8 +3961,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('保存済み課題一覧'),
+        if (returned) _returnedDialogContext = dialogContext;
+        return _historyDialogInput(
+          returned: returned,
+          child: AlertDialog(
+          title: _historyDialogTitle('保存済み課題一覧', returned),
           content: SizedBox(
             width: 620,
             child: sorted.isEmpty
@@ -3975,6 +3990,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               TextButton.icon(
                                 onPressed: () {
                                   Navigator.of(dialogContext).pop();
+                                  _setPendingReturnDialog('cachedReports');
                                   unawaited(
                                     _loadAllowedPageUrl(reportList.url),
                                   );
@@ -4012,9 +4028,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               child: const Text('閉じる'),
             ),
           ],
+          ),
         );
       },
     );
+    if (returned) _returnedDialogContext = null;
   }
 
   Future<void> _showDataManagementDialog() async {
@@ -4448,7 +4466,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return '$parent${Platform.pathSeparator}$child';
   }
 
-  Future<void> _showFavoritesDialog() async {
+  Future<void> _showFavoritesDialog({bool returned = false}) async {
     var favorites = await _activityStore.loadFavorites();
     if (!mounted) {
       return;
@@ -4457,10 +4475,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
+        if (returned) _returnedDialogContext = dialogContext;
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('お気に入り'),
+            return _historyDialogInput(
+              returned: returned,
+              child: AlertDialog(
+              title: _historyDialogTitle('お気に入り', returned),
               content: SizedBox(
                 width: 520,
                 child: favorites.isEmpty
@@ -4494,6 +4515,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             ),
                             onTap: () {
                               Navigator.of(dialogContext).pop();
+                              _setPendingReturnDialog('favorites');
                               unawaited(_loadAllowedPageUrl(favorite.url));
                             },
                           );
@@ -4506,11 +4528,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   child: const Text('閉じる'),
                 ),
               ],
+              ),
             );
           },
         );
       },
     );
+    if (returned) _returnedDialogContext = null;
     _refreshOpenFavorites = null;
   }
 
@@ -4805,6 +4829,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   });
 
   void _beginNavigation({bool preservesPendingMessageOpen = false}) {
+    _virtualPreviewForward = false;
+    _returnDialogMarker = null;
+    _activePreviewToken = null;
     if (_previewNavigationState != 'none' && mounted) {
       _handlePreviewNavigationState('none');
     }
@@ -4857,6 +4884,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     String url, {
     bool ownsPageNavigationOperation = false,
   }) async {
+    _detachedPreviewToken = null;
+    _virtualPreviewForward = false;
     if (!AllowedWebOrigins.canNavigate(url, debugAllowed: _debugAllowed)) {
       _showSnackBar('許可されていない外部URLは開けません');
       return;
@@ -5047,6 +5076,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     String? fallbackUrl,
     bool ownsPageNavigationOperation = false,
   }) async {
+    _detachedPreviewToken = null;
+    _virtualPreviewForward = false;
     if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return false;
@@ -6700,6 +6731,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _controller.runJavaScript(
         GakujoUploadPreviewScript.build(compactAndroid: Platform.isAndroid),
       );
+      await _controller.runJavaScript(
+        gakujoHistoryMarkerJs({'action': 'install-preview-tracker'}),
+      );
     } catch (error, stackTrace) {
       developer.log('Failed to inject upload preview',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -7402,6 +7436,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             )) {
               return;
             }
+            if (_canRunPageScripts && stillCurrent()) {
+              await _finishHistoryMarkers(url, navigationRevision);
+              if (!stillCurrent()) return;
+            }
             // After the restore, so returning to the last page after login
             // does not wait for the fetch.
             if (!isAuthenticationChallenge && stillCurrent()) {
@@ -7912,22 +7950,216 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  void _setPendingReturnDialog(String? kind) {
+    _pendingReturnDialogTimer?.cancel();
+    _pendingReturnDialog = kind;
+    if (kind != null) {
+      _pendingReturnDialogTimer = Timer(const Duration(minutes: 3), () {
+        _pendingReturnDialog = null;
+      });
+    }
+  }
+
+  Future<Map<String, dynamic>> _readHistoryMarkers() async {
+    if (!_canRunPageScripts) return {};
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoHistoryMarkerJs({'action': 'read'}),
+      );
+      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+      return decoded is Map<String, dynamic> ? decoded : {};
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to read history markers',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      return {};
+    }
+  }
+
+  Future<Map<String, dynamic>> _syncHistoryState({int? revision}) async {
+    final expectedRevision = revision ?? _navigationRevision;
+    final markers = await _readHistoryMarkers();
+    if (!mounted || expectedRevision != _navigationRevision) return {};
+    final active = markers['active'];
+    if (active is! String ||
+        !const {'visible', 'hidden', 'none'}.contains(active)) {
+      return {};
+    }
+    final activeToken = markers['activeToken'];
+    final dialog = markers['dialog'];
+    final preview = markers['preview'];
+    _handlePreviewNavigationState(active);
+    setState(() {
+      _activePreviewToken = activeToken is String ? activeToken : null;
+      _returnDialogMarker = dialog is String ? dialog : null;
+      _virtualPreviewForward = active == 'none' && preview is String &&
+          preview == _detachedPreviewToken;
+    });
+    return markers;
+  }
+
+  void _scheduleHistoryStateSync(int revision) {
+    for (final delay in const [
+      Duration(milliseconds: 400),
+      Duration(milliseconds: 1500),
+    ]) {
+      unawaited(Future<void>.delayed(delay, () async {
+        if (!mounted || revision != _navigationRevision) return;
+        await _syncHistoryState(revision: revision);
+        if (!mounted || revision != _navigationRevision) return;
+        await _refreshNavigationState(revision: revision);
+      }));
+    }
+  }
+
+  Future<void> _navigateWebViewHistory({required bool forward}) async {
+    _beginNavigation();
+    final revision = _navigationRevision;
+    if (forward) {
+      await _controller.goForward();
+    } else {
+      await _controller.goBack();
+    }
+    _scheduleHistoryStateSync(revision);
+    await _syncHistoryState(revision: revision);
+    if (mounted && revision == _navigationRevision) {
+      await _refreshNavigationState(revision: revision);
+    }
+  }
+
+  Future<void> _finishHistoryMarkers(String url, int revision) async {
+    final processing = _messageOpenProcessing;
+    if (processing != null) await processing.future;
+    if (!_isCurrentPageCallback(url, revision) || !_canRunPageScripts) return;
+    final kind = _pendingReturnDialog;
+    if (kind != null && _pendingMessageOpen == null &&
+        _messageOpenProcessing == null) {
+      try {
+        await _controller.runJavaScript(
+          gakujoHistoryMarkerJs({'action': 'stamp-dialog', 'kind': kind}),
+        );
+        if (_isCurrentPageCallback(url, revision) &&
+            _pendingReturnDialog == kind) {
+          _setPendingReturnDialog(null);
+        }
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to stamp history dialog',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
+    }
+    if (!_isCurrentPageCallback(url, revision)) return;
+    await _syncHistoryState(revision: revision);
+  }
+
+  Widget _historyDialogInput({required bool returned, required Widget child}) {
+    if (!returned) return child;
+    return Listener(
+      onPointerDown: (event) {
+        final direction = mouseHistoryNavigation(event);
+        if (direction != null) {
+          unawaited(_closeReturnedDialog(
+            back: direction == MouseHistoryNavigation.back,
+          ));
+        }
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent) {
+            return KeyEventResult.ignored;
+          }
+          final key = event.logicalKey;
+          final back = key == LogicalKeyboardKey.browserBack ||
+              (HardwareKeyboard.instance.isAltPressed &&
+                  key == LogicalKeyboardKey.arrowLeft);
+          final forward = key == LogicalKeyboardKey.browserForward ||
+              (HardwareKeyboard.instance.isAltPressed &&
+                  key == LogicalKeyboardKey.arrowRight);
+          if (back || forward) {
+            unawaited(_closeReturnedDialog(
+              back: back,
+            ));
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: child,
+      ),
+    );
+  }
+
+  Widget _historyDialogTitle(String title, bool returned) {
+    if (!returned) return Text(title);
+    return Row(children: [
+      Expanded(child: Text(title)),
+      IconButton(
+        icon: const Icon(Icons.arrow_back),
+        tooltip: '前のページへ戻る',
+        onPressed: () => unawaited(_closeReturnedDialog(back: true)),
+      ),
+      IconButton(
+        icon: const Icon(Icons.arrow_forward),
+        tooltip: 'ページに戻る',
+        onPressed: () => unawaited(_closeReturnedDialog(back: false)),
+      ),
+    ]);
+  }
+
+  Future<void> _closeReturnedDialog({required bool back}) async {
+    final dialogContext = _returnedDialogContext;
+    if (dialogContext == null) return;
+    _setPendingReturnDialog(null);
+    _returnedDialogContext = null;
+    if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+    if (back && await _controller.canGoBack()) {
+      await _navigateWebViewHistory(forward: false);
+    }
+  }
+
   Future<bool> _goBackIfPossible() async {
+    if (_returnedDialogContext != null) {
+      await _closeReturnedDialog(back: true);
+      return true;
+    }
+    _setPendingReturnDialog(null);
     if (_calendarOperationGate.isRunning) {
       return false;
     }
-    if (await _navigatePreview('back')) {
+    final markers = _previewNavigationState == 'visible'
+        ? <String, dynamic>{}
+        : await _syncHistoryState();
+    final dialog = markers['dialog'];
+    final action = decideGakujoHistoryAction(
+      forward: false,
+      previewState: _previewNavigationState,
+      hasDialog: dialog is String,
+      activeToken: _activePreviewToken,
+      markerToken:
+          markers['preview'] is String ? markers['preview'] as String : null,
+      detachedToken: _detachedPreviewToken,
+      canGoForward: false,
+      canGoBack: _previewNavigationState != 'visible' &&
+          await _controller.canGoBack(),
+    );
+    if (action == GakujoHistoryAction.preview) {
+      return _navigatePreview('back');
+    }
+    if (action == GakujoHistoryAction.dialog) {
+      switch (dialog) {
+        case 'starred': unawaited(_showStarredMessagesDialog(returned: true));
+        case 'favorites': unawaited(_showFavoritesDialog(returned: true));
+        case 'cachedReports': unawaited(_showCachedReportsDialog(returned: true));
+      }
       return true;
     }
     _setPendingMessageUrl(null);
-    if (!await _controller.canGoBack()) {
+    if (action != GakujoHistoryAction.webView) {
       await _refreshNavigationState();
       return false;
     }
-
-    _beginNavigation();
-    await _controller.goBack();
-    await _refreshNavigationState();
+    if (_previewNavigationState == 'hidden' && _activePreviewToken != null) {
+      _detachedPreviewToken = _activePreviewToken;
+    }
+    await _navigateWebViewHistory(forward: false);
     return true;
   }
 
@@ -7941,28 +8173,71 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<bool> _goForwardIfPossible() async {
+    if (_returnedDialogContext != null) {
+      await _closeReturnedDialog(back: false);
+      return true;
+    }
+    _setPendingReturnDialog(null);
     if (_calendarOperationGate.isRunning) {
       return false;
     }
-    if (await _navigatePreview('forward')) {
-      return true;
+    final markers = _previewNavigationState == 'visible'
+        ? <String, dynamic>{}
+        : await _syncHistoryState();
+    final canGoForward = _previewNavigationState != 'visible' &&
+        await _controller.canGoForward();
+    final action = decideGakujoHistoryAction(
+      forward: true,
+      previewState: _previewNavigationState,
+      hasDialog: false,
+      activeToken: _activePreviewToken,
+      markerToken:
+          markers['preview'] is String ? markers['preview'] as String : null,
+      detachedToken: _detachedPreviewToken,
+      canGoForward: canGoForward,
+      canGoBack: false,
+    );
+    if (action == GakujoHistoryAction.preview) {
+      return _navigatePreview('forward');
     }
-    if (_previewNavigationState == 'visible') {
-      return false;
+    if (action == GakujoHistoryAction.reopenPreview &&
+        _detachedPreviewToken != null) {
+      try {
+        final result = await _controller.runJavaScriptReturningResult(
+          gakujoHistoryMarkerJs({
+            'action': 'reopen-preview',
+            'token': _detachedPreviewToken,
+          }),
+        );
+        if (_boolFromJavaScriptResult(result)) {
+          _detachedPreviewToken = null;
+          if (mounted) setState(() => _virtualPreviewForward = false);
+          return true;
+        }
+      } on Object catch (error, stackTrace) {
+        developer.log('Failed to reopen preview',
+            name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      }
     }
     _setPendingMessageUrl(null);
-    if (!await _controller.canGoForward()) {
+    if (action != GakujoHistoryAction.webView &&
+        !(action == GakujoHistoryAction.reopenPreview && canGoForward)) {
       await _refreshNavigationState();
       return false;
     }
 
-    _beginNavigation();
-    await _controller.goForward();
-    await _refreshNavigationState();
+    await _navigateWebViewHistory(forward: true);
     return true;
   }
 
   void _handlePreviewNavigationState(String state) {
+    if (state.startsWith('token:')) {
+      final token = state.substring(6);
+      if (RegExp(r'^[A-Za-z0-9_-]{8,64}$').hasMatch(token)) {
+        _activePreviewToken = token;
+      }
+      return;
+    }
     if (!mounted || !const {'visible', 'hidden', 'none'}.contains(state)) {
       return;
     }
@@ -7995,10 +8270,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _refreshNavigationState() async {
+  Future<void> _refreshNavigationState({int? revision}) async {
     final canGoBack = await _controller.canGoBack();
     final canGoForward = await _controller.canGoForward();
-    if (!mounted) {
+    if (!mounted || (revision != null && revision != _navigationRevision)) {
       return;
     }
 

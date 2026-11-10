@@ -92,6 +92,8 @@ void main() {
     expect(relay, contains('event.data.type === "mbg-preview-title"'));
     expect(relay, contains('typeof event.data.name === "string"'));
     expect(relay, contains('type: "mbg-preview-title", name: event.data.name'));
+    expect(relay, contains('event.data.type === "mbg-preview-image"'));
+    expect(relay, contains('event.data.type === "mbg-preview-text"'));
     expect(relay, contains('event.data.indexOf("mbg-preview-") === 0'));
     final directory = await Directory.systemTemp.createTemp('popup-relay-');
     try {
