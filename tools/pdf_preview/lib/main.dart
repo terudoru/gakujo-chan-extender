@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:web/web.dart' as web;
 
@@ -54,6 +55,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   int _outlineRequest = 0;
   bool _textLimitReached = false;
   bool _receivedDocument = false;
+  String _title = 'PDFプレビュー';
   final textSearcher = ValueNotifier<BoundedPdfTextSearcher?>(null);
   final _fontManager = SerialPdfFontManager();
   VoidCallback? _releaseDocument;
@@ -122,6 +124,20 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       final message = event as web.MessageEvent;
       if (!identical(message.source, web.window.parent)) return;
       final data = message.data;
+      if (data != null && data.isA<JSObject>() && !data.isA<JSArrayBuffer>()) {
+        final object = data as JSObject;
+        final type = object.getProperty<JSAny?>('type'.toJS);
+        final name = object.getProperty<JSAny?>('name'.toJS);
+        if (type != null && type.isA<JSString>() &&
+            (type as JSString).toDart == 'mbg-preview-title' &&
+            name != null && name.isA<JSString>()) {
+          final trimmed = (name as JSString).toDart.trim();
+          setState(() => _title = trimmed.isEmpty
+              ? 'PDFプレビュー'
+              : trimmed.substring(0, math.min(trimmed.length, 200)));
+        }
+        return;
+      }
       if (data == null || !data.isA<JSArrayBuffer>()) return;
       final bytes = (data as JSArrayBuffer).toDart.asUint8List();
       if (_receivedDocument ||
@@ -172,6 +188,10 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     if (mounted) setState(() {});
   }
 
+  void _closePreview() {
+    web.window.parent?.postMessage('mbg-preview-close'.toJS, '*'.toJS);
+  }
+
   static bool determineWhetherMobileDeviceOrNot() {
     final data = MediaQueryData.fromView(
       WidgetsBinding.instance.platformDispatcher.views.single,
@@ -185,11 +205,17 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     // while Android's keyboard is animating. Use the frame's own viewport.
     final width = web.window.innerWidth;
     final height = web.window.innerHeight;
+    final narrow = MediaQuery.sizeOf(context).width < 600;
     final compactSearch = web.window.navigator.userAgent.contains('Android') &&
         showLeftPane.value &&
         width > height && height < 180;
-    return Scaffold(
+    return CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _closePreview},
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
       appBar: compactSearch ? null : AppBar(
+        toolbarHeight: narrow ? 48 : null,
         bottom: _textLimitReached
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(40),
@@ -204,11 +230,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           icon: const Icon(Icons.menu),
           onPressed: () => showLeftPane.value = !showLeftPane.value,
         ),
-        title: determineWhetherMobileDeviceOrNot()
-            ? null
-            : const Text('PDFプレビュー'),
+        title: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(
+          if (!narrow) IconButton(
             tooltip: 'ページの並びを変更',
             onPressed: _changeLayoutType,
             icon: const Icon(Icons.view_agenda),
@@ -227,7 +251,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
             },
             icon: const Icon(Icons.zoom_in),
           ),
-          IconButton(
+          if (!narrow) IconButton(
             tooltip: '最初のページ',
             onPressed: () {
               if (controller.isReady) {
@@ -236,7 +260,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
             },
             icon: const Icon(Icons.first_page),
           ),
-          IconButton(
+          if (!narrow) IconButton(
             tooltip: '最後のページ',
             onPressed: () {
               if (controller.isReady) {
@@ -246,6 +270,29 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
               }
             },
             icon: const Icon(Icons.last_page),
+          ),
+          if (narrow) PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'その他',
+            onSelected: (value) {
+              if (value == 'layout') {
+                _changeLayoutType();
+              } else if (controller.isReady) {
+                unawaited(controller.goToPage(
+                  pageNumber: value == 'first' ? 1 : controller.pageCount,
+                ));
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'layout', child: Text('ページの並びを変更')),
+              PopupMenuItem(value: 'first', child: Text('最初のページ')),
+              PopupMenuItem(value: 'last', child: Text('最後のページ')),
+            ],
+          ),
+          IconButton(
+            tooltip: '閉じる',
+            onPressed: _closePreview,
+            icon: const Icon(Icons.close),
           ),
         ],
       ),
@@ -541,6 +588,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

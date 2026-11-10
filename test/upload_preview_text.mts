@@ -63,6 +63,11 @@ for (const bytes of [
     cancelable:true, preventDefault(){prevented=true;}});
   assert.equal(prevented,true);
   assert.ok(parseFloat(pre.style.fontSize)>100,'Ctrl-wheel zooms text');
-  overlay.children[0].children.find((node: any) => node.textContent === '閉じる').fire('click');
+  assert.match(bar.style.cssText, /flex-wrap:nowrap/);
+  const close: any = bar.children.at(-1);
+  assert.equal(close.textContent, '×');
+  assert.equal(close.attributes['aria-label'], '閉じる');
+  assert.equal(close.title, '閉じる');
+  close.fire('click');
 }
 console.log('UTF-8, Shift_JIS and UTF-16 text render correctly.');

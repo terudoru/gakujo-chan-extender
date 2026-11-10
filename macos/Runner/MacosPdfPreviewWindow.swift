@@ -2,9 +2,9 @@ import AppKit
 import WebKit
 import ObjectiveC.runtime
 
-/// Opens only the app's capability-protected PDF viewer in a separate WebView.
-/// A top-level WebView avoids WebKit's mixed-content block on HTTP iframes.
-final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate, NSWindowDelegate {
+/// Hosts the capability-protected PDF viewer over its opener WebView.
+/// A separate WebView avoids WebKit's mixed-content block on HTTP iframes.
+final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate {
   private typealias CreateView = @convention(c) (
     AnyObject, Selector, WKWebView, WKWebViewConfiguration, WKNavigationAction, WKWindowFeatures
   ) -> Unmanaged<AnyObject>?
@@ -13,8 +13,7 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
   )
   private static var installedClasses = Set<ObjectIdentifier>()
   private static var allowedURL: URL?
-  private static var windows: [MacosPdfPreviewWindow] = []
-  private var window: NSWindow?
+  private static var overlays: [MacosPdfPreviewWindow] = []
   private weak var opener: WKWebView?
   private weak var viewer: WKWebView?
   private let url: URL
@@ -61,40 +60,35 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
   }
 
   static func setVisible(_ visible: Bool, mainWindow: NSWindow?) {
-    for owner in windows {
-      if visible {
-        owner.window?.makeKeyAndOrderFront(nil)
-      } else {
-        owner.window?.orderOut(nil)
+    for owner in overlays {
+      owner.viewer?.isHidden = !visible
+      if visible, let viewer = owner.viewer {
+        viewer.window?.makeFirstResponder(viewer)
+      } else if let opener = owner.opener {
+        opener.window?.makeFirstResponder(opener)
       }
     }
-    if !visible { mainWindow?.makeKeyAndOrderFront(nil) }
   }
 
   static func opener(for viewer: WKWebView) -> WKWebView? {
-    windows.first { $0.viewer === viewer }?.opener
+    overlays.first { $0.viewer === viewer }?.opener
   }
 
   private static func open(url: URL, configuration: WKWebViewConfiguration, opener: WKWebView) -> WKWebView {
     let owner = MacosPdfPreviewWindow(url: url)
-    let frame = NSRect(x: 0, y: 0, width: 1000, height: 760)
     // Do not expose the main page's native script-message channels to a PDF
     // viewer. WebKit still uses the supplied configuration for opener links.
     configuration.userContentController = WKUserContentController()
-    let webView = WKWebView(frame: frame, configuration: configuration)
+    let webView = WKWebView(frame: opener.bounds, configuration: configuration)
+    webView.autoresizingMask = [.width, .height]
+    webView.allowsLinkPreview = false
     owner.opener = opener
     owner.viewer = webView
     webView.uiDelegate = owner
     webView.navigationDelegate = owner
-    let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-    window.title = "PDFプレビュー"
-    window.isReleasedWhenClosed = false
-    window.delegate = owner
-    window.contentView = webView
-    owner.window = window
-    windows.append(owner)
-    window.center()
-    window.makeKeyAndOrderFront(nil)
+    overlays.append(owner)
+    opener.addSubview(webView)
+    opener.window?.makeFirstResponder(webView)
     return webView
   }
 
@@ -103,11 +97,11 @@ final class MacosPdfPreviewWindow: NSObject, WKUIDelegate, WKNavigationDelegate,
     decisionHandler(navigationAction.request.url == url ? .allow : .cancel)
   }
 
-  func webViewDidClose(_ webView: WKWebView) { window?.close() }
-
-  func windowWillClose(_ notification: Notification) {
-    window?.contentView = nil
-    window = nil
-    Self.windows.removeAll { $0 === self }
+  func webViewDidClose(_ webView: WKWebView) {
+    webView.removeFromSuperview()
+    if let opener = opener {
+      opener.window?.makeFirstResponder(opener)
+    }
+    Self.overlays.removeAll { $0 === self }
   }
 }

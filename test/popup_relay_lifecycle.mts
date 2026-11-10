@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+
+const source = (await readFile(process.argv[2] || 'web_scripts/src/popup_relay/main.ts', 'utf8'))
+  .replace('export {};', '');
+const opener: any = {messages: [], postMessage(...args: any[]) { this.messages.push(args); }};
+const window: any = {opener, messages: [], addEventListener(_name: string, fn: any) { this.listener = fn; },
+  postMessage(...args: any[]) { this.messages.push(args); }};
+window.parent = window;
+vm.runInNewContext(source, {window, ArrayBuffer});
+const title = {type: 'mbg-preview-title', name: 'sample.pdf', extra: 'ignored'};
+window.listener({source: {}, data: title});
+window.listener({source: opener, data: {...title, name: 3}});
+assert.equal(window.messages.length, 0);
+window.listener({source: opener, data: title});
+assert.equal(window.messages.length, 1);
+assert.notEqual(window.messages[0][0], title);
+assert.equal(window.messages[0][0].type, title.type);
+assert.equal(window.messages[0][0].name, title.name);
+assert.equal(window.messages[0][0].extra, undefined);
+const bytes = new ArrayBuffer(4);
+window.listener({source: opener, data: bytes});
+assert.equal(window.messages[1][0], bytes);
+window.listener({source: window, data: 'mbg-preview-close'});
+assert.equal(opener.messages[0][0], 'mbg-preview-close');
+console.log('Popup relay restricts titles and PDF bytes to the opener.');

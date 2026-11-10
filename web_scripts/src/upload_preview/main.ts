@@ -83,7 +83,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     overlay.setAttribute('aria-label', 'ファイルのプレビュー');
     overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;color:#111;display:flex;flex-direction:column;font:16px sans-serif';
     var bar = doc.createElement('div');
-    bar.style.cssText = 'display:flex;gap:8px;align-items:center;padding:10px;flex-wrap:wrap;border-bottom:1px solid #ccc';
+    bar.style.cssText = 'display:flex;gap:4px;align-items:center;box-sizing:border-box;height:48px;min-height:48px;padding:0 8px;flex-wrap:nowrap;background:#fff;border-bottom:1px solid #ddd';
+    var flutterViewerActive = false;
     // CampusSquare can use a desktop-sized layout viewport on a phone. Keep
     // controls readable even when the WebView scales that viewport down.
     var sourceWindow = doc.defaultView || window;
@@ -119,7 +120,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var screen = sourceWindow.screen;
       var compact = !!(mbgCompactAndroid && previewFrame && viewport && screen && screen.width > screen.height &&
         viewport.height * scale < 180);
-      bar.style.display = compact ? 'none' : 'flex';
+      bar.style.display = flutterViewerActive || compact ? 'none' : 'flex';
       if (visual && textZoom) visual.style.zoom = bar.style.zoom;
       if (previewFrame) {
         // A desktop-width page on a phone can be scaled below 100%. Give the
@@ -152,8 +153,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       rootViewport.addEventListener('scroll', resizeToolbar);
     }
     var title = doc.createElement('strong'); title.textContent = file.name;
-    title.style.cssText = 'flex:1 1 180px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-    var close = doc.createElement('button'); close.type = 'button'; close.textContent = '閉じる';
+    title.style.cssText = 'flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    var close = doc.createElement('button'); close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', '閉じる'); close.title = '閉じる';
     var previous = doc.createElement('button'); previous.type = 'button'; previous.textContent = '前へ';
     var next = doc.createElement('button'); next.type = 'button'; next.textContent = '次へ';
     var zoomOut = doc.createElement('button'); zoomOut.type = 'button'; zoomOut.textContent = '縮小';
@@ -161,6 +162,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     var imageZoomLabel = doc.createElement('span'); imageZoomLabel.hidden = true;
     imageZoomLabel.setAttribute('aria-label', '表示倍率');
     var count = doc.createElement('span');
+    [previous, next, zoomOut, zoomIn, close].forEach(function(button) { button.style.cssText = 'flex:none;padding:4px 6px'; });
     bar.append(title, previous, count, next, zoomOut, imageZoomLabel, zoomIn, close);
     var body = doc.createElement('div'); body.style.cssText = 'overflow:auto;flex:1;text-align:center;padding:12px';
     var status = doc.createElement('p'); status.textContent = '読み込み中…';
@@ -207,6 +209,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (watchdog) window.clearTimeout(watchdog);
       watchdog = window.setTimeout(function() {
         stopPdf();
+        flutterViewerActive = false; resizeToolbar();
         if (!closed) status.textContent = 'プレビューがタイムアウトしました。元のファイルは変更されません。';
       }, 30000);
     }
@@ -240,7 +243,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     window.addEventListener('pagehide', cleanup);
     if (sourceWindow !== window) sourceWindow.addEventListener('pagehide', cleanup);
     previous.hidden = next.hidden = true;
-    function fail(error: Error) { stopPdf(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
+    function fail(error: Error) { stopPdf(); flutterViewerActive = false; resizeToolbar(); if (!closed) status.textContent = 'プレビューできません: ' + (error.message || error); }
     function enableVisualZoom(element: HTMLElement, isText: boolean) {
       visual = element; textZoom = isText;
       resizeToolbar();
@@ -266,6 +269,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       armWatchdog();
       pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
+        if (window.__MBG_PDF_PREVIEW_URL) { flutterViewerActive = true; resizeToolbar(); }
         return new Promise<ArrayBuffer | null>(function(resolve, reject) {
           reader = new FileReader();
           reader.onload = function() { var result = reader && reader.result; reader = null; resolve(result as ArrayBuffer | null); };
@@ -276,6 +280,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       }).then(function(bytes) {
         if (closed || pdfStopped || !bytes) return null;
         if (window.__MBG_PDF_PREVIEW_URL) {
+          flutterViewerActive = true; resizeToolbar();
           var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
           var frame = popup ? null : doc.createElement('iframe');
           var viewer: Window | null = null, popupTimer: number | null = null;
@@ -293,6 +298,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
             if (event.data === 'mbg-preview-ready' && !sent) {
               sent = true;
               armWatchdog();
+              viewer!.postMessage({type: 'mbg-preview-title', name: file.name}, '*');
               viewer!.postMessage(bytes, '*', [bytes!]);
               bytes = null;
             } else if (event.data === 'mbg-preview-password-requested' && sent) {
@@ -302,7 +308,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
               armWatchdog();
             } else if (event.data === 'mbg-preview-loaded' && sent) {
               if (watchdog) { window.clearTimeout(watchdog); watchdog = null; }
-              status.textContent = popup ? 'PDFプレビューを別のウィンドウで表示中です' : '';
+              status.textContent = '';
+            } else if (event.data === 'mbg-preview-close') {
+              cleanup();
             } else if (event.data === 'mbg-preview-failed') {
               fail(new Error('PDFを開けません'));
             }

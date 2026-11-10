@@ -7910,7 +7910,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_previewNavigationState != state) {
       setState(() => _previewNavigationState = state);
     }
-    if (defaultTargetPlatform == TargetPlatform.macOS) {
+    if (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS) {
       unawaited(const MethodChannel('net.yoshida.morebettergakujo/pdf_preview')
           .invokeMethod<void>('setPreviewState', state)
           .catchError((Object error, StackTrace stackTrace) {

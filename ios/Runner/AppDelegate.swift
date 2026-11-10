@@ -4,6 +4,8 @@ import QuickLook
 import UIKit
 import UserNotifications
 import UniformTypeIdentifiers
+import WebKit
+import ObjectiveC.runtime
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -19,10 +21,37 @@ import UniformTypeIdentifiers
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    IosPdfPreviewOverlay.install()
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     downloadsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     notificationsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     calendarBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+    FlutterMethodChannel(
+      name: "net.yoshida.morebettergakujo/pdf_preview",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    ).setMethodCallHandler { call, result in
+      switch call.method {
+      case "setViewerURL":
+        guard let url = call.arguments as? String,
+              IosPdfPreviewOverlay.setViewerURL(url) else {
+          result(FlutterError(code: "invalid_viewer", message: nil, details: nil))
+          return
+        }
+      case "setPreviewState":
+        guard let state = call.arguments as? String,
+              ["visible", "hidden", "none"].contains(state) else {
+          result(FlutterError(code: "invalid_visibility", message: nil, details: nil))
+          return
+        }
+        if state != "none" {
+          IosPdfPreviewOverlay.setVisible(state == "visible")
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(nil)
+    }
   }
 }
 
@@ -1520,5 +1549,129 @@ private enum DownloadFolderError: LocalizedError {
 private extension Optional where Wrapped == String {
   var orEmpty: String {
     self ?? ""
+  }
+}
+
+/// Hosts the capability-protected PDF viewer over its opener WebView.
+/// A separate WebView avoids WebKit's mixed-content block on HTTP iframes.
+private final class IosPdfPreviewOverlay: NSObject, WKUIDelegate, WKNavigationDelegate {
+  private typealias CreateView = @convention(c) (
+    AnyObject, Selector, WKWebView, WKWebViewConfiguration, WKNavigationAction, WKWindowFeatures
+  ) -> Unmanaged<AnyObject>?
+  private static let selector = NSSelectorFromString(
+    "webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"
+  )
+  private typealias UIDelegateSetter = @convention(c) (AnyObject, Selector, AnyObject?) -> Void
+  private static var installed = false
+  private static var installedClasses = Set<ObjectIdentifier>()
+  private static var allowedURL: URL?
+  private static var overlays: [IosPdfPreviewOverlay] = []
+  private weak var opener: WKWebView?
+  private weak var viewer: WKWebView?
+  private let url: URL
+
+  private init(url: URL) { self.url = url }
+
+  static func setViewerURL(_ value: String) -> Bool {
+    guard let parts = URLComponents(string: value), parts.scheme == "http",
+          parts.host == "127.0.0.1", let port = parts.port, (1...65535).contains(port),
+          parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil else {
+      return false
+    }
+    let path = parts.path.split(separator: "/", omittingEmptySubsequences: true)
+    guard path.count == 2, path[1] == "index.html", path[0].count == 43,
+          path[0].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }),
+          parts.path == "/\(path[0])/index.html", let url = parts.url else { return false }
+    allowedURL = url
+    return true
+  }
+
+  static func install() {
+    guard !installed else { return }
+    installed = true
+    let setter = #selector(setter: WKWebView.uiDelegate)
+    guard let method = class_getInstanceMethod(WKWebView.self, setter) else { return }
+    let original = unsafeBitCast(method_getImplementation(method), to: UIDelegateSetter.self)
+    let block: @convention(block) (AnyObject, AnyObject?) -> Void = { webView, delegate in
+      if let delegate, !(delegate is IosPdfPreviewOverlay),
+         let delegateClass = object_getClass(delegate) {
+        install(on: delegateClass)
+      }
+      original(webView, setter, delegate)
+    }
+    method_setImplementation(
+      method, imp_implementationWithBlock(unsafeBitCast(block, to: AnyObject.self))
+    )
+  }
+
+  private static func install(on delegateClass: AnyClass) {
+    let identity = ObjectIdentifier(delegateClass)
+    guard !installedClasses.contains(identity),
+          let template = class_getInstanceMethod(IosPdfPreviewOverlay.self, selector) else { return }
+    let method = class_getInstanceMethod(delegateClass, selector)
+    let original: CreateView? = method.map {
+      unsafeBitCast(method_getImplementation($0), to: CreateView.self)
+    }
+    installedClasses.insert(identity)
+    let block: @convention(block) (
+      AnyObject, WKWebView, WKWebViewConfiguration, WKNavigationAction, WKWindowFeatures
+    ) -> WKWebView? = { delegate, opener, configuration, action, features in
+      let origin = action.sourceFrame.securityOrigin
+      if let allowed = allowedURL, action.request.url == allowed,
+         origin.protocol == "https", origin.host == "gakujo.iess.niigata-u.ac.jp" {
+        return open(url: allowed, configuration: configuration, opener: opener)
+      }
+      return original?(delegate, selector, opener, configuration, action, features)?
+        .takeUnretainedValue() as? WKWebView
+    }
+    let implementation = imp_implementationWithBlock(unsafeBitCast(block, to: AnyObject.self))
+    if !class_addMethod(delegateClass, selector, implementation, method_getTypeEncoding(method ?? template)),
+       let method = method {
+      method_setImplementation(method, implementation)
+    }
+  }
+
+  static func setVisible(_ visible: Bool) {
+    for owner in overlays {
+      owner.viewer?.isHidden = !visible
+    }
+  }
+
+  static func opener(for viewer: WKWebView) -> WKWebView? {
+    overlays.first { $0.viewer === viewer }?.opener
+  }
+
+  private static func open(url: URL, configuration: WKWebViewConfiguration, opener: WKWebView) -> WKWebView {
+    let owner = IosPdfPreviewOverlay(url: url)
+    // Do not expose the main page's native script-message channels to a PDF
+    // viewer. WebKit still uses the supplied configuration for opener links.
+    configuration.userContentController = WKUserContentController()
+    let webView = WKWebView(frame: opener.bounds, configuration: configuration)
+    webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    webView.allowsLinkPreview = false
+    owner.opener = opener
+    owner.viewer = webView
+    webView.uiDelegate = owner
+    webView.navigationDelegate = owner
+    overlays.append(owner)
+    opener.addSubview(webView)
+    return webView
+  }
+
+  func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+               decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    decisionHandler(navigationAction.request.url == url ? .allow : .cancel)
+  }
+
+  // Provides the Objective-C method signature when a delegate has no implementation.
+  func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+               for navigationAction: WKNavigationAction,
+               windowFeatures: WKWindowFeatures) -> WKWebView? {
+    nil
+  }
+
+  func webViewDidClose(_ webView: WKWebView) {
+    webView.removeFromSuperview()
+    Self.overlays.removeAll { $0 === self }
   }
 }

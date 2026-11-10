@@ -289,7 +289,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       overlay.setAttribute("aria-label", "ファイルのプレビュー");
       overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#fff;color:#111;display:flex;flex-direction:column;font:16px sans-serif";
       var bar = doc.createElement("div");
-      bar.style.cssText = "display:flex;gap:8px;align-items:center;padding:10px;flex-wrap:wrap;border-bottom:1px solid #ccc";
+      bar.style.cssText = "display:flex;gap:4px;align-items:center;box-sizing:border-box;height:48px;min-height:48px;padding:0 8px;flex-wrap:nowrap;background:#fff;border-bottom:1px solid #ddd";
+      var flutterViewerActive = false;
       var sourceWindow = doc.defaultView || window;
       var viewport = sourceWindow.visualViewport;
       var rootViewport = window.visualViewport;
@@ -321,7 +322,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         bar.style.zoom = String(scale > 0 ? Math.min(3, Math.max(1, 1 / scale)) : 1);
         var screen = sourceWindow.screen;
         var compact = !!(mbgCompactAndroid && previewFrame && viewport && screen && screen.width > screen.height && viewport.height * scale < 180);
-        bar.style.display = compact ? "none" : "flex";
+        bar.style.display = flutterViewerActive || compact ? "none" : "flex";
         if (visual && textZoom) visual.style.zoom = bar.style.zoom;
         if (previewFrame) {
           var frameScale = scale > 0 ? Math.max(0.1, Math.min(5, scale)) : 1;
@@ -350,10 +351,12 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       }
       var title = doc.createElement("strong");
       title.textContent = file.name;
-      title.style.cssText = "flex:1 1 180px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      title.style.cssText = "flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
       var close = doc.createElement("button");
       close.type = "button";
-      close.textContent = "閉じる";
+      close.textContent = "×";
+      close.setAttribute("aria-label", "閉じる");
+      close.title = "閉じる";
       var previous = doc.createElement("button");
       previous.type = "button";
       previous.textContent = "前へ";
@@ -370,6 +373,9 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       imageZoomLabel.hidden = true;
       imageZoomLabel.setAttribute("aria-label", "表示倍率");
       var count = doc.createElement("span");
+      [previous, next, zoomOut, zoomIn, close].forEach(function(button) {
+        button.style.cssText = "flex:none;padding:4px 6px";
+      });
       bar.append(title, previous, count, next, zoomOut, imageZoomLabel, zoomIn, close);
       var body = doc.createElement("div");
       body.style.cssText = "overflow:auto;flex:1;text-align:center;padding:12px";
@@ -455,6 +461,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         if (watchdog) window.clearTimeout(watchdog);
         watchdog = window.setTimeout(function() {
           stopPdf();
+          flutterViewerActive = false;
+          resizeToolbar();
           if (!closed) status.textContent = "プレビューがタイムアウトしました。元のファイルは変更されません。";
         }, 3e4);
       }
@@ -493,6 +501,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       previous.hidden = next.hidden = true;
       function fail(error) {
         stopPdf();
+        flutterViewerActive = false;
+        resizeToolbar();
         if (!closed) status.textContent = "プレビューできません: " + (error.message || error);
       }
       function enableVisualZoom(element, isText) {
@@ -538,6 +548,10 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
           cancelLibrary = cancel;
         }).then(function() {
           if (closed || pdfStopped) return null;
+          if (window.__MBG_PDF_PREVIEW_URL) {
+            flutterViewerActive = true;
+            resizeToolbar();
+          }
           return new Promise(function(resolve, reject) {
             reader = new FileReader();
             reader.onload = function() {
@@ -563,6 +577,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
               if (event.data === "mbg-preview-ready" && !sent) {
                 sent = true;
                 armWatchdog();
+                viewer.postMessage({ type: "mbg-preview-title", name: file.name }, "*");
                 viewer.postMessage(bytes, "*", [bytes]);
                 bytes = null;
               } else if (event.data === "mbg-preview-password-requested" && sent) {
@@ -578,12 +593,16 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
                   window.clearTimeout(watchdog);
                   watchdog = null;
                 }
-                status.textContent = popup ? "PDFプレビューを別のウィンドウで表示中です" : "";
+                status.textContent = "";
+              } else if (event.data === "mbg-preview-close") {
+                cleanup();
               } else if (event.data === "mbg-preview-failed") {
                 fail(new Error("PDFを開けません"));
               }
             };
             var onViewerMessage = onViewerMessage2;
+            flutterViewerActive = true;
+            resizeToolbar();
             var popup = !!window.__MBG_PDF_PREVIEW_POPUP;
             var frame = popup ? null : doc.createElement("iframe");
             var viewer = null, popupTimer = null;
