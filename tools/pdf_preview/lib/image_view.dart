@@ -2,6 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+/// Titles carry arbitrary file names, so name the bundled fonts explicitly.
+const previewTitleStyle = TextStyle(fontFamily: 'MBGPreviewUI', fontFamilyFallback: ['Unifont']);
+
 class ImagePreview extends StatefulWidget {
   const ImagePreview({super.key, required this.title, required this.bytes, required this.onMessage});
   final String title;
@@ -63,7 +66,7 @@ class _ImagePreviewState extends State<ImagePreview> {
       child: Focus(autofocus: true, child: Scaffold(
         appBar: AppBar(
           toolbarHeight: narrow ? 48 : null,
-          title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: previewTitleStyle),
           actions: [
             IconButton(tooltip: '縮小', onPressed: () => _zoom(1 / 1.2), icon: const Icon(Icons.zoom_out)),
             Text('${(_scale * 100).round()}%'),
@@ -72,8 +75,8 @@ class _ImagePreviewState extends State<ImagePreview> {
               IconButton(tooltip: '全体を表示', onPressed: () => action('fit'), icon: const Icon(Icons.fit_screen)),
               IconButton(tooltip: '右に回転', onPressed: () => action('rotate'), icon: const Icon(Icons.rotate_right)),
             ] else PopupMenuButton<String>(tooltip: 'その他', onSelected: action, itemBuilder: (_) => const [
-              PopupMenuItem(value: 'fit', child: Text('全体を表示')),
-              PopupMenuItem(value: 'rotate', child: Text('右に回転')),
+              PopupMenuItem(value: 'fit', child: Text('全体を表示', style: previewTitleStyle)),
+              PopupMenuItem(value: 'rotate', child: Text('右に回転', style: previewTitleStyle)),
             ]),
             IconButton(tooltip: '閉じる', onPressed: () => widget.onMessage('mbg-preview-close'), icon: const Icon(Icons.close)),
           ],
@@ -89,7 +92,7 @@ class _ImagePreviewState extends State<ImagePreview> {
             },
             errorBuilder: (context, error, stack) {
               _report('mbg-preview-failed');
-              return const Center(child: Text('画像を開けませんでした。'));
+              return const Center(child: Text('画像を開けませんでした。', style: previewTitleStyle));
             },
           ))),
         ),

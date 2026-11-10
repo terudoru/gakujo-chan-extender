@@ -1,20 +1,9 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
-
-const require = createRequire(new URL('../web_scripts/package.json', import.meta.url));
-const ts = require('typescript');
-function loadModule(path: string, imports: Record<string, any> = {}) {
-  const source = readFileSync(path, 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: {
-    module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
-  } }).outputText;
-  const exports: any = {};
-  runInNewContext(output, { exports, require: (name: string) => imports[name], Uint8Array, WeakSet });
-  return exports;
-}
-const { historyMarker } = loadModule('web_scripts/src/history_marker/marker.ts');
+// Node strips the TypeScript types; no compiler package is needed in CI.
+// A computed specifier keeps the tests' type check out of the page source,
+// which relies on the page script globals.
+const markerModule = '../web_scripts/src/history_marker/marker.ts';
+const { historyMarker }: { historyMarker: (win: any, config: any) => any } = await import(markerModule);
 
 function documentWithWindow() {
   const listeners: any[] = [];
