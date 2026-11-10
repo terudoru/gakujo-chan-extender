@@ -842,3 +842,23 @@ class DriveDownloadSwitch extends StatelessWidget {
     onChanged: signingIn || !enabled ? null : onChanged,
   );
 }
+
+class DriveSaveFolderTile extends StatelessWidget {
+  const DriveSaveFolderTile({
+    super.key,
+    required this.name,
+    required this.onChange,
+  });
+
+  final String? name;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    title: const Text('保存先フォルダ'),
+    subtitle: Text(name ?? '既定（マイドライブ / More Better Gakujo）'),
+    trailing: TextButton(onPressed: onChange, child: const Text('変更')),
+  );
+}

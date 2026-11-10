@@ -16,6 +16,9 @@ class DriveDownloadPreference {
   bool enabled = false;
   String? boundAccount;
   String? boundGoogleEmail;
+  String? folderId;
+  String? folderName;
+  String? folderEmail;
 
   Future<void> load(File legacyFile) async {
     final raw = await _storage.read(key: key);
@@ -24,6 +27,9 @@ class DriveDownloadPreference {
       enabled = data['enabled'] == true;
       boundAccount = data['boundAccount'] as String?;
       boundGoogleEmail = data['boundGoogleEmail'] as String?;
+      folderId = data['folderId'] as String?;
+      folderName = data['folderName'] as String?;
+      folderEmail = data['folderEmail'] as String?;
     } else if (await legacyFile.exists()) {
       // The old toggle has no account identity, so it cannot be trusted on.
       final legacyEnabled = await legacyFile.readAsString() == 'true';
@@ -39,6 +45,9 @@ class DriveDownloadPreference {
         'enabled': value,
         'boundAccount': account,
         'boundGoogleEmail': googleEmail,
+        'folderId': folderId,
+        'folderName': folderName,
+        'folderEmail': folderEmail,
       }),
     );
     enabled = value;
@@ -46,11 +55,37 @@ class DriveDownloadPreference {
     boundGoogleEmail = googleEmail;
   }
 
+  Future<void> saveFolder(String? id, String? name, String? email) async {
+    await _storage.write(
+      key: key,
+      value: jsonEncode({
+        'enabled': enabled,
+        'boundAccount': boundAccount,
+        'boundGoogleEmail': boundGoogleEmail,
+        'folderId': id,
+        'folderName': id == null ? null : name,
+        'folderEmail': id == null ? null : email,
+      }),
+    );
+    folderId = id;
+    folderName = id == null ? null : name;
+    folderEmail = id == null ? null : email;
+  }
+
+  String? folderIdFor(String? email) =>
+      email != null && folderEmail == email ? folderId : null;
+
+  String? folderNameFor(String? email) =>
+      email != null && folderEmail == email ? folderName : null;
+
   Future<void> clear() async {
     await _storage.delete(key: key);
     enabled = false;
     boundAccount = null;
     boundGoogleEmail = null;
+    folderId = null;
+    folderName = null;
+    folderEmail = null;
   }
 
   bool matches(String? account, [String? googleEmail]) =>
