@@ -219,6 +219,9 @@ const _reportListPortalUrl =
     'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=en';
 const _schedulePortalUrl =
     'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=sch';
+// Gakujo's own HOME tab (`#tab-home`), verified on the PC portal.
+const gakujoHomePortalUrl =
+    'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=home';
 const _compactToolbarHeight = 40.0;
 const _toolbarButtonExtent = 40.0;
 const _toolbarIconSize = 20.0;
@@ -1973,6 +1976,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               enabled: !_calendarOperationGate.isRunning,
               onReload: () => unawaited(
                 _handleToolbarAction(_ToolbarAction.reload),
+              ),
+            ),
+            IconButton(
+              tooltip: '学務のHOMEへ',
+              onPressed: _calendarOperationGate.isRunning
+                  ? null
+                  : () => unawaited(_openGakujoHome()),
+              icon: const Icon(Icons.home_outlined),
+              iconSize: _toolbarIconSize,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: _toolbarButtonExtent,
+                height: _toolbarButtonExtent,
               ),
             ),
             if (_supportsDesktopZoom)
@@ -4536,6 +4552,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     if (returned) _returnedDialogContext = null;
     _refreshOpenFavorites = null;
+  }
+
+  Future<void> _openGakujoHome() async {
+    if (_calendarOperationGate.isRunning) {
+      _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
+      return;
+    }
+    _setPendingMessageUrl(null);
+    await _loadAllowedPageUrl(gakujoHomePortalUrl);
   }
 
   Future<void> _handleToolbarSelection(Object selection) async {
