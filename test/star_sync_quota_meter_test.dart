@@ -24,17 +24,17 @@ void main() {
     StarSyncQuotaMeter make() =>
         StarSyncQuotaMeter(storage: storage, now: () => now);
     final first = make();
-    await first.charge(14900);
+    await first.charge(starSyncGoogleSoftLimit - 100);
     expect(await first.allowsAutomatic(100), isTrue);
     expect(await first.allowsAutomatic(101), isFalse);
     expect(await first.claimSaveNotice(), isTrue);
     final restored = make();
-    expect(await restored.currentUsage(), 14900);
+    expect(await restored.currentUsage(), starSyncGoogleSoftLimit - 100);
     expect(await restored.claimSaveNotice(), isFalse);
     // A local midnight does not reset anything: Google's accounting day is
     // a different 24 hours, and only a rolling window bounds every one.
     now = DateTime(2026, 11, 2);
-    expect(await restored.currentUsage(), 14900);
+    expect(await restored.currentUsage(), starSyncGoogleSoftLimit - 100);
     expect(await restored.claimSaveNotice(), isFalse);
     // The 23:00 hour leaves the window two days later at 00:00.
     now = DateTime(2026, 11, 3, 0, 1);
@@ -46,22 +46,22 @@ void main() {
 
   test('serializes charges and refuses crossing the hard limit', () async {
     final meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
-    await meter.charge(24900);
+    await meter.charge(starSyncGoogleHardLimit - 100);
     await Future.wait([meter.charge(50), meter.charge(50)]);
     await expectLater(meter.charge(5), throwsA(isA<StarSyncQuotaExceeded>()));
-    expect(await meter.currentUsage(), 25000);
+    expect(await meter.currentUsage(), starSyncGoogleHardLimit);
   });
 
   test('enforces the soft limit on each automatic charge', () async {
     final meter = StarSyncQuotaMeter(storage: MemorySecureStorage());
-    await meter.charge(14950);
+    await meter.charge(starSyncGoogleSoftLimit - 50);
     await meter.charge(50, automatic: true);
     await expectLater(
       meter.charge(1, automatic: true),
       throwsA(isA<StarSyncQuotaExceeded>()),
     );
     await meter.charge(50);
-    expect(await meter.currentUsage(), 15050);
+    expect(await meter.currentUsage(), starSyncGoogleSoftLimit + 50);
   });
 
   test('retains buckets after a forward and backward clock jump', () async {
@@ -86,14 +86,17 @@ void main() {
     final storage = MemorySecureStorage();
     storage.values[starSyncGoogleQuotaKey] = jsonEncode({
       'date': '2026-01-01',
-      'units': 14950,
+      'units': starSyncGoogleSoftLimit - 50,
     });
     final meter = StarSyncQuotaMeter(storage: storage);
-    expect(await meter.currentUsage(), 14950);
+    expect(await meter.currentUsage(), starSyncGoogleSoftLimit - 50);
     await expectLater(
       meter.charge(51, automatic: true),
       throwsA(isA<StarSyncQuotaExceeded>()),
     );
-    expect(await StarSyncQuotaMeter(storage: storage).currentUsage(), 14950);
+    expect(
+      await StarSyncQuotaMeter(storage: storage).currentUsage(),
+      starSyncGoogleSoftLimit - 50,
+    );
   });
 }

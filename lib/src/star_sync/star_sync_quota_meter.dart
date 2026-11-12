@@ -7,8 +7,8 @@ import '../secure_storage_factory.dart';
 import '../secure_storage_transaction.dart';
 
 const starSyncGoogleQuotaKey = 'more_better_gakujo_google_quota';
-const starSyncGoogleSoftLimit = 15000;
-const starSyncGoogleHardLimit = 25000;
+const starSyncGoogleSoftLimit = 60000;
+const starSyncGoogleHardLimit = 80000;
 const starSyncGoogleQuotaMessage =
     '直近24時間の Google ドライブの利用量が上限に達しました。時間をおくと再開します';
 
