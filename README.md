@@ -5,7 +5,6 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 
 ## 入手とインストール
 
-v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファイルがあります。iOS/iPadOS 版は、v0.70.6 には含まれていません。SideStore で配布している最新の iOS 版は 0.70.0 です。
 
 ### Android
 
@@ -35,7 +34,7 @@ v0.70.6 の GitHub Releases には、Android、Windows、macOS の配布ファ�
 
 ### iOS/iPadOS
 
-App Store では配布していません。利用者が自分の Apple Account で署名して入れる、技術者向けの配布です。iOS/iPadOS 14 以降が必要です。
+App Store では配布していません。各自Apple Accountで署名して入れてください。iOS/iPadOS 14 以降が必要です。
 
 - Mac か PC がある場合は、IPA を Sideloadly にドロップして署名する。Sideloadly の自動更新デーモンを有効にしておく
 - Mac がない場合は、SideStore の初期設定を済ませたうえで、次の source を追加してインストールする。GitHub Releases の IPA を直接ダウンロードして SideStore で開いてもよい
@@ -44,12 +43,6 @@ App Store では配布していません。利用者が自分の Apple Account �
 https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distribution/altstore-source.json
 ```
 
-入れる前に、次の点を確かめてください。
-
-- 無料の Apple Account では、通常7日以内に署名の更新が必要
-- 無料の Apple Account では、同時に有効にできるサイドロードアプリの数に上限がある
-- Apple やサイドロードツールの仕様が変わると、インストールや更新ができなくなることがある
-- Apple Account のパスワード、証明書、プロビジョニングプロファイルを他人と共有しない
 
 ## できること
 
