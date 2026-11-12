@@ -939,14 +939,14 @@ void main() {
   });
 
   test('skips an upload before any requests at the soft limit', () async {
-    await meter.charge(14700);
+    await meter.charge(starSyncGoogleSoftLimit - 300);
     await expectLater(
       save('Course', 'file', 1),
       throwsA(isA<GoogleDriveSaveSoftLimit>()),
     );
     expect(queries, isEmpty);
     expect(uploads, 0);
-    expect(await meter.currentUsage(), 14700);
+    expect(await meter.currentUsage(), starSyncGoogleSoftLimit - 300);
   });
 
   test(
@@ -957,7 +957,8 @@ void main() {
         saver.saveFile(
           courseName: 'Course',
           fileName: 'large',
-          length: 295 * 8 * 1024 * 1024,
+          length:
+              ((starSyncGoogleSoftLimit - 300) ~/ 50 + 1) * 8 * 1024 * 1024,
           automatic: true,
           open: () {
             opened = true;

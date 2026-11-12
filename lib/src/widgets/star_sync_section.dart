@@ -10,6 +10,11 @@ import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_quota_meter.dart';
 import '../star_sync/star_sync_transport.dart';
 
+String _units(int value) => value.toString().replaceAllMapped(
+  RegExp(r'\B(?=(\d{3})+(?!\d))'),
+  (_) => ',',
+);
+
 String starSyncErrorMessage(Object error) => _errorText(error);
 
 String _errorText(Object error) {
@@ -522,7 +527,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         children: [
           Text(line),
             Text(
-              '本日の利用量: ${status.googleQuotaUsed} / 15,000',
+              '直近24時間の利用量: ${_units(status.googleQuotaUsed)} / '
+              '${_units(starSyncGoogleSoftLimit)}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (status.googleQuotaSoftLimited)

@@ -2178,7 +2178,7 @@ void main() {
       await engine.setUpWithDrive(
         const StarSyncConfig(),
       );
-      await meter.charge(14950);
+      await meter.charge(starSyncGoogleSoftLimit - 50);
       final lists = remote.lists;
       await engine.syncNow(trigger: StarSyncTrigger.localChange);
       expect(remote.lists, lists);
@@ -2222,7 +2222,7 @@ void main() {
     await engine.setUpWithDrive(
       const StarSyncConfig(),
     );
-    await meter.charge(14950);
+    await meter.charge(starSyncGoogleSoftLimit - 50);
     var builds = 0;
     expect(
       await engine.uploadAutomaticBackupIfDue(() async {

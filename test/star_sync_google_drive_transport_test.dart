@@ -337,9 +337,9 @@ void main() {
   });
 
   test('allows requests up to the hard limit', () async {
-    await meter.charge(24900);
+    await meter.charge(starSyncGoogleHardLimit - 100);
     expect(await transport.list('stars'), isEmpty);
-    expect(await meter.currentUsage(), 25000);
+    expect(await meter.currentUsage(), starSyncGoogleHardLimit);
     await expectLater(
       transport.put('stars/device', [1]),
       throwsA(isA<StarSyncQuotaExceeded>()),
@@ -349,25 +349,25 @@ void main() {
   });
 
   test('stops before sending a request that crosses the hard limit', () async {
-    await meter.charge(24950);
+    await meter.charge(starSyncGoogleHardLimit - 50);
     await expectLater(
       transport.list('stars'),
       throwsA(isA<StarSyncQuotaExceeded>()),
     );
     expect(drive.counts, isEmpty);
-    expect(await meter.currentUsage(), 24950);
+    expect(await meter.currentUsage(), starSyncGoogleHardLimit - 50);
   });
 
   test('automatic requests stop at the soft limit mid-operation', () async {
     transport.automatic = true;
-    await meter.charge(14900);
+    await meter.charge(starSyncGoogleSoftLimit - 100);
     expect(await transport.list('stars'), isEmpty);
     await expectLater(
       transport.put('stars/device', [1]),
       throwsA(isA<StarSyncQuotaExceeded>()),
     );
     expect(drive.counts['POST /upload/drive/v3/files'], isNull);
-    expect(await meter.currentUsage(), 15000);
+    expect(await meter.currentUsage(), starSyncGoogleSoftLimit);
   });
 
   test('plain 403 is an auth error', () async {
