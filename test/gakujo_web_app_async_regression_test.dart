@@ -775,6 +775,24 @@ void main() {
       );
     });
 
+    test('does not treat an authenticated password change form as login',
+        () async {
+      final result = await _evaluateAuthProbe([
+        {'tag': 'input', 'type': 'text', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password', 'name': 'currentPassword'},
+        {'tag': 'input', 'type': 'password', 'name': 'newPassword'},
+        {'tag': 'button', 'type': 'submit', 'text': '変更'},
+        {'tag': 'ul', 'id': 'logout', 'text': 'ログアウト'},
+      ]);
+
+      expect(result['hasLoginFields'], isFalse);
+      expect(result['hasAuthenticatedMarker'], isTrue);
+      expect(
+        gakujoPortalAuthStateFromJavaScriptResult(result),
+        GakujoPortalAuthState.authenticated,
+      );
+    });
+
     test('detects 2FA and authenticated DOM markers', () async {
       final twoFactor = await _evaluateAuthProbe([
         {

@@ -28,7 +28,11 @@ class GakujoLastPageStore {
     }
 
     if (url != null) {
-      await clear();
+      try {
+        await clear();
+      } on Object {
+        // Failed cleanup must not stop startup; open the default page.
+      }
     }
     return null;
   }
