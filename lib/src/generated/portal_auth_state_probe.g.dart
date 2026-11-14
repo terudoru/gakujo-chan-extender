@@ -60,7 +60,8 @@ const String gakujoPortalAuthStateProbeJs = r'''
       var doc = documents[d];
       var inputs = Array.prototype.slice.call(doc.querySelectorAll("input"));
       var hasKnownUsername = false;
-      var hasPassword = false;
+      var passwordCount = 0;
+      var hasPasswordChangeField = false;
       for (var i = 0; i < inputs.length; i += 1) {
         var input = inputs[i];
         if (!visible(input)) {
@@ -70,15 +71,19 @@ const String gakujoPortalAuthStateProbeJs = r'''
         var type = (input.getAttribute("type") || "").toLowerCase();
         if (identifiers.indexOf("ninshocode") !== -1) {
           hasTwoFactorField = true;
-        } else if (identifiers.some(function(identifier) {
-          return knownUserIdentifiers.indexOf(identifier) !== -1;
+        } else if (identifiers.some(function(identifier2) {
+          return knownUserIdentifiers.indexOf(identifier2) !== -1;
         })) {
           hasKnownUsername = true;
         } else if (type === "password") {
-          hasPassword = true;
+          passwordCount += 1;
+          var identifier = identifiers.join("");
+          if (/(?:new|confirm|confirmation|old|current)(?:password|passwd|pwd)|(?:password|passwd|pwd)(?:new|confirm|confirmation|old|current)/.test(identifier) || (input.getAttribute("autocomplete") || "").toLowerCase() === "new-password") {
+            hasPasswordChangeField = true;
+          }
         }
       }
-      if (hasKnownUsername && hasPassword) {
+      if (hasKnownUsername && passwordCount === 1 && !hasPasswordChangeField) {
         hasLoginFields = true;
       }
       var controls = Array.prototype.slice.call(

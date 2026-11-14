@@ -226,7 +226,9 @@ class DownloadFileNamePolicy {
 
   static bool _hasLikelyExtension(String name) {
     final extension = _extensionFromName(name);
-    return extension != null && extension != 'do';
+    return extension != null &&
+        extension != 'do' &&
+        !RegExp(r'^\d+$').hasMatch(extension);
   }
 
   static String? _extensionFromName(String? name) {

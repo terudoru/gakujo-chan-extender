@@ -60,6 +60,19 @@ void main() {
     expect(storage.values.containsKey(GakujoLastPageStore.lastUrlKey), isFalse);
   });
 
+  for (final page in ['logout.do', 'theme/default/TimeoutAlert.html']) {
+    test('load rejects $page even when cleanup throws', () async {
+      final url = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/$page';
+      final storage = _MemorySecureStorage({
+        GakujoLastPageStore.lastUrlKey: url,
+      })..throwOnDelete = true;
+      final store = GakujoLastPageStore(secureStorage: storage);
+
+      expect(await store.load(debugAllowed: false), isNull);
+      expect(storage.values[GakujoLastPageStore.lastUrlKey], url);
+    });
+  }
+
   test('clear removes the stored URL', () async {
     final storage = _MemorySecureStorage({
       GakujoLastPageStore.lastUrlKey:
@@ -90,6 +103,7 @@ class _MemorySecureStorage extends FlutterSecureStorage {
       : values = Map<String, String>.from(initial ?? const {});
 
   final Map<String, String> values;
+  bool throwOnDelete = false;
 
   @override
   Future<String?> read({
@@ -132,6 +146,9 @@ class _MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (throwOnDelete) {
+      throw StateError('secure storage delete failed');
+    }
     values.remove(key);
   }
 }

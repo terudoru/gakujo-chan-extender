@@ -104,6 +104,16 @@ void main() {
         reason: 'the app owns zoom state and applies the toolbar step logic');
     expect(data['keydownListeners'], [1, 1],
         reason: 'reapplying zoom must not multiply shortcut messages');
+    final navigation = data['navigation'] as Map<String, dynamic>;
+    expect(navigation['actions'], ['in', 'in']);
+    expect(navigation['prevented'], [true, true, true, true]);
+    expect(navigation['keydownListeners'], [1, 1]);
+    expect(navigation['loadListeners'], [1, 1, 1]);
+    expect(navigation['observers'], [true, true]);
+    expect(navigation['reapplyCount'], 2);
+    expect(navigation['zoom'], 1.5);
+    expect(navigation['transform'], 'scale(1.5)');
+    expect(navigation['frameTransforms'], ['', '']);
   });
 
   test('clears visual zoom state at 100 percent', () {

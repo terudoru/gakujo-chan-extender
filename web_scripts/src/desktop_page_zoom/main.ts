@@ -246,6 +246,15 @@ function desktopPageZoom() {
             scheduleReapply(win, 'resize');
           }, true);
 
+          win.document.addEventListener('load', function(event) {
+            var frame = event.target as Element | null;
+            if (!frame || !/^(iframe|frame)$/i.test(frame.tagName)) {
+              return;
+            }
+            attachNativeZoomBlockers();
+            scheduleReapply(window, 'shape');
+          }, true);
+
           if (win.MutationObserver && win.document && win.document.body) {
             win.__MBG_PAGE_ZOOM_OBSERVER = new win.MutationObserver(function(mutations) {
               for (var m = 0; m < mutations.length; m += 1) {

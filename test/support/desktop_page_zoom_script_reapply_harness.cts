@@ -30,7 +30,7 @@ function runCase(scenario: string) {
   }});
   const body: any = {style: bodyStyle, scrollWidth: 900, offsetWidth: 900, scrollHeight: 3600, offsetHeight: 3600};
   const element: any = {style: {}, clientWidth: 900, scrollWidth: 900, offsetWidth: 900, scrollHeight: 3600, offsetHeight: 3600};
-  win.document = {body, documentElement: element};
+  win.document = {body, documentElement: element, addEventListener() {}};
   const fakeDate = class extends Date { static now() { return now; } };
   vm.runInNewContext(script, {window: win, Date: fakeDate, __mbgConfig: {zoom: 1.5, originX: 400, originY: 300}, exports: {}});
   win.scrollX = scenario === 'unscrolled' ? 0 : 300;

@@ -87,6 +87,23 @@ void main() {
     expect(name, '画面表示の第1回講義資料.pdf');
   });
 
+  test('adds a disposition extension to a display name ending in digits', () {
+    expect(
+      DownloadFileNamePolicy.safeFileName(
+        preferredName: 'Lecture 1.2',
+        contentDispositionName: 'notes.pdf',
+      ),
+      'Lecture 1.2.pdf',
+    );
+  });
+
+  test('keeps a display name ending in digits without extension metadata', () {
+    expect(
+      DownloadFileNamePolicy.safeFileName(preferredName: 'Lecture 1.2'),
+      'Lecture 1.2',
+    );
+  });
+
   test('uses the server attachment name when the page only has an action label',
       () {
     final name = DownloadFileNamePolicy.safeFileName(

@@ -56,7 +56,8 @@ function portalAuthStateProbe(): string {
     var doc = documents[d];
     var inputs = Array.prototype.slice.call(doc.querySelectorAll('input'));
     var hasKnownUsername = false;
-    var hasPassword = false;
+    var passwordCount = 0;
+    var hasPasswordChangeField = false;
     for (var i = 0; i < inputs.length; i += 1) {
       var input = inputs[i];
       if (!visible(input)) {
@@ -71,10 +72,16 @@ function portalAuthStateProbe(): string {
       })) {
         hasKnownUsername = true;
       } else if (type === 'password') {
-        hasPassword = true;
+        passwordCount += 1;
+        // Mirror login_autofill_assist's password-change exclusions.
+        var identifier = identifiers.join('');
+        if (/(?:new|confirm|confirmation|old|current)(?:password|passwd|pwd)|(?:password|passwd|pwd)(?:new|confirm|confirmation|old|current)/.test(identifier) ||
+            (input.getAttribute('autocomplete') || '').toLowerCase() === 'new-password') {
+          hasPasswordChangeField = true;
+        }
       }
     }
-    if (hasKnownUsername && hasPassword) {
+    if (hasKnownUsername && passwordCount === 1 && !hasPasswordChangeField) {
       hasLoginFields = true;
     }
 
