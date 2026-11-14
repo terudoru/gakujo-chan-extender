@@ -168,7 +168,8 @@ function messageReader() {
         try {
           html = frame.contentDocument!.documentElement.outerHTML;
         } catch (e) {
-          html = '';
+          finish(false);
+          return;
         }
         finish(!isSessionLostPage(html));
       };

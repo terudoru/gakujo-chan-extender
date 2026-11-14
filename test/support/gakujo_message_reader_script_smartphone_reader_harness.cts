@@ -9,6 +9,9 @@ class Element {
   constructor(tag, doc) {
     this.tagName = tag.toUpperCase(); this.ownerDocument = doc;
     this.children = []; this.attributes = {}; this.listeners = {}; this.style = {};
+    if (this.tagName === 'IFRAME') {
+      this.contentDocument = {documentElement: {outerHTML: '<html><body>連絡通知</body></html>'}};
+    }
   }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }

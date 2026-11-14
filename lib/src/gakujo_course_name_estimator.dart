@@ -16,7 +16,7 @@ class GakujoCourseNameEstimator {
 
   static String estimateFromHtml(String html) {
     final candidates = <String?>[
-      ..._textsForTags(html, ['tr']),
+      ..._textsForTableRows(html),
       ..._textsForTags(html, ['h1', 'h2', 'h3']),
       ..._textsForClassHints(html, [
         'breadcrumb',
@@ -126,6 +126,33 @@ class GakujoCourseNameEstimator {
     }
     final ignored = ['学務情報システム', 'more better gakujo', 'campussquare'];
     return ignored.any(lower.contains);
+  }
+
+  static Iterable<String?> _textsForTableRows(String html) sync* {
+    final rows = _textsForTags(html, ['tr']).toList();
+    final cellPattern = RegExp(r'<(th|td)\b[^>]*>(.*?)</\1>',
+        caseSensitive: false, dotAll: true);
+    for (var r = 0; r < rows.length; r += 1) {
+      final cells = cellPattern.allMatches(rows[r]!).toList();
+      final courseIndex = cells.indexWhere(
+          (cell) => _normalize(cell.group(2)) == '科目名');
+      if (courseIndex < 0) {
+        yield rows[r];
+        continue;
+      }
+      for (var same = courseIndex + 1; same < cells.length; same += 1) {
+        if (cells[same].group(1)!.toLowerCase() == 'th') {
+          continue;
+        }
+        yield cells[same].group(2);
+      }
+      for (var next = r + 1; next < rows.length; next += 1) {
+        final nextCells = cellPattern.allMatches(rows[next]!).toList();
+        if (nextCells.length > courseIndex) {
+          yield nextCells[courseIndex].group(2);
+        }
+      }
+    }
   }
 
   static Iterable<String?> _textsForTags(String html, List<String> tags) sync* {

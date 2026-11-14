@@ -112,6 +112,24 @@ void main() {
     expect(result['reloadCount'], 0);
   });
 
+  for (final frameDocument in ['inaccessible', 'missing']) {
+    test('reports an $frameDocument iframe document as a failure', () async {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [null],
+        iframeOutcomes: [true],
+        iframeDocuments: [frameDocument],
+      );
+
+      expect(result['fetchCallCount'], 1);
+      expect(result['frameCallCount'], 1);
+      expect(result['statusText'], '0件を既読にしました（失敗1件）');
+      expect(result['buttonDisabled'], isFalse);
+      expect(result['reloadCount'], 0);
+      expect(result['timeoutIds'], isEmpty);
+    });
+  }
+
   test('owns the visible result status for teardown', () async {
     final result = await evaluateMessageReaderScript(
       buildScript: GakujoMessageReaderScript.build(),

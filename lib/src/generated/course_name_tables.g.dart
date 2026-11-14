@@ -45,6 +45,9 @@ const String gakujoCourseNameTablesJs = r'''
             continue;
           }
           for (var same = courseIndex + 1; same < cells.length; same += 1) {
+            if (cells[same].tagName.toLowerCase() === "th") {
+              continue;
+            }
             var sameRowValue = textOf(cells[same]);
             if (sameRowValue) {
               return sameRowValue;

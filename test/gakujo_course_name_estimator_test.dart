@@ -73,6 +73,30 @@ void main() {
     expect(course, 'コンピュータ基礎');
   });
 
+  test('extracts course name below column headers', () {
+    for (final header in [
+      '<th>科目名</th><th>担当教員</th>',
+      '<th>担当教員</th><th>科目名</th>',
+    ]) {
+      final values = header.startsWith('<th>科目名')
+          ? '<td>物理学</td><td>Teacher</td>'
+          : '<td>Teacher</td><td>物理学</td>';
+      final course = GakujoCourseNameEstimator.estimateFromHtml('''
+        <table><tr>$header</tr><tr>$values</tr></table>
+      ''');
+
+      expect(course, '物理学', reason: header);
+    }
+  });
+
+  test('keeps td label and value rows working', () {
+    final course = GakujoCourseNameEstimator.estimateFromHtml('''
+      <table><tr><td>科目名</td><td>物理学</td></tr></table>
+    ''');
+
+    expect(course, '物理学');
+  });
+
   test('extracts course name from combined subject label and code', () {
     final course = GakujoCourseNameEstimator.estimateFromCandidates([
       '科目名\t262G5023  物理学基礎BⅠ',
