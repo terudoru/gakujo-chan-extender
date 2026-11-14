@@ -586,6 +586,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
             _showSnackBar('カレンダー用ファイルを作成できませんでした: '
                 '${fallbackError.message ?? fallbackError.code}');
           }
+        } on Object catch (fallbackError, stackTrace) {
+          developer.log(
+            'Failed to write the calendar fallback file',
+            name: 'MoreBetterGakujo',
+            error: fallbackError,
+            stackTrace: stackTrace,
+          );
+          _showSnackBar('カレンダー用ファイルを作成できませんでした: $fallbackError');
         }
         return;
       }
