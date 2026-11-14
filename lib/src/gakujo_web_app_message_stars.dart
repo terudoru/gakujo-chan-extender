@@ -306,10 +306,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
 
   Future<void> _openStarredMessage(GakujoStarredMessage entry) async {
     if (_calendarOperationGate.isRunning) {
+      _setPendingReturnDialog(null);
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return;
     }
     if (!_canRunPageScripts) {
+      _setPendingReturnDialog(null);
       _showSnackBar('学務へのログインが必要です');
       return;
     }
@@ -324,10 +326,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         !_isCurrentPageCallback(url, navigationRevision) ||
         _calendarOperationGate.isRunning ||
         _messageOpenProcessing != null) {
+      _setPendingReturnDialog(null);
       return;
     }
     final processing = Completer<void>();
     _messageOpenProcessing = processing;
+    var opened = false;
     try {
       final result = await _controller.runJavaScriptReturningResult(
         GakujoMessageStarScript.buildOpen(
@@ -342,6 +346,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
       switch (decoded['status']) {
         case 'ok':
           await _loadAllowedPageUrl(decoded['url'].toString());
+          opened = true;
           return;
         case 'gone':
           _showSnackBar('学務で見つかりませんでした。保存した内容を表示します');
@@ -364,6 +369,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         _showSnackBar('学務で連絡通知を開けませんでした');
       }
     } finally {
+      if (!opened) _setPendingReturnDialog(null);
       _messageOpenProcessing = null;
       processing.complete();
     }

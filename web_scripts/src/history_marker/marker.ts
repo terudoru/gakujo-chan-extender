@@ -2,25 +2,36 @@ const selector = 'button[data-mbg-submitted-preview]';
 const tokenPattern = /^[A-Za-z0-9_-]{8,64}$/;
 const kinds = ['starred', 'favorites', 'cachedReports'];
 type Marker = { token: string; index: number; name: string };
+type Frame = { path: string; url: string };
 type Config = { action: string; kind?: string; token?: string };
 
 export function historyMarker(win: Window, config: Config): string | boolean {
-  function documents(): Document[] {
+  function documents(onVisit?: (doc: Document, path: string) => void): Document[] {
     const docs: Document[] = [];
     let visited = 0;
-    function visit(current: Window): void {
+    function visit(current: Window, path: string): void {
       if (visited++ >= 64) return;
       try {
         const doc = current.document;
         if (!doc || docs.indexOf(doc) >= 0) return;
         docs.push(doc);
+        onVisit?.(doc, path);
         for (let i = 0; i < current.frames.length && visited < 64; i++) {
-          try { visit(current.frames[i]); } catch (_) { /* cross-origin */ }
+          try { visit(current.frames[i], path ? path + '/' + i : String(i)); } catch (_) { /* cross-origin */ }
         }
       } catch (_) { /* cross-origin */ }
     }
-    visit(win);
+    visit(win, '');
     return docs;
+  }
+  function frames(): Frame[] {
+    const values: Frame[] = [];
+    documents((doc, path) => {
+      if (!path) return;
+      const url = doc.location.href;
+      if (/^https?:/.test(url)) values.push({ path, url });
+    });
+    return values;
   }
   function marker(doc: Document): Marker | null {
     try {
@@ -30,21 +41,33 @@ export function historyMarker(win: Window, config: Config): string | boolean {
     } catch (_) { return null; }
   }
   function name(button: Element): string | null {
-    const anchor = button.previousElementSibling;
-    return anchor?.tagName.toLowerCase() === 'a' ? (anchor.textContent || '').trim() : null;
+    const source = button.previousElementSibling;
+    const tag = source?.tagName.toLowerCase();
+    if (tag === 'a' || tag === 'button') return (source!.textContent || '').trim();
+    return tag === 'input' ? (source as HTMLInputElement).value.trim() : null;
   }
   if (config.action === 'stamp-dialog') {
     if (!config.kind || kinds.indexOf(config.kind) < 0) return false;
-    win.history.replaceState(Object.assign({}, win.history.state, { __mbgReturnDialog: config.kind }), '');
+    win.history.replaceState(Object.assign({}, win.history.state, {
+      __mbgReturnDialog: { kind: config.kind, frames: frames() },
+    }), '');
     return 'ok';
   }
   if (config.action === 'read') {
-    const kind = win.history.state?.__mbgReturnDialog;
+    const saved = win.history.state?.__mbgReturnDialog;
+    const kind = typeof saved === 'string' ? saved : saved?.kind;
+    const unchanged = typeof saved === 'string' || Array.isArray(saved?.frames) && saved.frames.every((frame: Frame) => {
+      try {
+        let current = win;
+        for (const index of frame.path.split('/')) current = current.frames[Number(index)];
+        return current.document.location.href === frame.url;
+      } catch (_) { return false; }
+    });
     const preview = documents().map(marker).find(value => value !== null);
     const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
     const activeToken = active?.__mbgToken;
     return JSON.stringify({
-      dialog: kinds.indexOf(kind) >= 0 ? kind : null,
+      dialog: unchanged && kinds.indexOf(kind) >= 0 ? kind : null,
       preview: preview?.token || null,
       active: active ? (active.visible ? 'visible' : 'hidden') : 'none',
       activeToken: typeof activeToken === 'string' && tokenPattern.test(activeToken) ? activeToken : null,
@@ -65,12 +88,13 @@ export function historyMarker(win: Window, config: Config): string | boolean {
           if (!button || !doc.defaultView) return;
           const buttons = Array.from(doc.querySelectorAll(selector));
           const index = buttons.indexOf(button);
-          if (index < 0 || button.previousElementSibling?.tagName.toLowerCase() !== 'a') return;
+          const sourceName = name(button);
+          if (index < 0 || sourceName === null) return;
           const random = new Uint8Array(16);
           win.crypto.getRandomValues(random);
           const token = Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
           doc.defaultView.history.replaceState(Object.assign({}, doc.defaultView.history.state, {
-            __mbgPreview: { token, index, name: name(button)! },
+            __mbgPreview: { token, index, name: sourceName },
           }), '');
           win.setTimeout(() => {
             const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
