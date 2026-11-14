@@ -1220,8 +1220,11 @@ class GakujoActivityStore {
         .replaceAll('年', '/')
         .replaceAll('月', '/')
         .replaceAll('日', ' ')
-        .replaceAll('時', ':')
-        .replaceAll('分', '')
+        .replaceAllMapped(
+          RegExp(r'([0-9]{1,2})時(?:([0-9]{1,2})分)?'),
+          (match) =>
+              '${match.group(1)}:${(match.group(2) ?? '00').padLeft(2, '0')}',
+        )
         .replaceAll('-', '/');
     final fullDate = RegExp(
       r'((?:20)?[0-9]{2})[/.]([0-9]{1,2})[/.]([0-9]{1,2})(?![0-9]|\.[0-9])(?:\s*([0-9]{1,2}):([0-9]{2}))?',
