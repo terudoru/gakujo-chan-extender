@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'download_file_name_policy.dart';
 
-const maxGakujoDownloadBytes = 128 * 1024 * 1024;
+const maxGakujoDownloadBytes = 512 * 1024 * 1024;
 
 class GakujoDownloadRequest {
   const GakujoDownloadRequest({
