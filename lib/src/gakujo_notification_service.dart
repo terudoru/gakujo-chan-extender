@@ -122,13 +122,16 @@ GakujoAssignment? assignmentForDeadline(
   );
 }
 
-/// One notification per assignment, wherever it was found. Other deadlines
-/// are told apart by their own key.
+/// One notification per assignment or identified message, wherever it was
+/// found. Other deadlines are told apart by their own key.
 String deadlineNotificationKey(
   GakujoDeadlineEntry entry,
   GakujoAssignment? assignment, {
   Set<String> collidingAssignmentIds = const {},
 }) {
+  if (entry.source == '連絡通知') {
+    return _messageNotificationKey(entry.url) ?? entry.key;
+  }
   if (assignment != null) {
     final id = collidingAssignmentIds.contains(assignment.notificationId)
         ? assignment.id
@@ -144,6 +147,14 @@ String deadlineNotificationKey(
     )}';
   }
   return entry.key;
+}
+
+String? _messageNotificationKey(String url) {
+  final seqNo = Uri.tryParse(url)?.queryParameters['seqNo'];
+  if (seqNo == null || seqNo.isEmpty) {
+    return null;
+  }
+  return 'message|${gakujoMessageLinkFor(url)}';
 }
 
 /// A notification booked ahead of an assignment's closing time.
@@ -756,7 +767,12 @@ class GakujoDeadlineNotificationCoordinator {
     final legacyKeys = {
       for (final id in {reminder.id, ...reminder.legacyIds}) 'reminder|$id',
     };
-    final notifiedKeys = await _loadNotifiedKeys();
+    late final Set<String> notifiedKeys;
+    try {
+      notifiedKeys = await _loadNotifiedKeys(strict: true);
+    } on StateError {
+      return;
+    }
     if (notifiedKeys.contains(key) ||
         legacyKeys
             .any((legacyKey) => notifiedKeys.contains('$legacyKey|$trigger'))) {
@@ -796,7 +812,15 @@ class GakujoDeadlineNotificationCoordinator {
       await _activityStore.addNotifiedDeadlineKeys(migrationKeys);
       keys.addAll(migrationKeys);
     }
-    return keys;
+    // Older builds saved kind|URL|title|preview for messages. Keep that
+    // history effective when a detail scan changes the title or preview.
+    return {
+      ...keys,
+      for (final key in keys)
+        if (RegExp(r'^(?:deadline|notice|schedule)\|([^|]*)\|')
+            .firstMatch(key) case final match?)
+          ?_messageNotificationKey(match.group(1)!),
+    };
   }
 
   Future<T> _enqueueNotificationOperation<T>(

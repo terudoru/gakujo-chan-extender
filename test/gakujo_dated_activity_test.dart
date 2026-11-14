@@ -73,6 +73,49 @@ void main() {
     );
   });
 
+  for (final date in [
+    '2026年11月20日',
+    '令和8年11月20日',
+    '11/20 ',
+    '11月20日',
+  ]) {
+    for (final time in {'17時00分': 0, '17時': 0, '17時5分': 5}.entries) {
+      test('Japanese time survives a long preview: $date${time.key}', () {
+        final deadline = '$date${time.key}';
+        final text = '課題のお知らせ ${'説明文。' * 60} 提出期限：$deadline';
+        final preview = GakujoDatedActivity.datedTextPreview(text);
+        expect(text.indexOf(deadline), greaterThan(180));
+        expect(preview, contains(deadline));
+        final entry = GakujoDeadlineEntry(
+          title: '課題のお知らせ',
+          url: 'https://gakujo.example/message',
+          dueText: preview,
+          detectedAt: DateTime.utc(2026, 11, 15),
+          source: '連絡通知',
+        );
+        final store = GakujoActivityStore();
+        final dueAt = DateTime.utc(2026, 11, 20, 8, time.value);
+        expect(
+          store.isDeadlinePassed(entry,
+              now: dueAt.subtract(const Duration(minutes: 1))),
+          isFalse,
+        );
+        expect(store.isDeadlinePassed(entry, now: dueAt), isTrue);
+      });
+    }
+  }
+
+  test('Japanese metadata times are stripped without removing a body deadline',
+      () {
+    const text = '掲載日時：2026年11月15日9時 課題のお知らせ '
+        '掲示期間：2026年11月15日9時から2026年11月30日18時00分まで '
+        '送信日時：2026年11月15日9時5分 提出期限：2026年11月20日17時00分';
+    final content = GakujoDatedActivity.messageContentForDates(text);
+    expect(GakujoDatedActivity.compactText(content),
+        '課題のお知らせ 提出期限:2026年11月20日17時00分');
+    expect(GakujoDatedActivity.titleFor('課題 2026年11月20日17時00分'), '課題');
+  });
+
   test('message display and posting dates do not become deadlines', () {
     for (final text in [
       '課題の提出方法について 掲示期間：2026/10/24 8:45 ～2026/10/30 17:00',
