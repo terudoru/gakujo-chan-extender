@@ -2089,9 +2089,10 @@ class GakujoCalendarExport {
           endDay == null) {
         continue;
       }
-      final startYear = reference.month <= 3 && startMonth >= 4
-          ? reference.year - 1
-          : reference.year;
+      final academicYearMatch = RegExp(r'([0-9]{4})\s*年度').firstMatch(line);
+      final academicYear = int.tryParse(academicYearMatch?.group(1) ?? '') ??
+          (reference.month <= 3 ? reference.year - 1 : reference.year);
+      final startYear = startMonth >= 4 ? academicYear : academicYear + 1;
       final start = _validatedLocalDate(startYear, startMonth, startDay);
       final crossesCalendarYear = endMonth < startMonth ||
           (endMonth == startMonth && endDay < startDay);
