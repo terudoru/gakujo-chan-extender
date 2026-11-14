@@ -405,7 +405,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final extraction = await _readCalendarScheduleForImport(
         preferredTermRange: preferredTerm?.termRange,
       );
-      final extractedCourses = extraction.courses;
+      var extractedCourses = extraction.courses;
       if (extractedCourses.isEmpty) {
         await _showCalendarSourceMissingMessage(
           '学務のGoogle連携から取り込める授業が見つかりませんでした。スケジュールページでもう一度実行してください',
@@ -420,6 +420,17 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           );
       if (resolvedTerm == null) {
         return;
+      }
+      if (preferredTerm == null && extraction.termRange == null) {
+        // The page gave no period, so the export ran with Gakujo's default
+        // window before the student typed one; read again for that period so
+        // one-off meetings outside the default window are not lost.
+        final rangedExtraction = await _readCalendarScheduleForImport(
+          preferredTermRange: resolvedTerm.termRange,
+        );
+        if (rangedExtraction.courses.isNotEmpty) {
+          extractedCourses = rangedExtraction.courses;
+        }
       }
       final termRange = resolvedTerm.termRange;
       final uidNamespace = resolvedTerm.uidNamespace;
@@ -1485,15 +1496,30 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       }
     }
 
-    await _writeCalendarFallbackFile(
-      courses: courses,
-      termRange: termRange,
-      uidNamespace: _calendarValidationUidNamespace,
-      termLabel: 'カレンダー連携検証',
-      calendarName: _calendarValidationTitle,
-      reason: 'この環境では端末のカレンダーと直接連携できないため検証用のiCalendarファイルとして',
-      fileName: 'more-better-gakujo-calendar-validation.ics',
-    );
+    try {
+      await _writeCalendarFallbackFile(
+        courses: courses,
+        termRange: termRange,
+        uidNamespace: _calendarValidationUidNamespace,
+        termLabel: 'カレンダー連携検証',
+        calendarName: _calendarValidationTitle,
+        reason: 'この環境では端末のカレンダーと直接連携できないため検証用のiCalendarファイルとして',
+        fileName: 'more-better-gakujo-calendar-validation.ics',
+      );
+    } on PlatformException catch (error) {
+      if (isCancelledDownloadError(error)) {
+        return;
+      }
+      _showSnackBar('検証用予定を書き出せませんでした: ${error.message ?? error.code}');
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to export validation calendar file',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _showSnackBar('検証用予定を書き出せませんでした: $error');
+    }
   }
 
   Future<void> _deleteCalendarValidationEvents(
@@ -1507,9 +1533,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     }
 
     try {
+      final now = DateTime.now().toLocal();
       final result = await _calendarService.deleteAddedEvents(
-        rangeStart: termRange.start,
-        rangeEnd: termRange.end,
+        rangeStart: gakujoCalendarDateAfterDays(now, -400),
+        rangeEnd: gakujoCalendarDateAfterDays(now, 400),
         calendarTitle: _calendarValidationTitle,
       );
       if (result.removed == 0) {

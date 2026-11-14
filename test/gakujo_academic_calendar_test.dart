@@ -26,6 +26,29 @@ void main() {
     expect(term?.noClassDates, contains(DateTime(2027, 2, 11)));
   });
 
+  test('built-in terms include weekends between no-class Friday and Monday', () {
+    for (final term in GakujoAcademicCalendar.officialTerms) {
+      for (final friday in term.noClassDates) {
+        if (friday.weekday != DateTime.friday) {
+          continue;
+        }
+        final monday = DateTime(friday.year, friday.month, friday.day + 3);
+        if (!term.noClassDates.contains(monday)) {
+          continue;
+        }
+        for (final offset in [1, 2]) {
+          final weekend =
+              DateTime(friday.year, friday.month, friday.day + offset);
+          expect(
+            term.noClassDates,
+            contains(weekend),
+            reason: '${term.academicYear} ${term.name}: $weekend',
+          );
+        }
+      }
+    }
+  });
+
   test('termForDate returns null outside published terms', () {
     expect(GakujoAcademicCalendar.termForDate(DateTime(2026, 9, 1)), isNull);
   });
