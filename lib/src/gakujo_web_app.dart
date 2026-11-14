@@ -1527,6 +1527,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _pendingReturnDialog;
   Timer? _pendingReturnDialogTimer;
   BuildContext? _returnedDialogContext;
+  bool _returnedDialogOpening = false;
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
@@ -1743,7 +1744,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) _protectedSecretPromptGate.background();
     if (state == AppLifecycleState.resumed && _protectedSecretPromptGate.resume()) {
-      unawaited(_injectLoginAutofillAssistIfAllowed());
+      // The cancelled prompt may have been the 2FA one; retry both.
+      unawaited(() async {
+        await _injectLoginAutofillAssistIfAllowed();
+        await _injectTwoFactorAutofillIfAllowed();
+      }());
     }
     // Do not probe the network every few seconds while the app is in the
     // background; check again once it is back.
@@ -4555,6 +4560,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _openGakujoHome() async {
+    _setPendingReturnDialog(null);
     if (_calendarOperationGate.isRunning) {
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return;
@@ -4565,6 +4571,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleToolbarSelection(Object selection) async {
     if (selection is GakujoQuickJumpDestination) {
+      _setPendingReturnDialog(null);
       if (_calendarOperationGate.isRunning) {
         _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
         return;
@@ -4912,6 +4919,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _detachedPreviewToken = null;
     _virtualPreviewForward = false;
     if (!AllowedWebOrigins.canNavigate(url, debugAllowed: _debugAllowed)) {
+      _setPendingReturnDialog(null);
       _showSnackBar('許可されていない外部URLは開けません');
       return;
     }
@@ -8140,11 +8148,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<void> _showReturnedDialog(String kind) async {
+    try {
+      switch (kind) {
+        case 'starred': await _showStarredMessagesDialog(returned: true);
+        case 'favorites': await _showFavoritesDialog(returned: true);
+        case 'cachedReports': await _showCachedReportsDialog(returned: true);
+      }
+    } finally {
+      _returnedDialogOpening = false;
+    }
+  }
+
   Future<bool> _goBackIfPossible() async {
     if (_returnedDialogContext != null) {
       await _closeReturnedDialog(back: true);
       return true;
     }
+    if (_returnedDialogOpening) return true;
     _setPendingReturnDialog(null);
     if (_calendarOperationGate.isRunning) {
       return false;
@@ -8169,11 +8190,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return _navigatePreview('back');
     }
     if (action == GakujoHistoryAction.dialog) {
-      switch (dialog) {
-        case 'starred': unawaited(_showStarredMessagesDialog(returned: true));
-        case 'favorites': unawaited(_showFavoritesDialog(returned: true));
-        case 'cachedReports': unawaited(_showCachedReportsDialog(returned: true));
-      }
+      _returnedDialogOpening = true;
+      unawaited(_showReturnedDialog(dialog as String));
       return true;
     }
     _setPendingMessageUrl(null);
@@ -8202,6 +8220,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _closeReturnedDialog(back: false);
       return true;
     }
+    if (_returnedDialogOpening) return true;
     _setPendingReturnDialog(null);
     if (_calendarOperationGate.isRunning) {
       return false;
