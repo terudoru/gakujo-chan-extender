@@ -3254,6 +3254,45 @@ void main() {
     },
   );
 
+  test('drive setup surfaces the first device fetch failure', () async {
+    final remote = _Transport();
+    final keyring = createStarSyncDriveKeyring().keyring;
+    remote.files['stars/keyring.json'] = utf8.encode(
+      jsonEncode(keyring.toJson()),
+    );
+    remote.files['stars/devices/first'] = [0];
+    remote.files['stars/devices/second'] = [0];
+    const firstError = StarSyncTransportException(
+      StarSyncTransportErrorKind.network,
+      'first device download failed',
+    );
+    const secondError = StarSyncTransportException(
+      StarSyncTransportErrorKind.network,
+      'second device download failed',
+    );
+    remote.onGet = (path, _) {
+      if (path == 'stars/devices/first') throw firstError;
+      if (path == 'stars/devices/second') throw secondError;
+    };
+    final storage = _Storage();
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+    );
+    addTearDown(engine.dispose);
+    await expectLater(
+      engine.setUpWithDrive(config),
+      throwsA(same(firstError)),
+    );
+    expect(remote.gets['stars/devices/first'], 1);
+    expect(remote.gets['stars/devices/second'], 1);
+    expect(engine.status.value.enabled, isFalse);
+    expect(remote.puts, 0);
+    expect(remote.deletes, 0);
+  });
+
   test('setup uses keyring overwritten after a successful create', () async {
     final remote = _Transport();
     final first = _Storage();

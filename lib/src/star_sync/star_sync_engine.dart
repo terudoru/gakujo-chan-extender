@@ -1097,11 +1097,15 @@ class StarSyncEngine {
       throw const StarSyncKeyringMismatchException();
     }
     final entries = await transport.list(_deviceDirectory);
+    Object? firstFetchError;
+    StackTrace? firstFetchStackTrace;
     for (final entry in entries) {
       StarSyncRemoteObject? object;
       try {
         object = await transport.get(entry.path);
-      } on Object {
+      } on Object catch (error, stackTrace) {
+        firstFetchError ??= error;
+        firstFetchStackTrace ??= stackTrace;
         continue;
       }
       if (object == null) continue;
@@ -1118,6 +1122,9 @@ class StarSyncEngine {
       } on StarSyncFormatException {
         continue;
       }
+    }
+    if (firstFetchError != null) {
+      Error.throwWithStackTrace(firstFetchError, firstFetchStackTrace!);
     }
     if (entries.isNotEmpty) throw const StarSyncKeyringMismatchException();
   }

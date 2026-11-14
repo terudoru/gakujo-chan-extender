@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'star_sync_config.dart';
 import 'star_sync_google_auth.dart';
 import 'star_sync_transport.dart';
 
@@ -357,7 +358,8 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           (payload['email'] as String).isEmpty) {
         throw const FormatException();
       }
-      if (expectedEmail != null && payload['email'] != expectedEmail) {
+      if (expectedEmail != null &&
+          !sameGoogleAccount(payload['email'] as String, expectedEmail)) {
         throw const StarSyncGoogleAuthException(
           StarSyncGoogleAuthErrorKind.failed,
           'account changed',
