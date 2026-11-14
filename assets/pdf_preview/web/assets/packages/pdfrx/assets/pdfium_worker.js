@@ -648,7 +648,7 @@ const emEnv = {
     _notImplemented('emscripten_errn');
   },
   emscripten_resize_heap: function (requestedSizeInBytes) {
-    const maxHeapSizeInBytes = 256 * 1024 * 1024;
+    const maxHeapSizeInBytes = 1024 * 1024 * 1024; // One 600dpi A4 scan page needs over 256MB to decode.
     if (requestedSizeInBytes > maxHeapSizeInBytes) return false;
 
     const pageSize = 65536;
