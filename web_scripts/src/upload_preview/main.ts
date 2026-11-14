@@ -1,6 +1,8 @@
 import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
 
+const MAX_PDF_PREVIEW_BYTES = 512 * 1024 * 1024;
+
 declare const __mbgConfig: { compactAndroid: boolean };
 
 function uploadPreview() {
@@ -384,7 +386,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         }, fallback);
       }).catch(fail);
     } else if (file.type === 'application/pdf' || extension === 'pdf') {
-      if (file.size > 64 * 1024 * 1024) { fail(new Error('PDFが大きすぎます')); return; }
+      if (file.size > MAX_PDF_PREVIEW_BYTES) { fail(new Error('PDFが大きすぎます')); return; }
       armWatchdog();
       pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
@@ -746,7 +748,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var type = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
       if (type === 'text/html' || type === 'application/xhtml+xml') throw new Error('ファイルではなくページが返されました');
       var length = response.headers.get('content-length');
-      if (length && (!/^\d+$/.test(length) || Number(length) > 64 * 1024 * 1024)) throw new Error('ファイルが大きすぎます');
+      if (length && (!/^\d+$/.test(length) || Number(length) > MAX_PDF_PREVIEW_BYTES)) throw new Error('ファイルが大きすぎます');
       if (!response.body || !response.body.getReader) throw new Error('この環境では安全に読み込めません');
       var disposition = response.headers.get('content-disposition') || '';
       var extended = /(?:^|;)\s*filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition);
@@ -759,7 +761,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
           if (closed) return null;
           if (item.done) return {parts: parts, type: type, name: suggested};
           size += item.value.byteLength;
-          if (size > 64 * 1024 * 1024) { controller.abort(); throw new Error('ファイルが大きすぎます'); }
+          if (size > MAX_PDF_PREVIEW_BYTES) { controller.abort(); throw new Error('ファイルが大きすぎます'); }
           parts.push(item.value); return next();
         });
       }
@@ -782,6 +784,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       else if (first.length >= 8 && first[0] === 137 && prefix.slice(1, 4) === 'PNG') type = 'image/png';
       else if (prefix.slice(0, 4) === 'RIFF' && prefix.slice(8, 12) === 'WEBP') type = 'image/webp';
       var file = new File(result.parts, name, {type: type});
+      var extension = (name.split('.').pop() || '').toLowerCase();
+      var isImage = type.indexOf('image/') === 0 || /^(jpg|jpeg|png|webp)$/.test(extension);
+      if (file.size > 64 * 1024 * 1024 && (isImage || (type !== 'application/pdf' && extension !== 'pdf'))) {
+        throw new Error('ファイルが大きすぎます');
+      }
       var anchor = doc.createElement('input'); anchor.type = 'hidden'; doc.body.appendChild(anchor);
       var visible = operation.visible;
       var token = (operation as {__mbgToken?: string}).__mbgToken;

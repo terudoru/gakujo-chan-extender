@@ -41,6 +41,10 @@ class DOMParser {
     return {getElementsByTagName: () => [], getElementsByTagNameNS: (_: any, name: any) => name === 'p' ? paragraphs : []};
   }
 }
+let previewFileSize: number | undefined;
+class PreviewFile extends File {
+  get size() { return previewFileSize ?? super.size; }
+}
 let calls: any = [], body: any = [], type: any = 'text/plain', disposition: any = '', declaredLength: any = null, stall: any = false;
 function fetch(url: any, options: any) {
   calls.push({url, options});
@@ -51,7 +55,7 @@ function fetch(url: any, options: any) {
     body: {getReader: () => ({read: async () => chunks.length ? {done: false, value: chunks.shift()} : {done: true}})}});
 }
 vm.runInNewContext(source, {window, document: doc, FileReader, fetch, URL, URLSearchParams,
-  AbortController, File, Blob, Uint8Array, DataView, ArrayBuffer, Promise, Math, Number, Error,
+  AbortController, File: PreviewFile, Blob, Uint8Array, DataView, ArrayBuffer, Promise, Math, Number, Error,
   DOMParser, TextDecoder});
 const request: any = {url:'https://gakujo.iess.niigata-u.ac.jp/campusweb/file.txt', method:'GET', fileName:'sample.txt', formFields:{}};
 assert.equal(window.__MBG_OPEN_REMOTE_PREVIEW({...request, url:'https://evil.invalid/file.txt'}), false);
@@ -87,14 +91,63 @@ await flush();
 assert.match(doc.body.children.find((e: any) => e.attributes.role === 'dialog').children[0].textContent, /ページ/);
 window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
 
-declaredLength = String(64 * 1024 * 1024 + 1);
-window.__MBG_OPEN_REMOTE_PREVIEW(request);
+const pdfRequest = {...request, url: request.url.replace('file.txt', 'file.pdf'), fileName: 'sample.pdf'};
+body = [new TextEncoder().encode('%PDF-1.7\n')];
+declaredLength = String(512 * 1024 * 1024 + 1);
+window.__MBG_OPEN_REMOTE_PREVIEW(pdfRequest);
 await flush();
 assert.match(doc.body.children.find((e: any) => e.attributes.role === 'dialog').children[0].textContent, /大きすぎ/);
 window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
 assert.equal(timers.size, 0);
 
 declaredLength = null;
+body = [{byteLength: 512 * 1024 * 1024 + 1}];
+window.__MBG_OPEN_REMOTE_PREVIEW(pdfRequest);
+await flush();
+assert.equal(calls.at(-1).options.signal.aborted, true);
+assert.match(doc.body.children.find((e: any) => e.attributes.role === 'dialog').children[0].textContent, /大きすぎ/);
+window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
+
+body = [new TextEncoder().encode('%PDF-1.7\n')];
+const libraryRequests: string[] = [];
+window.MbgUploadCompression = {postMessage: (message: string) => libraryRequests.push(message)};
+// Declare large sizes while retaining only the small PDF header in memory.
+for (const size of [64 * 1024 * 1024 + 1, 512 * 1024 * 1024]) {
+  declaredLength = String(size); previewFileSize = size;
+  const before = libraryRequests.length;
+  window.__MBG_OPEN_REMOTE_PREVIEW(pdfRequest);
+  await flush();
+  assert.equal(libraryRequests.length, before + 1, `PDF preview accepts ${size} bytes`);
+  assert.equal(libraryRequests.at(-1), 'preview');
+  window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
+  assert.equal(timers.size, 0);
+}
+declaredLength = null; previewFileSize = 512 * 1024 * 1024 + 1;
+window.__MBG_OPEN_REMOTE_PREVIEW(pdfRequest);
+await flush();
+assert.match(doc.body.children.find((e: any) => e.attributes.role === 'dialog').children[1].children[0].textContent, /大きすぎ/);
+window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
+delete window.MbgUploadCompression;
+
+body = [new TextEncoder().encode('bounded preview')];
+for (const [name, mime, limit] of [
+  ['sample.png', 'image/png', 64],
+  ['sample.pdf', 'image/png', 64],
+  ['sample.png', 'application/pdf', 64],
+  ['sample.mp4', 'video/mp4', 64],
+  ['sample.docx', 'application/octet-stream', 32],
+  ['sample.txt', 'text/plain', 4],
+] as const) {
+  type = mime; previewFileSize = limit * 1024 * 1024 + 1;
+  window.__MBG_OPEN_REMOTE_PREVIEW({...request, url: request.url.replace('file.txt', name), fileName: name});
+  await flush();
+  const preview = doc.body.children.find((e: any) => e.attributes.role === 'dialog');
+  assert.match(preview.children[0].textContent + (preview.children[1]?.children[0]?.textContent || ''), /大きすぎ/, name);
+  window.__MBG_ACTIVE_UPLOAD_PREVIEW.close();
+}
+previewFileSize = undefined;
+assert.equal(timers.size, 0);
+
 type = 'text/plain'; disposition = 'attachment; filename="sample.txt"';
 body = [new TextEncoder().encode('POST attachment')];
 assert.equal(window.__MBG_OPEN_REMOTE_PREVIEW({...request,

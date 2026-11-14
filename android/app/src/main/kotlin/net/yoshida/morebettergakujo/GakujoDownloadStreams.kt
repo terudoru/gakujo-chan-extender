@@ -4,7 +4,7 @@ import java.io.InputStream
 import java.io.OutputStream
 
 internal object GakujoDownloadStreams {
-    const val MAX_DOWNLOAD_BYTES = 128L * 1024 * 1024
+    const val MAX_DOWNLOAD_BYTES = 512L * 1024 * 1024
     fun shouldDeleteFailedPickedDestination(initialSize: Long?): Boolean = initialSize == 0L
 
     fun haveSameContent(

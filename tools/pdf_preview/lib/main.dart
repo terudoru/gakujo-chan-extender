@@ -18,6 +18,8 @@ import 'thumbnails_view.dart';
 import 'image_view.dart';
 import 'text_view.dart';
 
+const _maxPdfBytes = 512 * 1024 * 1024;
+
 void main(List<String> args) {
   runApp(const MyApp());
 }
@@ -191,7 +193,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
       final bytes = (data as JSArrayBuffer).toDart.asUint8List();
       if (_receivedDocument ||
           bytes.isEmpty ||
-          bytes.lengthInBytes > 64 * 1024 * 1024) {
+          bytes.lengthInBytes > _maxPdfBytes) {
         return;
       }
       _receivedDocument = true;
