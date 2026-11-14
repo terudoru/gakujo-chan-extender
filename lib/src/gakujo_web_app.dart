@@ -1744,7 +1744,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) _protectedSecretPromptGate.background();
     if (state == AppLifecycleState.resumed && _protectedSecretPromptGate.resume()) {
-      unawaited(_injectLoginAutofillAssistIfAllowed());
+      // The cancelled prompt may have been the 2FA one; retry both.
+      unawaited(() async {
+        await _injectLoginAutofillAssistIfAllowed();
+        await _injectTwoFactorAutofillIfAllowed();
+      }());
     }
     // Do not probe the network every few seconds while the app is in the
     // background; check again once it is back.
