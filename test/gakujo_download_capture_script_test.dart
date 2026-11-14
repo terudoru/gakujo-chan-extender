@@ -231,6 +231,14 @@ void main() {
     );
   });
 
+  test('reset buttons do not capture clicks in download forms', () async {
+    final result = await _evaluateBehavior('nonSubmitButtons');
+    expect(result['prevented'], [false, true, true, true]);
+    expect(result['stopped'], [false, true, true, true]);
+    expect(result['postCounts'], [0, 1, 2, 3]);
+    expect(result['captured'], hasLength(3));
+  });
+
   test('download labels cannot turn Gakujo page navigation into downloads',
       () async {
     final result = await _evaluateBehavior('navigationLabels');

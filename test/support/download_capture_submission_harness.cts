@@ -78,6 +78,7 @@ function submitterWithForm(formaction, formmethod) {
   const element = {
     ownerDocument: document,
     form,
+    type: 'submit',
     name: 'b',
     value: '1',
     innerText: '\u30c0\u30a6\u30f3\u30ed\u30fc\u30c9',

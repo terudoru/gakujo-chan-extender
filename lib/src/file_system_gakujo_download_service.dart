@@ -495,8 +495,16 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
           }
           await sink.close();
         } on Object {
-          await sink.close();
-          await directory.delete(recursive: true);
+          try {
+            await sink.close();
+          } on Object {
+            // The write has already failed.
+          }
+          try {
+            await directory.delete(recursive: true);
+          } on Object {
+            // Preserve the original failure if cleanup also fails.
+          }
           rethrow;
         }
         final disposition =

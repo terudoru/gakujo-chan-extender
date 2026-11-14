@@ -700,6 +700,9 @@ function downloadCapture() {
       return;
     }
     if (form) {
+      // A reset button never submits; leave plain buttons alone because page
+      // scripts may call form.submit(), which fires no submit event.
+      if (submitter.type.toLowerCase() === 'reset') return;
       if (captureForm(form, submitter)) {
         event.preventDefault();
         event.stopPropagation();

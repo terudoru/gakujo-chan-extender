@@ -120,6 +120,7 @@ function submitterWithForm(text: any = 'ダウンロード', action: any = 'expo
     id: attributes.id || '',
     attributes: Object.keys(attributes).map(name => ({name})),
     form,
+    type: attributes.type || 'submit',
     name: '',
     value: text,
     innerText: text,
@@ -181,6 +182,18 @@ function submitEvent(form?: any, submitter?: any) {
 }
 
 function behavior() {
+  if (scenario === 'nonSubmitButtons') {
+    const prevented: any = [], stopped: any = [], postCounts: any = [];
+    for (const type of ['reset', 'button', 'submit', 'SUBMIT']) {
+      const button: any = submitterWithForm('Download', 'campussquare.do',
+        {_eventId: 'download'}, {type});
+      clickStopped = false;
+      prevented.push(click(button));
+      stopped.push(clickStopped);
+      postCounts.push(captured.length);
+    }
+    return {prevented, stopped, postCounts, captured};
+  }
   if (scenario === 'courseNameFileRows') {
     const rowText = '副専攻授業科目リスト等の変更について（2021.05.20現在）.pdfプレビューを見る 2021年5月20日 - 9999年12月31日 2021年5月20日 112725 令和３年度副専攻授業科目リスト等の変更';
     const row: any = {innerText: rowText, querySelectorAll() { return []; }};

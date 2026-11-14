@@ -29,6 +29,41 @@ class _FileBundle extends CachingAssetBundle {
 }
 
 void main() {
+  test('retries a failed bind and shares pending and successful starts', () async {
+    final server = GakujoPdfPreviewServer(bundle: _ViewerBundle());
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close();
+    });
+    const error = SocketException('Preview bind failed');
+    final stackTrace = StackTrace.fromString('preview bind failure stack');
+    final failed = IOOverrides.runZoned(
+      server.start,
+      serverSocketBind: (address, port,
+          {int backlog = 0, bool v6Only = false, bool shared = false}) {
+        return Future<ServerSocket>.error(error, stackTrace);
+      },
+    );
+    expect(server.start(), same(failed));
+    await failed.then<void>(
+      (_) => fail('The first bind should fail'),
+      onError: (Object caught, StackTrace caughtStack) {
+        expect(caught, same(error));
+        expect(caughtStack.toString(), contains('preview bind failure stack'));
+      },
+    );
+
+    final retry = server.start();
+    expect(server.start(), same(retry));
+    final url = await retry;
+    expect(server.start(), same(retry));
+    expect(server.isViewerUrl(url.toString()), isTrue);
+    final response = await (await client.getUrl(url)).close();
+    expect(response.statusCode, HttpStatus.ok);
+    await response.drain<void>();
+  });
+
   test('only the capability URL can read bundled resources', () async {
     final server = GakujoPdfPreviewServer(bundle: _ViewerBundle());
     final client = HttpClient()..findProxy = (_) => 'DIRECT';
