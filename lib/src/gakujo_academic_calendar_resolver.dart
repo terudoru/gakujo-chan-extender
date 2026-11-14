@@ -669,10 +669,7 @@ class GakujoAcademicCalendarPdfParser {
       for (var day = start;
           !day.isAfter(end);
           day = DateTime(day.year, day.month, day.day + 1)) {
-        if (day.weekday != DateTime.saturday &&
-            day.weekday != DateTime.sunday) {
-          dates.add(day);
-        }
+        dates.add(day);
       }
     }
     for (final match in RegExp(

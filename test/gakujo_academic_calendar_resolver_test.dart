@@ -208,6 +208,27 @@ void main() {
     expect(fourth.noClassDates, contains(DateTime(2027, 1, 18)));
   });
 
+  test('winter vacation includes Saturday and Sunday no-class dates', () {
+    final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
+      const GakujoPdfText(
+        text: '''
+第１ターム 4月8日～6月8日
+第２ターム 6月10日～8月5日
+第３ターム 10月2日～12月1日
+第４ターム 12月3日～2月12日
+12/27～1/6 冬期休業
+''',
+        actualTexts: [],
+      ),
+      academicYear: 2026,
+      sourceUrl: 'https://example.com/schedule_2026.pdf',
+    );
+
+    final fourth = terms.singleWhere((term) => term.name == '第4ターム');
+    expect(fourth.noClassDates, contains(DateTime(2027, 1, 2)));
+    expect(fourth.noClassDates, contains(DateTime(2027, 1, 3)));
+  });
+
   test('holiday ranges include their final civil day across DST changes', () {
     final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(
       const GakujoPdfText(
