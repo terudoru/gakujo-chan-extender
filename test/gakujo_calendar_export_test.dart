@@ -812,6 +812,66 @@ void main() {
     expect(range?.end, DateTime(2027, 2, 12));
   });
 
+  test('termRangeFromText uses an explicit academic year for winter', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '2026年度 第4ターム 1月8日～3月20日',
+      referenceDate: DateTime(2026, 11, 14),
+    );
+
+    expect(range?.start, DateTime(2027, 1, 8));
+    expect(range?.end, DateTime(2027, 3, 20));
+  });
+
+  test('termRangeFromText accepts a spaced full-width academic year', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '２０２６ 年度 第4ターム 1月8日～3月20日',
+      referenceDate: DateTime(2027, 11, 14),
+    );
+
+    expect(range?.start, DateTime(2027, 1, 8));
+    expect(range?.end, DateTime(2027, 3, 20));
+  });
+
+  test('termRangeFromText places winter after an autumn reference', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '第4ターム 1月8日～3月20日',
+      referenceDate: DateTime(2026, 11, 14),
+    );
+
+    expect(range?.start, DateTime(2027, 1, 8));
+    expect(range?.end, DateTime(2027, 3, 20));
+  });
+
+  test('termRangeFromText keeps winter in the reference calendar year', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '1月8日～3月20日',
+      referenceDate: DateTime(2027, 2, 1),
+    );
+
+    expect(range?.start, DateTime(2027, 1, 8));
+    expect(range?.end, DateTime(2027, 3, 20));
+  });
+
+  test('termRangeFromText places autumn before a winter reference', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '10月1日～11月30日',
+      referenceDate: DateTime(2027, 2, 1),
+    );
+
+    expect(range?.start, DateTime(2026, 10, 1));
+    expect(range?.end, DateTime(2026, 11, 30));
+  });
+
+  test('termRangeFromText keeps spring in the reference calendar year', () {
+    final range = GakujoCalendarExport.termRangeFromText(
+      '4月8日～6月3日',
+      referenceDate: DateTime(2026, 5, 1),
+    );
+
+    expect(range?.start, DateTime(2026, 4, 8));
+    expect(range?.end, DateTime(2026, 6, 3));
+  });
+
   test('termRangeFromText selects among multiple term ranges safely', () {
     const text = '時間割 第1ターム 授業期間 2026年4月8日～2026年6月8日 '
         '第2ターム 授業期間 2026年6月10日～2026年8月5日';
