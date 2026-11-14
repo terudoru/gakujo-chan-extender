@@ -506,6 +506,24 @@ void main() {
     expect(storage.values, contains(starSyncGoogleTokenKey));
   });
 
+  test('incremental scopes accept a different email casing', () async {
+    storage.values[starSyncGoogleTokenKey] = jsonEncode({
+      'refreshToken': 'refresh-secret',
+      'email': 'User@example.com',
+      'scopes': starSyncGoogleScopes,
+    });
+    final auth = makeAuth();
+    expect(await auth.restore(), 'User@example.com');
+    incremental = true;
+    await auth.requestScopes([googleDriveFileScope]);
+    expect(auth.currentEmail, 'user@example.com');
+    expect(await auth.hasScope(googleDriveFileScope), isTrue);
+    expect(
+      jsonDecode(storage.values[starSyncGoogleTokenKey]!)['refreshToken'],
+      'new-refresh-secret',
+    );
+  });
+
   test('incremental scopes persist and reject another account', () async {
     final auth = makeAuth();
     await auth.signIn();
