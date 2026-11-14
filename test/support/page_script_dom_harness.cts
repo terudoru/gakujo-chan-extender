@@ -162,6 +162,7 @@ function createPage() {
   const fetchStatuses: any = scenario ? [...scenario.fetchStatuses] : [200];
   const fetchBodies: any = scenario && scenario.fetchBodies ? [...scenario.fetchBodies] : [];
   const iframeOutcomes: any = scenario ? [...scenario.iframeOutcomes] : [];
+  const iframeDocuments: any = scenario?.iframeDocuments ? [...scenario.iframeDocuments] : [];
   const target: any = new FakeElement('div');
   target.id = 'tabmenutable';
   const body: any = new FakeElement('body');
@@ -190,6 +191,16 @@ function createPage() {
         return new FakeElement(tag, (frame: any) => {
           frameCallCount += 1;
           const loaded: any = iframeOutcomes.shift() === true;
+          const frameDocument: any = iframeDocuments.shift();
+          if (frameDocument === 'inaccessible') {
+            Object.defineProperty(frame, 'contentDocument', {
+              get() { throw new Error('Cross-origin frame'); }
+            });
+          } else {
+            frame.contentDocument = frameDocument === 'missing' ? null : {
+              documentElement: {outerHTML: '<html><body>連絡通知</body></html>'}
+            };
+          }
           if (loaded && frame.onload) frame.onload();
           if (!loaded && frame.onerror) frame.onerror();
         });

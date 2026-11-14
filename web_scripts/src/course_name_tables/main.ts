@@ -38,6 +38,9 @@ function courseNameTables(): string {
           continue;
         }
         for (var same = courseIndex + 1; same < cells.length; same += 1) {
+          if (cells[same].tagName.toLowerCase() === 'th') {
+            continue;
+          }
           var sameRowValue = textOf(cells[same] as HTMLElement);
           if (sameRowValue) {
             return sameRowValue;
