@@ -79,6 +79,7 @@ const form = {
 const submitter = {
   ownerDocument: document,
   form,
+  type: 'submit',
   name: '',
   value: 'Download',
   innerText: 'Download',

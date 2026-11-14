@@ -593,6 +593,7 @@ const String gakujoDownloadCaptureJs = r'''
         return;
       }
       if (form) {
+        if (submitter.type.toLowerCase() === "reset") return;
         if (captureForm(form, submitter)) {
           event.preventDefault();
           event.stopPropagation();

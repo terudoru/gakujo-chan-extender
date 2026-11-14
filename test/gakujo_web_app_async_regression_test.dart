@@ -181,18 +181,54 @@ void main() {
 
     test('drops the Downloads-folder " (n)" WebView2 adds to the name',
         () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-native-');
+      addTearDown(() => directory.delete(recursive: true));
+      await File('${directory.path}/02.pdf').writeAsBytes([]);
       final requests = <GakujoDownloadRequest>[];
       await handleGakujoNativeDownload(
-        const GakujoWebViewDownload(
+        GakujoWebViewDownload(
           url:
               'https://gakujo.iess.niigata-u.ac.jp/download.do?_eventId=download',
-          resultFilePath: r'C:\Users\student\Downloads\02 (1).pdf',
+          resultFilePath: '${directory.path}/02 (1).pdf',
           mimeType: 'application/pdf',
         ),
         onDownload: requests.add,
         showSnackBar: (_) {},
       );
       expect(requests.single.fileName, '02.pdf');
+    });
+
+    test('keeps a numbered name when the unsuffixed file does not exist', () {
+      expect(
+        gakujoNativeDownloadSuggestedName(
+          r'C:\Users\student\Downloads\Exam (2026).pdf',
+          exists: (path) {
+            expect(path, 'C:/Users/student/Downloads/Exam.pdf');
+            return false;
+          },
+        ),
+        'Exam (2026).pdf',
+      );
+    });
+
+    test('keeps a numbered name without a directory', () {
+      expect(
+        gakujoNativeDownloadSuggestedName(
+          '02 (1).pdf',
+          exists: (_) => fail('A name without a directory cannot be checked'),
+        ),
+        '02 (1).pdf',
+      );
+    });
+
+    test('keeps a numbered name if checking the directory fails', () {
+      expect(
+        gakujoNativeDownloadSuggestedName(
+          '/Downloads/02 (1).pdf',
+          exists: (_) => throw const FileSystemException('Cannot check file'),
+        ),
+        '02 (1).pdf',
+      );
     });
 
     test('uses MIME metadata when the suggested path is unavailable', () async {

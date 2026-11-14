@@ -55,7 +55,16 @@ class GakujoPdfPreviewServer {
     'assets/assets/unifont.otf',
   };
 
-  Future<Uri> start() => _starting ??= _start();
+  Future<Uri> start() {
+    final pending = _starting;
+    if (pending != null) return pending;
+    late final Future<Uri> starting;
+    starting = _start().onError((Object error, StackTrace stackTrace) {
+      if (identical(_starting, starting)) _starting = null;
+      Error.throwWithStackTrace(error, stackTrace);
+    });
+    return _starting = starting;
+  }
 
   Future<Uri> _start() async {
     if (_closed) throw StateError('PDF preview server is closed');
