@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
@@ -32,6 +34,36 @@ void main() {
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     expect(result?.folder, same(folder));
+  });
+
+  testWidgets('double create tap before rebuild creates one folder', (tester) async {
+    final pending = Completer<GoogleDriveFolder>();
+    var creates = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: DriveSaveFolderDialog(
+        currentId: null,
+        load: () async => [],
+        create: (name) {
+          creates++;
+          expect(name, 'Math');
+          return pending.future;
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Math');
+    await tester.tap(find.text('作成'));
+    await tester.tap(find.text('作成'));
+    expect(creates, 1);
+    await tester.pump();
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '作成')).onPressed, isNull);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '保存')).onPressed, isNull);
+    pending.complete(folder);
+    await tester.pumpAndSettle();
+    expect(creates, 1);
+    expect(find.text('School / Math'), findsOneWidget);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '作成')).onPressed, isNotNull);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '保存')).onPressed, isNotNull);
   });
 
   testWidgets('create calls the callback and selects the new folder', (tester) async {
