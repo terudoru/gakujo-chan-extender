@@ -11,6 +11,7 @@ import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 
 void main() {
@@ -1105,16 +1106,40 @@ void main() {
     expect(guidance, contains('再試行'));
   });
 
-  test('Linux locked keyring guidance asks to unlock, not to reset', () {
+  test('Linux missing keyring guidance asks to install a service', () {
     final guidance = secureStorageRecoveryGuidance(
       PlatformException(code: 'KeyringLocked', message: 'KeyringLocked'),
       platform: TargetPlatform.linux,
+      linuxSecretService: LinuxSecretServiceStatus.missing,
     );
 
-    expect(guidance, contains('ロックを解除'));
+    expect(guidance, contains('見つかりません'));
     expect(guidance, contains('再試行'));
+    expect(guidance, contains('ログイン情報を保存せずに'));
+    expect(guidance, isNot(contains('ロックされています')));
     expect(guidance, isNot(contains('保存データをリセット')));
   });
+
+  for (final status in [
+    LinuxSecretServiceStatus.running,
+    LinuxSecretServiceStatus.activatable,
+    LinuxSecretServiceStatus.unknown,
+    null,
+  ]) {
+    test('Linux locked keyring guidance asks to unlock for $status', () {
+      final guidance = secureStorageRecoveryGuidance(
+        PlatformException(code: 'KeyringLocked', message: 'KeyringLocked'),
+        platform: TargetPlatform.linux,
+        linuxSecretService: status,
+      );
+
+      expect(guidance, contains('ロックされています'));
+      expect(guidance, contains('ロックを解除'));
+      expect(guidance, contains('再試行'));
+      expect(guidance, isNot(contains('見つかりません')));
+      expect(guidance, isNot(contains('保存データをリセット')));
+    });
+  }
 
   test('Linux secret service guidance names the keyring services', () {
     final guidance = secureStorageRecoveryGuidance(

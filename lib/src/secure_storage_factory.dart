@@ -10,6 +10,29 @@ import 'device_only_secret_storage.dart';
 import 'keyring_lock_gate_storage.dart';
 import 'migrating_secure_storage.dart';
 
+enum LinuxSecretServiceStatus { running, activatable, missing, unknown }
+
+Future<LinuxSecretServiceStatus> linuxSecretServiceStatus() async {
+  try {
+    final status =
+        await const MethodChannel('net.yoshida.morebettergakujo/window')
+            .invokeMethod<String>('secretServiceStatus')
+            .timeout(const Duration(seconds: 3));
+    return switch (status) {
+      'running' => LinuxSecretServiceStatus.running,
+      'activatable' => LinuxSecretServiceStatus.activatable,
+      'missing' => LinuxSecretServiceStatus.missing,
+      _ => LinuxSecretServiceStatus.unknown,
+    };
+  } on MissingPluginException {
+    return LinuxSecretServiceStatus.unknown;
+  } on PlatformException {
+    return LinuxSecretServiceStatus.unknown;
+  } on TimeoutException {
+    return LinuxSecretServiceStatus.unknown;
+  }
+}
+
 class SecureStorageFactory {
   const SecureStorageFactory._();
 

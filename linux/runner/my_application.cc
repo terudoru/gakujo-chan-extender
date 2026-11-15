@@ -277,11 +277,85 @@ static void shutdown_notifications(MyApplication* self) {
   g_clear_pointer(&self->notification_urls, g_hash_table_unref);
 }
 
+static void secret_service_status_complete(FlMethodCall* method_call,
+                                           const char* status) {
+  g_autoptr(FlValue) result = fl_value_new_string(status);
+  fl_method_call_respond_success(method_call, result, nullptr);
+  g_object_unref(method_call);
+}
+
+static void secret_service_activatable_cb(GObject* object,
+                                          GAsyncResult* result,
+                                          gpointer user_data) {
+  FlMethodCall* method_call = FL_METHOD_CALL(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
+  if (reply == nullptr) {
+    secret_service_status_complete(method_call, "unknown");
+    return;
+  }
+  g_auto(GStrv) names = nullptr;
+  g_variant_get(reply, "(^as)", &names);
+  for (guint i = 0; names[i] != nullptr; i++) {
+    if (g_strcmp0(names[i], "org.freedesktop.secrets") == 0) {
+      secret_service_status_complete(method_call, "activatable");
+      return;
+    }
+  }
+  secret_service_status_complete(method_call, "missing");
+}
+
+static void secret_service_owner_cb(GObject* object,
+                                    GAsyncResult* result,
+                                    gpointer user_data) {
+  FlMethodCall* method_call = FL_METHOD_CALL(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
+  if (reply == nullptr) {
+    secret_service_status_complete(method_call, "unknown");
+    return;
+  }
+  gboolean has_owner;
+  g_variant_get(reply, "(b)", &has_owner);
+  if (has_owner) {
+    secret_service_status_complete(method_call, "running");
+    return;
+  }
+  g_dbus_connection_call(
+      G_DBUS_CONNECTION(object), "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames",
+      nullptr, G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, 2000, nullptr,
+      secret_service_activatable_cb, method_call);
+}
+
+static void secret_service_bus_cb(GObject* object,
+                                  GAsyncResult* result,
+                                  gpointer user_data) {
+  FlMethodCall* method_call = FL_METHOD_CALL(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GDBusConnection) connection = g_bus_get_finish(result, &error);
+  if (connection == nullptr) {
+    secret_service_status_complete(method_call, "unknown");
+    return;
+  }
+  g_dbus_connection_call(
+      connection, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "NameHasOwner",
+      g_variant_new("(s)", "org.freedesktop.secrets"), G_VARIANT_TYPE("(b)"),
+      G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, secret_service_owner_cb, method_call);
+}
+
 static void window_method_call_cb(FlMethodChannel* channel,
                                   FlMethodCall* method_call,
                                   gpointer user_data) {
   MyApplication* self = MY_APPLICATION(user_data);
-  if (g_strcmp0(fl_method_call_get_name(method_call), "waitUntilShown") != 0) {
+  const gchar* method = fl_method_call_get_name(method_call);
+  if (g_strcmp0(method, "secretServiceStatus") == 0) {
+    g_bus_get(G_BUS_TYPE_SESSION, nullptr, secret_service_bus_cb,
+              g_object_ref(method_call));
+  } else if (g_strcmp0(method, "waitUntilShown") != 0) {
     fl_method_call_respond_not_implemented(method_call, nullptr);
   } else if (self->window_shown) {
     g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
