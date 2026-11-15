@@ -358,6 +358,7 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
       return fields;
     }
     function detailData(doc, heading, mobileFields) {
+      var detailDoc = doc;
       var data = identity(doc.location && doc.location.href || doc.URL || "", doc);
       if (!data) {
         var attachments = doc.querySelectorAll('a[href*="_eventId=download"]');
@@ -365,6 +366,7 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
           data = identity(attachments[i].getAttribute("href"), doc);
         }
       }
+      if (!data) data = detailDoc.__MBG_MESSAGE_STARS_IDENTITY || null;
       if (!data) {
         try {
           var remembered = JSON.parse(window.top.sessionStorage.getItem(openedMessageKey));
@@ -372,6 +374,8 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
             return typeof remembered[key] === "string" && /^[0-9]+$/.test(remembered[key]);
           })) {
             data = { keijitype: remembered.keijitype, genrecd: remembered.genrecd, seqNo: remembered.seqNo };
+            detailDoc.__MBG_MESSAGE_STARS_IDENTITY = data;
+            window.top.sessionStorage.removeItem(openedMessageKey);
           }
         } catch (e) {
         }

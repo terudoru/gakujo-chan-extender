@@ -136,7 +136,7 @@ const String _gakujoAuthenticatedDownloadStartJsPrefix =
           if (totalBytes + bytes.length > __mbgConfig.byteLimit) {
             throw Object.assign(new Error("ダウンロードが大きすぎます"), { code: "download_too_large" });
           }
-          if (chunkIndex === 0 && checkPage && /^(?:\xEF\xBB\xBF)?[\x09-\x0D\x20]*(?:<!doctype html|<html)[\x09-\x0D\x20/>]/i.test(
+          if (chunkIndex === 0 && checkPage && /^(?:\xEF\xBB\xBF)?(?:[\x09-\x0D\x20]|<\?xml\b[\s\S]*?\?>|<!--[\s\S]*?-->)*(?:<!doctype html|<html)[\x09-\x0D\x20/>]/i.test(
             String.fromCharCode.apply(null, bytes.subarray(0, 1024))
           )) {
             throw Object.assign(

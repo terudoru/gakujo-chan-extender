@@ -129,6 +129,7 @@ const isDetail: any = scenario.startsWith('detail');
 const remembers: any = scenario.startsWith('remembered');
 let inner = isDetail ? detail(scenario === 'detailAttachment', scenario === 'detailLong')
   : list(scenario === 'genre' || scenario === 'rememberedGenre', scenario === 'allGenre', scenario === 'missingHeaders');
+if (scenario === 'rememberedSameTitleBack') inner.heading.textContent = '休講のお知らせ [新着]';
 const outer = scenario === 'iframe' || scenario === 'navigate' || remembers ? doc('campusportal.do') : inner;
 if (outer !== inner) outer.frame = {contentWindow: {document: inner}};
 const messages: any = []; const intervals: any = new Map(); let intervalId = 0;
@@ -142,7 +143,8 @@ const storageKey = '__MBG_MESSAGE_STARS_OPEN_MESSAGE';
 // A separate top object catches accidental use of the frame's own storage.
 context.top = {get sessionStorage() {
   if (scenario === 'rememberedStorageDenied') throw new Error('storage denied');
-  return {setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key) || null};
+  return {setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key) || null,
+    removeItem: key => storage.delete(key)};
 }};
 context.GakujoMessageStars = {postMessage: value => messages.push(JSON.parse(value))};
 context.setInterval = fn => { intervals.set(++intervalId, fn); return intervalId; };
@@ -213,6 +215,7 @@ if (scenario === 'reusedLink') {
 let navigatedTitle, navigatedButtonText, navigatedPressed, navigatedStyleCount;
 let reloadedButtonText, reloadedPressed, reloadedStyleCount, capture, oldListListenerRemoved;
 let rememberedBeforeClick, remembered, rememberedAfterReload, oldListButtonCount;
+let rememberedAfterNavigation, repeatedDetailSeqNo;
 let oldListStyleCount, oldDetailStyleCount;
 if (scenario === 'navigate' || remembers) {
   const oldList = inner;
@@ -226,7 +229,9 @@ if (scenario === 'navigate' || remembers) {
   if (scenario === 'rememberedMismatch') inner.heading.textContent = '別の連絡通知';
   // The detail need not retain the list's [新着] suffix.
   else if (remembers) inner.heading.textContent = '授業のお知らせ';
+  if (scenario === 'rememberedSameTitleBack') inner.heading.textContent = '休講のお知らせ';
   for (const callback of intervals.values()) callback();
+  rememberedAfterNavigation = JSON.parse(storage.get(storageKey) || 'null');
   oldListListenerRemoved = !oldList.listeners.click;
   oldListButtonCount = oldList.querySelectorAll('button').length;
   oldListStyleCount = oldList.querySelectorAll('style').length;
@@ -235,6 +240,26 @@ if (scenario === 'navigate' || remembers) {
   navigatedPressed = inner.querySelector('button')?.getAttribute('aria-pressed') || null;
   navigatedStyleCount = inner.querySelectorAll('style').length;
   if (remembers) {
+    if (inner.querySelector('button')) {
+      for (const callback of intervals.values()) callback();
+      inner.querySelector('button').listeners.click({preventDefault() {}, stopPropagation() {}});
+      repeatedDetailSeqNo = messages[messages.length - 1].seqNo;
+    }
+    if (scenario === 'rememberedSameTitleBack') {
+      const firstDetail = inner;
+      inner = oldList; outer.frame.contentWindow.document = inner;
+      for (const callback of intervals.values()) callback();
+      inner.heading.setAttribute('href', inner.heading.getAttribute('href').replace('507762', '507763'));
+      inner.listeners.click({target: inner.heading});
+      inner = detail(false, false, true); inner.heading.textContent = '休講のお知らせ';
+      inner.querySelector('div.keiji-naiyo').textContent = 'Bの本文';
+      outer.frame.contentWindow.document = inner;
+      for (const callback of intervals.values()) callback();
+      inner = firstDetail; outer.frame.contentWindow.document = inner;
+      inner.querySelector('div.keiji-naiyo').textContent = 'Aの更新された本文';
+      for (const callback of intervals.values()) callback();
+      inner.querySelector('button').listeners.click({preventDefault() {}, stopPropagation() {}});
+    }
     const oldDetail = inner;
     const heading = inner.heading.textContent;
     inner = detail(false, false, true); inner.heading.textContent = heading;
@@ -252,7 +277,7 @@ process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCo
   prevented, stopped, messages, navigatedTitle, navigatedButtonText, navigatedPressed,
   navigatedStyleCount, reloadedButtonText, reloadedPressed, reloadedStyleCount, capture,
   oldListListenerRemoved, oldListButtonCount, oldListStyleCount, oldDetailStyleCount,
-  rememberedBeforeClick, remembered, rememberedAfterReload,
+  rememberedBeforeClick, remembered, rememberedAfterNavigation, repeatedDetailSeqNo, rememberedAfterReload,
   reusedLabel, reusedButtonTitle, clickedPressed, clickedLabel,
   headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick}));
 

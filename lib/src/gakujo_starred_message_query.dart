@@ -1,4 +1,5 @@
 import 'gakujo_activity_store.dart';
+import 'gakujo_dated_activity.dart';
 
 enum GakujoStarredMessageSort {
   starredNewest,
@@ -33,7 +34,10 @@ List<GakujoStarredMessage> queryStarredMessages(
   DateTime? posted(GakujoStarredMessage entry) {
     final match = RegExp(
       r'(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?',
-    ).firstMatch(entry.postedAt);
+    ).firstMatch(
+      GakujoDatedActivity.normalizeDateText(entry.postedAt)
+          .replaceAll(RegExp(r'[\s\u0085]+'), ' '),
+    );
     if (match == null) return null;
     final year = int.parse(match[1]!);
     final month = int.parse(match[2]!);
