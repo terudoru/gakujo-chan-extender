@@ -896,9 +896,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
-              final usesWindowsAutomaticImport = Platform.isWindows &&
-                  selectedSettings.method ==
-                      GakujoCalendarImportMethod.automatic;
+              final usesOfficialGoogleAutomaticImport =
+                  !_calendarService.supportsDirectSync &&
+                      selectedSettings.method ==
+                          GakujoCalendarImportMethod.automatic;
 
               GakujoCalendarImportSettings currentSettings() {
                 return selectedSettings.copyWith(
@@ -932,8 +933,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Text(
-                        usesWindowsAutomaticImport
-                            ? 'Windowsで「自動で選ぶ」にすると、学務のGoogleカレンダー連携を開きます。学期・休講補講・締切・カレンダー名などの設定を反映するには、iCalendarファイルを書き出してください。'
+                        usesOfficialGoogleAutomaticImport
+                            ? 'WindowsとLinuxで「自動で選ぶ」にすると、学務のGoogleカレンダー連携を開きます。学期・休講補講・締切・カレンダー名などの設定を反映するには、iCalendarファイルを書き出してください。'
                             : '追加する授業予定は学務のGoogle連携から取れたものだけを使い、ターム期間と授業なしの日はMore Better Gakujo側で判定します。',
                       ),
                       const SizedBox(height: 12),
@@ -982,7 +983,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                               ),
                             ),
                         ],
-                        onChanged: usesWindowsAutomaticImport
+                        onChanged: usesOfficialGoogleAutomaticImport
                             ? null
                             : (source) {
                                 if (source == null) {
@@ -1016,7 +1017,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                                 ),
                               ),
                           ],
-                          onChanged: usesWindowsAutomaticImport
+                          onChanged: usesOfficialGoogleAutomaticImport
                               ? null
                               : (target) {
                                   if (target == null) {
@@ -1032,7 +1033,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       const SizedBox(height: 8),
                       CheckboxListTile(
                         dense: true,
-                        enabled: !usesWindowsAutomaticImport,
+                        enabled: !usesOfficialGoogleAutomaticImport,
                         contentPadding: EdgeInsets.zero,
                         title: const Text('授業なしの日・授業振替日を反映する'),
                         subtitle: const Text(
@@ -1048,7 +1049,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       ),
                       CheckboxListTile(
                         dense: true,
-                        enabled: !usesWindowsAutomaticImport,
+                        enabled: !usesOfficialGoogleAutomaticImport,
                         contentPadding: EdgeInsets.zero,
                         title: const Text('休講・補講・教室変更を反映する'),
                         subtitle: const Text(
@@ -1065,7 +1066,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                       const SizedBox(height: 8),
                       TextField(
                         controller: calendarTitleController,
-                        enabled: !usesWindowsAutomaticImport,
+                        enabled: !usesOfficialGoogleAutomaticImport,
                         decoration: const InputDecoration(
                           labelText: '追加先カレンダー名',
                           border: OutlineInputBorder(),
@@ -1081,10 +1082,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
                         ),
                       ],
                       if (!_calendarService.supportsDirectSync &&
-                          !usesWindowsAutomaticImport) ...[
+                          !usesOfficialGoogleAutomaticImport) ...[
                         const SizedBox(height: 8),
                         Text(
-                          'Windowsでは端末のカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
+                          'WindowsとLinuxでは端末のカレンダーへ直接書き込めないため、iCalendarファイルを書き出して既定のカレンダーアプリで開きます。',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
