@@ -58,6 +58,19 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           });
         }
         break;
+      case 'keyZoom':
+        final action = switch (event['action']) {
+          'in' => LinuxKeyZoomAction.zoomIn,
+          'out' => LinuxKeyZoomAction.zoomOut,
+          'reset' => LinuxKeyZoomAction.reset,
+          _ => null,
+        };
+        if (action != null) {
+          _dispatchEventHandler('key zoom', () async {
+            _onKeyZoom?.call(action);
+          });
+        }
+        break;
       case 'pinchZoom':
         final phase = event['phase'];
         final scale = event['scale'];

@@ -400,7 +400,20 @@ static gboolean history_key_press_event_cb(GtkWidget *widget,
     return TRUE;
   }
   WebKitWebView *web_view = WEBKIT_WEB_VIEW(widget);
-  switch (browser_key_action(event)) {
+  const BrowserKeyAction action = browser_key_action(event);
+  switch (action) {
+  case BrowserKeyAction::kZoomIn:
+  case BrowserKeyAction::kZoomOut:
+  case BrowserKeyAction::kZoomReset: {
+    FlValue *zoom_event = make_event("keyZoom");
+    fl_value_set_string_take(
+        zoom_event, "action",
+        fl_value_new_string(action == BrowserKeyAction::kZoomIn ? "in" :
+                            action == BrowserKeyAction::kZoomOut ? "out" :
+                                                                  "reset"));
+    send_event(webview, zoom_event);
+    return TRUE;
+  }
   case BrowserKeyAction::kFind:
     // The find strip is a Flutter text field; GTK focus must leave WebKit or
     // the typed text would go to the page.
@@ -412,8 +425,7 @@ static gboolean history_key_press_event_cb(GtkWidget *widget,
     FlValue *find_event = make_event("findAgain");
     fl_value_set_string_take(
         find_event, "forward",
-        fl_value_new_bool(browser_key_action(event) ==
-                          BrowserKeyAction::kFindNext));
+        fl_value_new_bool(action == BrowserKeyAction::kFindNext));
     send_event(webview, find_event);
     return TRUE;
   }

@@ -12,6 +12,8 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter_linux/webview_flutter_linux.dart'
+    show LinuxKeyZoomAction;
 
 import 'generated/course_name_estimate.g.dart';
 import 'generated/history_marker.g.dart';
@@ -1722,6 +1724,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         controller.onWheelZoom = (dyNotches, position) {
           _handleDesktopWheelZoom(dyNotches * kLinuxWheelNotchPixels, position);
         };
+        controller.onKeyZoom = (action) {
+          if (!mounted || !_supportsDesktopZoom) return;
+          switch (action) {
+            case LinuxKeyZoomAction.zoomIn:
+              unawaited(_changeDesktopZoomBy(_desktopZoomStep));
+              break;
+            case LinuxKeyZoomAction.zoomOut:
+              unawaited(_changeDesktopZoomBy(-_desktopZoomStep));
+              break;
+            case LinuxKeyZoomAction.reset:
+              unawaited(_setDesktopZoom(1.0));
+              break;
+          }
+        };
         controller.onPinchZoom = (phase, scale, position) {
           switch (phase) {
             case 'begin':
@@ -1800,6 +1816,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final controller = _controller;
     if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onWheelZoom = null;
+      controller.onKeyZoom = null;
       controller.onPinchZoom = null;
       controller.onWheelScroll = null;
       controller.onFindRequest = null;

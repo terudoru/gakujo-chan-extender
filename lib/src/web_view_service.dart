@@ -686,6 +686,13 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  set onKeyZoom(void Function(LinuxKeyZoomAction action)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnKeyZoom(handler);
+    }
+  }
+
   set onWheelScroll(
     void Function(double dxNotches, double dyNotches)? handler,
   ) {

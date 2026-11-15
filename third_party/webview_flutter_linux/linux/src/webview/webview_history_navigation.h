@@ -48,6 +48,9 @@ enum class BrowserKeyAction {
   kFind,
   kFindNext,
   kFindPrevious,
+  kZoomIn,
+  kZoomOut,
+  kZoomReset,
 };
 
 inline BrowserKeyAction browser_key_action(const GdkEventKey *event) {
@@ -58,7 +61,29 @@ inline BrowserKeyAction browser_key_action(const GdkEventKey *event) {
       (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK | GDK_MOD3_MASK |
        GDK_MOD4_MASK | GDK_MOD5_MASK | GDK_SUPER_MASK | GDK_HYPER_MASK |
        GDK_META_MASK);
+  const bool zoom_shortcut = (event->state & GDK_CONTROL_MASK) != 0 &&
+      (event->state & (GDK_MOD1_MASK | GDK_SUPER_MASK | GDK_META_MASK |
+                       GDK_HYPER_MASK)) == 0;
   switch (event->keyval) {
+  case GDK_KEY_equal:
+  case GDK_KEY_plus:
+  case GDK_KEY_KP_Add:
+    if (zoom_shortcut) {
+      return BrowserKeyAction::kZoomIn;
+    }
+    break;
+  case GDK_KEY_minus:
+  case GDK_KEY_KP_Subtract:
+    if (zoom_shortcut) {
+      return BrowserKeyAction::kZoomOut;
+    }
+    break;
+  case GDK_KEY_0:
+  case GDK_KEY_KP_0:
+    if (zoom_shortcut) {
+      return BrowserKeyAction::kZoomReset;
+    }
+    break;
   case GDK_KEY_f:
   case GDK_KEY_F:
     if (find_modifiers == GDK_CONTROL_MASK) {

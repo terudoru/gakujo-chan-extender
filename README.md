@@ -31,7 +31,7 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret google-noto-sans-cjk-fonts`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret noto-fonts-cjk`）。日本語フォントがないと文字が表示されない
 - パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要。キーリングがロックされていると起動時にロック解除の画面が出る。キャンセルしても「このまま使う」で使え、「再試行」でもう一度解除できる
 - Windows と同じく、アプリを開いている間はデスクトップの通知サービスを通じて提出期限を通知する。二重に起動すると、起動済みのウィンドウを前面に表示する
-- Windows と同じく、F5/Ctrl+R で再読み込み、Ctrl+P で印刷、Ctrl+F でページ内検索、Alt+←/→ で戻る・進む、Ctrl+ホイールやピンチで拡大・縮小できる
+- Windows と同じく、F5/Ctrl+R で再読み込み、Ctrl+P で印刷、Ctrl+F でページ内検索、Alt+←/→ で戻る・進む、Ctrl+ホイール、ピンチ、Ctrl+=/Ctrl+-（Ctrl+0 で元の大きさ）で拡大・縮小できる
 
 ### iOS/iPadOS
 
