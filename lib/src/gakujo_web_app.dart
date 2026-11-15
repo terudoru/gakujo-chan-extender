@@ -532,6 +532,7 @@ bool isMissingKeychainEntitlementError(Object error) {
 String secureStorageRecoveryGuidance(
   Object error, {
   required TargetPlatform platform,
+  LinuxSecretServiceStatus? linuxSecretService,
 }) {
   if (isMissingKeychainEntitlementError(error)) {
     return 'このアプリに必要なキーチェーン権限がありません。'
@@ -567,6 +568,11 @@ String secureStorageRecoveryGuidance(
   if (platform == TargetPlatform.linux &&
       error is PlatformException &&
       error.code == 'KeyringLocked') {
+    if (linuxSecretService == LinuxSecretServiceStatus.missing) {
+      return 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）が見つかりません。\n\n'
+          'サービスを入れて有効にしてから「再試行」を押してください。'
+          'それまでは「このまま使う」で、ログイン情報を保存せずに使えます。';
+    }
     // The data is intact; resetting would only throw it away.
     return 'キーリング（GNOME Keyring や KWallet など）がロックされています。\n\n'
         '「再試行」を押すとロック解除の画面がもう一度表示されるので、ログインパスワードでロックを解除してください。'
@@ -7905,6 +7911,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     _secureStorageRecoveryDialogVisible = true;
+    LinuxSecretServiceStatus? linuxSecretService;
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        error is PlatformException &&
+        error.code == 'KeyringLocked') {
+      linuxSecretService = await linuxSecretServiceStatus();
+      if (!mounted) {
+        _secureStorageRecoveryDialogVisible = false;
+        return;
+      }
+    }
     final action = await showDialog<_SecureStorageRecoveryAction>(
       context: context,
       builder: (context) {
@@ -7915,6 +7931,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         final guidance = secureStorageRecoveryGuidance(
           error,
           platform: defaultTargetPlatform,
+          linuxSecretService: linuxSecretService,
         );
         return AlertDialog(
           title: const Text('保存データにアクセスできません'),
