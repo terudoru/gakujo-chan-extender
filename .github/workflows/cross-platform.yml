@@ -104,21 +104,32 @@ jobs:
           retention-days: 7
 
   linux:
+    # Same image as the release job, so a GLib/GTK/WebKitGTK API the oldest
+    # supported Ubuntu lacks fails here instead of at release time.
     runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      - run: |
+          apt-get update
+          apt-get install -y git curl unzip xz-utils zip ca-certificates jq python3 file clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev xvfb xauth
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev liblzma-dev dpkg-dev
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: '3.47.8'
-          cache: true
+          cache: false
       - run: flutter pub get
       - run: flutter build linux --debug
+      - name: Run the Linux WebView plugin's native tests
+        run: |
+          cmake -S third_party/webview_flutter_linux/linux/test -B build/linux-plugin-tests
+          cmake --build build/linux-plugin-tests
+          xvfb-run -a ctest --test-dir build/linux-plugin-tests --output-on-failure --repeat until-pass:2
 
   windows:
     runs-on: windows-latest
