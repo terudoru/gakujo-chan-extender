@@ -70,6 +70,45 @@ void main() {
     );
   });
 
+  for (final separator in ['～', '〜', '~']) {
+    test('uses the closing date for $separator report periods', () async {
+      await _expectDeadlineOrder(
+        now: '2026-11-15T03:00:00Z', // Noon in Japan.
+        reports: [
+          ['expired', 'Not submitted', '2026/11/15 10:00'],
+          ['later', 'Not submitted', '2026/11/16 12:00'],
+          ['open', 'Not submitted', '2026/11/15 00:00${separator}2026/11/16 10:00'],
+        ],
+        expected: ['open', 'later', 'expired'],
+      );
+    });
+  }
+
+  test('missing deadlines follow dated reports while preserving other ordering',
+      () async {
+    await _expectDeadlineOrder(
+      now: '2026-11-15T03:00:00Z', // Noon in Japan.
+      reports: [
+        ['missing', 'Not submitted', ''],
+        ['noDate', 'Not submitted', '期限なし'],
+        ['submittedMissing', 'Submitted', ''],
+        ['later', 'Not submitted', '2026/11/17 10:00'],
+        ['earlier', 'Not submitted', '2026/11/16 10:00'],
+        ['expired', 'Not submitted', '2026/11/15 10:00'],
+        ['submitted', 'Submitted', '2026/11/16 09:00'],
+      ],
+      expected: [
+        'earlier',
+        'later',
+        'missing',
+        'noDate',
+        'submitted',
+        'submittedMissing',
+        'expired'
+      ],
+    );
+  });
+
   test('yearless range ends inherit the start year and roll across New Year',
       () async {
     await _expectDeadlineOrder(
