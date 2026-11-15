@@ -40,6 +40,29 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           () => _handleHistoryNavigationRequestEvent(event),
         );
         break;
+      // More Better Gakujo patch: search UI is outside the native WebView.
+      case 'findRequested':
+        _dispatchEventHandler('find request', () async {
+          _onFindRequest?.call();
+        });
+        break;
+      case 'findAgain':
+        final forward = event['forward'];
+        if (forward is bool) {
+          _dispatchEventHandler('find again', () async {
+            _onFindAgain?.call(forward);
+          });
+        }
+        break;
+      case 'findResult':
+        final matches = event['matches'];
+        final found = event['found'];
+        if (matches is int && found is bool) {
+          _dispatchEventHandler('find result', () async {
+            _onFindResult?.call(matches, found);
+          });
+        }
+        break;
       case 'titleChanged':
         _title = event['title'] as String?;
         // More Better Gakujo patch: retain the title for getTitle only.

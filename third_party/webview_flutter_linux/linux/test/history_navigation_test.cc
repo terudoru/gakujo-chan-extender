@@ -93,6 +93,59 @@ static void print_keys_test() {
   }
 }
 
+static void find_keys_test() {
+  GdkEventKey event = {};
+  event.type = GDK_KEY_PRESS;
+  const guint locks[] = {0, GDK_LOCK_MASK, GDK_MOD2_MASK,
+                         GDK_LOCK_MASK | GDK_MOD2_MASK};
+  for (guint lock : locks) {
+    for (guint key : {GDK_KEY_f, GDK_KEY_F}) {
+      event.keyval = key;
+      event.state = GDK_CONTROL_MASK | lock;
+      g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFind);
+    }
+    event.keyval = GDK_KEY_F3;
+    event.state = lock;
+    g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFindNext);
+    event.state = GDK_SHIFT_MASK | lock;
+    g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFindPrevious);
+  }
+
+  // Neither other modifier combinations nor unrelated keys trigger find.
+  const guint other_modifiers[] = {
+      GDK_MOD1_MASK, GDK_SUPER_MASK, GDK_META_MASK, GDK_HYPER_MASK,
+      GDK_MOD3_MASK, GDK_MOD4_MASK, GDK_MOD5_MASK};
+  const guint invalid_find_modifiers[] = {
+      0, GDK_SHIFT_MASK, GDK_CONTROL_MASK | GDK_SHIFT_MASK};
+  for (guint key : {GDK_KEY_f, GDK_KEY_F}) {
+    event.keyval = key;
+    for (guint modifiers : invalid_find_modifiers) {
+      event.state = modifiers;
+      g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+    }
+    for (guint modifiers : other_modifiers) {
+      for (guint lock : locks) {
+        event.state = modifiers | lock;
+        g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+        event.state |= GDK_CONTROL_MASK;
+        g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+      }
+    }
+  }
+  event.keyval = GDK_KEY_F3;
+  const guint extra_modifiers[] = {0, GDK_CONTROL_MASK, GDK_SHIFT_MASK};
+  for (guint modifiers : other_modifiers) {
+    for (guint extra : extra_modifiers) {
+      event.state = modifiers | extra;
+      g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+    }
+  }
+  event.state = GDK_CONTROL_MASK;
+  g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+  event.state |= GDK_SHIFT_MASK;
+  g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+}
+
 static void unhandled_browser_keys_test() {
   GdkEventKey event = {};
   event.type = GDK_KEY_PRESS;
@@ -138,6 +191,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/history/keys", history_keys_test);
   g_test_add_func("/browser/reload-keys", reload_keys_test);
   g_test_add_func("/browser/print-keys", print_keys_test);
+  g_test_add_func("/browser/find-keys", find_keys_test);
   g_test_add_func("/browser/unhandled-keys", unhandled_browser_keys_test);
   return g_test_run();
 }

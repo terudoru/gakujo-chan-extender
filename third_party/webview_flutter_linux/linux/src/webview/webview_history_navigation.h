@@ -45,12 +45,34 @@ enum class BrowserKeyAction {
   kReload,
   kReloadBypassCache,
   kPrint,
+  kFind,
+  kFindNext,
+  kFindPrevious,
 };
 
 inline BrowserKeyAction browser_key_action(const GdkEventKey *event) {
   const guint modifiers = event->state &
       (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK);
+  // Ignore Caps Lock and Num Lock, but no other modifiers for find shortcuts.
+  const guint find_modifiers = event->state &
+      (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK | GDK_MOD3_MASK |
+       GDK_MOD4_MASK | GDK_MOD5_MASK | GDK_SUPER_MASK | GDK_HYPER_MASK |
+       GDK_META_MASK);
   switch (event->keyval) {
+  case GDK_KEY_f:
+  case GDK_KEY_F:
+    if (find_modifiers == GDK_CONTROL_MASK) {
+      return BrowserKeyAction::kFind;
+    }
+    break;
+  case GDK_KEY_F3:
+    if (find_modifiers == 0) {
+      return BrowserKeyAction::kFindNext;
+    }
+    if (find_modifiers == GDK_SHIFT_MASK) {
+      return BrowserKeyAction::kFindPrevious;
+    }
+    break;
   case GDK_KEY_F5:
     if (modifiers == 0) {
       return BrowserKeyAction::kReload;

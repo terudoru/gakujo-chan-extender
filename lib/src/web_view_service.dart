@@ -674,6 +674,41 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  Future<void> findText(String text, {bool forward = true}) async {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      await platform.findText(text, forward: forward);
+    }
+  }
+
+  Future<void> finishFind({bool focusPage = false}) async {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      await platform.finishFind(focusPage: focusPage);
+    }
+  }
+
+  set onFindRequest(void Function()? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnFindRequest(handler);
+    }
+  }
+
+  set onFindAgain(void Function(bool forward)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnFindAgain(handler);
+    }
+  }
+
+  set onFindResult(void Function(int matches, bool found)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnFindResult(handler);
+    }
+  }
+
   @override
   Future<void> setJavaScriptModeUnrestricted() async {
     await _inner.setJavaScriptMode(JavaScriptMode.unrestricted);
