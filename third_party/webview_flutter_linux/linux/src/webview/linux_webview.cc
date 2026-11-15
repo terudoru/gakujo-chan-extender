@@ -393,8 +393,30 @@ static gboolean history_button_press_event_cb(GtkWidget *widget,
 static gboolean history_key_press_event_cb(GtkWidget *widget,
                                            GdkEventKey *event,
                                            gpointer user_data) {
-  return send_history_navigation(static_cast<LinuxWebView *>(user_data),
-                                 history_navigation_direction(event));
+  if (send_history_navigation(static_cast<LinuxWebView *>(user_data),
+                               history_navigation_direction(event))) {
+    return TRUE;
+  }
+  WebKitWebView *web_view = WEBKIT_WEB_VIEW(widget);
+  switch (browser_key_action(event)) {
+  case BrowserKeyAction::kReload:
+    webkit_web_view_reload(web_view);
+    return TRUE;
+  case BrowserKeyAction::kReloadBypassCache:
+    webkit_web_view_reload_bypass_cache(web_view);
+    return TRUE;
+  case BrowserKeyAction::kPrint: {
+    WebKitPrintOperation *operation = webkit_print_operation_new(web_view);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(web_view));
+    webkit_print_operation_run_dialog(
+        operation, GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
+    g_object_unref(operation);
+    return TRUE;
+  }
+  case BrowserKeyAction::kNone:
+    return FALSE;
+  }
+  return FALSE;
 }
 
 static gboolean zoom_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event,
