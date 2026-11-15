@@ -1697,6 +1697,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     } else if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onMouseHistoryNavigation = onMouseHistoryNavigation;
       if (defaultTargetPlatform == TargetPlatform.linux) {
+        controller.onWheelZoom = (dyNotches, position) {
+          _handleDesktopWheelZoom(dyNotches * kLinuxWheelNotchPixels, position);
+        };
+        controller.onWheelScroll = (dxNotches, dyNotches) {
+          _handleDesktopHistorySwipeDelta(
+            Offset(dxNotches, dyNotches) * kLinuxWheelNotchPixels,
+            positiveIsBack: false,
+          );
+        };
         controller.onFindRequest = _openLinuxFind;
         controller.onFindAgain = _findAgainLinux;
         controller.onFindResult = (matches, found) {
@@ -1755,6 +1764,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_saveCurrentPageUrl());
     final controller = _controller;
     if (controller is WebViewFlutterGakujoWebViewController) {
+      controller.onWheelZoom = null;
+      controller.onWheelScroll = null;
       controller.onFindRequest = null;
       controller.onFindAgain = null;
       controller.onFindResult = null;
@@ -2445,10 +2456,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    if (event.scrollDelta.dy == 0) return;
-    _desktopZoomOrigin = event.localPosition;
+    _handleDesktopWheelZoom(event.scrollDelta.dy, event.localPosition);
+  }
+
+  void _handleDesktopWheelZoom(double dy, Offset origin) {
+    if (dy == 0) return;
+    _desktopZoomOrigin = origin;
     unawaited(_setDesktopZoomSmooth(
-      desktopWheelZoom(_desktopZoom, event.scrollDelta.dy),
+      desktopWheelZoom(_desktopZoom, dy),
     ));
   }
 

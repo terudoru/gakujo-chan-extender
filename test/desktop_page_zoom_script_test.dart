@@ -6,6 +6,16 @@ import 'package:morebettergakujo_flutter/src/desktop_page_zoom_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('Linux wheel notches scale to desktop logical pixels', () {
+    expect(kLinuxWheelNotchPixels, 100.0);
+    expect(desktopWheelZoom(1, -kLinuxWheelNotchPixels), closeTo(1.105, .001));
+    expect(desktopWheelZoom(1, kLinuxWheelNotchPixels), closeTo(.905, .001));
+    expect(
+      const Offset(-0.75, 0.125) * kLinuxWheelNotchPixels,
+      const Offset(-75, 12.5),
+    );
+  });
+
   test('pan gesture locks out scale drift and resets', () {
     final gesture = DesktopPanZoomGesture();
     expect(gesture.update(const Offset(12, 0), 1.01), isFalse);

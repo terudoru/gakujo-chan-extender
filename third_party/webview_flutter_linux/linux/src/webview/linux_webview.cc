@@ -4,6 +4,7 @@
 #include "webview/webview_environment.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_wheel_scroll.h"
 
 #include <libsoup/soup.h>
 
@@ -466,8 +467,28 @@ static void counted_matches_cb(WebKitFindController *controller,
 static gboolean zoom_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event,
                                      gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  return !webview->zoom_enabled &&
-         (event->state & GDK_CONTROL_MASK) != 0;
+  const WheelScrollInput input = wheel_scroll_input(event);
+  switch (input.action) {
+  case WheelScrollAction::kZoom: {
+    FlValue *zoom_event = make_event("wheelZoom");
+    fl_value_set_string_take(zoom_event, "dy", fl_value_new_float(input.dy));
+    fl_value_set_string_take(zoom_event, "x", fl_value_new_float(event->x));
+    fl_value_set_string_take(zoom_event, "y", fl_value_new_float(event->y));
+    send_event(webview, zoom_event);
+    return TRUE;
+  }
+  case WheelScrollAction::kScroll: {
+    FlValue *scroll_event = make_event("wheelScroll");
+    fl_value_set_string_take(scroll_event, "dx", fl_value_new_float(input.dx));
+    fl_value_set_string_take(scroll_event, "dy", fl_value_new_float(input.dy));
+    send_event(webview, scroll_event);
+    // WebKit still scrolls while the app accumulates history swipe travel.
+    return FALSE;
+  }
+  case WheelScrollAction::kNone:
+    return FALSE;
+  }
+  return FALSE;
 }
 
 static gboolean zoom_key_press_event_cb(GtkWidget *widget, GdkEventKey *event,
