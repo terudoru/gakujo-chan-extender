@@ -21,8 +21,9 @@ void isolated(const std::function<void()> &body) {
     body();
     return;
   }
+  // G_TEST_SUBPROCESS_DEFAULT is 0 but needs GLib 2.74; Ubuntu 22.04 has 2.72.
   g_test_trap_subprocess(nullptr, 30 * G_TIME_SPAN_SECOND,
-                         G_TEST_SUBPROCESS_DEFAULT);
+                         static_cast<GTestSubprocessFlags>(0));
   g_test_trap_assert_passed();
 }
 
