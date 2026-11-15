@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'bundled_secure_storage.dart';
@@ -119,6 +121,19 @@ class SecureStorageFactory {
   );
   static final KeyringLockGateStorage _linuxStorage = KeyringLockGateStorage(
     inner: _nonMacosStorage,
+    beforeFirstAccess: () async {
+      try {
+        await const MethodChannel('net.yoshida.morebettergakujo/window')
+            .invokeMethod<bool>('waitUntilShown')
+            .timeout(const Duration(seconds: 5));
+      } on MissingPluginException {
+        return;
+      } on PlatformException {
+        return;
+      } on TimeoutException {
+        return;
+      }
+    },
   );
 
   static FlutterSecureStorage create() {

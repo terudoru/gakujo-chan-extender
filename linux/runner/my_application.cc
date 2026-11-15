@@ -12,11 +12,14 @@ struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   GtkWindow* window;
+  gboolean window_shown;
   gint normal_window_width;
   gint normal_window_height;
   GdkWindowState window_state;
   gboolean window_state_saved;
   FlMethodChannel* notification_channel;
+  FlMethodChannel* window_channel;
+  GPtrArray* pending_window_calls;
   GDBusConnection* notification_connection;
   GHashTable* notification_urls;
   guint notification_action_subscription;
@@ -274,6 +277,30 @@ static void shutdown_notifications(MyApplication* self) {
   g_clear_pointer(&self->notification_urls, g_hash_table_unref);
 }
 
+static void window_method_call_cb(FlMethodChannel* channel,
+                                  FlMethodCall* method_call,
+                                  gpointer user_data) {
+  MyApplication* self = MY_APPLICATION(user_data);
+  if (g_strcmp0(fl_method_call_get_name(method_call), "waitUntilShown") != 0) {
+    fl_method_call_respond_not_implemented(method_call, nullptr);
+  } else if (self->window_shown) {
+    g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
+    fl_method_call_respond_success(method_call, result, nullptr);
+  } else {
+    g_ptr_array_add(self->pending_window_calls, g_object_ref(method_call));
+  }
+}
+
+static void complete_window_calls(MyApplication* self, gboolean shown) {
+  g_autoptr(FlValue) result = fl_value_new_bool(shown);
+  for (guint i = 0; i < self->pending_window_calls->len; i++) {
+    FlMethodCall* method_call =
+        FL_METHOD_CALL(g_ptr_array_index(self->pending_window_calls, i));
+    fl_method_call_respond_success(method_call, result, nullptr);
+  }
+  g_ptr_array_set_size(self->pending_window_calls, 0);
+}
+
 static void restore_window_state(GtkWindow* window, MyApplication* self) {
   gint width;
   gint height;
@@ -385,6 +412,19 @@ static void window_destroy_cb(GtkWidget* window, MyApplication* self) {
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  // Let GTK map and paint the window before a waiting keyring access can
+  // block the main loop with its unlock prompt.
+  g_timeout_add_full(
+      G_PRIORITY_DEFAULT, 200,
+      [](gpointer user_data) -> gboolean {
+        MyApplication* self = MY_APPLICATION(user_data);
+        self->window_shown = TRUE;
+        if (self->pending_window_calls != nullptr) {
+          complete_window_calls(self, TRUE);
+        }
+        return G_SOURCE_REMOVE;
+      },
+      g_object_ref(self), g_object_unref);
 }
 
 // Implements GApplication::activate.
@@ -410,6 +450,7 @@ static void my_application_activate(GApplication* application) {
     }
   }
   self->window = window;
+  self->window_shown = FALSE;
   g_signal_connect_object(window, "destroy", G_CALLBACK(window_destroy_cb),
                           self, static_cast<GConnectFlags>(0));
   g_signal_connect_object(window, "size-allocate",
@@ -465,6 +506,13 @@ static void my_application_activate(GApplication* application) {
       FL_METHOD_CODEC(notification_codec));
   fl_method_channel_set_method_call_handler(
       self->notification_channel, notification_method_call_cb, self, nullptr);
+  g_clear_object(&self->window_channel);
+  self->window_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+      "net.yoshida.morebettergakujo/window",
+      FL_METHOD_CODEC(notification_codec));
+  fl_method_channel_set_method_call_handler(
+      self->window_channel, window_method_call_cb, self, nullptr);
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.
@@ -525,6 +573,15 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   shutdown_notifications(self);
+  if (self->pending_window_calls != nullptr) {
+    complete_window_calls(self, FALSE);
+    g_clear_pointer(&self->pending_window_calls, g_ptr_array_unref);
+  }
+  if (self->window_channel != nullptr) {
+    fl_method_channel_set_method_call_handler(
+        self->window_channel, nullptr, nullptr, nullptr);
+    g_clear_object(&self->window_channel);
+  }
   if (self->notification_channel != nullptr) {
     fl_method_channel_set_method_call_handler(
         self->notification_channel, nullptr, nullptr, nullptr);
@@ -544,6 +601,7 @@ static void my_application_class_init(MyApplicationClass* klass) {
 }
 
 static void my_application_init(MyApplication* self) {
+  self->pending_window_calls = g_ptr_array_new_with_free_func(g_object_unref);
   self->notification_urls =
       g_hash_table_new_full(g_direct_hash, g_direct_equal, nullptr, g_free);
 }

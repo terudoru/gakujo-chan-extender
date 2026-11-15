@@ -2,18 +2,22 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class KeyringLockGateStorage extends FlutterSecureStorage {
-  KeyringLockGateStorage({required FlutterSecureStorage inner})
-    : _inner = inner,
-      super(
-        iOptions: inner.iOptions,
-        aOptions: inner.aOptions,
-        lOptions: inner.lOptions,
-        webOptions: inner.webOptions,
-        mOptions: inner.mOptions,
-        wOptions: inner.wOptions,
-      );
+  KeyringLockGateStorage({
+    required FlutterSecureStorage inner,
+    this.beforeFirstAccess,
+  }) : _inner = inner,
+       super(
+         iOptions: inner.iOptions,
+         aOptions: inner.aOptions,
+         lOptions: inner.lOptions,
+         webOptions: inner.webOptions,
+         mOptions: inner.mOptions,
+         wOptions: inner.wOptions,
+       );
 
   final FlutterSecureStorage _inner;
+  final Future<void> Function()? beforeFirstAccess;
+  Future<void>? _beforeFirstAccessFuture;
   bool _locked = false;
   Future<void> _pendingStorageOperation = Future<void>.value();
 
@@ -33,6 +37,11 @@ class KeyringLockGateStorage extends FlutterSecureStorage {
     // cancelling one unlock prompt also blocks every queued access.
     final next = _pendingStorageOperation.then((_) async {
       _throwIfLocked();
+      final beforeFirstAccess = this.beforeFirstAccess;
+      if (beforeFirstAccess != null) {
+        await (_beforeFirstAccessFuture ??= Future<void>.sync(beforeFirstAccess)
+            .catchError((Object _, StackTrace _) {}));
+      }
       try {
         return await operation();
       } on PlatformException catch (error) {
