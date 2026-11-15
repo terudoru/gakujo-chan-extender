@@ -42,6 +42,18 @@ struct NotificationRequest {
   FlMethodCall* method_call;
 };
 
+static gchar* get_bundle_icon_path() {
+  g_autofree gchar* executable = g_file_read_link("/proc/self/exe", nullptr);
+  if (executable == nullptr) {
+    return nullptr;
+  }
+  g_autofree gchar* directory = g_path_get_dirname(executable);
+  g_autofree gchar* path =
+      g_build_filename(directory, "data", "app_icon.png", nullptr);
+  return g_file_test(path, G_FILE_TEST_IS_REGULAR) ? g_steal_pointer(&path)
+                                                : nullptr;
+}
+
 static const char* notification_string_arg(FlMethodCall* method_call,
                                            const char* key,
                                            const char* fallback) {
@@ -151,6 +163,19 @@ static void notify_deadline(NotificationRequest* request) {
   const char* body = notification_string_arg(
       request->method_call, "body", "提出期限を検出しました");
   g_autofree gchar* escaped_body = g_markup_escape_text(body, -1);
+  const gchar* app_icon = "";
+  g_autofree gchar* icon_uri = nullptr;
+  if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), APPLICATION_ID)) {
+    app_icon = APPLICATION_ID;
+  } else {
+    g_autofree gchar* icon_path = get_bundle_icon_path();
+    if (icon_path != nullptr) {
+      icon_uri = g_filename_to_uri(icon_path, nullptr, nullptr);
+      if (icon_uri != nullptr) {
+        app_icon = icon_uri;
+      }
+    }
+  }
   const gchar* actions[] = {"default", "開く", nullptr};
   GVariantBuilder hints;
   g_variant_builder_init(&hints, G_VARIANT_TYPE("a{sv}"));
@@ -161,7 +186,7 @@ static void notify_deadline(NotificationRequest* request) {
       self->notification_connection, kNotificationBusName,
       kNotificationObjectPath, kNotificationBusName, "Notify",
       g_variant_new("(susss@as@a{sv}i)", "More Better Gakujo", 0,
-                    "net.yoshida.morebettergakujo", title, escaped_body,
+                    app_icon, title, escaped_body,
                     g_variant_new_strv(actions, -1),
                     g_variant_builder_end(&hints), -1),
       G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
@@ -372,6 +397,18 @@ static void my_application_activate(GApplication* application) {
   }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), APPLICATION_ID)) {
+    gtk_window_set_icon_name(window, APPLICATION_ID);
+    gtk_window_set_default_icon_name(APPLICATION_ID);
+  } else {
+    g_autofree gchar* icon_path = get_bundle_icon_path();
+    if (icon_path != nullptr) {
+      g_autoptr(GError) error = nullptr;
+      gtk_window_set_icon_from_file(window, icon_path, &error);
+      g_clear_error(&error);
+      gtk_window_set_default_icon_from_file(icon_path, &error);
+    }
+  }
   self->window = window;
   g_signal_connect_object(window, "destroy", G_CALLBACK(window_destroy_cb),
                           self, static_cast<GConnectFlags>(0));
