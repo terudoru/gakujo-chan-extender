@@ -74,6 +74,7 @@ Maintainer: Teruhiko Yoshida <terudoru6741@gmail.com>
 Section: education
 Priority: optional
 Depends: libgtk-3-0 | libgtk-3-0t64, libwebkit2gtk-4.1-0, libsecret-1-0, libglib2.0-0 | libglib2.0-0t64
+Recommends: fonts-noto-cjk | fonts-ipafont-gothic | fonts-vlgothic
 Homepage: https://github.com/terudoru/gakujo-chan-extender
 Description: 学務情報システムを使うための非公式アプリ
  An unofficial desktop app for the Gakujo student information system.
