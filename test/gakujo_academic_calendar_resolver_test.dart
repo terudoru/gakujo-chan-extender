@@ -81,6 +81,67 @@ void main() {
     expect(uri.toString(), endsWith('/schedule_2026.pdf?ver=1'));
   });
 
+  test('rejects a different academic year despite calendar-year mentions', () {
+    for (final label in [
+      '令和8年度（2026）新潟大学授業暦（2027年3月まで）',
+      '令和8年度 新潟大学授業暦（2027年3月まで）',
+      '2026年度 新潟大学授業暦（2027年3月まで）',
+      '授業年度（2026）新潟大学授業暦（2027年3月まで）',
+    ]) {
+      expect(
+        GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
+          '<a href="/uploads/schedule_2027.pdf">$label</a>',
+          2027,
+        ),
+        isNull,
+        reason: label,
+      );
+    }
+  });
+
+  test('rejects a different labelled academic year despite nearby text', () {
+    expect(
+      GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
+        '''
+<h2>2028年度</h2>
+<a href="/uploads/calendar.pdf">令和9年度（2027）新潟大学授業暦</a>
+''',
+        2028,
+      ),
+      isNull,
+    );
+  });
+
+  test('accepts a label that also names the requested academic year', () {
+    for (final label in [
+      '令和8年度（2026）・令和9年度（2027）新潟大学授業暦',
+      '2026年度・2027年度 新潟大学授業暦',
+      '令和8年度（2027）新潟大学授業暦',
+    ]) {
+      expect(
+        GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
+          '<a href="/uploads/calendar.pdf">$label</a>',
+          2027,
+        ).toString(),
+        endsWith('/uploads/calendar.pdf'),
+        reason: label,
+      );
+    }
+  });
+
+  test('uses nearby text when the link label names no academic year', () {
+    expect(
+      GakujoAcademicCalendarResolver.findPdfUrlForAcademicYear(
+        '''
+<h2>2028年度</h2>
+<a href="/uploads/calendar.pdf">新潟大学授業暦</a>
+''',
+        2028,
+      ).toString(),
+      endsWith('/uploads/calendar.pdf'),
+    );
+  });
+
   test('termsFromExtractedText reads term ranges from PDF ActualText order',
       () {
     final terms = GakujoAcademicCalendarPdfParser.termsFromExtractedText(

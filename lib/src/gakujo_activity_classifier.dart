@@ -14,13 +14,23 @@ class GakujoActivityClassifier {
     required String text,
   }) {
     final normalizedUrl = url.toLowerCase();
+    switch (Uri.tryParse(normalizedUrl)?.queryParameters['tabid']?.toLowerCase()) {
+      case 'kj':
+        return '連絡通知';
+      case 'en':
+        return 'レポート・小テスト';
+      case 'sch':
+        return 'スケジュール';
+      case 'si':
+        return '成績';
+    }
     final normalizedTitle = _compact(title);
     final normalizedText = _compact(text);
 
     if (_looksLikeSchedule(normalizedUrl, normalizedTitle)) {
       return 'スケジュール';
     }
-    if (_looksLikeGrades(normalizedUrl, normalizedTitle)) {
+    if (_looksLikeGrades(normalizedTitle)) {
       return '成績';
     }
     if (_looksLikeReports(normalizedUrl, normalizedTitle)) {
@@ -101,9 +111,8 @@ class GakujoActivityClassifier {
         .toList();
   }
 
-  static bool _looksLikeGrades(String url, String title) {
-    return url.contains('tabid=si') ||
-        title.contains('単位修得状況照会') ||
+  static bool _looksLikeGrades(String title) {
+    return title.contains('単位修得状況照会') ||
         title.contains('成績確認');
   }
 
@@ -123,8 +132,7 @@ class GakujoActivityClassifier {
   }
 
   static bool _looksLikeSchedule(String url, String title) {
-    return RegExp(r'[?&]tabid=sch(?:[&#]|$)').hasMatch(url) ||
-        url.contains('schedule') ||
+    return url.contains('schedule') ||
         title.contains('スケジュール') ||
         title.contains('時間割');
   }

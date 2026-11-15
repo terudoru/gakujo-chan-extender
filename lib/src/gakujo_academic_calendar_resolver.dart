@@ -52,11 +52,22 @@ class GakujoAcademicCalendarResolver {
     final year = academicYear.toString();
     final reiwaYear = academicYear - 2018;
     final eraPattern = RegExp('令和\\s*0*$reiwaYear\\s*年度');
+    final academicYearPattern = RegExp(
+      r'令和\s*\d+\s*年度|\d{4}\s*年度|年度\s*[（(]\s*\d{4}\s*[）)]',
+    );
+    final westernYearPattern = RegExp(
+      '$year\\s*年度|年度\\s*[（(]\\s*$year\\s*[）)]',
+    );
     Uri? best;
     var bestScore = 0;
     for (final match in linkPattern.allMatches(html)) {
       final href = match.group(1) ?? '';
       final label = _normalizeDigits(_stripTags(match.group(2) ?? ''));
+      if (academicYearPattern.hasMatch(label) &&
+          !eraPattern.hasMatch(label) &&
+          !westernYearPattern.hasMatch(label)) {
+        continue;
+      }
       final uri = Uri.tryParse(href);
       if (uri == null) {
         continue;
