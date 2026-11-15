@@ -7757,10 +7757,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return true;
     }
 
+    final settingsLoad = _appSettingsStore.load();
     try {
       final secureSettings = allowMacosKeychainPrompt
-          ? await _appSettingsStore.load()
-          : await _appSettingsStore.load().timeout(const Duration(seconds: 3));
+          ? await settingsLoad
+          : await settingsLoad.timeout(const Duration(seconds: 3));
       var settings = secureSettings;
       if (Platform.isMacOS) {
         GakujoLocalPrefs? localPrefs;
@@ -7859,6 +7860,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             unawaited(_showSecureStorageRecoveryDialog(error));
           }
         });
+      }
+      // A Linux keyring unlock prompt outlasts the timeout; once it is
+      // answered, load for real or offer the retry.
+      if (Platform.isLinux &&
+          error is TimeoutException &&
+          !allowMacosKeychainPrompt) {
+        unawaited(settingsLoad.then(
+          (_) {
+            if (mounted) unawaited(_retrySecureStorageLoad());
+          },
+          onError: (Object later) {
+            if (mounted) unawaited(_showSecureStorageRecoveryDialog(later));
+          },
+        ));
       }
       return false;
     }
