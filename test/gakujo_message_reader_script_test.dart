@@ -31,10 +31,32 @@ void main() {
     );
     expect(
       script,
-      contains('var link = table.rows[i].querySelector("a[href]")'),
+      contains('var link = row.querySelector("a[href]")'),
     );
     expect(script, isNot(contains('classList')));
     expect(script, isNot(contains('fontWeight')));
+  });
+
+  test('reads only visible desktop rows within the requested limit', () async {
+    for (final hiddenRow in [
+      {'filtered': 'true', 'display': 'none'},
+      {'filtered': 'true'},
+      {'display': 'none'},
+      {'computedDisplay': 'none'},
+    ]) {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [200, 200],
+        messageUrls: ['/campusweb/message/A', '/campusweb/message/B'],
+        messageRows: [hiddenRow, {'filtered': 'false'}],
+        inputValue: '1',
+      );
+
+      expect(result['fetchCallCount'], 1, reason: '$hiddenRow');
+      expect(result['fetchUrls'], [
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/message/B',
+      ], reason: '$hiddenRow');
+    }
   });
 
   test('reloads after all requested messages are marked read', () async {

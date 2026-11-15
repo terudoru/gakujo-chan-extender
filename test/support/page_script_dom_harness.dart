@@ -44,6 +44,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
   bool teardownDuringRead = false,
   bool teardownAfterRead = false,
   List<String>? messageUrls,
+  List<Map<String, String>> messageRows = const [],
   Map<String, Object?> owningDocument = const {},
 }) async {
   final scenario = jsonEncode({
@@ -58,6 +59,7 @@ Future<Map<String, dynamic>> evaluateMessageReaderScript({
     'teardownDuringRead': teardownDuringRead,
     'teardownAfterRead': teardownAfterRead,
     'messageUrls': messageUrls,
+    'messageRows': messageRows,
     'owningDocument': owningDocument,
   });
   final result = await Process.run(
