@@ -2486,9 +2486,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         action: canOpenExternally
             ? SnackBarAction(
                 label: 'ブラウザで開く',
-                onPressed: () => unawaited(
-                  launchUrl(external, mode: LaunchMode.externalApplication),
-                ),
+                onPressed: () => unawaited(_launchExternalUrl(external)),
               )
             : null,
       );
@@ -3555,9 +3553,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       AppAboutSection(
-                        onOpenUrl: (url) => unawaited(
-                          launchUrl(url, mode: LaunchMode.externalApplication),
-                        ),
+                        onOpenUrl: (url) => unawaited(_launchExternalUrl(url)),
                       ),
                       const Divider(height: 32),
                       AppUpdateSection(
@@ -4250,6 +4246,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  /// Opens [url] in the system browser; launcher errors (a Windows shell
+  /// failure, a missing Linux launcher) become a message instead of escaping.
+  Future<bool> _launchExternalUrl(Uri url) async {
+    var launched = false;
+    try {
+      launched = await launchUrl(url, mode: LaunchMode.externalApplication);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to open an external URL',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    if (!launched && mounted) _showSnackBar('外部ブラウザで開けませんでした');
+    return launched;
+  }
+
   Future<void> _openUpdateReleasePage() async {
     final info = _availableUpdate;
     if (info == null) return;
@@ -4316,12 +4330,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           actions: [
             if (info.hasUpdate)
               TextButton(
-                onPressed: () => unawaited(
-                  launchUrl(
-                    Uri.parse(info.releaseUrl),
-                    mode: LaunchMode.externalApplication,
-                  ),
-                ),
+                onPressed: () =>
+                    unawaited(_launchExternalUrl(Uri.parse(info.releaseUrl))),
                 child: const Text('リリースページを開く'),
               ),
             TextButton(
@@ -4631,13 +4641,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _showSnackBar('URLをコピーしました');
         return;
       case _ToolbarAction.openExternal:
-        final launched = await launchUrl(
-          Uri.parse(url),
-          mode: LaunchMode.externalApplication,
-        );
-        if (!launched) {
-          _showSnackBar('外部ブラウザで開けませんでした');
-        }
+        await _launchExternalUrl(Uri.parse(url));
         return;
       case _ToolbarAction.reload:
       case _ToolbarAction.messageStars:
