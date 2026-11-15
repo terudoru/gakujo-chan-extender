@@ -674,6 +674,22 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  set onWheelZoom(void Function(double dyNotches, Offset position)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnWheelZoom(handler);
+    }
+  }
+
+  set onWheelScroll(
+    void Function(double dxNotches, double dyNotches)? handler,
+  ) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnWheelScroll(handler);
+    }
+  }
+
   Future<void> findText(String text, {bool forward = true}) async {
     final platform = _inner.platform;
     if (platform is LinuxWebViewController) {

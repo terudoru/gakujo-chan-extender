@@ -34,6 +34,11 @@ target_link_libraries(history_navigation_test PRIVATE PkgConfig::WEBKIT)
 target_compile_options(history_navigation_test PRIVATE -Wall -Wextra -Werror
   -Wno-unused-parameter)
 add_test(NAME history_navigation COMMAND history_navigation_test)
+add_executable(wheel_scroll_test wheel_scroll_test.cc)
+target_link_libraries(wheel_scroll_test PRIVATE PkgConfig::WEBKIT)
+target_compile_options(wheel_scroll_test PRIVATE -Wall -Wextra -Werror
+  -Wno-unused-parameter)
+add_test(NAME wheel_scroll COMMAND wheel_scroll_test)
 add_executable(environment_test
   environment_test.cc
   ../src/webview/webview_environment.cc
@@ -45,7 +50,7 @@ target_compile_options(environment_test PRIVATE -Wall -Wextra -Werror
 add_test(NAME environment COMMAND environment_test)
 # Download policy tests do not use the desktop accessibility service.
 set_tests_properties(download_policy message_bridge scroll_hook
-  history_navigation environment PROPERTIES
+  history_navigation wheel_scroll environment PROPERTIES
   TIMEOUT 60
   ENVIRONMENT "NO_AT_BRIDGE=1"
 )

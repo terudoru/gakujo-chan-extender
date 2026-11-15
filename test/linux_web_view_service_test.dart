@@ -71,6 +71,100 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  test('Linux plugin dispatches wheel notches and positions', () async {
+    final zooms = <(double, Offset)>[];
+    final scrolls = <(double, double)>[];
+    native.setOnWheelZoom((dy, position) => zooms.add((dy, position)));
+    native.setOnWheelScroll((dx, dy) => scrolls.add((dx, dy)));
+    await emitEvent({'type': 'wheelZoom', 'dy': -1, 'x': 120, 'y': 45.5});
+    await emitEvent({'type': 'wheelZoom', 'dy': 0.25, 'x': 10.5, 'y': 20});
+    await emitEvent({'type': 'wheelScroll', 'dx': -0.75, 'dy': 0.125});
+    await emitEvent({'type': 'wheelScroll', 'dx': 1, 'dy': 0});
+    expect(zooms, [
+      (-1.0, const Offset(120, 45.5)),
+      (0.25, const Offset(10.5, 20)),
+    ]);
+    expect(scrolls, [(-0.75, 0.125), (1.0, 0.0)]);
+    expect(calls, isEmpty);
+
+    native.setOnWheelZoom(null);
+    native.setOnWheelScroll(null);
+    await emitEvent({'type': 'wheelZoom', 'dy': -1, 'x': 0, 'y': 0});
+    await emitEvent({'type': 'wheelScroll', 'dx': 1, 'dy': 0});
+    expect(zooms, hasLength(2));
+    expect(scrolls, hasLength(2));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin ignores malformed wheel payloads', () async {
+    var dispatched = 0;
+    native.setOnWheelZoom((_, _) => dispatched++);
+    native.setOnWheelScroll((_, _) => dispatched++);
+    final zoom = <String, Object?>{
+      'type': 'wheelZoom',
+      'dy': -1,
+      'x': 12,
+      'y': 34,
+    };
+    final scroll = <String, Object?>{
+      'type': 'wheelScroll',
+      'dx': 0.5,
+      'dy': 0.25,
+    };
+    for (final payload in [zoom, scroll]) {
+      for (final field in payload.keys.where((key) => key != 'type')) {
+        final missing = Map<String, Object?>.of(payload)..remove(field);
+        await emitEvent(missing);
+        for (final invalid in [null, '1', true, double.nan, double.infinity]) {
+          await emitEvent({...payload, field: invalid});
+        }
+      }
+    }
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
+  test('Linux wheel events without handlers do nothing', () async {
+    await emitEvent({'type': 'wheelZoom', 'dy': -1, 'x': 12, 'y': 34});
+    await emitEvent({'type': 'wheelScroll', 'dx': 1, 'dy': 0});
+    expect(calls, isEmpty);
+  });
+
+  test('app adapter forwards and clears Linux wheel callbacks', () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final zooms = <(double, Offset)>[];
+    final scrolls = <(double, double)>[];
+    controller.onWheelZoom = (dy, position) => zooms.add((dy, position));
+    controller.onWheelScroll = (dx, dy) => scrolls.add((dx, dy));
+    await emitEvent({'type': 'wheelZoom', 'dy': -0.5, 'x': 50.5, 'y': 70});
+    await emitEvent({'type': 'wheelScroll', 'dx': 0.75, 'dy': -0.25});
+    expect(zooms, [(-0.5, const Offset(50.5, 70))]);
+    expect(scrolls, [(0.75, -0.25)]);
+    expect(calls, isEmpty);
+
+    controller.onWheelZoom = null;
+    controller.onWheelScroll = null;
+    await emitEvent({'type': 'wheelZoom', 'dy': 1, 'x': 0, 'y': 0});
+    await emitEvent({'type': 'wheelScroll', 'dx': -1, 'dy': 0});
+    expect(zooms, hasLength(1));
+    expect(scrolls, hasLength(1));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin stops dispatching wheel events after disposal', () async {
+    var dispatched = 0;
+    native.setOnWheelZoom((_, _) => dispatched++);
+    native.setOnWheelScroll((_, _) => dispatched++);
+    await native.dispose();
+    calls.clear();
+    await emitEvent({'type': 'wheelZoom', 'dy': -1, 'x': 12, 'y': 34});
+    await emitEvent({'type': 'wheelScroll', 'dx': 1, 'dy': 0});
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
   test(
     'Linux plugin dispatches find requests, directions and results',
     () async {

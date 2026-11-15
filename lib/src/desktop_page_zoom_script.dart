@@ -3,6 +3,9 @@ import 'dart:ui' show Offset;
 
 import 'generated/desktop_page_zoom.g.dart';
 
+/// Converts Linux wheel notches to logical pixels used by desktop gestures.
+const double kLinuxWheelNotchPixels = 100.0;
+
 /// Converts a wheel delta to a smooth multiplicative zoom, with bounded input.
 double desktopWheelZoom(double current, double deltaY) {
   if (!current.isFinite || !deltaY.isFinite || deltaY == 0) return current;

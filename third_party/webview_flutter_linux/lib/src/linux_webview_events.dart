@@ -40,6 +40,33 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           () => _handleHistoryNavigationRequestEvent(event),
         );
         break;
+      case 'wheelZoom':
+        final zoomDy = event['dy'];
+        final x = event['x'];
+        final y = event['y'];
+        if (zoomDy is num &&
+            x is num &&
+            y is num &&
+            zoomDy.isFinite &&
+            x.isFinite &&
+            y.isFinite) {
+          _dispatchEventHandler('wheel zoom', () async {
+            _onWheelZoom?.call(
+              zoomDy.toDouble(),
+              Offset(x.toDouble(), y.toDouble()),
+            );
+          });
+        }
+        break;
+      case 'wheelScroll':
+        final dx = event['dx'];
+        final dy = event['dy'];
+        if (dx is num && dy is num && dx.isFinite && dy.isFinite) {
+          _dispatchEventHandler('wheel scroll', () async {
+            _onWheelScroll?.call(dx.toDouble(), dy.toDouble());
+          });
+        }
+        break;
       // More Better Gakujo patch: search UI is outside the native WebView.
       case 'findRequested':
         _dispatchEventHandler('find request', () async {

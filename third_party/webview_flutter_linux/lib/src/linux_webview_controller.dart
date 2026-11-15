@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -146,6 +147,24 @@ class LinuxWebViewController extends PlatformWebViewController {
   /// Passing null restores navigation through the WebView's own history.
   void setOnHistoryNavigationRequest(Future<void> Function(bool back)? handler) {
     _onHistoryNavigationRequest = handler;
+  }
+
+  // More Better Gakujo patch: native wheel input cannot reach Flutter listeners.
+  void Function(double dyNotches, Offset position)? _onWheelZoom;
+  void Function(double dxNotches, double dyNotches)? _onWheelScroll;
+
+  /// Ctrl+wheel notches and the pointer position relative to the WebKit widget.
+  void setOnWheelZoom(
+    void Function(double dyNotches, Offset position)? handler,
+  ) {
+    _onWheelZoom = handler;
+  }
+
+  /// Unmodified horizontal wheel input; WebKit still scrolls the page.
+  void setOnWheelScroll(
+    void Function(double dxNotches, double dyNotches)? handler,
+  ) {
+    _onWheelScroll = handler;
   }
 
   // More Better Gakujo patch: native find results and shortcuts for the app bar.
@@ -784,6 +803,8 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onJavaScriptConfirmDialog = null;
     _onJavaScriptTextInputDialog = null;
     _onHistoryNavigationRequest = null;
+    _onWheelZoom = null;
+    _onWheelScroll = null;
     _onFindRequest = null;
     _onFindAgain = null;
     _onFindResult = null;
