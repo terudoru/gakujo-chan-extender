@@ -33,6 +33,13 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
         _canGoBack = event['canGoBack'] == true;
         _canGoForward = event['canGoForward'] == true;
         break;
+      // More Better Gakujo patch: app history understands flow-key pages.
+      case 'mouseHistoryNavigation':
+        _dispatchEventHandler(
+          'history navigation request',
+          () => _handleHistoryNavigationRequestEvent(event),
+        );
+        break;
       case 'titleChanged':
         _title = event['title'] as String?;
         // More Better Gakujo patch: retain the title for getTitle only.
@@ -135,6 +142,26 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           () => _handleJavaScriptDialogEvent(event),
         );
         break;
+    }
+  }
+
+  Future<void> _handleHistoryNavigationRequestEvent(
+    Map<dynamic, dynamic> event,
+  ) async {
+    final direction = event['direction'];
+    if (direction != 'back' && direction != 'forward') {
+      return;
+    }
+    final bool back = direction == 'back';
+    final callback = _onHistoryNavigationRequest;
+    if (callback != null) {
+      await callback(back);
+    } else if (back) {
+      if (await canGoBack()) {
+        await goBack();
+      }
+    } else if (await canGoForward()) {
+      await goForward();
     }
   }
 

@@ -1677,14 +1677,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     _controller = _webViewService.createController();
     final controller = _controller;
+    Future<void> onMouseHistoryNavigation(
+      MouseHistoryNavigation direction,
+    ) async {
+      if (direction == MouseHistoryNavigation.back) {
+        await _goBackIfPossible();
+      } else {
+        await _goForwardIfPossible();
+      }
+    }
     if (controller is WindowsGakujoWebViewController) {
-      controller.onMouseHistoryNavigation = (direction) async {
-        if (direction == MouseHistoryNavigation.back) {
-          await _goBackIfPossible();
-        } else {
-          await _goForwardIfPossible();
-        }
-      };
+      controller.onMouseHistoryNavigation = onMouseHistoryNavigation;
+    } else if (controller is WebViewFlutterGakujoWebViewController) {
+      controller.onMouseHistoryNavigation = onMouseHistoryNavigation;
     }
     _offlineRetry = GakujoOfflineRetry(
       probe: widget._gakujoReachable ?? probeGakujoReachability,
