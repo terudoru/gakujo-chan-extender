@@ -3289,7 +3289,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         topics: _appSettings.notificationTopics,
                         messages: _appSettings.messageNotification,
                         preferences: _appSettings.notificationPreferences,
-                        remindersOnlyWhileOpen: Platform.isWindows,
+                        remindersOnlyWhileOpen:
+                            Platform.isWindows || Platform.isLinux,
                         notificationPermission:
                             _notificationService.permissionGranted,
                         onOpenNotificationSettings:

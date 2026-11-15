@@ -18,19 +18,25 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
-  test('Linux does not call the notification permission channel', () async {
+  test('Linux calls the notification permission channel like Windows', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
-      return false;
+      if (call.method == 'checkPermission') {
+        throw MissingPluginException();
+      }
+      return true;
     });
     try {
       final service = GakujoNotificationService();
       expect(await service.checkPermission(), isNull);
-      expect(await service.requestPermission(), isFalse);
-      expect(service.permissionGranted.value, isNull);
-      expect(calls, isEmpty);
+      expect(await service.requestPermission(), isTrue);
+      expect(service.permissionGranted.value, isTrue);
+      expect(calls.map((call) => call.method), [
+        'checkPermission',
+        'requestPermission',
+      ]);
     } finally {
       debugDefaultTargetPlatformOverride = null;
     }

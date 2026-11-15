@@ -177,7 +177,7 @@ void main() {
     expect(result, isFalse);
   });
 
-  testWidgets('Linux explains unavailable notifications; Windows keeps controls',
+  testWidgets('Linux and Windows show notification controls and reminders',
       (tester) async {
     final permission = ValueNotifier<bool?>(false);
     final keywords = TextEditingController();
@@ -197,6 +197,8 @@ void main() {
                   messages: const GakujoMessageNotificationSettings(),
                   notificationsEnabled: true,
                   notificationPermission: permission,
+                  remindersOnlyWhileOpen: platform == TargetPlatform.windows ||
+                      platform == TargetPlatform.linux,
                   onOpenNotificationSettings: () {},
                   onChanged: (_, _) {},
                   onMessagesChanged: (_) async => true,
@@ -213,13 +215,14 @@ void main() {
       }
 
       await show(TargetPlatform.linux);
-      expect(find.text('Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。'), findsOneWidget);
-      expect(find.text('端末の設定で通知が許可されていません'), findsNothing);
-      expect(find.text('端末の通知設定を開く'), findsNothing);
-      expect(find.text('締切前のリマインド'), findsNothing);
+      expect(find.text('チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'), findsOneWidget);
+      expect(find.text('端末の設定で通知が許可されていません'), findsOneWidget);
+      expect(find.text('端末の通知設定を開く'), findsOneWidget);
+      expect(find.text('締切前のリマインド'), findsOneWidget);
+      expect(find.textContaining('WindowsとLinuxではアプリを開いている間に届きます。'), findsOneWidget);
       expect(tester.widget<CheckboxListTile>(
         find.widgetWithText(CheckboxListTile, '提出期限の通知'),
-      ).onChanged, isNull);
+      ).onChanged, isNotNull);
 
       expect(find.text('科目ごとの通知'), findsNothing);
 
@@ -227,6 +230,7 @@ void main() {
       expect(find.text('チェックした種類の期限だけをスマートフォンやパソコンの通知に出します。'), findsOneWidget);
       expect(find.text('端末の設定で通知が許可されていません'), findsOneWidget);
       expect(find.text('締切前のリマインド'), findsOneWidget);
+      expect(find.textContaining('WindowsとLinuxではアプリを開いている間に届きます。'), findsOneWidget);
       expect(tester.widget<CheckboxListTile>(
         find.widgetWithText(CheckboxListTile, '提出期限の通知'),
       ).onChanged, isNotNull);
