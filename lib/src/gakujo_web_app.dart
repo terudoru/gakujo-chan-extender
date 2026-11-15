@@ -3142,10 +3142,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             final controller = SecretProtectionController(_appSettingsStore.protectionState);
                             try {
                               if (enabled) {
-                                await controller.enable();
+                                await _appSettingsStore.runExclusive(controller.enable);
                               } else {
                                 try {
-                                  await controller.disable();
+                                  await _appSettingsStore.runExclusive(controller.disable);
                                 } on ProtectedSecretsUnreadable {
                                   if (!dialogContext.mounted) return;
                                   final discard = await showDialog<bool>(
@@ -3159,7 +3159,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                     ),
                                   );
                                   if (discard != true) return;
-                                  await controller.disableAndDiscard();
+                                  await _appSettingsStore.runExclusive(controller.disableAndDiscard);
                                   if (mounted) setState(() { _appSettings = _appSettings.copyWith(savedLoginId: null); });
                                 }
                               }

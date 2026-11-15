@@ -801,6 +801,11 @@ class GakujoAppSettingsStore {
         ],
       );
 
+  /// The operation must not call other queued methods on this store.
+  Future<T> runExclusive<T>(Future<T> Function() operation) {
+    return _enqueue(operation);
+  }
+
   Future<GakujoAppSettings> load() {
     return _enqueue(() => _load(migrateLegacyCredentials: true));
   }

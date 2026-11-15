@@ -350,6 +350,33 @@ void main() {
     );
   });
 
+  test('runExclusive waits for an in-flight load', () async {
+    final readStarted = Completer<void>();
+    final releaseRead = Completer<void>();
+    final storage = _TrackingSecureStorage({})
+      ..beforeReadAll = () async {
+        readStarted.complete();
+        await releaseRead.future;
+      };
+    final store = GakujoAppSettingsStore(secureStorage: storage);
+    final events = <String>[];
+
+    final load = store.load().then((_) => events.add('load'));
+    await readStarted.future;
+    final operation = store.runExclusive(() async {
+      events.add('exclusive');
+      return 42;
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(events, isEmpty);
+    releaseRead.complete();
+
+    await load;
+    expect(await operation, 42);
+    expect(events, ['load', 'exclusive']);
+  });
+
   test('concurrent feature changes preserve every disabled flag', () async {
     final storage = _TrackingSecureStorage({})
       ..readAllDelay = const Duration(milliseconds: 20);
@@ -382,6 +409,7 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
 
   final Map<String, String> values;
   Object? readAllError;
+  Future<void> Function()? beforeReadAll;
   String? writeErrorKey;
   String? deleteErrorKey;
   Duration readDelay = Duration.zero;
@@ -400,6 +428,7 @@ class _TrackingSecureStorage extends FlutterSecureStorage {
   }) async {
     readAllCount += 1;
     final snapshot = Map<String, String>.from(values);
+    await beforeReadAll?.call();
     if (readAllDelay > Duration.zero) {
       await Future<void>.delayed(readAllDelay);
     }
