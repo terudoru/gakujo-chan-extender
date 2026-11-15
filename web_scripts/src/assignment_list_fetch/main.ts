@@ -28,8 +28,17 @@ function assignmentListFetch() {
       }
       // The list states its total as 「11件」 or 「1～11/11件」.
       var content = String(form.textContent || '');
-      var counts = content.match(/([0-9]+)件/g) || [];
-      total = counts.length ? parseInt(counts[0]!, 10) : -1;
+      var countForm = form.cloneNode(true) as Element;
+      var table = countForm.querySelector<HTMLTableElement>('table:nth-of-type(2)');
+      if (table) Array.from(table.rows).slice(1).forEach(function(row) { row.remove(); });
+      countForm.querySelectorAll('ul.campussmart-list span.h3').forEach(function(title) {
+        var row = title.closest('tr') || title.closest('td') || title.parentElement;
+        if (row) row.remove();
+      });
+      var countText = String(countForm.textContent || '');
+      var count = countText.match(/[0-9]+\s*[～〜~]\s*[0-9]+\s*\/\s*([0-9]+)件/) ||
+        countText.match(/([0-9]+)件/);
+      total = count ? parseInt(count[1]!, 10) : -1;
       var pageRows = readAssignmentRows(doc);
       var previousLength = rows.length;
       pageRows.forEach(function(row) {

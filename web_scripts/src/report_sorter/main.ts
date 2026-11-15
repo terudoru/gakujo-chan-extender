@@ -37,7 +37,7 @@ function reportSorter() {
       return character === '　' ? ' ' :
         String.fromCharCode(character.charCodeAt(0) - 0xFEE0);
     });
-    var parts = normalized.split('～');
+    var parts = normalized.split(/[～〜~]/);
     var end = parts.pop() || '';
     // Parse Y/M/D and optional H:M explicitly so the comparable value is always
     // YYYYMMDDhhmm (12 digits), regardless of separators or trailing seconds.
@@ -63,7 +63,7 @@ function reportSorter() {
     }
     if (match) return dateNumber(match);
     var digits = end.replace(/[^\d]/g, '');
-    return Number(digits || '0');
+    return digits ? Number(digits) : Infinity;
   }
 
   function statusRank(row: HTMLTableRowElement) {

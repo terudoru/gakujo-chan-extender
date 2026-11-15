@@ -41,6 +41,31 @@ function assignmentDocument({smartphone = true, count = '', controls = [],
   const form: any = {
     textContent: [count, ...titles.map((title: any) => title.closest().textContent),
       ...controls.map((control: any) => control.textContent || '')].join(' '),
+    cloneNode(deep: any) {
+      assert.equal(deep, true);
+      const removed: any = new Set();
+      function row(index: any) { return {remove() { removed.add(index); }}; }
+      return {
+        get textContent() {
+          return [count, ...titles.filter((_: any, i: any) => !removed.has(i))
+            .map((title: any) => title.closest().textContent),
+            ...controls.map((control: any) => control.textContent || '')].join(' ');
+        },
+        querySelector(selector: any) {
+          assert.equal(selector, 'table:nth-of-type(2)');
+          return smartphone ? null : {rows: [{}, ...records.map((_: any, i: any) => row(i))]};
+        },
+        querySelectorAll(selector: any) {
+          assert.equal(selector, 'ul.campussmart-list span.h3');
+          return smartphone ? titles.map((_: any, i: any) => ({
+            closest(selector: any) {
+              assert.equal(selector, 'tr');
+              return row(i);
+            },
+          })) : [];
+        },
+      };
+    },
     getAttribute(name: any) { return name === 'action' ? action : null; },
     querySelectorAll(selector: any) {
       if (selector === 'input[type="hidden"]') {

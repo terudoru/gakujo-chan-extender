@@ -75,6 +75,60 @@ void main() {
     expect(result['total'], -1);
   });
 
+  test('a desktop assignment title is not a list count', () async {
+    final result = await _evaluate(expectedRows: 1, pages: [
+      {
+        'smartphone': false,
+        'rows': [
+          {'title': '1件の調査'}
+        ],
+      },
+    ]);
+    expect(result['total'], -1);
+  });
+
+  test('the range total takes precedence over a displayed row count', () async {
+    final result = await _evaluate(
+      smartphone: false,
+      count: '1件表示 1～12/12件',
+    );
+    expect(result['total'], 12);
+  });
+
+  for (final smartphone in [false, true]) {
+    test('a title count does not stop paging (smartphone: $smartphone)',
+        () async {
+      final result = await _evaluate(expectedRows: 2, pages: [
+        {
+          'smartphone': smartphone,
+          'rows': [
+            {'title': '1件の調査'}
+          ],
+          'controls': [
+            {
+              'tag': 'a',
+              'textContent': '次へ',
+              'attributes': {'href': '?_flowExecutionKey=page2&_eventId=paging'},
+            },
+          ],
+        },
+        {
+          'smartphone': smartphone,
+          'rows': [
+            {'title': '2件の調査'}
+          ],
+          'controls': [
+            {'tag': 'a', 'textContent': '前へ'},
+          ],
+        },
+      ]);
+      expect(result['requests'], hasLength(2));
+      expect(result['total'], -1);
+      expect((result['rows'] as List).map((row) => row['title']),
+          ['1件の調査', '2件の調査']);
+    });
+  }
+
   test('an unread page keeps the total unknown', () async {
     final result = await _evaluate(
       count: '1～12/24件',

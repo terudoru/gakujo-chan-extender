@@ -156,7 +156,7 @@ const String gakujoReportSorterJs = r'''
       var normalized = (text || "").replace(/[０-９／：　]/g, function(character) {
         return character === "　" ? " " : String.fromCharCode(character.charCodeAt(0) - 65248);
       });
-      var parts = normalized.split("～");
+      var parts = normalized.split(/[～〜~]/);
       var end = parts.pop() || "";
       var pattern = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/;
       var match = end.match(pattern);
@@ -183,7 +183,7 @@ const String gakujoReportSorterJs = r'''
       }
       if (match) return dateNumber(match);
       var digits = end.replace(/[^\d]/g, "");
-      return Number(digits || "0");
+      return digits ? Number(digits) : Infinity;
     }
     function statusRank(row) {
       var text = textOf(row.cells[2]);
