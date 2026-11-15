@@ -27,6 +27,7 @@ void main() {
   var failCheck = false;
   var quotaOnCheck = false;
   var failDelete = false;
+  var emptyChildrenPage = false;
   late HttpServer server;
   late Uri base;
   late GoogleDriveFileSaver saver;
@@ -63,6 +64,7 @@ void main() {
     failCheck = false;
     quotaOnCheck = false;
     failDelete = false;
+    emptyChildrenPage = false;
     files = [];
     queries = [];
     fields = [];
@@ -158,6 +160,12 @@ void main() {
         if (children != null) {
           if (deletedFolders.contains(children[1])) {
             response.statusCode = 404;
+            await response.close();
+            return;
+          }
+          if (emptyChildrenPage &&
+              request.uri.queryParameters['pageToken'] != 'children') {
+            response.write(jsonEncode({'files': [], 'nextPageToken': 'children'}));
             await response.close();
             return;
           }
@@ -739,6 +747,23 @@ void main() {
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 
+  test('pending cleanup keeps a folder with a child on the second page', () async {
+    failCheck = true;
+    await expectLater(save('Course', 'file', 1),
+        throwsA(isA<GoogleDrivePendingCheckException>()));
+    failCheck = false;
+    emptyChildrenPage = true;
+    files.singleWhere((f) => f['name'] == 'Course')['shared'] = true;
+    files.add({'id': 'other-child', 'parent': uploadParent});
+    await saver.processPendingChecks();
+    expect(deleted, ['uploaded']);
+    expect(
+      fields.where((field) => field == 'nextPageToken,files(id)'),
+      hasLength(2),
+    );
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
   test(
     'pending retry uses automatic quota and leaves entries when exhausted',
     () async {
@@ -804,6 +829,30 @@ void main() {
     );
     final course = files.singleWhere((f) => f['name'] == 'Course');
     expect(deleted, [course['id']]);
+    expect(storage.values[googleDrivePendingChecksKey], isNull);
+  });
+
+  test('early rollback keeps a folder with a child on the second page', () async {
+    emptyChildrenPage = true;
+    await expectLater(
+      saver.saveFile(
+        courseName: 'Course',
+        fileName: 'file',
+        length: 1,
+        open: () async* {
+          final course = files.singleWhere((f) => f['name'] == 'Course');
+          course['shared'] = true;
+          files.add({'id': 'other-child', 'parent': course['id']});
+          throw StateError('read failed');
+        },
+      ),
+      throwsStateError,
+    );
+    expect(deleted, isEmpty);
+    expect(
+      fields.where((field) => field == 'nextPageToken,files(id)'),
+      hasLength(2),
+    );
     expect(storage.values[googleDrivePendingChecksKey], isNull);
   });
 

@@ -213,7 +213,7 @@ void main() {
     expect((await transport.get('stars/devices/a'))!.bytes, [0, 255, 1]);
     await transport.put('stars/devices/a', [2, 3]);
     expect((await transport.get('stars/devices/a'))!.bytes, [2, 3]);
-    expect((await transport.get('stars/devices/a'))!.etag, '2');
+    expect((await transport.get('stars/devices/a'))!.etag, '1:2');
     await transport.delete('stars/devices/a');
     expect(await transport.get('stars/devices/a'), isNull);
     await transport.delete('stars/devices/a');
@@ -251,7 +251,7 @@ void main() {
     await transport.get('stars/keyring.json');
     await transport.get('stars/devices/other');
     await transport.put('stars/devices/own', [4]);
-    expect((await transport.get('stars/devices/own'))!.etag, '2');
+    expect((await transport.get('stars/devices/own'))!.etag, '${own.id}:2');
     expect(own.bytes, [4]);
     expect(drive.counts['GET /drive/v3/files'], 1);
   });

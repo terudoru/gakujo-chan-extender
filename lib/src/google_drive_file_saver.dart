@@ -364,19 +364,29 @@ class GoogleDriveFileSaver {
   }
 
   Future<bool?> _hasChildren(String folder) async {
-    final response = await _request(
-      'GET',
-      _uri('/drive/v3/files', {
-        'q': "'${_escape(folder)}' in parents and trashed=false",
-        'fields': 'files(id)',
-        'pageSize': '1',
-      }),
-    );
-    if (response.statusCode == 404) return null;
-    final result = _json(response);
-    final files = result['files'];
-    if (files is! List) throw const FormatException('Invalid Drive file list');
-    return files.isNotEmpty;
+    String? page;
+    do {
+      final response = await _request(
+        'GET',
+        _uri('/drive/v3/files', {
+          'q': "'${_escape(folder)}' in parents and trashed=false",
+          'fields': 'nextPageToken,files(id)',
+          'pageSize': '1',
+          'pageToken': ?page,
+        }),
+      );
+      if (response.statusCode == 404) return null;
+      final result = _json(response);
+      final files = result['files'];
+      if (files is! List) throw const FormatException('Invalid Drive file list');
+      if (files.isNotEmpty) return true;
+      final next = result['nextPageToken'];
+      if (next != null && next is! String) {
+        throw const FormatException('Invalid page token');
+      }
+      page = next as String?;
+    } while (page != null && page.isNotEmpty);
+    return false;
   }
 
   Future<bool> _isPrivateFolder(String id) async {

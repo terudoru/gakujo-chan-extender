@@ -377,12 +377,14 @@ class _DriveFile {
       created = DateTime.parse(json['createdTime'] as String),
       modified = DateTime.tryParse(json['modifiedTime'] as String? ?? ''),
       size = int.tryParse(json['size'] as String? ?? ''),
-      etag = (json['version'] ?? json['md5Checksum']) as String?;
+      _revision = (json['version'] ?? json['md5Checksum']) as String?;
 
   final String id;
   final String name;
   final DateTime created;
   final DateTime? modified;
   final int? size;
-  final String? etag;
+  final String? _revision;
+
+  String? get etag => _revision == null ? null : '$id:$_revision';
 }
