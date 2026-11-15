@@ -2930,7 +2930,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       await _prepareSettingsDialogInput();
       if (_secureStorageAccessAllowed) {
-        await _ensureStarSyncLoaded();
+        try {
+          await _ensureStarSyncLoaded();
+        } on Object catch (error) {
+          // A locked Linux keyring must not keep the settings from opening;
+          // the sync section then shows sync as not set up.
+          developer.log(
+            'Failed to load star sync for settings: ${error.runtimeType}',
+            name: 'MoreBetterGakujo',
+          );
+        }
       }
       if (!mounted) {
         return;
