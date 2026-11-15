@@ -146,6 +146,43 @@ static void find_keys_test() {
   g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
 }
 
+static void zoom_keys_test() {
+  GdkEventKey event = {};
+  event.type = GDK_KEY_PRESS;
+  const guint locks[] = {0, GDK_LOCK_MASK, GDK_MOD2_MASK,
+                         GDK_LOCK_MASK | GDK_MOD2_MASK};
+  const guint shifts[] = {0, GDK_SHIFT_MASK};
+  const guint other_modifiers[] = {
+      GDK_MOD1_MASK, GDK_SUPER_MASK, GDK_META_MASK, GDK_HYPER_MASK};
+  const struct {
+    guint key;
+    BrowserKeyAction action;
+  } cases[] = {
+      {GDK_KEY_equal, BrowserKeyAction::kZoomIn},
+      {GDK_KEY_plus, BrowserKeyAction::kZoomIn},
+      {GDK_KEY_KP_Add, BrowserKeyAction::kZoomIn},
+      {GDK_KEY_minus, BrowserKeyAction::kZoomOut},
+      {GDK_KEY_KP_Subtract, BrowserKeyAction::kZoomOut},
+      {GDK_KEY_0, BrowserKeyAction::kZoomReset},
+      {GDK_KEY_KP_0, BrowserKeyAction::kZoomReset},
+  };
+  for (const auto &test : cases) {
+    event.keyval = test.key;
+    for (guint lock : locks) {
+      for (guint shift : shifts) {
+        event.state = GDK_CONTROL_MASK | shift | lock;
+        g_assert_true(browser_key_action(&event) == test.action);
+        for (guint modifier : other_modifiers) {
+          event.state = GDK_CONTROL_MASK | modifier | shift | lock;
+          g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+        }
+        event.state = shift | lock;
+        g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+      }
+    }
+  }
+}
+
 static void unhandled_browser_keys_test() {
   GdkEventKey event = {};
   event.type = GDK_KEY_PRESS;
@@ -175,7 +212,6 @@ static void unhandled_browser_keys_test() {
       {GDK_KEY_Right, GDK_MOD1_MASK},
       {GDK_KEY_Back, 0},
       {GDK_KEY_Forward, 0},
-      {GDK_KEY_plus, GDK_CONTROL_MASK},
       {GDK_KEY_a, GDK_CONTROL_MASK},
   };
   for (const auto &test : cases) {
@@ -192,6 +228,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/browser/reload-keys", reload_keys_test);
   g_test_add_func("/browser/print-keys", print_keys_test);
   g_test_add_func("/browser/find-keys", find_keys_test);
+  g_test_add_func("/browser/zoom-keys", zoom_keys_test);
   g_test_add_func("/browser/unhandled-keys", unhandled_browser_keys_test);
   return g_test_run();
 }

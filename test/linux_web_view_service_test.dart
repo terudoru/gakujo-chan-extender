@@ -249,6 +249,68 @@ void main() {
     expect(calls, isEmpty);
   });
 
+  test('Linux plugin dispatches and clears key zoom actions', () async {
+    final actions = <LinuxKeyZoomAction>[];
+    native.setOnKeyZoom(actions.add);
+    for (final action in ['in', 'out', 'reset']) {
+      await emitEvent({'type': 'keyZoom', 'action': action});
+    }
+    expect(actions, [
+      LinuxKeyZoomAction.zoomIn,
+      LinuxKeyZoomAction.zoomOut,
+      LinuxKeyZoomAction.reset,
+    ]);
+    expect(calls, isEmpty);
+
+    native.setOnKeyZoom(null);
+    await emitEvent({'type': 'keyZoom', 'action': 'in'});
+    expect(actions, hasLength(3));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin ignores unknown and malformed key zoom actions', () async {
+    var dispatched = 0;
+    native.setOnKeyZoom((_) => dispatched++);
+    await emitEvent({'type': 'keyZoom'});
+    for (final action in ['unknown', '', 'IN', null, 1, true]) {
+      await emitEvent({'type': 'keyZoom', 'action': action});
+    }
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
+  test('app adapter forwards and clears Linux key zoom callbacks', () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final actions = <LinuxKeyZoomAction>[];
+    controller.onKeyZoom = actions.add;
+    for (final action in ['in', 'out', 'reset', 'unknown']) {
+      await emitEvent({'type': 'keyZoom', 'action': action});
+    }
+    expect(actions, [
+      LinuxKeyZoomAction.zoomIn,
+      LinuxKeyZoomAction.zoomOut,
+      LinuxKeyZoomAction.reset,
+    ]);
+    expect(calls, isEmpty);
+
+    controller.onKeyZoom = null;
+    await emitEvent({'type': 'keyZoom', 'action': 'out'});
+    expect(actions, hasLength(3));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin stops dispatching key zoom events after disposal', () async {
+    var dispatched = 0;
+    native.setOnKeyZoom((_) => dispatched++);
+    await native.dispose();
+    calls.clear();
+    await emitEvent({'type': 'keyZoom', 'action': 'reset'});
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
   test('Linux plugin ignores malformed wheel payloads', () async {
     var dispatched = 0;
     native.setOnWheelZoom((_, _) => dispatched++);

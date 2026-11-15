@@ -14,6 +14,8 @@ import 'linux_webview_requests.dart';
 
 part 'linux_webview_events.dart';
 
+enum LinuxKeyZoomAction { zoomIn, zoomOut, reset }
+
 // More Better Gakujo patch: omit fork-only session and scripting APIs.
 Future<void> _disposeFinalizedLinuxWebView(
   _LinuxWebViewDisposal disposal,
@@ -151,6 +153,7 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   // More Better Gakujo patch: native wheel input cannot reach Flutter listeners.
   void Function(double dyNotches, Offset position)? _onWheelZoom;
+  void Function(LinuxKeyZoomAction action)? _onKeyZoom;
   void Function(double dxNotches, double dyNotches)? _onWheelScroll;
 
   /// Ctrl+wheel notches and the pointer position relative to the WebKit widget.
@@ -158,6 +161,11 @@ class LinuxWebViewController extends PlatformWebViewController {
     void Function(double dyNotches, Offset position)? handler,
   ) {
     _onWheelZoom = handler;
+  }
+
+  /// Ctrl+=/Ctrl++/Ctrl+-/Ctrl+0 from the native WebKit widget.
+  void setOnKeyZoom(void Function(LinuxKeyZoomAction action)? handler) {
+    _onKeyZoom = handler;
   }
 
   /// Unmodified horizontal wheel input; WebKit still scrolls the page.
@@ -813,6 +821,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onJavaScriptTextInputDialog = null;
     _onHistoryNavigationRequest = null;
     _onWheelZoom = null;
+    _onKeyZoom = null;
     _onWheelScroll = null;
     _onPinchZoom = null;
     _onFindRequest = null;
