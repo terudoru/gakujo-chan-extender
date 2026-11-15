@@ -58,6 +58,28 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           });
         }
         break;
+      case 'pinchZoom':
+        final phase = event['phase'];
+        final scale = event['scale'];
+        final x = event['x'];
+        final y = event['y'];
+        if (phase is String &&
+            (phase == 'begin' || phase == 'update' || phase == 'end') &&
+            scale is num &&
+            x is num &&
+            y is num &&
+            scale.isFinite &&
+            x.isFinite &&
+            y.isFinite) {
+          _dispatchEventHandler('pinch zoom', () async {
+            _onPinchZoom?.call(
+              phase,
+              scale.toDouble(),
+              Offset(x.toDouble(), y.toDouble()),
+            );
+          });
+        }
+        break;
       case 'wheelScroll':
         final dx = event['dx'];
         final dy = event['dy'];

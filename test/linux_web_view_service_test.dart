@@ -71,6 +71,140 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  test('Linux plugin dispatches pinch phases, scales and positions', () async {
+    final pinches = <(String, double, Offset)>[];
+    native.setOnPinchZoom(
+      (phase, scale, position) => pinches.add((phase, scale, position)),
+    );
+    await emitEvent({
+      'type': 'pinchZoom',
+      'phase': 'begin',
+      'scale': 1,
+      'x': 120,
+      'y': 45.5,
+    });
+    await emitEvent({
+      'type': 'pinchZoom',
+      'phase': 'update',
+      'scale': 1.25,
+      'x': 121.5,
+      'y': 46,
+    });
+    await emitEvent({
+      'type': 'pinchZoom',
+      'phase': 'end',
+      'scale': 1.25,
+      'x': 121.5,
+      'y': 46,
+    });
+    expect(pinches, [
+      ('begin', 1.0, const Offset(120, 45.5)),
+      ('update', 1.25, const Offset(121.5, 46)),
+      ('end', 1.25, const Offset(121.5, 46)),
+    ]);
+    expect(calls, isEmpty);
+
+    native.setOnPinchZoom(null);
+    await emitEvent({
+      'type': 'pinchZoom',
+      'phase': 'begin',
+      'scale': 1,
+      'x': 0,
+      'y': 0,
+    });
+    expect(pinches, hasLength(3));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin ignores malformed pinch payloads', () async {
+    var dispatched = 0;
+    native.setOnPinchZoom((_, _, _) => dispatched++);
+    final payload = <String, Object?>{
+      'type': 'pinchZoom',
+      'phase': 'update',
+      'scale': 1.25,
+      'x': 12,
+      'y': 34,
+    };
+    for (final field in ['phase', 'scale', 'x', 'y']) {
+      await emitEvent(Map<String, Object?>.of(payload)..remove(field));
+      for (final invalid in [null, '1', true, double.nan, double.infinity]) {
+        await emitEvent({...payload, field: invalid});
+      }
+    }
+    for (final phase in ['', 'cancel', 'UPDATE', 1]) {
+      await emitEvent({...payload, 'phase': phase});
+    }
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
+  test('Linux pinch events without a handler do nothing', () async {
+    for (final phase in ['begin', 'update', 'end']) {
+      await emitEvent({
+        'type': 'pinchZoom',
+        'phase': phase,
+        'scale': 1.25,
+        'x': 12,
+        'y': 34,
+      });
+    }
+    expect(calls, isEmpty);
+  });
+
+  test('app adapter forwards and clears Linux pinch callbacks', () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final pinches = <(String, double, Offset)>[];
+    controller.onPinchZoom = (phase, scale, position) =>
+        pinches.add((phase, scale, position));
+    for (final phase in ['begin', 'update', 'end']) {
+      await emitEvent({
+        'type': 'pinchZoom',
+        'phase': phase,
+        'scale': 0.75,
+        'x': 50.5,
+        'y': 70,
+      });
+    }
+    expect(pinches, [
+      ('begin', 0.75, const Offset(50.5, 70)),
+      ('update', 0.75, const Offset(50.5, 70)),
+      ('end', 0.75, const Offset(50.5, 70)),
+    ]);
+    expect(calls, isEmpty);
+
+    controller.onPinchZoom = null;
+    await emitEvent({
+      'type': 'pinchZoom',
+      'phase': 'update',
+      'scale': 1.25,
+      'x': 0,
+      'y': 0,
+    });
+    expect(pinches, hasLength(3));
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin stops dispatching pinch events after disposal', () async {
+    var dispatched = 0;
+    native.setOnPinchZoom((_, _, _) => dispatched++);
+    await native.dispose();
+    calls.clear();
+    for (final phase in ['begin', 'update', 'end']) {
+      await emitEvent({
+        'type': 'pinchZoom',
+        'phase': phase,
+        'scale': 1.25,
+        'x': 12,
+        'y': 34,
+      });
+    }
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
+
   test('Linux plugin dispatches wheel notches and positions', () async {
     final zooms = <(double, Offset)>[];
     final scrolls = <(double, double)>[];
