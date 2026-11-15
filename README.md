@@ -29,8 +29,9 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 - x64 の Ubuntu 22.04 以降 / Debian 12 以降を対象とする。`MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` は `sudo apt install ./MoreBetterGakujo-vX.Y.Z-linux-amd64.deb` を実行して入れる
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret google-noto-sans-cjk-fonts`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret noto-fonts-cjk`）。日本語フォントがないと文字が表示されない
-- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
+- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要。キーリングがロックされていると起動時にロック解除の画面が出る。キャンセルしても「このまま使う」で使え、「再試行」でもう一度解除できる
 - Windows と同じく、アプリを開いている間はデスクトップの通知サービスを通じて提出期限を通知する。二重に起動すると、起動済みのウィンドウを前面に表示する
+- Windows と同じく、F5/Ctrl+R で再読み込み、Ctrl+P で印刷、Ctrl+F でページ内検索、Alt+←/→ で戻る・進む、Ctrl+ホイールやピンチで拡大・縮小できる
 
 ### iOS/iPadOS
 
@@ -69,7 +70,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - 提出済みファイルを、保存せずにプレビューする。PDF、JPEG/PNG/WebP、テキスト、主な音声・動画に対応する。Word/Excel/PowerPoint は本文だけを表示し、書式や画像は再現しない
 - 設定・履歴・お気に入りなどのバックアップと復元
 - GitHub Releases の新しい版の確認。新しい正式版があれば画面の上部で知らせる（pre-release は対象外。確認は1日1回で、設定の機能オン/オフで止められる）
-- マウスの戻る・進むボタンでのページ移動（Windows/macOS）
+- マウスの戻る・進むボタンでのページ移動（Windows/macOS/Linux）
 
 各機能は、設定の機能オン/オフで個別に止められます。
 
@@ -109,7 +110,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 | 方法 | 動き |
 |---|---|
-| 自動で選ぶ | Android・iOS・macOS では OS のカレンダーに直接追加する。Windows には安全に書き込める共通のカレンダー API がないので、学情の Google 連携を開き、見つからなければ `.ics` ファイルを書き出して既定のカレンダーアプリで開く |
+| 自動で選ぶ | Android・iOS・macOS では OS のカレンダーに直接追加する。Windows と Linux には安全に書き込める共通のカレンダー API がないので、学情の Google 連携を開き、見つからなければ `.ics` ファイルを書き出して既定のカレンダーアプリで開く |
 | 端末のカレンダーへ直接追加 | ターム期間、授業のない日、振替日を反映し、まとめて削除もできる。予定には `MBG_UID:` で始まる識別子を入れておき、再実行すると、対象ターム内のこのアプリが入れた予定を消してから入れ直すので、予定は重複しない |
 | 学務のGoogle連携を開く | 学情側の「Googleスケジュール連携」を開く |
 | iCalendarファイルを書き出す | `more-better-gakujo-classes.ics` を書き出す。各授業の `UID` は年度、ターム、授業名、曜日、時限、教室から作るので、書き出し直しても同じ予定として扱われやすい。それでも何度も手動で取り込むと、カレンダーアプリによっては予定が重複する |
