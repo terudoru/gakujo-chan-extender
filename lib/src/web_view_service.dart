@@ -232,6 +232,11 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
     );
     await _configureAppleHistoryNavigationGestures(inner);
     await _disableAppleLinkPreview(inner);
+    // Match Windows, whose WebView2 DevTools are on only when debugging.
+    final platform = inner.platform;
+    if (platform is LinuxWebViewController) {
+      await platform.setDeveloperExtrasEnabled(debugAllowed);
+    }
 
     if (kDebugMode) {
       developer.log(
