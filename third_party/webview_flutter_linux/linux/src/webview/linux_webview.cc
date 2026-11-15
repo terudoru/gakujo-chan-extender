@@ -2,6 +2,7 @@
 #include "plugin/webview_all_linux_plugin_private.h"
 #include "webview/download_policy.h"
 #include "webview/webview_environment.h"
+#include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
 
 #include <libsoup/soup.h>
@@ -368,6 +369,32 @@ static gboolean load_failed_cb(WebKitWebView *widget,
   }
   emit_load_error(static_cast<LinuxWebView *>(user_data), error, failing_url);
   return FALSE;
+}
+
+// More Better Gakujo patch: let the app handle flow-key history navigation.
+static gboolean send_history_navigation(LinuxWebView *webview,
+                                        const gchar *direction) {
+  if (direction == nullptr) {
+    return FALSE;
+  }
+  FlValue *event = make_event("mouseHistoryNavigation");
+  fl_value_set_string_take(event, "direction", fl_value_new_string(direction));
+  send_event(webview, event);
+  return TRUE;
+}
+
+static gboolean history_button_press_event_cb(GtkWidget *widget,
+                                              GdkEventButton *event,
+                                              gpointer user_data) {
+  return send_history_navigation(static_cast<LinuxWebView *>(user_data),
+                                 history_navigation_direction(event));
+}
+
+static gboolean history_key_press_event_cb(GtkWidget *widget,
+                                           GdkEventKey *event,
+                                           gpointer user_data) {
+  return send_history_navigation(static_cast<LinuxWebView *>(user_data),
+                                 history_navigation_direction(event));
 }
 
 static gboolean zoom_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event,
@@ -911,6 +938,10 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
                    G_CALLBACK(load_failed_with_tls_errors_cb), webview);
   g_signal_connect(webview->web_view, "scroll-event",
                    G_CALLBACK(zoom_scroll_event_cb), webview);
+  g_signal_connect(webview->web_view, "button-press-event",
+                   G_CALLBACK(history_button_press_event_cb), webview);
+  g_signal_connect(webview->web_view, "key-press-event",
+                   G_CALLBACK(history_key_press_event_cb), webview);
   g_signal_connect(webview->web_view, "key-press-event",
                    G_CALLBACK(zoom_key_press_event_cb), webview);
   g_signal_connect(webview->web_view, "size-allocate",

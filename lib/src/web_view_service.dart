@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_linux/webview_flutter_linux.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
 
@@ -655,6 +656,23 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   final GakujoJavaScriptChannelGuard _channelGuard = GakujoJavaScriptChannelGuard();
   final Stopwatch _contentProcessRecoveryClock = Stopwatch()..start();
   final List<Duration> _contentProcessRecoveries = [];
+
+  set onMouseHistoryNavigation(
+    Future<void> Function(MouseHistoryNavigation)? handler,
+  ) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnHistoryNavigationRequest(
+        handler == null
+            ? null
+            : (back) => handler(
+                  back
+                      ? MouseHistoryNavigation.back
+                      : MouseHistoryNavigation.forward,
+                ),
+      );
+    }
+  }
 
   @override
   Future<void> setJavaScriptModeUnrestricted() async {

@@ -139,6 +139,15 @@ class LinuxWebViewController extends PlatformWebViewController {
   Future<String> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptTextInputDialog;
 
+  // More Better Gakujo patch: route native history input through app history.
+  Future<void> Function(bool back)? _onHistoryNavigationRequest;
+
+  /// Handles mouse side buttons and browser history keys instead of WebKitGTK.
+  /// Passing null restores navigation through the WebView's own history.
+  void setOnHistoryNavigationRequest(Future<void> Function(bool back)? handler) {
+    _onHistoryNavigationRequest = handler;
+  }
+
   Future<void> _initialize(
     WeakReference<LinuxWebViewController> weakThis,
   ) async {
@@ -745,6 +754,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onJavaScriptAlertDialog = null;
     _onJavaScriptConfirmDialog = null;
     _onJavaScriptTextInputDialog = null;
+    _onHistoryNavigationRequest = null;
     if (initializationError != null) {
       Error.throwWithStackTrace(
         initializationError,
