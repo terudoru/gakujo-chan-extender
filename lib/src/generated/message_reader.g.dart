@@ -242,9 +242,14 @@ const String gakujoMessageReaderJs = r'''
         return mobileUrls;
       }
       var owningDocument = table.ownerDocument || doc;
+      var owningWindow = owningDocument.defaultView || window;
       var urls = [];
       for (var i = 1; i < table.rows.length && urls.length < limit; i += 1) {
-        var link = table.rows[i].querySelector("a[href]");
+        var row = table.rows[i];
+        if (row.getAttribute("data-mbg-message-filtered") === "true" || row.style.display === "none" || owningWindow.getComputedStyle(row).display === "none") {
+          continue;
+        }
+        var link = row.querySelector("a[href]");
         if (link) {
           var url = absoluteCampusUrl(link.getAttribute("href"), owningDocument);
           if (url) {

@@ -135,7 +135,13 @@ function createReportTable() {
 function createMessageTable(messageCount: any) {
   const rows: any = [{}];
   for (let i: any = 1; i <= messageCount; i += 1) {
+    const rowState: any = scenario?.messageRows?.[i - 1] || {};
     rows.push({
+        style: {display: rowState.display || ''},
+        computedDisplay: rowState.computedDisplay,
+        getAttribute(name: any) {
+          return name === 'data-mbg-message-filtered' ? rowState.filtered ?? null : null;
+        },
         querySelector(selector: any) {
           if (selector !== 'a[href]') return null;
           return {
@@ -238,6 +244,9 @@ function createPage() {
   const window: any = {
     document,
     location,
+    getComputedStyle(row: any) {
+      return {display: row.computedDisplay || row.style.display || 'table-row'};
+    },
     clearInterval(id: any) { activeIntervals.delete(id); },
     setInterval() {
       const id: any = nextIntervalId++;
