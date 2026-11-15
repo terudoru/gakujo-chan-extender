@@ -237,7 +237,7 @@ void main() {
 
   for (final scenario in ['unread', 'genre', 'topWithIframe']) {
     test(
-        'smartphone $scenario title click remembers attachment-free detail on reload',
+        'smartphone $scenario title click binds identity only to the opened document',
         () async {
       final result = await _evaluate('remember', scenario, [
         GakujoMessageStarScript.build(starredIds: ['1|40|508182'])
@@ -250,14 +250,14 @@ void main() {
         'title': _title,
       });
       expect(result['navigations'], 1);
-      expect(result['detailCounts'], [1, 1]);
+      expect(result['detailCounts'], [1, 0]);
       expect(result['oldListenerRemoved'], isTrue);
       expect(result['oldButtonCount'], 0);
       expect(
           (result['messages'] as List)
               .where((m) => m['action'] == 'detail')
               .length,
-          2);
+          1);
     });
   }
 

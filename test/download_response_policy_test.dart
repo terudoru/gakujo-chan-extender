@@ -13,6 +13,17 @@ void main() {
     (null, '<html>error</html>'),
     ('', '<html lang="en">error</html>'),
     ('text/html', '<html/>'),
+    ('text/html', '<!--portal--><html>login</html>'),
+    ('application/pdf', '<?xml version="1.0"?><html>login</html>'),
+    (
+      'text/html',
+      '<!--first--> \n<!--second--><!doctype html><html>login</html>'
+    ),
+    (
+      'text/html',
+      '\uFEFF \r\n<?xml version="1.0"?>\n<!--portal--><html>login</html>'
+    ),
+    ('application/octet-stream', '<!--portal-->\n<?xml version="1.0"?><html/>'),
   ]) {
     test('rejects a non-HTML attachment containing a page: $mimeType', () {
       expect(
@@ -38,6 +49,8 @@ void main() {
     ('application/octet-stream', '<htmlish>literal bytes'),
     ('text/html', '<!doctype htmlish>literal bytes'),
     ('text/html', '<html'),
+    ('text/html', '<!-- <html>login</html> -->%PDF-1.7'),
+    ('text/html', '<?xml version="1.0"?><svg/>'),
     ('text/html', '\uFEFF\uFEFF<html>literal bytes</html>'),
   ]) {
     test('preserves non-HTML text and non-page bytes: $mimeType / $body', () {

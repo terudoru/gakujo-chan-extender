@@ -161,6 +161,43 @@ void main() {
       true
     ),
     ('attachment.pdf', '', '<html lang="en">login</html>', '', true),
+    ('attachment.pdf', 'text/html', '<!--portal--><html>login</html>', '', true),
+    (
+      'attachment.pdf',
+      'application/pdf',
+      '<?xml version="1.0"?><html>login</html>',
+      '',
+      true
+    ),
+    (
+      'attachment.pdf',
+      'text/html',
+      '<!--first--> \n<!--second--><!doctype html><html>login</html>',
+      '',
+      true
+    ),
+    (
+      'attachment.pdf',
+      'text/html',
+      '\uFEFF \r\n<?xml version="1.0"?>\n<!--portal--><html>login</html>',
+      '',
+      true
+    ),
+    (
+      'attachment.pdf',
+      'application/octet-stream',
+      '<!--portal-->\n<?xml version="1.0"?><html/>',
+      '',
+      true
+    ),
+    (
+      'attachment.pdf',
+      'text/html',
+      '<!-- <html>login</html> -->%PDF-1.7',
+      '',
+      false
+    ),
+    ('attachment.pdf', 'text/html', '<?xml version="1.0"?><svg/>', '', false),
     ('attachment.pdf', 'text/html', '<htmlish>literal bytes', '', false),
     (
       'attachment.pdf',

@@ -82,4 +82,31 @@ void main() {
     );
     expect(entries.first.seqNo, '1', reason: 'the saved order is not changed');
   });
+
+  for (final whitespace in [
+    '\u00A0', '\u202F', '\u2003', '\u3000', '\u0085', '\t', '\r\n'
+  ]) {
+    test('sorts normalized posting dates with whitespace ${whitespace.codeUnits}',
+        () {
+      final entries = [
+        entry('0', 'Unknown', ''),
+        entry('1', 'Midnight', '2026/10/02'),
+        entry('2', 'Earlier', '2026/10/02 09:29'),
+        entry('3', 'Unicode space', '2026/10/02${whitespace}09:30'),
+        entry('4', 'Full-width', '２０２６／１０／０２$whitespace０９：３０：１５'),
+        entry('5', 'Later', '2026/10/02 09:31'),
+        entry('6', 'Bad date', '２０２６／９９／０１'),
+      ];
+      expect(
+        queryStarredMessages(entries, '', GakujoStarredMessageSort.postedOldest)
+            .map((e) => e.seqNo),
+        ['1', '2', '3', '4', '5', '0', '6'],
+      );
+      expect(
+        queryStarredMessages(entries, '', GakujoStarredMessageSort.postedNewest)
+            .map((e) => e.seqNo),
+        ['5', '4', '3', '2', '1', '0', '6'],
+      );
+    });
+  }
 }

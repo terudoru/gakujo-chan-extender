@@ -203,7 +203,7 @@ void main() {
   });
 
   for (final scenario in ['rememberedUnread', 'rememberedGenre']) {
-    test('$scenario title click resolves attachment-free detail and reload',
+    test('$scenario binds attachment-free identity only to the opened document',
         () async {
       final result = await _evaluate(
           'test/support/gakujo_message_star_script_star_dom_harness.cts',
@@ -223,15 +223,17 @@ void main() {
       expect(result['navigatedButtonText'], '');
       expect(result['navigatedPressed'], 'true');
       expect(result['navigatedStyleCount'], 1);
-      expect(result['reloadedButtonText'], '');
-      expect(result['reloadedPressed'], 'true');
-      expect(result['reloadedStyleCount'], 1);
+      expect(result['rememberedAfterNavigation'], isNull);
+      expect(result['repeatedDetailSeqNo'], '507762');
+      expect(result['reloadedButtonText'], isNull);
+      expect(result['reloadedPressed'], isNull);
+      expect(result['reloadedStyleCount'], 0);
       expect(result['oldDetailStyleCount'], 0);
-      expect(result['rememberedAfterReload'], result['remembered']);
+      expect(result['rememberedAfterReload'], isNull);
       final details = (result['messages'] as List)
           .where((message) => message['action'] == 'detail')
           .toList();
-      expect(details.length, 2);
+      expect(details.length, 1);
       for (final detail in details) {
         expect(detail['keijitype'], '1');
         expect(detail['genrecd'], '40');
@@ -241,6 +243,29 @@ void main() {
       }
     });
   }
+
+  test('Back preserves document identity after opening a same-title message',
+      () async {
+    final result = await _evaluate(
+      'test/support/gakujo_message_star_script_star_dom_harness.cts',
+      [GakujoMessageStarScript.build(starredIds: ['1|40|507762', '1|40|507763'])],
+      'rememberedSameTitleBack',
+    );
+    expect(result['rememberedAfterNavigation'], isNull);
+    expect(result['repeatedDetailSeqNo'], '507762');
+    final messages = result['messages'] as List;
+    final details = messages.where((message) => message['action'] == 'detail');
+    expect(details.map((message) => message['seqNo']),
+        ['507762', '507763', '507762']);
+    expect(details.map((message) => message['title']),
+        everyElement('休講のお知らせ'));
+    expect(details.map((message) => message['body']),
+        ['本文の一行目\n二行目', 'Bの本文', 'Aの更新された本文']);
+    expect(messages.last['action'], 'toggle');
+    expect(messages.last['seqNo'], '507762');
+    expect(result['rememberedAfterReload'], isNull);
+    expect(result['reloadedButtonText'], isNull);
+  });
 
   for (final scenario in ['rememberedMismatch', 'rememberedStorageDenied']) {
     test('$scenario does not resolve attachment-free detail', () async {

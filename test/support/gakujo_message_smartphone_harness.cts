@@ -195,7 +195,8 @@ const context: any = {document: outer, frames: outer.frame && scenario !== 'same
   location: {origin: new URL(base).origin}, window: null,
   top: {get sessionStorage() {
     if (scenario === 'storageDenied') throw new Error('storage denied');
-    return {setItem: (key: any, value: any) => storage.set(key, value), getItem: (key: any) => storage.get(key) || null};
+    return {setItem: (key: any, value: any) => storage.set(key, value), getItem: (key: any) => storage.get(key) || null,
+      removeItem: (key: any) => storage.delete(key)};
   }},
   GakujoMessageStars: {postMessage: (value: any) => messages.push(JSON.parse(value))},
   setInterval: (callback: any) => { intervals.set(++timerId, callback); return timerId; },
