@@ -28,6 +28,13 @@ struct _MyApplication {
   guint notification_action_subscription;
   guint notification_closed_subscription;
   gboolean notifications_shutdown;
+  GDBusConnection* appearance_connection;
+  GCancellable* appearance_cancellable;
+  guint appearance_subscription;
+  gboolean appearance_shutdown;
+  gboolean appearance_setting_changed;
+  gboolean appearance_original_dark_theme;
+  gboolean appearance_original_dark_theme_saved;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -42,6 +49,139 @@ static const GApplicationFlags kApplicationFlags = G_APPLICATION_FLAGS_NONE;
 
 static const char* kNotificationBusName = "org.freedesktop.Notifications";
 static const char* kNotificationObjectPath = "/org/freedesktop/Notifications";
+
+static const char* kAppearanceBusName = "org.freedesktop.portal.Desktop";
+static const char* kAppearanceObjectPath = "/org/freedesktop/portal/desktop";
+static const char* kAppearanceInterface = "org.freedesktop.portal.Settings";
+static const char* kAppearanceNamespace = "org.freedesktop.appearance";
+
+static void apply_color_scheme(MyApplication* self, GVariant* value) {
+  if (self->appearance_shutdown ||
+      !g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+    return;
+  }
+  GtkSettings* settings = gtk_settings_get_default();
+  if (settings == nullptr) {
+    return;
+  }
+  if (g_variant_get_uint32(value) == 1) {
+    if (!self->appearance_original_dark_theme_saved) {
+      g_object_get(settings, "gtk-application-prefer-dark-theme",
+                   &self->appearance_original_dark_theme, nullptr);
+      self->appearance_original_dark_theme_saved = TRUE;
+    }
+    g_object_set(settings, "gtk-application-prefer-dark-theme", TRUE, nullptr);
+  } else if (self->appearance_original_dark_theme_saved) {
+    g_object_set(settings, "gtk-application-prefer-dark-theme",
+                 self->appearance_original_dark_theme, nullptr);
+  }
+}
+
+static void appearance_signal_cb(GDBusConnection* connection,
+                                  const gchar* sender_name,
+                                  const gchar* object_path,
+                                  const gchar* interface_name,
+                                  const gchar* signal_name,
+                                  GVariant* parameters,
+                                  gpointer user_data) {
+  MyApplication* self = MY_APPLICATION(user_data);
+  if (self->appearance_shutdown ||
+      !g_variant_is_of_type(parameters, G_VARIANT_TYPE("(ssv)"))) {
+    return;
+  }
+  const gchar* namespace_name;
+  const gchar* key;
+  g_autoptr(GVariant) value = nullptr;
+  g_variant_get(parameters, "(&s&sv)", &namespace_name, &key, &value);
+  if (g_strcmp0(namespace_name, kAppearanceNamespace) != 0 ||
+      g_strcmp0(key, "color-scheme") != 0 ||
+      !g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+    return;
+  }
+  // A live change takes precedence over an outstanding initial read.
+  self->appearance_setting_changed = TRUE;
+  apply_color_scheme(self, value);
+}
+
+static void appearance_read_cb(GObject* object,
+                                GAsyncResult* result,
+                                gpointer user_data) {
+  g_autoptr(MyApplication) self = MY_APPLICATION(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
+  if (reply == nullptr || self->appearance_shutdown ||
+      self->appearance_setting_changed) {
+    return;
+  }
+  // The legacy Read method wraps its value in an extra variant.
+  g_autoptr(GVariant) boxed = nullptr;
+  g_variant_get(reply, "(v)", &boxed);
+  if (g_variant_is_of_type(boxed, G_VARIANT_TYPE_VARIANT)) {
+    g_autoptr(GVariant) value = g_variant_get_variant(boxed);
+    apply_color_scheme(self, value);
+  }
+}
+
+static void appearance_read_one_cb(GObject* object,
+                                    GAsyncResult* result,
+                                    gpointer user_data) {
+  g_autoptr(MyApplication) self = MY_APPLICATION(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
+  if (self->appearance_shutdown || self->appearance_setting_changed) {
+    return;
+  }
+  if (reply != nullptr) {
+    g_autoptr(GVariant) value = nullptr;
+    g_variant_get(reply, "(v)", &value);
+    apply_color_scheme(self, value);
+  } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
+    g_dbus_connection_call(
+        self->appearance_connection, kAppearanceBusName, kAppearanceObjectPath,
+        kAppearanceInterface, "Read",
+        g_variant_new("(ss)", kAppearanceNamespace, "color-scheme"),
+        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 2000,
+        self->appearance_cancellable, appearance_read_cb, g_object_ref(self));
+  }
+}
+
+static void appearance_bus_cb(GObject* object,
+                               GAsyncResult* result,
+                               gpointer user_data) {
+  g_autoptr(MyApplication) self = MY_APPLICATION(user_data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GDBusConnection) connection = g_bus_get_finish(result, &error);
+  if (connection == nullptr || self->appearance_shutdown) {
+    return;
+  }
+  self->appearance_connection = g_steal_pointer(&connection);
+  self->appearance_subscription = g_dbus_connection_signal_subscribe(
+      self->appearance_connection, kAppearanceBusName, kAppearanceInterface,
+      "SettingChanged", kAppearanceObjectPath, kAppearanceNamespace,
+      G_DBUS_SIGNAL_FLAGS_NONE, appearance_signal_cb, self, nullptr);
+  g_dbus_connection_call(
+      self->appearance_connection, kAppearanceBusName, kAppearanceObjectPath,
+      kAppearanceInterface, "ReadOne",
+      g_variant_new("(ss)", kAppearanceNamespace, "color-scheme"),
+      G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 2000,
+      self->appearance_cancellable, appearance_read_one_cb, g_object_ref(self));
+}
+
+static void shutdown_appearance(MyApplication* self) {
+  self->appearance_shutdown = TRUE;
+  if (self->appearance_cancellable != nullptr) {
+    g_cancellable_cancel(self->appearance_cancellable);
+    g_clear_object(&self->appearance_cancellable);
+  }
+  if (self->appearance_connection != nullptr) {
+    g_dbus_connection_signal_unsubscribe(self->appearance_connection,
+                                         self->appearance_subscription);
+    self->appearance_subscription = 0;
+    g_clear_object(&self->appearance_connection);
+  }
+}
 
 struct NotificationRequest {
   MyApplication* application;
@@ -558,6 +698,11 @@ static void my_application_activate(GApplication* application) {
     gtk_window_present(self->window);
     return;
   }
+  if (self->appearance_cancellable == nullptr && !self->appearance_shutdown) {
+    self->appearance_cancellable = g_cancellable_new();
+    g_bus_get(G_BUS_TYPE_SESSION, self->appearance_cancellable,
+              appearance_bus_cb, g_object_ref(self));
+  }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   if (gtk_icon_theme_has_icon(gtk_icon_theme_get_default(), APPLICATION_ID)) {
@@ -690,6 +835,7 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
+  shutdown_appearance(MY_APPLICATION(application));
   shutdown_notifications(MY_APPLICATION(application));
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
@@ -698,6 +844,7 @@ static void my_application_shutdown(GApplication* application) {
 // Implements GObject::dispose.
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
+  shutdown_appearance(self);
   shutdown_notifications(self);
   if (self->pending_window_calls != nullptr) {
     complete_window_calls(self, FALSE);
