@@ -1105,6 +1105,28 @@ void main() {
     expect(guidance, contains('再試行'));
   });
 
+  test('Linux locked keyring guidance asks to unlock, not to reset', () {
+    final guidance = secureStorageRecoveryGuidance(
+      PlatformException(code: 'KeyringLocked', message: 'KeyringLocked'),
+      platform: TargetPlatform.linux,
+    );
+
+    expect(guidance, contains('ロックを解除'));
+    expect(guidance, contains('再試行'));
+    expect(guidance, isNot(contains('保存データをリセット')));
+  });
+
+  test('Linux secret service guidance names the keyring services', () {
+    final guidance = secureStorageRecoveryGuidance(
+      PlatformException(code: 'Libsecret error', message: 'no provider'),
+      platform: TargetPlatform.linux,
+    );
+
+    expect(guidance, contains('GNOME Keyring'));
+    expect(guidance, contains('再試行'));
+    expect(guidance, contains('保存データをリセット'));
+  });
+
   test('macOS keychain timeout guidance asks to answer the dialog first', () {
     final guidance = secureStorageRecoveryGuidance(
       TimeoutException('Future not completed'),
