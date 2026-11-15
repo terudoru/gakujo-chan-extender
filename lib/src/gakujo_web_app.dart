@@ -564,6 +564,20 @@ String secureStorageRecoveryGuidance(
         '再試行してください。それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
         'その場合はログイン情報と2FA設定の再入力が必要です。';
   }
+  if (platform == TargetPlatform.linux &&
+      error is PlatformException &&
+      error.code == 'KeyringLocked') {
+    // The data is intact; resetting would only throw it away.
+    return 'キーリング（GNOME Keyring や KWallet など）がロックされています。\n\n'
+        'ロックを解除してから「再試行」を押してください。'
+        '解除するまでは「このまま使う」で、保存済みのログイン情報なしで使えます。';
+  }
+  if (platform == TargetPlatform.linux) {
+    return 'ログイン情報を安全に保管するサービス（GNOME Keyring や KWallet など）を使えない可能性があります。\n\n'
+        'サービスが動いていることを確かめてから「再試行」を押してください。'
+        'それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
+        'その場合はログイン情報と2FA設定の再入力が必要です。';
+  }
   return '一時的な失敗なら「再試行」で読み込み直せます。\n\n'
       'それでも読み込めないときは「保存データをリセット」で保存領域を作り直せます。'
       'その場合はログイン情報と2FA設定の再入力が必要です。';
