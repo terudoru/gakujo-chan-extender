@@ -71,6 +71,25 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  for (final debugAllowed in [true, false]) {
+    test('Linux inspector follows debugAllowed=$debugAllowed', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      await const WebViewFlutterGakujoWebViewService().configureController(
+        controller,
+        debugAllowed: debugAllowed,
+      );
+      final inspectorCalls = calls
+          .where((call) => call.method == 'setDeveloperExtrasEnabled')
+          .toList();
+      expect(inspectorCalls, hasLength(1));
+      expect(inspectorCalls.single.arguments, {'enabled': debugAllowed});
+    });
+  }
+
   test('Linux plugin dispatches pinch phases, scales and positions', () async {
     final pinches = <(String, double, Offset)>[];
     native.setOnPinchZoom(
