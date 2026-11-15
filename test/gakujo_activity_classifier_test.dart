@@ -2,6 +2,81 @@ import 'package:morebettergakujo_flutter/src/gakujo_activity_classifier.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final (tabId, category) in [
+    ('kj', '連絡通知'),
+    ('en', 'レポート・小テスト'),
+    ('sch', 'スケジュール'),
+    ('si', '成績'),
+  ]) {
+    test('$tabId tab overrides title and content keywords', () {
+      for (final query in ['tabId=$tabId', 'TABID=${tabId.toUpperCase()}']) {
+        for (final (title, text) in [
+          ('CampusSquare for WEB [CampusSquare]', ''),
+          (
+            'CampusSquare for WEB [CampusSquare]',
+            '[小テスト]に関する連絡です。',
+          ),
+          (
+            '週間スケジュール 成績確認 レポート 掲示 [CampusSquare]',
+            '単位修得状況照会 レポート提出 掲示一覧',
+          ),
+        ]) {
+          expect(
+            GakujoActivityClassifier.categoryFor(
+              url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+                  'campusportal.do?page=main&$query&lang=ja#top',
+              title: title,
+              text: text,
+            ),
+            category,
+            reason: '$query: $title',
+          );
+        }
+      }
+    });
+  }
+
+  test('ignores tab id substrings and fragments', () {
+    for (final suffix in [
+      '?tabId=kj-extra',
+      '?tabId=xkj',
+      '?tabId=en-extra',
+      '?tabId=xen',
+      '?tabId=sch-extra',
+      '?tabId=xsch',
+      '?tabId=si-extra',
+      '?tabId=xsi',
+      '?otherTabId=kj',
+      '?value=tabId%3Dkj',
+      '#?tabId=kj',
+      '#?tabId=sch',
+      '#?tabId=si',
+    ]) {
+      expect(
+        GakujoActivityClassifier.categoryFor(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+              'campusportal.do$suffix',
+          title: 'CampusSquare for WEB [CampusSquare]',
+          text: '',
+        ),
+        'Gakujo',
+        reason: suffix,
+      );
+    }
+  });
+
+  test('unknown tabs retain content heuristics', () {
+    expect(
+      GakujoActivityClassifier.categoryFor(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
+            'campusportal.do?page=main&tabId=unknown',
+        title: 'CampusSquare for WEB [CampusSquare]',
+        text: '[小テスト]のお知らせ',
+      ),
+      'レポート・小テスト',
+    );
+  });
+
   for (final (url, title) in [
     (
       'https://gakujo.iess.niigata-u.ac.jp/campusweb/'
