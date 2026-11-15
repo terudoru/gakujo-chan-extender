@@ -1203,7 +1203,8 @@ class MainActivity : FlutterActivity() {
                 GakujoDownloadStreams.copy(
                     openInput = { staged.inputStream() },
                     openOutput = {
-                        contentResolver.openOutputStream(destination)
+                        // "wt" truncates a picked existing document; plain "w" may not.
+                        contentResolver.openOutputStream(destination, "wt")
                             ?: throw IllegalStateException("ファイルを書き込めませんでした")
                     },
                     cleanupFailedDestination = {

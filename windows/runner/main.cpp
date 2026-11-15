@@ -107,7 +107,10 @@ bool ActivateExistingInstance(const std::string& url) {
   DWORD process_id = 0;
   GetWindowThreadProcessId(window, &process_id);
   AllowSetForegroundWindow(process_id);
-  ShowWindowAsync(window, SW_RESTORE);
+  // SW_RESTORE would also un-maximize a maximized window; only undo minimize.
+  if (IsIconic(window)) {
+    ShowWindowAsync(window, SW_RESTORE);
+  }
   SetForegroundWindow(window);
   if (url.empty()) {
     return true;
