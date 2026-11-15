@@ -690,6 +690,15 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  set onPinchZoom(
+    void Function(String phase, double scale, Offset position)? handler,
+  ) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnPinchZoom(handler);
+    }
+  }
+
   Future<void> findText(String text, {bool forward = true}) async {
     final platform = _inner.platform;
     if (platform is LinuxWebViewController) {

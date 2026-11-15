@@ -167,6 +167,15 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onWheelScroll = handler;
   }
 
+  void Function(String phase, double scale, Offset position)? _onPinchZoom;
+
+  /// Touchpad pinch phases, scale relative to the start, and widget position.
+  void setOnPinchZoom(
+    void Function(String phase, double scale, Offset position)? handler,
+  ) {
+    _onPinchZoom = handler;
+  }
+
   // More Better Gakujo patch: native find results and shortcuts for the app bar.
   void Function()? _onFindRequest;
   void Function(bool forward)? _onFindAgain;
@@ -805,6 +814,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onHistoryNavigationRequest = null;
     _onWheelZoom = null;
     _onWheelScroll = null;
+    _onPinchZoom = null;
     _onFindRequest = null;
     _onFindAgain = null;
     _onFindResult = null;

@@ -4,6 +4,7 @@
 #include "webview/webview_environment.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_pinch_zoom.h"
 #include "webview/webview_wheel_scroll.h"
 
 #include <libsoup/soup.h>
@@ -462,6 +463,16 @@ static void counted_matches_cb(WebKitFindController *controller,
                                guint match_count, gpointer user_data) {
   send_find_result(static_cast<LinuxWebView *>(user_data), match_count,
                    match_count > 0);
+}
+
+static void send_pinch_zoom(const PinchZoomInput &input, gpointer user_data) {
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  FlValue *event = make_event("pinchZoom");
+  fl_value_set_string_take(event, "phase", fl_value_new_string(input.phase));
+  fl_value_set_string_take(event, "scale", fl_value_new_float(input.scale));
+  fl_value_set_string_take(event, "x", fl_value_new_float(input.x));
+  fl_value_set_string_take(event, "y", fl_value_new_float(input.y));
+  send_event(webview, event);
 }
 
 static gboolean zoom_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event,
@@ -1036,6 +1047,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
                    G_CALLBACK(script_dialog_cb), webview);
   g_signal_connect(webview->web_view, "load-failed-with-tls-errors",
                    G_CALLBACK(load_failed_with_tls_errors_cb), webview);
+  g_signal_connect(webview->web_view, "event",
+                   G_CALLBACK(pinch_zoom_event_cb<send_pinch_zoom>), webview);
   g_signal_connect(webview->web_view, "scroll-event",
                    G_CALLBACK(zoom_scroll_event_cb), webview);
   g_signal_connect(webview->web_view, "button-press-event",

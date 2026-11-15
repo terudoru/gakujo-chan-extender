@@ -39,6 +39,20 @@ target_link_libraries(wheel_scroll_test PRIVATE PkgConfig::WEBKIT)
 target_compile_options(wheel_scroll_test PRIVATE -Wall -Wextra -Werror
   -Wno-unused-parameter)
 add_test(NAME wheel_scroll COMMAND wheel_scroll_test)
+add_executable(pinch_zoom_test pinch_zoom_test.cc)
+
+target_link_libraries(pinch_zoom_test PRIVATE PkgConfig::WEBKIT)
+
+target_compile_options(pinch_zoom_test PRIVATE -Wall -Wextra -Werror
+  -Wno-unused-parameter)
+add_test(NAME pinch_zoom COMMAND pinch_zoom_test)
+add_executable(pinch_zoom_dispatch_test pinch_zoom_dispatch_test.cc)
+
+target_link_libraries(pinch_zoom_dispatch_test PRIVATE PkgConfig::WEBKIT)
+
+target_compile_options(pinch_zoom_dispatch_test PRIVATE -Wall -Wextra -Werror
+  -Wno-unused-parameter)
+add_test(NAME pinch_zoom_dispatch COMMAND pinch_zoom_dispatch_test)
 add_executable(environment_test
   environment_test.cc
   ../src/webview/webview_environment.cc
@@ -50,7 +64,8 @@ target_compile_options(environment_test PRIVATE -Wall -Wextra -Werror
 add_test(NAME environment COMMAND environment_test)
 # Download policy tests do not use the desktop accessibility service.
 set_tests_properties(download_policy message_bridge scroll_hook
-  history_navigation wheel_scroll environment PROPERTIES
+  history_navigation wheel_scroll pinch_zoom pinch_zoom_dispatch environment
+  PROPERTIES
   TIMEOUT 60
   ENVIRONMENT "NO_AT_BRIDGE=1"
 )

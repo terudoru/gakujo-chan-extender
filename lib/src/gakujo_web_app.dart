@@ -1700,6 +1700,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         controller.onWheelZoom = (dyNotches, position) {
           _handleDesktopWheelZoom(dyNotches * kLinuxWheelNotchPixels, position);
         };
+        controller.onPinchZoom = (phase, scale, position) {
+          switch (phase) {
+            case 'begin':
+              _startDesktopPanZoom(position);
+              break;
+            case 'update':
+              _updateDesktopPinchZoom(scale, position);
+              break;
+            case 'end':
+              _endDesktopPanZoom();
+              break;
+          }
+        };
         controller.onWheelScroll = (dxNotches, dyNotches) {
           _handleDesktopHistorySwipeDelta(
             Offset(dxNotches, dyNotches) * kLinuxWheelNotchPixels,
@@ -1765,6 +1778,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final controller = _controller;
     if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onWheelZoom = null;
+      controller.onPinchZoom = null;
       controller.onWheelScroll = null;
       controller.onFindRequest = null;
       controller.onFindAgain = null;
@@ -2468,16 +2482,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
+    _startDesktopPanZoom(event.localPosition);
+  }
+
+  void _startDesktopPanZoom(Offset position) {
     _desktopPanZoomStartZoom = _desktopZoom;
     _desktopPanZoomGesture.reset();
-    _desktopZoomOrigin = event.localPosition;
+    _desktopZoomOrigin = position;
     _resetDesktopHistorySwipe();
   }
 
   void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
     _desktopZoomOrigin = event.localPosition;
     if (_desktopPanZoomGesture.update(event.panDelta, event.scale)) {
-      unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * event.scale));
+      _updateDesktopPinchZoom(event.scale, event.localPosition);
       return;
     }
 
@@ -2487,7 +2505,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
+  void _updateDesktopPinchZoom(double scale, Offset position) {
+    _desktopZoomOrigin = position;
+    unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * scale));
+  }
+
   void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
+    _endDesktopPanZoom();
+  }
+
+  void _endDesktopPanZoom() {
     _desktopPanZoomGesture.reset();
     _scheduleDesktopHistorySwipeReset();
   }
