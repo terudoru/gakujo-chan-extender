@@ -60,6 +60,7 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
   }
 
   Future<void> _create() async {
+    if (_creating) return;
     setState(() {
       _creating = true;
       _createFailed = false;

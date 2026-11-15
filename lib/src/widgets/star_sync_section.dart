@@ -143,6 +143,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     _busyValue = value;
   }
   bool _googleSigningIn = false;
+  bool _choosingGoogleSetup = false;
   String? _error;
   List<StarSyncBackupInfo>? _backups;
 
@@ -236,32 +237,23 @@ class _StarSyncSectionState extends State<StarSyncSection> {
   }
 
   Future<void> _startGoogle() async {
-    // Ask before showing progress, or the bar keeps animating behind it.
-    String expectedAccount;
-    int expectedGeneration;
-    try {
-      expectedAccount = widget.onRequireAccount();
-      expectedGeneration = widget.onAccountGeneration();
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-      return;
-    }
-    Map<String, String>? choice;
-    try {
-      choice = await _chooseLocalStars();
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = _errorText(error));
-      return;
-    }
-    if (choice == null || !mounted) return;
-    final clear = choice;
+    if (_busy) return;
     setState(() {
       _busy = true;
-      _googleSigningIn = true;
+      _choosingGoogleSetup = true;
       _error = null;
     });
     var needsCleanup = false;
     try {
+      final expectedAccount = widget.onRequireAccount();
+      final expectedGeneration = widget.onAccountGeneration();
+      // Ask before showing progress, or the bar keeps animating behind it.
+      final clear = await _chooseLocalStars();
+      if (clear == null || !mounted) return;
+      setState(() {
+        _choosingGoogleSetup = false;
+        _googleSigningIn = true;
+      });
       final result = await widget.onGoogleSignIn(
         clearLocalStars: clear,
         expectedAccount: expectedAccount,
@@ -271,8 +263,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       needsCleanup = result == StarSyncDriveSetup.needsLegacyReset;
       if (!mounted) return;
       if (result == StarSyncDriveSetup.needsLegacyReset) {
-        // Ask before showing progress, or the bar keeps animating behind it.
-        setState(() => _busy = false);
+        setState(() => _choosingGoogleSetup = true);
         final confirmed = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -285,8 +276,8 @@ class _StarSyncSectionState extends State<StarSyncSection> {
             ],
           ),
         );
-        if (confirmed != true) return;
-        if (mounted) setState(() => _busy = true);
+        if (confirmed != true || !mounted) return;
+        setState(() => _choosingGoogleSetup = false);
         await widget.onSetUpWithDrive(
           resetExisting: true, clearLocalStars: clear,
           expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
@@ -311,7 +302,11 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           if (mounted) setState(() => _error = _errorText(error));
         }
       }
-      if (mounted) setState(() { _busy = false; _googleSigningIn = false; });
+      if (mounted) setState(() {
+        _busy = false;
+        _googleSigningIn = false;
+        _choosingGoogleSetup = false;
+      });
     }
   }
 
@@ -339,6 +334,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     await _run(() async {
       await widget.onResetWithDrive();
       if (mounted) {
+        setState(() => _backups = null);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('他の端末も自動的に新しい同期データに追従します')));
       }
@@ -400,7 +396,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               '同期した内容は、この端末を使う他の人からも見えます。共用の端末では同期を設定しないでください。',
             ),
             if (_error != null) Text(_error!),
-            if (_busy) _googleProgress(),
+            if (_busy && !_choosingGoogleSetup) _googleProgress(),
             if (status.lastError != null) Text(status.lastError!),
           ],
         );
@@ -607,7 +603,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
               ),
           ],
           if (_error != null) Text(_error!),
-          if (_busy) _googleProgress(),
+          if (_busy && !_choosingGoogleSetup) _googleProgress(),
           Wrap(
             spacing: 8,
             runSpacing: 8,

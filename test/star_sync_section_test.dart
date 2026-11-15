@@ -21,6 +21,7 @@ void main() {
     Future<void> Function()? onBackup,
     Future<List<StarSyncBackupInfo>> Function()? onListBackups,
     Future<void> Function(String)? onRestoreBackup,
+    Future<void> Function()? onResetWithDrive,
     Future<StarSyncDriveSetup> Function({
       required Map<String, String> clearLocalStars,
       required String expectedAccount,
@@ -83,7 +84,7 @@ void main() {
                 required expectedAccount,
                 required expectedGeneration,
               }) async => StarSyncDriveSetup.created,
-          onResetWithDrive: () async {},
+          onResetWithDrive: onResetWithDrive ?? () async {},
           onSyncNow: () async {},
           onResumeKeepingLocal: onResumeKeepingLocal ?? () async {},
           onResumeDiscardingLocal: onResumeDiscardingLocal ?? () async {},
@@ -136,6 +137,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(selected, 'b');
   });
+
+  for (final resetFails in [false, true]) {
+    testWidgets('listed backups after reset (fails: $resetFails)', (tester) async {
+      final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+      addTearDown(status.dispose);
+      var resets = 0;
+      await tester.pumpWidget(
+        section(
+          status,
+          onBackup: () async {},
+          onListBackups: () async => [
+            const StarSyncBackupInfo(deviceId: 'a', isThisDevice: true),
+            const StarSyncBackupInfo(deviceId: 'b', isThisDevice: false),
+          ],
+          onRestoreBackup: (_) async {},
+          onResetWithDrive: () async {
+            resets++;
+            if (resetFails) throw StateError('reset failed');
+          },
+        ),
+      );
+      await tester.ensureVisible(find.text('バックアップから復元'));
+      await tester.tap(find.text('バックアップから復元'));
+      await tester.pumpAndSettle();
+      expect(find.text('この端末'), findsOneWidget);
+      expect(find.text('他の端末'), findsOneWidget);
+      await tester.ensureVisible(find.text('同期データをリセット'));
+      await tester.tap(find.text('同期データをリセット'));
+      await tester.pumpAndSettle();
+      expect(resets, 0);
+      await tester.tap(find.text('リセット'));
+      await tester.pumpAndSettle();
+      expect(resets, 1);
+      expect(find.text('この端末'), resetFails ? findsOneWidget : findsNothing);
+      expect(find.text('他の端末'), resetFails ? findsOneWidget : findsNothing);
+    });
+  }
 
   testWidgets('Drive download switch renders value and invokes callback', (tester) async {
     bool? requested;
@@ -277,6 +315,80 @@ void main() {
     expect(find.text('Google ドライブで同期'), findsOneWidget);
   });
 
+  testWidgets('double setup tap while counts load starts setup once', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    final counts = Completer<int>();
+    final setup = Completer<StarSyncDriveSetup>();
+    final busy = <bool>[];
+    var countLoads = 0;
+    var setups = 0;
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onBusyChanged: busy.add,
+        onLocalStarCount: () {
+          countLoads++;
+          return counts.future;
+        },
+        onGoogleSignIn: ({
+          required clearLocalStars,
+          required expectedAccount,
+          required expectedGeneration,
+        }) {
+          setups++;
+          return setup.future;
+        },
+      ),
+    );
+    final button = find.widgetWithText(FilledButton, 'Google ドライブで同期');
+    await tester.tap(button);
+    await tester.tap(button);
+    expect(countLoads, 1);
+    expect(busy, [true]);
+    await tester.pump();
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    counts.complete(3);
+    await tester.pumpAndSettle();
+    expect(find.text('この端末のスター（3件）'), findsOneWidget);
+    expect(busy, [true]);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    await tester.tap(find.text('含めて同期する'));
+    await tester.pump();
+    expect(setups, 1);
+    expect(busy, [true]);
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    setup.complete(StarSyncDriveSetup.created);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(setups, 1);
+    expect(busy, [true, false]);
+    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+  });
+
+  testWidgets('Google setup releases busy when loading counts fails', (tester) async {
+    final status = ValueNotifier(const StarSyncStatusSnapshot());
+    addTearDown(status.dispose);
+    final busy = <bool>[];
+    await tester.pumpWidget(
+      section(
+        status,
+        googleAvailable: true,
+        onBusyChanged: busy.add,
+        onLocalCollectionCounts: () async => throw StateError('counts failed'),
+      ),
+    );
+    await tester.tap(find.text('Google ドライブで同期'));
+    await tester.pumpAndSettle();
+    expect(busy, [true, false]);
+    expect(find.text('接続できませんでした'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNotNull);
+  });
+
   testWidgets('Google setup shows the account requirement', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
@@ -402,10 +514,12 @@ void main() {
       addTearDown(status.dispose);
       Map<String, String>? selected;
       var captures = 0;
+      final busy = <bool>[];
       await tester.pumpWidget(
         section(
           status,
           googleAvailable: true,
+          onBusyChanged: busy.add,
           onLocalStarCount: () async => 3,
           onSnapshotLocalStars: () async {
             captures++;
@@ -428,8 +542,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('この端末のスター（3件）'), findsOneWidget);
       expect(captures, 0);
+      expect(busy, [true]);
       await tester.tap(find.text(choice));
       await tester.pumpAndSettle();
+      expect(busy, [true, false]);
       expect(captures, choice == '空にして始める' ? 1 : 0);
       expect(
         selected,
@@ -448,11 +564,14 @@ void main() {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     var resets = 0;
+    final pending = Completer<StarSyncDriveSetup>();
+    final busy = <bool>[];
     Map<String, String>? cleared;
     await tester.pumpWidget(
       section(
         status,
         googleAvailable: true,
+        onBusyChanged: busy.add,
         onLocalStarCount: () async => 1,
         onGoogleSignIn: ({
           required clearLocalStars,
@@ -471,7 +590,7 @@ void main() {
               expect(resetExisting, isTrue);
               cleared = clearLocalStars;
               resets++;
-              return StarSyncDriveSetup.created;
+              return pending.future;
             },
       ),
     );
@@ -481,10 +600,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('以前の同期データが見つかりました'), findsOneWidget);
     expect(resets, 0);
+    expect(busy, [true]);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.tap(find.text('作り直す'));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(resets, 1);
     expect(cleared, {'id': 'time'});
+    expect(busy, [true]);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    pending.complete(StarSyncDriveSetup.created);
+    await tester.pumpAndSettle();
+    expect(busy, [true, false]);
   });
 
   testWidgets('desktop initial sign-in can be cancelled', (tester) async {
