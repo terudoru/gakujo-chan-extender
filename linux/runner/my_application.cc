@@ -15,6 +15,9 @@ struct _MyApplication {
   gboolean window_shown;
   gint normal_window_width;
   gint normal_window_height;
+  gint normal_window_x;
+  gint normal_window_y;
+  gboolean normal_window_position_valid;
   GdkWindowState window_state;
   gboolean window_state_saved;
   FlMethodChannel* notification_channel;
@@ -381,6 +384,7 @@ static void restore_window_state(GtkWindow* window, MyApplication* self) {
   gtk_window_get_default_size(window, &width, &height);
   self->window_state = static_cast<GdkWindowState>(0);
   self->window_state_saved = FALSE;
+  self->normal_window_position_valid = FALSE;
 
   g_autofree gchar* path = g_build_filename(
       g_get_user_config_dir(), APPLICATION_ID, "window-state.ini", nullptr);
@@ -427,6 +431,34 @@ static void restore_window_state(GtkWindow* window, MyApplication* self) {
   self->normal_window_height = height;
   gtk_window_set_geometry_hints(window, nullptr, &hints, GDK_HINT_MIN_SIZE);
   gtk_window_set_default_size(window, width, height);
+#ifdef GDK_WINDOWING_X11
+  if (display != nullptr && GDK_IS_X11_DISPLAY(display)) {
+    g_autoptr(GError) error = nullptr;
+    gint x = g_key_file_get_integer(state, "window", "x", &error);
+    gint y = 0;
+    if (error == nullptr) {
+      y = g_key_file_get_integer(state, "window", "y", &error);
+    }
+    if (error == nullptr) {
+      for (gint i = 0; i < gdk_display_get_n_monitors(display); i++) {
+        GdkRectangle workarea;
+        gdk_monitor_get_workarea(gdk_display_get_monitor(display, i), &workarea);
+        // Use wide arithmetic for coordinates read from the state file.
+        if (workarea.width > 0 && workarea.height > 0 &&
+            static_cast<gint64>(x) + width > workarea.x &&
+            static_cast<gint64>(workarea.x) + workarea.width > x &&
+            static_cast<gint64>(y) + MIN(32, height) > workarea.y &&
+            static_cast<gint64>(workarea.y) + workarea.height > y) {
+          self->normal_window_x = x;
+          self->normal_window_y = y;
+          self->normal_window_position_valid = TRUE;
+          gtk_window_move(window, x, y);
+          break;
+        }
+      }
+    }
+  }
+#endif
   if (self->window_state & GDK_WINDOW_STATE_MAXIMIZED) {
     gtk_window_maximize(window);
   }
@@ -448,6 +480,10 @@ static void save_window_state(MyApplication* self) {
   g_autoptr(GKeyFile) state = g_key_file_new();
   g_key_file_set_integer(state, "window", "width", self->normal_window_width);
   g_key_file_set_integer(state, "window", "height", self->normal_window_height);
+  if (self->normal_window_position_valid) {
+    g_key_file_set_integer(state, "window", "x", self->normal_window_x);
+    g_key_file_set_integer(state, "window", "y", self->normal_window_y);
+  }
   g_key_file_set_boolean(state, "window", "maximized",
                          (self->window_state & GDK_WINDOW_STATE_MAXIMIZED) != 0);
   g_key_file_save_to_file(state, path, nullptr);
@@ -462,6 +498,19 @@ static void window_size_allocate_cb(GtkWidget* window,
     gtk_window_get_size(GTK_WINDOW(window), &self->normal_window_width,
                         &self->normal_window_height);
   }
+}
+
+static gboolean window_configure_cb(GtkWidget* window,
+                                    GdkEventConfigure* event,
+                                    MyApplication* self) {
+  if (!(self->window_state & (GDK_WINDOW_STATE_MAXIMIZED |
+                             GDK_WINDOW_STATE_FULLSCREEN |
+                             GDK_WINDOW_STATE_ICONIFIED))) {
+    gtk_window_get_position(GTK_WINDOW(window), &self->normal_window_x,
+                            &self->normal_window_y);
+    self->normal_window_position_valid = TRUE;
+  }
+  return FALSE;
 }
 
 static gboolean window_state_cb(GtkWidget* window,
@@ -532,6 +581,9 @@ static void my_application_activate(GApplication* application) {
                           static_cast<GConnectFlags>(0));
   g_signal_connect_object(window, "window-state-event",
                           G_CALLBACK(window_state_cb), self,
+                          static_cast<GConnectFlags>(0));
+  g_signal_connect_object(window, "configure-event",
+                          G_CALLBACK(window_configure_cb), self,
                           static_cast<GConnectFlags>(0));
   g_signal_connect_object(window, "delete-event", G_CALLBACK(window_delete_cb),
                           self, static_cast<GConnectFlags>(0));
