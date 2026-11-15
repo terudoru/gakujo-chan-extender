@@ -40,4 +40,44 @@ inline const gchar *history_navigation_direction(const GdkEventKey *event) {
   return nullptr;
 }
 
+enum class BrowserKeyAction {
+  kNone,
+  kReload,
+  kReloadBypassCache,
+  kPrint,
+};
+
+inline BrowserKeyAction browser_key_action(const GdkEventKey *event) {
+  const guint modifiers = event->state &
+      (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK);
+  switch (event->keyval) {
+  case GDK_KEY_F5:
+    if (modifiers == 0) {
+      return BrowserKeyAction::kReload;
+    }
+    if (modifiers == GDK_SHIFT_MASK) {
+      return BrowserKeyAction::kReloadBypassCache;
+    }
+    break;
+  case GDK_KEY_r:
+  case GDK_KEY_R:
+    if (modifiers == GDK_CONTROL_MASK) {
+      return BrowserKeyAction::kReload;
+    }
+    if (modifiers == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+      return BrowserKeyAction::kReloadBypassCache;
+    }
+    break;
+  case GDK_KEY_p:
+  case GDK_KEY_P:
+    if (modifiers == GDK_CONTROL_MASK) {
+      return BrowserKeyAction::kPrint;
+    }
+    break;
+  default:
+    break;
+  }
+  return BrowserKeyAction::kNone;
+}
+
 #endif  // WEBVIEW_ALL_LINUX_WEBVIEW_HISTORY_NAVIGATION_H_
