@@ -61,15 +61,142 @@ void main() {
     messenger.setMockStreamHandler(events, null);
   });
 
-  Future<void> emit(Object? direction) async {
-    eventSink!.success({
-      'type': 'mouseHistoryNavigation',
-      'direction': direction,
-    });
+  Future<void> emitEvent(Map<String, Object?> event) async {
+    eventSink!.success(event);
     for (var turn = 0; turn < 3; turn++) {
       await Future<void>.delayed(Duration.zero);
     }
   }
+
+  Future<void> emit(Object? direction) =>
+      emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
+
+  test(
+    'Linux plugin dispatches find requests, directions and results',
+    () async {
+      var requested = 0;
+      final directions = <bool>[];
+      final results = <(int, bool)>[];
+      native.setOnFindRequest(() => requested++);
+      native.setOnFindAgain(directions.add);
+      native.setOnFindResult((matches, found) => results.add((matches, found)));
+
+      await emitEvent({'type': 'findRequested'});
+      await emitEvent({'type': 'findAgain', 'forward': true});
+      await emitEvent({'type': 'findAgain', 'forward': false});
+      await emitEvent({'type': 'findResult', 'matches': 4, 'found': true});
+      await emitEvent({'type': 'findResult', 'matches': 0, 'found': false});
+      expect(requested, 1);
+      expect(directions, [true, false]);
+      expect(results, [(4, true), (0, false)]);
+      expect(calls, isEmpty);
+
+      native.setOnFindRequest(null);
+      native.setOnFindAgain(null);
+      native.setOnFindResult(null);
+      await emitEvent({'type': 'findRequested'});
+      await emitEvent({'type': 'findAgain', 'forward': true});
+      await emitEvent({'type': 'findResult', 'matches': 2, 'found': true});
+      expect(requested, 1);
+      expect(directions, [true, false]);
+      expect(results, [(4, true), (0, false)]);
+    },
+  );
+
+  test('Linux plugin ignores malformed find event payloads', () async {
+    final directions = <bool>[];
+    final results = <(int, bool)>[];
+    native.setOnFindAgain(directions.add);
+    native.setOnFindResult((matches, found) => results.add((matches, found)));
+    for (final forward in [null, 'true', 1]) {
+      await emitEvent({'type': 'findAgain', 'forward': forward});
+    }
+    await emitEvent({'type': 'findResult', 'matches': '4', 'found': true});
+    await emitEvent({'type': 'findResult', 'matches': 4, 'found': null});
+    await emitEvent({'type': 'findResult'});
+    expect(directions, isEmpty);
+    expect(results, isEmpty);
+    expect(calls, isEmpty);
+  });
+
+  test('Linux plugin sends findText and findFinish to its instance', () async {
+    await native.findText('ページ');
+    await native.findText('ページ', forward: false);
+    await native.findText('');
+    await native.finishFind();
+    expect(calls.map((call) => call.method), [
+      'findText',
+      'findText',
+      'findText',
+      'findFinish',
+    ]);
+    expect(calls.map((call) => call.arguments), [
+      {'text': 'ページ', 'forward': true},
+      {'text': 'ページ', 'forward': false},
+      {'text': '', 'forward': true},
+      {'focusPage': false},
+    ]);
+  });
+
+  test(
+    'app adapter forwards and clears Linux find callbacks and methods',
+    () async {
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      var requested = 0;
+      final directions = <bool>[];
+      final results = <(int, bool)>[];
+      controller.onFindRequest = () => requested++;
+      controller.onFindAgain = directions.add;
+      controller.onFindResult = (matches, found) =>
+          results.add((matches, found));
+      await emitEvent({'type': 'findRequested'});
+      await emitEvent({'type': 'findAgain', 'forward': false});
+      await emitEvent({'type': 'findResult', 'matches': 7, 'found': true});
+      expect(requested, 1);
+      expect(directions, [false]);
+      expect(results, [(7, true)]);
+
+      await controller.findText('term');
+      await controller.findText('term', forward: false);
+      await controller.finishFind();
+      expect(calls.map((call) => call.method), [
+        'findText',
+        'findText',
+        'findFinish',
+      ]);
+      expect(calls.map((call) => call.arguments), [
+        {'text': 'term', 'forward': true},
+        {'text': 'term', 'forward': false},
+        {'focusPage': false},
+      ]);
+
+      controller.onFindRequest = null;
+      controller.onFindAgain = null;
+      controller.onFindResult = null;
+      await emitEvent({'type': 'findRequested'});
+      await emitEvent({'type': 'findAgain', 'forward': true});
+      await emitEvent({'type': 'findResult', 'matches': 0, 'found': false});
+      expect(requested, 1);
+      expect(directions, [false]);
+      expect(results, [(7, true)]);
+    },
+  );
+
+  test('Linux plugin stops dispatching find events after disposal', () async {
+    var dispatched = 0;
+    native.setOnFindRequest(() => dispatched++);
+    native.setOnFindAgain((_) => dispatched++);
+    native.setOnFindResult((_, _) => dispatched++);
+    await native.dispose();
+    calls.clear();
+    await emitEvent({'type': 'findRequested'});
+    await emitEvent({'type': 'findAgain', 'forward': true});
+    await emitEvent({'type': 'findResult', 'matches': 1, 'found': true});
+    expect(dispatched, 0);
+    expect(calls, isEmpty);
+  });
 
   test(
     'Linux plugin forwards both directions without native navigation',

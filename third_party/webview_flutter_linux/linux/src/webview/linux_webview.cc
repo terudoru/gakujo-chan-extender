@@ -393,12 +393,28 @@ static gboolean history_button_press_event_cb(GtkWidget *widget,
 static gboolean history_key_press_event_cb(GtkWidget *widget,
                                            GdkEventKey *event,
                                            gpointer user_data) {
-  if (send_history_navigation(static_cast<LinuxWebView *>(user_data),
-                               history_navigation_direction(event))) {
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  if (send_history_navigation(webview, history_navigation_direction(event))) {
     return TRUE;
   }
   WebKitWebView *web_view = WEBKIT_WEB_VIEW(widget);
   switch (browser_key_action(event)) {
+  case BrowserKeyAction::kFind:
+    // The find strip is a Flutter text field; GTK focus must leave WebKit or
+    // the typed text would go to the page.
+    release_linux_webview_focus(webview);
+    send_event(webview, make_event("findRequested"));
+    return TRUE;
+  case BrowserKeyAction::kFindNext:
+  case BrowserKeyAction::kFindPrevious: {
+    FlValue *find_event = make_event("findAgain");
+    fl_value_set_string_take(
+        find_event, "forward",
+        fl_value_new_bool(browser_key_action(event) ==
+                          BrowserKeyAction::kFindNext));
+    send_event(webview, find_event);
+    return TRUE;
+  }
   case BrowserKeyAction::kReload:
     webkit_web_view_reload(web_view);
     return TRUE;
@@ -417,6 +433,34 @@ static gboolean history_key_press_event_cb(GtkWidget *widget,
     return FALSE;
   }
   return FALSE;
+}
+
+// More Better Gakujo patch: all results belong to this WebView's find session.
+static void send_find_result(LinuxWebView *webview, guint matches,
+                             gboolean found) {
+  if (webview->find_text == nullptr) {
+    return;
+  }
+  FlValue *event = make_event("findResult");
+  fl_value_set_string_take(event, "matches", fl_value_new_int(matches));
+  fl_value_set_string_take(event, "found", fl_value_new_bool(found));
+  send_event(webview, event);
+}
+
+static void found_text_cb(WebKitFindController *controller, guint match_count,
+                          gpointer user_data) {
+  send_find_result(static_cast<LinuxWebView *>(user_data), match_count, TRUE);
+}
+
+static void failed_to_find_text_cb(WebKitFindController *controller,
+                                   gpointer user_data) {
+  send_find_result(static_cast<LinuxWebView *>(user_data), 0, FALSE);
+}
+
+static void counted_matches_cb(WebKitFindController *controller,
+                               guint match_count, gpointer user_data) {
+  send_find_result(static_cast<LinuxWebView *>(user_data), match_count,
+                   match_count > 0);
 }
 
 static gboolean zoom_scroll_event_cb(GtkWidget *widget, GdkEventScroll *event,
@@ -785,6 +829,10 @@ void destroy_linux_webview(gpointer data) {
 
   unregister_message_metadata_handler(webview);
   if (webview->web_view != nullptr) {
+    WebKitFindController *fc =
+        webkit_web_view_get_find_controller(webview->web_view);
+    g_signal_handlers_disconnect_by_data(fc, webview);
+    webkit_find_controller_search_finish(fc);
     delete webview->download_policy;
     webview->download_policy = nullptr;
     webview->visible = FALSE;
@@ -821,6 +869,7 @@ void destroy_linux_webview(gpointer data) {
   g_hash_table_destroy(webview->js_channels);
   g_hash_table_destroy(webview->user_scripts);
   g_ptr_array_unref(webview->user_script_order);
+  g_free(webview->find_text);
   g_free(webview);
 }
 
@@ -933,6 +982,14 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
 
   register_message_metadata_handler(webview);
   rebuild_user_scripts(webview);
+
+  WebKitFindController *fc =
+      webkit_web_view_get_find_controller(webview->web_view);
+  g_signal_connect(fc, "found-text", G_CALLBACK(found_text_cb), webview);
+  g_signal_connect(fc, "failed-to-find-text",
+                   G_CALLBACK(failed_to_find_text_cb), webview);
+  g_signal_connect(fc, "counted-matches", G_CALLBACK(counted_matches_cb),
+                   webview);
 
   g_signal_connect(webview->web_view, "decide-policy",
                    G_CALLBACK(decide_policy_cb), webview);

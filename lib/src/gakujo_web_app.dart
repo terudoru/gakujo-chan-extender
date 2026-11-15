@@ -102,6 +102,7 @@ import 'widgets/app_update_banner.dart';
 import 'widgets/drive_save_folder_dialog.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
+import 'widgets/linux_find_bar.dart';
 import 'widgets/linux_native_toolbar_tooltips.dart';
 import 'widgets/linux_snack_bar_strip.dart';
 import 'widgets/settings_sections.dart';
@@ -1517,6 +1518,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastAllowedPageUrl;
   String _status = '準備中';
   SnackBar? _linuxSnackBar;
+  bool _linuxFindOpen = false;
+  final _linuxFindController = TextEditingController();
+  final _linuxFindFocusNode = FocusNode();
+  int _linuxFindMatches = 0;
+  bool _linuxFindFound = false;
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _previewNavigationState = 'none';
@@ -1690,6 +1696,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       controller.onMouseHistoryNavigation = onMouseHistoryNavigation;
     } else if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onMouseHistoryNavigation = onMouseHistoryNavigation;
+      if (defaultTargetPlatform == TargetPlatform.linux) {
+        controller.onFindRequest = _openLinuxFind;
+        controller.onFindAgain = _findAgainLinux;
+        controller.onFindResult = (matches, found) {
+          if (!mounted || !_linuxFindOpen) return;
+          setState(() {
+            _linuxFindMatches = matches;
+            _linuxFindFound = found;
+          });
+        };
+      }
     }
     _offlineRetry = GakujoOfflineRetry(
       probe: widget._gakujoReachable ?? probeGakujoReachability,
@@ -1736,6 +1753,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _pendingMessageOpenTimer?.cancel();
     _pendingReturnDialogTimer?.cancel();
     unawaited(_saveCurrentPageUrl());
+    final controller = _controller;
+    if (controller is WebViewFlutterGakujoWebViewController) {
+      controller.onFindRequest = null;
+      controller.onFindAgain = null;
+      controller.onFindResult = null;
+    }
+    _linuxFindController.dispose();
+    _linuxFindFocusNode.dispose();
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipe.dispose();
@@ -1959,7 +1984,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _previewNavigationState == 'visible' &&
         MediaQuery.orientationOf(context) == Orientation.landscape &&
         MediaQuery.viewInsetsOf(context).bottom > 0;
-    return PopScope<void>(
+    final page = PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
@@ -2138,6 +2163,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 onOpen: () => unawaited(_openUpdateReleasePage()),
                 onDismiss: () => unawaited(_dismissUpdateNotice()),
               ),
+            if (defaultTargetPlatform == TargetPlatform.linux &&
+                _linuxFindOpen &&
+                !_isSettingsDialogOpen)
+              LinuxNativeToolbarTooltips(
+                child: LinuxFindBar(
+                  controller: _linuxFindController,
+                  focusNode: _linuxFindFocusNode,
+                  matches: _linuxFindMatches,
+                  found: _linuxFindFound,
+                  onFind: _searchLinuxFind,
+                  onClose: () => _closeLinuxFind(focusPage: true),
+                ),
+              ),
             Expanded(
               // Android 15+ draws edge to edge; without this the end of a
               // page (often a submit button) stays under the navigation bar.
@@ -2151,6 +2189,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           ],
         ),
       ),
+    );
+    if (defaultTargetPlatform != TargetPlatform.linux) return page;
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: _handleLinuxFindKeyEvent,
+      child: page,
     );
   }
 
@@ -2283,6 +2327,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    if (_handleLinuxFindKeyEvent(node, event) == KeyEventResult.handled) {
+      return KeyEventResult.handled;
+    }
     if (!HardwareKeyboard.instance.isMetaPressed &&
         !HardwareKeyboard.instance.isControlPressed) {
       return KeyEventResult.ignored;
@@ -2305,6 +2352,67 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handleLinuxFindKeyEvent(FocusNode node, KeyEvent event) {
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        (event is KeyDownEvent || event is KeyRepeatEvent) &&
+        HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isShiftPressed &&
+        !HardwareKeyboard.instance.isAltPressed &&
+        !HardwareKeyboard.instance.isMetaPressed &&
+        event.logicalKey == LogicalKeyboardKey.keyF &&
+        !_isSettingsDialogOpen) {
+      _openLinuxFind();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _openLinuxFind({bool forward = true}) {
+    if (!mounted || _isSettingsDialogOpen) return;
+    final wasOpen = _linuxFindOpen;
+    setState(() => _linuxFindOpen = true);
+    if (!wasOpen && _linuxFindController.text.isNotEmpty) {
+      _searchLinuxFind(_linuxFindController.text, forward: forward);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_linuxFindOpen || _isSettingsDialogOpen) return;
+      _linuxFindFocusNode.requestFocus();
+      _linuxFindController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _linuxFindController.text.length,
+      );
+    });
+  }
+
+  void _searchLinuxFind(String text, {bool forward = true}) {
+    final controller = _controller;
+    if (controller is WebViewFlutterGakujoWebViewController) {
+      unawaited(controller.findText(text, forward: forward));
+    }
+  }
+
+  void _findAgainLinux(bool forward) {
+    if (!mounted || _isSettingsDialogOpen) return;
+    if (!_linuxFindOpen) {
+      _openLinuxFind(forward: forward);
+    } else if (_linuxFindController.text.isNotEmpty) {
+      _searchLinuxFind(_linuxFindController.text, forward: forward);
+    }
+  }
+
+  void _closeLinuxFind({bool focusPage = false}) {
+    if (!mounted || !_linuxFindOpen) return;
+    setState(() {
+      _linuxFindOpen = false;
+      _linuxFindMatches = 0;
+      _linuxFindFound = false;
+    });
+    final controller = _controller;
+    if (controller is WebViewFlutterGakujoWebViewController) {
+      unawaited(controller.finishFind(focusPage: focusPage));
+    }
   }
 
   Future<void> _handleDesktopZoomMessage(String message) async {
@@ -7296,6 +7404,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
         onDownloadStarting: _handleNativeDownload,
         onPageStarted: (url) {
+          _closeLinuxFind();
           // Only a page that starts loading counts: blocked requests do not.
           _mainFrameNavigationStarts += 1;
           _invalidateLoginUrl(url);

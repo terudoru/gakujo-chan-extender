@@ -634,6 +634,47 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  // More Better Gakujo patch: native page search for the Flutter find strip.
+  if (strcmp(method, "findText") == 0) {
+    WebKitFindController *fc =
+        webkit_web_view_get_find_controller(webview->web_view);
+    const gchar *text = map_lookup_string(args, "text");
+    const gboolean forward = map_lookup_bool(args, "forward", TRUE);
+    if (text == nullptr || *text == '\0') {
+      g_clear_pointer(&webview->find_text, g_free);
+      webkit_find_controller_search_finish(fc);
+    } else if (g_strcmp0(webview->find_text, text) == 0) {
+      if (forward) {
+        webkit_find_controller_search_next(fc);
+      } else {
+        webkit_find_controller_search_previous(fc);
+      }
+    } else {
+      g_free(webview->find_text);
+      webview->find_text = g_strdup(text);
+      const guint32 options = WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE |
+          WEBKIT_FIND_OPTIONS_WRAP_AROUND |
+          (forward ? 0 : WEBKIT_FIND_OPTIONS_BACKWARDS);
+      webkit_find_controller_search(fc, text, options, G_MAXUINT);
+      webkit_find_controller_count_matches(fc, text, options, G_MAXUINT);
+    }
+    respond(method_call, success_response());
+    return;
+  }
+
+  if (strcmp(method, "findFinish") == 0) {
+    g_clear_pointer(&webview->find_text, g_free);
+    webkit_find_controller_search_finish(
+        webkit_web_view_get_find_controller(webview->web_view));
+    // Like WebView2's find bar, closing the search returns keys to the page.
+    if (map_lookup_bool(args, "focusPage", FALSE) &&
+        gtk_widget_get_mapped(GTK_WIDGET(webview->web_view))) {
+      gtk_widget_grab_focus(GTK_WIDGET(webview->web_view));
+    }
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "clearCache") == 0) {
     webkit_web_context_clear_cache(
         webkit_web_view_get_context(webview->web_view));

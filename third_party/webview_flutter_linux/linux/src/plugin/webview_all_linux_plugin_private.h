@@ -54,6 +54,8 @@ typedef struct {
   gboolean vertical_scrollbar_enabled;
   gboolean horizontal_scrollbar_enabled;
   gboolean zoom_enabled;
+  // More Better Gakujo patch: null when the find session has finished.
+  gchar *find_text;
   DownloadPolicy *download_policy;
   gint media_playback_requires_user_gesture;
   const gchar *over_scroll_behavior;

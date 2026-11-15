@@ -148,6 +148,35 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onHistoryNavigationRequest = handler;
   }
 
+  // More Better Gakujo patch: native find results and shortcuts for the app bar.
+  void Function()? _onFindRequest;
+  void Function(bool forward)? _onFindAgain;
+  void Function(int matches, bool found)? _onFindResult;
+
+  Future<void> findText(String text, {bool forward = true}) {
+    return _invoke<void>('findText', <String, Object?>{
+      'text': text,
+      'forward': forward,
+    });
+  }
+
+  /// [focusPage] gives the keyboard back to the page, as closing a find bar
+  /// does in browsers.
+  Future<void> finishFind({bool focusPage = false}) =>
+      _invoke<void>('findFinish', <String, Object?>{'focusPage': focusPage});
+
+  void setOnFindRequest(void Function()? handler) {
+    _onFindRequest = handler;
+  }
+
+  void setOnFindAgain(void Function(bool forward)? handler) {
+    _onFindAgain = handler;
+  }
+
+  void setOnFindResult(void Function(int matches, bool found)? handler) {
+    _onFindResult = handler;
+  }
+
   Future<void> _initialize(
     WeakReference<LinuxWebViewController> weakThis,
   ) async {
@@ -755,6 +784,9 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onJavaScriptConfirmDialog = null;
     _onJavaScriptTextInputDialog = null;
     _onHistoryNavigationRequest = null;
+    _onFindRequest = null;
+    _onFindAgain = null;
+    _onFindResult = null;
     if (initializationError != null) {
       Error.throwWithStackTrace(
         initializationError,
