@@ -33,6 +33,67 @@ void main() {
       .having((error) => error.code, 'code', 'KeyringLocked')
       .having((error) => error.message, 'message', 'KeyringLocked');
 
+  test('accesses wait for beforeFirstAccess and run in order', () async {
+    final ready = Completer<void>();
+    final release = Completer<void>();
+    final inner = _FakeSecureStorage()..pending = release.future;
+    final storage = KeyringLockGateStorage(
+      inner: inner,
+      beforeFirstAccess: () => ready.future,
+    );
+    final results = [
+      for (final operation in _operations) _call(storage, operation),
+    ];
+
+    await Future<void>.delayed(Duration.zero);
+    expect(inner.calls, isEmpty);
+    ready.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(inner.calls, ['read']);
+    release.complete();
+    await Future.wait(results);
+    expect(inner.calls, _operations);
+  });
+
+  test(
+    'beforeFirstAccess is called only once, including after reopen',
+    () async {
+      var calls = 0;
+      final inner = _FakeSecureStorage();
+      final storage = KeyringLockGateStorage(
+        inner: inner,
+        beforeFirstAccess: () async {
+          calls++;
+        },
+      );
+
+      await Future.wait([
+        for (final operation in _operations) _call(storage, operation),
+      ]);
+      storage.reopen();
+      expect(await storage.read(key: 'token'), 'value');
+      expect(calls, 1);
+      expect(inner.calls, [..._operations, 'read']);
+    },
+  );
+
+  test('a throwing beforeFirstAccess does not block access', () async {
+    var calls = 0;
+    final inner = _FakeSecureStorage();
+    final storage = KeyringLockGateStorage(
+      inner: inner,
+      beforeFirstAccess: () {
+        calls++;
+        throw StateError('Window unavailable');
+      },
+    );
+
+    expect(await storage.read(key: 'token'), 'value');
+    await storage.write(key: 'token', value: 'value');
+    expect(calls, 1);
+    expect(inner.calls, ['read', 'write']);
+  });
+
   for (final operation in _operations) {
     test(
       '$operation closes the gate on KeyringLocked until reopened',
