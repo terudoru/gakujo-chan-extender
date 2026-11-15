@@ -682,28 +682,63 @@ class GakujoCalendarExport {
   ) {
     String title(GakujoCalendarCourse course) =>
         displayTitleForCourse(course).replaceAll(RegExp(r'\s+'), '');
-    final bySlot = <String, String>{};
-    final byPeriod = <String, String>{};
+    String code(GakujoCalendarCourse course) =>
+        GakujoCalendarCourse._normalizeCourseCode(course.courseCode);
+    final byCodeSlot = <String, String>{};
+    final bySlot = <String, List<GakujoCalendarCourse>>{};
+    final byPeriod = <String, List<GakujoCalendarCourse>>{};
     for (final course in pageCourses) {
       final location = displayLocationForCourse(course);
       if (location.isEmpty) {
         continue;
       }
-      bySlot.putIfAbsent(
-        '${title(course)}|${course.weekday}|${course.period}',
-        () => location,
-      );
-      byPeriod.putIfAbsent('${title(course)}|${course.period}', () => location);
+      final courseCode = code(course);
+      if (courseCode.isNotEmpty) {
+        byCodeSlot.putIfAbsent(
+          '$courseCode|${course.weekday}|${course.period}',
+          () => location,
+        );
+      }
+      bySlot
+          .putIfAbsent(
+            '${title(course)}|${course.weekday}|${course.period}',
+            () => [],
+          )
+          .add(course);
+      byPeriod
+          .putIfAbsent('${title(course)}|${course.period}', () => [])
+          .add(course);
     }
     if (byPeriod.isEmpty) {
       return courses;
     }
+    String? locationFor(GakujoCalendarCourse course) {
+      final courseCode = code(course);
+      final exact = courseCode.isEmpty
+          ? null
+          : byCodeSlot['$courseCode|${course.weekday}|${course.period}'];
+      if (exact != null) {
+        return exact;
+      }
+      for (final matches in [
+        bySlot['${title(course)}|${course.weekday}|${course.period}'],
+        byPeriod['${title(course)}|${course.period}'],
+      ]) {
+        for (final candidate in matches ?? const <GakujoCalendarCourse>[]) {
+          final candidateCode = code(candidate);
+          if (courseCode.isEmpty ||
+              candidateCode.isEmpty ||
+              courseCode == candidateCode) {
+            return displayLocationForCourse(candidate);
+          }
+        }
+      }
+      return null;
+    }
     return [
       for (final course in courses)
         if (displayLocationForCourse(course).isEmpty)
-          switch (
-              bySlot['${title(course)}|${course.weekday}|${course.period}'] ??
-                  byPeriod['${title(course)}|${course.period}']) {
+          switch (locationFor(course)) {
             final location? => course.copyWith(location: location),
             null => course,
           }

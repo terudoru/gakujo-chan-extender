@@ -237,4 +237,104 @@ void main() {
     expect(
         courses.map((course) => course.location), ['A-101', 'A-101', 'Zoom']);
   });
+
+  test('classrooms stay with course codes across terms', () {
+    const thirdTerm = GakujoCalendarCourse(
+      title: '物理学',
+      weekday: DateTime.friday,
+      period: 1,
+      courseCode: '263G5023',
+    );
+    final fourthTerm = thirdTerm.copyWith(courseCode: '264G5023');
+    final page = [
+      thirdTerm.copyWith(location: 'A-101'),
+      fourthTerm.copyWith(location: 'B-200'),
+    ];
+
+    for (final pageCourses in [page, page.reversed.toList()]) {
+      final courses = GakujoCalendarExport.withPageLocations(
+        [thirdTerm, fourthTerm],
+        pageCourses,
+      );
+
+      expect(courses.map((course) => course.location), ['A-101', 'B-200']);
+    }
+  });
+
+  test('exact normalized code and slot takes priority over title matches', () {
+    const course = GakujoCalendarCourse(
+      title: '物理学',
+      weekday: DateTime.friday,
+      period: 1,
+      courseCode: ' ２６３ｇ５０２３ ',
+    );
+    final pageCourse = course.copyWith(
+      title: '物理学基礎',
+      courseCode: '263g5023',
+      location: 'A-101',
+    );
+    final courses = GakujoCalendarExport.withPageLocations([course], [
+      course.copyWith(courseCode: '', location: 'Fallback'),
+      pageCourse.copyWith(weekday: DateTime.tuesday, location: 'Other day'),
+      pageCourse.copyWith(period: 2, location: 'Other period'),
+      pageCourse,
+    ]);
+
+    expect(courses.single.location, 'A-101');
+  });
+
+  test('title fallbacks skip conflicting codes and retain compatible rooms', () {
+    const course = GakujoCalendarCourse(
+      title: '物理学',
+      weekday: DateTime.friday,
+      period: 1,
+      courseCode: '264G5023',
+    );
+
+    for (final weekday in [DateTime.friday, DateTime.tuesday]) {
+      final conflicting = course.copyWith(
+        courseCode: '263G5023',
+        weekday: weekday,
+        location: 'A-101',
+      );
+      expect(
+        GakujoCalendarExport.withPageLocations([course], [conflicting])
+            .single
+            .location,
+        isEmpty,
+      );
+      for (final code in ['', '264g5023']) {
+        final compatible = conflicting.copyWith(
+          courseCode: code,
+          location: 'B-200',
+        );
+        final courses = GakujoCalendarExport.withPageLocations(
+          [course],
+          [conflicting, compatible],
+        );
+
+        expect(courses.single.location, 'B-200', reason: '$weekday $code');
+      }
+    }
+  });
+
+  test('uncoded targets can still use coded page classrooms', () {
+    const course = GakujoCalendarCourse(
+      title: '物理学',
+      weekday: DateTime.friday,
+      period: 1,
+    );
+
+    for (final weekday in [DateTime.friday, DateTime.tuesday]) {
+      final courses = GakujoCalendarExport.withPageLocations([course], [
+        course.copyWith(
+          courseCode: '263G5023',
+          weekday: weekday,
+          location: 'A-101',
+        ),
+      ]);
+
+      expect(courses.single.location, 'A-101');
+    }
+  });
 }

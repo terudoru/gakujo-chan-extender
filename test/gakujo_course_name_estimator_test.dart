@@ -34,6 +34,27 @@ void main() {
     }
   });
 
+  test('preserves English words in course names', () {
+    for (final text in [
+      'Academic Writing',
+      '科目名：Academic Writing',
+      '科目名 Academic Writing',
+    ]) {
+      expect(GakujoCourseNameEstimator.estimateFromCandidates([text]),
+          'Academic Writing', reason: text);
+    }
+  });
+
+  test('strips course-code prefixes containing digits', () {
+    for (final text in ['ABC123 線形代数', 'abc123 線形代数']) {
+      expect(GakujoCourseNameEstimator.estimateFromCandidates([text]), '線形代数',
+          reason: text);
+    }
+    expect(GakujoCourseNameEstimator.estimateFromCandidates([
+      '262G5023  物理学基礎BⅠ',
+    ]), '物理学基礎BⅠ');
+  });
+
   test('estimates a course from headings', () {
     final course = GakujoCourseNameEstimator.estimateFromHtml('''
       <html>
@@ -87,6 +108,36 @@ void main() {
 
       expect(course, '物理学', reason: header);
     }
+  });
+
+  test('prioritizes labelled subject values over earlier unlabelled rows', () {
+    for (final subjectRows in [
+      '<tr><th>科目名</th><td>物理学</td></tr>',
+      '<tr><td>科目名</td><td>物理学</td></tr>',
+      '<tr><th>担当教員</th><th>科目名</th></tr>'
+          '<tr><td>山田</td><td>物理学</td></tr>',
+    ]) {
+      final course = GakujoCourseNameEstimator.estimateFromHtml('''
+        <table>
+          <tr><th>担当教員</th><td>山田</td></tr>
+          $subjectRows
+        </table>
+      ''');
+
+      expect(course, '物理学', reason: subjectRows);
+    }
+  });
+
+  test('keeps unlabelled rows in order when labelled values are ignored', () {
+    final course = GakujoCourseNameEstimator.estimateFromHtml('''
+      <table>
+        <tr><td>線形代数</td></tr>
+        <tr><td>物理学</td></tr>
+        <tr><th>科目名</th><td>資料.pdf</td></tr>
+      </table>
+    ''');
+
+    expect(course, '線形代数');
   });
 
   test('keeps td label and value rows working', () {
