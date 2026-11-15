@@ -60,7 +60,7 @@ class GakujoCourseNameEstimator {
 
   static String _extractCourseName(String text) {
     final labeledMatch = RegExp(
-      r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:[A-Z0-9]{4,}\s+)?(.+)$',
+      r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+)?(.+)$',
       caseSensitive: false,
     ).firstMatch(text);
     if (labeledMatch != null) {
@@ -69,7 +69,7 @@ class GakujoCourseNameEstimator {
     }
 
     final codeMatch = RegExp(
-      r'^[A-Z0-9]{4,}\s+(.+)$',
+      r'^(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+(.+)$',
       caseSensitive: false,
     ).firstMatch(text);
     if (codeMatch != null) {
@@ -130,6 +130,7 @@ class GakujoCourseNameEstimator {
 
   static Iterable<String?> _textsForTableRows(String html) sync* {
     final rows = _textsForTags(html, ['tr']).toList();
+    final unlabelledRows = <String?>[];
     final cellPattern = RegExp(r'<(th|td)\b[^>]*>(.*?)</\1>',
         caseSensitive: false, dotAll: true);
     for (var r = 0; r < rows.length; r += 1) {
@@ -137,7 +138,7 @@ class GakujoCourseNameEstimator {
       final courseIndex = cells.indexWhere(
           (cell) => _normalize(cell.group(2)) == '科目名');
       if (courseIndex < 0) {
-        yield rows[r];
+        unlabelledRows.add(rows[r]);
         continue;
       }
       for (var same = courseIndex + 1; same < cells.length; same += 1) {
@@ -153,6 +154,7 @@ class GakujoCourseNameEstimator {
         }
       }
     }
+    yield* unlabelledRows;
   }
 
   static Iterable<String?> _textsForTags(String html, List<String> tags) sync* {
