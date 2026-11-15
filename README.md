@@ -30,7 +30,7 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret`）
 - パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要
-- Linux では OS の通知に対応していない。提出期限はアプリ内で確認する
+- Windows と同じく、アプリを開いている間はデスクトップの通知サービスを通じて提出期限を通知する。二重に起動すると、起動済みのウィンドウを前面に表示する
 
 ### iOS/iPadOS
 

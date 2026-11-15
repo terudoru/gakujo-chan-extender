@@ -346,7 +346,6 @@ class GakujoNotificationService {
 
   /// Reads the OS state without displaying a permission prompt.
   Future<bool?> checkPermission() async {
-    if (defaultTargetPlatform == TargetPlatform.linux) return null;
     bool? granted;
     try {
       granted = await _channel.invokeMethod<bool>('checkPermission');
@@ -388,7 +387,6 @@ class GakujoNotificationService {
   /// until [forgetRefusal] or [checkPermission] observes a grant: reminders are
   /// rebooked by background refreshes, which should not keep raising prompts.
   Future<bool> requestPermission() async {
-    if (defaultTargetPlatform == TargetPlatform.linux) return false;
     if (_permissionRefused) {
       return false;
     }
@@ -443,7 +441,7 @@ class GakujoNotificationService {
   Future<void> Function(GakujoReminder)? _onInAppReminder;
 
   /// Books [reminders] with the OS, replacing earlier ones. Where the OS
-  /// cannot book ahead (Windows), they fire from the app while it is open.
+  /// cannot book ahead (Windows and Linux), they fire from the app while open.
   /// Returns whether the OS booked them. [onInAppReminder] handles delivery
   /// when an in-app timer fires, so the coordinator can also record it.
   Future<bool> scheduleReminders(

@@ -453,9 +453,6 @@ class FeatureFlagsSection extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             title: Text(flag.label),
             subtitle: switch (flag) {
-              GakujoFeatureFlag.deadlineNotifications
-                  when defaultTargetPlatform == TargetPlatform.linux =>
-                const Text('Linux では OS の通知に対応していません。'),
               GakujoFeatureFlag.uploadCompression =>
                 const Text('5MBを超えるファイルを提出前に圧縮します。オフでもプレビューできます。'),
               GakujoFeatureFlag.updateNotice =>
@@ -463,10 +460,7 @@ class FeatureFlagsSection extends StatelessWidget {
               _ => null,
             },
             value: settings.isFeatureEnabled(flag),
-            onChanged: defaultTargetPlatform == TargetPlatform.linux &&
-                    flag == GakujoFeatureFlag.deadlineNotifications
-                ? null
-                : (value) => onChanged(flag, value ?? true),
+            onChanged: (value) => onChanged(flag, value ?? true),
           ),
       ],
     );
@@ -530,11 +524,6 @@ class NotificationTopicsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (defaultTargetPlatform == TargetPlatform.linux) {
-      return const Text(
-        'Linux では OS の通知に対応していません。提出期限はアプリ内の表示で確認してください。',
-      );
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -597,7 +586,7 @@ class NotificationTopicsSection extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           remindersOnlyWhileOpen
-              ? '未提出の課題を締切の前にもう一度知らせます。Windowsではアプリを開いている間に届きます。閉じている間に通知の時刻を過ぎたものは、次に開いたときに知らせます。'
+              ? '未提出の課題を締切の前にもう一度知らせます。WindowsとLinuxではアプリを開いている間に届きます。閉じている間に通知の時刻を過ぎたものは、次に開いたときに知らせます。'
               : '未提出の課題を締切の前にもう一度知らせます。アプリを閉じていても届きます。',
         ),
         Wrap(
