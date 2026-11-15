@@ -569,7 +569,7 @@ String secureStorageRecoveryGuidance(
       error.code == 'KeyringLocked') {
     // The data is intact; resetting would only throw it away.
     return 'キーリング（GNOME Keyring や KWallet など）がロックされています。\n\n'
-        'ロックを解除してから「再試行」を押してください。'
+        '「再試行」を押すとロック解除の画面がもう一度表示されるので、ログインパスワードでロックを解除してください。'
         '解除するまでは「このまま使う」で、保存済みのログイン情報なしで使えます。';
   }
   if (platform == TargetPlatform.linux) {
@@ -2758,6 +2758,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool applyToCurrentPage = true,
   }) async {
     _protectedSecretPromptGate.reset();
+    // Saving is an explicit action, so it may ask to unlock the keyring again.
+    SecureStorageFactory.reopenLinuxKeyringGate();
     try {
       return await _starSyncEngine.runAccountChange(() => _settingsOperations.runExclusive(() async {
         final protectionBefore = await _appSettingsStore.protectionState.read();
@@ -2826,6 +2828,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<bool> _saveTwoFactorSecretInput(String secret) async {
     _protectedSecretPromptGate.reset();
+    // Saving is an explicit action, so it may ask to unlock the keyring again.
+    SecureStorageFactory.reopenLinuxKeyringGate();
     try {
       final protectionBefore = await _secretStore.protectionState.read();
       await _secretStore.save(secret);
@@ -3612,6 +3616,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                   : _starSyncGoogleEmail,
                           onGoogleCancelSignIn: _cancelGoogleSignIn,
                           onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                            SecureStorageFactory.reopenLinuxKeyringGate();
                             _starSyncGoogleEmail = await _signInGoogle();
                             try {
                               return await _starSyncEngine.setUpWithDrive(
@@ -3638,6 +3643,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             }
                           },
                           onGoogleReSignIn: () async {
+                            SecureStorageFactory.reopenLinuxKeyringGate();
                             _starSyncGoogleEmail = await _signInGoogle();
                             if (mounted) setState(() {});
                             await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
@@ -3659,6 +3665,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               ),
                           onResetWithDrive: _starSyncEngine.resetRemoteWithDrive,
                           onSyncNow: () async {
+                            SecureStorageFactory.reopenLinuxKeyringGate();
                             await _ensureStarSyncLoaded();
                             await _starSyncEngine.syncNow(trigger: StarSyncTrigger.manual);
                           },
@@ -6332,6 +6339,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _applyDriveDownloadsEnabled(bool enabled, {required bool byStudentSwitch}) async {
+    if (enabled && byStudentSwitch) {
+      SecureStorageFactory.reopenLinuxKeyringGate();
+    }
     final cancelGeneration = _googleCancelGeneration;
     void checkCancelled() {
       if (enabled && cancelGeneration != _googleCancelGeneration) {
@@ -7857,6 +7867,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _retrySecureStorageLoad() async {
     _protectedSecretPromptGate.reset();
     SecureStorageFactory.resetMacosCache();
+    SecureStorageFactory.reopenLinuxKeyringGate();
     _loginAutofillStorageLoadAttempted = true;
     if (!await _loadAppSettings(allowMacosKeychainPrompt: true)) {
       // Other platforms keep storage access; only macOS defers the keychain.
@@ -7967,6 +7978,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     var revocationUnconfirmed = false;
+    SecureStorageFactory.reopenLinuxKeyringGate();
     try {
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
