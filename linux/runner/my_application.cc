@@ -12,6 +12,10 @@ struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   GtkWindow* window;
+  gint normal_window_width;
+  gint normal_window_height;
+  GdkWindowState window_state;
+  gboolean window_state_saved;
   FlMethodChannel* notification_channel;
   GDBusConnection* notification_connection;
   GHashTable* notification_urls;
@@ -245,7 +249,111 @@ static void shutdown_notifications(MyApplication* self) {
   g_clear_pointer(&self->notification_urls, g_hash_table_unref);
 }
 
+static void restore_window_state(GtkWindow* window, MyApplication* self) {
+  gint width;
+  gint height;
+  gtk_window_get_default_size(window, &width, &height);
+  self->window_state = static_cast<GdkWindowState>(0);
+  self->window_state_saved = FALSE;
+
+  g_autofree gchar* path = g_build_filename(
+      g_get_user_config_dir(), APPLICATION_ID, "window-state.ini", nullptr);
+  g_autoptr(GKeyFile) state = g_key_file_new();
+  if (g_key_file_load_from_file(state, path, G_KEY_FILE_NONE, nullptr)) {
+    g_autoptr(GError) error = nullptr;
+    gint saved_width = g_key_file_get_integer(state, "window", "width", &error);
+    gint saved_height = 0;
+    if (error == nullptr) {
+      saved_height = g_key_file_get_integer(state, "window", "height", &error);
+    }
+    if (error == nullptr && saved_width >= 960 && saved_height >= 600 &&
+        saved_width <= 16384 && saved_height <= 16384) {
+      width = saved_width;
+      height = saved_height;
+      if (g_key_file_get_boolean(state, "window", "maximized", nullptr)) {
+        self->window_state = GDK_WINDOW_STATE_MAXIMIZED;
+      }
+    }
+  }
+
+  GdkGeometry hints = {};
+  hints.min_width = 960;
+  hints.min_height = 600;
+  GdkDisplay* display = gdk_display_get_default();
+  GdkMonitor* monitor = nullptr;
+  if (display != nullptr) {
+    monitor = gdk_display_get_primary_monitor(display);
+    if (monitor == nullptr && gdk_display_get_n_monitors(display) > 0) {
+      monitor = gdk_display_get_monitor(display, 0);
+    }
+  }
+  if (monitor != nullptr) {
+    GdkRectangle workarea;
+    gdk_monitor_get_workarea(monitor, &workarea);
+    if (workarea.width > 0 && workarea.height > 0) {
+      width = MIN(width, workarea.width);
+      height = MIN(height, workarea.height);
+      hints.min_width = MIN(hints.min_width, workarea.width);
+      hints.min_height = MIN(hints.min_height, workarea.height);
+    }
+  }
+  self->normal_window_width = width;
+  self->normal_window_height = height;
+  gtk_window_set_geometry_hints(window, nullptr, &hints, GDK_HINT_MIN_SIZE);
+  gtk_window_set_default_size(window, width, height);
+  if (self->window_state & GDK_WINDOW_STATE_MAXIMIZED) {
+    gtk_window_maximize(window);
+  }
+}
+
+static void save_window_state(MyApplication* self) {
+  // Both delete-event and destroy can run for the same close.
+  if (self->window_state_saved) {
+    return;
+  }
+  self->window_state_saved = TRUE;
+
+  g_autofree gchar* dir =
+      g_build_filename(g_get_user_config_dir(), APPLICATION_ID, nullptr);
+  if (g_mkdir_with_parents(dir, 0700) != 0) {
+    return;
+  }
+  g_autofree gchar* path = g_build_filename(dir, "window-state.ini", nullptr);
+  g_autoptr(GKeyFile) state = g_key_file_new();
+  g_key_file_set_integer(state, "window", "width", self->normal_window_width);
+  g_key_file_set_integer(state, "window", "height", self->normal_window_height);
+  g_key_file_set_boolean(state, "window", "maximized",
+                         (self->window_state & GDK_WINDOW_STATE_MAXIMIZED) != 0);
+  g_key_file_save_to_file(state, path, nullptr);
+}
+
+static void window_size_allocate_cb(GtkWidget* window,
+                                    GtkAllocation* allocation,
+                                    MyApplication* self) {
+  if (!(self->window_state & (GDK_WINDOW_STATE_MAXIMIZED |
+                             GDK_WINDOW_STATE_FULLSCREEN |
+                             GDK_WINDOW_STATE_ICONIFIED))) {
+    gtk_window_get_size(GTK_WINDOW(window), &self->normal_window_width,
+                        &self->normal_window_height);
+  }
+}
+
+static gboolean window_state_cb(GtkWidget* window,
+                                GdkEventWindowState* event,
+                                MyApplication* self) {
+  self->window_state = event->new_window_state;
+  return FALSE;
+}
+
+static gboolean window_delete_cb(GtkWidget* window,
+                                 GdkEvent* event,
+                                 MyApplication* self) {
+  save_window_state(self);
+  return FALSE;
+}
+
 static void window_destroy_cb(GtkWidget* window, MyApplication* self) {
+  save_window_state(self);
   self->window = nullptr;
 }
 
@@ -266,6 +374,14 @@ static void my_application_activate(GApplication* application) {
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   self->window = window;
   g_signal_connect_object(window, "destroy", G_CALLBACK(window_destroy_cb),
+                          self, static_cast<GConnectFlags>(0));
+  g_signal_connect_object(window, "size-allocate",
+                          G_CALLBACK(window_size_allocate_cb), self,
+                          static_cast<GConnectFlags>(0));
+  g_signal_connect_object(window, "window-state-event",
+                          G_CALLBACK(window_state_cb), self,
+                          static_cast<GConnectFlags>(0));
+  g_signal_connect_object(window, "delete-event", G_CALLBACK(window_delete_cb),
                           self, static_cast<GConnectFlags>(0));
 
   // Use a header bar when running in GNOME as this is the common style used
@@ -296,6 +412,7 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 800);
+  restore_window_state(window, self);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
