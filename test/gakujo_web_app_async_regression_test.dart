@@ -1526,6 +1526,40 @@ void main() {
       }
     });
 
+    test('captures requested tabs from a confirmed authenticated flow page',
+        () {
+      const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+      const durable = '${base}campusportal.do?page=main&tabId=en';
+      const flowUrl = '${base}campussquare.do?_flowExecutionKey=e1s2';
+      const schedule = '${base}campusportal.do?page=main&tabId=sch';
+      expect(
+        captureGakujoNavigationRecoveryCandidate(
+          url: schedule,
+          currentUrl: flowUrl,
+          authenticatedUrl: durable,
+          navigationCandidateUrl: null,
+          authenticatedPageUrl: flowUrl,
+        ),
+        schedule,
+      );
+    });
+
+    test('unconfirmed flow pages cannot capture requested tabs', () {
+      const base = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
+      const durable = '${base}campusportal.do?page=main&tabId=en';
+      const flowUrl = '${base}campussquare.do?_flowExecutionKey=e1s2';
+      const schedule = '${base}campusportal.do?page=main&tabId=sch';
+      expect(
+        captureGakujoNavigationRecoveryCandidate(
+          url: schedule,
+          currentUrl: flowUrl,
+          authenticatedUrl: durable,
+          navigationCandidateUrl: null,
+        ),
+        isNull,
+      );
+    });
+
     test('login, logout and timeout challenges cannot become destinations', () {
       const durable =
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/report/list.do';

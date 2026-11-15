@@ -1250,6 +1250,7 @@ String? captureGakujoNavigationRecoveryCandidate({
   required String? currentUrl,
   required String? authenticatedUrl,
   required String? navigationCandidateUrl,
+  String? authenticatedPageUrl,
   bool navigationCandidateFailed = false,
   bool debugAllowed = false,
 }) {
@@ -1263,8 +1264,8 @@ String? captureGakujoNavigationRecoveryCandidate({
     }
     return navigationCandidateUrl;
   }
-  if (authenticatedUrl != null &&
-      currentUrl == authenticatedUrl &&
+  if (currentUrl != null &&
+      (currentUrl == authenticatedUrl || currentUrl == authenticatedPageUrl) &&
       url != authenticatedUrl &&
       isGakujoNavigationRecoveryCandidateUrl(url, debugAllowed: debugAllowed)) {
     return url;
@@ -1556,6 +1557,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _currentCourseName;
   String? _pendingLoginRestoreUrl;
   String? _sessionRecoveryUrl;
+  String? _authenticatedPageUrl;
   String? _navigationRecoveryCandidateUrl;
   bool _navigationRecoveryCandidateFailed = false;
   String? _mainFrameNavigationUrl;
@@ -1922,6 +1924,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _setActiveLoginAccount(String? account, {bool resync = true, bool Function()? stillValid}) async {
     if (account != null && _activeLoginAccount == account) return;
+    if (account == null) _authenticatedPageUrl = null;
     final revision = ++_loginIdentity.revision;
     _activeLoginAccount = null;
     _cancelDriveUploads();
@@ -5886,6 +5889,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _handleSessionExpiredIfNeeded(url, authState: authState);
     if (!stillCurrent()) return;
     if (authState == GakujoPortalAuthState.authenticated) {
+      _authenticatedPageUrl = url;
       _sessionRecoveryUrl = selectGakujoSessionRecoveryUrl(
         navigationCandidateUrl: url,
         authenticatedUrl: _sessionRecoveryUrl,
@@ -5977,6 +5981,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       currentUrl: _currentPageUrl,
       authenticatedUrl: _sessionRecoveryUrl,
       navigationCandidateUrl: _navigationRecoveryCandidateUrl,
+      authenticatedPageUrl: _authenticatedPageUrl,
       navigationCandidateFailed: _navigationRecoveryCandidateFailed,
       debugAllowed: _debugAllowed,
     );
@@ -6000,6 +6005,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     )) {
       return;
     }
+    _authenticatedPageUrl = null;
     final navigationCandidateUrl = usableGakujoNavigationCandidateForChallenge(
       navigationCandidateUrl: _navigationRecoveryCandidateUrl,
       challengeUrl: url,
@@ -6770,6 +6776,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (account != null) _submitLoginAccount(account);
       }
       if (decoded is Map && decoded['event'] == 'challenge') {
+        _authenticatedPageUrl = null;
         final source = Uri.tryParse(decoded['url'] is String ? decoded['url'] as String : '');
         final current = Uri.tryParse(_currentPageUrl ?? '');
         if (decoded['hasCredentials'] != true && source != null && current != null && source.hasAuthority && current.hasAuthority &&
