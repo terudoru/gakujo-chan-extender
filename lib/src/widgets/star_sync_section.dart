@@ -302,11 +302,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
           if (mounted) setState(() => _error = _errorText(error));
         }
       }
-      if (mounted) setState(() {
-        _busy = false;
-        _googleSigningIn = false;
-        _choosingGoogleSetup = false;
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _googleSigningIn = false;
+          _choosingGoogleSetup = false;
+        });
+      }
     }
   }
 

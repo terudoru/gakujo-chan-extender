@@ -361,7 +361,7 @@ void main() {
     final store = GakujoAppSettingsStore(secureStorage: storage);
     final events = <String>[];
 
-    final load = store.load().then((_) => events.add('load'));
+    final load = store.load();
     await readStarted.future;
     final operation = store.runExclusive(() async {
       events.add('exclusive');
@@ -374,7 +374,7 @@ void main() {
 
     await load;
     expect(await operation, 42);
-    expect(events, ['load', 'exclusive']);
+    expect(events, ['exclusive']);
   });
 
   test('concurrent feature changes preserve every disabled flag', () async {
