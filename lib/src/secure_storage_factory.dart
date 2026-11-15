@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'bundled_secure_storage.dart';
 import 'device_only_secret_storage.dart';
+import 'keyring_lock_gate_storage.dart';
 import 'migrating_secure_storage.dart';
 
 class SecureStorageFactory {
@@ -116,6 +117,9 @@ class SecureStorageFactory {
     inner: _nonMacosStorage,
     secretKeys: iosDeviceOnlyKeys,
   );
+  static final KeyringLockGateStorage _linuxStorage = KeyringLockGateStorage(
+    inner: _nonMacosStorage,
+  );
 
   static FlutterSecureStorage create() {
     if (Platform.isMacOS) {
@@ -130,6 +134,9 @@ class SecureStorageFactory {
     // fall back per key and report unreadable data.
     if (Platform.isIOS && !_isFlutterTest) {
       return _iosStorage;
+    }
+    if (Platform.isLinux && !_isFlutterTest) {
+      return _linuxStorage;
     }
     return _nonMacosStorage;
   }
@@ -147,6 +154,12 @@ class SecureStorageFactory {
     // so recovery flows re-read from the keychain instead of serving a stale
     // (possibly empty) cached bundle.
     _macosBundledStorage.clearCache();
+  }
+
+  static void reopenLinuxKeyringGate() {
+    if (Platform.isLinux && !_isFlutterTest) {
+      _linuxStorage.reopen();
+    }
   }
 
   static Future<void> resetStorage() {
