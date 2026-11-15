@@ -802,7 +802,16 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
                     name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
               }
             }
-            await delegate.onPageFinished?.call(url);
+            try {
+              await delegate.onPageFinished?.call(url);
+            } on Object catch (error, stackTrace) {
+              developer.log(
+                'WebView page-finished handler failed',
+                name: 'MoreBetterGakujo',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            }
           }
         },
         onWebResourceError: (error) {
