@@ -1805,7 +1805,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _submitLoginAccount(String account) {
     final navigation = _navigationRevision;
     if (_loginIdentity.submit(account, navigation: navigation)) {
-      unawaited(_setActiveLoginAccount(null, resync: false));
+      unawaited(_setActiveLoginAccount(null, resync: false).catchError(
+        (Object error, StackTrace stackTrace) {
+          developer.log('Failed to clear active login account',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        },
+      ));
     }
     // A reported submit that starts no navigation was stopped (validation, a
     // page handler); it must not wait to be promoted by some later page.
@@ -5648,7 +5653,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (state == GakujoPortalAuthState.login ||
             state == GakujoPortalAuthState.twoFactor) {
           _loginIdentity.challenge();
-          unawaited(_setActiveLoginAccount(null, resync: false));
+          unawaited(_setActiveLoginAccount(null, resync: false).catchError(
+            (Object error, StackTrace stackTrace) {
+              developer.log('Failed to clear active login account',
+                  name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+            },
+          ));
         }
         if (state != GakujoPortalAuthState.unknown || attempt == attempts - 1) {
           return state;
@@ -5851,7 +5861,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _invalidateLoginUrl(String url) {
     _loginIdentity.invalidateLoginNavigation(url, () {
-      unawaited(_setActiveLoginAccount(null, resync: false));
+      unawaited(_setActiveLoginAccount(null, resync: false).catchError(
+        (Object error, StackTrace stackTrace) {
+          developer.log('Failed to clear active login account',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        },
+      ));
     });
   }
 

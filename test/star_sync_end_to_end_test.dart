@@ -218,9 +218,19 @@ void main() {
           (await activityB.loadStarredMessages()).map((e) => e.title).toSet(),
           {'Title 3', 'Title 4'},
         );
+        final deviceA =
+            (jsonDecode(storageA.values[starSyncStateKey]!) as Map)['deviceId'];
+        final original = drive.files.singleWhere(
+          (f) => f.name == 'stars/devices/$deviceA',
+        );
+        final version = original.version;
         await activityA.removeStarredMessage('1|2|3');
         await a.syncNow();
+        drive.files.remove(original);
+        final replacement = drive.add(original.name, original.bytes)
+          ..version = version;
         await b.syncNow();
+        expect(drive.counts['GET /drive/v3/files/${replacement.id}'], 1);
         expect(
           (await activityB.loadStarredMessages()).map((e) => e.title).toList(),
           ['Title 4'],
@@ -230,5 +240,54 @@ void main() {
         b.dispose();
         await server.close(force: true);
       }
+  });
+
+  test('Drive re-reads a replaced keyring with the same version', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final drive = _FakeDrive(server);
+    final storageA = _Storage();
+    final storageB = _Storage();
+    StarSyncEngine engine(_Storage storage) => StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => StarSyncGoogleDriveTransport(
+        apiBase: drive.base,
+        quotaMeter: StarSyncQuotaMeter(storage: _Storage()),
+        accessToken: ({bool forceRefresh = false}) async => 'token',
+      ),
+    );
+    final a = engine(storageA);
+    var b = engine(storageB);
+    try {
+      const config = StarSyncConfig();
+      await a.setUpWithDrive(config);
+      await b.setUpWithDrive(config);
+      final original = drive.files.singleWhere(
+        (f) => f.name == 'stars/keyring.json',
+      );
+      final before = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
+      b.dispose();
+      b = engine(storageB);
+      await b.load();
+      await a.resetRemoteWithDrive();
+      final replacement = drive.files.singleWhere((f) => f.name == original.name);
+      expect(replacement.id, isNot(original.id));
+      expect(replacement.version, original.version);
+      final reads = drive.counts['GET /drive/v3/files/${replacement.id}'] ?? 0;
+      await b.syncNow();
+      final after = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
+      final reset = jsonDecode(storageA.values[starSyncStateKey]!) as Map;
+      expect(drive.counts['GET /drive/v3/files/${replacement.id}'], reads + 1);
+      expect(after['keyId'], isNot(before['keyId']));
+      expect(after['keyId'], reset['keyId']);
+      expect(after['dataKey'], reset['dataKey']);
+      expect(after['keyringEtag'], '${replacement.id}:${replacement.version}');
+      expect(b.status.value.status, StarSyncStatus.ok);
+    } finally {
+      a.dispose();
+      b.dispose();
+      await server.close(force: true);
+    }
   });
 }

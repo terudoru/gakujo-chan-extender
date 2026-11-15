@@ -90,7 +90,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         headers: {'content-type': 'application/x-www-form-urlencoded'},
         body: utf8.encode(Uri(queryParameters: fields).query),
       );
-      final decoded = jsonDecode(utf8.decode(response.bytes));
+      final decoded = response.bytes.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(utf8.decode(response.bytes));
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         if (decoded['error'] == 'invalid_grant' && clearOnInvalidGrant) {

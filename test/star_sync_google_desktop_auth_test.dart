@@ -105,8 +105,10 @@ void main() {
       request.response.headers.contentType = ContentType.json;
       if (request.uri.path == '/revoke') {
         revokedToken = fields['token'];
-        if (revokeFails) request.response.statusCode = 500;
-        request.response.write('{}');
+        if (revokeFails) {
+          request.response.statusCode = 500;
+          request.response.write('{}');
+        }
       } else if (fields['grant_type'] == 'refresh_token') {
         refreshes++;
         expect(
@@ -561,11 +563,13 @@ void main() {
     expect(await auth.accessToken(forceRefresh: true), 'refresh3');
   });
 
-  test('sign out deletes credentials', () async {
+  test('sign out accepts an empty 200 revoke response', () async {
     final auth = makeAuth();
     await auth.signIn();
-    await auth.signOut();
+    await expectLater(auth.signOut(), completes);
+    expect(revokedToken, 'refresh-secret');
     expect(storage.values, isEmpty);
+    expect(auth.currentEmail, isNull);
   });
 
   for (final failRevocation in [false, true]) {
