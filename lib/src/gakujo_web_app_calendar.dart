@@ -409,7 +409,8 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         preferredTermRange: preferredTerm?.termRange,
       );
       var extractedCourses = extraction.courses;
-      if (extractedCourses.isEmpty) {
+      if (extractedCourses.isEmpty &&
+          (preferredTerm != null || extraction.termRange != null)) {
         await _showCalendarSourceMissingMessage(
           '学務のGoogle連携から取り込める授業が見つかりませんでした。スケジュールページでもう一度実行してください',
         );
