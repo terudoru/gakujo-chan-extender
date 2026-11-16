@@ -63,7 +63,7 @@ void main() {
     test('truncates only lines longer than 160 characters', () {
       final line = 'レポート 提出期限 2026/1/2 '.padRight(160, 'あ');
       expect(gakujoExtractReportListItems(line), [line]);
-      expect(gakujoExtractReportListItems('${line}続き'), ['$line...']);
+      expect(gakujoExtractReportListItems('$line続き'), ['$line...']);
     });
 
     test('caps the list at 80 items', () {
