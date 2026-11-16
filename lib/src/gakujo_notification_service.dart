@@ -539,6 +539,8 @@ class GakujoDeadlineNotificationCoordinator {
   int _reminderGeneration = 0;
   int _bookedReminderGeneration = 0;
   int _queuedReminderSyncs = 0;
+  final _deferredReminders =
+      <({int generation, Future<void> Function() notify})>[];
 
   Future<bool> _hasPermission(bool allowPermissionRequest) async {
     if (allowPermissionRequest) {
@@ -726,18 +728,25 @@ class GakujoDeadlineNotificationCoordinator {
         }
         // Only replacing bookings permanently invalidates their callbacks.
         _bookedReminderGeneration = generation;
+        _deferredReminders.clear();
         final booksAhead = await _notificationService.scheduleReminders(
           reminders,
-          onInAppReminder: (reminder) => _enqueueNotificationOperation(
-            () async {
-              if (generation != _bookedReminderGeneration ||
-                  _queuedReminderSyncs > 0) {
-                return;
-              }
-              await _notifyReminderOnce(reminder,
-                  topics: topics, preferences: preferences);
-            },
-          ),
+          onInAppReminder: (reminder) => _enqueueNotificationOperation(() async {
+            if (generation != _bookedReminderGeneration) {
+              return;
+            }
+            Future<void> notify() => _notifyReminderOnce(
+              reminder,
+              topics: topics,
+              preferences: preferences,
+            );
+            if (_queuedReminderSyncs > 0) {
+              // The one-shot timer has fired; a skipped sync cannot rebook it.
+              _deferredReminders.add((generation: generation, notify: notify));
+              return;
+            }
+            await notify();
+          }),
         );
         if (booksAhead || lateReminders.isEmpty) {
           return;
@@ -751,6 +760,15 @@ class GakujoDeadlineNotificationCoordinator {
         }
       } finally {
         _queuedReminderSyncs -= 1;
+        if (_queuedReminderSyncs == 0) {
+          final deferred = _deferredReminders.toList();
+          _deferredReminders.clear();
+          for (final reminder in deferred) {
+            if (reminder.generation == _bookedReminderGeneration) {
+              await reminder.notify();
+            }
+          }
+        }
       }
     });
   }

@@ -1210,7 +1210,7 @@ class GakujoActivityStore {
       return _strictDateTime(year, month, day, hour, minute);
     }
 
-    final normalized = GakujoDatedActivity.normalizeDateText(text)
+    final normalizedWithSeparators = GakujoDatedActivity.normalizeDateText(text)
         .replaceAllMapped(RegExp(r'令和([0-9]{1,2})年'), (match) {
           final reiwaYear = int.tryParse(match.group(1) ?? '');
           if (reiwaYear == null) {
@@ -1219,8 +1219,6 @@ class GakujoActivityStore {
           return '${2018 + reiwaYear}年';
         })
         .replaceAll(RegExp(r'[（(][月火水木金土日][）)]'), ' ')
-        .replaceAll('～', ' ')
-        .replaceAll('〜', ' ')
         .replaceAll('年', '/')
         .replaceAll('月', '/')
         .replaceAll('日', ' ')
@@ -1237,8 +1235,12 @@ class GakujoActivityStore {
         .replaceAllMapped(
           RegExp(r'(?<![0-9])([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?![0-9])'),
           (match) => '${match.group(1)}/${match.group(2)}/${match.group(3)}',
-        )
-        .replaceAll('-', ' ');
+        );
+    // Keep offsets identical while preserving separators for closing times.
+    final normalized = normalizedWithSeparators.replaceAll(
+      RegExp(r'[～〜-]'),
+      ' ',
+    );
 
     DateTime withClosingTime(
       DateTime opening,
@@ -1247,10 +1249,9 @@ class GakujoActivityStore {
       int day,
       int matchEnd,
     ) {
-      // Normalization above turns wave dashes and hyphens into spaces.
       final closingTime = RegExp(
-        r'^\s*(?:[～〜~-]|から)?\s*([0-9]{1,2}):([0-9]{2})(?![0-9])',
-      ).firstMatch(normalized.substring(matchEnd));
+        r'^\s*(?:[～〜~-]|から)\s*([0-9]{1,2}):([0-9]{2})(?![0-9])',
+      ).firstMatch(normalizedWithSeparators.substring(matchEnd));
       if (closingTime == null) {
         return opening;
       }
