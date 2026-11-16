@@ -2810,10 +2810,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _refreshEstimatedCourseName() async {
+    final revision = _navigationRevision;
     final estimated = await _estimateCourseNameFromPage(
       await _controller.getTitle(),
     );
-    if (!_isUsefulCourseName(estimated)) {
+    if (!mounted || revision != _navigationRevision ||
+        !_isUsefulCourseName(estimated)) {
       return;
     }
     _currentCourseName = estimated;
@@ -8516,9 +8518,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    final revision = _navigationRevision;
+    bool stillCurrent() => mounted && revision == _navigationRevision;
     final markers = _previewNavigationState == 'visible'
         ? <String, dynamic>{}
-        : await _syncHistoryState();
+        : await _syncHistoryState(revision: revision);
+    if (!stillCurrent()) return true;
     final dialog = markers['dialog'];
     final action = decideGakujoHistoryAction(
       forward: false,
@@ -8532,6 +8537,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       canGoBack: _previewNavigationState != 'visible' &&
           await _controller.canGoBack(),
     );
+    if (!stillCurrent()) return true;
     if (action == GakujoHistoryAction.preview) {
       return _navigatePreview('back');
     }
@@ -8571,11 +8577,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_calendarOperationGate.isRunning) {
       return false;
     }
+    final revision = _navigationRevision;
+    bool stillCurrent() => mounted && revision == _navigationRevision;
     final markers = _previewNavigationState == 'visible'
         ? <String, dynamic>{}
-        : await _syncHistoryState();
+        : await _syncHistoryState(revision: revision);
+    if (!stillCurrent()) return true;
     final canGoForward = _previewNavigationState != 'visible' &&
         await _controller.canGoForward();
+    if (!stillCurrent()) return true;
     final action = decideGakujoHistoryAction(
       forward: true,
       previewState: _previewNavigationState,
@@ -8599,6 +8609,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             'token': _detachedPreviewToken,
           }),
         );
+        if (!stillCurrent()) return true;
         if (_boolFromJavaScriptResult(result)) {
           _detachedPreviewToken = null;
           if (mounted) setState(() => _virtualPreviewForward = false);
@@ -8609,6 +8620,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
       }
     }
+    if (!stillCurrent()) return true;
     _setPendingMessageUrl(null);
     if (action != GakujoHistoryAction.webView &&
         !(action == GakujoHistoryAction.reopenPreview && canGoForward)) {
