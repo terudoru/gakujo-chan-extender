@@ -416,6 +416,22 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         );
         return;
       }
+      if (extractedCourses.isEmpty &&
+          preferredTerm == null &&
+          extraction.termRange == null) {
+        final authState = await _readPortalAuthState();
+        if (authState == GakujoPortalAuthState.login ||
+            authState == GakujoPortalAuthState.twoFactor) {
+          _showSnackBar(
+            gakujoCalendarSourceMissingMessage(
+              authState,
+              fallback:
+                  '学務のGoogle連携から取り込める授業が見つかりませんでした。スケジュールページでもう一度実行してください',
+            ),
+          );
+          return;
+        }
+      }
 
       final resolvedTerm = preferredTerm ??
           await _resolveCalendarTerm(
