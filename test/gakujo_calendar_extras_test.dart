@@ -76,6 +76,30 @@ void main() {
       expect(meetings, contains('10/28 10:30 知的財産概論 @ B-200'));
     });
 
+    for (final cancellationFirst in [true, false]) {
+      test(
+          'a cancellation suppresses a room change '
+          '(${cancellationFirst ? 'cancellation first' : 'room change first'})',
+          () {
+        final cancellation =
+            change('kyuko-kyuko', '2026-10-20', '1', 'プログラミング基礎Ⅰ', '');
+        final roomChange =
+            change('kyuko-kyoshitsu', '2026-10-20', '1', 'プログラミング基礎Ⅰ', 'E-260');
+        final meetings = _meetings(
+          GakujoCalendarExport.applyClassChanges(_weekly, [
+            if (cancellationFirst) cancellation,
+            roomChange,
+            if (!cancellationFirst) cancellation,
+            change('kyuko-hoko', '2026-10-24', '1', 'プログラミング基礎Ⅰ', 'A-101'),
+          ]),
+        );
+
+        expect(meetings, isNot(contains(startsWith('10/20 8:45'))));
+        expect(meetings, contains('10/27 8:45 プログラミング基礎Ⅰ @ 計算機演習室'));
+        expect(meetings, contains('10/24 8:45 プログラミング基礎Ⅰ @ A-101'));
+      });
+    }
+
     test('a one-off cancellation matches only its date, course and period', () {
       GakujoCalendarCourse meeting(int day, String title, int period) =>
           GakujoCalendarCourse(

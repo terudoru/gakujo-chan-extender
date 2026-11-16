@@ -611,6 +611,7 @@ class GakujoCalendarExport {
 
     final excluded = <int, List<DateTime>>{};
     final added = <GakujoCalendarCourse>[];
+    final cancellations = <GakujoClassChange>[];
     for (final change in changes) {
       final matches = [
         for (var i = 0; i < courses.length; i += 1)
@@ -628,6 +629,7 @@ class GakujoCalendarExport {
         }
       }
       if (change.kind == GakujoClassChangeKind.cancelled) {
+        cancellations.add(change);
         continue;
       }
       final base = matches.isEmpty ? null : courses[matches.first];
@@ -655,6 +657,15 @@ class GakujoCalendarExport {
         ),
       );
     }
+    // Apply cancellations after all replacements so input order cannot revive them.
+    added.removeWhere(
+      (course) => cancellations.any(
+        (change) =>
+            _dateOnly(course.sourceDate!) == _dateOnly(change.date) &&
+            course.period == change.period &&
+            sameCourse(course, change),
+      ),
+    );
     return [
       for (var i = 0; i < courses.length; i += 1)
         if (excluded[i] case final dates?)
