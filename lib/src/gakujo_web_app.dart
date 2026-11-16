@@ -3011,6 +3011,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
     var starSyncBusy = false;
+    var googleSetupHadDriveSession = false;
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
@@ -3686,20 +3687,36 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                   : _starSyncGoogleEmail,
                           onGoogleCancelSignIn: _cancelGoogleSignIn,
                           onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                            final cancelGeneration = _googleCancelGeneration;
+                            googleSetupHadDriveSession = _driveDownloadsEnabled &&
+                                _starSyncGoogleAuth.currentEmail != null;
                             SecureStorageFactory.reopenLinuxKeyringGate();
                             _starSyncGoogleEmail = await _signInGoogle();
                             try {
+                              if (cancelGeneration != _googleCancelGeneration) {
+                                throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
+                              }
                               return await _starSyncEngine.setUpWithDrive(
                                 StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
                                 clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                               );
                             } on Object {
-                              if (!_starSyncEngine.status.value.enabled) {
+                              if (!googleSetupHadDriveSession && !_starSyncEngine.status.value.enabled) {
                                 await _setDriveDownloadsEnabled(false);
                                 await _signOutGoogle();
                                 _starSyncGoogleEmail = null;
                               }
                               rethrow;
+                            }
+                          },
+                          onGoogleSetupAbandoned: () async {
+                            if (googleSetupHadDriveSession) return;
+                            try {
+                              await _setDriveDownloadsEnabled(false);
+                              await _warnPendingDriveChecks();
+                            } finally {
+                              await _signOutGoogle(warn: false);
+                              _starSyncGoogleEmail = null;
                             }
                           },
                           onGoogleSignOut: () async {

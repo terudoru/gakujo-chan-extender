@@ -74,6 +74,7 @@ class StarSyncSection extends StatefulWidget {
     required this.googleEmail,
     required this.onGoogleSignIn,
     required this.onGoogleSignOut,
+    this.onGoogleSetupAbandoned,
     required this.onGoogleReSignIn,
     this.onGoogleCancelSignIn,
     required this.onLocalStarCount,
@@ -109,6 +110,8 @@ class StarSyncSection extends StatefulWidget {
   })
   onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
+  /// Cleanup for incomplete setup, which may preserve an existing Drive session.
+  final Future<void> Function()? onGoogleSetupAbandoned;
   final Future<void> Function() onGoogleReSignIn;
   final VoidCallback? onGoogleCancelSignIn;
   final Future<int> Function() onLocalStarCount;
@@ -297,7 +300,7 @@ class _StarSyncSectionState extends State<StarSyncSection> {
     } finally {
       if (needsCleanup && !widget.status.value.enabled) {
         try {
-          await widget.onGoogleSignOut();
+          await (widget.onGoogleSetupAbandoned ?? widget.onGoogleSignOut)();
         } on Object catch (error) {
           if (mounted) setState(() => _error = _errorText(error));
         }
