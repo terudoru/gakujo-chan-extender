@@ -2749,8 +2749,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ) &&
         _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture) &&
         GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
+      final revision = _navigationRevision;
       final title = await _controller.getTitle();
-      final courseName = await _estimateCourseNameFromPage(title);
+      final pageCourseName = await _estimateCourseNameFromPage(title);
+      final courseName =
+          resolveGakujoDownloadCourseName(
+            pageCourseName: pageCourseName,
+            initialCourseName: null,
+            navigationRevision: revision,
+            currentNavigationRevision: _navigationRevision,
+          ) ??
+          '';
       await _handleDownloadRequest(
         GakujoDownloadRequest(
           url: request.url,
@@ -2759,6 +2768,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           fileName: '',
           formFields: const {},
         ),
+        navigationRevision: revision,
       );
       return GakujoNavigationDecision.prevent;
     }

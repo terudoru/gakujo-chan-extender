@@ -887,6 +887,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
   Future<void> _handleDownloadRequest(
     GakujoDownloadRequest request, {
     String? retryEntryId,
+    int? navigationRevision,
   }) async {
     if (!AllowedWebOrigins.canLoad(
       request.url,
@@ -912,9 +913,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
-    final revision = _navigationRevision;
-    // The shared downloads tab must not inherit the last course page's name.
-    final initialCourseName = isGakujoSharedDownloadsUrl(_currentPageUrl)
+    final revision = navigationRevision ?? _navigationRevision;
+    // A later page or the shared downloads tab must not supply a cached course.
+    final initialCourseName =
+        revision != _navigationRevision ||
+            isGakujoSharedDownloadsUrl(_currentPageUrl)
         ? null
         : _currentCourseName;
     try {
