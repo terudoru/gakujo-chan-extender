@@ -640,6 +640,12 @@ jobs:
           git add distribution/altstore-source.json
           git commit -m "Update AltStore source for ${RELEASE_TAG}"
 
-          if ! git push origin HEAD:main; then
-            echo "::warning::GitHub Release was published, but the AltStore source update could not be pushed to main."
-          fi
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              break
+            fi
+            git rebase --abort 2>/dev/null || true
+            if [ "$attempt" -eq 3 ]; then
+              echo "::warning::GitHub Release was published, but the AltStore source update could not be pushed to main."
+            fi
+          done
