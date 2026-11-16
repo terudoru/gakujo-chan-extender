@@ -74,10 +74,17 @@ target_link_libraries(environment_test PRIVATE PkgConfig::WEBKIT)
 target_compile_options(environment_test PRIVATE -Wall -Wextra -Werror
   -Wno-unused-parameter)
 add_test(NAME environment COMMAND environment_test)
+foreach(test_name navigation_policy load_errors)
+  add_executable(${test_name}_test ${test_name}_test.cc)
+  target_link_libraries(${test_name}_test PRIVATE PkgConfig::WEBKIT)
+  target_compile_options(${test_name}_test PRIVATE -Wall -Wextra -Werror
+    -Wno-unused-parameter)
+  add_test(NAME ${test_name} COMMAND ${test_name}_test)
+endforeach()
 # Download policy tests do not use the desktop accessibility service.
 set_tests_properties(download_policy message_bridge scroll_hook
   history_navigation native_dialog_keys context_menu wheel_scroll pinch_zoom
-  pinch_zoom_dispatch environment
+  pinch_zoom_dispatch environment navigation_policy load_errors
   PROPERTIES
   TIMEOUT 60
   ENVIRONMENT "NO_AT_BRIDGE=1"

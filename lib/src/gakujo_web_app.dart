@@ -657,6 +657,18 @@ void handleGakujoWebResourceError(
   setStatus('読み込みエラー: ${error.description}');
 }
 
+@visibleForTesting
+bool allowsGakujoPdfPreviewNavigation(
+  GakujoNavigationRequest request, {
+  required TargetPlatform platform,
+  required bool Function(String url) isViewerUrl,
+}) {
+  // Before WebKit 2.56 an unnamed iframe can be reported as the main frame.
+  // Only the exact app-owned capability URL gets this Linux exception.
+  return (!request.isMainFrame || platform == TargetPlatform.linux) &&
+      isViewerUrl(request.url);
+}
+
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
     super.key,
@@ -2707,10 +2719,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoNavigationDecision> _handleNavigationRequest(
     GakujoNavigationRequest request,
   ) async {
-    if (request.isMainFrame) _invalidateLoginUrl(request.url);
-    if (!request.isMainFrame && _pdfPreviewServer.isViewerUrl(request.url)) {
+    if (allowsGakujoPdfPreviewNavigation(
+      request,
+      platform: defaultTargetPlatform,
+      isViewerUrl: _pdfPreviewServer.isViewerUrl,
+    )) {
       return GakujoNavigationDecision.navigate;
     }
+    if (request.isMainFrame) _invalidateLoginUrl(request.url);
     if (_isInternalBlankUrl(request.url)) {
       return GakujoNavigationDecision.navigate;
     }

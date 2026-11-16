@@ -796,7 +796,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
 
   @override
   Future<void> setNavigationDelegate(GakujoNavigationDelegate delegate) async {
-    var mainFrameConnectivityFailed = false;
+    var mainFrameLoadFailed = false;
     await _inner.setNavigationDelegate(
       NavigationDelegate(
         onNavigationRequest: (request) async {
@@ -809,12 +809,12 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
         },
         onPageStarted: (url) {
           _channelGuard.rotate();
-          mainFrameConnectivityFailed = false;
+          mainFrameLoadFailed = false;
           delegate.onPageStarted?.call(url);
         },
         onPageFinished: (url) async {
-          // Error documents also finish loading; keep offline recovery active.
-          if (!mainFrameConnectivityFailed) {
+          // Error documents also finish loading; preserve failed-load status.
+          if (!mainFrameLoadFailed) {
             if (AllowedWebOrigins.canLoad(url, debugAllowed: kDebugMode)) {
               try {
                 if (await _inner.currentUrl() == url) {
@@ -846,7 +846,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
             )) {
               unawaited(_recoverFromTerminatedContentProcess());
             } else {
-              mainFrameConnectivityFailed = true;
+              mainFrameLoadFailed = true;
               delegate.onWebResourceError?.call(
                 const GakujoWebResourceError(
                   description: '表示が繰り返し停止したため再読み込みを止めました。再読み込みを押してください',
@@ -856,8 +856,12 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
             }
           }
           final mapped = GakujoWebResourceError.fromWebViewFlutter(error);
-          if (mapped.isForMainFrame && mapped.isConnectivityError) {
-            mainFrameConnectivityFailed = true;
+          if (mapped.isForMainFrame &&
+              (mapped.isConnectivityError ||
+                  (_inner.platform is LinuxWebViewController &&
+                      error.errorType ==
+                          WebResourceErrorType.failedSslHandshake))) {
+            mainFrameLoadFailed = true;
           }
           delegate.onWebResourceError?.call(mapped);
         },

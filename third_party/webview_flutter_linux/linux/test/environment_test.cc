@@ -44,6 +44,9 @@ void default_environment_test() {
     g_assert_null(webkit_website_data_manager_get_base_data_directory(manager));
     g_assert_null(
         webkit_website_data_manager_get_base_cache_directory(manager));
+    g_autofree gchar *cookie_directory = g_build_filename(
+        g_get_user_data_dir(), g_get_prgname(), "cookies", nullptr);
+    g_assert_true(g_file_test(cookie_directory, G_FILE_TEST_IS_DIR));
     g_assert_true(ensure_linux_environment("", "", FALSE, &error));
     g_autofree gchar *default_data =
         g_build_filename(g_get_user_data_dir(), g_get_prgname(), nullptr);
@@ -218,10 +221,10 @@ void await(bool *done) {
   g_assert_true(*done);
 }
 
-void add_cookie(WebKitWebContext *context, const char *name) {
+void add_cookie(WebKitWebContext *context, const char *name, gint max_age = -1) {
   bool done = false;
   SoupCookie *cookie =
-      soup_cookie_new(name, "value", "environment.example", "/", -1);
+      soup_cookie_new(name, "value", "environment.example", "/", max_age);
   webkit_cookie_manager_add_cookie(
       webkit_web_context_get_cookie_manager(context), cookie, nullptr,
       [](GObject *object, GAsyncResult *result, gpointer data) {
@@ -261,6 +264,38 @@ std::vector<std::string> cookie_names(WebKitWebContext *context) {
       &result);
   await(&result.done);
   return result.names;
+}
+
+void persistent_cookie_test() {
+  isolated([] {
+    GError *error = nullptr;
+    g_assert_true(ensure_linux_environment(
+        path("persistent-data").c_str(), path("persistent-cache").c_str(),
+        FALSE, &error));
+    g_assert_no_error(error);
+    WebKitWebContext *context = get_linux_environment_context(&error);
+    add_cookie(context, "persistent", 3600);
+    add_cookie(context, "session");
+    g_assert_cmpuint(cookie_names(context).size(), ==, 2);
+    const std::string directory = path("persistent-data/cookies");
+    const std::string file = directory + "/cookies.sqlite";
+    g_assert_true(g_file_test(file.c_str(), G_FILE_TEST_IS_REGULAR));
+    GStatBuf stat = {};
+    g_assert_cmpint(g_stat(directory.c_str(), &stat), ==, 0);
+    g_assert_cmpint(stat.st_mode & 0777, ==, 0700);
+
+    g_autoptr(WebKitWebsiteDataManager) manager = webkit_website_data_manager_new(
+        "base-data-directory", path("reopened-data").c_str(),
+        "base-cache-directory", path("reopened-cache").c_str(), nullptr);
+    g_autoptr(WebKitWebContext) reopened =
+        webkit_web_context_new_with_website_data_manager(manager);
+    webkit_cookie_manager_set_persistent_storage(
+        webkit_web_context_get_cookie_manager(reopened), file.c_str(),
+        WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+    const auto restored = cookie_names(reopened);
+    g_assert_cmpuint(restored.size(), ==, 1);
+    g_assert_cmpstr(restored.front().c_str(), ==, "persistent");
+  });
 }
 
 void clear_data(WebKitWebContext *context) {
@@ -439,6 +474,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/environment/failure-retry", failure_retry_test);
   g_test_add_func("/environment/explicit-default-failure",
                   explicit_default_failure_test);
+  g_test_add_func("/environment/persistent-cookie", persistent_cookie_test);
   g_test_add_func("/environment/shared-storage", shared_storage_test);
   g_test_add_func("/environment/incognito-storage", incognito_storage_test);
   return g_test_run();
