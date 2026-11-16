@@ -567,6 +567,20 @@ class StarSyncEngine {
     if (!_disposed) _publish(syncing: _status.value.syncing);
   }
 
+  Future<bool> _allowsAutomaticQuota(int estimate) async {
+    try {
+      return await _quotaMeter.allowsAutomatic(estimate);
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to check star sync automatic quota',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
   Future<void> _scheduleQuotaRetry([int estimate = 100]) async {
     _quotaTimer?.cancel();
     _quotaRetryEstimate = max(_quotaRetryEstimate, estimate);
@@ -1368,12 +1382,21 @@ class StarSyncEngine {
         return const StarSyncResult();
       }
       if (trigger != StarSyncTrigger.manual &&
-          !await _quotaMeter.allowsAutomatic(100)) {
+          !await _allowsAutomaticQuota(100)) {
+        unawaited(_scheduleQuotaRetry());
         if (trigger == StarSyncTrigger.localChange) {
           state.pendingLocalChange = true;
-          await _saveState();
+          try {
+            await _saveState();
+          } on Object catch (error, stackTrace) {
+            developer.log(
+              'Failed to save pending star sync local change',
+              name: 'MoreBetterGakujo',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
         }
-        unawaited(_scheduleQuotaRetry());
         _publish();
         return const StarSyncResult();
       }
@@ -2476,7 +2499,7 @@ class StarSyncEngine {
           _pendingAutomaticBackup = null;
           return false;
         }
-        if (!await _quotaMeter.allowsAutomatic(100)) {
+        if (!await _allowsAutomaticQuota(100)) {
           _pendingAutomaticBackup = build;
           unawaited(_scheduleQuotaRetry());
           _publish();
