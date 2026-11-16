@@ -207,8 +207,8 @@ function createPage(html: any, text: any, storage: any, options: any = {}) {
     counter: options.counter,
     counterElement: options.counterElement,
     location: {
-      href: 'https://gakujo.example/report/input',
-      pathname: '/report/input'
+      href: 'https://gakujo.example' + (options.pathname || '/report/input'),
+      pathname: options.pathname || '/report/input'
     },
     defaultView: null,
     insertedStatus: null,
@@ -333,6 +333,19 @@ function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimer
 
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'pathIdentity') {
+    const savingPage = textPage(storage, {pathname: spec.paths[0]});
+    runPage(savingPage);
+    savingPage.field.value = 'Saved draft';
+    savingPage.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+    hidePage(savingPage);
+    const restored = spec.paths.slice(1).map((pathname: string) => {
+      const page = textPage(storage, {pathname});
+      runPage(page);
+      return page.field.value;
+    });
+    return {key: storage.key(0), restored, draftKeyCount: storage.length};
+  }
   if (spec.scenario === 'statusInRow') {
     const savingPage = textPage(storage, {value: 'first', anonymous: true});
     runPage(savingPage);

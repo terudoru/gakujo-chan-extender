@@ -359,7 +359,7 @@ function reportDraft() {
     }
     var path = '';
     try {
-      path = doc.location.pathname || '';
+      path = (doc.location.pathname || '').replace(/;jsessionid=[^;/]*/gi, '');
     } catch (e) {
       path = '';
     }
