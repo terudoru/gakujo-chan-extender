@@ -1087,7 +1087,7 @@ class GakujoActivityStore {
   Future<void> _removeFavorite(String url) async {
     final favoriteRead = await _readFavorites();
     if (!favoriteRead.isSuccessful) {
-      return;
+      throw StateError('Failed to read favorites');
     }
     final favorites = favoriteRead.value;
     await _writeList(
@@ -1239,6 +1239,31 @@ class GakujoActivityStore {
           (match) => '${match.group(1)}/${match.group(2)}/${match.group(3)}',
         )
         .replaceAll('-', ' ');
+
+    DateTime withClosingTime(
+      DateTime opening,
+      int year,
+      int month,
+      int day,
+      int matchEnd,
+    ) {
+      // Normalization above turns wave dashes and hyphens into spaces.
+      final closingTime = RegExp(
+        r'^\s*(?:[～〜~-]|から)?\s*([0-9]{1,2}):([0-9]{2})(?![0-9])',
+      ).firstMatch(normalized.substring(matchEnd));
+      if (closingTime == null) {
+        return opening;
+      }
+      final closing = deadlineDateTime(
+        year,
+        month,
+        day,
+        int.parse(closingTime.group(1)!),
+        int.parse(closingTime.group(2)!),
+      );
+      return closing != null && closing.isAfter(opening) ? closing : opening;
+    }
+
     final fullDate = RegExp(
       r'((?:20)?[0-9]{2})[/.]([0-9]{1,2})[/.]([0-9]{1,2})(?![0-9]|\.[0-9])(?:\s*([0-9]{1,2}):([0-9]{2}))?',
     );
@@ -1300,20 +1325,13 @@ class GakujoActivityStore {
               }
             }
           } else {
-            final trailingTime = RegExp(r'^\s*([0-9]{1,2}):([0-9]{2})(?![0-9])')
-                .firstMatch(normalized.substring(fullDate.end));
-            if (trailingTime != null) {
-              final sameDayDueAt = deadlineDateTime(
-                year,
-                month,
-                day,
-                int.parse(trailingTime.group(1)!),
-                int.parse(trailingTime.group(2)!),
-              );
-              if (sameDayDueAt != null && sameDayDueAt.isAfter(fullDateDueAt)) {
-                return sameDayDueAt;
-              }
-            }
+            return withClosingTime(
+              fullDateDueAt,
+              year,
+              month,
+              day,
+              fullDate.end,
+            );
           }
           return fullDateDueAt;
         }
@@ -1335,6 +1353,7 @@ class GakujoActivityStore {
     final minute = int.tryParse(monthAndDay.group(5) ?? '') ?? 59;
     final detectedYear = japanWallClock(detectedAt).year;
     DateTime? dueAt;
+    var dueYear = detectedYear;
     for (final year in [detectedYear - 1, detectedYear, detectedYear + 1]) {
       final candidate = deadlineDateTime(year, month, day, hour, minute);
       if (candidate != null &&
@@ -1342,9 +1361,12 @@ class GakujoActivityStore {
               candidate.difference(detectedAt).abs() <
                   dueAt.difference(detectedAt).abs())) {
         dueAt = candidate;
+        dueYear = year;
       }
     }
-    return dueAt;
+    return dueAt == null
+        ? null
+        : withClosingTime(dueAt, dueYear, month, day, monthAndDay.end);
   }
 
   DateTime? _strictDateTime(
