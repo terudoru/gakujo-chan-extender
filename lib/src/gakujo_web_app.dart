@@ -451,6 +451,32 @@ String gakujoCachedAssignmentText(GakujoAssignment assignment) {
 }
 
 @visibleForTesting
+List<String> gakujoExtractReportListItems(String text) {
+  final keywords = RegExp(
+    r'(レポート|課題|小テスト|アンケート|提出|期限|締切|締め切)',
+  );
+  final seen = <String>{};
+  final items = <String>[];
+  for (final line in text
+      .split(RegExp(r'[\r\n]+'))
+      .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())) {
+    if (line.length < 4 ||
+        !keywords.hasMatch(line) ||
+        !GakujoDatedActivity.containsDate(line)) {
+      continue;
+    }
+    final item = line.length > 160 ? '${line.substring(0, 160)}...' : line;
+    if (seen.add(item)) {
+      items.add(item);
+    }
+    if (items.length >= 80) {
+      break;
+    }
+  }
+  return items;
+}
+
+@visibleForTesting
 DateTime? parseCalendarDate(String raw) {
   final match = RegExp(
     r'^\s*((?:20)?[0-9]{2})[/-]([0-9]{1,2})[/-]([0-9]{1,2})\s*$',
@@ -5500,7 +5526,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           url: url,
           capturedAt: capturedAt,
           items: rowItems.isEmpty
-              ? _extractReportListItems(result.text)
+              ? gakujoExtractReportListItems(result.text)
               : rowItems,
         ),
       );
@@ -5719,29 +5745,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return genericTitles.contains(trimmed) || trimmed.startsWith('CampusSquare')
         ? _datedActivityTitle(line)
         : trimmed;
-  }
-
-  List<String> _extractReportListItems(String text) {
-    final keywords = RegExp(
-      r'(レポート|課題|小テスト|アンケート|提出|期限|締切|締め切)',
-    );
-    final seen = <String>{};
-    final items = <String>[];
-    for (final line in text
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())) {
-      if (line.length < 4 || !keywords.hasMatch(line)) {
-        continue;
-      }
-      final item = line.length > 160 ? '${line.substring(0, 160)}...' : line;
-      if (seen.add(item)) {
-        items.add(item);
-      }
-      if (items.length >= 80) {
-        break;
-      }
-    }
-    return items;
   }
 
   Future<void> _notifyPendingDeadlines({bool allowPermissionRequest = true}) {
