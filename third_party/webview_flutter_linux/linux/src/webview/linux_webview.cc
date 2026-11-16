@@ -1,6 +1,7 @@
 #include "common/method_channel_utils.h"
 #include "plugin/webview_all_linux_plugin_private.h"
 #include "webview/download_policy.h"
+#include "webview/webview_context_menu.h"
 #include "webview/webview_environment.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
@@ -370,6 +371,13 @@ static gboolean load_failed_cb(WebKitWebView *widget,
     return FALSE;
   }
   emit_load_error(static_cast<LinuxWebView *>(user_data), error, failing_url);
+  return FALSE;
+}
+
+// More Better Gakujo patch: hide downloads that bypass the app's handling.
+static gboolean context_menu_cb(WebKitWebView *, WebKitContextMenu *menu,
+                                 GdkEvent *, WebKitHitTestResult *, gpointer) {
+  remove_unmanaged_download_items(menu);
   return FALSE;
 }
 
@@ -1037,6 +1045,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
 
   g_signal_connect(webview->web_view, "decide-policy",
                    G_CALLBACK(decide_policy_cb), webview);
+  g_signal_connect(webview->web_view, "context-menu",
+                   G_CALLBACK(context_menu_cb), webview);
   g_signal_connect(webview->web_view, "create", G_CALLBACK(create_web_view_cb),
                    webview);
   g_signal_connect(webview->web_view, "load-changed",
