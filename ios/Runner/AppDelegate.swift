@@ -1595,6 +1595,9 @@ private final class IosPdfPreviewOverlay: NSObject, WKUIDelegate, WKNavigationDe
     let block: @convention(block) (AnyObject, AnyObject?) -> Void = { webView, delegate in
       if let delegate, !(delegate is IosPdfPreviewOverlay),
          let delegateClass = object_getClass(delegate) {
+        // Unlike macOS, iOS defaults this to false. The viewer opens after async work,
+        // so window.open returns nil and no viewer appears unless this is enabled.
+        (webView as? WKWebView)?.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         install(on: delegateClass)
       }
       original(webView, setter, delegate)
