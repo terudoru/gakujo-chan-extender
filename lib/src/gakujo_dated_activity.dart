@@ -7,6 +7,10 @@ class GakujoDatedActivity {
   static final RegExp _postingDatePattern = RegExp(
     r'^\s*[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}\s+[0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?',
   );
+  static final RegExp _dateTimeSuffixPattern = RegExp(
+    r'(?:\s*(?:午前|午後)\s*[0-9]{1,2}(?::[0-9]{2}|時(?:[0-9]{1,2}分)?))?'
+    r'(?:\s*(?:[～〜~-]|から)\s*(?:午前|午後)?\s*[0-9]{1,2}(?::[0-9]{2}|時(?:[0-9]{1,2}分)?))?',
+  );
 
   static bool containsDate(String text) {
     return _datePattern.hasMatch(normalizeDateText(text));
@@ -228,13 +232,31 @@ class GakujoDatedActivity {
         _postingDatePattern.firstMatch(normalized)?.group(0)?.trim();
   }
 
+  /// Date syntax for diagnostics, without surrounding message body text.
+  static String dateExpressionsOnly(String text) {
+    return _dateExpressions(normalizeDateText(text)).join(' ');
+  }
+
+  static Iterable<String> _dateExpressions(
+    String normalized, {
+    int after = 0,
+  }) sync* {
+    for (final match in _datePattern.allMatches(normalized)) {
+      final suffix = _dateTimeSuffixPattern.matchAsPrefix(
+        normalized,
+        match.end,
+      );
+      final end = suffix?.end ?? match.end;
+      if (end > after) {
+        yield normalized.substring(match.start, end).trim();
+      }
+    }
+  }
+
   /// Keep dates found past the preview boundary for downstream parsing.
   static String datedTextPreview(String text) {
     final compacted = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final dates = _datePattern
-        .allMatches(normalizeDateText(compacted))
-        .where((match) => match.end > 180)
-        .map((match) => match.group(0)!);
+    final dates = _dateExpressions(normalizeDateText(compacted), after: 180);
     return [compactText(compacted), ...dates].join(' ');
   }
 

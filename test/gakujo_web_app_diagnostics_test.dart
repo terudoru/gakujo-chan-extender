@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 
 void main() {
@@ -126,6 +128,94 @@ void main() {
       expect(
         redactGakujoDiagnosticBackup({'deadlines': deadlines})['deadlines'],
         deadlines,
+      );
+    }
+  });
+
+  test('diagnostic backup keeps only dates from message deadline previews', () {
+    const privateText = '山田太郎 学籍番号12345678 個別の提出指示';
+    final deadlines = [
+      GakujoDeadlineEntry(
+        title: '課題のお知らせ',
+        url: 'https://gakujo.example/message',
+        dueText: '$privateText 2026/11/20 午後5:00まで',
+        detectedAt: DateTime.utc(2026, 11, 1),
+        source: '連絡通知',
+        messageText: '$privateText 2026/11/20 午後5:00まで',
+      ),
+      GakujoDeadlineEntry(
+        title: '本文が未保存の連絡',
+        url: 'https://gakujo.example/message',
+        dueText: '$privateText 2026/11/21 09:00～17:00',
+        detectedAt: DateTime.utc(2026, 11, 1),
+        kind: 'schedule',
+        source: '連絡通知',
+      ),
+      GakujoDeadlineEntry(
+        title: '出典が未保存の連絡',
+        url: 'https://gakujo.example/message',
+        dueText: '$privateText 日付なし',
+        detectedAt: DateTime.utc(2026, 11, 1),
+        kind: 'notice',
+        messageText: privateText,
+      ),
+      GakujoDeadlineEntry(
+        title: '通常の課題',
+        url: 'https://gakujo.example/report',
+        dueText: '提出期限 2026/11/22 17:00まで',
+        detectedAt: DateTime.utc(2026, 11, 1),
+        source: 'レポート・小テスト',
+      ),
+    ];
+    final backup = buildGakujoBackupPayload(
+      appSettings: const GakujoAppSettings(),
+      downloadHistory: const [],
+      failedDownloads: const [],
+      favorites: const [],
+      deadlines: deadlines,
+      notifiedDeadlineKeys: [
+        for (final deadline in deadlines) deadline.key,
+        'deadline|https://gakujo.example/portal|削除済みの連絡|'
+            '$privateText | 2026/11/23 17:00まで',
+      ],
+      reportLists: const [],
+    );
+    final originalJson = jsonEncode(backup);
+
+    final redacted = redactGakujoDiagnosticBackup(backup);
+    final entries = (redacted['deadlines']! as List).cast<Map>();
+
+    expect(entries[0]['dueText'], '2026/11/20 午後5:00');
+    expect(entries[1]['dueText'], '2026/11/21 09:00～17:00');
+    expect(entries[2]['dueText'], isEmpty);
+    expect(entries[3], deadlines[3].toJson());
+    expect(redacted['notifiedDeadlineKeys'], [
+      'deadline|https://gakujo.example/message|課題のお知らせ|2026/11/20 午後5:00',
+      'schedule|https://gakujo.example/message|本文が未保存の連絡|2026/11/21 09:00～17:00',
+      'notice|https://gakujo.example/message|出典が未保存の連絡|',
+      'deadline|https://gakujo.example/report|通常の課題|2026/11/22 17:00',
+      'deadline|https://gakujo.example/portal|削除済みの連絡|2026/11/23 17:00',
+    ]);
+    final reportJson = jsonEncode({'backup': redacted});
+    for (final value in ['山田太郎', '12345678', '個別の提出指示', 'messageText']) {
+      expect(reportJson, isNot(contains(value)));
+    }
+    expect(jsonEncode(backup), originalJson);
+  });
+
+  test('diagnostic backup handles malformed notification keys defensively', () {
+    expect(
+      redactGakujoDiagnosticBackup({
+        'notifiedDeadlineKeys': [null, 42, 'legacy-key', 'kind|url|title'],
+      })['notifiedDeadlineKeys'],
+      [null, 42, 'legacy-key', 'kind|url|title'],
+    );
+    for (final keys in <Object?>[null, 'invalid', 42, <String, Object?>{}]) {
+      expect(
+        redactGakujoDiagnosticBackup({
+          'notifiedDeadlineKeys': keys,
+        })['notifiedDeadlineKeys'],
+        keys,
       );
     }
   });
