@@ -30,4 +30,48 @@ void main() {
       }
     });
   }
+
+  group('report list fallback', () {
+    test('headings without dates yield no items', () {
+      expect(
+        gakujoExtractReportListItems(
+          'レポート・小テスト・アンケート提出\n提出期間\n提出期限\n該当する課題はありません',
+        ),
+        isEmpty,
+      );
+    });
+
+    for (final date in [
+      '2026/1/2',
+      '1/2',
+      '1月2日',
+      '２０２６／１／２',
+      '１／２',
+      '１月２日',
+    ]) {
+      test('keeps a dated assignment with $date', () {
+        final line = 'レポート 第1回 提出期限 $date';
+        expect(
+          gakujoExtractReportListItems(
+            'レポート・小テスト・アンケート提出\n$line\n提出期間\n$date',
+          ),
+          [line],
+        );
+      });
+    }
+
+    test('truncates only lines longer than 160 characters', () {
+      final line = 'レポート 提出期限 2026/1/2 '.padRight(160, 'あ');
+      expect(gakujoExtractReportListItems(line), [line]);
+      expect(gakujoExtractReportListItems('${line}続き'), ['$line...']);
+    });
+
+    test('caps the list at 80 items', () {
+      final lines = List.generate(81, (index) => '課題 $index 提出期限 2026/1/2');
+      expect(
+        gakujoExtractReportListItems(lines.join('\n')),
+        lines.take(80).toList(),
+      );
+    });
+  });
 }
