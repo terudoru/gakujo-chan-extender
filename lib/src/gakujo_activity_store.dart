@@ -1221,11 +1221,20 @@ class GakujoActivityStore {
         .replaceAll('月', '/')
         .replaceAll('日', ' ')
         .replaceAllMapped(
+          RegExp(r'(午前|午後)\s*(1[0-2]|0?[1-9])(?=:|時)'),
+          (match) =>
+              '${int.parse(match.group(2)!) % 12 + (match.group(1) == '午後' ? 12 : 0)}',
+        )
+        .replaceAllMapped(
           RegExp(r'([0-9]{1,2})時(?:([0-9]{1,2})分)?'),
           (match) =>
               '${match.group(1)}:${(match.group(2) ?? '00').padLeft(2, '0')}',
         )
-        .replaceAll('-', '/');
+        .replaceAllMapped(
+          RegExp(r'(?<![0-9])([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?![0-9])'),
+          (match) => '${match.group(1)}/${match.group(2)}/${match.group(3)}',
+        )
+        .replaceAll('-', ' ');
     final fullDate = RegExp(
       r'((?:20)?[0-9]{2})[/.]([0-9]{1,2})[/.]([0-9]{1,2})(?![0-9]|\.[0-9])(?:\s*([0-9]{1,2}):([0-9]{2}))?',
     );
@@ -1284,6 +1293,21 @@ class GakujoActivityStore {
                       fullDateDueAt;
                 }
                 return sameYearDueAt;
+              }
+            }
+          } else {
+            final trailingTime = RegExp(r'^\s*([0-9]{1,2}):([0-9]{2})(?![0-9])')
+                .firstMatch(normalized.substring(fullDate.end));
+            if (trailingTime != null) {
+              final sameDayDueAt = deadlineDateTime(
+                year,
+                month,
+                day,
+                int.parse(trailingTime.group(1)!),
+                int.parse(trailingTime.group(2)!),
+              );
+              if (sameDayDueAt != null && sameDayDueAt.isAfter(fullDateDueAt)) {
+                return sameDayDueAt;
               }
             }
           }

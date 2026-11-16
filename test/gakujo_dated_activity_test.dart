@@ -116,6 +116,42 @@ void main() {
     expect(GakujoDatedActivity.titleFor('課題 2026年11月20日17時00分'), '課題');
   });
 
+  for (final dateSeparator in ['/', '-']) {
+    for (final rangeSeparator in ['-', ' - ']) {
+      test('hyphen metadata ranges preserve the body deadline: '
+          '$dateSeparator "$rangeSeparator"', () {
+        final start = '2026${dateSeparator}11${dateSeparator}01 00:00';
+        final end = '2026${dateSeparator}12${dateSeparator}01 00:00';
+        final dueText = '提出期限2026${dateSeparator}11${dateSeparator}20 17:00';
+        final store = GakujoActivityStore();
+        for (final text in [
+          '掲示期間$start$rangeSeparator$end $dueText',
+          '2026/10/20 09:00 $dueText $start$rangeSeparator$end',
+        ]) {
+          final content = GakujoDatedActivity.messageContentForDates(text);
+          expect(content, contains(dueText));
+          expect(content, isNot(contains(start)));
+          expect(content, isNot(contains(end)));
+          final entry = GakujoDeadlineEntry(
+            title: '課題',
+            url: 'https://gakujo.example/message',
+            dueText: content,
+            detectedAt: DateTime.utc(2026, 11, 1),
+            source: '連絡通知',
+          );
+          expect(
+            store.isDeadlinePassed(entry, now: DateTime.utc(2026, 11, 20, 7, 59)),
+            isFalse,
+          );
+          expect(
+            store.isDeadlinePassed(entry, now: DateTime.utc(2026, 11, 20, 8)),
+            isTrue,
+          );
+        }
+      });
+    }
+  }
+
   test('message display and posting dates do not become deadlines', () {
     for (final text in [
       '課題の提出方法について 掲示期間：2026/10/24 8:45 ～2026/10/30 17:00',

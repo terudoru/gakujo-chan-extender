@@ -205,13 +205,13 @@ class GakujoDatedActivity {
     final normalized = normalizeDateText(text);
     var content = normalized.replaceAll(
       RegExp('(?:掲示期間|掲載日時|送信日時)\\s*[:：]?\\s*$date'
-          '(?:\\s*(?:[～〜~]|から)\\s*$date\\s*(?:まで)?)?'),
+          '(?:\\s*(?:[～〜~-]|から)\\s*$date\\s*(?:まで)?)?'),
       ' ',
     );
     // List scans start with the posting date and omit the period's label.
     if (_postingDatePattern.hasMatch(normalized)) {
       content = content.replaceAll(
-        RegExp('$date\\s*(?:[～〜~]|から)\\s*$date\\s*(?:まで)?\\s*\$'),
+        RegExp('$date\\s*(?:[～〜~-]|から)\\s*$date\\s*(?:まで)?\\s*\$'),
         ' ',
       );
     }
