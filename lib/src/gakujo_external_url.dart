@@ -1,5 +1,28 @@
 import 'allowed_web_origins.dart';
 
+const _authenticationQueryParameters = {
+  'state',
+  'code',
+  'login_hint',
+  'id_token',
+  'access_token',
+  'refresh_token',
+  'nonce',
+  'code_challenge',
+  'code_verifier',
+  'samlrequest',
+  'samlresponse',
+  'relaystate',
+  'sigalg',
+  'signature',
+  'ticket',
+  'session',
+  'sessionid',
+  'jsessionid',
+  'token',
+  'authuser',
+};
+
 /// Keeps navigation identifiers while removing session data from exports.
 String sanitizeGakujoExternalUrl(String value) =>
     _sanitizeGakujoUrl(value, preserveExternalQuery: false);
@@ -19,7 +42,17 @@ String _sanitizeGakujoUrl(String value, {required bool preserveExternalQuery}) {
       uri.host != Uri.parse(AllowedWebOrigins.gakujoUrl).host &&
       AllowedWebOrigins.canNavigate(value, debugAllowed: false);
   final query = <String, List<String>>{};
+  final externalQuery = <String>[];
   try {
+    if (keepQuery) {
+      // Preserve duplicate values and original escaping on links such as Forms.
+      for (final parameter in uri.query.split('&')) {
+        final name = Uri.decodeQueryComponent(parameter.split('=').first);
+        if (!_authenticationQueryParameters.contains(name.toLowerCase())) {
+          externalQuery.add(parameter);
+        }
+      }
+    }
     for (final entry in uri.queryParametersAll.entries) {
       final name = entry.key.toLowerCase();
       final safeValue = switch (name) {
@@ -48,7 +81,9 @@ String _sanitizeGakujoUrl(String value, {required bool preserveExternalQuery}) {
     port: uri.hasPort ? uri.port : null,
     pathSegments: segments.any((s) => s.toLowerCase().contains('jsessionid'))
         ? const [] : segments,
-    query: keepQuery ? uri.query : null,
+    query: keepQuery && externalQuery.isNotEmpty
+        ? externalQuery.join('&')
+        : null,
     queryParameters: keepQuery || query.isEmpty ? null : query,
   ).toString();
 }

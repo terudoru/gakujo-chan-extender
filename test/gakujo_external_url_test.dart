@@ -21,6 +21,40 @@ void main() {
     });
   }
 
+  test('Copy URL strips OAuth authentication data', () {
+    const url =
+        'https://accounts.google.com/o/oauth2/v2/auth'
+        '?state=secret&code=secret&login_hint=student%40niigata-u.ac.jp'
+        '&ID_TOKEN=secret&access_token=secret&refresh_token=secret'
+        '&nonce=secret&code_challenge=secret&code_verifier=secret'
+        '&authuser=student&client_id=public&scope=openid';
+    expect(
+      sanitizeGakujoCopyUrl(url),
+      'https://accounts.google.com/o/oauth2/v2/auth'
+      '?client_id=public&scope=openid',
+    );
+  });
+
+  test('Copy URL strips SAML and session data from university SSO', () {
+    const url =
+        'https://sso.niigata-u.ac.jp/callback'
+        '?SAMLRequest=secret&SAMLResponse=secret&RelayState=secret'
+        '&SigAlg=secret&Signature=secret&ticket=secret&session=secret'
+        '&SESSIONID=secret&jsessionid=secret&%74oken=secret'
+        '&destination=course%20page&destination=resources';
+    expect(
+      sanitizeGakujoCopyUrl(url),
+      'https://sso.niigata-u.ac.jp/callback'
+      '?destination=course%20page&destination=resources',
+    );
+    expect(
+      sanitizeGakujoCopyUrl(
+        'https://sso.niigata-u.ac.jp/callback?code=secret&state=secret',
+      ),
+      'https://sso.niigata-u.ac.jp/callback',
+    );
+  });
+
   for (final tabId in ['en', 'sch', 'kj', 'si', 'sd', 'sy']) {
     test('Copy URL and exports preserve portal tab $tabId', () {
       final url =
