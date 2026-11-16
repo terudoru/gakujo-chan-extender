@@ -5,6 +5,7 @@
 #include "webview/webview_environment.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_native_dialog_keys.h"
 #include "webview/webview_pinch_zoom.h"
 #include "webview/webview_wheel_scroll.h"
 
@@ -403,6 +404,16 @@ static gboolean history_button_press_event_cb(GtkWidget *widget,
 static gboolean history_key_press_event_cb(GtkWidget *widget,
                                            GdkEventKey *event,
                                            gpointer user_data) {
+  // More Better Gakujo patch: run native dialog bindings before FlView consumes
+  // the event. Even unbound keys must stay out of page and Flutter shortcuts.
+  if (focus_is_inside_native_child(widget)) {
+    if (cycle_focus_in_native_child(widget, event)) {
+      return TRUE;
+    }
+    GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+    gtk_bindings_activate_event(G_OBJECT(toplevel), event);
+    return TRUE;
+  }
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
   if (send_history_navigation(webview, history_navigation_direction(event))) {
     return TRUE;
@@ -1075,6 +1086,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
                    G_CALLBACK(zoom_scroll_event_cb), webview);
   g_signal_connect(webview->web_view, "button-press-event",
                    G_CALLBACK(history_button_press_event_cb), webview);
+  // More Better Gakujo patch: keep history first so native dialog keys return
+  // TRUE before the zoom handler and WebKit's class handler can run.
   g_signal_connect(webview->web_view, "key-press-event",
                    G_CALLBACK(history_key_press_event_cb), webview);
   g_signal_connect(webview->web_view, "key-press-event",
