@@ -693,6 +693,22 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  set onDownloadSaved(void Function(String url, String path)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnDownloadSaved(handler);
+    }
+  }
+
+  set onDownloadFailed(
+    void Function(String url, String description)? handler,
+  ) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnDownloadFailed(handler);
+    }
+  }
+
   set onWheelScroll(
     void Function(double dxNotches, double dyNotches)? handler,
   ) {

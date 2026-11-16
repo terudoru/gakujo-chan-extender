@@ -31,6 +31,12 @@ std::string SafeFilename(const gchar *name) {
     if (static_cast<unsigned char>(c) < 32 || c == 127)
       c = '_';
   }
+  // More Better Gakujo patch: the app trims paths it opens, so a name with
+  // surrounding spaces would open a different file.
+  const size_t first = value.find_first_not_of(' ');
+  value = first == std::string::npos
+              ? std::string()
+              : value.substr(first, value.find_last_not_of(' ') - first + 1);
   if (value.empty() || value == "." || value == "..")
     value = "download";
   if (value.size() > 200) {
@@ -530,6 +536,13 @@ void DownloadPolicy::Result(Task &task, const std::string &status,
   if (!description.empty())
     task.event.description = description;
   Emit(task, "downloadResult");
+  // More Better Gakujo patch: WebKitGTK has no download UI, so tell the app
+  // about files it saved (or failed to save) without delegation.
+  if (!task.delegated && callback_ &&
+      (status == "completed" || status == "failed")) {
+    task.event.type = status == "completed" ? "downloadSaved" : "downloadFailed";
+    callback_(task.event);
+  }
   tasks_.erase(task.event.id);
 }
 

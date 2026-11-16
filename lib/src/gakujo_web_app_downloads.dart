@@ -1362,6 +1362,41 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
+  /// Linux: WebKitGTK saved a download the app did not capture into the
+  /// default download directory. It has no download UI of its own, unlike
+  /// WebView2 on Windows, so tell the user where the file went.
+  void _showWebKitDownloadSavedSnackBar(String path) {
+    if (!mounted) {
+      return;
+    }
+    _showSnackBar(
+      'ダウンロードフォルダに保存しました: ${path.split('/').last}',
+      action: SnackBarAction(
+        label: '開く',
+        onPressed: () => unawaited(_openSavedDownload(path)),
+      ),
+    );
+  }
+
+  void _showWebKitDownloadFailedSnackBar(String url) {
+    if (!mounted) {
+      return;
+    }
+    var name = _displayUrl(url);
+    try {
+      // pathSegments throws for percent-escapes that are not valid UTF-8.
+      final segments = Uri.tryParse(url)?.pathSegments ?? const <String>[];
+      if (segments.isNotEmpty && segments.last.isNotEmpty) {
+        name = segments.last;
+      }
+    } on FormatException {
+      // Keep the URL.
+    } on ArgumentError {
+      // Keep the URL.
+    }
+    _showSnackBar('ダウンロードに失敗しました: $name');
+  }
+
   Future<void> _openSavedDownload(String location) async {
     await openGakujoSavedDownload(
       location,

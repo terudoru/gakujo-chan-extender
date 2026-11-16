@@ -301,6 +301,47 @@ void main() {
     expect(calls, isEmpty);
   });
 
+  test('app adapter forwards WebKit download outcomes', () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final saved = <(String, String)>[];
+    final failed = <(String, String)>[];
+    controller.onDownloadSaved = (url, path) => saved.add((url, path));
+    controller.onDownloadFailed = (url, error) => failed.add((url, error));
+    await emitEvent({
+      'type': 'downloadSaved',
+      'url': 'https://www.niigata-u.ac.jp/a.pdf',
+      'path': '/home/u/Downloads/a.pdf',
+    });
+    await emitEvent({
+      'type': 'downloadFailed',
+      'url': 'https://www.niigata-u.ac.jp/b.pdf',
+      'description': 'No space left',
+    });
+    await emitEvent({'type': 'downloadFailed', 'url': 'https://x.test/c'});
+    // Malformed payloads are ignored.
+    await emitEvent({'type': 'downloadSaved', 'url': 'https://x.test/d'});
+    await emitEvent({'type': 'downloadSaved', 'url': 1, 'path': '/tmp/d'});
+    await emitEvent({'type': 'downloadSaved', 'url': 'u', 'path': ''});
+    await emitEvent({'type': 'downloadFailed'});
+    expect(saved, [
+      ('https://www.niigata-u.ac.jp/a.pdf', '/home/u/Downloads/a.pdf'),
+    ]);
+    expect(failed, [
+      ('https://www.niigata-u.ac.jp/b.pdf', 'No space left'),
+      ('https://x.test/c', ''),
+    ]);
+    expect(calls, isEmpty);
+
+    controller.onDownloadSaved = null;
+    controller.onDownloadFailed = null;
+    await emitEvent({'type': 'downloadSaved', 'url': 'u', 'path': '/tmp/e'});
+    await emitEvent({'type': 'downloadFailed', 'url': 'u'});
+    expect(saved, hasLength(1));
+    expect(failed, hasLength(2));
+  });
+
   test('Linux plugin stops dispatching key zoom events after disposal', () async {
     var dispatched = 0;
     native.setOnKeyZoom((_) => dispatched++);

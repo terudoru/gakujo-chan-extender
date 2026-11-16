@@ -8,7 +8,29 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
 
     final String? type = event['type'] as String?;
     switch (type) {
-      // More Better Gakujo patch: fork-only download events are not exposed.
+      // More Better Gakujo patch: only the outcome of downloads WebKit saved
+      // on its own is exposed; delegated download events are not.
+      case 'downloadSaved':
+        final url = event['url'];
+        final path = event['path'];
+        if (url is String && path is String && path.isNotEmpty) {
+          _dispatchEventHandler('download saved', () async {
+            _onDownloadSaved?.call(url, path);
+          });
+        }
+        break;
+      case 'downloadFailed':
+        final url = event['url'];
+        if (url is String) {
+          final description = event['description'];
+          _dispatchEventHandler('download failed', () async {
+            _onDownloadFailed?.call(
+              url,
+              description is String ? description : '',
+            );
+          });
+        }
+        break;
       case 'urlChanged':
         final String url = '${event['url'] ?? ''}';
         _currentUrl = url;

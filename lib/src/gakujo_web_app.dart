@@ -1760,6 +1760,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         controller.onWheelZoom = (dyNotches, position) {
           _handleDesktopWheelZoom(dyNotches * kLinuxWheelNotchPixels, position);
         };
+        controller.onDownloadSaved = (url, path) {
+          _showWebKitDownloadSavedSnackBar(path);
+        };
+        controller.onDownloadFailed = (url, description) {
+          _showWebKitDownloadFailedSnackBar(url);
+        };
         controller.onKeyZoom = (action) {
           if (!mounted || !_supportsDesktopZoom) return;
           switch (action) {
@@ -1853,6 +1859,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onWheelZoom = null;
       controller.onKeyZoom = null;
+      controller.onDownloadSaved = null;
+      controller.onDownloadFailed = null;
       controller.onPinchZoom = null;
       controller.onWheelScroll = null;
       controller.onFindRequest = null;
