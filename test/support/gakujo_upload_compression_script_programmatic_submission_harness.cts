@@ -38,6 +38,7 @@ for (const uploadFirst of [true, false]) {
     let refreshUpload;
     const window: any = {document: top, frames: [frame], location: {href: top.baseURI},
       setInterval(fn) { refreshUpload = fn; return 1; },
+      clearInterval() {},
       MoreBetterGakujoDownloads: {postMessage(value) { captured.push(JSON.parse(value)); }}};
     const context: any = vm.createContext({window, document: top, URL,
       FormData: class {
