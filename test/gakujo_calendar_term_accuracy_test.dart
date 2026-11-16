@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar_resolver.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_service.dart';
 
@@ -24,6 +25,22 @@ void main() {
         GakujoAcademicCalendar.selectTerm(DateTime(2026, 12, 2), terms)?.name,
         '第4ターム',
       );
+    });
+
+    test('term selection advances at midnight in Japan', () {
+      for (final (moment, termName) in [
+        (DateTime.utc(2026, 12, 1, 14, 59), '第3ターム'),
+        (DateTime.utc(2026, 12, 1, 15), '第4ターム'),
+        (DateTime.utc(2026, 12, 1, 16), '第4ターム'),
+      ]) {
+        final selected = GakujoAcademicCalendar.selectTerm(
+          japanWallClock(moment),
+          terms,
+        );
+
+        expect(selected?.academicYear, 2026, reason: '$moment');
+        expect(selected?.name, termName, reason: '$moment');
+      }
     });
 
     test('spring break plans the next academic year', () {

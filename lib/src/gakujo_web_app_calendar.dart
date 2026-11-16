@@ -702,7 +702,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     if (settings.termSource ==
         GakujoCalendarTermSource.officialAcademicCalendar) {
       final officialTerm = await _officialAcademicTermFor(
-        DateTime.now(),
+        japanWallClock(DateTime.now()),
         target: settings.termTarget,
       );
       if (officialTerm != null) {
