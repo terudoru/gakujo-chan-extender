@@ -471,6 +471,10 @@ typedef NotificationPreferencesUpdate = GakujoNotificationPreferences Function(
   GakujoNotificationPreferences preferences,
 );
 
+typedef MessageNotificationUpdate = GakujoMessageNotificationSettings Function(
+  GakujoMessageNotificationSettings messages,
+);
+
 class NotificationTopicsSection extends StatelessWidget {
   const NotificationTopicsSection({
     super.key,
@@ -502,18 +506,19 @@ class NotificationTopicsSection extends StatelessWidget {
   final GakujoMessageNotificationSettings messages;
   final bool notificationsEnabled;
   final void Function(GakujoNotificationTopic topic, bool enabled) onChanged;
-  final Future<bool> Function(GakujoMessageNotificationSettings messages)
+  final Future<bool> Function(MessageNotificationUpdate update)
       onMessagesChanged;
   final TextEditingController keywordController;
   final bool canAddKeyword;
   final ValueChanged<String> onKeywordInputChanged;
 
   Future<void> _addKeyword() async {
+    final keyword = keywordController.text;
     final saved = await onMessagesChanged(
-      messages.copyWith(
+      (current) => current.copyWith(
         keywords: normalizeMessageExcludeKeywords([
-          ...messages.keywords,
-          keywordController.text,
+          ...current.keywords,
+          keyword,
         ]),
       ),
     );
@@ -625,7 +630,9 @@ class NotificationTopicsSection extends StatelessWidget {
           groupValue: messages.mode,
           onChanged: (mode) {
             if (notificationsEnabled && mode != null) {
-              unawaited(onMessagesChanged(messages.copyWith(mode: mode)));
+              unawaited(onMessagesChanged(
+                (current) => current.copyWith(mode: mode),
+              ));
             }
           },
           child: Column(
@@ -692,9 +699,9 @@ class NotificationTopicsSection extends StatelessWidget {
                   onDeleted: notificationsEnabled
                       ? () => unawaited(
                             onMessagesChanged(
-                              messages.copyWith(
+                              (current) => current.copyWith(
                                 keywords: [
-                                  for (final value in messages.keywords)
+                                  for (final value in current.keywords)
                                     if (value != keyword) value,
                                 ],
                               ),

@@ -126,7 +126,8 @@ void main() {
               messages: messages,
               notificationsEnabled: true,
               onChanged: (_, _) {},
-              onMessagesChanged: (next) async {
+              onMessagesChanged: (update) async {
+                final next = update(messages);
                 final saved = await saveGakujoSettingsSafely(
                   () => store.saveMessageNotification(next),
                   showSnackBar: (message) {

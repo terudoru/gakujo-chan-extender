@@ -3357,12 +3357,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             setDialogState(() {});
                           },
                           onAdd: () async {
-                            final next = normalizeMessageExcludeKeywords([
-                              ..._appSettings.messageExcludeKeywords,
-                              messageExcludeKeywordInput,
-                            ]);
+                            final keyword = messageExcludeKeywordInput;
                             if (!await _trySaveSettings(
-                              () => _saveMessageExcludeKeywords(next),
+                              () => _saveMessageExcludeKeywords(
+                                (current) => [...current, keyword],
+                              ),
                             )) {
                               return;
                             }
@@ -3374,11 +3373,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             setDialogState(() {});
                           },
                           onRemove: (keyword) async {
-                            final next = _appSettings.messageExcludeKeywords
-                                .where((value) => value != keyword)
-                                .toList();
                             if (!await _trySaveSettings(
-                              () => _saveMessageExcludeKeywords(next),
+                              () => _saveMessageExcludeKeywords(
+                                (current) => current
+                                    .where((value) => value != keyword)
+                                    .toList(),
+                              ),
                             )) {
                               return;
                             }
@@ -3570,9 +3570,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           messageNotificationKeywordInput = value;
                           setDialogState(() {});
                         },
-                        onMessagesChanged: (messages) async {
+                        onMessagesChanged: (update) async {
                           if (!await _trySaveSettings(
-                            () => _saveMessageNotification(messages),
+                            () => _saveMessageNotification(update),
                           )) {
                             return false;
                           }
@@ -3586,9 +3586,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         ),
                         onChanged: (topic, enabled) async {
                           if (!await _trySaveSettings(
-                            () => _saveNotificationTopics({
-                              for (final value
-                                  in _appSettings.notificationTopics)
+                            () => _saveNotificationTopics((current) => {
+                              for (final value in current)
                                 if (value != topic) value,
                               if (enabled) topic,
                             }),
@@ -5028,11 +5027,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _saveMessageNotification(
-    GakujoMessageNotificationSettings messages,
+    MessageNotificationUpdate update,
   ) => _settingsOperations.runExclusive(() async {
     // Only messages posted from now on follow the new rule.
-    messages = messages.copyWith(since: DateTime.now());
-    final nextSettings = _appSettings.copyWith(messageNotification: messages);
+    final messages = update(_appSettings.messageNotification)
+        .copyWith(since: DateTime.now());
     if (!Platform.isMacOS || _secureStorageAccessAllowed) {
       try {
         await _appSettingsStore.saveMessageNotification(messages);
@@ -5048,21 +5047,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       }
     }
-    await _syncLocalSettingsMirror(nextSettings);
+    if (mounted) {
+      setState(() {
+        _appSettings = _appSettings.copyWith(messageNotification: messages);
+      });
+    }
+    await _syncLocalSettingsMirror(
+      _appSettings.copyWith(messageNotification: messages),
+    );
     if (!mounted) {
       return;
     }
-    setState(() {
-      _appSettings = _appSettings.copyWith(messageNotification: messages);
-    });
     _scheduleStarSync();
   });
 
   Future<void> _saveNotificationTopics(
-    Set<GakujoNotificationTopic> topics,
-  ) async {
+    Set<GakujoNotificationTopic> Function(Set<GakujoNotificationTopic>) update,
+  ) => _settingsOperations.runExclusive(() async {
+    final topics = update(_appSettings.notificationTopics);
     await saveGakujoSettingsChange(
-      operations: _settingsOperations,
       save: () async {
         if (!Platform.isMacOS || _secureStorageAccessAllowed) {
           try {
@@ -5088,7 +5091,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     _scheduleStarSync();
     if (mounted) unawaited(_syncReminders());
-  }
+  });
 
   Future<void> _saveNotificationPreferences(
     NotificationPreferencesUpdate update,
@@ -5146,38 +5149,40 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     });
   }
 
-  Future<void> _saveMessageExcludeKeywords(List<String> keywords) => _settingsOperations.runExclusive(() async {
-    final normalized = normalizeMessageExcludeKeywords(keywords);
-    final nextSettings = _appSettings.copyWith(
-      messageExcludeKeywords: normalized,
+  Future<void> _saveMessageExcludeKeywords(
+    List<String> Function(List<String>) update,
+  ) => _settingsOperations.runExclusive(() async {
+    final normalized = normalizeMessageExcludeKeywords(
+      update(_appSettings.messageExcludeKeywords),
     );
-    if (Platform.isMacOS) {
-      // These keywords are non-sensitive and macOS starts from this local
-      // mirror before Keychain access is granted. Persist them there first so
-      // a stale or unavailable Keychain cannot make this setting unusable.
-      await _syncLocalSettingsMirror(nextSettings);
-      if (_secureStorageAccessAllowed) {
-        try {
-          await _appSettingsStore.saveMessageExcludeKeywords(normalized);
-        } on Object catch (error, stackTrace) {
-          developer.log(
-            'Failed to mirror message filters to secure storage',
-            name: 'MoreBetterGakujo',
-            error: error,
-            stackTrace: stackTrace,
-          );
-        }
-      }
-    } else {
+    if (!Platform.isMacOS) {
       await _appSettingsStore.saveMessageExcludeKeywords(normalized);
-      await _syncLocalSettingsMirror(nextSettings);
+    }
+    if (mounted) {
+      setState(() {
+        _appSettings = _appSettings.copyWith(messageExcludeKeywords: normalized);
+      });
+    }
+    // Apply before mirroring so concurrent saves cannot queue older keywords.
+    // macOS persists these non-sensitive keywords locally before Keychain.
+    await _syncLocalSettingsMirror(
+      _appSettings.copyWith(messageExcludeKeywords: normalized),
+    );
+    if (Platform.isMacOS && _secureStorageAccessAllowed) {
+      try {
+        await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+      } on Object catch (error, stackTrace) {
+        developer.log(
+          'Failed to mirror message filters to secure storage',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
     }
     if (!mounted) {
       return;
     }
-    setState(() {
-      _appSettings = _appSettings.copyWith(messageExcludeKeywords: normalized);
-    });
     _scheduleStarSync();
     await _injectMessageFilterIfAllowed();
   });

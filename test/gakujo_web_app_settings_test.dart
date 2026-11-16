@@ -699,7 +699,8 @@ void main() {
               messages: messages,
               notificationsEnabled: true,
               onChanged: (_, _) {},
-              onMessagesChanged: (next) async {
+              onMessagesChanged: (update) async {
+                final next = update(messages);
                 if (next.keywords.contains('集中講義')) await addSave.future;
                 setState(() => messages = next);
                 return true;
@@ -734,6 +735,79 @@ void main() {
     expect(messages.keywords, ['集中講義']);
     expect(controller.text, isEmpty);
     expect(input, isEmpty);
+  });
+
+  testWidgets('queued notification keyword edits compose from the same build',
+      (tester) async {
+    var messages = const GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['アンケート', '説明会'],
+    );
+    final controller = TextEditingController(text: '集中講義');
+    addTearDown(controller.dispose);
+    final firstSave = Completer<void>();
+    final operations = StorageOperationQueue();
+    final pending = <Future<void>>[];
+    final saves = <GakujoMessageNotificationSettings>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: NotificationTopicsSection(
+            topics: const {},
+            messages: messages,
+            notificationsEnabled: true,
+            onChanged: (_, _) {},
+            onMessagesChanged: (update) {
+              final saved = operations.runExclusive(() async {
+                final next = update(messages);
+                saves.add(next);
+                if (saves.length == 1) await firstSave.future;
+                messages = next;
+              });
+              pending.add(saved);
+              return saved.then((_) => true);
+            },
+            keywordController: controller,
+            canAddKeyword: true,
+            onKeywordInputChanged: (_) {},
+            preferences: const GakujoNotificationPreferences(),
+            onPreferencesChanged: (_) async {},
+          ),
+        ),
+      ),
+    ));
+
+    tester
+        .widget<InputChip>(find.widgetWithText(InputChip, 'アンケート'))
+        .onDeleted!();
+    tester
+        .widget<InputChip>(find.widgetWithText(InputChip, '説明会'))
+        .onDeleted!();
+    tester
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '追加'))
+        .onPressed!();
+    tester
+        .widget<RadioGroup<GakujoMessageNotificationMode>>(
+          find.byType(RadioGroup<GakujoMessageNotificationMode>),
+        )
+        .onChanged(GakujoMessageNotificationMode.deadlines);
+    await tester.pump();
+    expect(saves, hasLength(1));
+    expect(controller.text, '集中講義');
+    controller.text = '別の入力';
+    firstSave.complete();
+    await tester.pump();
+    await Future.wait(pending);
+
+    expect(saves.map((saved) => saved.keywords), [
+      ['説明会'],
+      <String>[],
+      ['集中講義'],
+      ['集中講義'],
+    ]);
+    expect(messages.mode, GakujoMessageNotificationMode.deadlines);
+    expect(messages.keywords, ['集中講義']);
+    expect(controller.text, isEmpty);
   });
 
   testWidgets(
