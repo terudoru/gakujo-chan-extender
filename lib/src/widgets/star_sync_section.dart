@@ -103,10 +103,12 @@ class StarSyncSection extends StatefulWidget {
   final Future<void> Function(String, bool)? onCollectionChanged;
   final bool googleAvailable;
   final String? Function() googleEmail;
+  /// Invoke onSignedIn before Drive setup starts, when cancellation must stop.
   final Future<StarSyncDriveSetup> Function({
     required Map<String, String> clearLocalStars,
     required String expectedAccount,
     required int expectedGeneration,
+    required VoidCallback onSignedIn,
   })
   onGoogleSignIn;
   final Future<void> Function() onGoogleSignOut;
@@ -194,7 +196,13 @@ class _StarSyncSectionState extends State<StarSyncSection> {
       if (_googleSigningIn && widget.onGoogleCancelSignIn != null &&
           {TargetPlatform.windows, TargetPlatform.macOS, TargetPlatform.linux}
               .contains(defaultTargetPlatform))
-        TextButton(onPressed: widget.onGoogleCancelSignIn, child: const Text('キャンセル')),
+        TextButton(
+          onPressed: () {
+            // A tap can arrive before the sign-in completion is painted.
+            if (_googleSigningIn) widget.onGoogleCancelSignIn?.call();
+          },
+          child: const Text('キャンセル'),
+        ),
     ],
   );
 
@@ -261,6 +269,9 @@ class _StarSyncSectionState extends State<StarSyncSection> {
         clearLocalStars: clear,
         expectedAccount: expectedAccount,
         expectedGeneration: expectedGeneration,
+        onSignedIn: () {
+          if (mounted) setState(() => _googleSigningIn = false);
+        },
       );
       if (mounted) setState(() => _googleSigningIn = false);
       needsCleanup = result == StarSyncDriveSetup.needsLegacyReset;

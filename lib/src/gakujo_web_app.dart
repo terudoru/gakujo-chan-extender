@@ -3687,7 +3687,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                   ? _starSyncEngine.config?.googleEmail
                                   : _starSyncGoogleEmail,
                           onGoogleCancelSignIn: _cancelGoogleSignIn,
-                          onGoogleSignIn: ({required clearLocalStars, required expectedAccount, required expectedGeneration}) async {
+                          onGoogleSignIn:
+                              ({
+                                required clearLocalStars,
+                                required expectedAccount,
+                                required expectedGeneration,
+                                required onSignedIn,
+                              }) async {
                             final cancelGeneration = _googleCancelGeneration;
                             googleSetupHadDriveSession = _driveDownloadsEnabled &&
                                 _starSyncGoogleAuth.currentEmail != null;
@@ -3697,6 +3703,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               if (cancelGeneration != _googleCancelGeneration) {
                                 throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
                               }
+                              onSignedIn();
                               return await _starSyncEngine.setUpWithDrive(
                                 StarSyncConfig(googleEmail: _starSyncGoogleAuth.currentEmail),
                                 clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,

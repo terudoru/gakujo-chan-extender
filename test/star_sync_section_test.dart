@@ -26,6 +26,7 @@ void main() {
       required Map<String, String> clearLocalStars,
       required String expectedAccount,
       required int expectedGeneration,
+      required VoidCallback onSignedIn,
     })?
     onGoogleSignIn,
     Future<int> Function()? onLocalStarCount,
@@ -67,6 +68,7 @@ void main() {
                 required clearLocalStars,
                 required expectedAccount,
                 required expectedGeneration,
+                required onSignedIn,
               }) async => StarSyncDriveSetup.created,
           onGoogleSignOut: onGoogleSignOut ?? () async {},
           onGoogleSetupAbandoned: onGoogleSetupAbandoned,
@@ -338,6 +340,7 @@ void main() {
           required clearLocalStars,
           required expectedAccount,
           required expectedGeneration,
+          required onSignedIn,
         }) {
           setups++;
           return setup.future;
@@ -402,6 +405,7 @@ void main() {
           required clearLocalStars,
           required expectedAccount,
           required expectedGeneration,
+          required onSignedIn,
         }) async => throw const StarSyncAccountRequiredException(),
       ),
     );
@@ -476,7 +480,9 @@ void main() {
       status,
       googleAvailable: true,
       onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
-        required expectedGeneration}) async => StarSyncDriveSetup.needsLegacyReset,
+        required expectedGeneration,
+        required onSignedIn,
+      }) async => StarSyncDriveSetup.needsLegacyReset,
       onGoogleSignOut: () async { signedOut = true; },
     ));
     await tester.tap(find.text('Google ドライブで同期'));
@@ -504,7 +510,9 @@ void main() {
         googleAvailable: true,
         onBusyChanged: busy.add,
         onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
-          required expectedGeneration}) async => StarSyncDriveSetup.needsLegacyReset,
+          required expectedGeneration,
+          required onSignedIn,
+        }) async => StarSyncDriveSetup.needsLegacyReset,
         onGoogleSignOut: () async { signedOut++; },
         onGoogleSetupAbandoned: () async { abandoned++; },
         onSetUpWithDrive: ({required resetExisting, required clearLocalStars,
@@ -573,6 +581,7 @@ void main() {
                 required clearLocalStars,
                 required expectedAccount,
                 required expectedGeneration,
+                required onSignedIn,
               }) async {
                 selected = clearLocalStars;
                 expect(expectedAccount, 'account');
@@ -622,6 +631,7 @@ void main() {
           required clearLocalStars,
           required expectedAccount,
           required expectedGeneration,
+          required onSignedIn,
         }) async => StarSyncDriveSetup.needsLegacyReset,
         onSetUpWithDrive:
             ({
@@ -668,7 +678,9 @@ void main() {
     var cancelled = false;
     await tester.pumpWidget(section(status, googleAvailable: true,
       onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
-          required expectedGeneration}) => pending.future,
+          required expectedGeneration,
+          required onSignedIn,
+        }) => pending.future,
       onGoogleCancelSignIn: () {
         cancelled = true;
         pending.completeError(const StarSyncGoogleAuthException(
@@ -685,6 +697,66 @@ void main() {
     await tester.pump();
     expect(cancelled, isTrue);
     expect(find.text('Google へのログインに失敗しました'), findsNothing);
+    } finally {
+      try {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
+  testWidgets('desktop Cancel stops being offered when Drive setup starts', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final status = ValueNotifier(const StarSyncStatusSnapshot());
+      addTearDown(status.dispose);
+      final setup = Completer<StarSyncDriveSetup>();
+      late VoidCallback finishSignIn;
+      var cancellations = 0;
+      final busy = <bool>[];
+      await tester.pumpWidget(
+        section(
+          status,
+          googleAvailable: true,
+          onBusyChanged: busy.add,
+          onGoogleSignIn:
+              ({
+                required clearLocalStars,
+                required expectedAccount,
+                required expectedGeneration,
+                required onSignedIn,
+              }) {
+                finishSignIn = onSignedIn;
+                return setup.future;
+              },
+          onGoogleCancelSignIn: () => cancellations++,
+        ),
+      );
+      await tester.tap(find.text('Google ドライブで同期'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('空にして始める'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('キャンセル'), findsOneWidget);
+
+      finishSignIn();
+      // The previous frame still shows Cancel while setup is already running.
+      await tester.tap(find.text('キャンセル'));
+      expect(cancellations, 0);
+      await tester.pump();
+      expect(find.text('キャンセル'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('同期を開始しました'), findsNothing);
+      expect(busy, [true]);
+
+      setup.complete(StarSyncDriveSetup.created);
+      await tester.pumpAndSettle();
+      expect(find.text('同期を開始しました'), findsOneWidget);
+      expect(busy, [true, false]);
     } finally {
       try {
         await tester.pumpWidget(const SizedBox.shrink());
