@@ -400,7 +400,10 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       returnUrl = await _currentActionableUrl();
       final preferredTerm = settings.termSource ==
               GakujoCalendarTermSource.officialAcademicCalendar
-          ? await _resolveCalendarTerm(settings: settings)
+          ? await _resolveCalendarTerm(
+              settings: settings,
+              allowManualRange: false,
+            )
           : null;
       final extraction = await _readCalendarScheduleForImport(
         preferredTermRange: preferredTerm?.termRange,
@@ -428,9 +431,13 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         final rangedExtraction = await _readCalendarScheduleForImport(
           preferredTermRange: resolvedTerm.termRange,
         );
-        if (rangedExtraction.courses.isNotEmpty) {
-          extractedCourses = rangedExtraction.courses;
+        if (rangedExtraction.courses.isEmpty) {
+          await _showCalendarSourceMissingMessage(
+            '指定した期間の授業を読み込めませんでした。スケジュールページでもう一度実行してください',
+          );
+          return;
         }
+        extractedCourses = rangedExtraction.courses;
       }
       final termRange = resolvedTerm.termRange;
       final uidNamespace = resolvedTerm.uidNamespace;
@@ -687,6 +694,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
   Future<_ResolvedCalendarTerm?> _resolveCalendarTerm({
     required GakujoCalendarImportSettings settings,
     GakujoCalendarExtraction? extraction,
+    bool allowManualRange = true,
     String manualTitle = 'ターム期間を入力',
     String manualDescription = 'ページからターム期間を読み取れませんでした。書き出す授業期間を入力してください。',
     String manualActionLabel = '書き出し',
@@ -715,6 +723,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     }
 
     final pageRange = extraction?.termRange;
+    if (pageRange == null && !allowManualRange) {
+      return null;
+    }
     final termRange = pageRange ??
         await _askCalendarTermRange(
           title: manualTitle,
@@ -1765,14 +1776,14 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     fallbackExtraction = await _readCalendarScheduleFromPage();
 
     final waitedExtraction = await _waitForScheduleCoursesOrOfficial(
-      termRange: fallbackExtraction.termRange ?? preferredTermRange,
+      termRange: preferredTermRange ?? fallbackExtraction.termRange,
     );
     if (waitedExtraction != null && waitedExtraction.courses.isNotEmpty) {
       return waitedExtraction;
     }
 
     final officialExtraction = await _readOfficialGoogleScheduleAfterActivation(
-      termRange: fallbackExtraction.termRange ?? preferredTermRange,
+      termRange: preferredTermRange ?? fallbackExtraction.termRange,
     );
     if (officialExtraction != null &&
         isUsableGakujoScheduleExtraction(
@@ -1783,7 +1794,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     }
 
     final timetableExtraction = await _readCourseTimetableForCalendarImport(
-      preferredTermRange: fallbackExtraction.termRange ?? preferredTermRange,
+      preferredTermRange: preferredTermRange ?? fallbackExtraction.termRange,
     );
     if (isBroadGakujoScheduleExtraction(timetableExtraction)) {
       return timetableExtraction;
@@ -1855,7 +1866,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           integration.status == 'clicked') {
         final officialExtraction =
             await _readOfficialGoogleScheduleAfterActivation(
-          termRange: extraction.termRange ?? termRange,
+          termRange: termRange ?? extraction.termRange,
         );
         if (officialExtraction != null &&
             isUsableGakujoScheduleExtraction(
@@ -1865,7 +1876,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           return _withClassrooms(officialExtraction, extraction.courses);
         }
         final timetableExtraction = await _readCourseTimetableForCalendarImport(
-          preferredTermRange: extraction.termRange ?? termRange,
+          preferredTermRange: termRange ?? extraction.termRange,
         );
         if (isBroadGakujoScheduleExtraction(timetableExtraction)) {
           return timetableExtraction;
@@ -2014,7 +2025,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
         }
         final exportExtraction =
             await _readOfficialScheduleExportAfterExecution(
-          termRange: extraction.termRange ?? termRange,
+          termRange: termRange ?? extraction.termRange,
         );
         if (exportExtraction != null && exportExtraction.courses.isNotEmpty) {
           return exportExtraction;
@@ -2105,7 +2116,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     );
     if (integration.url.isNotEmpty) {
       return _readOfficialGoogleScheduleAfterActivation(
-        termRange: extraction.termRange ?? termRange,
+        termRange: termRange ?? extraction.termRange,
       );
     }
     return null;
