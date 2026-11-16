@@ -174,6 +174,7 @@ function createPage() {
   const body: any = new FakeElement('body');
   const reportTable: any = createReportTable();
   const messageTable: any = createMessageTable(fetchStatuses.length);
+  const mainFrame: any = feature === 'message' ? {contentWindow: {document: null}} : null;
   const timeoutTimer: any = {textContent: '20'};
   const extendButton: any = {click() {}};
 
@@ -214,7 +215,7 @@ function createPage() {
       return new FakeElement(tag);
     },
     getElementById(id: any) {
-      if (id === 'main-frame-if') return null;
+      if (id === 'main-frame-if') return mainFrame;
       if (id === 'tabmenutable') return target;
       if (id === 'timeout-timer') return timeoutTimer;
       if (id === 'portaltimerimg') return extendButton;
@@ -240,6 +241,16 @@ function createPage() {
       return matches;
     }
   };
+
+  const listDocument: any = mainFrame ? {...document} : document;
+  if (mainFrame) mainFrame.contentWindow.document = listDocument;
+  messageTable.ownerDocument = listDocument;
+  messageTable.isConnected = true;
+
+  function replaceListDocument() {
+    // An old document's nodes can remain connected after frame navigation.
+    mainFrame.contentWindow.document = {...listDocument, querySelector() { return null; }};
+  }
 
   const window: any = {
     document,
@@ -318,7 +329,7 @@ function createPage() {
     };
   }
 
-  return {context, snapshot, flushTimeouts};
+  return {context, snapshot, flushTimeouts, replaceListDocument};
 }
 
 function run(script: any, page: any) {
@@ -351,6 +362,7 @@ async function main() {
       afterCountChange = injectedPage.snapshot();
     }
     for (let i: any = 0; i < scenario.clickCount; i += 1) reads.push(button.click());
+    if (scenario.replaceListDocumentAt === 'duringRead') injectedPage.replaceListDocument();
     if (scenario.teardownDuringRead) run(teardownScript, injectedPage);
     let beforeTimeout;
     if (scenario.fetchBodies?.includes(null)) {
@@ -359,6 +371,7 @@ async function main() {
       injectedPage.flushTimeouts(15000);
     }
     await Promise.all(reads);
+    if (scenario.replaceListDocumentAt === 'afterRead') injectedPage.replaceListDocument();
     if (scenario.teardownAfterRead) run(teardownScript, injectedPage);
     injectedPage.flushTimeouts();
     process.stdout.write(JSON.stringify({

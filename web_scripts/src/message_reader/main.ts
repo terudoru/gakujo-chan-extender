@@ -297,6 +297,10 @@ function messageReader() {
       return;
     }
     disarm(confirmButton);
+    var table = messageTable();
+    var list = table ? null : smartphoneUnreadList();
+    var listTable = table || list && list.table;
+    var listDocument = listTable && listTable.ownerDocument;
     reading = true;
     var button = controlsDocument.getElementById('mbg-read-button') as HTMLButtonElement | null;
     if (button) {
@@ -321,8 +325,12 @@ function messageReader() {
       }
       reloadTimeout = window.setTimeout(function() {
         reloadTimeout = null;
-        if (!disposed) {
+        // The main frame may now contain an editor with unsaved inputs.
+        if (!disposed && listTable && listTable.isConnected &&
+            (listDocument === document || mainFrameDocument() === listDocument)) {
           location.reload();
+        } else if (button && !disposed) {
+          button.disabled = false;
         }
       }, 1000);
     } finally {
