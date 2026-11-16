@@ -26,7 +26,7 @@ class FakeStorage {
     this.values.set(key, String(value));
   }
   removeItem(key: any) {
-    if (this.failRemove) throw new Error('SecurityError');
+    if (this.failRemove || this.failRemoveKey === key) throw new Error('SecurityError');
     this.values.delete(key);
   }
   key(index: any) { return Array.from(this.values.keys())[index] || null; }
@@ -333,6 +333,68 @@ function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimer
 
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'deleteMigrationSource') {
+    const legacy = spec.source === 'legacy';
+    const pathname = legacy ? '/report/input' : '/campusweb/report/input;jsessionid=A';
+    const sourceKey = legacy ? 'mbg-report-draft:v1:cmm5xw' : 'mbg-report-draft:v2:jpaytn';
+    const payload = JSON.stringify({
+      savedAt: Date.now() - 60000,
+      title: 'レポート提出', url: 'https://gakujo.example' + pathname,
+      fields: legacy ? [
+        {key: 'textarea||gakuComment gakuComment 入力文字数：17/200文字|0', value: 'Saved draft'},
+        {key: 'textarea||Q2 入力文字数：17/200文字|1', value: 'Second answer'}
+      ] : [{key: 'textarea||gakuComment|0', value: 'Saved draft', kind: 'text'}]
+    });
+    function form() {
+      const page = textPage(storage, {pathname, counter: 0, counterElement: legacy});
+      if (legacy) page.document.fields = [page.field,
+        new FakeControl(page.document, 'select', {name: 'choice'}),
+        new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+      return page;
+    }
+    storage.setItem(sourceKey, payload);
+    const otherKeys = ['mbg-report-draft:v1:other', 'mbg-report-draft:v2:other', 'other-key'];
+    for (const key of otherKeys) storage.setItem(key, payload);
+    storage.failWrite = true;
+    const page = form();
+    runPage(page);
+    const canonicalKey = page.document.insertedStatus.__MBG_REPORT_DRAFT_KEY;
+    const restored = page.field.value;
+    const migrationFailed = storage.getItem(canonicalKey) === null && storage.getItem(sourceKey) === payload;
+    if (!legacy) {
+      // A remembered migration for another document must not be deleted.
+      page.document.__MBG_REPORT_DRAFT_LEGACY_FOUND = {
+        key: 'another-document', legacyKey: otherKeys[0]
+      };
+    }
+    if (spec.failRemoval) {
+      // A canonical failure must still attempt removal of the source.
+      storage.values.set(canonicalKey, payload);
+      storage.failRemoveKey = spec.failRemoval === 'source' ? sourceKey : canonicalKey;
+    }
+    page.document.insertedStatus.children.find((child: any) => child.textContent === '下書きを削除').listeners.click();
+    const deletionStatus = statusFor(page);
+    const sourceRetainedAfterDelete = storage.getItem(sourceKey) !== null;
+    const canonicalRetainedAfterDelete = storage.getItem(canonicalKey) !== null;
+    const retryButton = page.document.getElementById('mbg-report-draft-retry');
+    const retryVisible = retryButton.style.display !== 'none';
+    if (spec.failRemoval) {
+      delete storage.failRemoveKey;
+      retryButton.listeners.click();
+    }
+    const finalStatus = statusFor(page);
+    storage.failWrite = false;
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    hidePage(page);
+    const reopened = form();
+    runPage(reopened);
+    return {restored, migrationFailed, deletionStatus, sourceRetainedAfterDelete,
+      canonicalRetainedAfterDelete, retryVisible, finalStatus,
+      restoredAgain: reopened.field.value,
+      sourceRemoved: storage.getItem(sourceKey) === null,
+      canonicalRemoved: storage.getItem(canonicalKey) === null,
+      otherKeysRetained: otherKeys.every(key => storage.getItem(key) === payload)};
+  }
   if (spec.scenario === 'rawPathMigration') {
     const pathname = '/campusweb/report/input;jsessionid=A';
     // Captured from the generated script before 06435b4 stripped session IDs.
@@ -971,10 +1033,10 @@ if (spec.scenario === 'deleteFailure') {
   return process.stdout.write(JSON.stringify({failureStatus,hasRetry,remainingAfterRetry:storage.length}));
 }
 if (spec.scenario === 'deletePending') {
-  clearDraft();flushTimers();pageHide();const remainingAfterPageHide: any=storage.length;
+  clearDraft();const deletionStatus = statusText();flushTimers();pageHide();const remainingAfterPageHide: any=storage.length;
   savingPage.field.textContent='新しい入力';savingPage.field.dispatchEvent(new FakeEvent('input',{}));flushTimers();
   const saved: any=JSON.parse(storage.getItem(storage.key(0)));
-  return process.stdout.write(JSON.stringify({remainingAfterPageHide,storedAfterNewInput:saved.fields[0].value}));
+  return process.stdout.write(JSON.stringify({deletionStatus,remainingAfterPageHide,storedAfterNewInput:saved.fields[0].value}));
 }
 if (spec.scenario === 'clearFailure') {
   storage.failRemove=true;savingPage.field.textContent='';savingPage.field.dispatchEvent(new FakeEvent('input',{}));

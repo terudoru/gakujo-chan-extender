@@ -681,16 +681,23 @@ const String gakujoReportDraftJs = r'''
       clearButton.textContent = "下書きを削除";
       clearButton.style.fontSize = "12px";
       function clearStoredDraft() {
-        var deleted = removeDraft(
-          status.__MBG_REPORT_DRAFT_STORE,
-          status.__MBG_REPORT_DRAFT_KEY
-        );
+        var store2 = status.__MBG_REPORT_DRAFT_STORE;
+        var key2 = status.__MBG_REPORT_DRAFT_KEY;
+        var fields = saveableFields(doc);
+        var rawKey = draftKey(doc, fields, true);
+        var deleted = removeDraft(store2, key2);
+        if (rawKey !== key2) {
+          deleted = removeDraft(store2, rawKey) && deleted;
+        }
+        var found = doc.__MBG_REPORT_DRAFT_LEGACY_FOUND;
+        if (found && found.key === key2 && found.legacyKey) {
+          deleted = removeDraft(store2, found.legacyKey) && deleted;
+        }
         if (!deleted) {
           updateStatus(doc, "下書きを削除できませんでした", clearStoredDraft);
           return;
         }
         var win = doc.defaultView;
-        var key2 = status.__MBG_REPORT_DRAFT_KEY;
         var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS || (win.__MBG_REPORT_DRAFT_DELETED_KEYS = /* @__PURE__ */ Object.create(null));
         suppressed[key2] = true;
         var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
@@ -698,7 +705,7 @@ const String gakujoReportDraftJs = r'''
           win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
           delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
         }
-        saveableFields(doc).forEach(function(field) {
+        fields.forEach(function(field) {
           field.__MBG_REPORT_DRAFT_DIRTY = false;
           delete field.__MBG_REPORT_DRAFT_CONFLICT;
         });

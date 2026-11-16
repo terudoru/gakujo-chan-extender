@@ -21,6 +21,38 @@ void main() {
     });
   }
 
+  for (final source in ['rawPath', 'legacy']) {
+    for (final failRemoval in [null, 'canonical', 'source']) {
+      test(
+        'deletes failed $source migration without restoring it ($failRemoval)',
+        () async {
+          final result = await _evaluateDraft({
+            'scenario': 'deleteMigrationSource',
+            'source': source,
+            'failRemoval': failRemoval,
+          });
+          expect(result['restored'], 'Saved draft');
+          expect(result['migrationFailed'], isTrue);
+          expect(
+            result['deletionStatus'],
+            failRemoval == null ? '下書きを削除しました' : '下書きを削除できませんでした',
+          );
+          expect(result['sourceRetainedAfterDelete'], failRemoval == 'source');
+          expect(
+            result['canonicalRetainedAfterDelete'],
+            failRemoval == 'canonical',
+          );
+          expect(result['retryVisible'], failRemoval != null);
+          expect(result['finalStatus'], '下書きを削除しました');
+          expect(result['restoredAgain'], '');
+          expect(result['sourceRemoved'], isTrue);
+          expect(result['canonicalRemoved'], isTrue);
+          expect(result['otherKeysRetained'], isTrue);
+        },
+      );
+    }
+  }
+
   test(
     'drafts restore across servlet sessions and the parameter-free URL',
     () async {
@@ -272,6 +304,7 @@ void main() {
         initialText: '削除対象',
         scenario: 'deletePending',
         deferSaveTimer: true);
+    expect(result['deletionStatus'], '下書きを削除しました');
     expect(result['remainingAfterPageHide'], 0);
     expect(result['storedAfterNewInput'], '新しい入力');
   });
