@@ -1974,6 +1974,70 @@ void main() {
     });
   });
 
+  test(
+    'empty default calendar window prompts for a term before reading again',
+    () {
+      final source = File('lib/src/gakujo_web_app_calendar.dart')
+          .readAsStringSync();
+      final importFlow = source.substring(
+        source.indexOf(
+          'final extraction = await _readCalendarScheduleForImport(',
+        ),
+        source.indexOf('final termRange = resolvedTerm.termRange;'),
+      );
+      expect(
+        importFlow,
+        matches(
+          RegExp(
+            r'if \(extractedCourses\.isEmpty &&\s*'
+            r'\(preferredTerm != null \|\| extraction\.termRange != null\)\) \{\s*'
+            r'await _showCalendarSourceMissingMessage\([\s\S]*?\);\s*return;\s*\}\s*'
+            r'final resolvedTerm = preferredTerm \?\?\s*'
+            r'await _resolveCalendarTerm\(\s*extraction: extraction,\s*'
+            r'settings: settings,\s*\);\s*'
+            r'if \(resolvedTerm == null\) \{\s*return;\s*\}\s*'
+            r'if \(preferredTerm == null && extraction\.termRange == null\) \{'
+            r'[\s\S]*?final rangedExtraction = await _readCalendarScheduleForImport\('
+            r'\s*preferredTermRange: resolvedTerm\.termRange,\s*\);',
+          ),
+        ),
+      );
+      expect(
+        importFlow,
+        matches(
+          RegExp(
+            r'if \(rangedExtraction\.courses\.isEmpty\) \{\s*'
+            r'await _showCalendarSourceMissingMessage\(\s*'
+            r"'指定した期間の授業を読み込めませんでした。スケジュールページでもう一度実行してください',"
+            r'\s*\);\s*return;\s*\}\s*'
+            r'extractedCourses = rangedExtraction\.courses;',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('calendar term resolution accepts an empty extraction to prompt', () {
+    final source = File('lib/src/gakujo_web_app_calendar.dart')
+        .readAsStringSync();
+    final resolver = source.substring(
+      source.indexOf('Future<_ResolvedCalendarTerm?> _resolveCalendarTerm('),
+      source.indexOf('GakujoCalendarTermRange _calendarTermRangeForOfficial('),
+    );
+    expect(resolver, isNot(contains('.courses')));
+    expect(
+      resolver,
+      matches(
+        RegExp(
+          r'final pageRange = extraction\?\.termRange;\s*'
+          r'if \(pageRange == null && !allowManualRange\) \{\s*'
+          r'return null;\s*\}\s*'
+          r'final termRange = pageRange \?\?\s*await _askCalendarTermRange\(',
+        ),
+      ),
+    );
+  });
+
   test('official export timeout reaches the message and navigation cleanup',
       () {
     final source =
