@@ -23,6 +23,19 @@ void main() {
     expect(sanitized, isNot(contains('secret')));
     expect(uri.fragment, isEmpty);
   });
+  test('external URLs strip jsessionid path parameters and query tokens', () {
+    final sanitized = sanitizeGakujoExternalUrl(
+      'https://gakujo.iess.niigata-u.ac.jp/'
+      'campusweb;jsessionid=secret-path/campusportal.do'
+      '?page=main&tabId=en&jsessionid=secret-query'
+      '&_flowExecutionKey=e1s1&token=secret-token',
+    );
+    expect(
+      sanitized,
+      'https://gakujo.iess.niigata-u.ac.jp/'
+      'campusweb/campusportal.do?page=main&tabId=en',
+    );
+  });
   test('automatic backup omits starred messages without requesting deletion', () {
     final payload = buildGakujoBackupPayload(
       appSettings: const GakujoAppSettings(),
