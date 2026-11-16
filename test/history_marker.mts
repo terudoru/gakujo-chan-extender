@@ -33,10 +33,11 @@ child.doc.location.href = 'https://gakujo.iess.niigata-u.ac.jp/child';
 const blank = documentWithWindow();
 const messages: string[] = [];
 const timers: (() => void)[] = [];
+let randomSeed = 13;
 const crossOrigin = Object.defineProperty({}, 'document', { get() { throw Error('cross origin'); } });
 const win: any = { document: top.doc, history: top.history,
   frames: [crossOrigin, { document: frame.doc, frames: [{ document: child.doc, frames: [] }] }, { document: blank.doc, frames: [] }],
-  crypto: { getRandomValues(bytes: Uint8Array) { bytes.fill(13); } },
+  crypto: { getRandomValues(bytes: Uint8Array) { bytes.fill(randomSeed++); } },
   MbgPreviewNavigation: { postMessage(message: string) { messages.push(message); } },
   setInterval() { return 1; }, clearInterval() {},
   setTimeout(fn: () => void, delay: number) { assert.equal(delay, 0); timers.push(fn); },
@@ -44,12 +45,20 @@ const win: any = { document: top.doc, history: top.history,
 assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'bad' }), false);
 assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'starred' }), 'ok');
 assert.equal(top.history.state.existing, 42);
+assert.equal(frame.history.state.existing, 42);
+assert.equal(child.history.state.existing, 42);
+assert.match(frame.history.state.__mbgReturnDialogFrame, /^[a-f0-9]{32}$/);
+assert.match(child.history.state.__mbgReturnDialogFrame, /^[a-f0-9]{32}$/);
+assert.notEqual(frame.history.state.__mbgReturnDialogFrame, child.history.state.__mbgReturnDialogFrame);
+const firstFrameToken = frame.history.state.__mbgReturnDialogFrame;
+assert.equal(historyMarker(win, { action: 'stamp-dialog', kind: 'starred' }), 'ok');
+assert.notEqual(frame.history.state.__mbgReturnDialogFrame, firstFrameToken);
 assert.deepEqual(JSON.parse(historyMarker(win, { action: 'read' })),
   { dialog: 'starred', preview: null, active: 'none', activeToken: null });
 assert.deepEqual(top.history.state.__mbgReturnDialog,
   { kind: 'starred', frames: [
-    { path: '1', url: frame.doc.location.href },
-    { path: '1/0', url: child.doc.location.href },
+    { path: '1', url: frame.doc.location.href, token: frame.history.state.__mbgReturnDialogFrame },
+    { path: '1/0', url: child.doc.location.href, token: child.history.state.__mbgReturnDialogFrame },
   ] });
 frame.doc.location.href = 'https://gakujo.iess.niigata-u.ac.jp/b';
 assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, null);
@@ -62,6 +71,26 @@ assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, 'starred
 blank.doc.location.href = 'https://gakujo.iess.niigata-u.ac.jp/late';
 assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, 'starred');
 const savedDialog = top.history.state.__mbgReturnDialog;
+// A CampusSquare POST creates a new child document at the same URL.
+const nextChild = documentWithWindow();
+nextChild.doc.location.href = child.doc.location.href;
+childWindow.document = nextChild.doc;
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, null);
+nextChild.history.replaceState({ ...nextChild.history.state, __mbgReturnDialogFrame: 'different-entry' });
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, null);
+// Back restores the stamped document and its original history state.
+childWindow.document = child.doc;
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, 'starred');
+
+// Entries stamped by older versions still compare frames by URL alone.
+top.history.state.__mbgReturnDialog = {
+  kind: 'starred', frames: savedDialog.frames.map(({ path, url }: { path: string; url: string }) => ({ path, url })),
+};
+childWindow.document = nextChild.doc;
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, 'starred');
+nextChild.doc.location.href += '/changed';
+assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, null);
+childWindow.document = child.doc;
 top.history.state.__mbgReturnDialog = 'starred';
 assert.equal(JSON.parse(historyMarker(win, { action: 'read' })).dialog, 'starred');
 top.history.state.__mbgReturnDialog = savedDialog;

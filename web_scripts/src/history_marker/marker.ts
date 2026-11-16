@@ -2,7 +2,7 @@ const selector = 'button[data-mbg-submitted-preview]';
 const tokenPattern = /^[A-Za-z0-9_-]{8,64}$/;
 const kinds = ['starred', 'favorites', 'cachedReports'];
 type Marker = { token: string; index: number; name: string };
-type Frame = { path: string; url: string };
+type Frame = { path: string; url: string; token?: string };
 type Config = { action: string; kind?: string; token?: string };
 
 export function historyMarker(win: Window, config: Config): string | boolean {
@@ -29,7 +29,13 @@ export function historyMarker(win: Window, config: Config): string | boolean {
     documents((doc, path) => {
       if (!path) return;
       const url = doc.location.href;
-      if (/^https?:/.test(url)) values.push({ path, url });
+      const history = doc.defaultView?.history;
+      if (!/^https?:/.test(url) || !history) return;
+      const random = new Uint8Array(16);
+      win.crypto.getRandomValues(random);
+      const token = Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
+      history.replaceState(Object.assign({}, history.state, { __mbgReturnDialogFrame: token }), '');
+      values.push({ path, url, token });
     });
     return values;
   }
@@ -60,7 +66,9 @@ export function historyMarker(win: Window, config: Config): string | boolean {
       try {
         let current = win;
         for (const index of frame.path.split('/')) current = current.frames[Number(index)];
-        return current.document.location.href === frame.url;
+        const doc = current.document;
+        return doc.location.href === frame.url &&
+          (frame.token === undefined || doc.defaultView?.history.state?.__mbgReturnDialogFrame === frame.token);
       } catch (_) { return false; }
     });
     const preview = documents().map(marker).find(value => value !== null);
