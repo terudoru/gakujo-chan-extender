@@ -1,10 +1,23 @@
+import 'allowed_web_origins.dart';
+
 /// Keeps navigation identifiers while removing session data from exports.
-String sanitizeGakujoExternalUrl(String value) {
+String sanitizeGakujoExternalUrl(String value) =>
+    _sanitizeGakujoUrl(value, preserveExternalQuery: false);
+
+/// Preserves query parameters needed to revisit allowed external pages.
+String sanitizeGakujoCopyUrl(String value) =>
+    _sanitizeGakujoUrl(value, preserveExternalQuery: true);
+
+String _sanitizeGakujoUrl(String value, {required bool preserveExternalQuery}) {
   final uri = Uri.tryParse(value);
   if (uri == null || !uri.hasAuthority ||
       (uri.scheme != 'https' && uri.scheme != 'http')) {
     return '';
   }
+  final keepQuery =
+      preserveExternalQuery &&
+      uri.host != Uri.parse(AllowedWebOrigins.gakujoUrl).host &&
+      AllowedWebOrigins.canNavigate(value, debugAllowed: false);
   final query = <String, List<String>>{};
   try {
     for (final entry in uri.queryParametersAll.entries) {
@@ -13,7 +26,7 @@ String sanitizeGakujoExternalUrl(String value) {
         '_flowid' => RegExp(r'^[A-Za-z0-9-]{1,80}-flow$'),
         'keijitype' || 'genrecd' || 'seqno' => RegExp(r'^[0-9]{1,32}$'),
         'page' => RegExp(r'^main$'),
-        'tabid' => RegExp(r'^(en|sch|kj|si)$'),
+        'tabid' => RegExp(r'^(en|sch|kj|si|sd|sy)$'),
         _ => null,
       };
       if (safeValue != null && entry.value.every(safeValue.hasMatch)) {
@@ -35,7 +48,8 @@ String sanitizeGakujoExternalUrl(String value) {
     port: uri.hasPort ? uri.port : null,
     pathSegments: segments.any((s) => s.toLowerCase().contains('jsessionid'))
         ? const [] : segments,
-    queryParameters: query.isEmpty ? null : query,
+    query: keepQuery ? uri.query : null,
+    queryParameters: keepQuery || query.isEmpty ? null : query,
   ).toString();
 }
 

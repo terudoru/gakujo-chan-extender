@@ -208,6 +208,44 @@ void main() {
         unorderedEquals(pages.map((page) => page.durable)));
   });
 
+  test(
+    'removeFavorite reports a failed read and preserves stored favorites',
+    () async {
+      const favoritesKey = 'more_better_gakujo_favorites';
+      const url =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      final existingRaw = jsonEncode([
+        GakujoFavoritePage(
+          title: '学情',
+          url: url,
+          addedAt: DateTime.utc(2026, 11, 1),
+        ).toJson(),
+      ]);
+      final storage = _FailingReadSecureStorage(
+        initialValues: {favoritesKey: existingRaw},
+        failingReadKeys: {favoritesKey},
+      );
+      final store = GakujoActivityStore(secureStorage: storage);
+
+      await expectLater(
+        store.removeFavorite(url),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'Failed to read favorites',
+          ),
+        ),
+      );
+      expect(storage.writeKeys, isEmpty);
+      expect(storage.values[favoritesKey], existingRaw);
+
+      storage.failingReadKeys.clear();
+      await store.removeFavorite(url);
+      expect(await store.loadFavorites(), isEmpty);
+    },
+  );
+
   test('compact and explicit cleanup delete both retired keys', () async {
     const snapshots = 'more_better_gakujo_activity_snapshots';
     const changes = 'more_better_gakujo_activity_changes';
@@ -406,6 +444,21 @@ void main() {
       '2026/11/20 09:00～17:00': DateTime.utc(2026, 11, 20, 8),
       '2026/11/20 09:00〜17:00': DateTime.utc(2026, 11, 20, 8),
       '2026/11/20 09:00 - 17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 09:00から17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 09:00~17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00～17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00〜17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00~17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00 - 17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00から17:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 午前9:00から午後5:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 午前9時～午後5時': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00': DateTime.utc(2026, 11, 20),
+      '11/20 17:00～09:00': DateTime.utc(2026, 11, 20, 8),
+      '11/20 09:00～24:30': DateTime.utc(2026, 11, 20),
+      '11/20 09:00 10-12限': DateTime.utc(2026, 11, 20),
+      '11/20 10-12限': DateTime.utc(2026, 11, 20, 14, 59),
+      '2026/11/20 10-12限': DateTime.utc(2026, 11, 20, 14, 59),
       '2026/11/20 17:00～09:00': DateTime.utc(2026, 11, 20, 8),
       '2026/11/20 09:00 説明会17:00': DateTime.utc(2026, 11, 20),
       '2026/11/20 09:00～24:30': DateTime.utc(2026, 11, 20),
