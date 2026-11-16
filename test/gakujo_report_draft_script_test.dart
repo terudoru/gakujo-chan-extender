@@ -5,6 +5,22 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final failMigrationWrite in [false, true]) {
+    test('restores raw-path drafts and retries migration ($failMigrationWrite)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'rawPathMigration',
+        'failMigrationWrite': failMigrationWrite,
+      });
+      expect(result['restored'], 'Saved draft');
+      expect(result['retainedAfterFailure'], failMigrationWrite);
+      expect(result['legacyRemoved'], isTrue);
+      expect(result['savedAtPreserved'], isTrue);
+      expect(result['restoredAgain'], 'Saved draft');
+      expect(result['draftKeyCount'], 1);
+    });
+  }
+
   test(
     'drafts restore across servlet sessions and the parameter-free URL',
     () async {

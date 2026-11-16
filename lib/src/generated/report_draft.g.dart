@@ -416,7 +416,7 @@ const String gakujoReportDraftJs = r'''
       }
       return (hash >>> 0).toString(36);
     }
-    function draftKey(doc, fields) {
+    function draftKey(doc, fields, rawPath) {
       var identities = fields.map(function(field, index) {
         return fieldKey(field, index, fields);
       }).sort().join("\n");
@@ -424,11 +424,11 @@ const String gakujoReportDraftJs = r'''
       if (cached && cached.signature === identities && cached.fields.length === fields.length && cached.fields.every(function(field, index) {
         return field === fields[index];
       })) {
-        return cached.key;
+        return rawPath ? cached.rawKey : cached.key;
       }
       var path = "";
       try {
-        path = (doc.location.pathname || "").replace(/;jsessionid=[^;/]*/gi, "");
+        path = doc.location.pathname || "";
       } catch (e) {
         path = "";
       }
@@ -437,14 +437,17 @@ const String gakujoReportDraftJs = r'''
         doc.title || "",
         stablePageTextForKey(doc),
         identities
-      ].join("\n");
-      var key = prefix + hashString(signature);
+      ];
+      var rawKey = prefix + hashString(signature.join("\n"));
+      signature[0] = path.replace(/;jsessionid=[^;/]*/gi, "");
+      var key = signature[0] === path ? rawKey : prefix + hashString(signature.join("\n"));
       doc.__MBG_REPORT_DRAFT_IDENTITY = {
         signature: identities,
         fields: fields.slice(),
-        key
+        key,
+        rawKey
       };
-      return key;
+      return rawPath ? rawKey : key;
     }
     var legacyDraft = /* @__PURE__ */ (function() {
       var prefix2 = "mbg-report-draft:v1:";
@@ -831,6 +834,13 @@ const String gakujoReportDraftJs = r'''
     function restoreDraft(doc, store, key, fields, force) {
       var draft = readDraft(store, key);
       var legacyKey = null;
+      if (!draft) {
+        var rawKey = draftKey(doc, fields, true);
+        if (rawKey !== key) {
+          draft = readDraft(store, rawKey);
+          if (draft) legacyKey = rawKey;
+        }
+      }
       if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {
         var legacyFields = legacyDraft.fields(doc);
         var oldDraft = null;

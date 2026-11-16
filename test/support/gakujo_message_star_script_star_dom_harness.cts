@@ -153,6 +153,7 @@ vm.createContext(context);
 const counts: any = [], buttonTexts: any = [], pressedStates: any = [], intervalCounts: any = [], listenerCounts: any = [];
 const styleCounts: any = [], styleTexts: any = [], outerStyleCounts: any = [], rowTexts: any = [];
 const headerQueryCounts: any = [], urlParseCounts: any = [], rowCellReadCounts: any = [];
+const detailSaveCounts: number[] = [];
 let timerReadsUnchanged = true, headersAfterClick;
 const originalRowText = inner.heading.closest('tr')?.innerText || null;
 let beforeTitle, label, buttonTitle, prevented = false, stopped = false, oldButton;
@@ -162,6 +163,7 @@ scripts.forEach((script, index) => {
     inner.heading.textContent = '別のお知らせ';
   }
   vm.runInContext(script, context);
+  detailSaveCounts.push(messages.filter(message => message.action === 'detail').length);
   headerQueryCounts.push(headerQueryCount);
   urlParseCounts.push(urlParseCount);
   rowCellReadCounts.push(rowCellReadCount);
@@ -184,7 +186,7 @@ scripts.forEach((script, index) => {
   rowTexts.push(inner.heading.closest('tr')?.innerText || null);
   intervalCounts.push(intervals.size);
   listenerCounts.push(inner.listeners.click ? 1 : 0);
-  if (index === 0 && buttons[0] && !performanceScenario) {
+  if (index === 0 && buttons[0] && !performanceScenario && scenario !== 'detailStarSync') {
     oldButton = buttons[0]; label = oldButton.getAttribute('aria-label');
     buttonTitle = oldButton.title;
     beforeTitle = oldButton.nextElementSibling === inner.heading;
@@ -279,5 +281,6 @@ process.stdout.write(JSON.stringify({counts, buttonTexts, pressedStates, styleCo
   oldListListenerRemoved, oldListButtonCount, oldListStyleCount, oldDetailStyleCount,
   rememberedBeforeClick, remembered, rememberedAfterNavigation, repeatedDetailSeqNo, rememberedAfterReload,
   reusedLabel, reusedButtonTitle, clickedPressed, clickedLabel,
-  headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick}));
+  headerQueryCounts, urlParseCounts, rowCellReadCounts, timerReadsUnchanged, headersAfterClick,
+  detailSaveCounts}));
 
