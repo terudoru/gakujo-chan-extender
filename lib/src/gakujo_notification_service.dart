@@ -767,8 +767,7 @@ class GakujoDeadlineNotificationCoordinator {
           return;
         }
         for (final reminder in lateReminders) {
-          await _notifyReminderOnce(reminder,
-              topics: topics, preferences: preferences);
+          await _notifyReminderWithLatestSettings(reminder);
         }
       } finally {
         _queuedReminderSyncs -= 1;

@@ -73,6 +73,52 @@ void main() {
     );
   });
 
+  test('open starred messages reloads on sync and clears its own callback', () {
+    final source = File('lib/src/gakujo_web_app_message_stars.dart')
+        .readAsStringSync();
+    final dialog = source.substring(
+      source.indexOf('Future<void> _showStarredMessagesDialog('),
+      source.indexOf('Future<void> _showSavedMessage('),
+    );
+    final app = File('lib/src/gakujo_web_app.dart').readAsStringSync();
+    final syncCallback = app.substring(
+      app.indexOf('onLocalStarsChanged: () {'),
+      app.indexOf('_collectionSyncScheduler ='),
+    );
+
+    expect(
+      syncCallback,
+      matches(
+        RegExp(
+          r'onLocalStarsChanged: \(\) \{\s*if \(_canSyncStars\) \{\s*'
+          r'unawaited\(_refreshMessageStars\(\)\);\s*'
+          r'unawaited\(_refreshOpenStarredMessages\?\.call\(\)\);',
+        ),
+      ),
+    );
+    expect(
+      dialog,
+      matches(
+        RegExp(
+          r'refreshStarredMessages \?\?= \(\) async \{\s*'
+          r'final updatedEntries = await _activityStore\.loadStarredMessages\(\);\s*'
+          r'if \(!dialogContext\.mounted\) return;\s*'
+          r'setDialogState\(\(\) => entries = updatedEntries\);\s*\};\s*'
+          r'_refreshOpenStarredMessages = refreshStarredMessages;',
+        ),
+      ),
+    );
+    expect(
+      dialog,
+      matches(
+        RegExp(
+          r'if \(identical\(_refreshOpenStarredMessages, refreshStarredMessages\)\) \{\s*'
+          r'_refreshOpenStarredMessages = null;\s*\}',
+        ),
+      ),
+    );
+  });
+
   testWidgets('dialog inputs remain alive through the exit animation', (
     tester,
   ) async {

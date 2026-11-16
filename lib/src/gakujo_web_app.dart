@@ -1526,6 +1526,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
   Future<void> Function()? _refreshOpenFavorites;
+  Future<void> Function()? _refreshOpenStarredMessages;
   late final GakujoOfflineRetry _offlineRetry;
   bool _offlineRetryPausedInBackground = false;
   // Reloads since the last successful Gakujo page. The probe can reach the
@@ -1717,7 +1718,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       accountHash: () => _activeLoginAccount,
       canSync: () => _canSyncStars,
       onLocalStarsChanged: () {
-        if (_canSyncStars) unawaited(_refreshMessageStars());
+        if (_canSyncStars) {
+          unawaited(_refreshMessageStars());
+          unawaited(_refreshOpenStarredMessages?.call());
+        }
       },
     );
     _collectionSyncScheduler = GakujoCollectionSyncScheduler(
