@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -572,11 +573,21 @@ class StarSyncEngine {
     final generation = ++_quotaRetryGeneration;
     // Retry once enough of the rolling 24-hour usage has expired, spread by
     // up to 30 minutes so devices do not return together.
-    final wait = await _quotaMeter.timeUntilAutomaticAllowed(
-      _quotaRetryEstimate,
-    );
+    var delay = const Duration(minutes: 15);
+    try {
+      final wait = await _quotaMeter.timeUntilAutomaticAllowed(
+        _quotaRetryEstimate,
+      );
+      delay = wait + Duration(milliseconds: _random.nextInt(1800001));
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to compute star sync quota retry time',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
     if (_disposed || generation != _quotaRetryGeneration) return;
-    final delay = wait + Duration(milliseconds: _random.nextInt(1800001));
     _quotaTimer = _timerFactory(delay, () {
       _quotaRetryEstimate = 100;
       if (_disposed) return;
