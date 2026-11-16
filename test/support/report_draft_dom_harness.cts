@@ -333,6 +333,31 @@ function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimer
 
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'rawPathMigration') {
+    const pathname = '/campusweb/report/input;jsessionid=A';
+    // Captured from the generated script before 06435b4 stripped session IDs.
+    const legacyKey = 'mbg-report-draft:v2:jpaytn';
+    const oldDraft = {
+      savedAt: Date.now() - 60000,
+      title: 'レポート提出', url: 'https://gakujo.example' + pathname,
+      fields: [{key: 'textarea||gakuComment|0', value: 'Saved draft', kind: 'text'}]
+    };
+    storage.setItem(legacyKey, JSON.stringify(oldDraft));
+    storage.failWrite = !!spec.failMigrationWrite;
+    const page = textPage(storage, {pathname});
+    runPage(page);
+    const restored = page.field.value;
+    const retainedAfterFailure = storage.getItem(legacyKey) !== null;
+    storage.failWrite = false;
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    const key = storage.key(0);
+    const migrated = JSON.parse(storage.getItem(key));
+    const reopened = textPage(storage, {pathname: '/campusweb/report/input'});
+    runPage(reopened);
+    return {restored, retainedAfterFailure, key, legacyRemoved: storage.getItem(legacyKey) === null,
+      savedAtPreserved: migrated.savedAt === oldDraft.savedAt,
+      restoredAgain: reopened.field.value, draftKeyCount: storage.length};
+  }
   if (spec.scenario === 'pathIdentity') {
     const savingPage = textPage(storage, {pathname: spec.paths[0]});
     runPage(savingPage);

@@ -280,7 +280,9 @@ function messageStar() {
         return detailData(doc, heading, mobileFields && smartphoneDetailFields(doc));
       }, doc, mobileFields ? detail : null, !!mobileFields);
       var signature = JSON.stringify(detail);
-      if (ids.has(id(detail)) && signature !== lastDetailSignatures.get(doc)) {
+      if (!ids.has(id(detail))) {
+        lastDetailSignatures.delete(doc);
+      } else if (signature !== lastDetailSignatures.get(doc)) {
         lastDetailSignatures.set(doc, signature);
         send('detail', detail);
       }

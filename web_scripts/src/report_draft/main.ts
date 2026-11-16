@@ -9,7 +9,7 @@ type DraftWindow = Window & typeof globalThis;
 type DraftDocument = Document & { defaultView: DraftWindow };
 declare global {
   interface Window { __MBG_REPORT_DRAFT_VERSION?: number; __MBG_REPORT_DRAFT_UPDATE?: () => boolean; __MBG_REPORT_DRAFT_INTERVAL?: number; __MBG_REPORT_DRAFT_DELETED_KEYS?: Record<string, boolean>; __MBG_REPORT_DRAFT_SAVE_TIMER?: number; __MBG_REPORT_DRAFT_BEFORE_UNLOAD_BOUND?: boolean }
-  interface Document { __MBG_REPORT_DRAFT_FLUSH?: () => boolean; __MBG_REPORT_DRAFT_IDENTITY?: { signature: string; fields: DraftField[]; key: string }; __MBG_REPORT_DRAFT_LEGACY_CHECKED?: string; __MBG_REPORT_DRAFT_LEGACY_FOUND?: { key: string; legacyKey: string | null }; __MBG_REPORT_DRAFT_RESTORING?: boolean }
+  interface Document { __MBG_REPORT_DRAFT_FLUSH?: () => boolean; __MBG_REPORT_DRAFT_IDENTITY?: { signature: string; fields: DraftField[]; key: string; rawKey: string }; __MBG_REPORT_DRAFT_LEGACY_CHECKED?: string; __MBG_REPORT_DRAFT_LEGACY_FOUND?: { key: string; legacyKey: string | null }; __MBG_REPORT_DRAFT_RESTORING?: boolean }
   interface HTMLElement { __MBG_REPORT_DRAFT_STORE?: Storage | null; __MBG_REPORT_DRAFT_KEY?: string; __MBG_REPORT_DRAFT_RETRY?: (() => void) | null; __MBG_REPORT_DRAFT_REPLACE?: (() => void) | null }
 }
 
@@ -347,7 +347,7 @@ function reportDraft() {
     return (hash >>> 0).toString(36);
   }
 
-  function draftKey(doc: DraftDocument, fields: DraftField[]) {
+  function draftKey(doc: DraftDocument, fields: DraftField[], rawPath?: boolean) {
     var identities = fields.map(function(field, index) {
       return fieldKey(field, index, fields);
     }).sort().join('\n');
@@ -355,11 +355,11 @@ function reportDraft() {
     if (cached && cached.signature === identities &&
         cached.fields.length === fields.length &&
         cached.fields.every(function(field, index) { return field === fields[index]; })) {
-      return cached.key;
+      return rawPath ? cached.rawKey : cached.key;
     }
     var path = '';
     try {
-      path = (doc.location.pathname || '').replace(/;jsessionid=[^;/]*/gi, '');
+      path = doc.location.pathname || '';
     } catch (e) {
       path = '';
     }
@@ -368,12 +368,14 @@ function reportDraft() {
       doc.title || '',
       stablePageTextForKey(doc),
       identities
-    ].join('\n');
-    var key = prefix + hashString(signature);
+    ];
+    var rawKey = prefix + hashString(signature.join('\n'));
+    signature[0] = path.replace(/;jsessionid=[^;/]*/gi, '');
+    var key = signature[0] === path ? rawKey : prefix + hashString(signature.join('\n'));
     doc.__MBG_REPORT_DRAFT_IDENTITY = {
-      signature: identities, fields: fields.slice(), key: key
+      signature: identities, fields: fields.slice(), key: key, rawKey: rawKey
     };
-    return key;
+    return rawPath ? rawKey : key;
   }
 
   // v0.70.x identity rules must stay independent of v2's counters and choices.
@@ -795,6 +797,13 @@ function reportDraft() {
   function restoreDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[], force?: boolean) {
     var draft = readDraft(store, key);
     var legacyKey = null;
+    if (!draft) {
+      var rawKey = draftKey(doc, fields, true);
+      if (rawKey !== key) {
+        draft = readDraft(store, rawKey);
+        if (draft) legacyKey = rawKey;
+      }
+    }
     // The v0.70 lookup hashes the page once per counter value; one search per
     // page is enough, since a found draft moves to the v2 key.
     if (!draft && doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED !== key) {

@@ -169,6 +169,29 @@ void main() {
     });
   }
 
+  test('remote unstar and re-star saves the unchanged open detail again',
+      () async {
+    const ids = ['1|40|507762'];
+    final result = await _evaluate(
+      'test/support/gakujo_message_star_script_star_dom_harness.cts',
+      [
+        GakujoMessageStarScript.build(starredIds: ids),
+        GakujoMessageStarScript.buildRefresh(ids),
+        GakujoMessageStarScript.buildRefresh([]),
+        GakujoMessageStarScript.buildRefresh(ids),
+        GakujoMessageStarScript.buildRefresh(ids),
+      ],
+      'detailStarSync',
+    );
+    expect(result['detailSaveCounts'], [1, 1, 1, 2, 2]);
+    expect(result['pressedStates'], ['true', 'true', 'false', 'true', 'true']);
+    final messages = result['messages'] as List;
+    expect(messages.length, 2);
+    expect(messages.first['action'], 'detail');
+    expect(messages.first['body'], '本文の一行目\n二行目');
+    expect(messages.last, messages.first);
+  });
+
   test('unstarred detail is not saved and long detail bodies are capped',
       () async {
     final unstarred = await _evaluate(
