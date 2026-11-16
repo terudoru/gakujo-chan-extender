@@ -5,6 +5,32 @@ import 'package:morebettergakujo_flutter/src/gakujo_report_draft_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'drafts restore across servlet sessions and the parameter-free URL',
+    () async {
+      final result = await _evaluateDraft({
+        'scenario': 'pathIdentity',
+        'paths': [
+          '/campusweb/campussquare.do;jsessionid=A',
+          '/campusweb/campussquare.do;jsessionid=B',
+          '/campusweb/campussquare.do;JSESSIONID=C',
+          '/campusweb/campussquare.do',
+        ],
+      });
+      expect(result['restored'], ['Saved draft', 'Saved draft', 'Saved draft']);
+      expect(result['draftKeyCount'], 1);
+    },
+  );
+
+  test('a parameter-free page retains its existing draft key', () async {
+    final result = await _evaluateDraft({
+      'scenario': 'pathIdentity',
+      'paths': ['/campusweb/campussquare.do', '/campusweb/campussquare.do'],
+    });
+    expect(result['key'], 'mbg-report-draft:v2:1i0hzsd');
+    expect(result['restored'], ['Saved draft']);
+  });
+
   test('contenteditable text stays out of its own draft key', () async {
     final result = await _evaluateContentEditableDraft(
       initialHtml: 'first',

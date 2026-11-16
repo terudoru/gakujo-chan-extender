@@ -67,7 +67,7 @@ function assignmentListFetch() {
         if (target) {
           var candidate = new URL(target.replace(/&amp;/g, '&'), base);
           if (candidate.origin === location.origin &&
-              candidate.pathname === '/campusweb/campussquare.do') {
+              candidate.pathname.replace(/;jsessionid=[^;/]*/gi, '') === '/campusweb/campussquare.do') {
             next = candidate.href;
             break;
           }
@@ -88,7 +88,7 @@ function assignmentListFetch() {
         var size = displayCount.options ? Math.max.apply(null, sizes) : 500;
         if (target.searchParams.has('_flowExecutionKey') && size > pageRows.length &&
             target.origin === location.origin &&
-            target.pathname === '/campusweb/campussquare.do') {
+            target.pathname.replace(/;jsessionid=[^;/]*/gi, '') === '/campusweb/campussquare.do') {
           target.searchParams.set('_eventId', 'paging');
           target.searchParams.set('_displayCount', String(size));
           next = target.href;

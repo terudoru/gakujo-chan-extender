@@ -169,6 +169,68 @@ void main() {
     expect((result['requests'] as List).last, next);
   });
 
+  for (final useFormAction in [false, true]) {
+    for (final (path, accepted) in [
+      ('/campusweb/campussquare.do;jsessionid=ABC', true),
+      ('/campusweb/other.do;jsessionid=ABC', false),
+    ]) {
+      final control = useFormAction ? 'form action' : 'next link';
+      test('$control ${accepted ? 'follows' : 'rejects'} $path', () async {
+        final target = 'https://gakujo.iess.niigata-u.ac.jp$path';
+        final next =
+            '$target?_flowExecutionKey=page2&_eventId=paging'
+            '${useFormAction ? '&_displayCount=50' : ''}';
+        final result = await _evaluate(
+          expectedRows: accepted ? 2 : 1,
+          pages: [
+            {
+              'action': useFormAction ? target : '',
+              'count': '1～1/2件',
+              'rows': [
+                {'title': '第1回'},
+              ],
+              'controls': [
+                if (useFormAction) ...[
+                  {
+                    'tag': 'input',
+                    'value': 'page2',
+                    'attributes': {
+                      'type': 'hidden',
+                      'name': '_flowExecutionKey',
+                    },
+                  },
+                  {
+                    'tag': 'select',
+                    'attributes': {'name': '_displayCount'},
+                    'options': [
+                      {'value': '1'},
+                      {'value': '50'},
+                    ],
+                  },
+                ] else
+                  {
+                    'tag': 'a',
+                    'textContent': '次へ',
+                    'attributes': {'href': next},
+                  },
+              ],
+            },
+            {
+              'url': next,
+              'count': '2～2/2件',
+              'rows': [
+                {'title': '第2回'},
+              ],
+            },
+          ],
+        );
+        expect(result['total'], accepted ? 2 : -1);
+        expect(result['requests'], hasLength(accepted ? 2 : 1));
+        if (accepted) expect((result['requests'] as List).last, next);
+      });
+    }
+  }
+
   test('a supported display count uses the form flow key and paging event',
       () async {
     final result = await _evaluate(expectedRows: 2, pages: [
