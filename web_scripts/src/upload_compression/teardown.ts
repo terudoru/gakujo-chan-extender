@@ -1,6 +1,8 @@
 export {};
 function uploadCompressionTeardown() {
   window.__MBG_UPLOAD_COMPRESSION_ENABLED = false;
+  if (window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE) window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE();
+  delete window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE;
   window.__MBG_UPLOAD_COMPRESSION_GENERATION =
     (window.__MBG_UPLOAD_COMPRESSION_GENERATION || 0) + 1;
   var hooks = window.__MBG_UPLOAD_COMPRESSION_SUBMIT_PROTOTYPES || [];

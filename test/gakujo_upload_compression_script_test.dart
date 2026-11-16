@@ -426,13 +426,18 @@ void main() {
   );
 
   test(
-    'keeps only live submit hooks after 30 iframe document replacements',
+    'keeps live iframe hooks and restarts watching after teardown',
     () async {
-      final result = await _runNode([
-        'test/support/gakujo_upload_compression_script_iframe_document_replacement_harness.cts',
-        GakujoUploadCompressionScript.build(),
-      ]);
-      expect(result.exitCode, 0, reason: '${result.stderr}');
+      for (final withObserver in [false, true]) {
+        final result = await _runNode([
+          'test/support/gakujo_upload_compression_script_iframe_document_replacement_harness.cts',
+          GakujoUploadCompressionScript.build(),
+          GakujoUploadCompressionScript.buildTeardown(),
+          jsonEncode({'withObserver': withObserver}),
+        ]);
+        expect(result.exitCode, 0,
+            reason: 'withObserver=$withObserver: ${result.stderr}');
+      }
     },
   );
 

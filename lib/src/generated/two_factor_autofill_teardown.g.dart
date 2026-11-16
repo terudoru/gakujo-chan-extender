@@ -10,6 +10,22 @@ const String gakujoTwoFactorAutofillTeardownJs = r'''
     window.__MBG_2FA_AUTOFILL_DISABLED = true;
     window.clearTimeout(window.__MBG_2FA_AUTOFILL_TIMER);
     delete window.__MBG_2FA_AUTOFILL_TIMER;
+    function restore(win) {
+      try {
+        var doc = win.document;
+        var inputs = doc.querySelectorAll("input[data-mbg-2fa-original-type]");
+        for (var i = 0; i < inputs.length; i += 1) {
+          inputs[i].type = inputs[i].getAttribute("data-mbg-2fa-original-type");
+          inputs[i].removeAttribute("data-mbg-2fa-original-type");
+        }
+        var frames = doc.querySelectorAll("iframe, frame");
+        for (var j = 0; j < frames.length; j += 1) {
+          if (frames[j].contentWindow) restore(frames[j].contentWindow);
+        }
+      } catch (_) {
+      }
+    }
+    restore(window);
   }
   twoFactorAutofillTeardown();
 })();

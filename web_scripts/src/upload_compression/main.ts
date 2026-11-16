@@ -13,6 +13,9 @@ function uploadCompression() {
   if (window.__MBG_UPLOAD_COMPRESSION_VERSION === version) {
     if (window.__MBG_UPLOAD_COMPRESSION_UPDATE) {
       window.__MBG_UPLOAD_COMPRESSION_UPDATE();
+      if (!window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE) {
+        window.__MBG_UPLOAD_COMPRESSION_WATCH_DISPOSE = watchPage(window, window.__MBG_UPLOAD_COMPRESSION_UPDATE, { fallbackMs: 5000, legacyIntervalMs: 1000 });
+      }
     }
     return;
   }
