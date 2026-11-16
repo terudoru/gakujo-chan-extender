@@ -64,7 +64,17 @@ class GakujoCourseNameEstimator {
       caseSensitive: false,
     ).firstMatch(text);
     if (labeledMatch != null) {
-      final value = labeledMatch.group(1)!.trim();
+      var value = labeledMatch.group(1)!.trim();
+      final closingBracket = const {
+        '[': ']',
+        '［': '］',
+        '(': ')',
+        '（': '）',
+        '【': '】',
+      }[text[labeledMatch.start]];
+      if (closingBracket != null && value.endsWith(closingBracket)) {
+        value = value.substring(0, value.length - 1).trim();
+      }
       return _isFileRow(value) ? '' : _trimAtKnownFieldLabel(value);
     }
 
