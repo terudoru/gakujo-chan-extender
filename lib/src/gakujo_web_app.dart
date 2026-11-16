@@ -4082,8 +4082,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         },
                         onClear: () async {
-                          final root =
-                              await _downloadService.clearDownloadRoot();
+                          final DownloadDestinationSettings root;
+                          try {
+                            root = await _downloadService.clearDownloadRoot();
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to clear download root during initial setup',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            _showSnackBar('保存先を解除できませんでした');
+                            return;
+                          }
                           if (!mounted) {
                             return;
                           }
@@ -4244,7 +4255,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               onPressed: sorted.isEmpty
                   ? null
                   : () async {
-                      await _activityStore.clearReportLists();
+                      try {
+                        await _activityStore.clearReportLists();
+                      } on Object catch (error, stackTrace) {
+                        developer.log(
+                          'Failed to delete cached assignment lists',
+                          name: 'MoreBetterGakujo',
+                          error: error,
+                          stackTrace: stackTrace,
+                        );
+                        _showSnackBar('削除できませんでした');
+                        return;
+                      }
                       // The assignments go with the lists, and so do their
                       // booked reminders; fetch the list again soon.
                       _lastAssignmentRefresh = null;
@@ -4749,9 +4771,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               tooltip: '削除',
                               icon: const Icon(Icons.delete_outline),
                               onPressed: () async {
-                                await _activityStore.removeFavorite(
-                                  favorite.url,
-                                );
+                                try {
+                                  await _activityStore.removeFavorite(
+                                    favorite.url,
+                                  );
+                                } on Object catch (error, stackTrace) {
+                                  developer.log(
+                                    'Failed to delete favorite',
+                                    name: 'MoreBetterGakujo',
+                                    error: error,
+                                    stackTrace: stackTrace,
+                                  );
+                                  _showSnackBar('お気に入りを削除できませんでした');
+                                  return;
+                                }
                                 _scheduleStarSync();
                                 favorites =
                                     await _activityStore.loadFavorites();
