@@ -84,6 +84,42 @@ void main() {
     });
   }
 
+  for (final deadline in [
+    '2026/10/30',
+    '2026/10/24 8:45 ～10/30',
+    '2026/10/24 8:45 ～2026/10/30',
+  ]) {
+    test('defaults a missing closing time to 23:59 for $deadline', () async {
+      await _expectDeadlineOrder(
+        now: '2026-10-30T03:00:00Z', // Noon in Japan.
+        reports: [
+          ['dateOnly', 'Not submitted', deadline],
+          ['midnight', 'Not submitted', '2026/10/30 00:00'],
+          ['earlier', 'Not submitted', '2026/10/30 23:58'],
+          ['later', 'Not submitted', '2026/10/31 00:00'],
+        ],
+        expected: ['earlier', 'dateOnly', 'later', 'midnight'],
+      );
+    });
+  }
+
+  test('date-only closing times expire after 23:59 in Japan', () async {
+    final reports = [
+      ['dateOnly', 'Not submitted', '2026/10/24 8:45 ～10/30'],
+      ['midnight', 'Submitted', '2026/10/31 00:00'],
+    ];
+    await _expectDeadlineOrder(
+      now: '2026-10-30T14:59:00Z', // 23:59 in Japan.
+      reports: reports,
+      expected: ['dateOnly', 'midnight'],
+    );
+    await _expectDeadlineOrder(
+      now: '2026-10-30T15:00:00Z', // Next-day midnight in Japan.
+      reports: reports,
+      expected: ['midnight', 'dateOnly'],
+    );
+  });
+
   test('missing deadlines follow dated reports while preserving other ordering',
       () async {
     await _expectDeadlineOrder(
@@ -117,9 +153,10 @@ void main() {
         ['newYear', 'Not submitted', '2026/12/31 10:00～01/01 00:00'],
         ['later', 'Not submitted', '2027/01/01 01:00'],
         ['expired', 'Not submitted', '2026/12/31 23:00'],
+        ['dateOnlyStart', 'Not submitted', '2026/12/31～12/31 23:40'],
         ['sameYear', 'Not submitted', '2026/12/30 10:00～12/31 23:45'],
       ],
-      expected: ['sameYear', 'newYear', 'later', 'expired'],
+      expected: ['dateOnlyStart', 'sameYear', 'newYear', 'later', 'expired'],
     );
   });
 

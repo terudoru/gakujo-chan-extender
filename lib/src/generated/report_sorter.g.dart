@@ -160,13 +160,14 @@ const String gakujoReportSorterJs = r'''
       var end = parts.pop() || "";
       var pattern = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/;
       var match = end.match(pattern);
-      function dateNumber(value) {
+      function dateNumber(value, closing = true) {
+        var _a, _b;
         var date = new Date(Date.UTC(
           +value[1],
           +value[2] - 1,
           +value[3],
-          +(value[4] || 0),
-          +(value[5] || 0)
+          +((_a = value[4]) != null ? _a : closing ? 23 : 0),
+          +((_b = value[5]) != null ? _b : closing ? 59 : 0)
         ));
         function pad(value2) {
           return ("0" + value2).slice(-2);
@@ -178,7 +179,7 @@ const String gakujoReportSorterJs = r'''
         var shortEnd = end.match(/^\s*(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/);
         if (start && shortEnd) {
           match = [shortEnd[0], start[1]].concat(shortEnd.slice(1));
-          if (dateNumber(match) < dateNumber(start)) match[1] = +start[1] + 1;
+          if (dateNumber(match) < dateNumber(start, false)) match[1] = +start[1] + 1;
         }
       }
       if (match) return dateNumber(match);

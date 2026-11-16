@@ -304,6 +304,9 @@ const String gakujoDownloadCaptureJs = r'''
               continue;
             }
             for (var same = courseIndex + 1; same < cells.length; same += 1) {
+              if (cells[same].tagName.toLowerCase() === "th") {
+                continue;
+              }
               var sameRowValue = textOf(cells[same]);
               if (sameRowValue && !isIgnoredCourseName(normalizeCourseName(sameRowValue))) {
                 return sameRowValue;
@@ -349,7 +352,7 @@ const String gakujoDownloadCaptureJs = r'''
       if (extracted) {
         return extracted;
       }
-      var codeMatch = normalized.match(/^[A-Z0-9]{4,}\s+(.+)$/i);
+      var codeMatch = normalized.match(/^(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+(.+)$/i);
       if (codeMatch) {
         return codeMatch[1].trim();
       }
@@ -364,7 +367,7 @@ const String gakujoDownloadCaptureJs = r'''
     }
     function extractCourseNameFromText(text) {
       var normalized = (text || "").replace(/\s+/g, " ").trim();
-      var labeledMatch = normalized.match(/(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:[A-Z0-9]{4,}\s+)?(.+)$/i);
+      var labeledMatch = normalized.match(/(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]\s*|\s+[:：]?\s*)|科目\s*[:：]\s*)(?:(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+)?(.+)$/i);
       if (!labeledMatch) {
         return "";
       }
