@@ -5332,7 +5332,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           genrecd: pending.message.genrecd,
           seqNo: pending.message.seqNo,
         ),
-      );
+      ).timeout(const Duration(seconds: 60));
       if (!stillCurrent()) {
         return false;
       }
@@ -5370,6 +5370,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }
       _setPendingMessageUrl(null);
       _showSnackBar('連絡通知を開けませんでした');
+    } on TimeoutException {
+      if (identical(_pendingMessageOpen, pending)) {
+        _setPendingMessageUrl(null);
+        _showSnackBar('連絡通知を開けませんでした');
+      }
     } on Object catch (error, stackTrace) {
       developer.log('Failed to open pending message',
           name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
@@ -5804,7 +5809,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     try {
       final result = await _controller.runJavaScriptReturningResult(
         gakujoAssignmentListFetchScript,
-      );
+      ).timeout(const Duration(seconds: 60));
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
       if (decoded is! Map || decoded['status'] != 'ok') {
         // Not signed in yet; try again on a later page.
@@ -5864,7 +5869,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final result = await _controller.runJavaScriptReturningResult(
       gakujoMessageListFetchScript,
-    );
+    ).timeout(const Duration(seconds: 60));
     final decoded = jsonDecode(_stringFromJavaScriptResult(result));
     final items =
         decoded is Map && decoded['status'] == 'ok' ? decoded['items'] : null;
