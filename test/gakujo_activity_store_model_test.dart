@@ -398,6 +398,42 @@ void main() {
       });
     }
 
+    for (final due in {
+      '提出期間 11/1-11/20': DateTime.utc(2026, 11, 20, 14, 59),
+      '提出期間 11/1 - 11/20': DateTime.utc(2026, 11, 20, 14, 59),
+      '2026-11-20 17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026-1-2 17:00': DateTime.utc(2026, 1, 2, 8),
+      '2026/11/20 09:00～17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 09:00〜17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 09:00 - 17:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 17:00～09:00': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 09:00 説明会17:00': DateTime.utc(2026, 11, 20),
+      '2026/11/20 09:00～24:30': DateTime.utc(2026, 11, 20),
+      '2026/11/20 午後5:00まで': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 午後5時まで': DateTime.utc(2026, 11, 20, 8),
+      '2026/11/20 午後5時30分まで': DateTime.utc(2026, 11, 20, 8, 30),
+      '2026/11/20 午前5:00まで': DateTime.utc(2026, 11, 19, 20),
+      '2026/11/20 午前5時30分まで': DateTime.utc(2026, 11, 19, 20, 30),
+      '2026/11/20 午後12:00まで': DateTime.utc(2026, 11, 20, 3),
+      '2026/11/20 午前12時まで': DateTime.utc(2026, 11, 19, 15),
+    }.entries) {
+      test('parses deadline in Japan time: ${due.key}', () {
+        final entry = GakujoDeadlineEntry(
+          title: '課題',
+          url: 'https://gakujo.example/report',
+          dueText: due.key,
+          detectedAt: DateTime.utc(2026, 11, 1),
+        );
+
+        expect(
+          store.isDeadlinePassed(entry,
+              now: due.value.subtract(const Duration(minutes: 1))),
+          isFalse,
+        );
+        expect(store.isDeadlinePassed(entry, now: due.value), isTrue);
+      });
+    }
+
     test('a date without a time expires at 23:59 Japan time', () {
       final entry = deadline('2026/10/30まで');
 
