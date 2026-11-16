@@ -229,6 +229,13 @@ class StarSyncReportDraftsCollection extends StarSyncCollection {
   Comparable Function(Object?)? get order => null;
 
   @override
+  int? editedAt(Object? value) {
+    if (value is! Map) return null;
+    final savedAt = value['savedAt'];
+    return savedAt is num && savedAt.isFinite ? savedAt.toInt() : null;
+  }
+
+  @override
   Future<Map<String, Object?>?> readLocal() => read();
 
   @override

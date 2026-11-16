@@ -2040,6 +2040,9 @@ class StarSyncEngine {
     final reconciled = Map<String, StarSyncCollectionRecord>.from(
       previousRecords,
     );
+    final remoteRecords = mergeStarSyncCollectionRecords(
+      documents.map((document) => document.records),
+    );
     final remoteKeys = {
       for (final document in documents) ...document.records.keys,
     };
@@ -2059,12 +2062,29 @@ class StarSyncEngine {
       if (local.containsKey(key)) {
         final value = local[key];
         final hash = starSyncValueHash(value);
-        if ((stored['pendingBulkReplace'] == true &&
-                (pendingKeys == null ||
-                    (pendingKeys is List && pendingKeys.contains(key)))) ||
+        final bulkReplace =
+            stored['pendingBulkReplace'] == true &&
+            (pendingKeys == null ||
+                (pendingKeys is List && pendingKeys.contains(key)));
+        if (bulkReplace ||
             (old == null && !(preferRemote && remoteKeys.contains(key))) ||
             (old != null && old.deleted) ||
             (old != null && old.valueHash != hash)) {
+          final remote = remoteRecords[key];
+          if (!bulkReplace &&
+              remote != null &&
+              !remote.deleted &&
+              remote.clock > (old?.clock ?? -1)) {
+            final localEditedAt = collection.editedAt(value);
+            final remoteEditedAt = collection.editedAt(remote.value);
+            // Reconnecting must not promote an older offline draft over a
+            // newer edit that this device has not observed yet.
+            if (localEditedAt != null &&
+                remoteEditedAt != null &&
+                remoteEditedAt > localEditedAt) {
+              continue;
+            }
+          }
           reconciled[key] = StarSyncCollectionRecord(
             key: key,
             value: value,

@@ -10,6 +10,9 @@ abstract class StarSyncCollection {
   bool get growOnly;
   Future<Map<String, Object?>?> readLocal();
 
+  /// Returns an edit timestamp for resolving concurrent local changes.
+  int? editedAt(Object? value) => null;
+
   /// Applies only if local data still equals basedOn in canonical JSON.
   /// Returns false on a concurrent edit; the engine retries on a later sync.
   Future<bool> applyLocal(

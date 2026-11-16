@@ -170,6 +170,34 @@ void main() {
     });
   });
 
+  test('report drafts exposes only finite numeric edit timestamps', () {
+    final collection = StarSyncReportDraftsCollection(
+      read: () async => null,
+      apply: (entries, {required basedOn, stillCurrent}) async => true,
+    );
+    expect(collection.editedAt({'savedAt': 1234}), 1234);
+    expect(collection.editedAt({'savedAt': 1234.0}), 1234);
+    for (final value in [
+      null,
+      'draft',
+      [],
+      {},
+      {'savedAt': null},
+      {'savedAt': '1234'},
+      {'savedAt': true},
+      {'savedAt': double.nan},
+      {'savedAt': double.infinity},
+      {'savedAt': double.negativeInfinity},
+    ]) {
+      expect(collection.editedAt(value), isNull);
+    }
+    final settings = StarSyncSettingsCollection(
+      read: () async => {},
+      apply: (entries, {required basedOn, stillCurrent}) async => true,
+    );
+    expect(settings.editedAt({'savedAt': 1234}), isNull);
+  });
+
   test('report drafts passes null and entries through', () async {
     Map<String, Object?>? applied;
     final collection = StarSyncReportDraftsCollection(
