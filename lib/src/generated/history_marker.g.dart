@@ -43,9 +43,16 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
     function frames() {
       const values = [];
       documents((doc, path) => {
+        var _a2;
         if (!path) return;
         const url = doc.location.href;
-        if (/^https?:/.test(url)) values.push({ path, url });
+        const history = (_a2 = doc.defaultView) == null ? void 0 : _a2.history;
+        if (!/^https?:/.test(url) || !history) return;
+        const random = new Uint8Array(16);
+        win.crypto.getRandomValues(random);
+        const token = Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        history.replaceState(Object.assign({}, history.state, { __mbgReturnDialogFrame: token }), "");
+        values.push({ path, url, token });
       });
       return values;
     }
@@ -75,10 +82,12 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
       const saved = (_a = win.history.state) == null ? void 0 : _a.__mbgReturnDialog;
       const kind = typeof saved === "string" ? saved : saved == null ? void 0 : saved.kind;
       const unchanged = typeof saved === "string" || Array.isArray(saved == null ? void 0 : saved.frames) && saved.frames.every((frame) => {
+        var _a2, _b;
         try {
           let current = win;
           for (const index of frame.path.split("/")) current = current.frames[Number(index)];
-          return current.document.location.href === frame.url;
+          const doc = current.document;
+          return doc.location.href === frame.url && (frame.token === void 0 || ((_b = (_a2 = doc.defaultView) == null ? void 0 : _a2.history.state) == null ? void 0 : _b.__mbgReturnDialogFrame) === frame.token);
         } catch (_) {
           return false;
         }

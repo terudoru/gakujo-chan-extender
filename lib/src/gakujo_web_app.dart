@@ -8569,6 +8569,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return _navigatePreview('back');
     }
     if (action == GakujoHistoryAction.dialog) {
+      if (_returnedDialogOpening || _returnedDialogContext != null) return true;
       _returnedDialogOpening = true;
       unawaited(_showReturnedDialog(dialog as String));
       return true;
