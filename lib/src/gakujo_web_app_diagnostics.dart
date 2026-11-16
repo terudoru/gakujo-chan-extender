@@ -11,12 +11,43 @@ Map<String, Object?> redactGakujoDiagnosticBackup(Map<String, Object?> backup) {
     redacted['deadlines'] = [
       for (final deadline in deadlines)
         if (deadline is Map)
-          Map<Object?, Object?>.of(deadline)..remove('messageText')
+          _redactGakujoDiagnosticDeadline(deadline)
         else
           deadline,
     ];
   }
+  final notifiedKeys = redacted['notifiedDeadlineKeys'];
+  if (notifiedKeys is List) {
+    // Keys outlive their deadline entries, so none can rely on source metadata.
+    redacted['notifiedDeadlineKeys'] = [
+      for (final key in notifiedKeys)
+        if (key is String) _redactGakujoDiagnosticDeadlineKey(key) else key,
+    ];
+  }
   return redacted;
+}
+
+Map<Object?, Object?> _redactGakujoDiagnosticDeadline(Map deadline) {
+  final redacted = Map<Object?, Object?>.of(deadline)..remove('messageText');
+  final dueText = deadline['dueText'];
+  if ((deadline.containsKey('messageText') || deadline['source'] == '連絡通知') &&
+      dueText is String) {
+    redacted['dueText'] = GakujoDatedActivity.dateExpressionsOnly(dueText);
+  }
+  return redacted;
+}
+
+String _redactGakujoDiagnosticDeadlineKey(String key) {
+  // kind|url|title|dueText; the body itself may also contain pipes.
+  var separator = -1;
+  for (var index = 0; index < 3; index++) {
+    separator = key.indexOf('|', separator + 1);
+    if (separator < 0) {
+      return key;
+    }
+  }
+  return '${key.substring(0, separator + 1)}'
+      '${GakujoDatedActivity.dateExpressionsOnly(key.substring(separator + 1))}';
 }
 
 @visibleForTesting

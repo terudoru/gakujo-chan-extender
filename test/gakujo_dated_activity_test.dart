@@ -73,6 +73,73 @@ void main() {
     );
   });
 
+  for (final deadline in [
+    '2026/11/20 午後5:00まで',
+    '2026/11/20 午後5時まで',
+    '2026/11/20 午後5時00分まで',
+    '２０２６／１１／２０ 午後５：００まで',
+    '2026/11/20 09:00～17:00',
+    '2026/11/20 09:00〜17:00',
+    '2026/11/20 09:00 - 17:00',
+    '2026/11/20 午前9時～午後5時',
+  ]) {
+    test('long preview keeps the 17:00 closing time: $deadline', () {
+      final text = '${'説明文。' * 60} 提出期限：$deadline';
+      final preview = GakujoDatedActivity.datedTextPreview(text);
+      expect(text.indexOf(deadline), greaterThan(180));
+      final entry = GakujoDeadlineEntry(
+        title: '課題',
+        url: 'https://gakujo.example/message',
+        dueText: preview,
+        detectedAt: DateTime.utc(2026, 11, 1),
+        source: '連絡通知',
+      );
+      final store = GakujoActivityStore();
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 11, 20, 7, 59)),
+        isFalse,
+      );
+      expect(
+        store.isDeadlinePassed(entry, now: DateTime.utc(2026, 11, 20, 8)),
+        isTrue,
+      );
+    });
+  }
+
+  for (final separator in ['～', '〜', '~', '-', 'から']) {
+    test('long preview preserves the time range separator: $separator', () {
+      final deadline = '2026/11/20 09:00$separator午後5:00';
+      final text = '${'説明文。' * 60} 提出期限：$deadline';
+      expect(GakujoDatedActivity.datedTextPreview(text), contains(deadline));
+    });
+  }
+
+  test('a time crossing the preview boundary keeps its afternoon marker', () {
+    final preview = GakujoDatedActivity.datedTextPreview(
+      '${'あ' * 166}2026/11/20 午後5:00まで',
+    );
+    expect(preview, endsWith('2026/11/20 午後5:00'));
+  });
+
+  test('a short dated notice is unchanged', () {
+    const text = '提出期限：２０２６／１１／２０ 午後５：００まで';
+    expect(GakujoDatedActivity.datedTextPreview(text), text);
+  });
+
+  test(
+    'date-only diagnostics keep date syntax and times without body text',
+    () {
+      expect(
+        GakujoDatedActivity.dateExpressionsOnly(
+          '山田太郎 学籍番号12345678 ２０２６／１１／２０ 午後５：００まで '
+          '個別指示 2026/11/21 09:00～17:00 2026/13/40 25:61',
+        ),
+        '2026/11/20 午後5:00 2026/11/21 09:00～17:00 2026/13/40 25:61',
+      );
+      expect(GakujoDatedActivity.dateExpressionsOnly('個別指示のみ'), isEmpty);
+    },
+  );
+
   for (final date in [
     '2026年11月20日',
     '令和8年11月20日',
