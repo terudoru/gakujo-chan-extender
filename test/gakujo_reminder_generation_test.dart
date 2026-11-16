@@ -13,6 +13,89 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final pause in ['assignment read', 'permission prompt']) {
+    for (final change in [
+      'unchanged',
+      'coursework off',
+      'survey off',
+      'offset off',
+      'notifications off',
+    ]) {
+      test('catch-up uses latest settings after $pause: $change', () async {
+        final now = DateTime.utc(2099, 7, 1, 8);
+        final store = _ControlledAssignmentStore();
+        final service = _ReminderNotificationService();
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: service,
+          now: () => now,
+        );
+        final assignments = [
+          GakujoAssignment(
+            kind: change == 'survey off' ? 'アンケート' : 'レポート',
+            title: '課題',
+            course: '科目',
+            status: '未提出',
+            dueAt: now.add(const Duration(minutes: 30)),
+            capturedAt: now,
+          ),
+        ];
+        await store.mergeAssignments(assignments);
+        final paused = Completer<void>();
+        final resume = Completer<void>();
+        if (pause == 'assignment read') {
+          store.onLoadAssignments = () async {
+            paused.complete();
+            await resume.future;
+            return assignments;
+          };
+        } else {
+          service.onRequestPermission = () async {
+            paused.complete();
+            await resume.future;
+            return true;
+          };
+        }
+        final firstSync = coordinator.syncReminders(
+          notificationsEnabled: true,
+          topics: {...GakujoNotificationTopic.values},
+          preferences: const GakujoNotificationPreferences(
+            reminderOffsets: {GakujoReminderOffset.oneHour},
+          ),
+        );
+        await paused.future;
+        final changedSync = coordinator.syncReminders(
+          notificationsEnabled: change != 'notifications off',
+          topics: {
+            for (final topic in GakujoNotificationTopic.values)
+              if (!(change == 'coursework off' &&
+                      topic == GakujoNotificationTopic.coursework) &&
+                  !(change == 'survey off' &&
+                      topic == GakujoNotificationTopic.survey))
+                topic,
+          },
+          preferences: GakujoNotificationPreferences(
+            reminderOffsets: {
+              if (change != 'offset off') GakujoReminderOffset.oneHour,
+            },
+          ),
+        );
+        store.onLoadAssignments = null;
+        service.onRequestPermission = null;
+        resume.complete();
+        await firstSync;
+        await changedSync;
+
+        final expectedCount = change == 'unchanged' ? 1 : 0;
+        expect(service.notifiedReminders, hasLength(expectedCount));
+        expect(
+          await store.loadNotifiedDeadlineKeys(),
+          hasLength(expectedCount),
+        );
+      });
+    }
+  }
+
   for (final outcome in [
     'unreadable assignments',
     'permission refused',

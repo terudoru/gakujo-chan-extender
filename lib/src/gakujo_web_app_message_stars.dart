@@ -96,6 +96,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     var query = '';
     var sort = GakujoStarredMessageSort.starredNewest;
     if (!mounted) return;
+    Future<void> Function()? refreshStarredMessages;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -104,6 +105,12 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
           returned: returned,
           child: StatefulBuilder(
         builder: (context, setDialogState) {
+          refreshStarredMessages ??= () async {
+            final updatedEntries = await _activityStore.loadStarredMessages();
+            if (!dialogContext.mounted) return;
+            setDialogState(() => entries = updatedEntries);
+          };
+          _refreshOpenStarredMessages = refreshStarredMessages;
           final visible = queryStarredMessages(entries, query, sort);
           final size = MediaQuery.sizeOf(context);
           return AlertDialog(
@@ -267,6 +274,9 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
       },
     );
     if (returned) _returnedDialogContext = null;
+    if (identical(_refreshOpenStarredMessages, refreshStarredMessages)) {
+      _refreshOpenStarredMessages = null;
+    }
   }
 
   Future<void> _showSavedMessage(GakujoStarredMessage entry) async {
