@@ -280,9 +280,9 @@ void persistent_cookie_test() {
     const std::string directory = path("persistent-data/cookies");
     const std::string file = directory + "/cookies.sqlite";
     g_assert_true(g_file_test(file.c_str(), G_FILE_TEST_IS_REGULAR));
-    GStatBuf stat = {};
-    g_assert_cmpint(g_stat(directory.c_str(), &stat), ==, 0);
-    g_assert_cmpint(stat.st_mode & 0777, ==, 0700);
+    GStatBuf st = {};
+    g_assert_cmpint(g_stat(directory.c_str(), &st), ==, 0);
+    g_assert_cmpint(st.st_mode & 0777, ==, 0700);
 
     g_autoptr(WebKitWebsiteDataManager) manager = webkit_website_data_manager_new(
         "base-data-directory", path("reopened-data").c_str(),

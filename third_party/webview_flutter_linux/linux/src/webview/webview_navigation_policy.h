@@ -30,9 +30,11 @@ inline gboolean navigation_is_main_frame(
     return webkit_frame_info_is_main_frame(frame);
   }
 #endif
-  // Older WebKit exposes only explicit target names, not a frame identity.
-  // Unnamed frames and _self/_parent targets remain ambiguous; keep main-frame
-  // policy for them rather than guessing from URLs before a load has started.
+  // Before 2.56 the target name does not identify the destination frame.
+  // WebKit 2.54 retargets named and unnamed iframe loads (even target="frame")
+  // to _self, so this fallback cannot identify real subframe navigations.
+  // Only new-window actions reliably report false; the app's exact PDF viewer
+  // URL exception permits its preview iframe on these older versions.
 #if WEBKIT_CHECK_VERSION(2, 40, 0)
   const gchar *frame_name = webkit_navigation_action_get_frame_name(action);
 #else
