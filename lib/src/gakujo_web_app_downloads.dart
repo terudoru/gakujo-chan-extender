@@ -552,7 +552,18 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                   onPressed: entries.isEmpty
                       ? null
                       : () async {
-                          await _downloadHistoryStore.clear();
+                          try {
+                            await _downloadHistoryStore.clear();
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to clear download history',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            _showSnackBar('履歴を削除できませんでした');
+                            return;
+                          }
                           entries = const [];
                           if (!dialogContext.mounted) {
                             return;
@@ -633,7 +644,18 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                   onPressed: entries.isEmpty
                       ? null
                       : () async {
-                          await _downloadHistoryStore.clearFailedDownloads();
+                          try {
+                            await _downloadHistoryStore.clearFailedDownloads();
+                          } on Object catch (error, stackTrace) {
+                            developer.log(
+                              'Failed to clear failed downloads',
+                              name: 'MoreBetterGakujo',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                            _showSnackBar('一覧を削除できませんでした');
+                            return;
+                          }
                           entries = const [];
                           if (!dialogContext.mounted) {
                             return;
@@ -1255,13 +1277,31 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (allowed() && mounted) _showSnackBar('ファイルが大きすぎるため、Google ドライブへの自動保存を見送りました');
       } on GoogleDriveSaveSoftLimit {
         if (!allowed()) return;
-        if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
-          _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+        try {
+          if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
+            _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+          }
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to record Google Drive save quota notice',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
         }
       } on StarSyncQuotaExceeded {
         if (!allowed()) return;
-        if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
-          _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+        try {
+          if (await StarSyncQuotaMeter.shared.claimSaveNotice() && mounted) {
+            _showSnackBar('本日の保存上限に達したため、Google ドライブへの保存を見送りました');
+          }
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to record Google Drive save quota notice',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
         }
       } on GoogleDriveStorageFull {
         if (allowed() && mounted) _showSnackBar('Google ドライブの空き容量が足りないため、保存できませんでした');
