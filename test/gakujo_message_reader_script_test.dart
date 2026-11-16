@@ -71,6 +71,24 @@ void main() {
     expect(result['reloadCount'], 1);
   });
 
+  for (final replacementAt in ['duringRead', 'afterRead']) {
+    test('does not reload after the list document is replaced ($replacementAt)',
+        () async {
+      final result = await evaluateMessageReaderScript(
+        buildScript: GakujoMessageReaderScript.build(),
+        fetchStatuses: [200, 200, 200],
+        replaceListDocumentAt: replacementAt,
+      );
+
+      expect(result['fetchCallCount'], 3);
+      expect(result['frameCallCount'], 0);
+      expect(result['statusText'], '3件を既読にしました（失敗0件）');
+      expect(result['reloadCount'], 0);
+      expect(result['buttonDisabled'], isFalse);
+      expect(result['timeoutIds'], isEmpty);
+    });
+  }
+
   test('reports a non-2xx fetch without treating iframe load as success',
       () async {
     final result = await evaluateMessageReaderScript(

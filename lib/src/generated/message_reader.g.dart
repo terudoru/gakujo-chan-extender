@@ -395,6 +395,10 @@ const String gakujoMessageReaderJs = r'''
         return;
       }
       disarm(confirmButton);
+      var table = messageTable();
+      var list = table ? null : smartphoneUnreadList();
+      var listTable = table || list && list.table;
+      var listDocument = listTable && listTable.ownerDocument;
       reading = true;
       var button = controlsDocument.getElementById("mbg-read-button");
       if (button) {
@@ -419,8 +423,10 @@ const String gakujoMessageReaderJs = r'''
         }
         reloadTimeout = window.setTimeout(function() {
           reloadTimeout = null;
-          if (!disposed) {
+          if (!disposed && listTable && listTable.isConnected && (listDocument === document || mainFrameDocument() === listDocument)) {
             location.reload();
+          } else if (button && !disposed) {
+            button.disabled = false;
           }
         }, 1e3);
       } finally {

@@ -38,6 +38,9 @@ class Element {
     return null;
   }
   contains(node) { return node === this || elements(this).includes(node); }
+  get isConnected() {
+    return this === this.ownerDocument.body || !!this.parentNode?.isConnected;
+  }
 }
 
 function elements(root?: any) {
