@@ -4390,6 +4390,289 @@ void main() {
     b.dispose();
   });
 
+  group('report draft edit conflicts', () {
+    const key = 'mbg-report-draft:v2:report';
+    const early = 1794874800000;
+    const late = early + 60 * 60 * 1000;
+
+    Map<String, Object?> draft(String text, int? savedAt) => {
+      'savedAt': ?savedAt,
+      'title': 'Report',
+      'url': 'https://gakujo.iess.niigata-u.ac.jp/report',
+      'fields': [
+        {'key': 'answer', 'value': text, 'kind': 'text'},
+      ],
+    };
+
+    ({StarSyncEngine engine, _Collection data, _Storage storage}) make(
+      _Transport remote, {
+      bool timestamps = true,
+    }) {
+      final storage = _Storage();
+      final data = _Collection(timestamps ? 'report-drafts' : 'notes');
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        collections: [
+          if (timestamps)
+            StarSyncReportDraftsCollection(
+              read: data.readLocal,
+              apply: data.applyLocal,
+            )
+          else
+            data,
+        ],
+      );
+      addTearDown(engine.dispose);
+      return (engine: engine, data: data, storage: storage);
+    }
+
+    Map collectionState(_Storage storage, [String name = 'report-drafts']) =>
+        jsonDecode(storage.values[starSyncStateKey]!)['collectionStates'][name];
+
+    for (final scenario in [
+      (
+        name: 'older offline edit',
+        local: early,
+        remote: late,
+        localWins: false,
+      ),
+      (name: 'newer offline edit', local: late, remote: early, localWins: true),
+      (name: 'equal savedAt', local: late, remote: late, localWins: true),
+      (
+        name: 'missing local savedAt',
+        local: null,
+        remote: late,
+        localWins: true,
+      ),
+      (
+        name: 'missing remote savedAt',
+        local: early,
+        remote: null,
+        localWins: true,
+      ),
+      (
+        name: 'missing both savedAt',
+        local: null,
+        remote: null,
+        localWins: true,
+      ),
+    ]) {
+      test(
+        '${scenario.name} converges without re-uploading stale text',
+        () async {
+          final remote = _Transport();
+          final a = make(remote);
+          final b = make(remote);
+          await a.engine.setUpWithDrive(config);
+          a.data.entries = {key: draft('initial', early - 1)};
+          await a.engine.syncNow();
+          await b.engine.setUpWithDrive(config);
+          b.data.entries = {key: draft('offline B', scenario.local)};
+          a.data.entries = {key: draft('synced A', scenario.remote)};
+          await a.engine.syncNow();
+          final remoteRecord = collectionState(a.storage)['records'][key];
+          final localRecord = collectionState(b.storage)['records'][key];
+          expect(remoteRecord['clock'], greaterThan(localRecord['clock']));
+
+          await b.engine.syncNow();
+          final expected = {
+            key: scenario.localWins
+                ? draft('offline B', scenario.local)
+                : draft('synced A', scenario.remote),
+          };
+          expect(b.data.entries, expected);
+          if (scenario.localWins) {
+            expect(
+              collectionState(b.storage)['records'][key]['clock'],
+              greaterThan(remoteRecord['clock']),
+            );
+          } else {
+            expect(collectionState(b.storage)['records'][key], remoteRecord);
+          }
+          final deviceId = jsonDecode(
+            b.storage.values[starSyncStateKey]!,
+          )['deviceId'];
+          final path = 'sync/report-drafts/$deviceId';
+          final uploaded = List<int>.of(remote.files[path]!);
+          await a.engine.syncNow();
+          await b.engine.syncNow();
+          await a.engine.syncNow();
+          expect(a.data.entries, expected);
+          expect(b.data.entries, expected);
+          expect(remote.files[path], uploaded);
+          expect(
+            collectionState(a.storage)['records'],
+            collectionState(b.storage)['records'],
+          );
+        },
+      );
+    }
+
+    test(
+      'first sync applies a newer remote draft over an older local one',
+      () async {
+        final remote = _Transport();
+        final a = make(remote);
+        final b = make(remote);
+        await a.engine.setUpWithDrive(config);
+        a.data.entries = {key: draft('synced A', late)};
+        await a.engine.syncNow();
+        b.data.entries = {key: draft('offline B', early)};
+        await b.engine.setUpWithDrive(config);
+        await a.engine.syncNow();
+        expect(b.data.entries, a.data.entries);
+        expect(b.data.entries, {key: draft('synced A', late)});
+      },
+    );
+
+    test(
+      'an observed remote timestamp does not veto a later local edit',
+      () async {
+        final remote = _Transport();
+        final a = make(remote);
+        final b = make(remote);
+        await a.engine.setUpWithDrive(config);
+        a.data.entries = {key: draft('synced A', late)};
+        await a.engine.syncNow();
+        await b.engine.setUpWithDrive(config);
+        b.data.entries = {key: draft('later local edit', early)};
+        await b.engine.syncNow();
+        await a.engine.syncNow();
+        expect(a.data.entries, {key: draft('later local edit', early)});
+        expect(b.data.entries, a.data.entries);
+      },
+    );
+
+    test('bulk restore keeps its priority over a newer remote draft', () async {
+      final remote = _Transport();
+      final a = make(remote);
+      final b = make(remote);
+      await a.engine.setUpWithDrive(config);
+      await b.engine.setUpWithDrive(config);
+      a.data.entries = {key: draft('synced A', late)};
+      await a.engine.syncNow();
+      await b.engine.withBulkReplace(
+        () async => b.data.entries = {key: draft('restored B', early)},
+        stars: false,
+        collections: const {'report-drafts': null},
+      );
+      await b.engine.syncNow();
+      await a.engine.syncNow();
+      expect(a.data.entries, {key: draft('restored B', early)});
+      expect(b.data.entries, a.data.entries);
+    });
+
+    test('a concurrent local edit rejects apply and is retried', () async {
+      final remote = _Transport();
+      final a = make(remote);
+      final b = make(remote);
+      await a.engine.setUpWithDrive(config);
+      a.data.entries = {key: draft('initial', early - 1)};
+      await a.engine.syncNow();
+      await b.engine.setUpWithDrive(config);
+      final before = collectionState(b.storage)['records'];
+      final deviceId = jsonDecode(
+        b.storage.values[starSyncStateKey]!,
+      )['deviceId'];
+      final path = 'sync/report-drafts/$deviceId';
+      final uploaded = List<int>.of(remote.files[path]!);
+      b.data.entries = {key: draft('offline B', early)};
+      a.data.entries = {key: draft('synced A', late)};
+      await a.engine.syncNow();
+      b.data.rejectApply = true;
+      await b.engine.syncNow();
+      expect(b.data.entries, {key: draft('offline B', early)});
+      expect(collectionState(b.storage)['records'], before);
+      expect(collectionState(b.storage)['pendingApplyRetry'], isTrue);
+      expect(remote.files[path], uploaded);
+
+      b.data.rejectApply = false;
+      b.data.entries = {key: draft('concurrent B', late + 1)};
+      await b.engine.syncNow();
+      await a.engine.syncNow();
+      expect(a.data.entries, {key: draft('concurrent B', late + 1)});
+      expect(b.data.entries, a.data.entries);
+      expect(collectionState(b.storage)['pendingApplyRetry'], isNull);
+    });
+
+    test('only the remote clock winner can suppress a local edit', () async {
+      final remote = _Transport();
+      final a = make(remote);
+      final b = make(remote);
+      final c = make(remote);
+      await a.engine.setUpWithDrive(config);
+      a.data.entries = {key: draft('initial', early - 1)};
+      await a.engine.syncNow();
+      await b.engine.setUpWithDrive(config);
+      a.data.entries = {key: draft('superseded A', late + 1)};
+      await a.engine.syncNow();
+      await c.engine.setUpWithDrive(config);
+      c.data.entries = {key: draft('clock winner C', early)};
+      await c.engine.syncNow();
+      expect(
+        collectionState(c.storage)['records'][key]['clock'],
+        greaterThan(collectionState(a.storage)['records'][key]['clock']),
+      );
+      b.data.entries = {key: draft('offline B', late)};
+      await b.engine.syncNow();
+      await a.engine.syncNow();
+      await c.engine.syncNow();
+      expect(a.data.entries, {key: draft('offline B', late)});
+      expect(b.data.entries, a.data.entries);
+      expect(c.data.entries, a.data.entries);
+    });
+
+    for (final deletion in ['local', 'remote']) {
+      test('$deletion deletion keeps the clock rule', () async {
+        final remote = _Transport();
+        final a = make(remote);
+        final b = make(remote);
+        await a.engine.setUpWithDrive(config);
+        a.data.entries = {key: draft('initial', early - 1)};
+        await a.engine.syncNow();
+        await b.engine.setUpWithDrive(config);
+        a.data.entries = deletion == 'remote'
+            ? {}
+            : {key: draft('synced A', late)};
+        b.data.entries = deletion == 'local'
+            ? {}
+            : {key: draft('offline B', early)};
+        await a.engine.syncNow();
+        await b.engine.syncNow();
+        await a.engine.syncNow();
+        expect(
+          a.data.entries,
+          deletion == 'local' ? isEmpty : {key: draft('offline B', early)},
+        );
+        expect(b.data.entries, a.data.entries);
+      });
+    }
+
+    test('collections without edit timestamps keep the clock rule', () async {
+      final remote = _Transport();
+      final a = make(remote, timestamps: false);
+      final b = make(remote, timestamps: false);
+      await a.engine.setUpWithDrive(config);
+      a.data.entries = {key: draft('initial', early - 1)};
+      await a.engine.syncNow();
+      await b.engine.setUpWithDrive(config);
+      b.data.entries = {key: draft('offline B', early)};
+      a.data.entries = {key: draft('synced A', late)};
+      await a.engine.syncNow();
+      await b.engine.syncNow();
+      await a.engine.syncNow();
+      expect(a.data.entries, {key: draft('offline B', early)});
+      expect(b.data.entries, a.data.entries);
+      expect(
+        collectionState(a.storage, 'notes')['records'],
+        collectionState(b.storage, 'notes')['records'],
+      );
+    });
+  });
+
   test('concurrent collection edits converge and cache remote files', () async {
     final remote = _Transport();
     final ca = _Collection('drafts');
