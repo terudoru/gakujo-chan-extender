@@ -30,4 +30,65 @@ void main() {
       expect(isUsefulGakujoCourseName(name), isTrue, reason: name);
     }
   });
+
+  test('download prefers a useful estimate from the original navigation', () {
+    expect(
+      resolveGakujoDownloadCourseName(
+        pageCourseName: 'Course A',
+        initialCourseName: 'Cached course',
+        navigationRevision: 1,
+        currentNavigationRevision: 1,
+      ),
+      'Course A',
+    );
+  });
+
+  test('download keeps its starting course after navigation changes', () {
+    expect(
+      resolveGakujoDownloadCourseName(
+        pageCourseName: 'Course B',
+        initialCourseName: 'Course A',
+        navigationRevision: 1,
+        currentNavigationRevision: 2,
+      ),
+      'Course A',
+    );
+  });
+
+  test('download rejects a stale estimate without a useful starting course', () {
+    for (final initialCourseName in [null, '', '未分類', 'ダウンロード']) {
+      expect(
+        resolveGakujoDownloadCourseName(
+          pageCourseName: 'Course B',
+          initialCourseName: initialCourseName,
+          navigationRevision: 1,
+          currentNavigationRevision: 2,
+        ),
+        isNull,
+      );
+    }
+  });
+
+  test('download falls back when the original page has no useful estimate', () {
+    for (final pageCourseName in [null, '', '未分類', 'ダウンロード']) {
+      expect(
+        resolveGakujoDownloadCourseName(
+          pageCourseName: pageCourseName,
+          initialCourseName: 'Course A',
+          navigationRevision: 1,
+          currentNavigationRevision: 1,
+        ),
+        'Course A',
+      );
+    }
+    expect(
+      resolveGakujoDownloadCourseName(
+        pageCourseName: null,
+        initialCourseName: null,
+        navigationRevision: 1,
+        currentNavigationRevision: 1,
+      ),
+      isNull,
+    );
+  });
 }

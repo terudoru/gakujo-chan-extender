@@ -69,6 +69,22 @@ Future<void> handleGakujoNativeDownload(
 }
 
 @visibleForTesting
+String? resolveGakujoDownloadCourseName({
+  required String? pageCourseName,
+  required String? initialCourseName,
+  required int navigationRevision,
+  required int currentNavigationRevision,
+}) {
+  if (navigationRevision == currentNavigationRevision &&
+      isUsefulGakujoCourseName(pageCourseName ?? '')) {
+    return pageCourseName;
+  }
+  return isUsefulGakujoCourseName(initialCourseName ?? '')
+      ? initialCourseName
+      : null;
+}
+
+@visibleForTesting
 String gakujoDownloadLocationLabel(String location) {
   // Keep the encoded path intact so malformed escapes survive the fallback.
   final match = RegExp(
@@ -896,6 +912,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
+    final revision = _navigationRevision;
+    // The shared downloads tab must not inherit the last course page's name.
+    final initialCourseName = isGakujoSharedDownloadsUrl(_currentPageUrl)
+        ? null
+        : _currentCourseName;
     try {
       await _driveDownloadsLoad.timeout(const Duration(seconds: 5));
     } on TimeoutException {
@@ -909,18 +930,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     var effectiveRequest = request;
     try {
       if (!_isUsefulCourseName(request.courseName)) {
-        final pageCourseName =
-            await _estimateCourseNameFromPage(await _controller.getTitle());
-        // The shared downloads tab belongs to no course, so the last course
-        // page's name does not apply here.
-        final cachedCourseName = isGakujoSharedDownloadsUrl(await _controller.currentUrl())
-            ? null
-            : _currentCourseName;
-        final courseName = _isUsefulCourseName(pageCourseName)
-            ? pageCourseName
-            : _isUsefulCourseName(cachedCourseName ?? '')
-                ? cachedCourseName!
-                : null;
+        final pageCourseName = mounted && revision == _navigationRevision
+            ? await _estimateCourseNameFromPage(await _controller.getTitle())
+            : null;
+        final courseName = resolveGakujoDownloadCourseName(
+          pageCourseName: pageCourseName,
+          initialCourseName: initialCourseName,
+          navigationRevision: revision,
+          currentNavigationRevision: _navigationRevision,
+        );
         if (courseName != null) {
           effectiveRequest = GakujoDownloadRequest(
             url: request.url,
