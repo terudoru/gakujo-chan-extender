@@ -2022,10 +2022,22 @@ void main() {
     );
     expect(
       dialog,
-      matches(RegExp(
-        r'finally \{\s*controllerToDispose\?\.dispose\(\);\s*'
-        r'await _finishPageNavigationOperation\(\);',
-      )),
+      matches(
+        RegExp(
+          r'dialogRoute = ModalRoute\.of<_ScheduleIntegrationDialogResult>\(\s*'
+          r'dialogContext,\s*\);',
+        ),
+      ),
+    );
+    expect(
+      dialog,
+      matches(
+        RegExp(
+          r'finally \{\s*await dialogRoute\?\.completed;\s*'
+          r'controllerToDispose\?\.dispose\(\);\s*'
+          r'await _finishPageNavigationOperation\(\);',
+        ),
+      ),
     );
   });
 

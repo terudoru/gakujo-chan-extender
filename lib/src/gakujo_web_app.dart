@@ -4413,49 +4413,74 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       unawaited(_syncReminders());
     }
 
+    var isClearing = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('データ管理'),
-          content: SizedBox(
-            width: 520,
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                _DataCountTile(label: 'ダウンロード履歴', count: data.history.length),
-                _DataCountTile(
-                    label: '失敗したダウンロード', count: data.failedDownloads.length),
-                _DataCountTile(label: 'お気に入り', count: data.favorites.length),
-                _DataCountTile(
-                    label: 'スター付き連絡通知', count: data.starredMessages.length),
-                _DataCountTile(
-                    label: '新着情報・期限・予定', count: data.deadlines.length),
-                _DataCountTile(
-                    label: '保存済み課題一覧', count: data.reportLists.length),
-              ],
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('データ管理'),
+            content: SizedBox(
+              width: 520,
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  _DataCountTile(label: 'ダウンロード履歴', count: data.history.length),
+                  _DataCountTile(
+                    label: '失敗したダウンロード',
+                    count: data.failedDownloads.length,
+                  ),
+                  _DataCountTile(label: 'お気に入り', count: data.favorites.length),
+                  _DataCountTile(
+                    label: 'スター付き連絡通知',
+                    count: data.starredMessages.length,
+                  ),
+                  _DataCountTile(
+                    label: '新着情報・期限・予定',
+                    count: data.deadlines.length,
+                  ),
+                  _DataCountTile(
+                    label: '保存済み課題一覧',
+                    count: data.reportLists.length,
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: isClearing
+                    ? null
+                    : () async {
+                        if (isClearing) return;
+                        setDialogState(() => isClearing = true);
+                        try {
+                          await clearAll();
+                          if (!dialogContext.mounted ||
+                              ModalRoute.of(dialogContext)?.isCurrent != true) {
+                            return;
+                          }
+                          Navigator.of(dialogContext).pop();
+                          // Keep the revocation warning: a success message would hide it.
+                          _showSnackBar(
+                            revocationUnconfirmed
+                                ? '保存データを削除しました。$googleRevocationUnconfirmedMessage'
+                                : '保存データを削除しました',
+                          );
+                        } finally {
+                          if (dialogContext.mounted &&
+                              ModalRoute.of(dialogContext)?.isCurrent == true) {
+                            setDialogState(() => isClearing = false);
+                          }
+                        }
+                      },
+                child: const Text('全て削除'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('閉じる'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await clearAll();
-                if (!dialogContext.mounted) {
-                  return;
-                }
-                Navigator.of(dialogContext).pop();
-                // Keep the revocation warning: a success message would hide it.
-                _showSnackBar(revocationUnconfirmed
-                    ? '保存データを削除しました。$googleRevocationUnconfirmedMessage'
-                    : '保存データを削除しました');
-              },
-              child: const Text('全て削除'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('閉じる'),
-            ),
-          ],
         );
       },
     );
@@ -4804,12 +4829,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    Future<void> Function()? refreshFavorites;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
         if (returned) _returnedDialogContext = dialogContext;
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            refreshFavorites ??= () async {
+              final updatedFavorites = await _activityStore.loadFavorites();
+              if (!dialogContext.mounted) return;
+              setDialogState(() => favorites = updatedFavorites);
+            };
+            _refreshOpenFavorites = refreshFavorites;
             return _historyDialogInput(
               returned: returned,
               child: AlertDialog(
@@ -4878,7 +4910,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       },
     );
     if (returned) _returnedDialogContext = null;
-    _refreshOpenFavorites = null;
+    if (identical(_refreshOpenFavorites, refreshFavorites)) {
+      _refreshOpenFavorites = null;
+    }
   }
 
   Future<void> _openGakujoHome() async {

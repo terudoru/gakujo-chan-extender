@@ -893,6 +893,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       return;
     }
     TextEditingController? controllerToDispose;
+    ModalRoute<_ScheduleIntegrationDialogResult>? dialogRoute;
     try {
       final initialSettings = _effectiveCalendarImportSettings(
         _appSettings.calendarImportSettings,
@@ -905,6 +906,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
       final result = await showDialog<_ScheduleIntegrationDialogResult>(
         context: context,
         builder: (dialogContext) {
+          dialogRoute = ModalRoute.of<_ScheduleIntegrationDialogResult>(
+            dialogContext,
+          );
           return StatefulBuilder(
             builder: (context, setDialogState) {
               final usesOfficialGoogleAutomaticImport =
@@ -1166,6 +1170,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           return;
       }
     } finally {
+      await dialogRoute?.completed;
       controllerToDispose?.dispose();
       await _finishPageNavigationOperation();
     }
