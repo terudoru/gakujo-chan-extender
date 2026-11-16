@@ -368,10 +368,22 @@ const String gakujoDownloadCaptureJs = r'''
       if (!labeledMatch) {
         return "";
       }
-      if (isFileRow(labeledMatch[1])) {
+      var value = labeledMatch[1].trim();
+      var closingBrackets = {
+        "[": "]",
+        "［": "］",
+        "(": ")",
+        "（": "）",
+        "【": "】"
+      };
+      var closingBracket = closingBrackets[normalized.charAt(labeledMatch.index || 0)];
+      if (closingBracket && value.endsWith(closingBracket)) {
+        value = value.slice(0, -1).trim();
+      }
+      if (isFileRow(value)) {
         return "";
       }
-      var extracted = trimAtKnownFieldLabel(labeledMatch[1].trim());
+      var extracted = trimAtKnownFieldLabel(value);
       return isIgnoredCourseName(extracted) ? "" : extracted;
     }
     function isFileRow(text) {
