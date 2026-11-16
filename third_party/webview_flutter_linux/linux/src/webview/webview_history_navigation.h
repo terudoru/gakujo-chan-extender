@@ -90,6 +90,15 @@ inline BrowserKeyAction browser_key_action(const GdkEventKey *event) {
       return BrowserKeyAction::kFind;
     }
     break;
+  case GDK_KEY_g:
+  case GDK_KEY_G:
+    if (find_modifiers == GDK_CONTROL_MASK) {
+      return BrowserKeyAction::kFindNext;
+    }
+    if (find_modifiers == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+      return BrowserKeyAction::kFindPrevious;
+    }
+    break;
   case GDK_KEY_F3:
     if (find_modifiers == 0) {
       return BrowserKeyAction::kFindNext;

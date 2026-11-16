@@ -62,6 +62,14 @@ class _LinuxFindBarState extends State<LinuxFindBar> {
         const SingleActivator(LogicalKeyboardKey.f3): () => _find(true),
         const SingleActivator(LogicalKeyboardKey.f3, shift: true): () =>
             _find(false),
+        const SingleActivator(LogicalKeyboardKey.keyG, control: true): () =>
+            _find(true),
+        const SingleActivator(
+          LogicalKeyboardKey.keyG,
+          control: true,
+          shift: true,
+        ): () =>
+            _find(false),
         const SingleActivator(LogicalKeyboardKey.escape): _close,
       },
       child: Material(

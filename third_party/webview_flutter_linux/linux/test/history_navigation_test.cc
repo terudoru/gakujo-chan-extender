@@ -104,6 +104,13 @@ static void find_keys_test() {
       event.state = GDK_CONTROL_MASK | lock;
       g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFind);
     }
+    for (guint key : {GDK_KEY_g, GDK_KEY_G}) {
+      event.keyval = key;
+      event.state = GDK_CONTROL_MASK | lock;
+      g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFindNext);
+      event.state = GDK_CONTROL_MASK | GDK_SHIFT_MASK | lock;
+      g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFindPrevious);
+    }
     event.keyval = GDK_KEY_F3;
     event.state = lock;
     g_assert_true(browser_key_action(&event) == BrowserKeyAction::kFindNext);
@@ -131,6 +138,13 @@ static void find_keys_test() {
         g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
       }
     }
+  }
+  for (guint key : {GDK_KEY_g, GDK_KEY_G}) {
+    event.keyval = key;
+    event.state = 0;
+    g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
+    event.state = GDK_CONTROL_MASK | GDK_MOD1_MASK;
+    g_assert_true(browser_key_action(&event) == BrowserKeyAction::kNone);
   }
   event.keyval = GDK_KEY_F3;
   const guint extra_modifiers[] = {0, GDK_CONTROL_MASK, GDK_SHIFT_MASK};
