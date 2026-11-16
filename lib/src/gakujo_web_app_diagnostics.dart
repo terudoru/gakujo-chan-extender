@@ -6,7 +6,38 @@ Map<String, Object?> redactGakujoDiagnosticBackup(Map<String, Object?> backup) {
   final starredMessages = redacted.remove('starredMessages');
   redacted['starredMessageCount'] =
       starredMessages is List ? starredMessages.length : 0;
+  final deadlines = redacted['deadlines'];
+  if (deadlines is List) {
+    redacted['deadlines'] = [
+      for (final deadline in deadlines)
+        if (deadline is Map)
+          Map<Object?, Object?>.of(deadline)..remove('messageText')
+        else
+          deadline,
+    ];
+  }
   return redacted;
+}
+
+@visibleForTesting
+Map<String, Object?> gakujoDiagnosticSettingsPayload({
+  required GakujoAppSettings settings,
+  required DownloadDestinationSettings downloadRoot,
+  required bool includeStoredData,
+}) {
+  final calendarSettings = settings.calendarImportSettings.toJson();
+  if (!includeStoredData) {
+    calendarSettings.remove('calendarTitle');
+  }
+  return {
+    'downloadRootConfigured': downloadRoot.isConfigured,
+    if (includeStoredData)
+      'downloadRootLabel': downloadRootLabel(downloadRoot, includePath: true),
+    'downloadSaveMode': settings.downloadSaveMode.storageValue,
+    'pageMode': settings.pageMode.storageValue,
+    'calendarImportSettings': calendarSettings,
+    'loginCredentialsConfigured': settings.hasLoginCredentials,
+  };
 }
 
 extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
@@ -88,15 +119,11 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
       'createdAt': DateTime.now().toIso8601String(),
       'canGoBack': _canGoBack,
       'canGoForward': _canGoForward,
-      'downloadRootConfigured': _downloadRoot.isConfigured,
-      'downloadRootLabel': downloadRootLabel(
-        _downloadRoot,
-        includePath: includeStoredData,
+      ...gakujoDiagnosticSettingsPayload(
+        settings: _appSettings,
+        downloadRoot: _downloadRoot,
+        includeStoredData: includeStoredData,
       ),
-      'downloadSaveMode': _appSettings.downloadSaveMode.storageValue,
-      'pageMode': _appSettings.pageMode.storageValue,
-      'calendarImportSettings': _appSettings.calendarImportSettings.toJson(),
-      'loginCredentialsConfigured': _appSettings.hasLoginCredentials,
       'twoFactorSecretConfigured': hasTwoFactorSecret,
       'desktopZoom': _desktopZoom,
       'downloadHistoryCount': historyCount,

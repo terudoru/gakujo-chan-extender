@@ -1240,7 +1240,7 @@ void main() {
     }
   });
 
-  test('downloadRootLabel hides local path for lightweight diagnostics', () {
+  test('downloadRootLabel hides local path when includePath is false', () {
     const root = DownloadDestinationSettings(
       isConfigured: true,
       displayName: '授業資料',
