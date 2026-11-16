@@ -43,10 +43,10 @@ function reportSorter() {
     // YYYYMMDDhhmm (12 digits), regardless of separators or trailing seconds.
     var pattern = /(\d{4})\D+(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/;
     var match: (string | number)[] | null = end.match(pattern);
-    function dateNumber(value: (string | number)[]) {
+    function dateNumber(value: (string | number)[], closing = true) {
       // UTC arithmetic normalizes 24:00 across days, months and years.
       var date = new Date(Date.UTC(+value[1], +value[2] - 1, +value[3],
-        +(value[4] || 0), +(value[5] || 0)));
+        +(value[4] ?? (closing ? 23 : 0)), +(value[5] ?? (closing ? 59 : 0))));
       function pad(value: number) {
         return ('0' + value).slice(-2);
       }
@@ -58,7 +58,7 @@ function reportSorter() {
       var shortEnd = end.match(/^\s*(\d{1,2})\D+(\d{1,2})(?:\D+(\d{1,2})\D+(\d{1,2}))?/);
       if (start && shortEnd) {
         match = [shortEnd[0], start[1]].concat(shortEnd.slice(1));
-        if (dateNumber(match) < dateNumber(start)) match[1] = +start[1] + 1;
+        if (dateNumber(match) < dateNumber(start, false)) match[1] = +start[1] + 1;
       }
     }
     if (match) return dateNumber(match);

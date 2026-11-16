@@ -23,7 +23,7 @@ void main() {
     expect(script, contains('firstMatchingCourseNameText'));
     expect(script, contains('sameRowValue'));
     expect(script, contains('科目名'));
-    expect(script, contains(r'(?:[A-Z0-9]{4,}\s+)?'));
+    expect(script, contains(r'(?:(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+)?'));
     expect(script, contains('isIgnoredCourseName'));
     expect(script, contains('text.length > 100'));
     expect(script, contains('extractCourseNameFromText'));
@@ -308,6 +308,27 @@ void main() {
       'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/page.do',
       'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/exports/override.pdf',
       'https://gakujo.iess.niigata-u.ac.jp/campusweb/child/page.do',
+    ]);
+  });
+
+  test('captures course cells below headers and beside same-row labels',
+      () async {
+    final result = await _evaluateBehavior('courseNameTables');
+    final payloads = (result['captured'] as List).cast<Map>();
+    expect(payloads.map((payload) => payload['courseName']),
+        ['線形代数', '物理学基礎BⅠ', '情報基礎']);
+  });
+
+  test('preserves English course names and strips only digit-bearing codes',
+      () async {
+    final result = await _evaluateBehavior('courseNameCodes');
+    expect(result['names'], [
+      'Academic Writing',
+      'Academic Writing',
+      '物理学基礎BⅠ',
+      '物理学基礎BⅠ',
+      'Academic Writing',
+      'Academic Writing',
     ]);
   });
 

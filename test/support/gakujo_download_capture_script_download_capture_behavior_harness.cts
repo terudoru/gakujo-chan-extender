@@ -194,6 +194,36 @@ function behavior() {
     }
     return {prevented, stopped, postCounts, captured};
   }
+  if (scenario === 'courseNameTables') {
+    for (const rows of [
+      [[['th', '科目名'], ['th', '担当教員']],
+        [['td', '線形代数'], ['td', '山田太郎']]],
+      [[['th', '開講番号'], ['th', '科目名'], ['th', '担当教員']],
+        [['td', '262G5023'], ['td', '物理学基礎BⅠ'], ['td', '山田太郎']]],
+      [[['th', '科目名'], ['td', '情報基礎']]]
+    ]) {
+      const table: any = {querySelectorAll() {
+        return rows.map(cells => ({querySelectorAll() {
+          return cells.map(([tagName, innerText]) => ({tagName, innerText}));
+        }}));
+      }};
+      topDocument.querySelectorAll = selector => selector === 'table' ? [table] : [];
+      click(anchor('exports/form.pdf', '資料.pdf', '資料.pdf'));
+    }
+    return {captured};
+  }
+  if (scenario === 'courseNameCodes') {
+    const names: any = [];
+    for (const text of [
+      'Academic Writing', '科目名：Academic Writing',
+      '262G5023  物理学基礎BⅠ', '科目名：262G5023  物理学基礎BⅠ',
+      'abc123 Academic Writing', '科目名：abc123 Academic Writing'
+    ]) {
+      topDocument.querySelectorAll = selector => selector === 'h1' ? [{innerText: text}] : [];
+      names.push(window.__MBG_ESTIMATE_COURSE_NAME());
+    }
+    return {names};
+  }
   if (scenario === 'courseNameFileRows') {
     const rowText = '副専攻授業科目リスト等の変更について（2021.05.20現在）.pdfプレビューを見る 2021年5月20日 - 9999年12月31日 2021年5月20日 112725 令和３年度副専攻授業科目リスト等の変更';
     const row: any = {innerText: rowText, querySelectorAll() { return []; }};
