@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -100,6 +101,172 @@ void main() {
     await sync();
     expect(service.notifiedReminders, hasLength(1));
     expect(await store.loadNotifiedDeadlineKeys(), hasLength(1));
+  });
+
+  for (final change in [
+    'notifications off',
+    'reminders off',
+    'topic off',
+    'unchanged',
+  ]) {
+    test('queued in-app reminder follows the newer sync: $change', () async {
+      var now = DateTime.now().toUtc();
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService(notifyResult: true);
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => now,
+      );
+      final assignment = GakujoAssignment(
+        kind: 'レポート',
+        title: '課題',
+        course: '科目',
+        status: '未提出',
+        dueAt: now.add(const Duration(hours: 2)),
+        capturedAt: now,
+      );
+      await store.mergeAssignments([assignment]);
+      var notificationsEnabled = true;
+      var topics = {GakujoNotificationTopic.coursework};
+      var preferences = const GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+      );
+      Future<void> sync() => coordinator.syncReminders(
+            notificationsEnabled: notificationsEnabled,
+            topics: topics,
+            preferences: preferences,
+          );
+
+      await sync();
+      final reminder = service.bookings.single.single;
+      now = reminder.at;
+      final queuedReminder = service.onInAppReminder!(reminder);
+      notificationsEnabled = change != 'notifications off';
+      if (change == 'reminders off') {
+        preferences = const GakujoNotificationPreferences(reminderOffsets: {});
+      }
+      if (change == 'topic off') {
+        topics = {};
+      }
+      // This sync is behind the callback in the queue, but invalidates it now.
+      final newerSync = sync();
+      await queuedReminder;
+      expect(service.notifiedReminders, isEmpty);
+      await newerSync;
+
+      expect(service.bookings, hasLength(2));
+      expect(service.bookings.last, isEmpty);
+      if (change == 'unchanged') {
+        // In-app platforms deliver the elapsed reminder from the newer plan.
+        expect(service.notifiedReminders, hasLength(1));
+        expect(service.notifiedReminders.single.at, reminder.at);
+        expect(await store.loadNotifiedDeadlineKeys(), {
+          'reminder|${assignment.id}|${reminder.at.millisecondsSinceEpoch}',
+        });
+        await sync();
+        expect(service.notifiedReminders, hasLength(1));
+      } else {
+        expect(service.notifiedReminders, isEmpty);
+        expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+      }
+    });
+  }
+
+  for (final matched in [false, true]) {
+    for (final delay in [
+      const Duration(seconds: 59),
+      const Duration(minutes: 1),
+      const Duration(minutes: 2),
+    ]) {
+      test(
+          '${matched ? 'matched assignment' : 'standalone deadline'} rechecks '
+          'expiry after ${delay.inSeconds}s permission wait', () async {
+        final dueAt = DateTime.utc(2099, 7, 1, 8);
+        var now = dueAt.subtract(const Duration(minutes: 1));
+        final store = GakujoActivityStore();
+        final permissionStarted = Completer<void>();
+        final permission = Completer<bool>();
+        final service = _FakeNotificationService(notifyResult: true)
+          ..onRequestPermission = () {
+            permissionStarted.complete();
+            return permission.future;
+          };
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: service,
+          now: () => now,
+        );
+        final assignment = GakujoAssignment(
+          kind: 'レポート',
+          title: '課題',
+          course: '科目',
+          status: '未提出',
+          dueAt: dueAt,
+          capturedAt: now,
+        );
+        final deadline = GakujoDeadlineEntry(
+          title: assignment.title,
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/sch',
+          dueText: matched ? '2099/07/01まで' : '2099/07/01 17:00まで',
+          detectedAt: now,
+          source: 'スケジュール',
+          course: matched ? assignment.course : '',
+          assignment: matched ? assignment.title : '',
+        );
+        if (matched) {
+          await store.mergeAssignments([assignment]);
+        }
+        await store.mergeDeadlines([deadline]);
+
+        final notifying = coordinator.notifyPendingDeadlines(
+          notificationsEnabled: true,
+        );
+        await permissionStarted.future;
+        now = now.add(delay);
+        permission.complete(true);
+        await notifying;
+
+        final expired = !dueAt.isAfter(now);
+        expect(service.notifiedEntries.map((entry) => entry.key),
+            expired ? isEmpty : [deadline.key]);
+        expect(
+          await store.loadNotifiedDeadlineKeys(),
+          expired
+              ? isEmpty
+              : {
+                  deadlineNotificationKey(deadline, matched ? assignment : null),
+                  if (matched) 'assignment|${assignment.id}',
+                },
+        );
+      });
+    }
+  }
+
+  test('pending expiry is checked again between individual notifications',
+      () async {
+    final dueAt = DateTime.utc(2099, 7, 1, 8);
+    var now = dueAt.subtract(const Duration(minutes: 1));
+    final store = GakujoActivityStore();
+    final service = _FakeNotificationService(notifyResult: true)
+      ..onNotifyDeadline = (_) {
+        now = dueAt;
+      };
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: service,
+      now: () => now,
+    );
+    await store.mergeDeadlines([
+      _deadline('first deadline'),
+      _deadline('second deadline'),
+    ]);
+
+    await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+
+    expect(service.notifiedEntries, hasLength(1));
+    expect(await store.loadNotifiedDeadlineKeys(),
+        {service.notifiedEntries.single.key});
   });
 
   test('desktop list and dated detail scans notify the same message once',
@@ -346,17 +513,22 @@ class _FakeNotificationService extends GakujoNotificationService {
   final bool notifyResult;
   final List<GakujoDeadlineEntry> notifiedEntries = [];
   final List<GakujoReminder> notifiedReminders = [];
+  final List<List<GakujoReminder>> bookings = [];
+  Future<bool> Function()? onRequestPermission;
+  void Function(GakujoDeadlineEntry)? onNotifyDeadline;
+  Future<void> Function(GakujoReminder)? onInAppReminder;
   int permissionRequestCount = 0;
 
   @override
   Future<bool> requestPermission() async {
     permissionRequestCount += 1;
-    return true;
+    return await onRequestPermission?.call() ?? true;
   }
 
   @override
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
     notifiedEntries.add(entry);
+    onNotifyDeadline?.call(entry);
     return notifyResult;
   }
 
@@ -364,8 +536,11 @@ class _FakeNotificationService extends GakujoNotificationService {
   Future<bool> scheduleReminders(
     List<GakujoReminder> reminders, {
     Future<void> Function(GakujoReminder)? onInAppReminder,
-  }) async =>
-      false;
+  }) async {
+    bookings.add(reminders);
+    this.onInAppReminder = onInAppReminder;
+    return false;
+  }
 
   @override
   Future<bool> notifyReminder(GakujoReminder reminder) async {

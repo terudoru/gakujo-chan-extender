@@ -5833,7 +5833,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         assignments,
         isWholeList: rows is List && total is num && rows.length == total,
       );
-      final messages = await _fetchMessageDeadlinesInBackground();
+      late final ({
+        List<GakujoDeadlineEntry> entries,
+        List<String>? unreadMessageUrls,
+      }) messages;
+      var messageFetchFailed = false;
+      try {
+        messages = await _fetchMessageDeadlinesInBackground();
+      } on Object catch (error, stackTrace) {
+        messages = (
+          entries: const <GakujoDeadlineEntry>[],
+          unreadMessageUrls: null,
+        );
+        messageFetchFailed = true;
+        developer.log(
+          'Failed to fetch message deadlines in the background',
+          name: 'MoreBetterGakujo',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       await _activityStore.mergeDeadlines([
         ...deadlineEntriesForAssignments(
           assignments,
@@ -5846,6 +5865,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         allowPermissionRequest: allowPermissionRequest,
       );
       await _syncReminders(allowPermissionRequest: allowPermissionRequest);
+      if (messageFetchFailed) {
+        _lastAssignmentRefresh = null;
+      }
     } on Object catch (error, stackTrace) {
       // The page may have navigated away mid-fetch; try again soon.
       _lastAssignmentRefresh = null;

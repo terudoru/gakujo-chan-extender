@@ -536,6 +536,7 @@ class GakujoDeadlineNotificationCoordinator {
   final GakujoNotificationService _notificationService;
   final DateTime Function() _now;
   Future<void> _pendingNotificationOperation = Future<void>.value();
+  int _reminderGeneration = 0;
 
   Future<bool> _hasPermission(bool allowPermissionRequest) async {
     if (allowPermissionRequest) {
@@ -665,9 +666,14 @@ class GakujoDeadlineNotificationCoordinator {
     }
     final notifiedNow = <String>[];
     for (final MapEntry(:key, value: entry) in pending.entries) {
+      final assignment = assignmentForDeadline(entry, assignments);
+      if (assignment != null
+          ? !assignment.dueAt.isAfter(_now())
+          : _activityStore.isDeadlinePassed(entry, now: _now())) {
+        continue;
+      }
       if (await _notificationService.notifyDeadline(entry)) {
         notifiedNow.add(key);
-        final assignment = assignmentForDeadline(entry, assignments);
         if (assignment != null) {
           // Remember the kind before a same-title collision appears. Older
           // builds saved only the unqualified key, so those may repeat once.
@@ -686,6 +692,8 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoNotificationPreferences preferences,
     bool allowPermissionRequest = true,
   }) {
+    // Invalidate timer callbacks even while this sync waits in the queue.
+    final generation = ++_reminderGeneration;
     return _enqueueNotificationOperation(() async {
       // With no reminder offsets every booking is cancelled, readable or not.
       final assignments =
@@ -715,8 +723,13 @@ class GakujoDeadlineNotificationCoordinator {
       final booksAhead = await _notificationService.scheduleReminders(
         reminders,
         onInAppReminder: (reminder) => _enqueueNotificationOperation(
-          () => _notifyReminderOnce(reminder,
-              topics: topics, preferences: preferences),
+          () async {
+            if (generation != _reminderGeneration) {
+              return;
+            }
+            await _notifyReminderOnce(reminder,
+                topics: topics, preferences: preferences);
+          },
         ),
       );
       if (booksAhead || lateReminders.isEmpty) {
