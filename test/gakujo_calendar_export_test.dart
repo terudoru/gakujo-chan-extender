@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:test/test.dart';
 
@@ -708,6 +709,22 @@ void main() {
 
     expect(range?.start, DateTime(2026, 4, 8));
     expect(range?.end, DateTime(2026, 6, 10));
+  });
+
+  test('yearless term ranges use the academic year at midnight in Japan', () {
+    for (final (moment, year) in [
+      (DateTime.utc(2026, 3, 31, 14, 59), 2025),
+      (DateTime.utc(2026, 3, 31, 15), 2026),
+      (DateTime.utc(2026, 3, 31, 16), 2026),
+    ]) {
+      final range = GakujoCalendarExport.termRangeFromText(
+        '第1ターム 4月8日～6月10日',
+        referenceDate: japanWallClock(moment),
+      );
+
+      expect(range?.start, DateTime(year, 4, 8), reason: '$moment');
+      expect(range?.end, DateTime(year, 6, 10), reason: '$moment');
+    }
   });
 
   void expectEquivalentTermRanges(

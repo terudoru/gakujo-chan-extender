@@ -83,6 +83,33 @@ void main() {
     expect(entries.first.seqNo, '1', reason: 'the saved order is not changed');
   });
 
+  test('sorts Japan posting times through a device DST gap', () {
+    // Run with America/Los_Angeles to catch local DateTime normalization.
+    final entries = [
+      entry('0', 'Unknown', ''),
+      entry('5', 'After gap', '2026/03/08 03:00'),
+      entry('3', 'Japan time', '2026/03/08 02:30'),
+      entry('1', 'Date only', '2026/03/08'),
+      entry('4', 'With seconds', '2026/03/08 02:30:15'),
+      entry('2', 'Before gap', '2026/03/08 01:59'),
+      entry('6', 'Invalid day', '2026/02/30 02:30'),
+      entry('7', 'Invalid hour', '2026/03/08 24:30'),
+      entry('8', 'Invalid minute', '2026/03/08 02:60'),
+      entry('9', 'Invalid second', '2026/03/08 02:30:60'),
+    ];
+
+    expect(
+      queryStarredMessages(entries, '', GakujoStarredMessageSort.postedOldest)
+          .map((e) => e.seqNo),
+      ['1', '2', '3', '4', '5', '0', '6', '7', '8', '9'],
+    );
+    expect(
+      queryStarredMessages(entries, '', GakujoStarredMessageSort.postedNewest)
+          .map((e) => e.seqNo),
+      ['5', '4', '3', '2', '1', '0', '6', '7', '8', '9'],
+    );
+  });
+
   for (final whitespace in [
     '\u00A0', '\u202F', '\u2003', '\u3000', '\u0085', '\t', '\r\n'
   ]) {

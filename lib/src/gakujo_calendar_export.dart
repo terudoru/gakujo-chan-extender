@@ -1607,7 +1607,7 @@ class GakujoCalendarExport {
     DateTime? referenceDate,
     String targetTermName = '',
   }) {
-    final reference = referenceDate ?? DateTime.now();
+    final reference = referenceDate ?? japanWallClock(DateTime.now());
     final normalized = GakujoDatedActivity.normalizeDateText(text)
         .replaceAll('（', '(')
         .replaceAll('）', ')')

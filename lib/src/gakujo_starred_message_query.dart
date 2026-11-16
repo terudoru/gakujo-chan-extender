@@ -45,7 +45,7 @@ List<GakujoStarredMessage> queryStarredMessages(
     final hour = int.tryParse(match[4] ?? '') ?? 0;
     final minute = int.tryParse(match[5] ?? '') ?? 0;
     final second = int.tryParse(match[6] ?? '') ?? 0;
-    final date = DateTime(year, month, day, hour, minute, second);
+    final date = DateTime.utc(year, month, day, hour, minute, second);
     return date.year == year &&
             date.month == month &&
             date.day == day &&

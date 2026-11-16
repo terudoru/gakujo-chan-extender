@@ -441,6 +441,16 @@ String? gakujoRuntimeTeardownScriptForFeature(GakujoFeatureFlag flag) {
 }
 
 @visibleForTesting
+String gakujoCachedAssignmentText(GakujoAssignment assignment) {
+  final due = assignment.dueInJapan;
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${assignment.kind} ${assignment.title}'
+      '${assignment.course.isEmpty ? '' : '（${assignment.course}）'}'
+      ' ${assignment.status} 締切 ${due.year}/${two(due.month)}/${two(due.day)} '
+      '${two(due.hour)}:${two(due.minute)}';
+}
+
+@visibleForTesting
 DateTime? parseCalendarDate(String raw) {
   final match = RegExp(
     r'^\s*((?:20)?[0-9]{2})[/-]([0-9]{1,2})[/-]([0-9]{1,2})\s*$',
@@ -5482,9 +5492,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             url: url,
           )
               case final assignment?)
-            '${assignment.kind} ${assignment.title}'
-                '${assignment.course.isEmpty ? '' : '（${assignment.course}）'}'
-                ' ${assignment.status} 締切 ${_formatDateTime(assignment.dueAt)}',
+            gakujoCachedAssignmentText(assignment),
       ];
       await _activityStore.saveReportList(
         GakujoCachedReportList(
