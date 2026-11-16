@@ -265,7 +265,13 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       _pendingAuthorization = pending;
       server.listen((request) async {
         try {
-          final params = request.uri.queryParameters;
+          var params = const <String, String>{};
+          var malformedQuery = false;
+          try {
+            params = request.uri.queryParameters;
+          } on FormatException {
+            malformedQuery = true;
+          }
           final matching = request.uri.path == '/' && params['state'] == state;
           final valid = matching && params['code']?.isNotEmpty == true;
           request.response.headers.contentType = ContentType(
@@ -273,7 +279,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
             'html',
             charset: 'utf-8',
           );
-          request.response.statusCode = request.uri.path != '/'
+          request.response.statusCode = malformedQuery
+              ? 400
+              : request.uri.path != '/'
               ? 404
               : valid
               ? 200

@@ -4854,7 +4854,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _showSnackBar('お気に入りに追加しました');
         return;
       case _ToolbarAction.copyUrl:
-        await Clipboard.setData(ClipboardData(text: url));
+        final sanitizedUrl = sanitizeGakujoExternalUrl(url);
+        if (sanitizedUrl.isEmpty) {
+          _showSnackBar('このページのURLはコピーできません');
+          return;
+        }
+        await Clipboard.setData(ClipboardData(text: sanitizedUrl));
         _showSnackBar('URLをコピーしました');
         return;
       case _ToolbarAction.openExternal:

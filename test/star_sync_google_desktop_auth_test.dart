@@ -73,6 +73,7 @@ void main() {
   var revokeFails = false;
   String? revokedToken;
   var strayRequests = false;
+  var malformedQuery = false;
   String? verifier;
   String? challenge;
   var incremental = false;
@@ -90,6 +91,7 @@ void main() {
     revokeFails = false;
     revokedToken = null;
     strayRequests = false;
+    malformedQuery = false;
     verifier = null;
     challenge = null;
     incremental = false;
@@ -215,6 +217,16 @@ void main() {
             expect(response.statusCode, uri == wrong ? 400 : 404);
             await response.drain<void>();
           }
+        }
+        if (malformedQuery) {
+          final malformed = redirect.replace(query: 'state=%FF');
+          final response = await (await client.getUrl(malformed)).close();
+          expect(response.statusCode, 400);
+          expect(response.headers.contentType?.mimeType, 'text/html');
+          expect(
+            await utf8.decoder.bind(response).join(),
+            contains('接続できませんでした。アプリに戻ってください。'),
+          );
         }
         final response = await (await client.getUrl(redirect)).close();
         await response.drain<void>();
@@ -426,6 +438,11 @@ void main() {
 
   test('stray requests do not abort sign in', () async {
     strayRequests = true;
+    expect(await makeAuth().signIn(), 'user@example.com');
+  });
+
+  test('malformed callback queries return 400 without aborting sign in', () async {
+    malformedQuery = true;
     expect(await makeAuth().signIn(), 'user@example.com');
   });
 
