@@ -21,6 +21,8 @@ class _Storage extends FlutterSecureStorage {
   final values = <String, String>{};
   bool failStarWriteOnce = false;
   bool failStateAfterStarWrite = false;
+  String? failReadKey;
+  String? failWriteKey;
   String? failWriteKeyOnce;
   String? failDeleteKey;
   void Function()? onStarRead;
@@ -36,6 +38,7 @@ class _Storage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (key == failReadKey) throw StateError('read failed');
     if (key == 'more_better_gakujo_starred_messages') onStarRead?.call();
     return values[key];
   }
@@ -52,6 +55,7 @@ class _Storage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     onWrite?.call(key);
+    if (key == failWriteKey) throw StateError('write failed');
     if (key == failWriteKeyOnce) {
       failWriteKeyOnce = null;
       throw StateError('sync write failed');
@@ -2202,6 +2206,232 @@ void main() {
       engine.dispose();
     },
   );
+
+  for (final operation in ['read', 'write']) {
+    test('quota $operation failure keeps local changes retrying', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final quotaStorage = _Storage();
+      final timers = <_TestTimer>[];
+      final waits = <Duration>[];
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
+        timerFactory: (duration, callback) {
+          waits.add(duration);
+          final timer = _TestTimer(callback);
+          timers.add(timer);
+          return timer;
+        },
+      );
+      addTearDown(engine.dispose);
+      await engine.setUpWithDrive(const StarSyncConfig());
+      if (operation == 'read') {
+        quotaStorage.failReadKey = starSyncGoogleQuotaKey;
+      } else {
+        quotaStorage.failWriteKey = starSyncGoogleQuotaKey;
+      }
+      final lists = remote.lists;
+
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      await pumpEventQueue();
+
+      expect(remote.lists, lists);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+        isTrue,
+      );
+      expect(waits, [const Duration(minutes: 15)]);
+      expect(timers.single.isActive, isTrue);
+
+      timers.single.fire();
+      await pumpEventQueue();
+
+      expect(remote.lists, lists);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+        isTrue,
+      );
+      expect(waits, List.filled(2, const Duration(minutes: 15)));
+      expect(timers.last.isActive, isTrue);
+
+      quotaStorage.failReadKey = null;
+      quotaStorage.failWriteKey = null;
+      timers.last.fire();
+      await pumpEventQueue(times: 100);
+
+      expect(remote.lists, greaterThan(lists));
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+        isFalse,
+      );
+    });
+
+    test('quota $operation failure keeps automatic backups retrying', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final quotaStorage = _Storage();
+      final timers = <_TestTimer>[];
+      final waits = <Duration>[];
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
+        canSync: () => false,
+        timerFactory: (duration, callback) {
+          waits.add(duration);
+          final timer = _TestTimer(callback);
+          timers.add(timer);
+          return timer;
+        },
+      );
+      addTearDown(engine.dispose);
+      await engine.setUpWithDrive(const StarSyncConfig());
+      if (operation == 'read') {
+        quotaStorage.failReadKey = starSyncGoogleQuotaKey;
+      } else {
+        quotaStorage.failWriteKey = starSyncGoogleQuotaKey;
+      }
+      final puts = remote.puts;
+      var builds = 0;
+
+      expect(
+        await engine.uploadAutomaticBackupIfDue(() async {
+          builds++;
+          return [1, 2, 3];
+        }),
+        isFalse,
+      );
+      await pumpEventQueue();
+
+      expect(builds, 0);
+      expect(remote.puts, puts);
+      expect(waits, [const Duration(minutes: 15)]);
+      expect(timers.single.isActive, isTrue);
+
+      timers.single.fire();
+      await pumpEventQueue();
+
+      expect(builds, 0);
+      expect(remote.puts, puts);
+      expect(waits, List.filled(2, const Duration(minutes: 15)));
+      expect(timers.last.isActive, isTrue);
+
+      quotaStorage.failReadKey = null;
+      quotaStorage.failWriteKey = null;
+      timers.last.fire();
+      await pumpEventQueue(times: 100);
+
+      expect(builds, 1);
+      expect(await engine.listBackups(), hasLength(1));
+      expect(engine.shouldUploadAutomaticBackup(DateTime.now()), isFalse);
+    });
+
+    test('quota $operation failure does not block manual sync', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      final quotaStorage = _Storage();
+      final timers = <_TestTimer>[];
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
+        timerFactory: (_, callback) {
+          final timer = _TestTimer(callback);
+          timers.add(timer);
+          return timer;
+        },
+      );
+      addTearDown(engine.dispose);
+      await engine.setUpWithDrive(const StarSyncConfig());
+      if (operation == 'read') {
+        quotaStorage.failReadKey = starSyncGoogleQuotaKey;
+      } else {
+        quotaStorage.failWriteKey = starSyncGoogleQuotaKey;
+      }
+      final lists = remote.lists;
+
+      await engine.syncNow(trigger: StarSyncTrigger.manual);
+      await pumpEventQueue();
+
+      expect(remote.lists, greaterThan(lists));
+      expect(engine.status.value.status, StarSyncStatus.ok);
+      expect(timers, isEmpty);
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+        isFalse,
+      );
+    });
+  }
+
+  test('quota read and state save failures keep a retry timer armed', () async {
+    final remote = _Transport();
+    final storage = _Storage();
+    final timers = <_TestTimer>[];
+    final waits = <Duration>[];
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      timerFactory: (duration, callback) {
+        waits.add(duration);
+        final timer = _TestTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+    addTearDown(engine.dispose);
+    await engine.setUpWithDrive(const StarSyncConfig());
+    storage.failReadKey = starSyncGoogleQuotaKey;
+    storage.failWriteKey = starSyncStateKey;
+    var stateSaveAttempts = 0;
+    storage.onWrite = (key) {
+      if (key == starSyncStateKey) stateSaveAttempts++;
+    };
+    var publications = 0;
+    engine.status.addListener(() => publications++);
+    final lists = remote.lists;
+
+    expect(
+      await engine.syncNow(trigger: StarSyncTrigger.localChange),
+      isA<StarSyncResult>(),
+    );
+    await pumpEventQueue();
+
+    expect(stateSaveAttempts, 1);
+    expect(publications, 1);
+    expect(remote.lists, lists);
+    expect(waits, [const Duration(minutes: 15)]);
+    expect(timers.single.isActive, isTrue);
+
+    timers.single.fire();
+    await pumpEventQueue();
+
+    expect(stateSaveAttempts, 2);
+    expect(publications, 2);
+    expect(remote.lists, lists);
+    expect(waits, List.filled(2, const Duration(minutes: 15)));
+    expect(timers.last.isActive, isTrue);
+
+    storage.failReadKey = null;
+    storage.failWriteKey = null;
+    timers.last.fire();
+    await pumpEventQueue(times: 100);
+
+    expect(remote.lists, greaterThan(lists));
+    expect(
+      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+      isFalse,
+    );
+  });
 
   test('quota retry storage failure arms a fallback timer', () async {
     final remote = _Transport();
