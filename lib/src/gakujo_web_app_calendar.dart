@@ -1697,7 +1697,7 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     try {
       final result = await _controller.runJavaScriptReturningResult(
         GakujoCalendarExport.registrationPageFetchScript(),
-      );
+      ).timeout(const Duration(seconds: 60));
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
       final html = decoded is Map ? decoded['text']?.toString() ?? '' : '';
       return GakujoCalendarExport.coursesFromRegistrationPage(html);
@@ -1736,7 +1736,9 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
           start: termRange.start,
           end: termRange.end,
         ),
-      );
+        // One synchronous request per week; a stalled one must not hold the
+        // calendar gate forever.
+      ).timeout(const Duration(minutes: 3));
       return GakujoCalendarExport.classChangesFromJson(
         _stringFromJavaScriptResult(result),
       );
