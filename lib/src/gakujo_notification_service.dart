@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -167,6 +168,7 @@ class GakujoReminder {
     required this.at,
     this.dueAt,
     this.assignmentId,
+    this.topic,
     this.legacyIds = const [],
   });
 
@@ -177,6 +179,7 @@ class GakujoReminder {
   final DateTime at;
   final DateTime? dueAt;
   final String? assignmentId;
+  final GakujoNotificationTopic? topic;
   // Historical OS ids that can be attributed to this assignment.
   final List<int> legacyIds;
 
@@ -263,6 +266,9 @@ List<GakujoReminder> planReminders({
         at: at,
         dueAt: due,
         assignmentId: assignment.id,
+        topic: assignment.isSurvey
+            ? GakujoNotificationTopic.survey
+            : GakujoNotificationTopic.coursework,
         legacyIds: [
           if (remindableIds[assignment.notificationId] == 1)
             idFor(assignment.notificationId),
@@ -539,6 +545,10 @@ class GakujoDeadlineNotificationCoordinator {
   int _reminderGeneration = 0;
   int _bookedReminderGeneration = 0;
   int _queuedReminderSyncs = 0;
+  bool _reminderNotificationsEnabled = false;
+  Set<GakujoNotificationTopic> _reminderTopics = const {};
+  GakujoNotificationPreferences _reminderPreferences =
+      const GakujoNotificationPreferences();
   final _deferredReminders =
       <({int generation, Future<void> Function() notify})>[];
 
@@ -696,6 +706,11 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoNotificationPreferences preferences,
     bool allowPermissionRequest = true,
   }) {
+    _reminderNotificationsEnabled = notificationsEnabled;
+    _reminderTopics = Set.unmodifiable(topics);
+    _reminderPreferences = preferences.copyWith(
+      reminderOffsets: Set.unmodifiable(preferences.reminderOffsets),
+    );
     final generation = ++_reminderGeneration;
     // Suppress timer callbacks until every queued sync has finished.
     _queuedReminderSyncs += 1;
@@ -735,11 +750,8 @@ class GakujoDeadlineNotificationCoordinator {
             if (generation != _bookedReminderGeneration) {
               return;
             }
-            Future<void> notify() => _notifyReminderOnce(
-              reminder,
-              topics: topics,
-              preferences: preferences,
-            );
+            Future<void> notify() =>
+                _notifyReminderWithLatestSettings(reminder);
             if (_queuedReminderSyncs > 0) {
               // The one-shot timer has fired; a skipped sync cannot rebook it.
               _deferredReminders.add((generation: generation, notify: notify));
@@ -765,12 +777,43 @@ class GakujoDeadlineNotificationCoordinator {
           _deferredReminders.clear();
           for (final reminder in deferred) {
             if (reminder.generation == _bookedReminderGeneration) {
-              await reminder.notify();
+              try {
+                await reminder.notify();
+              } on Object catch (error, stackTrace) {
+                developer.log(
+                  'Failed to deliver deferred reminder',
+                  name: 'MoreBetterGakujo',
+                  error: error,
+                  stackTrace: stackTrace,
+                );
+              }
             }
           }
         }
       }
     });
+  }
+
+  Future<void> _notifyReminderWithLatestSettings(
+    GakujoReminder reminder,
+  ) async {
+    final preferences = _reminderPreferences;
+    final topics = _reminderTopics;
+    final dueAt = reminder.dueAt;
+    if (!_reminderNotificationsEnabled ||
+        preferences.reminderOffsets.isEmpty ||
+        (dueAt != null &&
+            !preferences.reminderOffsets.any(
+              (offset) => dueAt.subtract(offset.before) == reminder.at,
+            )) ||
+        (reminder.topic != null && !topics.contains(reminder.topic))) {
+      return;
+    }
+    await _notifyReminderOnce(
+      reminder,
+      topics: topics,
+      preferences: preferences,
+    );
   }
 
   Future<void> _notifyReminderOnce(

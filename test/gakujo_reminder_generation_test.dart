@@ -222,14 +222,212 @@ void main() {
       },
     );
   }
+
+  for (final deferred in [false, true]) {
+    for (final change in [
+      'unchanged',
+      'coursework off',
+      'survey off',
+      'offset off',
+      'notifications off',
+      if (!deferred) 'skip submitted',
+    ]) {
+      testWidgets(
+        'preserved reminder uses latest settings: $change, deferred: $deferred',
+        (tester) async {
+          const channel = MethodChannel(
+            'net.yoshida.morebettergakujo/notifications',
+          );
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) async => false);
+          addTearDown(() {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null);
+          });
+          var now = DateTime.utc(2099, 7, 1, 8);
+          final store = _ControlledAssignmentStore();
+          final service = _ReminderNotificationService(
+            now: () => now,
+            useRealTimers: true,
+          );
+          addTearDown(() => service.scheduleReminders(const []));
+          final coordinator = GakujoDeadlineNotificationCoordinator(
+            activityStore: store,
+            notificationService: service,
+            now: () => now,
+          );
+          await store.mergeAssignments([
+            GakujoAssignment(
+              kind: change == 'survey off' ? 'アンケート' : 'レポート',
+              title: '課題',
+              course: '科目',
+              status: change == 'skip submitted' ? '提出済' : '未提出',
+              dueAt: now.add(const Duration(hours: 1, seconds: 1)),
+              capturedAt: now,
+            ),
+          ]);
+          await coordinator.syncReminders(
+            notificationsEnabled: true,
+            topics: {...GakujoNotificationTopic.values},
+            preferences: const GakujoNotificationPreferences(
+              skipSubmitted: false,
+              reminderOffsets: {GakujoReminderOffset.oneHour},
+            ),
+          );
+          final reminder = service.bookings.single.single;
+          final callback = service.onInAppReminder!;
+          final readStarted = Completer<void>();
+          final read = Completer<List<GakujoAssignment>?>();
+          store.onLoadAssignments = () {
+            readStarted.complete();
+            return read.future;
+          };
+          // Queue a preserving sync ahead of the changed settings, so delivery
+          // must wait for both and use the newest request.
+          final preservingSync = coordinator.syncReminders(
+            notificationsEnabled: true,
+            topics: {...GakujoNotificationTopic.values},
+            preferences: const GakujoNotificationPreferences(
+              skipSubmitted: false,
+              reminderOffsets: {GakujoReminderOffset.oneHour},
+            ),
+          );
+          await readStarted.future;
+          now = reminder.at;
+          if (deferred) {
+            await tester.pump(const Duration(seconds: 1));
+          }
+          final changedSync = coordinator.syncReminders(
+            notificationsEnabled: change != 'notifications off',
+            topics: {
+              for (final topic in GakujoNotificationTopic.values)
+                if (!(change == 'coursework off' &&
+                        topic == GakujoNotificationTopic.coursework) &&
+                    !(change == 'survey off' &&
+                        topic == GakujoNotificationTopic.survey))
+                  topic,
+            },
+            preferences: GakujoNotificationPreferences(
+              skipSubmitted: change == 'skip submitted',
+              // Keep a different offset enabled so the unreadable sync preserves
+              // the original bookings instead of clearing every reminder.
+              reminderOffsets: {
+                change == 'offset off'
+                    ? GakujoReminderOffset.threeHours
+                    : GakujoReminderOffset.oneHour,
+              },
+            ),
+          );
+          store.onLoadAssignments = () async => null;
+          read.complete(null);
+          await preservingSync;
+          await changedSync;
+          if (change == 'skip submitted') {
+            // The latest skipSubmitted choice can be checked once data returns.
+            store.onLoadAssignments = null;
+          }
+          if (!deferred) {
+            await tester.pump(const Duration(seconds: 1));
+          }
+          await callback(reminder);
+          await callback(reminder);
+          final expected = change == 'unchanged'
+              ? [reminder]
+              : <GakujoReminder>[];
+          expect(service.notifiedReminders, expected);
+          expect(
+            await store.loadNotifiedDeadlineKeys(),
+            hasLength(expected.length),
+          );
+          expect(
+            service.bookings,
+            hasLength(change == 'notifications off' ? 2 : 1),
+          );
+        },
+      );
+    }
+  }
+
+  test('a deferred reminder write failure does not discard the next reminder', () async {
+    var now = DateTime.utc(2099, 7, 1, 8);
+    final store = _ControlledAssignmentStore();
+    final service = _ReminderNotificationService();
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: service,
+      now: () => now,
+    );
+    await store.mergeAssignments([
+      for (final title in ['first', 'second'])
+        GakujoAssignment(
+          kind: 'レポート',
+          title: title,
+          course: '科目',
+          status: '未提出',
+          dueAt: now.add(const Duration(hours: 2)),
+          capturedAt: now,
+        ),
+    ]);
+    Future<void> sync() => coordinator.syncReminders(
+      notificationsEnabled: true,
+      topics: {GakujoNotificationTopic.coursework},
+      preferences: const GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+      ),
+    );
+
+    await sync();
+    final reminders = service.bookings.single;
+    final callback = service.onInAppReminder!;
+    final readStarted = Completer<void>();
+    final read = Completer<List<GakujoAssignment>?>();
+    store.onLoadAssignments = () {
+      readStarted.complete();
+      return read.future;
+    };
+    final firstSync = sync();
+    await readStarted.future;
+    now = reminders.first.at;
+    final firstCallback = callback(reminders.first);
+    final secondCallback = callback(reminders.last);
+    final secondSync = sync();
+    store.onLoadAssignments = () async => null;
+    store.failNextNotifiedWrite = true;
+    read.complete(null);
+    await firstSync;
+    await firstCallback;
+    await secondCallback;
+    await secondSync;
+
+    expect(service.bookings, hasLength(1));
+    expect(service.notifiedReminders, reminders);
+    expect(store.failedNotifiedWrites, 1);
+    expect(await store.loadNotifiedDeadlineKeys(), {
+      'reminder|${reminders.last.assignmentId}|${reminders.last.at.millisecondsSinceEpoch}',
+    });
+    await callback(reminders.last);
+    expect(service.notifiedReminders, reminders);
+  });
 }
 
 class _ControlledAssignmentStore extends GakujoActivityStore {
   Future<List<GakujoAssignment>?> Function()? onLoadAssignments;
+  bool failNextNotifiedWrite = false;
+  int failedNotifiedWrites = 0;
 
   @override
   Future<List<GakujoAssignment>?> loadAssignmentsIfAvailable() =>
       onLoadAssignments?.call() ?? super.loadAssignmentsIfAvailable();
+
+  @override
+  Future<void> addNotifiedDeadlineKeys(Iterable<String> deadlineKeys) async {
+    if (failNextNotifiedWrite) {
+      failNextNotifiedWrite = false;
+      failedNotifiedWrites += 1;
+      throw StateError('notified key write failed');
+    }
+    await super.addNotifiedDeadlineKeys(deadlineKeys);
+  }
 }
 
 class _ReminderNotificationService extends GakujoNotificationService {
