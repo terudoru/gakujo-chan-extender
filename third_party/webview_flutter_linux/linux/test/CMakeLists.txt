@@ -34,6 +34,13 @@ target_link_libraries(history_navigation_test PRIVATE PkgConfig::WEBKIT)
 target_compile_options(history_navigation_test PRIVATE -Wall -Wextra -Werror
   -Wno-unused-parameter)
 add_test(NAME history_navigation COMMAND history_navigation_test)
+add_executable(context_menu_test context_menu_test.cc)
+
+target_link_libraries(context_menu_test PRIVATE PkgConfig::WEBKIT)
+
+target_compile_options(context_menu_test PRIVATE -Wall -Wextra -Werror
+  -Wno-unused-parameter)
+add_test(NAME context_menu COMMAND context_menu_test)
 add_executable(wheel_scroll_test wheel_scroll_test.cc)
 target_link_libraries(wheel_scroll_test PRIVATE PkgConfig::WEBKIT)
 target_compile_options(wheel_scroll_test PRIVATE -Wall -Wextra -Werror
@@ -64,7 +71,7 @@ target_compile_options(environment_test PRIVATE -Wall -Wextra -Werror
 add_test(NAME environment COMMAND environment_test)
 # Download policy tests do not use the desktop accessibility service.
 set_tests_properties(download_policy message_bridge scroll_hook
-  history_navigation wheel_scroll pinch_zoom pinch_zoom_dispatch environment
+  history_navigation context_menu wheel_scroll pinch_zoom pinch_zoom_dispatch environment
   PROPERTIES
   TIMEOUT 60
   ENVIRONMENT "NO_AT_BRIDGE=1"
