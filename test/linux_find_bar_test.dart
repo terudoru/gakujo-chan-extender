@@ -98,6 +98,27 @@ void main() {
     );
   }
 
+  testWidgets('Ctrl+G searches forward and Ctrl+Shift+G searches backward', (
+    tester,
+  ) async {
+    final searches = <(String, bool)>[];
+    await showBar(
+      tester,
+      onFind: (text, forward) {
+        searches.add((text, forward));
+      },
+    );
+    await tester.enterText(find.byType(TextField), 'term');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyG);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyG);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(searches, [('term', true), ('term', false)]);
+  });
+
   testWidgets('previous and next search immediately in their direction', (
     tester,
   ) async {
