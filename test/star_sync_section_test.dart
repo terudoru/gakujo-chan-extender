@@ -33,6 +33,7 @@ void main() {
     Future<Map<String, String>> Function()? onSnapshotLocalStars,
     Future<void> Function()? onGoogleReSignIn,
     Future<void> Function()? onGoogleSignOut,
+    Future<void> Function()? onGoogleSetupAbandoned,
     VoidCallback? onGoogleCancelSignIn,
     Future<void> Function()? onResumeKeepingLocal,
     Future<void> Function()? onResumeDiscardingLocal,
@@ -68,6 +69,7 @@ void main() {
                 required expectedGeneration,
               }) async => StarSyncDriveSetup.created,
           onGoogleSignOut: onGoogleSignOut ?? () async {},
+          onGoogleSetupAbandoned: onGoogleSetupAbandoned,
           onGoogleReSignIn: onGoogleReSignIn ?? () async {},
           onGoogleCancelSignIn: onGoogleCancelSignIn,
           onLocalStarCount: onLocalStarCount ?? () async => 0,
@@ -486,6 +488,47 @@ void main() {
     await tester.pumpAndSettle();
     expect(signedOut, isTrue);
   });
+
+  for (final failRecreation in [false, true]) {
+    testWidgets(failRecreation
+        ? 'failed legacy recreation uses setup abandonment cleanup'
+        : 'cancelling legacy recreation uses setup abandonment cleanup', (tester) async {
+      final status = ValueNotifier(const StarSyncStatusSnapshot());
+      addTearDown(status.dispose);
+      var abandoned = 0;
+      var signedOut = 0;
+      var resets = 0;
+      final busy = <bool>[];
+      await tester.pumpWidget(section(
+        status,
+        googleAvailable: true,
+        onBusyChanged: busy.add,
+        onGoogleSignIn: ({required clearLocalStars, required expectedAccount,
+          required expectedGeneration}) async => StarSyncDriveSetup.needsLegacyReset,
+        onGoogleSignOut: () async { signedOut++; },
+        onGoogleSetupAbandoned: () async { abandoned++; },
+        onSetUpWithDrive: ({required resetExisting, required clearLocalStars,
+          required expectedAccount, required expectedGeneration}) async {
+          resets++;
+          throw StateError('setup failed');
+        },
+      ));
+      await tester.tap(find.text('Google ドライブで同期'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('含めて同期する'));
+      await tester.pumpAndSettle();
+      expect(find.text('以前の同期データが見つかりました'), findsOneWidget);
+      expect(abandoned, 0);
+      await tester.tap(find.text(failRecreation ? '作り直す' : 'キャンセル'));
+      await tester.pumpAndSettle();
+      expect(abandoned, 1);
+      expect(signedOut, 0);
+      expect(resets, failRecreation ? 1 : 0);
+      expect(busy, [true, false]);
+      expect(find.text('接続できませんでした'), failRecreation ? findsOneWidget : findsNothing);
+    });
+  }
+
   testWidgets('shows collection counts even with no stars', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
@@ -564,6 +607,7 @@ void main() {
     final status = ValueNotifier(const StarSyncStatusSnapshot());
     addTearDown(status.dispose);
     var resets = 0;
+    var abandoned = 0;
     final pending = Completer<StarSyncDriveSetup>();
     final busy = <bool>[];
     Map<String, String>? cleared;
@@ -573,6 +617,7 @@ void main() {
         googleAvailable: true,
         onBusyChanged: busy.add,
         onLocalStarCount: () async => 1,
+        onGoogleSetupAbandoned: () async { abandoned++; },
         onGoogleSignIn: ({
           required clearLocalStars,
           required expectedAccount,
@@ -611,6 +656,7 @@ void main() {
     pending.complete(StarSyncDriveSetup.created);
     await tester.pumpAndSettle();
     expect(busy, [true, false]);
+    expect(abandoned, 0);
   });
 
   testWidgets('desktop initial sign-in can be cancelled', (tester) async {
