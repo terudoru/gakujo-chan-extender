@@ -263,6 +263,33 @@ void main() {
     expect(result['visibleValue'], isEmpty, reason: jsonEncode(result));
     expect(result['clickCount'], 0, reason: jsonEncode(result));
   });
+
+  test('teardown restores the original code field type after repeated autofill',
+      () async {
+    final script = TwoFactorAutofillScript.build(token: '654321');
+    final teardown = TwoFactorAutofillScript.buildTeardown();
+    for (final type in ['password', 'text']) {
+      for (final inFrame in [false, true]) {
+        final result = await _evaluateTwoFactorAssist(
+          '$script\n$script',
+          teardownScript: '$teardown\n$teardown',
+          formSettings: {
+            'teardownAfterFill': 'true',
+            'inputType': type,
+            'inFrame': '$inFrame',
+          },
+        );
+        expect(result['visibleTypeBeforeTeardown'], 'text');
+        expect(result['originalTypeBeforeTeardown'], type);
+        expect(result['visibleType'], type);
+        expect(result['originalTypeAfterTeardown'], isNull);
+        expect(result['hiddenType'], 'password');
+        expect(result['visibleValue'], '654321');
+        expect(result['clickCount'], 1);
+        expect(result['activeTimerCount'], 0);
+      }
+    }
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateTwoFactorAssist(

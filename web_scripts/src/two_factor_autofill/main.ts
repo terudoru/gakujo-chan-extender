@@ -308,6 +308,9 @@ function twoFactorAutofill() {
       reportProgress('submit-blocked', 'unsafe-destination');
       return false;
     }
+    if (!input.hasAttribute('data-mbg-2fa-original-type')) {
+      input.setAttribute('data-mbg-2fa-original-type', input.type);
+    }
     input.type = 'text';
     input.value = token;
     input.dispatchEvent(new Event('input', { bubbles: true }));

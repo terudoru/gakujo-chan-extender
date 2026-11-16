@@ -10,7 +10,7 @@ const clickedNames: any = [];
 const sessionValues: any = new Map();
 const activeTimers: any = new Map();
 let nextTimerId: any = 1;
-let fieldsAvailable: any = !generatedTeardown;
+let fieldsAvailable: any = !generatedTeardown || spec.teardownAfterFill === 'true';
 
 class FakeEvent {
   [key: string]: any;
@@ -30,6 +30,8 @@ class FakeElement {
     this.form = null;
   }
   getAttribute(name: any) { return this.attributes[name] ?? null; }
+  setAttribute(name: any, value: any) { this.attributes[name] = String(value); }
+  removeAttribute(name: any) { delete this.attributes[name]; }
   hasAttribute(name: any) { return Object.hasOwn(this.attributes, name); }
   getClientRects() { return this.attributes.display === 'none' ? [] : [{}]; }
   closest(selector: any) { return selector === 'form' ? this.form : null; }
@@ -45,7 +47,7 @@ const hidden: any = new FakeElement('input', {
   name: 'ninshoCode', type: 'password', display: 'none'
 });
 const visible: any = new FakeElement('input', {
-  name: 'ninshoCode', type: 'password'
+  name: 'ninshoCode', type: spec.inputType || 'password'
 });
 const controls: any = (spec.controls || [
   {tag: 'button', type: 'submit', text: '認証', ...(spec.formOverride ? {formaction: spec.formOverride} : {})}
@@ -70,6 +72,9 @@ const document: any = {
     if (selector === 'iframe, frame') return [];
     if (selector === 'input[name="ninshoCode"]') {
       return fieldsAvailable ? [hidden, visible] : [];
+    }
+    if (selector === 'input[data-mbg-2fa-original-type]') {
+      return [hidden, visible].filter(element => element.hasAttribute('data-mbg-2fa-original-type'));
     }
     return [];
   }
@@ -108,16 +113,36 @@ for (const element of [hidden, visible, ...controls]) {
   element.ownerDocument = document;
   element.form = form;
 }
+if (spec.inFrame === 'true') {
+  const codeWindow: any = {...window};
+  document.defaultView = codeWindow;
+  const nestedFrame: any = {contentWindow: {document: {
+    querySelectorAll(selector) {
+      return selector === 'iframe, frame' ? [{contentWindow: codeWindow}] : [];
+    }
+  }}};
+  const crossOriginFrame: any = {contentWindow: {
+    get document() { throw new Error('cross-origin'); }
+  }};
+  window.document = {
+    ...document,
+    querySelectorAll(selector) {
+      return selector === 'iframe, frame' ? [crossOriginFrame, nestedFrame] : [];
+    }
+  };
+}
 
 const context: any = {
   window,
-  document,
+  document: window.document,
   URL,
   location: new URL(process.argv[4]),
   Event: FakeEvent,
   console: {log(message: any) { consoleLogs.push(message); }}
 };
 vm.runInNewContext(generatedScript, context);
+const visibleTypeBeforeTeardown = visible.type;
+const originalTypeBeforeTeardown = visible.getAttribute('data-mbg-2fa-original-type');
 if (generatedTeardown) {
   vm.runInNewContext(generatedTeardown, context);
   fieldsAvailable = true;
@@ -127,6 +152,12 @@ if (generatedTeardown) {
 process.stdout.write(JSON.stringify({
   hiddenValue: hidden.value,
   visibleValue: visible.value,
+  hiddenType: hidden.type,
+  visibleType: visible.type,
+  visibleTypeBeforeTeardown,
+  originalTypeBeforeTeardown,
+  originalTypeAfterTeardown: visible.getAttribute('data-mbg-2fa-original-type'),
+  activeTimerCount: activeTimers.size,
   clickCount,
   clickedNames,
   sessionValues: Object.fromEntries(sessionValues),
