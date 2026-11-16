@@ -33,6 +33,7 @@ class WindowsInstallerUpgradeTest(unittest.TestCase):
         def install(name):
             subprocess.run([
                 str(ISCC), '/Qp', '/DInstallerTestMode=1',
+                '/DMyAppVersion=1.0.0', '/DMyAppVersionInfo=1.0.0.0',
                 f'/DInstallerTestRoot={installed}', f'/DMyBuildDir={source}',
                 f'/DMyOutputDir={output}', f'/DMyOutputBaseFilename={name}',
                 str(ROOT / 'distribution/windows/morebettergakujo.iss'),
@@ -98,6 +99,7 @@ class WindowsInstallerUpgradeTest(unittest.TestCase):
         def build_and_install(name, destination=installed):
             subprocess.run([
                 str(ISCC), '/Qp', '/DInstallerTestMode=1',
+                '/DMyAppVersion=1.0.0', '/DMyAppVersionInfo=1.0.0.0',
                 f'/DInstallerTestRoot={installed}', f'/DMyBuildDir={source}',
                 f'/DMyOutputDir={output}', f'/DMyOutputBaseFilename={name}',
                 str(ROOT / 'distribution/windows/morebettergakujo.iss'),
@@ -201,6 +203,7 @@ class WindowsInstallerUpgradeTest(unittest.TestCase):
         def install(name, installer_script):
             subprocess.run([
                 str(ISCC), '/Qp', '/DInstallerTestMode=1',
+                '/DMyAppVersion=1.0.0', '/DMyAppVersionInfo=1.0.0.0',
                 f'/DInstallerTestRoot={installed}', f'/DMyBuildDir={source}',
                 f'/DMyOutputDir={output}', f'/DMyOutputBaseFilename={name}',
                 str(installer_script),

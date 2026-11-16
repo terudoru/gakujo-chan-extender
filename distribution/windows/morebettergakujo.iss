@@ -15,11 +15,11 @@
 #define MyAppName "More Better Gakujo"
 
 #ifndef MyAppVersion
-#define MyAppVersion "0.67.0"
+#error MyAppVersion must be supplied by the packaging script or /DMyAppVersion.
 #endif
 
 #ifndef MyAppVersionInfo
-#define MyAppVersionInfo "0.67.0.67"
+#error MyAppVersionInfo must be supplied by the packaging script or /DMyAppVersionInfo.
 #endif
 
 #define MyAppPublisher "net.yoshida"

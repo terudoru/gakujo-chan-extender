@@ -33,6 +33,7 @@ jobs:
       - name: Verify release tag is part of main
         id: verify
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag_name }}
         shell: bash
         run: |
@@ -43,6 +44,19 @@ jobs:
           fi
           commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
           git merge-base --is-ancestor "$commit" origin/main
+          tag_version="${RELEASE_TAG#v}"
+          tag_version="${tag_version%%-*}"
+          release_version="$(git show "${commit}:pubspec.yaml" | awk '/^version:/ { print $2; exit }')"
+          release_version="${release_version%%+*}"
+          if [[ "$release_version" != "$tag_version" ]]; then
+            echo '::error::The release tag does not match the app version.'
+            exit 1
+          fi
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+          if [[ "$is_draft" != false ]]; then
+            echo '::error::Windows installers require an existing published release.'
+            exit 1
+          fi
           printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
 
   windows-installer:
@@ -146,10 +160,9 @@ jobs:
         with:
           name: windows-installer
           path: dist
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: ${{ inputs.tag_name }}
-          files: |
-            dist/*.exe
-            dist/*.zip
+      - name: Upload Windows assets to existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip --clobber

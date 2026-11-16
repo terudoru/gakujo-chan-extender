@@ -35,11 +35,17 @@ try {
   $VersionInfo = ($VersionNumbers | Select-Object -First 4) -join "."
 
   flutter build windows --release
+  if ($LASTEXITCODE -ne 0) {
+    throw "Flutter build failed with exit code $LASTEXITCODE."
+  }
   & $InnoSetupCompiler `
     $InstallerScript `
     "/DMyAppVersion=$AppVersion" `
     "/DMyAppVersionInfo=$VersionInfo" `
     "/DMyOutputBaseFilename=MoreBetterGakujo-v$AppVersion"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
+  }
 }
 finally {
   Pop-Location

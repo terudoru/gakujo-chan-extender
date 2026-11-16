@@ -125,7 +125,7 @@ flutter build windows --release
 .\scripts\package_windows_inno.ps1
 ```
 
-`ISCC.exe distribution\windows\morebettergakujo.iss` で直接コンパイルもできます。出力先は `dist\windows\` です。
+版の指定は必須です。上記のスクリプトは `pubspec.yaml` から版を読み取り、Inno Setup に渡します。出力先は `dist\windows\` です。
 
 インストーラーの動きは次のとおりです。
 
