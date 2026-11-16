@@ -65,7 +65,7 @@ class StarSyncQuotaMeter {
       .where((entry) => entry.key >= _oldestCounted)
       .fold(0, (sum, entry) => sum + entry.value);
 
-  Future<void> _load() async {
+  Future<void> _load({bool save = true}) async {
     if (!_loaded) {
       final raw = await _storage.read(key: starSyncGoogleQuotaKey);
       if (raw != null) {
@@ -102,7 +102,7 @@ class StarSyncQuotaMeter {
         _referenceHour - const Duration(hours: 48).inMilliseconds;
     _buckets.removeWhere((hour, _) => hour < oldestRetained);
     usage.value = _used;
-    await _save();
+    if (save) await _save();
   }
 
   Future<void> _save() => _storage.write(
@@ -175,7 +175,7 @@ class StarSyncQuotaMeter {
   Future<void> charge(int units, {bool automatic = false}) =>
       _queue.run(() async {
         if (units <= 0) throw ArgumentError.value(units, 'units');
-        await _load();
+        await _load(save: false);
         if (_used + units >
             (automatic ? starSyncGoogleSoftLimit : starSyncGoogleHardLimit)) {
           throw StarSyncQuotaExceeded(units);

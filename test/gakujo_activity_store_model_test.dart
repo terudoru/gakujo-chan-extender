@@ -1163,6 +1163,30 @@ void main() {
         (await store.loadDeadlines()).map((entry) => entry.title), ['授業のお知らせ']);
   });
 
+  test('mergeDeadlines does not write an unchanged list', () async {
+    const deadlinesKey = 'more_better_gakujo_deadlines';
+    final entry = GakujoDeadlineEntry(
+      title: 'Report',
+      url: 'https://gakujo.example/report',
+      dueText: '2099/07/01 17:00',
+      detectedAt: DateTime.now(),
+    );
+    final existingRaw = jsonEncode([entry.toJson()]);
+    final storage = _FailingReadSecureStorage(
+      initialValues: {deadlinesKey: existingRaw},
+      failingReadKeys: const {},
+    );
+    final store = GakujoActivityStore(secureStorage: storage);
+
+    expect(await store.mergeDeadlines([entry]), isEmpty);
+    expect(storage.writeKeys, isEmpty);
+    expect(storage.values[deadlinesKey], existingRaw);
+
+    expect(await store.mergeDeadlines([]), isEmpty);
+    expect(storage.writeKeys, isEmpty);
+    expect(storage.values[deadlinesKey], existingRaw);
+  });
+
   test('mergeDeadlines updates duplicate keys and returns only new entries',
       () async {
     final store = GakujoActivityStore();

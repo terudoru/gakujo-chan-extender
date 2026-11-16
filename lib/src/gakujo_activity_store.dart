@@ -905,7 +905,11 @@ class GakujoActivityStore {
     }
     final sorted = entries.values.toList()
       ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
-    await _writeList(_deadlinesKey, _capDeadlines(sorted));
+    final capped = _capDeadlines(sorted);
+    if (jsonEncode(capped.map((entry) => entry.toJson()).toList()) !=
+        jsonEncode(deadlineRead.value.map((entry) => entry.toJson()).toList())) {
+      await _writeList(_deadlinesKey, capped);
+    }
     return newEntries;
   }
 

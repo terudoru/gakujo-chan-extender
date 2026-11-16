@@ -6,6 +6,31 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dar
 import 'support/memory_secure_storage.dart';
 
 void main() {
+  test('charge writes once including refreshed bookkeeping', () async {
+    var now = DateTime.utc(2026, 11, 1, 12);
+    final storage = MemorySecureStorage();
+    final meter = StarSyncQuotaMeter(storage: storage, now: () => now);
+
+    await meter.charge(100);
+
+    expect(storage.writeKeys, [starSyncGoogleQuotaKey]);
+    expect(meter.usage.value, 100);
+    expect(jsonDecode(storage.values[starSyncGoogleQuotaKey]!), {
+      'buckets': {'${now.millisecondsSinceEpoch}': 100},
+      'lastSeen': now.millisecondsSinceEpoch,
+    });
+
+    now = now.add(const Duration(hours: 49));
+    await meter.charge(50);
+
+    expect(storage.writeKeys, [starSyncGoogleQuotaKey, starSyncGoogleQuotaKey]);
+    expect(meter.usage.value, 50);
+    expect(jsonDecode(storage.values[starSyncGoogleQuotaKey]!), {
+      'buckets': {'${now.millisecondsSinceEpoch}': 50},
+      'lastSeen': now.millisecondsSinceEpoch,
+    });
+  });
+
   test('clear removes persisted and in-memory quota data', () async {
     final storage = MemorySecureStorage();
     final meter = StarSyncQuotaMeter(storage: storage);

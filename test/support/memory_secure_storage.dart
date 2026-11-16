@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// which breaks loopback fake servers).
 class MemorySecureStorage extends FlutterSecureStorage {
   final values = <String, String>{};
+  final List<String> writeKeys = [];
 
   @override
   Future<void> delete({
@@ -41,6 +42,7 @@ class MemorySecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    writeKeys.add(key);
     if (value == null) {
       values.remove(key);
     } else {
