@@ -168,6 +168,22 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onKeyZoom = handler;
   }
 
+  // More Better Gakujo patch: WebKitGTK saves undelegated downloads silently.
+  void Function(String url, String path)? _onDownloadSaved;
+  void Function(String url, String description)? _onDownloadFailed;
+
+  /// A download WebKit saved by itself into the default download directory.
+  void setOnDownloadSaved(void Function(String url, String path)? handler) {
+    _onDownloadSaved = handler;
+  }
+
+  /// A download WebKit started by itself but could not save.
+  void setOnDownloadFailed(
+    void Function(String url, String description)? handler,
+  ) {
+    _onDownloadFailed = handler;
+  }
+
   /// Unmodified horizontal wheel input; WebKit still scrolls the page.
   void setOnWheelScroll(
     void Function(double dxNotches, double dyNotches)? handler,
@@ -822,6 +838,8 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onHistoryNavigationRequest = null;
     _onWheelZoom = null;
     _onKeyZoom = null;
+    _onDownloadSaved = null;
+    _onDownloadFailed = null;
     _onWheelScroll = null;
     _onPinchZoom = null;
     _onFindRequest = null;

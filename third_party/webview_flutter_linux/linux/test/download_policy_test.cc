@@ -144,6 +144,9 @@ public:
       }
     } else if (event.type == "downloadResult") {
       results_.push_back(event);
+    } else if (event.type == "downloadSaved" ||
+               event.type == "downloadFailed") {
+      undelegated_.push_back(event);
     }
   }
 
@@ -164,6 +167,7 @@ public:
   std::unique_ptr<DownloadPolicy> first_policy_;
   std::unique_ptr<DownloadPolicy> second_policy_;
   std::vector<DownloadEvent> results_;
+  std::vector<DownloadEvent> undelegated_;
   std::vector<std::pair<DownloadPolicy *, std::string>> pending_;
   std::string action_ = "platformDefault";
   std::string target_;
@@ -270,6 +274,11 @@ void TestDefaultWithoutDelegate() {
   AssertContents(path, "download test");
   g_assert_cmpuint(fixture.requests_, ==, 0);
   g_assert_true(fixture.results_.empty());
+  // Without a delegate the app is still told where WebKit saved the file.
+  Wait([&] { return fixture.undelegated_.size() == 1; });
+  g_assert_cmpstr(fixture.undelegated_.back().type.c_str(), ==,
+                  "downloadSaved");
+  g_assert_cmpstr(fixture.undelegated_.back().path.c_str(), ==, path.c_str());
 }
 
 void TestInvalidTargetAndCallbackError() {
