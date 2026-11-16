@@ -537,6 +537,8 @@ class GakujoDeadlineNotificationCoordinator {
   final DateTime Function() _now;
   Future<void> _pendingNotificationOperation = Future<void>.value();
   int _reminderGeneration = 0;
+  int _bookedReminderGeneration = 0;
+  int _queuedReminderSyncs = 0;
 
   Future<bool> _hasPermission(bool allowPermissionRequest) async {
     if (allowPermissionRequest) {
@@ -692,55 +694,63 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoNotificationPreferences preferences,
     bool allowPermissionRequest = true,
   }) {
-    // Invalidate timer callbacks even while this sync waits in the queue.
     final generation = ++_reminderGeneration;
+    // Suppress timer callbacks until every queued sync has finished.
+    _queuedReminderSyncs += 1;
     return _enqueueNotificationOperation(() async {
-      // With no reminder offsets every booking is cancelled, readable or not.
-      final assignments =
-          notificationsEnabled && preferences.reminderOffsets.isNotEmpty
-              ? await _activityStore.loadAssignmentsIfAvailable()
-              : const <GakujoAssignment>[];
-      if (assignments == null) {
-        return;
-      }
-      if (notificationsEnabled) {
-        await _loadNotifiedKeys();
-      }
-      final lateReminders = <GakujoReminder>[];
-      final reminders = notificationsEnabled
-          ? planReminders(
-              assignments: assignments,
-              topics: topics,
-              preferences: preferences,
-              now: _now(),
-              lateReminders: lateReminders,
-            )
-          : const <GakujoReminder>[];
-      if (reminders.isNotEmpty &&
-          !await _hasPermission(allowPermissionRequest)) {
-        return;
-      }
-      final booksAhead = await _notificationService.scheduleReminders(
-        reminders,
-        onInAppReminder: (reminder) => _enqueueNotificationOperation(
-          () async {
-            if (generation != _reminderGeneration) {
-              return;
-            }
-            await _notifyReminderOnce(reminder,
-                topics: topics, preferences: preferences);
-          },
-        ),
-      );
-      if (booksAhead || lateReminders.isEmpty) {
-        return;
-      }
-      if (reminders.isEmpty && !await _hasPermission(allowPermissionRequest)) {
-        return;
-      }
-      for (final reminder in lateReminders) {
-        await _notifyReminderOnce(reminder,
-            topics: topics, preferences: preferences);
+      try {
+        // With no reminder offsets every booking is cancelled, readable or not.
+        final assignments =
+            notificationsEnabled && preferences.reminderOffsets.isNotEmpty
+                ? await _activityStore.loadAssignmentsIfAvailable()
+                : const <GakujoAssignment>[];
+        if (assignments == null) {
+          return;
+        }
+        if (notificationsEnabled) {
+          await _loadNotifiedKeys();
+        }
+        final lateReminders = <GakujoReminder>[];
+        final reminders = notificationsEnabled
+            ? planReminders(
+                assignments: assignments,
+                topics: topics,
+                preferences: preferences,
+                now: _now(),
+                lateReminders: lateReminders,
+              )
+            : const <GakujoReminder>[];
+        if (reminders.isNotEmpty &&
+            !await _hasPermission(allowPermissionRequest)) {
+          return;
+        }
+        // Only replacing bookings permanently invalidates their callbacks.
+        _bookedReminderGeneration = generation;
+        final booksAhead = await _notificationService.scheduleReminders(
+          reminders,
+          onInAppReminder: (reminder) => _enqueueNotificationOperation(
+            () async {
+              if (generation != _bookedReminderGeneration ||
+                  _queuedReminderSyncs > 0) {
+                return;
+              }
+              await _notifyReminderOnce(reminder,
+                  topics: topics, preferences: preferences);
+            },
+          ),
+        );
+        if (booksAhead || lateReminders.isEmpty) {
+          return;
+        }
+        if (reminders.isEmpty && !await _hasPermission(allowPermissionRequest)) {
+          return;
+        }
+        for (final reminder in lateReminders) {
+          await _notifyReminderOnce(reminder,
+              topics: topics, preferences: preferences);
+        }
+      } finally {
+        _queuedReminderSyncs -= 1;
       }
     });
   }
