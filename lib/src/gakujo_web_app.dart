@@ -4085,8 +4085,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_isSettingsDialogOpen) {
       return;
     }
-    if (defaultTargetPlatform == TargetPlatform.linux &&
-        !_startupFlow.claimSetup()) {
+    if (!_startupFlow.claimSetup()) {
       return;
     }
 
@@ -8311,10 +8310,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _retrySecureStorageLoad({bool automatic = false}) async {
+  Future<bool> _retrySecureStorageLoad({bool automatic = false}) async {
     if (defaultTargetPlatform == TargetPlatform.linux &&
         automatic && _startupFlow.continuedWithoutStorage) {
-      return;
+      return false;
     }
     _protectedSecretPromptGate.reset();
     SecureStorageFactory.resetMacosCache();
@@ -8328,7 +8327,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       if (Platform.isMacOS) {
         _secureStorageAccessAllowed = false;
       }
-      return;
+      return false;
     }
     await _applyFeatureFlagRuntimeState(
       GakujoFeatureFlag.downloadCapture,
@@ -8336,6 +8335,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     await _injectLoginAutofillAssistIfAllowed();
     await _injectTwoFactorAutofillIfAllowed();
+    return true;
   }
 
   Future<void> _showSecureStorageRecoveryDialog(
@@ -8416,14 +8416,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginAutofillStorageLoadAttempted = true;
     }
 
+    var storageRecovered = false;
     if (action == _SecureStorageRecoveryAction.retry && mounted) {
-      await _retrySecureStorageLoad();
+      storageRecovered = await _retrySecureStorageLoad();
     } else if (action == _SecureStorageRecoveryAction.reset && mounted) {
       await _resetSecureStorageAfterConfirmation();
     }
     if (defaultTargetPlatform == TargetPlatform.linux &&
         action == _SecureStorageRecoveryAction.continueWithoutStorage) {
       _startupFlow.continuedWithoutStorage = true;
+    }
+    if (storageRecovered ||
+        (defaultTargetPlatform == TargetPlatform.linux &&
+            action == _SecureStorageRecoveryAction.continueWithoutStorage)) {
       await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted && !_appSettings.setupCompleted) {
         await _showInitialSetupWizard();
