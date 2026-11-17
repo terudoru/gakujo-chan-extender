@@ -40,6 +40,33 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('replacement is atomic on success and preserves the old file on failure',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-replace-');
+    addTearDown(() => directory.delete(recursive: true));
+    final target = File('${directory.path}/notes.pdf');
+    await target.writeAsBytes([1, 2, 3]);
+    Stream<List<int>> failingWrite() async* {
+      yield [4];
+      throw const FileSystemException('Disk full');
+    }
+
+    await expectLater(writeDownloadFileAtomically(target.path, failingWrite()),
+        throwsA(isA<FileSystemException>()));
+    expect(await target.readAsBytes(), [1, 2, 3]);
+    expect(await directory.list().length, 1);
+    await writeDownloadFileAtomically(target.path, Stream.value([4, 5]));
+    expect(await target.readAsBytes(), [4, 5]);
+    expect(await directory.list().length, 1);
+    final conflict = await Directory('${directory.path}/folder').create();
+    await expectLater(
+      writeDownloadFileAtomically(conflict.path, Stream.value([6])),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(await target.readAsBytes(), [4, 5]);
+    expect(await directory.list().length, 2);
+  });
+
   for (final fromFile in [false, true]) {
     for (final mimeType in [
       'text/html; charset=UTF-8',

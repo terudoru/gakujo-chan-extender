@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -83,15 +84,40 @@ class AuthenticatedDownloadedFile {
   }
 
   Future<void> saveTo(String path) async {
-    final file = _file;
-    if (file != null) {
-      await file.copy(path);
-    } else {
-      await File(path).writeAsBytes(_bytes!);
-    }
+    await writeDownloadFileAtomically(path, openRead());
   }
 
+  Stream<List<int>> openRead() => _file?.openRead() ?? Stream.value(_bytes!);
+
   Future<void> dispose() async => _cleanup?.call();
+}
+
+@visibleForTesting
+Future<void> writeDownloadFileAtomically(
+  String path,
+  Stream<List<int>> bytes,
+) async {
+  final parent = File(path).parent;
+  final random = Random.secure();
+  final suffix = List.generate(4, (_) => random.nextInt(1 << 32).toRadixString(16))
+      .join();
+  final temporary = File('${parent.path}/.mbg-download-$suffix.tmp');
+  await temporary.create(exclusive: true);
+  try {
+    final output = await temporary.open(mode: FileMode.writeOnly);
+    try {
+      await for (final chunk in bytes) {
+        await output.writeFrom(chunk);
+      }
+      await output.flush();
+    } finally {
+      await output.close();
+    }
+    // Dart uses a replacing rename on Windows as well as Unix.
+    await temporary.rename(path);
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
 }
 
 @visibleForTesting
