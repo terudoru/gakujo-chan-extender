@@ -69,6 +69,12 @@ Future<void> handleGakujoNativeDownload(
 }
 
 @visibleForTesting
+String gakujoDriveDownloadCourseName(
+  GakujoDownloadResult result,
+  String courseName,
+) => result.courseName.isEmpty ? courseName : result.courseName;
+
+@visibleForTesting
 String? resolveGakujoDownloadCourseName({
   required String? pageCourseName,
   required String? initialCourseName,
@@ -1034,6 +1040,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       );
       if (_queueDriveDownload(
         result, downloadAccount, downloadEmail, downloadGeneration,
+        courseName: effectiveRequest.courseName,
       )) {
         uploadSnapshot = null;
       }
@@ -1204,8 +1211,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
 
   bool _queueDriveDownload(
     GakujoDownloadResult result, String? account, String? email,
-    int startGeneration,
-  ) {
+    int startGeneration, {
+    required String courseName,
+  }) {
     if (!_driveUploads.isCurrent(startGeneration)) return false;
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
@@ -1226,7 +1234,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
     final uploadBytes = result.uploadBytes;
     final uploadSnapshot = result.uploadSnapshot;
-    final courseName = result.courseName;
+    final driveCourseName = gakujoDriveDownloadCourseName(result, courseName);
     final fileName = result.fileName;
     _driveUploads.add((generation) => _driveDownloadQueue.run(() async {
       bool allowed() => _driveUploads.isCurrent(generation) &&
@@ -1282,7 +1290,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           );
         }
         await _googleDriveFileSaver!.saveFile(
-          courseName: courseName,
+          courseName: driveCourseName,
           fileName: fileName,
           open: open,
           length: length,

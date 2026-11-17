@@ -22,6 +22,17 @@ import 'package:morebettergakujo_flutter/src/login_autofill_assist_script.dart';
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 void main() {
+  test('Drive retains the detected course in flat and picker save modes', () {
+    for (final location in ['/downloads/notes.pdf', 'content://downloads/1']) {
+      final result = GakujoDownloadResult(
+        fileName: 'notes.pdf', courseName: '', location: location);
+      expect(gakujoDriveDownloadCourseName(result, 'Physics'), 'Physics');
+    }
+    expect(gakujoDriveDownloadCourseName(
+      const GakujoDownloadResult(fileName: 'notes.pdf', courseName: 'Sorted'),
+      'Physics'), 'Sorted');
+  });
+
   test('page scripts remain selected with retired disabled values', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     try {
