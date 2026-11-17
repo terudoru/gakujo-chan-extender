@@ -302,6 +302,10 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Install web script test dependencies
+        run: npm ci
+        working-directory: web_scripts
+
       - name: Test macOS security and Flutter behavior
         run: |
           bash scripts/test_darwin_secure_storage.sh

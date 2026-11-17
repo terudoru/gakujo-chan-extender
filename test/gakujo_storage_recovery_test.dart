@@ -1,11 +1,27 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
+import 'package:webview_flutter_windows/webview_flutter_windows.dart'
+    as windows;
+
+class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
+  // Recovery must use the secure store's setup flag, not this startup mirror.
+  @override
+  Future<GakujoLocalPrefs?> load() async => const GakujoLocalPrefs(
+    appSettings: GakujoAppSettings(setupCompleted: true),
+  );
+
+  @override
+  Future<void> saveAppSettings(GakujoAppSettings settings) async {}
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +37,7 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late Completer<void> unlock;
   late int settingsReads;
+  final eventSinks = <String, MockStreamHandlerEventSink>{};
   var retrying = false;
   var setupCompleted = false;
 
@@ -28,6 +45,7 @@ void main() {
     LinuxWebViewPlatform.registerWith();
     unlock = Completer<void>();
     settingsReads = 0;
+    eventSinks.clear();
     retrying = false;
     setupCompleted = false;
     messenger.setMockMethodCallHandler(storage, (call) async {
@@ -61,18 +79,34 @@ void main() {
       if (call.method == 'initialize') return {'textureId': 73};
       return null;
     });
-    messenger.setMockMethodCallHandler(windowsView, (call) async => null);
+    messenger.setMockMethodCallHandler(windowsView, (call) async {
+      if (call.method == 'executeScript' &&
+          call.arguments == gakujoPortalAuthStateProbeScript) {
+        return '"login"';
+      }
+      return null;
+    });
     messenger.setMockMethodCallHandler(LinuxWebViewController.rootChannel, (
       call,
     ) async {
       if (call.method == 'createWebView') return 91;
       return null;
     });
-    messenger.setMockMethodCallHandler(linuxView, (call) async => null);
+    messenger.setMockMethodCallHandler(linuxView, (call) async {
+      if (call.method == 'runJavaScriptReturningResult') {
+        final script = (call.arguments as Map)['script'];
+        return script == gakujoPortalAuthStateProbeScript ? 'login' : '';
+      }
+      return null;
+    });
     for (final channel in [windowsEvents, linuxEvents]) {
       messenger.setMockStreamHandler(
         channel,
-        MockStreamHandler.inline(onListen: (arguments, sink) {}),
+        MockStreamHandler.inline(
+          onListen: (arguments, sink) {
+            eventSinks[channel.name] = sink;
+          },
+        ),
       );
     }
   });
@@ -102,7 +136,39 @@ void main() {
         (tester) async {
           debugDefaultTargetPlatformOverride = platform;
           setupCompleted = completed;
-          await tester.pumpWidget(const MaterialApp(home: GakujoWebApp()));
+          await tester.pumpWidget(
+            MaterialApp(
+              home: GakujoWebApp(localPrefsStore: _StartupLocalPrefsStore()),
+            ),
+          );
+          await tester.pumpAndSettle();
+          if (Platform.isMacOS) {
+            // macOS starts from the local mirror without touching Keychain.
+            expect(settingsReads, 0);
+            expect(find.text('初回セットアップ'), findsNothing);
+            expect(
+              find.widgetWithText(AlertDialog, '保存データにアクセスできません'),
+              findsNothing,
+            );
+          } else {
+            expect(settingsReads, greaterThan(0));
+          }
+          // A loaded login page requests secure settings on macOS. Other hosts
+          // have already reached the same recovery dialog during startup.
+          const url =
+              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+          if (Platform.isWindows) {
+            final sink = eventSinks[windowsEvents.name]!;
+            sink.success({'type': 'urlChanged', 'value': url});
+            sink.success({
+              'type': 'loadingStateChanged',
+              'value': windows.LoadingState.navigationCompleted.index,
+            });
+          } else {
+            final sink = eventSinks[linuxEvents.name]!;
+            sink.success({'type': 'pageStarted', 'url': url});
+            sink.success({'type': 'pageFinished', 'url': url});
+          }
           await tester.pumpAndSettle();
           expect(settingsReads, greaterThan(0));
           final initialReads = settingsReads;
