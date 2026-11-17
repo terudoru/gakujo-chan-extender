@@ -323,6 +323,14 @@ static void load_changed_cb(WebKitWebView *widget, WebKitLoadEvent load_event,
   const gchar *uri = webkit_web_view_get_uri(widget);
   switch (load_event) {
   case WEBKIT_LOAD_STARTED: {
+    GList *requests = g_hash_table_get_keys(webview->pending_permission_requests);
+    for (GList *item = requests; item != nullptr; item = item->next) {
+      const gint id = GPOINTER_TO_INT(item->data);
+      cancel_pending_request_timeout(webview, id);
+      resolve_pending_request_with_safe_default(
+          webview, id, PendingRequestType::kPermission);
+    }
+    g_list_free(requests);
     FlValue *event = make_event("pageStarted");
     fl_value_set_string_take(event, "url",
                              fl_value_new_string(uri != nullptr ? uri : ""));
@@ -733,7 +741,7 @@ static gboolean permission_request_cb(WebKitWebView *widget,
   }
 
   const guint resources = webview_permission_resources(request);
-  if (resources == 0 || webview_permission_obscured(widget)) {
+  if (resources == 0) {
     webkit_permission_request_deny(request);
     return TRUE;
   }

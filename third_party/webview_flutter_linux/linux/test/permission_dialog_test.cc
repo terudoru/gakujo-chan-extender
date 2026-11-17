@@ -130,27 +130,24 @@ static void obscured_test(gconstpointer value) {
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
   auto *request = static_cast<TestPermissionRequest *>(
       g_object_new(test_permission_request_get_type(), nullptr));
-  if (already_open) {
-    g_assert_nonnull(show_webview_permission_dialog(
-        view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
-        kPermissionGeolocation));
-  }
-  set_webview_permission_obscured(view, true);
-  if (!already_open) {
-    g_assert_null(show_webview_permission_dialog(
-        view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
-        kPermissionGeolocation));
-  }
-  g_assert_cmpuint(request->denied, ==, 1);
-  g_assert_cmpint(webview_permission_decision(webview_permission_decisions(view),
-      "https://example.edu", kPermissionGeolocation), ==, -1);
-  set_webview_permission_obscured(view, false);
+  if (!already_open) set_webview_permission_obscured(view, true);
   GtkWidget *dialog = show_webview_permission_dialog(
       view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
       kPermissionGeolocation);
   g_assert_nonnull(dialog);
+  if (already_open) {
+    g_assert_true(gtk_widget_get_visible(dialog));
+    set_webview_permission_obscured(view, true);
+  }
+  g_assert_false(gtk_widget_get_visible(dialog));
+  g_assert_cmpuint(request->allowed, ==, 0);
+  g_assert_cmpuint(request->denied, ==, 0);
+  set_webview_permission_obscured(view, false);
+  g_assert_true(gtk_widget_get_visible(dialog));
   gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
   g_assert_cmpuint(request->allowed, ==, 1);
+  g_assert_cmpint(webview_permission_decision(webview_permission_decisions(view),
+      "https://example.edu", kPermissionGeolocation), ==, 1);
   gtk_widget_destroy(window);
   g_object_unref(request);
 }
@@ -165,18 +162,50 @@ static void obscured_keeps_choice_test() {
   auto *request = static_cast<TestPermissionRequest *>(
       g_object_new(test_permission_request_get_type(), nullptr));
   set_webview_permission_obscured(view, true);
-  g_assert_null(show_webview_permission_dialog(
+  GtkWidget *dialog = show_webview_permission_dialog(
       view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
-      kPermissionGeolocation));
+      kPermissionGeolocation);
+  g_assert_nonnull(dialog);
+  g_assert_false(gtk_widget_get_visible(dialog));
+  g_assert_cmpuint(request->allowed, ==, 0);
+  g_assert_cmpuint(request->denied, ==, 0);
+  set_webview_permission_obscured(view, false);
+  g_assert_cmpuint(request->allowed, ==, 1);
+  g_assert_cmpuint(request->denied, ==, 0);
+  gtk_widget_destroy(window);
+  g_object_unref(request);
+}
+
+static void held_cleanup_test(gconstpointer value) {
+  const int reason = GPOINTER_TO_INT(value);
+  GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  auto *view = WEBKIT_WEB_VIEW(webkit_web_view_new());
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  g_autoptr(GHashTable) decisions =
+      g_hash_table_ref(webview_permission_decisions(view));
+  auto *request = static_cast<TestPermissionRequest *>(
+      g_object_new(test_permission_request_get_type(), nullptr));
+  set_webview_permission_obscured(view, true);
+  GtkWidget *dialog = show_webview_permission_dialog(
+      view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+      kPermissionMicrophone);
+  if (reason == 0) {
+    g_signal_emit_by_name(view, "load-changed", WEBKIT_LOAD_STARTED);
+    set_webview_permission_obscured(view, false);
+  } else if (reason == 1) {
+    gtk_widget_destroy(window);
+  } else {
+    auto *data = static_cast<WebViewPermissionDialog *>(
+        g_object_get_data(G_OBJECT(dialog), "mbg-permission-dialog-data"));
+    g_source_remove(data->timeout);
+    webview_permission_dialog_timeout(dialog);
+    set_webview_permission_obscured(view, false);
+  }
+  g_assert_cmpuint(request->allowed, ==, 0);
   g_assert_cmpuint(request->denied, ==, 1);
   g_assert_cmpint(webview_permission_decision(
-      decisions, "https://example.edu", kPermissionGeolocation), ==, 1);
-  set_webview_permission_obscured(view, false);
-  g_assert_null(show_webview_permission_dialog(
-      view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
-      kPermissionGeolocation));
-  g_assert_cmpuint(request->allowed, ==, 1);
-  gtk_widget_destroy(window);
+      decisions, "https://example.edu", kPermissionMicrophone), ==, -1);
+  if (reason != 1) gtk_widget_destroy(window);
   g_object_unref(request);
 }
 
@@ -198,5 +227,11 @@ int main(int argc, char **argv) {
                        response_test);
   g_test_add_data_func("/permission/close", GINT_TO_POINTER(GTK_RESPONSE_DELETE_EVENT),
                        response_test);
+  g_test_add_data_func("/permission/held-navigation", GINT_TO_POINTER(0),
+                       held_cleanup_test);
+  g_test_add_data_func("/permission/held-destroy", GINT_TO_POINTER(1),
+                       held_cleanup_test);
+  g_test_add_data_func("/permission/held-timeout", GINT_TO_POINTER(2),
+                       held_cleanup_test);
   return g_test_run();
 }

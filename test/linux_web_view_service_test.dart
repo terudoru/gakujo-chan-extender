@@ -79,7 +79,7 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
-  test('obscured Linux pages deny without a prompt and resume after closing',
+  test('obscured Linux pages forward requests for native deferral',
       () async {
     final controller = WebViewFlutterGakujoWebViewController(
       WebViewController.fromPlatform(native),
@@ -92,10 +92,10 @@ void main() {
     });
     expect(calls.map((call) => call.method), [
       'setPermissionPromptsObscured',
-      'completePermissionRequest',
+      'showPermissionRequest',
     ]);
     expect(calls.first.arguments, {'obscured': true});
-    expect(calls.last.arguments, {'requestId': 21, 'grant': false});
+    expect(calls.last.arguments, {'requestId': 21});
 
     calls.clear();
     controller.setLinuxPageObscured(false);

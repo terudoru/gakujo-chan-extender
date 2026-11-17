@@ -154,7 +154,6 @@ class LinuxWebViewController extends PlatformWebViewController {
   bool _canGoBack = false;
   bool _canGoForward = false;
   bool _disposed = false;
-  bool _permissionPromptsObscured = false;
   int _frameSequence = 0;
   Future<void>? _disposeFuture;
 
@@ -844,7 +843,6 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   /// Suppresses page permission prompts while Flutter covers the page.
   Future<void> setPermissionPromptsObscured(bool obscured) {
-    _permissionPromptsObscured = obscured;
     return _invoke<void>('setPermissionPromptsObscured', {'obscured': obscured});
   }
 
