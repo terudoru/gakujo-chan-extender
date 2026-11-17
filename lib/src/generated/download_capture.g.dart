@@ -6,6 +6,8 @@ const String gakujoDownloadCaptureJs = r'''
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __propIsEnum = Object.prototype.propertyIsEnumerable;
@@ -21,6 +23,7 @@ const String gakujoDownloadCaptureJs = r'''
       }
     return a;
   };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
@@ -257,24 +260,31 @@ const String gakujoDownloadCaptureJs = r'''
       collect(window);
       return documents;
     }
-    function firstUsefulText(selectors) {
-      var documents = collectDocuments();
+    function firstUsefulText(selectors, documents = collectDocuments()) {
       for (var i = 0; i < selectors.length; i += 1) {
+        var names = /* @__PURE__ */ new Set();
         for (var d = 0; d < documents.length; d += 1) {
           var elements = documents[d].querySelectorAll(selectors[i]);
           for (var j = 0; j < elements.length; j += 1) {
             var text = textOf(elements[j]);
             if (text && !isIgnoredCourseName(normalizeCourseName(text))) {
-              return text;
+              names.add(normalizeCourseName(text));
             }
           }
         }
+        if (names.size) return names.size > 1 ? "未分類" : Array.from(names)[0];
       }
       return "";
     }
-    function estimateCourseName() {
-      var tableCourse = firstCourseNameFromTables();
+    var courseNameAmbiguous = false;
+    function estimateCourseName(source) {
+      courseNameAmbiguous = false;
+      var documents = source && source.ownerDocument ? [source.ownerDocument] : collectDocuments();
+      var row = source && source.closest ? source.closest("tr") : null;
+      var tableCourse = row ? firstCourseNameFromTables(documents, row) : "";
+      if (!tableCourse) tableCourse = firstCourseNameFromTables(documents);
       if (tableCourse) {
+        courseNameAmbiguous = tableCourse === "未分類";
         return normalizeCourseName(tableCourse);
       }
       var explicitCourse = firstMatchingCourseNameText([
@@ -283,8 +293,9 @@ const String gakujoDownloadCaptureJs = r'''
         "div",
         "p",
         "span"
-      ]);
+      ], documents);
       if (explicitCourse) {
+        courseNameAmbiguous = explicitCourse === "未分類";
         return normalizeCourseName(explicitCourse);
       }
       var candidate = firstUsefulText([
@@ -298,16 +309,32 @@ const String gakujoDownloadCaptureJs = r'''
         ".kamoku",
         ".selected",
         ".active"
-      ]) || document.title || "未分類";
-      return normalizeCourseName(candidate);
+      ], documents);
+      if (candidate) {
+        courseNameAmbiguous = candidate === "未分類";
+        return normalizeCourseName(candidate);
+      }
+      if (source) return estimateCourseName();
+      return normalizeCourseName(document.title || "未分類");
     }
     window.__MBG_ESTIMATE_COURSE_NAME = estimateCourseName;
-    function firstCourseNameFromTables() {
-      var documents = collectDocuments();
+    function coursePayload(source) {
+      var courseName = estimateCourseName(source);
+      return __spreadValues({
+        courseName
+      }, courseNameAmbiguous ? { courseNameAmbiguous: true } : {});
+    }
+    function firstCourseNameFromTables(documents, selectedRow) {
+      var names = /* @__PURE__ */ new Set();
+      function add(value) {
+        var normalized = normalizeCourseName(value);
+        if (value && !isIgnoredCourseName(normalized)) names.add(normalized);
+      }
       for (var d = 0; d < documents.length; d += 1) {
         var tables = documents[d].querySelectorAll("table");
         for (var t = 0; t < tables.length; t += 1) {
           var rows = tables[t].querySelectorAll("tr");
+          if (selectedRow && Array.prototype.indexOf.call(rows, selectedRow) < 0) continue;
           for (var r = 0; r < rows.length; r += 1) {
             var cells = rows[r].querySelectorAll("th,td");
             var courseIndex = -1;
@@ -317,46 +344,42 @@ const String gakujoDownloadCaptureJs = r'''
                 break;
               }
             }
-            if (courseIndex < 0) {
-              continue;
-            }
-            for (var same = courseIndex + 1; same < cells.length; same += 1) {
-              if (cells[same].tagName.toLowerCase() === "th") {
-                continue;
+            if (courseIndex < 0) continue;
+            var sameRowCourse = false;
+            if (!selectedRow || rows[r] === selectedRow) {
+              for (var same = courseIndex + 1; same < cells.length; same += 1) {
+                if (cells[same].tagName.toLowerCase() !== "th") {
+                  add(textOf(cells[same]));
+                  sameRowCourse = true;
+                  break;
+                }
               }
-              var sameRowValue = textOf(cells[same]);
-              if (sameRowValue && !isIgnoredCourseName(normalizeCourseName(sameRowValue))) {
-                return sameRowValue;
-              }
             }
+            if (sameRowCourse) continue;
             for (var next = r + 1; next < rows.length; next += 1) {
+              if (selectedRow && rows[next] !== selectedRow) continue;
               var nextCells = rows[next].querySelectorAll("th,td");
-              if (nextCells.length <= courseIndex) {
-                continue;
-              }
-              var value = textOf(nextCells[courseIndex]);
-              if (value && !isIgnoredCourseName(normalizeCourseName(value))) {
-                return value;
-              }
+              if (nextCells.length > courseIndex) add(textOf(nextCells[courseIndex]));
             }
           }
         }
       }
-      return "";
+      return names.size > 1 ? "未分類" : Array.from(names)[0] || "";
     }
-    function firstMatchingCourseNameText(selectors) {
-      var documents = collectDocuments();
+    function firstMatchingCourseNameText(selectors, documents = collectDocuments()) {
       for (var i = 0; i < selectors.length; i += 1) {
+        var names = /* @__PURE__ */ new Set();
         for (var d = 0; d < documents.length; d += 1) {
           var elements = documents[d].querySelectorAll(selectors[i]);
           for (var j = 0; j < elements.length; j += 1) {
             var text = textOf(elements[j]);
             var extracted = extractCourseNameFromText(text);
             if (extracted) {
-              return extracted;
+              names.add(normalizeCourseName(extracted));
             }
           }
         }
+        if (names.size) return names.size > 1 ? "未分類" : Array.from(names)[0];
       }
       return "";
     }
@@ -551,7 +574,7 @@ const String gakujoDownloadCaptureJs = r'''
     function submissionAttribute(form, submitter, name) {
       return submitter && submitter.hasAttribute("form" + name) ? submitter.getAttribute("form" + name) : form.getAttribute(name);
     }
-    function captureForm(form, submitter, explicitOnly) {
+    function captureForm(form, submitter, explicitOnly, courseSource) {
       if (!form || isAppOwned(form) || submitter && isAppOwned(submitter)) return false;
       var action = submissionAttribute(form, submitter, "action") || baseUrlOf(form);
       var method = (submissionAttribute(form, submitter, "method") || "GET").toUpperCase();
@@ -569,13 +592,13 @@ const String gakujoDownloadCaptureJs = r'''
       if (explicitOnly) {
         if (new URL(absoluteAction).host !== "gakujo.iess.niigata-u.ac.jp" || !signals.explicit) return false;
       } else if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
-      post(__spreadValues({
+      post(__spreadValues(__spreadProps(__spreadValues({
         url: absoluteAction,
         method,
-        fileName: downloadFileName(submitter, form),
-        courseName: estimateCourseName(),
+        fileName: downloadFileName(submitter, form)
+      }, coursePayload(courseSource || submitter || form)), {
         formFields: fields
-      }, pairs.length > Object.keys(fields).length ? { formFieldPairs: pairs } : {}));
+      }), pairs.length > Object.keys(fields).length ? { formFieldPairs: pairs } : {}));
       return true;
     }
     window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER = function(event) {
@@ -610,13 +633,13 @@ const String gakujoDownloadCaptureJs = r'''
         }
         event.preventDefault();
         event.stopPropagation();
-        post({
+        post(__spreadProps(__spreadValues({
           url: absoluteUrl,
           method: "GET",
-          fileName: downloadFileName(anchor, null),
-          courseName: estimateCourseName(),
+          fileName: downloadFileName(anchor, null)
+        }, coursePayload(anchor)), {
           formFields: {}
-        });
+        }));
         return;
       }
       var submitter = target.closest('button, input[type="submit"], input[type="button"]');
@@ -642,13 +665,13 @@ const String gakujoDownloadCaptureJs = r'''
       }
       event.preventDefault();
       event.stopPropagation();
-      post({
+      post(__spreadProps(__spreadValues({
         url: submitterPageUrl,
         method: "GET",
-        fileName: downloadFileName(submitter, null),
-        courseName: estimateCourseName(),
+        fileName: downloadFileName(submitter, null)
+      }, coursePayload(submitter)), {
         formFields: {}
-      });
+      }));
     };
     function restoreFormSubmits() {
       var prototypes = window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES || [];
@@ -669,8 +692,9 @@ const String gakujoDownloadCaptureJs = r'''
       if (!prototype) return;
       var entry = { prototype, original: prototype.submit };
       var wrapper = function() {
+        var courseSource = formSubmitters.get(this);
         formSubmitters.delete(this);
-        if (!captureForm(this, null, true)) return entry.original.apply(this, arguments);
+        if (!captureForm(this, null, true, courseSource)) return entry.original.apply(this, arguments);
       };
       wrapper.__mbgFormSubmitHook = entry;
       entry.wrapper = wrapper;

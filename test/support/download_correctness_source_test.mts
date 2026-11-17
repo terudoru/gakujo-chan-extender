@@ -22,6 +22,12 @@ const repeated = behavior('repeatedFormFields').captured[0];
 assert.deepEqual(repeated.formFieldPairs,
   [['fileId', 'A'], ['_eventId', 'download'], ['fileId', 'B'], ['fileId', 'C']]);
 assert.equal(repeated.formFields.fileId, 'C');
+assert.deepEqual(behavior('courseRowAndFrame').captured.map(value => value.courseName),
+  ['Chemistry', 'Chemistry', '未分類', 'Chemistry', 'Chemistry', '未分類']);
+assert.deepEqual(behavior('courseRowAndFrame').captured.map(value => !!value.courseNameAmbiguous),
+  [false, false, true, false, false, true]);
+assert.deepEqual(behavior('courseNameTables').captured.map(value => value.courseName),
+  ['線形代数', '物理学基礎BⅠ', '情報基礎']);
 assert.deepEqual(behavior('nonSubmitButtons').postCounts, [0, 1, 2, 3]);
 
 const authenticatedScript = await bundle('authenticated_download/start');
@@ -50,4 +56,4 @@ for (const method of ['GET', 'POST']) {
     if (method === 'GET') assert.equal(actual.get('keep'), 'x');
   }
 }
-console.log('Download capture/authenticated request source regressions passed');
+console.log('Download capture/course/authenticated request source regressions passed');

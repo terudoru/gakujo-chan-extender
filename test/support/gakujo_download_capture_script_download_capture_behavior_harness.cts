@@ -200,6 +200,38 @@ function behavior() {
     click(button);
     return {captured};
   }
+  if (scenario === 'courseRowAndFrame') {
+    function table(names) {
+      const rows = [['科目名', '資料名'], ...names.map(name => [name, 'notes.pdf'])]
+        .map((cells, index) => ({querySelectorAll() {
+          return cells.map(innerText => ({tagName: index ? 'td' : 'th', innerText}));
+        }}));
+      return {rows, querySelectorAll() { return rows; }};
+    }
+    const courses = table(['Physics', 'Chemistry']);
+    childDocument.querySelectorAll = selector => selector === 'table' ? [courses] : [];
+    const link = anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf');
+    link.closest = selector => selector === 'a[href]' ? link :
+      selector === 'tr' ? courses.rows[2] : null;
+    click(link);
+    const button = submitterWithForm('Download', 'exports/form.pdf',
+      {_eventId: 'download'}, {onclick: 'download()'});
+    const closest = button.closest;
+    button.closest = selector => selector === 'tr' ? courses.rows[2] : closest(selector);
+    click(button);
+    button.form.submit();
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    const other = table(['Physics']), local = table(['Chemistry']);
+    topDocument.querySelectorAll = selector => selector === 'table' ? [other] : [];
+    childDocument.querySelectorAll = selector => selector === 'table' ? [local] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    childDocument.querySelectorAll = selector => selector === 'h1' ? [{innerText: 'Chemistry'}] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    childDocument.querySelectorAll = selector => selector === 'h1' ?
+      [{innerText: 'Physics'}, {innerText: 'Chemistry'}] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    return {captured};
+  }
   if (scenario === 'nonSubmitButtons') {
     const prevented: any = [], stopped: any = [], postCounts: any = [];
     for (const type of ['reset', 'button', 'submit', 'SUBMIT']) {

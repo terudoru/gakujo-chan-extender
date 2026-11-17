@@ -2,6 +2,19 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('keeps ambiguous courses unresolved across capture and retry', () {
+    final request = GakujoDownloadRequest.fromJsonText('''{
+      "url":"https://gakujo.iess.niigata-u.ac.jp/file",
+      "courseName":"未分類", "courseNameAmbiguous":true
+    }''');
+    expect(request.courseNameAmbiguous, isTrue);
+    expect(request.courseName, '未分類');
+    expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).courseNameAmbiguous,
+        isTrue);
+    expect(request.toMethodChannelArguments()['courseNameAmbiguous'], isTrue);
+    expect(GakujoDownloadRequest.fromJsonMap({}).courseNameAmbiguous, isFalse);
+  });
+
   test('keeps repeated fields ordered through JSON, retry and native arguments', () {
     final request = GakujoDownloadRequest.fromJsonText('''{
       "url":"https://gakujo.iess.niigata-u.ac.jp/file", "method":"POST",

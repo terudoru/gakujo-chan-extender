@@ -937,7 +937,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     var effectiveRequest = request;
     GakujoDownloadSnapshot? uploadSnapshot;
     try {
-      if (!_isUsefulCourseName(request.courseName)) {
+      if (!request.courseNameAmbiguous &&
+          !_isUsefulCourseName(request.courseName)) {
         final pageCourseName = mounted && revision == _navigationRevision
             ? await _estimateCourseNameFromPage(await _controller.getTitle())
             : null;
@@ -955,6 +956,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             fileName: request.fileName,
             formFields: request.formFields,
             formFieldPairs: request.formFieldPairs,
+            courseNameAmbiguous: request.courseNameAmbiguous,
           );
         }
       }

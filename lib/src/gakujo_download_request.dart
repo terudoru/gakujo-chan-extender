@@ -12,6 +12,7 @@ class GakujoDownloadRequest {
     required this.fileName,
     required this.formFields,
     this.formFieldPairs,
+    this.courseNameAmbiguous = false,
   });
 
   final String url;
@@ -20,6 +21,7 @@ class GakujoDownloadRequest {
   final String fileName;
   final Map<String, String> formFields;
   final List<List<String>>? formFieldPairs;
+  final bool courseNameAmbiguous;
 
   List<List<String>> get orderedFormFields =>
       formFieldPairs ??
@@ -82,6 +84,7 @@ class GakujoDownloadRequest {
       fileName: fileName,
       formFields: fields,
       formFieldPairs: _parsePairs(raw['formFieldPairs']),
+      courseNameAmbiguous: raw['courseNameAmbiguous'] == true,
     );
   }
 
@@ -93,6 +96,7 @@ class GakujoDownloadRequest {
       'fileName': fileName,
       'formFields': formFields,
       if (formFieldPairs != null) 'formFieldPairs': formFieldPairs,
+      if (courseNameAmbiguous) 'courseNameAmbiguous': true,
       if (userAgent != null && userAgent.isNotEmpty) 'userAgent': userAgent,
     };
   }
@@ -105,6 +109,7 @@ class GakujoDownloadRequest {
       'fileName': fileName,
       'formFields': formFields,
       if (formFieldPairs != null) 'formFieldPairs': formFieldPairs,
+      if (courseNameAmbiguous) 'courseNameAmbiguous': true,
     };
   }
 
@@ -151,6 +156,7 @@ class GakujoDownloadRequest {
       fileName: fileName,
       formFields: fields,
       formFieldPairs: _parsePairs(raw['formFieldPairs']),
+      courseNameAmbiguous: raw['courseNameAmbiguous'] == true,
     );
   }
 }
