@@ -1,55 +1,126 @@
 # GitHub アカウント不要の報告フォーム
 
-More Better Gakujo の不具合と要望を受け付ける Cloudflare Worker です。フォームから送った内容は D1 に非公開で保存します。開発者は Cloudflare Access で保護した `/dashboard/` で確認します。
+More Better Gakujo の不具合・要望を Google Apps Script のウェブアプリで受け付け、専用 Google アカウントの非公開スプレッドシートに保存します。開発者はシートで内容を確認し、公開欄だけを入れた GitHub の新規 Issue 画面を開きます。Issue を自動投稿する機能や、報告内容を読み出す公開 API はありません。
 
-「GitHub で Issue を作る」は、公開欄を入力した GitHub の新規 Issue 画面を開きます。開発者が内容を確認・編集し、GitHub 上で投稿します。Worker は GitHub の認証情報を持たず、Issue を投稿しません。
+Apps Script は受付用の `intake/` と、削除管理用の `admin/` の2プロジェクトに分けます。公開するのは受付用だけです。アプリとブラウザーは同じ非公開保存関数・検証・ロック・重複確認・全体上限を通り、同じ `reports` シートに保存します。Google フォームや別の診断情報保管先は使いません。初回は「保守者が初回に行う設定」を順に進め、運用時は「シートでの確認と削除」を参照してください。
+
+現時点では未公開です。`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `reportEndpointUrl` は、動作確認が済むまで `null` にします。ブラウザー向けの案内は `https://gakujo.terudoru.com/report/` に置きます。
 
 ## 保存する内容と公開する内容
 
-- D1 には種類、件名、内容、問題が起きるまでの手順、本来どうなってほしかったか、バージョン、OS、任意の診断情報、受付時刻、確認状態、関連 Issue 番号を保存します。フォームで個人情報を入力しないよう案内します。
-- 診断情報は管理画面でだけ表示します。Issue 用のリンクとコピーには、件名と公開欄だけを渡します。`@` の直後にゼロ幅スペースを入れて、意図しないメンションを防ぎます。URL が6,000文字を超える場合は本文を省略します。コピーでは公開本文全体を取得できます。
-- 報告は180日後に削除対象になります。毎時の処理で削除するため、最大1時間の差があります。`REPORT_RETENTION_DAYS` で変更できます。管理画面の「削除」では診断情報も含めて削除します。GitHub に投稿済みの Issue は削除しません。D1 の復元用バックアップには Cloudflare 側の保持期間が別に適用されます。
-- 生の IP アドレスは保存しません。Turnstile の検証時だけ Cloudflare に送ります。送信制限にはソルト付き SHA-256 ハッシュを使い、IPv6 は `/64` 単位でまとめます。ハッシュは1日後に削除対象になり、毎時削除します。報告との対応表は作りません。
+シート `reports` の列は次の順番です。下の見出しをコピーし、シートの A1 に貼り付けます。タブ区切りで16列になります。列の名前や順番は変えないでください。最後の `payloadHash` は重複確認用です。
 
-同じ IP の送信は直近10分で3件、直近24時間で10件までです。全体で直近24時間200件まで受け付けます。日付が変わる瞬間の集中を防ぐため、1日はローリング24時間で数えます。制限の確認と報告の保存は D1 の同じトランザクションで行います。
-
-## ローカルで動かす
-
-Node.js 22.13 以降が必要です。CI は Node.js 24 を使います。以下はすべて `report_form/` で実行します。
-
-```sh
-npm ci
-npm test
-cp .dev.vars.example .dev.vars
-npm run db:migrate:local
-npx wrangler dev --local --ip 127.0.0.1 --port 8787
+```text
+receipt	submissionKey	createdAt	client	type	title	content	steps	expected	version	platform	diagnosticStatus	diagnostic	status	issueDraft	payloadHash
 ```
 
-Windows PowerShell では `cp` の代わりに `Copy-Item .dev.vars.example .dev.vars` を使えます。`http://localhost:8787/?type=bug&version=1.2.3&platform=windows` を開いて確認します。`type=request` なら要望が選ばれます。`platform` は `windows`、`macos`、`linux`、`android`、`ios`、`other` に対応します。
+受付番号、重複確認用 UUID、受付時刻（UTC）、送信元、種類、件名、内容、再現手順、期待した動き、バージョン、OS、診断情報の有無、診断情報、確認状態、Issue 下書きの URL、正規化した本文の SHA-256 ハッシュを保存します。IP アドレス、メールアドレス、Google アカウントは収集しません。送信者のログインも不要です。通信や保存には Google のサービスを使います。
 
-`.dev.vars.example` は Cloudflare の公開テストキーとローカル用ソルトです。本番に使わないでください。[Cloudflare のテストキー](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)は hostname に `example.com` を返し、`action` は返しません。この Worker は `action=report` と hostname を厳密に確認するため、テストキーの実レスポンスは400で拒否します。送信成功は通信を置き換えたテストで確認し、実キーでの確認は管理者の本番設定後に行います。テストのために本番の検証を緩めないでください。
+開発者が確認して公開する場合があるのは、種類・件名・内容・再現手順・期待した動き・バージョン・OS です。診断情報、受付番号、UUID、受付時刻などは Issue 下書きに含めません。個別の返信は行いません。送信者には公開 Issue の一覧で対応状況を確認するよう案内します。
 
-`DEV="true"` とループバックホストの両方が成立する場合だけ、未設定の `SITE_ORIGIN` をリクエスト先の origin で補えます。それでも Origin ヘッダーは必須です。本番設定では `DEV` を指定しません。テストは実際のマイグレーションを `node:sqlite` に適用し、Turnstile と Access の通信をスタブに置き換えます。Miniflare の実 Worker とローカル D1 でも、siteverify だけをテスト専用の `outboundService` に置き換えて201・保存・送信制限を確認します。GitHub や Cloudflare の管理 API は呼びません。
+アプリのバグ報告には、利用者が確認した軽量版の診断情報を添付します。明示的に診断情報なしを選んだ場合は `omitted_by_user`、添付した場合は `attached` と記録します。バグ以外では診断情報を集めず、`not_applicable` にします。ブラウザーには診断情報欄がなく、どの種類でも `web_none` です。氏名・学籍番号・パスワード・成績・学情の画面の内容を送らないよう案内し、公開の可能性への同意を必須にしています。
 
-`wrangler.jsonc` の D1 `database_id` は未設定です。ローカルの D1 は ID なしで使えます。本番では次の手順で ID を設定してください。秘密値は `.dev.vars` または Wrangler のシークレットに置きます。`.dev.vars` と `.wrangler/` は Git の対象外です。
+| 種類 | 本文の項目 | 追加の項目 | 公開 Issue のラベル |
+|---|---|---|---|
+| `bug`: バグ報告 | 起きたこと（何をしたら何が起きたか） | 再現手順・期待した動き。どちらも任意 | `bug,from-form` |
+| `request`: 機能追加の要望 | 実現したい機能（何に困っていて、何ができると嬉しいか） | なし | `enhancement,from-form` |
+| `improvement`: 既存機能の改善要望 | 今困っている点と、どう変わると良いか | なし | `enhancement,from-form` |
+| `other`: その他 | 内容 | なし | `from-form` |
 
-## 初回の本番設定
+個別の返信がないため、質問の種類は設けません。未知の種類と、バグ以外に添付された診断情報は受け付けません。
 
-作業対象は Worker `gakujo-report`、D1 `gakujo-reports`、ホスト `gakujo-report.terudoru.com` です。Cloudflare の対象アカウントを確認してから進めてください。この手順は管理者が行います。CI はテストだけを実行し、デプロイしません。
+既定の保持期間は180日です。毎日の `dailyCleanup` で期限を過ぎた行を削除するため、削除まで実行間隔分の差があります。受付番号に対応する行を開発者が削除すれば、それより早く削除できます。ただし、削除したセルの内容が Google スプレッドシートの変更履歴などに残る場合があり、完全な消去は保証できません。公開済みの GitHub Issue は、シートの行を削除しても残ります。
 
-1. `npx wrangler d1 create gakujo-reports` を実行します。出力された `database_id` を `wrangler.jsonc` の `d1_databases[0]` に設定します。
-2. `npm run db:migrate:remote` で本番 D1 にテーブルを作ります。
-3. Cloudflare で `gakujo-report.terudoru.com` 用の Turnstile ウィジェットを作ります。サイトキーを `TURNSTILE_SITE_KEY` に設定し、`TURNSTILE_HOSTNAMES` は `gakujo-report.terudoru.com` にします。`npx wrangler secret put TURNSTILE_SECRET` で秘密キーを登録します。ローカルホストやテストキーを本番設定に加えないでください。
-4. 十分に長いランダムな値を秘密情報の保管先で作り、`npx wrangler secret put IP_HASH_SALT` で登録します。秘密値をコマンド引数や Git に残さないでください。
-5. Cloudflare Access に self-hosted アプリを作ります。`gakujo-report.terudoru.com/dashboard` とその配下、`gakujo-report.terudoru.com/api/dashboard` とその配下を同じアプリで保護します。両パスに開発者本人だけを許可するポリシーを適用します。チームドメイン（例 `your-team.cloudflareaccess.com`、`https://` なし）を `ACCESS_TEAM_DOMAIN` に、アプリの Audience タグを `ACCESS_AUD` に設定します。別々のアプリに分けると Audience が異なるため、同じアプリの複数パスとして登録してください。
-6. Worker のカスタムドメインとして `gakujo-report.terudoru.com` を追加します。Wrangler で管理する場合は `routes` に `{ "pattern": "gakujo-report.terudoru.com", "custom_domain": true }` を追加します。`SITE_ORIGIN` が `https://gakujo-report.terudoru.com`、`ISSUE_REPO` が `terudoru/gakujo-chan-extender` であることも確認します。
-7. `npm test` を実行してから `npm run deploy` でデプロイします。Access 未ログインで管理画面と管理 API が開けないこと、許可した管理者では開けること、フォームの受付と非公開欄の分離を確認します。`workers_dev` とプレビュー URL は無効のままにします。
-8. GitHub の対象リポジトリに `from-form` ラベルを作ります。`bug` と `enhancement` も存在することを確認します。試しに Issue 作成画面を開き、診断情報が含まれていないことを確認します。画面を開くだけでは投稿されません。
+## 保守者が初回に行う設定
 
-設定や必須シークレットが欠けた場合、送信は503で拒否します。Access の設定がない場合も管理画面を開きません。署名、issuer、audience、有効期限を Worker 内でも検証します。管理操作には同じ origin と JSON を要求します。
+報告用のスプレッドシートだけを保有する**専用 Google アカウント**で行います。普段使いのアカウントや、ほかの資料にアクセスできるアカウントでは運用しないでください。ここに記した手順は手動で行います。リポジトリや CI からログイン・公開はしません。
 
-## 費用と運用
+### 1. スプレッドシートと非公開の管理プロジェクトを作る
 
-Workers・D1・Turnstile の無料枠内で運用する想定です。Cloudflare Access も利用人数とプランの条件を確認してください。利用量や料金条件が変われば無料枠を超える可能性があるため、Cloudflare の利用状況を確認してください。
+1. 専用アカウントで Google スプレッドシートを新規作成します。共有は「制限付き」のままにし、シートのタブ名を `reports` にします。上の見出しを A1 に貼り付けます。
+2. URL の `/d/` と次の `/` の間にあるスプレッドシート ID を控えます。シート自体をウェブ公開する必要はありません。
+3. シートの「拡張機能 → Apps Script」を開き、管理用だと分かるプロジェクト名を付けます。`Code.gs` を [apps_script/admin/Code.gs](apps_script/admin/Code.gs) に置き換えます。HTML ファイルは追加しません。
+4. 「プロジェクトの設定」でマニフェストの表示を有効にし、`appsscript.json` を [apps_script/admin/appsscript.json](apps_script/admin/appsscript.json) に置き換えて保存します。このプロジェクトはウェブアプリとして**絶対にデプロイしないでください**。
 
-参考: [Workers Static Assets のルーティング](https://developers.cloudflare.com/workers/static-assets/routing/worker-script/)、[D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/)、[Access JWT の検証](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)、[Turnstile のサーバー検証](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)。Wrangler は公開から2週間以上経過した `4.156.2`（2026-11-02公開）に固定しています。
+管理用はシートに紐づくプロジェクトで、`@OnlyCurrentDoc` と `spreadsheets.currentonly` を使い、`getActiveSpreadsheet()` でそのシートだけを操作します。必要なら管理用のスクリプト プロパティに `RETENTION_DAYS` を正の整数で設定します。省略時は180日です。受付用とはプロパティが別なので、受付用に保存日数を設定しても反映されません。
+
+### 2. スタンドアロンの受付プロジェクトと設定を作る
+
+専用アカウントで [Apps Script](https://script.google.com/home) の新しいプロジェクトを作ります。管理用とは別の、スタンドアロンのプロジェクトにします。`Code.gs` に [apps_script/intake/Code.gs](apps_script/intake/Code.gs) を貼り付け、「＋ → HTML」で `Form` を追加し、[apps_script/intake/Form.html](apps_script/intake/Form.html) を貼り付けます。マニフェストを表示して [apps_script/intake/appsscript.json](apps_script/intake/appsscript.json) に置き換え、保存します。
+
+受付用の OAuth スコープは `https://www.googleapis.com/auth/spreadsheets` だけです。ウェブアプリでは `getActiveSpreadsheet()` を使えないため、`SpreadsheetApp.openById()` に必要な完全なスプレッドシート権限を使います。受付用では `@OnlyCurrentDoc` や `spreadsheets.currentonly` では代用しません。この権限は実行アカウントがアクセスできるほかのシートにも及ぶため、報告シートだけを保有する専用アカウントに限って許可してください。どちらのプロジェクトも Drive、メール、外部 HTTP 通信、トリガー管理のスコープは要求しません。[コンテナに紐づくスクリプトの制限](https://developers.google.com/apps-script/guides/bound)も参照してください。
+
+「プロジェクトの設定 → スクリプト プロパティ」で次の値を設定します。ID や実環境の設定をソースに埋め込まないでください。
+
+| 名前 | 設定値・既定値 |
+|---|---|
+| `SHEET_ID` | 作成したスプレッドシートの ID。必須 |
+| `ENABLED` | 受付時は文字列 `true`。それ以外は受付停止 |
+| `ISSUE_REPO` | 省略時は `terudoru/gakujo-chan-extender` |
+| `HOURLY_LIMIT` | 省略時20。全送信元を合わせた1時間の上限 |
+| `DAILY_LIMIT` | 省略時100。全送信元を合わせた1日の上限 |
+| `MAX_ROWS` | 省略時5000。見出しを除く保存行数の上限 |
+
+数値は正の整数で指定します。必須設定の不足、不正な数値、リポジトリ形式の誤りは受付停止になります。`SHEET_ID` を指定しても `reports` シートがない場合や列の見出しが違う場合、送信は受け付けません。
+
+### 3. ウェブアプリを公開する
+
+1. 「デプロイ → 新しいデプロイ」で種類を「ウェブアプリ」にします。
+2. 「次のユーザーとして実行」は**自分（専用アカウント）**、「アクセスできるユーザー」は**全員（Anyone）**にします。「Google アカウントを持つ全員」では匿名送信できません。マニフェスト上は `executeAs: USER_DEPLOYING`、`access: ANYONE_ANONYMOUS` です。
+3. 専用アカウントで権限の内容を確認して承認し、デプロイします。組織の制限などで匿名公開を選べないアカウントでは、この方式は使えません。
+4. 発行された `/exec` で終わるウェブアプリ URL を控えます。開発用の `/dev` URL は使いません。ログアウトした別のブラウザーでフォームを開き、個人情報のないテスト報告を1件送って、シートと受付番号を確認します。
+5. 動作確認後、`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `reportEndpointUrl` に**同じ `/exec` URL**を設定します。サイトとアプリの反映はそれぞれの公開手順に従います。シート ID は設定しません。
+
+埋め込み用のフォームページだけで `XFrameOptionsMode.ALLOWALL` を指定します。他サイトからも埋め込めるため、クリックジャッキングのリスクがあります。このページの操作は利用者自身が入力し、明示的に同意した報告の送信だけなので、そのリスクを受け入れる設計です。管理機能や報告の閲覧機能は置きません。設定不足の受付停止ページには `ALLOWALL` を指定しません。
+
+### 4. 毎日の削除と GitHub を設定する
+
+1. **管理用の** Apps Script を開き、「トリガー → トリガーを追加」で、実行する関数を `dailyCleanup`、イベントのソースを「時間主導型」、種類を「日付ベースのタイマー」、間隔を毎日にします。専用アカウントで作成し、現在のシートへの権限を承認してください。コードからトリガーは作りません。
+2. 対象の GitHub リポジトリで `from-form` ラベルを作り、`bug` と `enhancement` も存在することを確認します。
+3. シートの `issueDraft` リンクを開き、公開欄だけが入った新規 Issue 画面になることを確認します。確認するだけでは投稿されません。診断情報をコピーしないでください。
+
+受付用スクリプトを変更した場合は、エディターで保存するだけでなく、「デプロイを管理 → 編集」で新しいバージョンを選んで反映します。受付を止めるときは受付用の `ENABLED` を `false` にします。非公開の管理用プロジェクトは公開せずに保存します。受付停止中も管理用の毎日の削除は続きます。
+
+## シートでの確認と削除
+
+`status` は新規受付時に `new` です。開発者がシート上で確認状態を更新します。`issueDraft` には GitHub の Issue 作成ページの URL を平文で保存し、Sheets がリンクとして表示します。数式やリッチテキストは使いません。投稿前に公開文面を確認・編集してください。メンションを避けるため公開用の `@` の直後にゼロ幅スペースを入れ、URL が6,000文字を超える場合は本文を省略した旨を付けます。長い報告はシートの公開欄を参照して補ってください。
+
+報告を削除するときは、対象の受付番号の**行全体**を削除します。診断情報も同じ行にあります。見出し行は残してください。シートを一般公開したり、診断情報を Issue に貼り付けたりしないでください。利用者による公開 API 経由の閲覧・削除はできません。
+
+手動で期限切れの報告を削除する場合は、管理用の Apps Script エディターで関数一覧から `dailyCleanup` を選び、「実行」を押します。毎日のトリガーと同じ関数なので、直前の成功から12時間未満の再実行では何もしません。この関数は非公開の管理用プロジェクトにだけあり、公開フォームの `google.script.run` からは呼べません。
+
+## 送信方式と運用上の制限
+
+アプリは `/exec` に JSON を POST します。Google が `script.googleusercontent.com/macros/echo` に302リダイレクトしたら、アプリはその `Location` を GET で取得します。POST 本文を転送先へ再送しません。転送後の HTTP ステータスが200でも、受付の成否は JSON の `ok` で判定します。ブラウザーは HtmlService 内の `google.script.run.submitReport` を使い、GitHub Pages はフォームを iframe で表示するだけです。CORS や独自ドメイン、DNS の変更は不要です。
+
+送信番号は小文字 UUID v4、受付番号は別のランダムな `R-` 形式です。同じ送信番号と同じ正規化済み本文の再送は元の受付番号を返し、行とカウンターを増やしません。同じ番号で本文が変わっていれば `conflict` で拒否します。ブラウザーではページを開いた時点で番号を作り、失敗後に種類・本文・同意などを変更したら新しい番号にします。未変更の再試行では同じ番号を使います。診断情報なしのアプリのバグ報告には明示的な選択が必要です。バグ以外では再現手順と期待した動きを保存しません。本文の上限は65,536バイト、各入力欄の長さは UTF-16 単位で数えます。
+
+重複確認・永続カウンター・保存件数の確認・行追加は、最大10秒待つ受付用の1つのスクリプトロックで保護します。Issue URL と本文ハッシュを含む行全体を1回の `appendRow` で保存し、後続のセル書き込みはしません。その前に処理が失敗した場合、報告の行は保存されません。受付用と管理用のロックは共有されないため、削除前の行番号に依存せず末尾へ追加します。保存件数の上限は、削除と重なった場合には一時的に保守的な判定になることがあります。どちらもロックを解放する前に `SpreadsheetApp.flush()` を呼びます。
+
+文字列のセルは空でない限り先頭に `'` を付け、Sheets による数式・数値・日付への変換を防ぎます。受付時刻と Issue URL は対象外です。たとえばバージョン `1.10` や件名 `3/4` をそのまま保持し、この先頭の `'` は読み戻す値には含まれません。重複検索は UUID の列だけを TextFinder の完全一致で検索し、見つかった1行の UUID を再確認してから受付番号と本文ハッシュを使います。全件の診断情報を毎回読み出すことはしません。
+
+送信の上限は UTC の固定1時間枠と日付枠で数え、カウンターは受付用のスクリプト プロパティに保存します。書き込み前に件数を予約するため、書き込み失敗でも枠を消費する場合があります。古いカウンターは受付用が書き込みのたびに削除し、現在の1時間・1日の分だけを残します。管理用の `dailyCleanup` は、期限を過ぎた両方の送信元の報告を削除します。
+
+`doPost` から送信者の IP を取得できないため、IP 単位の制限はありません。匿名の送信者が全体の枠を使い切る可能性があります。ロック失敗は `busy`、全体上限は `rate_limited`（待ち秒数つき）、保存上限は `full`、設定不足やサービス障害は `unavailable` です。入力不備は `invalid`、本文超過は `too_large`、同じ送信番号での本文の変更は `conflict` です。失敗時はフォームの入力を残します。通信失敗時は、未変更で再送すれば二重登録されないことを案内します。
+
+無料の Google アカウントの範囲で運用する想定ですが、永続的な無料運用は保証しません。Apps Script の実行時間・同時実行・プロパティ・Sheets の制限は別に適用され、混雑や Google 側の変更で受け付けられない場合があります。運用開始前と運用中に [Apps Script の割り当て](https://developers.google.com/apps-script/guides/services/quotas)を確認してください。
+
+## ローカルのテストと表示確認
+
+Node.js 22 以降が必要です。依存パッケージのインストールは不要です。`report_form/` で実行します。
+
+```sh
+node --test
+```
+
+`npm test` でも実装・フォームのテストを実行できます。テストは `Code.gs` を `node:vm` で読み、Sheets、ロック、プロパティ、時刻、ContentService、HtmlService を置き換えます。Google への通信や実データの読み書きはありません。
+
+ブラウザーでの表示確認は次のコマンドです。
+
+```sh
+node test/preview/server.mjs
+```
+
+`http://127.0.0.1:8788/form` でフォーム、`http://127.0.0.1:8788/site` で準備中の Pages ページを表示します。送信はテスト用の `google.script.run` に置き換えています。失敗時は `/form?scenario=transport`、待ち秒数は `scenario=rate_limited`、ほかに `busy`・`unavailable`・`full`・`invalid`・`conflict` で確認できます。`scenario=pending` では応答を保留します。開発者コンソールで `failPreview()` を呼ぶと失敗、`finishPreview({ok:true,receipt:'R-PREVIEW234',duplicate:false})` を呼ぶと成功になり、送信中・失敗後・成功後の入力固定を確認できます。プレビューは受付番号を表示するだけで、どこにも保存しません。終了は Ctrl+C です。
+
+ローカルテストでは、実際の匿名公開、Google の権限同意、POST のリダイレクト、iframe 内での Google の画面、実シートの URL 表示、時間主導トリガーの動作までは確認できません。これらは専用アカウントで設定した後の確認が必要です。

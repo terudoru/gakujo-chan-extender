@@ -1,3 +1,5 @@
 node_modules/
+debug.log
+# Ignore local artifacts left by the retired backend, including old secrets.
 .wrangler/
 .dev.vars

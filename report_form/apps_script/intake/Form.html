@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>不具合・要望を送る | More Better Gakujo</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f7f8f5;--fg:#1c2724;--link:#075f54;--line:#b8cac2;--muted:#52665d;--error:#a51e33;--notice:#e9efeb}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.75 system-ui,sans-serif}main{max-width:760px;margin:auto;padding:2rem 1.25rem 3rem}h1{font-size:clamp(1.65rem,5vw,2.1rem);line-height:1.4;margin:0 0 1.25rem}a{color:var(--link);overflow-wrap:anywhere}.eyebrow,.hint,small,.counter{color:var(--muted)}.eyebrow{margin:0 0 .4rem}.hint,small{font-size:.9rem}small{display:block}form{border-top:2px solid var(--fg);padding-top:1rem;margin-top:2rem}fieldset{border:1px solid var(--line);padding:1rem;margin:0 0 1.75rem}legend,label:not(.choice){font-weight:650}label{display:block}.field{margin-bottom:1.5rem}.field>label{margin-bottom:.4rem}.choice{display:flex;gap:.65rem;align-items:flex-start;margin:.5rem 0;cursor:pointer}.choice input{flex-shrink:0;margin-top:.5rem;accent-color:var(--link);width:18px;height:18px}input:not([type=radio]):not([type=checkbox]),textarea,select{width:100%;font:inherit;padding:.65rem .75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}textarea{display:block;resize:vertical}:focus-visible{outline:3px solid var(--link);outline-offset:3px}[aria-invalid=true]{border-color:var(--error)!important}.required{font-size:.8rem;font-weight:500;margin-left:.3rem;color:var(--muted)}.field-note{display:flex;justify-content:space-between;gap:.6rem;font-size:.85rem;margin-top:.2rem}.counter{margin-left:auto;white-space:nowrap}.error{color:var(--error);margin:.1rem 0;font-size:.9rem}.environment{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}button{font:inherit;font-weight:600;padding:.65rem 1.25rem;border:1px solid var(--link);border-radius:4px;background:var(--link);color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}button.secondary{color:var(--link);background:transparent}#status:not(:empty){border-left:3px solid var(--link);padding:.75rem 1rem;background:var(--notice);margin:1rem 0;white-space:pre-wrap;overflow-wrap:anywhere}footer{margin-top:2rem;border-top:1px solid var(--line);padding-top:1rem;font-size:.85rem}[hidden]{display:none!important}@media(max-width:480px){main{padding:1.5rem 1rem}.environment{grid-template-columns:1fr;gap:0}}@media(prefers-color-scheme:dark){:root{--bg:#151d1b;--fg:#e7efeb;--link:#8cdbca;--line:#496057;--muted:#b4c9c0;--error:#ff9aa8;--notice:#25342e}button{color:#151d1b}}
+    #report-inputs{border:0;padding:0;margin:0;min-width:0}
+  </style>
+</head>
+<body><main>
+  <p class="eyebrow">More Better Gakujo</p>
+  <h1>不具合・要望を送る</h1>
+  <p>GitHub アカウントは不要です。開発者が内容を確認してから、誰でも見られる公開ページ（GitHub の Issue）にすることがあります。</p>
+  <p>個別の返信はできません。対応状況は <a href="https://github.com/terudoru/gakujo-chan-extender/issues" target="_blank" rel="noopener noreferrer">公開ページの一覧（新しいタブで開きます）</a>で確認できます。すべての報告が一覧に載るとは限りません。</p>
+  <p>氏名・学籍番号・パスワード・成績・学情の画面の内容など、個人情報は書かないでください。アプリの設定や状態（診断情報）を添えたい場合は、アプリの 設定 → このアプリについて → アプリから報告する を使ってください。</p>
+  <noscript><p>送るには JavaScript が必要です。ブラウザーで有効にしてください。</p></noscript>
+  <form id="report-form" novalidate>
+    <fieldset id="report-inputs" aria-label="報告内容">
+    <p class="hint">「必須」以外は、分かる範囲で構いません。</p>
+    <fieldset id="type-group" aria-describedby="type-error">
+      <legend>種類 <span class="required">必須</span></legend>
+      <label class="choice"><input type="radio" name="type" value="bug" checked><span>バグ報告<small>思ったとおりに動かない・エラーが出る</small></span></label>
+      <label class="choice"><input type="radio" name="type" value="request"><span>機能追加の要望<small>新しく追加してほしい機能がある</small></span></label>
+      <label class="choice"><input type="radio" name="type" value="improvement"><span>既存機能の改善要望<small>今ある機能を、もっと使いやすくしてほしい</small></span></label>
+      <label class="choice"><input type="radio" name="type" value="other"><span>その他<small>上の3つに当てはまらない連絡・報告</small></span></label>
+      <p class="error" id="type-error"></p>
+    </fieldset>
+    <div class="field">
+      <label for="title">件名 <span class="required">必須</span></label>
+      <input id="title" name="title" required maxlength="80" autocomplete="off" aria-describedby="title-error title-count">
+      <div class="field-note"><span id="title-error" class="error"></span><span id="title-count" class="counter"></span></div>
+    </div>
+    <div class="field">
+      <label for="content"><span id="content-label">起きたこと</span> <span class="required">必須</span></label>
+      <textarea id="content" name="content" required maxlength="4000" rows="7" placeholder="何をしたら何が起きたか" aria-describedby="content-error content-count"></textarea>
+      <div class="field-note"><span id="content-error" class="error"></span><span id="content-count" class="counter"></span></div>
+    </div>
+    <div id="bug-fields">
+      <div class="field">
+        <label for="steps">問題が起きるまでの手順</label>
+        <textarea id="steps" name="steps" maxlength="2000" rows="4" aria-describedby="steps-error steps-count"></textarea>
+        <div class="field-note"><span id="steps-error" class="error"></span><span id="steps-count" class="counter"></span></div>
+      </div>
+      <div class="field">
+        <label for="expected">本来どうなってほしかったか</label>
+        <textarea id="expected" name="expected" maxlength="1000" rows="3" aria-describedby="expected-error expected-count"></textarea>
+        <div class="field-note"><span id="expected-error" class="error"></span><span id="expected-count" class="counter"></span></div>
+      </div>
+    </div>
+    <div class="environment">
+      <div class="field">
+        <label for="version">アプリのバージョン</label>
+        <input id="version" name="version" maxlength="40" autocomplete="off" aria-describedby="version-error version-hint version-count">
+        <p id="version-hint" class="hint">アプリの 設定 → このアプリについて で確認できます。</p>
+        <div class="field-note"><span id="version-error" class="error"></span><span id="version-count" class="counter"></span></div>
+      </div>
+      <div class="field">
+        <label for="platform">OS（Windows・macOS・Android など）</label>
+        <select id="platform" name="platform" aria-describedby="platform-error">
+          <option value="">選択しない</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option><option value="ios">iOS / iPadOS</option><option value="other">その他</option>
+        </select>
+        <p id="platform-error" class="error"></p>
+      </div>
+    </div>
+    <div class="field">
+      <label class="choice"><input type="checkbox" id="consent" name="consent" required aria-describedby="consent-error"><span>氏名・学籍番号・パスワード・成績・学情の画面の内容など、個人情報を書いていないことを確認しました。件名・内容・問題が起きるまでの手順・本来どうなってほしかったか・アプリのバージョン・OS が GitHub で公開される場合があることに同意します。 <span class="required">必須</span></span></label>
+      <p id="consent-error" class="error"></p>
+    </div>
+    </fieldset>
+    <button id="submit" type="submit">送信する</button>
+    <p id="status" role="status" aria-live="polite" tabindex="-1"></p>
+    <button id="another" type="button" class="secondary" hidden>もう1件送信する</button>
+  </form>
+  <footer><a href="https://gakujo.terudoru.com/privacy.html" target="_blank" rel="noopener noreferrer">プライバシーポリシー（新しいタブで開きます）</a><br><a href="https://github.com/terudoru/gakujo-chan-extender/issues/new" target="_blank" rel="noopener noreferrer">GitHub から直接報告する（アカウントが必要・投稿は公開、新しいタブで開きます）</a></footer>
+</main>
+<script>
+(() => {
+  const form = document.getElementById('report-form');
+  const status = document.getElementById('status');
+  const button = document.getElementById('submit');
+  const another = document.getElementById('another');
+  const inputs = document.getElementById('report-inputs');
+  const limits = { title: 80, content: 4000, steps: 2000, expected: 1000, version: 40 };
+  const platforms = ['', 'windows', 'macos', 'linux', 'android', 'ios', 'other'];
+  const types = {
+    bug: { label: '起きたこと', hint: '何をしたら何が起きたか' },
+    request: { label: '実現したい機能', hint: '何に困っていて、何ができると嬉しいか' },
+    improvement: { label: '今困っている点と、どう変わると良いか', hint: '使っている機能と、困っている点・改善してほしい点' },
+    other: { label: '内容', hint: '伝えたい内容を書いてください。' }
+  };
+  const clean = value => value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim();
+  let pending = false;
+  const newKey = () => globalThis.crypto && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : '';
+  let submissionKey = newKey();
+  let submittedSnapshot = '';
+  function show(message) { status.textContent = message; status.focus(); }
+  function update() {
+    for (const [key, limit] of Object.entries(limits)) document.getElementById(`${key}-count`).textContent = `${clean(form.elements[key].value).length} / ${limit}`;
+    const type = form.elements.type.value;
+    document.getElementById('bug-fields').hidden = type !== 'bug';
+    if (Object.hasOwn(types, type)) {
+      document.getElementById('content-label').textContent = types[type].label;
+      form.elements.content.placeholder = types[type].hint;
+    }
+  }
+  function errors(fields) {
+    for (const key of [...Object.keys(limits), 'type', 'platform', 'consent']) {
+      document.getElementById(`${key}-error`).textContent = fields[key] || '';
+      const element = key === 'type' ? document.getElementById('type-group') : form.elements[key];
+      element.setAttribute('aria-invalid', fields[key] ? 'true' : 'false');
+    }
+  }
+  function finish() { pending = false; inputs.disabled = false; form.setAttribute('aria-busy', 'false'); button.disabled = false; button.textContent = '送信する'; }
+  function failed() { finish(); show('送信できたか確認できませんでした。内容を変えずにもう一度送れば、二重には登録されません。'); }
+  function edited() {
+    if (submittedSnapshot) { submissionKey = newKey(); submittedSnapshot = ''; }
+    update();
+  }
+  form.addEventListener('input', edited);
+  form.addEventListener('change', edited);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (pending || !another.hidden) return;
+    const type = form.elements.type.value;
+    const payload = { v: 1, client: 'web', type, platform: form.elements.platform.value, consent: form.elements.consent.checked, diagnostic: null };
+    const fields = {};
+    for (const [key, limit] of Object.entries(limits)) {
+      payload[key] = clean(form.elements[key].value);
+      if (payload[key].length > limit) fields[key] = `${limit}文字以内で入力してください。`;
+    }
+    for (const key of ['title', 'content']) if (!payload[key]) fields[key] = '入力してください。';
+    if (!Object.hasOwn(types, type)) fields.type = '種類を選んでください。';
+    if (!platforms.includes(payload.platform)) fields.platform = 'OS を選び直してください。';
+    if (!payload.consent) fields.consent = '確認してチェックを入れてください。';
+    if (type !== 'bug') { payload.steps = ''; payload.expected = ''; }
+    errors(fields);
+    if (Object.keys(fields).length) { show('入力内容を確認してください。各項目の下に理由を表示しています。'); return; }
+    // The page-load UUID survives unchanged retries; edits identify a new payload.
+    const nextSnapshot = JSON.stringify(payload);
+    if (submittedSnapshot && submittedSnapshot !== nextSnapshot) submissionKey = newKey();
+    if (!submissionKey) { show('このブラウザーでは送れません。ページを再読み込みすると入力内容は消えます。別のブラウザーで試すか、時間をおいてください。'); return; }
+    submittedSnapshot = nextSnapshot;
+    payload.submissionKey = submissionKey;
+    pending = true;
+    inputs.disabled = true;
+    form.setAttribute('aria-busy', 'true');
+    button.disabled = true;
+    button.textContent = '送信中…';
+    status.textContent = '送っています。';
+    try {
+      google.script.run.withSuccessHandler(result => {
+        finish();
+        if (result && result.ok === true && /^R-[A-Z2-9]{10}$/.test(result.receipt)) {
+          inputs.disabled = true;
+          button.disabled = true;
+          another.hidden = false;
+          show(`受け付けました。受付番号：${result.receipt}\nこの番号は、公開ページの Issue 番号とは別です。\n受付番号は送信の控えです。個別の返信はありません。すべての報告が公開されるとは限りません。`);
+          return;
+        }
+        const messages = {
+          unavailable: '現在は受け付けられません。入力内容は残っています。少し待ってから、もう一度送ってください。',
+          busy: 'ただいま混み合っています。入力内容は残っています。少し待ってから、もう一度送ってください。',
+          full: '保存できる件数の上限に達しています。時間をおいてお試しください。GitHub からも直接報告できます。',
+          too_large: '送る内容が長すぎます。文章を短くして、もう一度送ってください。',
+          invalid: '入力内容を確認してください。各項目の下に理由を表示しています。',
+          rate_limited: '送信が集中しています。少し待ってから、もう一度送信してください。入力内容は残っています。'
+        };
+        if (result && result.code === 'conflict') { submissionKey = newKey(); submittedSnapshot = ''; show('内容が変わったため、もう一度送信してください。'); return; }
+        if (result && result.code === 'invalid') errors(result.fields || {});
+        if (result && result.code === 'rate_limited' && Number.isInteger(result.retryAfterSeconds) && result.retryAfterSeconds > 0) show(`送信が集中しています。あと${result.retryAfterSeconds}秒ほど待ってから、もう一度送ってください。入力内容は残っています。`);
+        else show(messages[result && result.code] || '送信できたか確認できませんでした。内容を変えずにもう一度送れば、二重には登録されません。');
+      }).withFailureHandler(failed).submitReport(payload);
+    } catch (_) { failed(); }
+  });
+  another.addEventListener('click', () => {
+    form.reset(); inputs.disabled = false; submissionKey = newKey(); submittedSnapshot = ''; another.hidden = true; button.disabled = false; status.textContent = ''; errors({}); update(); form.elements.title.focus();
+  });
+  update();
+})();
+</script>
+</body></html>

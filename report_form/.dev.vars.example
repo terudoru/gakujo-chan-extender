@@ -1,7 +1,0 @@
-# Local test keys only. Never use these values in production.
-DEV="true"
-SITE_ORIGIN="http://localhost:8787"
-TURNSTILE_SITE_KEY="1x00000000000000000000AA"
-TURNSTILE_SECRET="1x0000000000000000000000000000000AA"
-TURNSTILE_HOSTNAMES="localhost,127.0.0.1"
-IP_HASH_SALT="local-test-salt-replace-in-production"

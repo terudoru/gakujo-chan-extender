@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'report_form/**'
+      - 'site/report/**'
       - '.github/workflows/report-form.yml'
   pull_request:
     paths:
       - 'report_form/**'
+      - 'site/report/**'
       - '.github/workflows/report-form.yml'
 
 permissions:
@@ -26,7 +28,5 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: report_form/package-lock.json
-      - run: npm ci
+      # The tests use only Node's built-in modules, so there is nothing to install.
       - run: npm test
