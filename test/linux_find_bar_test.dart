@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -180,6 +181,33 @@ void main() {
       },
     );
   }
+
+  testWidgets('Escape dismisses the text menu before closing the find bar', (
+    tester,
+  ) async {
+    var closed = 0;
+    await showBar(tester, text: 'needle', onClose: () => closed++);
+    await tester.tap(
+      find.byType(TextField),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
+    expect(closed, 0);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
+      isTrue,
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(closed, 1);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
 
   for (final (text, found, label) in [
     ('term', true, '3件'),
