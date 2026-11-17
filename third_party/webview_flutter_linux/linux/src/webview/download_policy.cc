@@ -143,6 +143,7 @@ struct DownloadPolicy::Task {
   bool failed = false;
   bool publishing = false;
   guint timeout = 0;
+  gint64 last_progress_time = 0;
   GCancellable *cancel = g_cancellable_new();
 
   Task(DownloadPolicy *policy, WebKitDownload *value)
@@ -232,6 +233,34 @@ void DownloadPolicy::Emit(Task &task, const std::string &type) {
   callback_(task.event);
 }
 
+void DownloadPolicy::ReportProgress(Task &task, bool force) {
+  if (task.delegated || !callback_)
+    return;
+  const gint64 now = g_get_monotonic_time();
+  if (!force && now - task.last_progress_time < 100 * 1000)
+    return;
+  task.last_progress_time = now;
+  DownloadEvent event = task.event;
+  event.type = "unmanagedDownloadProgress";
+  if (event.status.empty())
+    event.status = "downloading";
+  callback_(event);
+}
+
+bool DownloadPolicy::Cancel(const std::string &id) {
+  const auto found = tasks_.find(id);
+  if (found == tasks_.end() || found->second->delegated)
+    return false;
+  auto task = found->second;
+  task->event.status = "cancelled";
+  g_cancellable_cancel(task->cancel);
+  if (task->download && !task->finished)
+    webkit_download_cancel(task->download);
+  else if (!task->publishing)
+    Complete(*task);
+  return true;
+}
+
 bool DownloadPolicy::PrepareStaging(Task &task, GError **error) {
   gchar *directory = g_dir_make_tmp("webview-all-download-XXXXXX", error);
   if (!directory)
@@ -317,14 +346,15 @@ bool DownloadPolicy::HandleResponseData(GBytes *bytes, SoupMessage *message) {
   if (tasks_.find(task->event.id) == tasks_.end())
     return true;
   Emit(*task, "downloadProgress");
+  ReportProgress(*task);
   Complete(*task);
   return true;
 }
 
 gboolean DownloadPolicy::OnDestination(WebKitDownload *download,
                                        const gchar *suggested, gpointer data) {
-  auto *task = static_cast<Task *>(data);
-  auto *policy = task->owner;
+  auto *policy = static_cast<Task *>(data)->owner;
+  auto task = policy->tasks_.at(static_cast<Task *>(data)->event.id);
   task->event.suggested_filename = SafeFilename(suggested);
   WebKitURIResponse *response = webkit_download_get_response(download);
   if (response) {
@@ -367,15 +397,18 @@ gboolean DownloadPolicy::OnDestination(WebKitDownload *download,
   webkit_download_set_destination(download, uri);
   g_free(uri);
   policy->RequestDecision(*task);
+  policy->ReportProgress(*task);
   return TRUE;
 }
 
 void DownloadPolicy::OnReceived(WebKitDownload *download, guint64,
                                 gpointer data) {
-  auto *task = static_cast<Task *>(data);
+  auto *policy = static_cast<Task *>(data)->owner;
+  auto task = policy->tasks_.at(static_cast<Task *>(data)->event.id);
   task->event.bytes_received =
       static_cast<gint64>(webkit_download_get_received_data_length(download));
   task->owner->Emit(*task, "downloadProgress");
+  task->owner->ReportProgress(*task);
 }
 
 void DownloadPolicy::OnFailed(WebKitDownload *, GError *error, gpointer data) {
@@ -448,6 +481,8 @@ void DownloadPolicy::Complete(Task &task) {
   }
   task.publishing = true;
   GTask *job = g_task_new(nullptr, task.cancel, Published, nullptr);
+  // PublishFile checks cancellation; a completed publication still wins.
+  g_task_set_check_cancellable(job, FALSE);
   g_task_set_task_data(
       job, new std::shared_ptr<Task>(tasks_.at(task.event.id)),
       +[](gpointer value) {
@@ -520,7 +555,9 @@ void DownloadPolicy::Published(GObject *, GAsyncResult *result, gpointer) {
     if (success)
       task->owner->Result(*task, "completed");
     else
-      task->owner->Result(*task, "failed",
+      task->owner->Result(*task,
+                          g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+                              ? "cancelled" : "failed",
                           error ? std::to_string(error->code) : "save_failed",
                           Text(error ? error->message : nullptr));
   }
@@ -536,6 +573,7 @@ void DownloadPolicy::Result(Task &task, const std::string &status,
   if (!description.empty())
     task.event.description = description;
   Emit(task, "downloadResult");
+  ReportProgress(task, true);
   // More Better Gakujo patch: WebKitGTK has no download UI, so tell the app
   // about files it saved (or failed to save) without delegation.
   if (!task.delegated && callback_ &&

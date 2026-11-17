@@ -1387,6 +1387,18 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
+  Future<void> _cancelLinuxDownload(String id) async {
+    final controller = _controller;
+    if (controller is! WebViewFlutterGakujoWebViewController) return;
+    try {
+      await controller.cancelLinuxDownload(id);
+    } catch (error, stackTrace) {
+      developer.log('Failed to cancel a WebKit download',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+      if (mounted) _showSnackBar('ダウンロードをキャンセルできませんでした');
+    }
+  }
+
   /// Linux: WebKitGTK saved a download the app did not capture into the
   /// default download directory. It has no download UI of its own, unlike
   /// WebView2 on Windows, so tell the user where the file went.

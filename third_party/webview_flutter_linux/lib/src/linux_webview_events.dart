@@ -8,8 +8,37 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
 
     final String? type = event['type'] as String?;
     switch (type) {
-      // More Better Gakujo patch: only the outcome of downloads WebKit saved
-      // on its own is exposed; delegated download events are not.
+      // More Better Gakujo patch: delegated download events stay separate.
+      case 'unmanagedDownloadProgress':
+        final id = event['id'];
+        final name = event['suggestedFilename'];
+        final received = event['bytesReceived'];
+        final total = event['totalBytes'];
+        final status = event['status'];
+        if (id is String &&
+            id.isNotEmpty &&
+            name is String &&
+            received is int &&
+            received >= 0 &&
+            const {
+              'downloading',
+              'completed',
+              'failed',
+              'cancelled',
+            }.contains(status)) {
+          _dispatchEventHandler('download progress', () async {
+            _onDownloadProgress?.call(
+              LinuxDownloadProgress(
+                id: id,
+                fileName: name.isEmpty ? 'ダウンロード' : name,
+                bytesReceived: received,
+                totalBytes: total is int && total > 0 ? total : null,
+                status: status as String,
+              ),
+            );
+          });
+        }
+        break;
       case 'downloadSaved':
         final url = event['url'];
         final path = event['path'];

@@ -13,7 +13,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart'
-    show LinuxKeyZoomAction;
+    show LinuxDownloadProgress, LinuxKeyZoomAction;
 
 import 'generated/course_name_estimate.g.dart';
 import 'generated/history_marker.g.dart';
@@ -106,6 +106,7 @@ import 'widgets/drive_save_folder_dialog.dart';
 import 'widgets/gakujo_gpa_taunt.dart';
 import 'widgets/gakujo_toolbar_actions.dart';
 import 'widgets/linux_find_bar.dart';
+import 'widgets/linux_download_strip.dart';
 import 'widgets/linux_native_toolbar_tooltips.dart';
 import 'widgets/linux_snack_bar_strip.dart';
 import 'widgets/settings_sections.dart';
@@ -1627,6 +1628,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastAllowedPageUrl;
   String _status = '準備中';
   SnackBar? _linuxSnackBar;
+  final _linuxDownloads = <String, LinuxDownloadProgress>{};
   bool _linuxFindOpen = false;
   final _linuxFindController = TextEditingController();
   final _linuxFindFocusNode = FocusNode();
@@ -1817,6 +1819,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         controller.onWheelZoom = (dyNotches, position) {
           _handleDesktopWheelZoom(dyNotches * kLinuxWheelNotchPixels, position);
         };
+        controller.onDownloadProgress = (progress) {
+          if (!mounted) return;
+          setState(() {
+            if (progress.isActive) {
+              _linuxDownloads[progress.id] = progress;
+            } else {
+              _linuxDownloads.remove(progress.id);
+            }
+          });
+        };
         controller.onDownloadSaved = (url, path) {
           _showWebKitDownloadSavedSnackBar(path);
         };
@@ -1916,6 +1928,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (controller is WebViewFlutterGakujoWebViewController) {
       controller.onWheelZoom = null;
       controller.onKeyZoom = null;
+      controller.onDownloadProgress = null;
       controller.onDownloadSaved = null;
       controller.onDownloadFailed = null;
       controller.onPinchZoom = null;
@@ -2354,6 +2367,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     : _buildWebViewArea(),
               ),
             ),
+            if (defaultTargetPlatform == TargetPlatform.linux &&
+                _linuxDownloads.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 144),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final progress in _linuxDownloads.values)
+                        LinuxDownloadStrip(
+                          key: ValueKey(progress.id),
+                          progress: progress,
+                          onCancel: () => _cancelLinuxDownload(progress.id),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
