@@ -17,6 +17,25 @@ Future<void> main() async {
   runApp(MoreBetterGakujoApp(debugLaunchConfig: debugLaunchConfig));
 }
 
+@visibleForTesting
+ThemeData buildGakujoTheme(TargetPlatform platform) {
+  final isLinux = platform == TargetPlatform.linux;
+  return ThemeData(
+    colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff276749)),
+    useMaterial3: true,
+    fontFamily: isLinux ? 'Noto Sans CJK JP' : null,
+    fontFamilyFallback: isLinux
+        ? const [
+            'Noto Sans JP',
+            'Source Han Sans JP',
+            'IPAexGothic',
+            'IPAGothic',
+            'VL Gothic',
+          ]
+        : null,
+  );
+}
+
 class MoreBetterGakujoApp extends StatefulWidget {
   const MoreBetterGakujoApp({
     required this.debugLaunchConfig,
@@ -43,10 +62,7 @@ class _MoreBetterGakujoAppState extends State<MoreBetterGakujoApp> {
     return MaterialApp(
       navigatorObservers: [_linuxOverlayObserver],
       title: 'More Better Gakujo',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff276749)),
-        useMaterial3: true,
-      ),
+      theme: buildGakujoTheme(defaultTargetPlatform),
       home: GakujoWebApp(
         startUrl: widget.debugLaunchConfig.startUrl,
         initialTwoFactorSecret: widget.debugLaunchConfig.twoFactorSecret,

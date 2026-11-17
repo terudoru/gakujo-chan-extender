@@ -5,7 +5,9 @@
 #include "webview/webview_environment.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_load_errors.h"
 #include "webview/webview_native_dialog_keys.h"
+#include "webview/webview_navigation_policy.h"
 #include "webview/webview_pinch_zoom.h"
 #include "webview/webview_wheel_scroll.h"
 
@@ -307,7 +309,9 @@ static gboolean decide_policy_cb(WebKitWebView *widget,
   fl_value_set_string_take(event, "requestId", fl_value_new_int(request_id));
   fl_value_set_string_take(event, "url",
                            fl_value_new_string(uri != nullptr ? uri : ""));
-  fl_value_set_string_take(event, "isMainFrame", fl_value_new_bool(true));
+  fl_value_set_string_take(
+      event, "isMainFrame",
+      fl_value_new_bool(navigation_is_main_frame(navigation_decision, type)));
   send_event(webview, event);
   return TRUE;
 }
@@ -375,10 +379,59 @@ static gboolean load_failed_cb(WebKitWebView *widget,
   return FALSE;
 }
 
-// More Better Gakujo patch: hide downloads that bypass the app's handling.
-static gboolean context_menu_cb(WebKitWebView *, WebKitContextMenu *menu,
-                                 GdkEvent *, WebKitHitTestResult *, gpointer) {
+static void web_process_terminated_cb(WebKitWebView *widget,
+                                      WebKitWebProcessTerminationReason reason,
+                                      gpointer user_data) {
+  const gchar *description = web_process_termination_description(reason);
+  if (description == nullptr) {
+    return;
+  }
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  resolve_all_pending_requests(webview);
+  FlValue *event = make_event("webResourceError");
+  fl_value_set_string_take(event, "description",
+                           fl_value_new_string(description));
+  fl_value_set_string_take(event, "errorCode", fl_value_new_int(reason));
+  fl_value_set_string_take(event, "errorType",
+                           fl_value_new_string("webContentProcessTerminated"));
+  fl_value_set_string_take(event, "isForMainFrame", fl_value_new_bool(true));
+  const gchar *uri = webkit_web_view_get_uri(widget);
+  if (uri != nullptr) {
+    fl_value_set_string_take(event, "url", fl_value_new_string(uri));
+  }
+  send_event(webview, event);
+}
+
+static void print_webview(WebKitWebView *web_view) {
+  WebKitPrintOperation *operation = webkit_print_operation_new(web_view);
+  GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(web_view));
+  webkit_print_operation_run_dialog(
+      operation, GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
+  g_object_unref(operation);
+}
+
+static void print_action_cb(GSimpleAction *, GVariant *, gpointer user_data) {
+  print_webview(WEBKIT_WEB_VIEW(user_data));
+}
+
+// More Better Gakujo patch: hide unmanaged downloads and add page printing.
+static gboolean context_menu_cb(WebKitWebView *web_view, WebKitContextMenu *menu,
+                                 GdkEvent *, WebKitHitTestResult *hit, gpointer) {
   remove_unmanaged_download_items(menu);
+#if WEBKIT_CHECK_VERSION(2, 18, 0)
+  if (hit != nullptr && webkit_hit_test_result_get_context(hit) ==
+                            WEBKIT_HIT_TEST_RESULT_CONTEXT_DOCUMENT) {
+    g_autoptr(GSimpleAction) action = g_simple_action_new("mbg-print", nullptr);
+    g_signal_connect_object(action, "activate", G_CALLBACK(print_action_cb),
+                            web_view, static_cast<GConnectFlags>(0));
+    if (webkit_context_menu_get_n_items(menu) > 0) {
+      webkit_context_menu_append(menu, webkit_context_menu_item_new_separator());
+    }
+    webkit_context_menu_append(
+        menu, webkit_context_menu_item_new_from_gaction(
+                  G_ACTION(action), "印刷(_P)", nullptr));
+  }
+#endif
   return FALSE;
 }
 
@@ -454,14 +507,9 @@ static gboolean history_key_press_event_cb(GtkWidget *widget,
   case BrowserKeyAction::kReloadBypassCache:
     webkit_web_view_reload_bypass_cache(web_view);
     return TRUE;
-  case BrowserKeyAction::kPrint: {
-    WebKitPrintOperation *operation = webkit_print_operation_new(web_view);
-    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(web_view));
-    webkit_print_operation_run_dialog(
-        operation, GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
-    g_object_unref(operation);
+  case BrowserKeyAction::kPrint:
+    print_webview(web_view);
     return TRUE;
-  }
   case BrowserKeyAction::kNone:
     return FALSE;
   }
@@ -847,6 +895,9 @@ static gboolean load_failed_with_tls_errors_cb(WebKitWebView *widget,
   FlValue *event = make_event("sslAuthError");
   fl_value_set_string_take(event, "requestId", fl_value_new_int(request_id));
   gchar *description = describe_tls_error(failing_uri, host, errors);
+  g_autoptr(GError) load_error = g_error_new_literal(
+      G_TLS_ERROR, G_TLS_ERROR_BAD_CERTIFICATE, description);
+  emit_load_error(webview, load_error, failing_uri);
   fl_value_set_string_take(event, "description",
                            fl_value_new_string(description));
   g_free(description);
@@ -1070,6 +1121,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self, GError **error,
                    G_CALLBACK(notify_title_cb), webview);
   g_signal_connect(webview->web_view, "load-failed", G_CALLBACK(load_failed_cb),
                    webview);
+  g_signal_connect(webview->web_view, "web-process-terminated",
+                   G_CALLBACK(web_process_terminated_cb), webview);
   g_signal_connect(webview->web_view, "resource-load-started",
                    G_CALLBACK(resource_load_started_cb), webview);
   g_signal_connect(webview->web_view, "authenticate",

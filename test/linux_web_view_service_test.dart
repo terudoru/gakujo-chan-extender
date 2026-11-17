@@ -5,6 +5,13 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
 
+class _FakeWebViewPlatform extends WebViewPlatform {
+  @override
+  LinuxNavigationDelegate createPlatformNavigationDelegate(
+    PlatformNavigationDelegateCreationParams params,
+  ) => LinuxNavigationDelegate(params);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const instance = MethodChannel('com.abandoft.webview_all_linux/73');
@@ -18,6 +25,7 @@ void main() {
   var canGoForward = false;
 
   setUp(() async {
+    WebViewPlatform.instance = _FakeWebViewPlatform();
     calls = [];
     eventSink = null;
     canGoBack = false;
@@ -70,6 +78,162 @@ void main() {
 
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
+
+  test(
+    'Linux snapshots forward typed PNG bytes through the app controller',
+    () async {
+      final bytes = Uint8List.fromList([137, 80, 78, 71]);
+      messenger.setMockMethodCallHandler(instance, (call) async {
+        calls.add(call);
+        return call.method == 'takeSnapshot' ? bytes : null;
+      });
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+
+      expect(await controller.takeLinuxSnapshot(), bytes);
+      expect(calls.map((call) => call.method), ['takeSnapshot']);
+    },
+  );
+
+  test(
+    'Linux focus queries and restoration use the native controller',
+    () async {
+      messenger.setMockMethodCallHandler(instance, (call) async {
+        calls.add(call);
+        return call.method == 'hasFocus' ? true : null;
+      });
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      expect(await controller.hasLinuxFocus(), isTrue);
+      await controller.restoreLinuxFocus();
+      expect(calls.map((call) => call.method), ['hasFocus', 'requestFocus']);
+    },
+  );
+
+  test('unavailable Linux snapshots return null', () async {
+    expect(await native.takeSnapshot(), isNull);
+    expect(calls.map((call) => call.method), ['takeSnapshot']);
+  });
+
+  test('Linux navigation events preserve main-frame classification', () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final requests = <GakujoNavigationRequest>[];
+    await controller.setNavigationDelegate(
+      GakujoNavigationDelegate(
+        onNavigationRequest: (request) {
+          requests.add(request);
+          return GakujoNavigationDecision.navigate;
+        },
+      ),
+    );
+    for (final mainFrame in [true, false]) {
+      await emitEvent({
+        'type': 'navigationRequest',
+        'requestId': mainFrame ? 1 : 2,
+        'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do',
+        'isMainFrame': mainFrame,
+      });
+    }
+    expect(requests.map((request) => request.isMainFrame), [true, false]);
+    expect(
+      calls
+          .where((call) => call.method == 'completeNavigationRequest')
+          .map((call) => call.arguments),
+      [
+        {'requestId': 1, 'allow': true},
+        {'requestId': 2, 'allow': true},
+      ],
+    );
+  });
+
+  test(
+    'Linux renderer errors reload with GET within the shared retry limit',
+    () async {
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      final errors = <GakujoWebResourceError>[];
+      await controller.setNavigationDelegate(
+        GakujoNavigationDelegate(onWebResourceError: errors.add),
+      );
+      const url =
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+      await emitEvent({'type': 'urlChanged', 'url': url});
+      for (final reason in [0, 1, 0, 1]) {
+        await emitEvent({
+          'type': 'webResourceError',
+          'description': 'WebKit content process terminated unexpectedly.',
+          'errorCode': reason,
+          'errorType': 'webContentProcessTerminated',
+          'isForMainFrame': true,
+          'url': url,
+        });
+      }
+      final loads = calls
+          .where((call) => call.method == 'loadRequest')
+          .toList();
+      expect(loads, hasLength(3));
+      for (final load in loads) {
+        final arguments = load.arguments as Map<Object?, Object?>;
+        expect(arguments['url'], url);
+        expect(arguments['method'], 'get');
+        expect(arguments['body'], isNull);
+      }
+      expect(errors, hasLength(4));
+      expect(errors.last.description, isNot(errors.first.description));
+    },
+  );
+
+  test(
+    'Linux TLS errors remain visible and certificates are rejected',
+    () async {
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      final errors = <GakujoWebResourceError>[];
+      final finished = <String>[];
+      await controller.setNavigationDelegate(
+        GakujoNavigationDelegate(
+          onWebResourceError: errors.add,
+          onPageFinished: finished.add,
+        ),
+      );
+      const url = 'https://gakujo.iess.niigata-u.ac.jp/';
+      const reason = 'TLS certificate error: Certificate has expired.';
+      await emitEvent({'type': 'pageStarted', 'url': url});
+      await emitEvent({
+        'type': 'webResourceError',
+        'description': reason,
+        'errorCode': 2,
+        'errorType': 'failedSslHandshake',
+        'isForMainFrame': true,
+        'url': url,
+      });
+      await emitEvent({
+        'type': 'sslAuthError',
+        'requestId': 7,
+        'description': reason,
+        'url': url,
+      });
+      await emitEvent({'type': 'pageFinished', 'url': url});
+      expect(errors.single.description, reason);
+      expect(errors.single.isForMainFrame, isTrue);
+      expect(errors.single.isConnectivityError, isFalse);
+      expect(finished, isEmpty);
+      expect(
+        calls
+            .where((call) => call.method == 'completeSslAuthError')
+            .single
+            .arguments,
+        {'requestId': 7, 'proceed': false},
+      );
+      expect(calls.where((call) => call.method == 'loadRequest'), isEmpty);
+    },
+  );
 
   for (final debugAllowed in [true, false]) {
     test('Linux inspector follows debugAllowed=$debugAllowed', () async {

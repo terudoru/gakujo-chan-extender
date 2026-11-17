@@ -92,6 +92,7 @@ import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'linux_overlay_guard.dart';
+import 'linux_session_settings.dart';
 import 'macos_input_focus_service.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
@@ -567,6 +568,19 @@ bool isMissingKeychainEntitlementError(Object error) {
 }
 
 @visibleForTesting
+String gakujoUserFacingMessage(
+  String message, {
+  required TargetPlatform platform,
+}) {
+  if (platform != TargetPlatform.linux) return message;
+  if (message.contains('KeyringLocked')) {
+    return 'キーリングがロックされているため、設定を読み書きできません。'
+        'キーリング管理アプリでロックを解除してから、アプリを起動し直してください。';
+  }
+  return message;
+}
+
+@visibleForTesting
 String secureStorageRecoveryGuidance(
   Object error, {
   required TargetPlatform platform,
@@ -657,6 +671,18 @@ void handleGakujoWebResourceError(
   setStatus('読み込みエラー: ${error.description}');
 }
 
+@visibleForTesting
+bool allowsGakujoPdfPreviewNavigation(
+  GakujoNavigationRequest request, {
+  required TargetPlatform platform,
+  required bool Function(String url) isViewerUrl,
+}) {
+  // Before WebKit 2.56 an unnamed iframe can be reported as the main frame.
+  // Only the exact app-owned capability URL gets this Linux exception.
+  return (!request.isMainFrame || platform == TargetPlatform.linux) &&
+      isViewerUrl(request.url);
+}
+
 class GakujoWebApp extends StatefulWidget {
   const GakujoWebApp({
     super.key,
@@ -690,6 +716,29 @@ class GakujoWebApp extends StatefulWidget {
 }
 
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
+
+@visibleForTesting
+class GakujoStartupFlow {
+  Future<bool>? _settingsLoad;
+  bool _storageRecoveryShown = false;
+  bool _setupShown = false;
+  bool continuedWithoutStorage = false;
+
+  Future<bool> loadSettings(Future<bool> Function() load) =>
+      _settingsLoad ??= Future<bool>.sync(load);
+
+  bool claimStorageRecovery({bool automatic = true}) {
+    if (automatic && _storageRecoveryShown) return false;
+    _storageRecoveryShown = true;
+    return true;
+  }
+
+  bool claimSetup() {
+    if (_setupShown) return false;
+    _setupShown = true;
+    return true;
+  }
+}
 
 @visibleForTesting
 class ProtectedSecretPromptGate {
@@ -1615,6 +1664,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
+  final _linuxOverlayGuardKey = GlobalKey<LinuxOverlayGuardState>();
+  final _linuxOverlayNavigation = ValueNotifier<int>(0);
   // The setup wizard can open before macOS reads the saved download folder.
   VoidCallback? _refreshSetupWizard;
   DateTime? _lastAssignmentRefresh;
@@ -1625,6 +1676,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _settingsOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
+  final _linuxSessionSettings = LinuxSessionSettings();
+  final _startupFlow = GakujoStartupFlow();
   final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
   bool _loginAutofillStorageLoadAttempted = false;
   bool _secureStorageRecoveryDialogVisible = false;
@@ -1871,6 +1924,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       controller.onFindAgain = null;
       controller.onFindResult = null;
     }
+    _linuxOverlayNavigation.dispose();
     _linuxFindController.dispose();
     _linuxFindFocusNode.dispose();
     unawaited(_controller.dispose());
@@ -2294,7 +2348,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               // page (often a submit button) stays under the navigation bar.
               child: SafeArea(
                 top: compactPreviewForKeyboard,
-                child: _isSettingsDialogOpen
+                child: _isSettingsDialogOpen &&
+                        defaultTargetPlatform != TargetPlatform.linux
                     ? const SizedBox.expand()
                     : _buildWebViewArea(),
               ),
@@ -2331,10 +2386,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
     );
 
-    if (defaultTargetPlatform == TargetPlatform.linux &&
-        widget.linuxOverlayObscured != null) {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      final controller = _controller;
       content = LinuxOverlayGuard(
-        obscured: widget.linuxOverlayObscured!,
+        key: _linuxOverlayGuardKey,
+        obscured: widget.linuxOverlayObscured,
+        forceObscured: _isSettingsDialogOpen,
+        navigation: _linuxOverlayNavigation,
+        takeSnapshot: controller is WebViewFlutterGakujoWebViewController
+            ? controller.takeLinuxSnapshot
+            : null,
+        hasNativeFocus: controller is WebViewFlutterGakujoWebViewController
+            ? controller.hasLinuxFocus
+            : null,
+        restoreNativeFocus: controller is WebViewFlutterGakujoWebViewController
+            ? controller.restoreLinuxFocus
+            : null,
         child: content,
       );
     }
@@ -2707,10 +2774,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<GakujoNavigationDecision> _handleNavigationRequest(
     GakujoNavigationRequest request,
   ) async {
-    if (request.isMainFrame) _invalidateLoginUrl(request.url);
-    if (!request.isMainFrame && _pdfPreviewServer.isViewerUrl(request.url)) {
+    if (allowsGakujoPdfPreviewNavigation(
+      request,
+      platform: defaultTargetPlatform,
+      isViewerUrl: _pdfPreviewServer.isViewerUrl,
+    )) {
       return GakujoNavigationDecision.navigate;
     }
+    if (request.isMainFrame) _invalidateLoginUrl(request.url);
     if (_isInternalBlankUrl(request.url)) {
       return GakujoNavigationDecision.navigate;
     }
@@ -2986,6 +3057,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // Removing WKWebView and waiting for that frame prevents its native view
     // from remaining the macOS keyboard first responder behind the dialog.
     await WidgetsBinding.instance.endOfFrame;
+    if (defaultTargetPlatform == TargetPlatform.linux && mounted) {
+      await _linuxOverlayGuardKey.currentState?.overlayReady;
+      await WidgetsBinding.instance.endOfFrame;
+    }
     if (!mounted) {
       return;
     }
@@ -3073,6 +3148,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   setState(() {
                     _downloadRoot = next;
                   });
+                  _noticeSessionDownloadRoot(next);
                   if (!dialogContext.mounted) {
                     return;
                   }
@@ -3097,9 +3173,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 if (!await _trySaveSettings(
                   () => saveGakujoSettingsChange(
                     operations: _settingsOperations,
-                    save: () => _appSettingsStore.saveFeatureEnabled(
-                      flag,
-                      enabled: enabled,
+                    save: () => _saveAppSettings(
+                      () => _appSettingsStore.saveFeatureEnabled(
+                        flag,
+                        enabled: enabled,
+                      ),
                     ),
                     currentSettings: () => _appSettings,
                     update: (settings) => settings.copyWith(
@@ -3322,7 +3400,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           final saved = await _settingsOperations.runExclusive(
                             () async {
                               if (!await _trySaveSettings(
-                                () => _appSettingsStore.savePageMode(mode),
+                                () => _saveAppSettings(
+                                  () => _appSettingsStore.savePageMode(mode),
+                                ),
                               )) {
                                 return false;
                               }
@@ -3431,8 +3511,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           final saved = await _settingsOperations.runExclusive(
                             () async {
                               if (!await _trySaveSettings(
-                                () => _appSettingsStore.saveDownloadSaveMode(
-                                  mode,
+                                () => _saveAppSettings(
+                                  () => _appSettingsStore.saveDownloadSaveMode(
+                                    mode,
+                                  ),
                                 ),
                               )) {
                                 return false;
@@ -3917,6 +3999,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_isSettingsDialogOpen) {
       return;
     }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_startupFlow.claimSetup()) {
+      return;
+    }
 
     var loginIdInput = '';
     var loginPasswordInput = '';
@@ -4068,9 +4154,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       error: saveError,
                       stackTrace: saveStackTrace,
                     );
-                    _showSnackBar(
-                      '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
-                    );
+                    if (defaultTargetPlatform == TargetPlatform.linux) {
+                      _secureStorageAccessAllowed = false;
+                      _linuxSessionSettings.showNotice(_showSnackBar);
+                    } else {
+                      _showSnackBar(
+                        '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
+                      );
+                    }
                   }
                   _deferLoginAutofillDuringSetup = false;
                   await _loadAllowedPageUrl(selectedPageMode.startUrl);
@@ -4151,6 +4242,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             setState(() {
                               _downloadRoot = root;
                             });
+                            _noticeSessionDownloadRoot(root);
                             if (!dialogContext.mounted) {
                               return;
                             }
@@ -4184,6 +4276,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           setState(() {
                             _downloadRoot = root;
                           });
+                          _noticeSessionDownloadRoot(root);
                           if (!dialogContext.mounted) {
                             return;
                           }
@@ -4253,7 +4346,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
-      return;
+      if (!Platform.isLinux) return;
     }
     if (mounted) {
       setState(() {
@@ -4697,7 +4790,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('アップデートを確認できませんでした'),
-          content: SelectableText(error.toString()),
+          content: SelectableText(
+            gakujoUserFacingMessage(
+              error.toString(),
+              platform: defaultTargetPlatform,
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
@@ -5038,6 +5136,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return _currentPageUrl;
   }
 
+  Future<void> _saveAppSettings(Future<void> Function() save) async {
+    if (defaultTargetPlatform != TargetPlatform.linux) {
+      await save();
+      return;
+    }
+    if (!await _linuxSessionSettings.save(
+      save,
+      storageAvailable: _secureStorageAccessAllowed,
+      showSnackBar: _showSnackBar,
+    )) {
+      _secureStorageAccessAllowed = false;
+    }
+  }
+
+  void _noticeSessionDownloadRoot(DownloadDestinationSettings root) {
+    if (!root.isSessionOnly) return;
+    _secureStorageAccessAllowed = false;
+    _linuxSessionSettings.showNotice(_showSnackBar);
+  }
+
   Future<bool> _trySaveSettings(Future<void> Function() save) {
     return saveGakujoSettingsSafely(save, showSnackBar: _showSnackBar);
   }
@@ -5045,7 +5163,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _saveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
   ) => _settingsOperations.runExclusive(() async {
-    await _appSettingsStore.saveCalendarImportSettings(settings);
+    await _saveAppSettings(
+      () => _appSettingsStore.saveCalendarImportSettings(settings),
+    );
     final nextSettings = _appSettings.copyWith(
       calendarImportSettings: settings,
     );
@@ -5069,6 +5189,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _syncLocalSettingsMirror(
     GakujoAppSettings settings,
   ) async {
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_secureStorageAccessAllowed) {
+      return;
+    }
     try {
       await _localPrefsStore.saveAppSettings(_settingsForPersistence(settings));
     } on Object catch (error, stackTrace) {
@@ -5089,7 +5213,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         .copyWith(since: DateTime.now());
     if (!Platform.isMacOS || _secureStorageAccessAllowed) {
       try {
-        await _appSettingsStore.saveMessageNotification(messages);
+        await _saveAppSettings(
+          () => _appSettingsStore.saveMessageNotification(messages),
+        );
       } on Object catch (error, stackTrace) {
         if (!Platform.isMacOS) {
           rethrow;
@@ -5124,7 +5250,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       save: () async {
         if (!Platform.isMacOS || _secureStorageAccessAllowed) {
           try {
-            await _appSettingsStore.saveNotificationTopics(topics);
+            await _saveAppSettings(
+              () => _appSettingsStore.saveNotificationTopics(topics),
+            );
           } on Object catch (error, stackTrace) {
             if (!Platform.isMacOS) rethrow;
             // macOS starts from the local mirror before Keychain access.
@@ -5158,8 +5286,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           save: () async {
             if (!Platform.isMacOS || _secureStorageAccessAllowed) {
               try {
-                await _appSettingsStore
-                    .saveNotificationPreferences(preferences);
+                await _saveAppSettings(
+                  () => _appSettingsStore.saveNotificationPreferences(
+                    preferences,
+                  ),
+                );
               } on Object catch (error, stackTrace) {
                 if (!Platform.isMacOS) rethrow;
                 developer.log(
@@ -5211,7 +5342,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       update(_appSettings.messageExcludeKeywords),
     );
     if (!Platform.isMacOS) {
-      await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+      await _saveAppSettings(
+        () => _appSettingsStore.saveMessageExcludeKeywords(normalized),
+      );
     }
     if (mounted) {
       setState(() {
@@ -5255,6 +5388,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _offlineRetry.cancel();
     _offlineRetryPausedInBackground = false;
     _navigationRevision += 1;
+    _linuxOverlayNavigation.value = _navigationRevision;
     _pendingPageFinishedNavigationRevision = null;
   }
 
@@ -7918,7 +8052,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<bool> _loadAppSettings({bool allowMacosKeychainPrompt = false}) async {
+  Future<bool> _loadAppSettings({
+    bool allowMacosKeychainPrompt = false,
+    bool? automaticRecovery,
+  }) {
+    Future<bool> read() => _readAppSettings(
+      allowMacosKeychainPrompt: allowMacosKeychainPrompt,
+      automaticRecovery: automaticRecovery ?? !allowMacosKeychainPrompt,
+    );
+    // WebView recovery must retain the settings and choices from this run.
+    return defaultTargetPlatform == TargetPlatform.linux &&
+            !allowMacosKeychainPrompt
+        ? _startupFlow.loadSettings(read)
+        : read();
+  }
+
+  Future<bool> _readAppSettings({
+    required bool allowMacosKeychainPrompt,
+    required bool automaticRecovery,
+  }) async {
     if (Platform.isMacOS && !allowMacosKeychainPrompt) {
       // Unsigned development builds can trigger a macOS Keychain prompt on
       // every launch. Keep startup usable and only touch Keychain after an
@@ -8034,6 +8186,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         isMacOS: Platform.isMacOS,
         error: error,
       );
+      if (Platform.isLinux) {
+        _secureStorageAccessAllowed = false;
+      }
       setState(() {
         _appSettings = fallbackSettings;
         if (!Platform.isMacOS) {
@@ -8050,7 +8205,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           (Platform.isMacOS && allowMacosKeychainPrompt)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            unawaited(_showSecureStorageRecoveryDialog(error));
+            unawaited(_showSecureStorageRecoveryDialog(
+              error,
+              automatic: automaticRecovery,
+            ));
           }
         });
       }
@@ -8061,10 +8219,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           !allowMacosKeychainPrompt) {
         unawaited(settingsLoad.then(
           (_) {
-            if (mounted) unawaited(_retrySecureStorageLoad());
+            if (mounted && !_startupFlow.continuedWithoutStorage) {
+              unawaited(_retrySecureStorageLoad(automatic: true));
+            }
           },
           onError: (Object later) {
-            if (mounted) unawaited(_showSecureStorageRecoveryDialog(later));
+            if (mounted) {
+              unawaited(_showSecureStorageRecoveryDialog(later, automatic: true));
+            }
           },
         ));
       }
@@ -8072,12 +8234,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _retrySecureStorageLoad() async {
+  Future<void> _retrySecureStorageLoad({bool automatic = false}) async {
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        automatic && _startupFlow.continuedWithoutStorage) {
+      return;
+    }
     _protectedSecretPromptGate.reset();
     SecureStorageFactory.resetMacosCache();
     SecureStorageFactory.reopenLinuxKeyringGate();
     _loginAutofillStorageLoadAttempted = true;
-    if (!await _loadAppSettings(allowMacosKeychainPrompt: true)) {
+    if (!await _loadAppSettings(
+      allowMacosKeychainPrompt: true,
+      automaticRecovery: automatic,
+    )) {
       // Other platforms keep storage access; only macOS defers the keychain.
       if (Platform.isMacOS) {
         _secureStorageAccessAllowed = false;
@@ -8092,8 +8261,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectTwoFactorAutofillIfAllowed();
   }
 
-  Future<void> _showSecureStorageRecoveryDialog(Object error) async {
+  Future<void> _showSecureStorageRecoveryDialog(
+    Object error, {
+    bool automatic = false,
+  }) async {
     if (_secureStorageRecoveryDialogVisible || !mounted) {
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_startupFlow.claimStorageRecovery(automatic: automatic)) {
       return;
     }
 
@@ -8108,9 +8284,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
     }
+    ModalRoute<_SecureStorageRecoveryAction>? dialogRoute;
     final action = await showDialog<_SecureStorageRecoveryAction>(
       context: context,
       builder: (context) {
+        dialogRoute = ModalRoute.of<_SecureStorageRecoveryAction>(context);
         final details = error is PlatformException
             ? (error.message ?? error.code)
             : error.toString();
@@ -8124,8 +8302,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           title: const Text('保存データにアクセスできません'),
           content: Text(
             '保存済みログイン情報や2FA設定を読み込めませんでした。\n\n'
-            '$guidance\n\n'
-            '詳細: $details',
+            '$guidance'
+            '${defaultTargetPlatform == TargetPlatform.linux ? '' : '\n\n詳細: $details'}',
           ),
           actions: [
             TextButton(
@@ -8165,6 +8343,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _retrySecureStorageLoad();
     } else if (action == _SecureStorageRecoveryAction.reset && mounted) {
       await _resetSecureStorageAfterConfirmation();
+    }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        action == _SecureStorageRecoveryAction.continueWithoutStorage) {
+      _startupFlow.continuedWithoutStorage = true;
+      await gakujoWaitForDialogDismissal(dialogRoute);
+      if (mounted && !_appSettings.setupCompleted) {
+        await _showInitialSetupWizard();
+      }
     }
   }
 
@@ -8810,7 +8996,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     setState(() {
-      _status = status;
+      _status = gakujoUserFacingMessage(
+        status,
+        platform: defaultTargetPlatform,
+      );
     });
   }
 
@@ -8821,6 +9010,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
+    message = gakujoUserFacingMessage(message, platform: defaultTargetPlatform);
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     if (defaultTargetPlatform == TargetPlatform.linux) {

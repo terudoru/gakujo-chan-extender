@@ -1,5 +1,6 @@
 #include "common/method_channel_utils.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_load_errors.h"
 #include "webview/webview_message_bridge.h"
 #include "webview/webview_scroll_hook.h"
 
@@ -63,30 +64,6 @@ void emit_title_change(LinuxWebView *webview) {
   FlValue *event = make_event("titleChanged");
   fl_value_set_string_take(event, "title", fl_value_new_string(title));
   send_event(webview, event);
-}
-
-static const gchar *error_type_name_from_error(GError *error) {
-  if (error == nullptr) {
-    return "unknown";
-  }
-  switch (error->code) {
-  case WEBKIT_NETWORK_ERROR_CANCELLED:
-    return "unknown";
-  case WEBKIT_NETWORK_ERROR_FILE_DOES_NOT_EXIST:
-    return "fileNotFound";
-  case WEBKIT_NETWORK_ERROR_UNKNOWN_PROTOCOL:
-    return "unsupportedScheme";
-  case WEBKIT_NETWORK_ERROR_FAILED:
-    return "connect";
-  case WEBKIT_POLICY_ERROR_CANNOT_SHOW_URI:
-    return "unsupportedScheme";
-  case WEBKIT_POLICY_ERROR_CANNOT_SHOW_MIME_TYPE:
-    return "file";
-  case WEBKIT_DOWNLOAD_ERROR_NETWORK:
-    return "connect";
-  default:
-    return "unknown";
-  }
 }
 
 void emit_load_error(LinuxWebView *webview, GError *error,

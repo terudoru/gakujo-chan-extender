@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
@@ -93,6 +94,25 @@ class AuthenticatedDownloadedFile {
   Future<void> dispose() async => _cleanup?.call();
 }
 
+@visibleForTesting
+Future<String?> linuxDownloadInitialDirectory({
+  required Future<Directory?> Function() downloadsDirectory,
+  required String? homeDirectory,
+}) async {
+  try {
+    final downloads = await downloadsDirectory();
+    if (downloads != null) return downloads.path;
+  } on Object {
+    // An optional initial folder must not prevent the chooser from opening.
+  }
+  if (homeDirectory != null &&
+      homeDirectory.isNotEmpty &&
+      Directory(homeDirectory).existsSync()) {
+    return homeDirectory;
+  }
+  return null;
+}
+
 class FileSystemGakujoDownloadService extends GakujoDownloadService {
   FileSystemGakujoDownloadService({
     FlutterSecureStorage? secureStorage,
@@ -115,6 +135,10 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   final Duration _requestTimeout;
   final bool? _usesNativeDownloadRootOverride;
   Future<void> _pendingConfiguredFolderSave = Future<void>.value();
+  bool _linuxRootSessionOnly = false;
+  String? _linuxSessionRootPath;
+  int _linuxRootRevision = 0;
+  static const _linuxRootReadTimeout = Duration(seconds: 3);
 
   @override
   Future<DownloadDestinationSettings> getDownloadRoot() async {
@@ -122,14 +146,22 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return _getNativeDownloadRoot();
     }
 
+    if (_linuxRootSessionOnly) {
+      return _settingsFromPath(_linuxSessionRootPath);
+    }
+    final revision = _linuxRootRevision;
     final path = await _secureStorage.read(key: _downloadRootPathKey);
-    return _settingsFromPath(path);
+    // A late read must not replace a folder already chosen for this session.
+    if (!_linuxRootSessionOnly && revision == _linuxRootRevision) {
+      _linuxSessionRootPath = path;
+    }
+    return _settingsFromPath(_linuxSessionRootPath);
   }
 
   @override
   Future<DownloadDestinationSettings> pickDownloadRoot() async {
-    final current = await getDownloadRoot();
     if (_usesNativeDownloadRoot) {
+      await getDownloadRoot();
       final raw =
           await _nativeDownloadsChannel.invokeMethod<Map<dynamic, dynamic>>(
         'pickDownloadRoot',
@@ -137,19 +169,37 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return DownloadDestinationSettings.fromMap(raw);
     }
 
-    final selected = await getDirectoryPath(
-      initialDirectory: current.path ?? await _defaultDirectoryPath(),
-      confirmButtonText: '保存先にする',
-      canCreateDirectories: true,
-    );
+    DownloadDestinationSettings current;
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      try {
+        // Reopening the gate can wait forever without an unlock prompter.
+        current = await getDownloadRoot().timeout(_linuxRootReadTimeout);
+      } on PlatformException catch (error) {
+        if (error.code != 'KeyringLocked') rethrow;
+        _linuxRootSessionOnly = true;
+        current = _settingsFromPath(_linuxSessionRootPath);
+      } on TimeoutException {
+        current = _settingsFromPath(_linuxSessionRootPath);
+      }
+    } else {
+      current = await getDownloadRoot();
+    }
+    final initialDirectory = current.path ?? await _defaultDirectoryPath();
+    final selected = defaultTargetPlatform == TargetPlatform.linux
+        ? await const MethodChannel('net.yoshida.morebettergakujo/window')
+              .invokeMethod<String>('pickDownloadDirectory', {
+                'initialDirectory': initialDirectory,
+              })
+        : await getDirectoryPath(
+            initialDirectory: initialDirectory,
+            confirmButtonText: '保存先にする',
+            canCreateDirectories: true,
+          );
     if (selected == null || selected.trim().isEmpty) {
       return current;
     }
 
-    await _secureStorage.write(
-      key: _downloadRootPathKey,
-      value: selected,
-    );
+    await _saveDownloadRoot(selected);
     return _settingsFromPath(selected);
   }
 
@@ -163,8 +213,27 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return DownloadDestinationSettings.fromMap(raw);
     }
 
-    await _secureStorage.delete(key: _downloadRootPathKey);
-    return const DownloadDestinationSettings(isConfigured: false);
+    await _saveDownloadRoot(null);
+    return _settingsFromPath(null);
+  }
+
+  Future<void> _saveDownloadRoot(String? path) async {
+    Future<void> save() => path == null
+        ? _secureStorage.delete(key: _downloadRootPathKey)
+        : _secureStorage.write(key: _downloadRootPathKey, value: path);
+    if (defaultTargetPlatform != TargetPlatform.linux) {
+      await save();
+      return;
+    }
+    _linuxRootRevision++;
+    _linuxSessionRootPath = path;
+    if (_linuxRootSessionOnly) return;
+    try {
+      await save();
+    } on PlatformException catch (error) {
+      if (error.code != 'KeyringLocked') rethrow;
+      _linuxRootSessionOnly = true;
+    }
   }
 
   @override
@@ -294,23 +363,30 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     required AuthenticatedDownloadedFile downloaded,
     required String fileName,
   }) async {
-    final location = await getSaveLocation(
-      initialDirectory: await _defaultDirectoryPath(),
-      suggestedName: fileName,
-      confirmButtonText: '保存',
-      canCreateDirectories: true,
-    );
-    if (location == null) {
+    final initialDirectory = await _defaultDirectoryPath();
+    final path = defaultTargetPlatform == TargetPlatform.linux
+        ? await const MethodChannel('net.yoshida.morebettergakujo/window')
+              .invokeMethod<String>('pickSaveFile', {
+                'initialDirectory': initialDirectory,
+                'suggestedName': fileName,
+              })
+        : (await getSaveLocation(
+            initialDirectory: initialDirectory,
+            suggestedName: fileName,
+            confirmButtonText: '保存',
+            canCreateDirectories: true,
+          ))?.path;
+    if (path == null) {
       throw PlatformException(
         code: 'cancelled',
         message: '保存をキャンセルしました',
       );
     }
-    await downloaded.saveTo(location.path);
+    await downloaded.saveTo(path);
     return GakujoDownloadResult(
-      fileName: _baseName(location.path),
+      fileName: _baseName(path),
       courseName: '',
-      location: location.path,
+      location: path,
     );
   }
 
@@ -556,6 +632,12 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
   }
 
   Future<String?> _defaultDirectoryPath() async {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      return linuxDownloadInitialDirectory(
+        downloadsDirectory: getDownloadsDirectory,
+        homeDirectory: Platform.environment['HOME'],
+      );
+    }
     final downloads = await getDownloadsDirectory();
     if (downloads != null) {
       return downloads.path;
@@ -566,13 +648,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
   DownloadDestinationSettings _settingsFromPath(String? path) {
     if (path == null || path.trim().isEmpty) {
-      return const DownloadDestinationSettings(isConfigured: false);
+      return DownloadDestinationSettings(
+        isConfigured: false,
+        isSessionOnly: _linuxRootSessionOnly,
+      );
     }
     final directory = Directory(path);
     return DownloadDestinationSettings(
       isConfigured: directory.existsSync(),
       displayName: _baseName(path),
       path: path,
+      isSessionOnly: _linuxRootSessionOnly,
     );
   }
 

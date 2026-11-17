@@ -115,6 +115,19 @@ gboolean ensure_linux_environment(const gchar *user_data_path,
     return matches;
   }
 
+  const std::string cookie_directory = data + "/cookies";
+  if (!prepare_directory(cookie_directory, error)) {
+    g_mutex_unlock(&state.mutex);
+    return FALSE;
+  }
+  if (g_chmod(cookie_directory.c_str(), 0700) < 0) {
+    g_set_error(error, linux_environment_error_quark(),
+                LINUX_ENVIRONMENT_CREATION_FAILED,
+                "Unable to protect WebKit cookie directory '%s': %s",
+                cookie_directory.c_str(), g_strerror(errno));
+    g_mutex_unlock(&state.mutex);
+    return FALSE;
+  }
   WebKitWebContext *context = nullptr;
   if (explicit_configuration &&
       (!prepare_directory(data, error) || !prepare_directory(cache, error))) {
@@ -122,7 +135,7 @@ gboolean ensure_linux_environment(const gchar *user_data_path,
     return FALSE;
   }
   if (data == default_data && cache == default_cache) {
-    // Preserve the default context and its existing persistence behavior.
+    // Keep the default context so existing local storage remains available.
     context =
         WEBKIT_WEB_CONTEXT(g_object_ref(webkit_web_context_get_default()));
   } else {
@@ -139,6 +152,10 @@ gboolean ensure_linux_environment(const gchar *user_data_path,
     g_mutex_unlock(&state.mutex);
     return FALSE;
   }
+  const std::string cookie_file = cookie_directory + "/cookies.sqlite";
+  webkit_cookie_manager_set_persistent_storage(
+      webkit_web_context_get_cookie_manager(context), cookie_file.c_str(),
+      WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
   // Publish only after successful validation and construction, so callers can
   // correct a failed path and retry without locking in a partial environment.
   state.user_data_path = data;

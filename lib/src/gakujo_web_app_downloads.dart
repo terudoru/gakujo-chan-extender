@@ -627,6 +627,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                         separatorBuilder: (_, _) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final entry = entries[index];
+                          final errorMessage = gakujoUserFacingMessage(
+                            entry.errorMessage,
+                            platform: defaultTargetPlatform,
+                          );
                           return ListTile(
                             dense: true,
                             title: Text(
@@ -637,7 +641,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                             subtitle: Text(
                               '${entry.request.courseName.trim().isEmpty ? '未分類' : entry.request.courseName}\n'
                               '${_formatDateTime(entry.failedAt)}\n'
-                              '${entry.errorMessage}',
+                              '$errorMessage',
                             ),
                             isThreeLine: true,
                             trailing: IconButton(

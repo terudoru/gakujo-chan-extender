@@ -498,6 +498,47 @@ static void window_method_call_cb(FlMethodChannel* channel,
   if (g_strcmp0(method, "secretServiceStatus") == 0) {
     g_bus_get(G_BUS_TYPE_SESSION, nullptr, secret_service_bus_cb,
               g_object_ref(method_call));
+  } else if (g_strcmp0(method, "pickDownloadDirectory") == 0 ||
+             g_strcmp0(method, "pickSaveFile") == 0) {
+    // file_selector exposes the accept label, but not the title or cancel label.
+    const gboolean save_file = g_strcmp0(method, "pickSaveFile") == 0;
+    g_autoptr(GtkFileChooserNative) dialog = gtk_file_chooser_native_new(
+        save_file ? "名前を付けて保存" : "ダウンロードの保存先を選択",
+        self->window,
+        save_file ? GTK_FILE_CHOOSER_ACTION_SAVE
+                  : GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+        save_file ? "保存" : "保存先にする", "キャンセル");
+    gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dialog), TRUE);
+    if (save_file) {
+      gtk_file_chooser_set_do_overwrite_confirmation(
+          GTK_FILE_CHOOSER(dialog), TRUE);
+    }
+    FlValue* args = fl_method_call_get_args(method_call);
+    if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      FlValue* directory = fl_value_lookup_string(args, "initialDirectory");
+      if (directory != nullptr &&
+          fl_value_get_type(directory) == FL_VALUE_TYPE_STRING) {
+        gtk_file_chooser_set_current_folder(
+            GTK_FILE_CHOOSER(dialog), fl_value_get_string(directory));
+      }
+      if (save_file) {
+        FlValue* name = fl_value_lookup_string(args, "suggestedName");
+        if (name != nullptr && fl_value_get_type(name) == FL_VALUE_TYPE_STRING) {
+          gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),
+                                           fl_value_get_string(name));
+        }
+      }
+    }
+    g_autoptr(FlValue) result = fl_value_new_null();
+    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+      g_autofree gchar* path =
+          gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+      if (path != nullptr) {
+        g_clear_pointer(&result, fl_value_unref);
+        result = fl_value_new_string(path);
+      }
+    }
+    fl_method_call_respond_success(method_call, result, nullptr);
   } else if (g_strcmp0(method, "waitUntilShown") != 0) {
     fl_method_call_respond_not_implemented(method_call, nullptr);
   } else if (self->window_shown) {

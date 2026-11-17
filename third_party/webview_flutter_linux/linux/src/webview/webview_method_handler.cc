@@ -1,6 +1,7 @@
 #include "common/method_channel_utils.h"
 #include "webview/download_policy.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_snapshot.h"
 
 #include <libsoup/soup.h>
 
@@ -445,6 +446,54 @@ void instance_method_call_cb(FlMethodChannel *channel,
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
   const gchar *method = fl_method_call_get_name(method_call);
   FlValue *args = fl_method_call_get_args(method_call);
+
+  if (strcmp(method, "takeSnapshot") == 0) {
+    take_webview_snapshot(
+        webview->web_view, 1000,
+        [](GObject *object, GAsyncResult *result, gpointer data) {
+          FlMethodCall *call = FL_METHOD_CALL(data);
+          g_autoptr(GError) error = nullptr;
+          g_autoptr(GBytes) bytes = take_webview_snapshot_finish(
+              WEBKIT_WEB_VIEW(object), result, &error);
+          g_autoptr(FlValue) value = fl_value_new_null();
+          if (bytes != nullptr) {
+            gsize length = 0;
+            const auto *png =
+                static_cast<const guint8 *>(g_bytes_get_data(bytes, &length));
+            g_clear_pointer(&value, fl_value_unref);
+            value = fl_value_new_uint8_list(png, length);
+          }
+          respond(call, success_response(value));
+          g_object_unref(call);
+        },
+        g_object_ref(method_call));
+    return;
+  }
+
+  if (strcmp(method, "hasFocus") == 0) {
+    GtkWidget *widget = GTK_WIDGET(webview->web_view);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+    GtkWidget *focus = GTK_IS_WINDOW(toplevel)
+                           ? gtk_window_get_focus(GTK_WINDOW(toplevel))
+                           : nullptr;
+    const gboolean focused =
+        focus == widget ||
+        (focus != nullptr && gtk_widget_is_ancestor(focus, widget));
+    g_autoptr(FlValue) value = fl_value_new_bool(focused);
+    respond(method_call, success_response(value));
+    return;
+  }
+
+  if (strcmp(method, "requestFocus") == 0) {
+    GtkWidget *widget = GTK_WIDGET(webview->web_view);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+    if (webview->visible && gtk_widget_get_mapped(widget) &&
+        GTK_IS_WINDOW(toplevel) && gtk_window_is_active(GTK_WINDOW(toplevel))) {
+      gtk_widget_grab_focus(widget);
+    }
+    respond(method_call, success_response());
+    return;
+  }
 
   if (strcmp(method, "setFrame") == 0) {
     GtkWidget *widget = GTK_WIDGET(webview->web_view);
