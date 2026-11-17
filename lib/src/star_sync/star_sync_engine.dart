@@ -284,6 +284,7 @@ class StarSyncEngine {
     FlutterSecureStorage? secureStorage,
     StarSyncTransport Function(StarSyncConfig)? transportFactory,
     StarSyncTransport Function()? googleDriveTransport,
+    this.setupGuard,
     DateTime Function()? now,
     Random? random,
     Future<void> Function(Duration)? delay,
@@ -350,6 +351,7 @@ class StarSyncEngine {
   final FlutterSecureStorage _storage;
   final StarSyncQuotaMeter _quotaMeter;
   final StarSyncTransport Function(StarSyncConfig) _transportFactory;
+  final void Function() Function(StarSyncConfig)? setupGuard;
   final DateTime Function() _now;
   final Random _random;
   final Future<void> Function(Duration) _delay;
@@ -361,6 +363,7 @@ class StarSyncEngine {
   final void Function()? onLocalStarsChanged;
   final Future<bool> Function(DateTime)? clearDraftsBefore;
   final StorageOperationQueue _queue = StorageOperationQueue();
+  final StorageOperationQueue _setupQueue = StorageOperationQueue();
   final ValueNotifier<StarSyncStatusSnapshot> _status = ValueNotifier(
     const StarSyncStatusSnapshot(),
   );
@@ -710,19 +713,24 @@ class StarSyncEngine {
     StarSyncConfig config,
     StarSyncState state, {
     required Map<String, String> pendingLocalClear,
+    void Function()? checkCurrent,
   }) async {
     state.pendingLocalClear = Map.of(pendingLocalClear);
     final deferred = pendingLocalClear[_deferredDraftClearKey];
+    checkCurrent?.call();
     try {
       await _storage.write(
         key: starSyncStateKey,
         value: jsonEncode(state.toJson()),
       );
+      checkCurrent?.call();
       await _storage.write(
         key: starSyncConfigKey,
         value: jsonEncode(config.toJson()),
       );
+      checkCurrent?.call();
       if (deferred != null) await _recordDraftClear(deferred);
+      checkCurrent?.call();
     } on Object {
       for (final key in [starSyncStateKey, starSyncConfigKey]) {
         try {
@@ -1005,6 +1013,7 @@ class StarSyncEngine {
     required Map<String, String> pendingLocalClear,
     int? expectedGeneration,
     String? retiredKeyId,
+    void Function()? checkCurrent,
   }) => _queue.run(() async {
     if (_currentAccount() != account ||
         (expectedGeneration != null &&
@@ -1025,6 +1034,7 @@ class StarSyncEngine {
         retiredKeyIds: {?retiredKeyId: _now()},
       ),
       pendingLocalClear: pendingLocalClear,
+      checkCurrent: checkCurrent,
     );
   });
 
@@ -1035,6 +1045,30 @@ class StarSyncEngine {
     String? expectedAccount,
     int? expectedGeneration,
   }) async {
+    final checkCurrent = setupGuard?.call(config);
+    final result = await _setupQueue.run(
+      () => _setUpWithDrive(
+        config,
+        resetExisting: resetExisting,
+        clearLocalStars: clearLocalStars,
+        expectedAccount: expectedAccount,
+        expectedGeneration: expectedGeneration,
+        checkCurrent: checkCurrent,
+      ),
+    );
+    if (result == StarSyncDriveSetup.created) await _syncAfterSetup();
+    return result;
+  }
+
+  Future<StarSyncDriveSetup> _setUpWithDrive(
+    StarSyncConfig config, {
+    required bool resetExisting,
+    required Map<String, String> clearLocalStars,
+    String? expectedAccount,
+    int? expectedGeneration,
+    void Function()? checkCurrent,
+  }) async {
+    checkCurrent?.call();
     final account = _setupAccount(expectedAccount, expectedGeneration);
     final transport = _transportFactory(config);
     try {
@@ -1051,6 +1085,7 @@ class StarSyncEngine {
           (await transport.list(_deviceDirectory)).isNotEmpty) {
         // Another device may be mid-setup; recreating would delete its data.
         // A new transport looks again rather than reusing a cached listing.
+        checkCurrent?.call();
         final recheck = _transportFactory(config);
         try {
           remote = await recheck.get(_keyringPath);
@@ -1105,11 +1140,11 @@ class StarSyncEngine {
         pendingLocalClear: clearLocalStars,
         expectedGeneration: expectedGeneration,
         retiredKeyId: retiredKeyId,
+        checkCurrent: checkCurrent,
       );
     } finally {
       transport.close();
     }
-    await _syncAfterSetup();
     return StarSyncDriveSetup.created;
   }
 

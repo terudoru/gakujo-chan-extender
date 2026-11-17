@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -38,6 +39,64 @@ void main() {
 
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
+  });
+
+  test('replacement is atomic on success and preserves the old file on failure',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-replace-');
+    addTearDown(() => directory.delete(recursive: true));
+    final target = File('${directory.path}/notes.pdf');
+    await target.writeAsBytes([1, 2, 3]);
+    Stream<List<int>> failingWrite() async* {
+      yield [4];
+      throw const FileSystemException('Disk full');
+    }
+
+    await expectLater(writeDownloadFileAtomically(target.path, failingWrite()),
+        throwsA(isA<FileSystemException>()));
+    expect(await target.readAsBytes(), [1, 2, 3]);
+    expect(await directory.list().length, 1);
+    await writeDownloadFileAtomically(target.path, Stream.value([4, 5]));
+    expect(await target.readAsBytes(), [4, 5]);
+    expect(await directory.list().length, 1);
+    final conflict = await Directory('${directory.path}/folder').create();
+    await expectLater(
+      writeDownloadFileAtomically(conflict.path, Stream.value([6])),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(await target.readAsBytes(), [4, 5]);
+    expect(await directory.list().length, 2);
+  });
+
+  test('upload snapshot retains the response after the saved file is overwritten',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-snapshot-');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/response');
+    await source.writeAsBytes([1, 2, 3]);
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: _MemorySecureStorage({
+        'more_better_gakujo_download_root_path': directory.path,
+      }),
+      usesNativeDownloadRoot: false,
+      authenticatedBytesLoader: (request, {userAgent}) async =>
+          AuthenticatedDownloadedFile.fromFile(
+        file: source,
+        cleanup: () async => source.delete(),
+        finalUrl: request.url,
+      ),
+    );
+    final result = await service.download(_dedupeRequest,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        retainUploadSnapshot: true);
+    final snapshot = result.uploadSnapshot!;
+    expect(await source.exists(), isFalse);
+    await File(result.location!).writeAsBytes([9]);
+    expect(snapshot.length, 3);
+    expect(await snapshot.openRead().expand((bytes) => bytes).toList(), [1, 2, 3]);
+    await snapshot.dispose();
+    await expectLater(snapshot.openRead().drain<void>(),
+        throwsA(isA<FileSystemException>()));
   });
 
   for (final fromFile in [false, true]) {
@@ -265,6 +324,64 @@ void main() {
       }
     }
   });
+
+  for (final (name, ambiguous, expectedCourse) in [
+    ('講義資料1.pdf', false, '未分類'),
+    ('課題3.docx', false, '未分類'),
+    ('レポート4.pdf', false, '未分類'),
+    ('資料2.pdf', true, '未分類'),
+    ('資料3.pdf', true, '未分類'),
+    ('一括ダウンロード.zip', true, '未分類'),
+    ('情報数学 - 第1回 資料.pdf', true, '未分類'),
+    ('情報数学 - 第1回 資料.pdf', false, '情報数学'),
+    ('配布資料_情報数学_第1回.pdf', false, '情報数学'),
+    ('線形代数_第3回.pdf', false, '線形代数'),
+  ]) {
+    test('sorts $name using known courses (ambiguous page: $ambiguous)',
+        () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-course-');
+      addTearDown(() => directory.delete(recursive: true));
+      final storage = _MemorySecureStorage({
+        'more_better_gakujo_download_root_path': directory.path,
+        'more_better_gakujo_download_history': jsonEncode([
+          GakujoDownloadHistoryEntry(
+            fileName: 'notes.pdf',
+            courseName: '情報数学',
+            savedAt: DateTime.now(),
+          ).toJson(),
+        ]),
+      });
+      final bytes = Uint8List.fromList([1, 2, 3]);
+      final result = await FileSystemGakujoDownloadService(
+        secureStorage: storage,
+        usesNativeDownloadRoot: false,
+        authenticatedBytesLoader: (request, {userAgent}) async =>
+            AuthenticatedDownloadedFile(
+          bytes: bytes,
+          finalUrl: request.url,
+          contentDispositionFileName: name,
+        ),
+      ).download(
+        GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+          method: 'GET',
+          courseName: '未分類',
+          fileName: 'ダウンロード',
+          formFields: const {},
+          courseNameAmbiguous: ambiguous,
+        ),
+        saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
+      );
+      expect(result.courseName, expectedCourse);
+      final saved = File(result.location!);
+      expect(
+        saved.parent.uri.pathSegments.where((part) => part.isNotEmpty).last,
+        expectedCourse,
+      );
+      expect(await saved.readAsBytes(), bytes);
+      expect(await directory.list().length, 1);
+    });
+  }
 
   test('does not overwrite an existing file whose name differs only by case',
       () async {

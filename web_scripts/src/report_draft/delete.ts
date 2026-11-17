@@ -1,4 +1,4 @@
-import { isDraftKey, draftDocuments } from './storage_helpers.js';
+import { cleanupMigrationSources, isDraftKey, draftDocuments } from './storage_helpers.js';
 
 declare const __mbgConfig: { key: string };
 
@@ -10,6 +10,7 @@ function reportDraftDelete() {
   var failed = false;
   draftDocuments().forEach(function(doc) {
     try {
+      cleanupMigrationSources(doc.defaultView!.localStorage, key);
       doc.defaultView!.localStorage.removeItem(key);
       var win = doc.defaultView!;
       var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS ||

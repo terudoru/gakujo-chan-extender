@@ -503,6 +503,8 @@ void Webview::RegisterEventHandlers() {
 
               wil::unique_cotaskmem_string mimeType;
               download->get_MimeType(&mimeType);
+              wil::unique_cotaskmem_string contentDisposition;
+              download->get_ContentDisposition(&contentDisposition);
 
               wil::unique_cotaskmem_string resultFilePath;
               args->get_ResultFilePath(&resultFilePath);
@@ -515,7 +517,10 @@ void Webview::RegisterEventHandlers() {
                          ? util::Utf8FromUtf16(resultFilePath.get())
                          : "",
                      0, totalBytesToReceive,
-                     mimeType ? util::Utf8FromUtf16(mimeType.get()) : ""});
+                     mimeType ? util::Utf8FromUtf16(mimeType.get()) : "",
+                     contentDisposition
+                         ? util::Utf8FromUtf16(contentDisposition.get())
+                         : ""});
               }
 
               return S_OK;

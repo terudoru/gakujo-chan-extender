@@ -126,11 +126,43 @@ const String gakujoReportDraftJs = r'''
     };
   }
 
+  // web_scripts/src/report_draft/storage_helpers.ts
+  var retentionMs = 14 * 24 * 60 * 60 * 1e3;
+  function isDraftKey(key) {
+    return typeof key === "string" && /^mbg-report-draft:v[12]:/.test(key);
+  }
+  var migrationPrefix = "mbg-report-draft:migration:";
+  function migrationSources(store, key) {
+    var raw = store.getItem(migrationPrefix + key);
+    if (!raw) return [];
+    var sources = JSON.parse(raw);
+    return Array.isArray(sources) ? sources.filter(function(source) {
+      return isDraftKey(source) && source !== key;
+    }) : [];
+  }
+  function rememberMigration(store, key, source) {
+    if (!store) return false;
+    try {
+      var sources = migrationSources(store, key);
+      if (sources.indexOf(source) < 0) sources.push(source);
+      store.setItem(migrationPrefix + key, JSON.stringify(sources));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  function cleanupMigrationSources(store, key) {
+    migrationSources(store, key).forEach(function(source) {
+      store.removeItem(source);
+    });
+    store.removeItem(migrationPrefix + key);
+  }
+
   // web_scripts/src/report_draft/main.ts
   function reportDraft() {
     var version = 11;
     var prefix = "mbg-report-draft:v2:";
-    var retentionMs = 14 * 24 * 60 * 60 * 1e3;
+    var retentionMs2 = 14 * 24 * 60 * 60 * 1e3;
     if (window.__MBG_REPORT_DRAFT_VERSION === version) {
       if (window.__MBG_REPORT_DRAFT_UPDATE) {
         window.__MBG_REPORT_DRAFT_UPDATE();
@@ -639,7 +671,7 @@ const String gakujoReportDraftJs = r'''
             continue;
           }
           var draft = readDraft(store, key);
-          if (!draft || typeof draft.savedAt !== "number" || !isFinite(draft.savedAt) || !draft.savedAt || !Array.isArray(draft.fields) || now - draft.savedAt > retentionMs) {
+          if (!draft || typeof draft.savedAt !== "number" || !isFinite(draft.savedAt) || !draft.savedAt || !Array.isArray(draft.fields) || now - draft.savedAt > retentionMs2) {
             store.removeItem(key);
           }
         }
@@ -692,6 +724,11 @@ const String gakujoReportDraftJs = r'''
         var found = doc.__MBG_REPORT_DRAFT_LEGACY_FOUND;
         if (found && found.key === key2 && found.legacyKey) {
           deleted = removeDraft(store2, found.legacyKey) && deleted;
+        }
+        try {
+          if (store2 && key2) cleanupMigrationSources(store2, key2);
+        } catch (_) {
+          deleted = false;
         }
         if (!deleted) {
           updateStatus(doc, "下書きを削除できませんでした", clearStoredDraft);
@@ -840,6 +877,12 @@ const String gakujoReportDraftJs = r'''
     }
     function restoreDraft(doc, store, key, fields, force) {
       var draft = readDraft(store, key);
+      if (draft && store) {
+        try {
+          cleanupMigrationSources(store, key);
+        } catch (_) {
+        }
+      }
       var legacyKey = null;
       if (!draft) {
         var rawKey = draftKey(doc, fields, true);
@@ -959,8 +1002,11 @@ const String gakujoReportDraftJs = r'''
       } finally {
         doc.__MBG_REPORT_DRAFT_RESTORING = false;
       }
-      if (legacyKey && writeDraft(store, key, draft)) {
-        removeDraft(store, legacyKey);
+      if (legacyKey && rememberMigration(store, key, legacyKey) && writeDraft(store, key, draft)) {
+        try {
+          cleanupMigrationSources(store, key);
+        } catch (_) {
+        }
         doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
       }
       if (conflict) {

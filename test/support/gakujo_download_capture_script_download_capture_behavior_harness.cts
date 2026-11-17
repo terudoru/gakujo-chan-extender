@@ -1,4 +1,7 @@
-process.argv = [process.argv[0], ...process.argv.slice(2).map((path) => require('node:fs').readFileSync(path, 'utf8'))];
+const sourceInput = process.argv[2] === '-' ?
+  JSON.parse(require('node:fs').readFileSync(0, 'utf8')) : null;
+process.argv = sourceInput ? [process.argv[0], sourceInput.script, sourceInput.scenario] :
+  [process.argv[0], ...process.argv.slice(2).map((path) => require('node:fs').readFileSync(path, 'utf8'))];
 const vm: any = require('node:vm');
 const buildScript = process.argv[1];
 const scenario = process.argv[2] || 'links';
@@ -47,9 +50,15 @@ window.window = window;
 
 class FakeFormData {
   [key: string]: any;
-  constructor(form) { this.fields = new Map(Object.entries(form.fields || {})); }
-  set(key, value) { this.fields.set(key, value); }
-  forEach(callback) { this.fields.forEach(callback); }
+  constructor(form) { this.fields = Array.isArray(form.fields) ? [...form.fields] : Object.entries(form.fields || {}); }
+  set(key, value) {
+    const first = this.fields.findIndex(pair => pair[0] === key);
+    if (first < 0) this.append(key, value);
+    else this.fields = this.fields.filter((pair, index) => index === first || pair[0] !== key)
+      .map((pair, index) => index === first ? [key, value] : pair);
+  }
+  append(key, value) { this.fields.push([key, value]); }
+  forEach(callback) { this.fields.forEach(([key, value]) => callback(value, key)); }
 }
 
 function anchor(href?: any, text?: any, downloadName?: any, attributes: any = {}) {
@@ -182,6 +191,47 @@ function submitEvent(form?: any, submitter?: any) {
 }
 
 function behavior() {
+  if (scenario === 'repeatedFormFields') {
+    const button = submitterWithForm('Download', 'exports/form.pdf', [
+      ['fileId', 'A'], ['_eventId', 'download'], ['fileId', 'B']
+    ]);
+    button.name = 'fileId';
+    button.value = 'C';
+    click(button);
+    return {captured};
+  }
+  if (scenario === 'courseRowAndFrame') {
+    function table(names) {
+      const rows = [['科目名', '資料名'], ...names.map(name => [name, 'notes.pdf'])]
+        .map((cells, index) => ({querySelectorAll() {
+          return cells.map(innerText => ({tagName: index ? 'td' : 'th', innerText}));
+        }}));
+      return {rows, querySelectorAll() { return rows; }};
+    }
+    const courses = table(['Physics', 'Chemistry']);
+    childDocument.querySelectorAll = selector => selector === 'table' ? [courses] : [];
+    const link = anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf');
+    link.closest = selector => selector === 'a[href]' ? link :
+      selector === 'tr' ? courses.rows[2] : null;
+    click(link);
+    const button = submitterWithForm('Download', 'exports/form.pdf',
+      {_eventId: 'download'}, {onclick: 'download()'});
+    const closest = button.closest;
+    button.closest = selector => selector === 'tr' ? courses.rows[2] : closest(selector);
+    click(button);
+    button.form.submit();
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    const other = table(['Physics']), local = table(['Chemistry']);
+    topDocument.querySelectorAll = selector => selector === 'table' ? [other] : [];
+    childDocument.querySelectorAll = selector => selector === 'table' ? [local] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    childDocument.querySelectorAll = selector => selector === 'h1' ? [{innerText: 'Chemistry'}] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    childDocument.querySelectorAll = selector => selector === 'h1' ?
+      [{innerText: 'Physics'}, {innerText: 'Chemistry'}] : [];
+    click(anchor('exports/form.pdf', 'notes.pdf', 'notes.pdf'));
+    return {captured};
+  }
   if (scenario === 'nonSubmitButtons') {
     const prevented: any = [], stopped: any = [], postCounts: any = [];
     for (const type of ['reset', 'button', 'submit', 'SUBMIT']) {

@@ -1,4 +1,5 @@
 #include "webview/download_policy.h"
+#include "webview/download_staging.h"
 
 #include <glib/gstdio.h>
 #include <libsoup/soup.h>
@@ -262,11 +263,9 @@ bool DownloadPolicy::Cancel(const std::string &id) {
 }
 
 bool DownloadPolicy::PrepareStaging(Task &task, GError **error) {
-  gchar *directory = g_dir_make_tmp("webview-all-download-XXXXXX", error);
-  if (!directory)
+  task.staging_directory = download_staging::Create(g_get_tmp_dir(), error);
+  if (task.staging_directory.empty())
     return false;
-  task.staging_directory = directory;
-  g_free(directory);
   task.staging_file = task.staging_directory + "/payload";
   return true;
 }

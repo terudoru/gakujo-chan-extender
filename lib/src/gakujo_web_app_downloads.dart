@@ -5,22 +5,17 @@ part of 'gakujo_web_app.dart';
 @visibleForTesting
 String gakujoNativeDownloadSuggestedName(
   String resultFilePath, {
-  required bool Function(String path) exists,
+  String? contentDisposition,
 }) {
   final path = resultFilePath.replaceAll('\\', '/');
   final separator = path.lastIndexOf('/');
   final name = path.substring(separator + 1);
-  final strippedName =
-      name.replaceFirst(RegExp(r' \(\d+\)(?=\.[^.]*$|$)'), '');
-  if (separator < 0 || strippedName == name) return name;
-  try {
-    if (exists('${path.substring(0, separator + 1)}$strippedName')) {
-      return strippedName;
-    }
-  } on Object {
-    // Keep the suggested name if its directory cannot be checked.
-  }
-  return name;
+  final original = DownloadFileNamePolicy.fileNameFromContentDisposition(
+    contentDisposition,
+  );
+  // A numbered server name is legitimate; the Downloads directory is no proof
+  // that WebView2 added a collision suffix.
+  return original == null || original.isEmpty ? name : original;
 }
 
 @visibleForTesting
@@ -46,11 +41,9 @@ Future<void> handleGakujoNativeDownload(
     return;
   }
 
-  // WebView2 suggests a path in Windows' Downloads folder and appends " (n)"
-  // when that folder already holds the name; the course folder does not.
   final suggestedName = gakujoNativeDownloadSuggestedName(
     download.resultFilePath,
-    exists: (path) => File(path).existsSync(),
+    contentDisposition: download.contentDisposition,
   );
   await onDownload(
     GakujoDownloadRequest(
@@ -67,6 +60,12 @@ Future<void> handleGakujoNativeDownload(
     ),
   );
 }
+
+@visibleForTesting
+String gakujoDriveDownloadCourseName(
+  GakujoDownloadResult result,
+  String courseName,
+) => result.courseName.isEmpty ? courseName : result.courseName;
 
 @visibleForTesting
 String? resolveGakujoDownloadCourseName({
@@ -935,8 +934,10 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     // the file may have been fetched with the other person's session.
     final downloadGeneration = _driveUploads.generation;
     var effectiveRequest = request;
+    GakujoDownloadSnapshot? uploadSnapshot;
     try {
-      if (!_isUsefulCourseName(request.courseName)) {
+      if (!request.courseNameAmbiguous &&
+          !_isUsefulCourseName(request.courseName)) {
         final pageCourseName = mounted && revision == _navigationRevision
             ? await _estimateCourseNameFromPage(await _controller.getTitle())
             : null;
@@ -953,6 +954,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             courseName: courseName,
             fileName: request.fileName,
             formFields: request.formFields,
+            formFieldPairs: request.formFieldPairs,
+            courseNameAmbiguous: request.courseNameAmbiguous,
           );
         }
       }
@@ -995,7 +998,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         cookieHeader: await _cookieHeader(effectiveRequest.url),
         sharePositionOrigin: _sharePositionOrigin(),
         saveMode: _appSettings.downloadSaveMode,
+        retainUploadSnapshot: _driveDownloadsEnabled,
       );
+      uploadSnapshot = result.uploadSnapshot;
       final historyRecorded = await recordGakujoDownloadMetadataBestEffort(
         historyStore: _downloadHistoryStore,
         historyEntry: GakujoDownloadHistoryEntry(
@@ -1026,9 +1031,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                 ? '保存しました: $savedPath'
                 : '保存しました（履歴は更新できませんでした）: $savedPath',
       );
-      _queueDriveDownload(
+      if (_queueDriveDownload(
         result, downloadAccount, downloadEmail, downloadGeneration,
-      );
+        courseName: effectiveRequest.courseName,
+      )) {
+        uploadSnapshot = null;
+      }
       _showDownloadSavedSnackBar(
         result,
         historyRecorded: historyRecorded,
@@ -1051,6 +1059,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       await _recordFailedDownload(effectiveRequest, error.toString());
     } finally {
       _downloadOperationGate.finish(operationKey);
+      await uploadSnapshot?.dispose();
     }
   }
 
@@ -1193,11 +1202,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  void _queueDriveDownload(
+  bool _queueDriveDownload(
     GakujoDownloadResult result, String? account, String? email,
-    int startGeneration,
-  ) {
-    if (!_driveUploads.isCurrent(startGeneration)) return;
+    int startGeneration, {
+    required String courseName,
+  }) {
+    if (!_driveUploads.isCurrent(startGeneration)) return false;
     if (!_driveDownloadPreference.matchesUpload(
       _driveAccountHash, _starSyncGoogleAuth.currentEmail, account, email,
     )) {
@@ -1206,18 +1216,18 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           _appSettingsLoaded && _starSyncGoogleAuth.currentEmail == null && mounted) {
         _showSnackBar('Google のログインが切れたため、Google ドライブに保存できませんでした。設定からもう一度ログインしてください');
       }
-      return;
+      return false;
     }
     if (!_driveDownloadsEnabled) {
       if (!_driveDownloadsSuspended && _appSettingsLoaded &&
           _driveDownloadPreference.enabled && mounted) {
         _showSnackBar('ログインIDが変わったため、Google ドライブへの保存を見送りました');
       }
-      return;
+      return false;
     }
-    final location = result.location;
     final uploadBytes = result.uploadBytes;
-    final courseName = result.courseName;
+    final uploadSnapshot = result.uploadSnapshot;
+    final driveCourseName = gakujoDriveDownloadCourseName(result, courseName);
     final fileName = result.fileName;
     _driveUploads.add((generation) => _driveDownloadQueue.run(() async {
       bool allowed() => _driveUploads.isCurrent(generation) &&
@@ -1231,22 +1241,11 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
         if (uploadBytes != null) {
           length = uploadBytes.length;
           open = () => Stream<List<int>>.value(uploadBytes);
+        } else if (uploadSnapshot != null) {
+          length = uploadSnapshot.length;
+          open = uploadSnapshot.openRead;
         } else {
-          if (location == null || location.isEmpty) {
-            throw StateError('Local file is unavailable');
-          }
-          final uri = Uri.tryParse(location);
-          final isContent = Platform.isAndroid && uri?.scheme == 'content';
-          const contentService = MethodChannelGakujoDownloadService();
-          final file = isContent
-              ? null
-              : (uri?.scheme == 'file' ? File.fromUri(uri!) : File(location));
-          length = isContent
-              ? await contentService.contentUriSize(location)
-              : await file!.length();
-          open = isContent
-              ? () => contentService.openContentUri(location, length)
-              : file!.openRead;
+          throw StateError('Download upload snapshot is unavailable');
         }
         if (GoogleDriveFileSaver.isAutomaticFileTooLarge(length)) {
           throw const GoogleDriveSaveTooLarge();
@@ -1284,7 +1283,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
           );
         }
         await _googleDriveFileSaver!.saveFile(
-          courseName: courseName,
+          courseName: driveCourseName,
           fileName: fileName,
           open: open,
           length: length,
@@ -1357,7 +1356,8 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             name: 'MoreBetterGakujo');
         if (allowed() && mounted) _showSnackBar('Google ドライブに保存できませんでした');
       }
-    }));
+    }), cleanUp: uploadSnapshot?.dispose);
+    return true;
   }
 
   void _showDownloadSavedSnackBar(

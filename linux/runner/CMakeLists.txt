@@ -26,3 +26,5 @@ pkg_check_modules(GIO_UNIX REQUIRED IMPORTED_TARGET gio-unix-2.0)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GIO_UNIX)
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+target_include_directories(${BINARY_NAME} PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/webview_flutter_linux/linux/src")

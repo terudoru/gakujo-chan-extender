@@ -1,6 +1,6 @@
 export {};
 function downloadCapture() {
-  var captureVersion = 20;
+  var captureVersion = 21;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -284,25 +284,32 @@ function downloadCapture() {
     return documents;
   }
 
-  function firstUsefulText(selectors: string[]) {
-    var documents = collectDocuments();
+  function firstUsefulText(selectors: string[], documents = collectDocuments()) {
     for (var i = 0; i < selectors.length; i += 1) {
+      var names = new Set<string>();
       for (var d = 0; d < documents.length; d += 1) {
         var elements = documents[d].querySelectorAll<HTMLElement>(selectors[i]);
         for (var j = 0; j < elements.length; j += 1) {
           var text = textOf(elements[j]);
           if (text && !isIgnoredCourseName(normalizeCourseName(text))) {
-            return text;
+            names.add(normalizeCourseName(text));
           }
         }
       }
+      if (names.size) return names.size > 1 ? '未分類' : Array.from(names)[0];
     }
     return '';
   }
 
-  function estimateCourseName() {
-    var tableCourse = firstCourseNameFromTables();
+  var courseNameAmbiguous = false;
+  function estimateCourseName(source?: HTMLElement | null) {
+    courseNameAmbiguous = false;
+    var documents = source && source.ownerDocument ? [source.ownerDocument] : collectDocuments();
+    var row = source && source.closest ? source.closest('tr') : null;
+    var tableCourse = row ? firstCourseNameFromTables(documents, row) : '';
+    if (!tableCourse) tableCourse = firstCourseNameFromTables(documents);
     if (tableCourse) {
+      courseNameAmbiguous = tableCourse === '未分類';
       return normalizeCourseName(tableCourse);
     }
 
@@ -312,8 +319,9 @@ function downloadCapture() {
       'div',
       'p',
       'span'
-    ]);
+    ], documents);
     if (explicitCourse) {
+      courseNameAmbiguous = explicitCourse === '未分類';
       return normalizeCourseName(explicitCourse);
     }
 
@@ -328,18 +336,34 @@ function downloadCapture() {
       '.kamoku',
       '.selected',
       '.active'
-    ]) || document.title || '未分類';
-    return normalizeCourseName(candidate);
+    ], documents);
+    if (candidate) {
+      courseNameAmbiguous = candidate === '未分類';
+      return normalizeCourseName(candidate);
+    }
+    if (source) return estimateCourseName();
+    return normalizeCourseName(document.title || '未分類');
   }
 
   window.__MBG_ESTIMATE_COURSE_NAME = estimateCourseName;
 
-  function firstCourseNameFromTables() {
-    var documents = collectDocuments();
+  function coursePayload(source: HTMLElement) {
+    var courseName = estimateCourseName(source);
+    return {courseName: courseName,
+      ...(courseNameAmbiguous ? {courseNameAmbiguous: true} : {})};
+  }
+
+  function firstCourseNameFromTables(documents: Document[], selectedRow?: Element | null) {
+    var names = new Set<string>();
+    function add(value: string) {
+      var normalized = normalizeCourseName(value);
+      if (value && !isIgnoredCourseName(normalized)) names.add(normalized);
+    }
     for (var d = 0; d < documents.length; d += 1) {
       var tables = documents[d].querySelectorAll('table');
       for (var t = 0; t < tables.length; t += 1) {
         var rows = tables[t].querySelectorAll('tr');
+        if (selectedRow && Array.prototype.indexOf.call(rows, selectedRow) < 0) continue;
         for (var r = 0; r < rows.length; r += 1) {
           var cells = rows[r].querySelectorAll<HTMLElement>('th,td');
           var courseIndex = -1;
@@ -349,47 +373,43 @@ function downloadCapture() {
               break;
             }
           }
-          if (courseIndex < 0) {
-            continue;
-          }
-          for (var same = courseIndex + 1; same < cells.length; same += 1) {
-            if (cells[same].tagName.toLowerCase() === 'th') {
-              continue;
+          if (courseIndex < 0) continue;
+          var sameRowCourse = false;
+          if (!selectedRow || rows[r] === selectedRow) {
+            for (var same = courseIndex + 1; same < cells.length; same += 1) {
+              if (cells[same].tagName.toLowerCase() !== 'th') {
+                add(textOf(cells[same]));
+                sameRowCourse = true;
+                break;
+              }
             }
-            var sameRowValue = textOf(cells[same]);
-            if (sameRowValue && !isIgnoredCourseName(normalizeCourseName(sameRowValue))) {
-              return sameRowValue;
-            }
           }
+          if (sameRowCourse) continue;
           for (var next = r + 1; next < rows.length; next += 1) {
+            if (selectedRow && rows[next] !== selectedRow) continue;
             var nextCells = rows[next].querySelectorAll<HTMLElement>('th,td');
-            if (nextCells.length <= courseIndex) {
-              continue;
-            }
-            var value = textOf(nextCells[courseIndex]);
-            if (value && !isIgnoredCourseName(normalizeCourseName(value))) {
-              return value;
-            }
+            if (nextCells.length > courseIndex) add(textOf(nextCells[courseIndex]));
           }
         }
       }
     }
-    return '';
+    return names.size > 1 ? '未分類' : Array.from(names)[0] || '';
   }
 
-  function firstMatchingCourseNameText(selectors: string[]) {
-    var documents = collectDocuments();
+  function firstMatchingCourseNameText(selectors: string[], documents = collectDocuments()) {
     for (var i = 0; i < selectors.length; i += 1) {
+      var names = new Set<string>();
       for (var d = 0; d < documents.length; d += 1) {
         var elements = documents[d].querySelectorAll<HTMLElement>(selectors[i]);
         for (var j = 0; j < elements.length; j += 1) {
           var text = textOf(elements[j]);
           var extracted = extractCourseNameFromText(text);
           if (extracted) {
-            return extracted;
+            names.add(normalizeCourseName(extracted));
           }
         }
       }
+      if (names.size) return names.size > 1 ? '未分類' : Array.from(names)[0];
     }
     return '';
   }
@@ -547,23 +567,23 @@ function downloadCapture() {
   }
 
   function formFields(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined) {
-    var fields: Record<string, string> = Object.create(null);
+    var fields: [string, string][] = [];
     if (!form) {
       return fields;
     }
     var data = new FormData(form);
     if (submitter && submitter.name) {
-      data.set(submitter.name, submitter.value || '');
+      data.append(submitter.name, submitter.value || '');
     }
     data.forEach(function(value, key) {
       if (typeof value === 'string') {
-        fields[key] = value;
+        fields.push([key, value]);
       }
     });
     return fields;
   }
 
-  function post(payload: {url: string; method: string; fileName: string; courseName: string; formFields: Record<string, string>}) {
+  function post(payload: {url: string; method: string; fileName: string; courseName: string; courseNameAmbiguous?: boolean; formFields: Record<string, string>; formFieldPairs?: [string, string][]}) {
     window.MoreBetterGakujoDownloads.postMessage(JSON.stringify(payload));
   }
 
@@ -622,7 +642,7 @@ function downloadCapture() {
       ? submitter.getAttribute('form' + name) : form.getAttribute(name);
   }
 
-  function captureForm(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined, explicitOnly?: boolean) {
+  function captureForm(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined, explicitOnly?: boolean, courseSource?: HTMLElement) {
     if (!form || isAppOwned(form) || submitter && isAppOwned(submitter)) return false;
     var action = submissionAttribute(form, submitter, 'action') || baseUrlOf(form);
     var method = (submissionAttribute(form, submitter, 'method') || 'GET').toUpperCase();
@@ -634,7 +654,9 @@ function downloadCapture() {
         method === 'POST' && enctype !== 'application/x-www-form-urlencoded' ||
         !/^_self$/i.test(target)) return false;
     var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute('formaction') ? submitter : form, action);
-    var fields = formFields(form, submitter);
+    var pairs = formFields(form, submitter);
+    var fields: Record<string, string> = Object.create(null);
+    pairs.forEach(function(field) { fields[field[0]] = field[1]; });
     var signals = formDownloadSignals(absoluteAction, fields);
     if (signals.workflow) return false;
     if (explicitOnly) {
@@ -645,8 +667,9 @@ function downloadCapture() {
       url: absoluteAction,
       method: method,
       fileName: downloadFileName(submitter, form),
-      courseName: estimateCourseName(),
-      formFields: fields
+      ...coursePayload(courseSource || submitter || form),
+      formFields: fields,
+      ...(pairs.length > Object.keys(fields).length ? {formFieldPairs: pairs} : {})
     });
     return true;
   }
@@ -693,7 +716,7 @@ function downloadCapture() {
         url: absoluteUrl,
         method: 'GET',
         fileName: downloadFileName(anchor, null),
-        courseName: estimateCourseName(),
+        ...coursePayload(anchor),
         formFields: {}
       });
       return;
@@ -731,7 +754,7 @@ function downloadCapture() {
       url: submitterPageUrl,
       method: 'GET',
       fileName: downloadFileName(submitter, null),
-      courseName: estimateCourseName(),
+      ...coursePayload(submitter),
       formFields: {}
     });
   };
@@ -757,8 +780,9 @@ function downloadCapture() {
     if (!prototype) return;
     var entry: MbgSubmitHookEntry = { prototype: prototype, original: prototype.submit };
     var wrapper: MbgSubmitHookFunction = function(this: HTMLFormElement) {
+      var courseSource = formSubmitters.get(this);
       formSubmitters.delete(this);
-      if (!captureForm(this, null, true)) return entry.original.apply(this, arguments as unknown as []);
+      if (!captureForm(this, null, true, courseSource)) return entry.original.apply(this, arguments as unknown as []);
     };
     wrapper.__mbgFormSubmitHook = entry;
     entry.wrapper = wrapper;

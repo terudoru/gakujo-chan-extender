@@ -365,6 +365,8 @@ void WebviewBridge::RegisterEventHandlers() {
               flutter::EncodableValue(webviewDownloadEvent.resultFilePath)},
              {flutter::EncodableValue("mimeType"),
               flutter::EncodableValue(webviewDownloadEvent.mimeType)},
+             {flutter::EncodableValue("contentDisposition"),
+              flutter::EncodableValue(webviewDownloadEvent.contentDisposition)},
              {flutter::EncodableValue("bytesReceived"),
               flutter::EncodableValue(webviewDownloadEvent.bytesReceived)},
              {flutter::EncodableValue("totalBytesToReceive"),

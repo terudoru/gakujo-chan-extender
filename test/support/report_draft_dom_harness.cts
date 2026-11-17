@@ -1,7 +1,7 @@
 import type {} from 'node:fs';
 const vm: any = require('node:vm');
 const {generatedScript, spec, listScript, deleteScript, exportScript, importScript} = JSON.parse(
-  require('node:fs').readFileSync(process.argv[2], 'utf8')
+  require('node:fs').readFileSync(process.argv[2] === '-' ? 0 : process.argv[2], 'utf8')
 );
 const storageValues: any = new Map();
 let xssExecutionCount: any = 0;
@@ -333,7 +333,7 @@ function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimer
 
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
-  if (spec.scenario === 'deleteMigrationSource') {
+  if (spec.scenario === 'deleteMigrationSource' || spec.scenario === 'remoteDeleteMigrationSource') {
     const legacy = spec.source === 'legacy';
     const pathname = legacy ? '/report/input' : '/campusweb/report/input;jsessionid=A';
     const sourceKey = legacy ? 'mbg-report-draft:v1:cmm5xw' : 'mbg-report-draft:v2:jpaytn';
@@ -355,11 +355,42 @@ function runExtendedScenario() {
     storage.setItem(sourceKey, payload);
     const otherKeys = ['mbg-report-draft:v1:other', 'mbg-report-draft:v2:other', 'other-key'];
     for (const key of otherKeys) storage.setItem(key, payload);
-    storage.failWrite = true;
+    if (spec.scenario === 'remoteDeleteMigrationSource') storage.failRemoveKey = sourceKey;
+    else storage.failWrite = true;
     const page = form();
     runPage(page);
     const canonicalKey = page.document.insertedStatus.__MBG_REPORT_DRAFT_KEY;
     const restored = page.field.value;
+    if (spec.scenario === 'remoteDeleteMigrationSource') {
+      const reopened = form();
+      runPage(reopened);
+      const linkKey = 'mbg-report-draft:migration:' + canonicalKey;
+      const linked = JSON.parse(storage.getItem(linkKey)).includes(sourceKey);
+      if (spec.cleanup) {
+        delete storage.failRemoveKey;
+        reopened.window.__MBG_REPORT_DRAFT_UPDATE();
+        return {restored, linked, sourceRemoved: storage.getItem(sourceKey) === null,
+          linkRemoved: storage.getItem(linkKey) === null,
+          canonicalRetained: storage.getItem(canonicalKey) !== null};
+      }
+      const basedOn = JSON.parse(runPage(reopened, exportScript));
+      function removeRemote() {
+        return runPage(reopened, importScript.replace('__MBG_IMPORT_CONFIG__',
+          JSON.stringify({drafts: '{}', basedOn: JSON.stringify(basedOn)})));
+      }
+      const refused = removeRemote() === false;
+      const retained = storage.getItem(sourceKey) !== null && storage.getItem(canonicalKey) !== null &&
+        storage.getItem(linkKey) !== null;
+      delete storage.failRemoveKey;
+      const applied = removeRemote();
+      const afterDelete = form();
+      runPage(afterDelete);
+      return {restored, linked, refused, retained, applied,
+        restoredAgain: afterDelete.field.value,
+        sourceRemoved: storage.getItem(sourceKey) === null,
+        canonicalRemoved: storage.getItem(canonicalKey) === null,
+        linkRemoved: storage.getItem(linkKey) === null};
+    }
     const migrationFailed = storage.getItem(canonicalKey) === null && storage.getItem(sourceKey) === payload;
     if (!legacy) {
       // A remembered migration for another document must not be deleted.

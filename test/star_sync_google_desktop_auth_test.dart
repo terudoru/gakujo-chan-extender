@@ -82,6 +82,8 @@ void main() {
   var omitScope = false;
   Completer<void>? tokenStarted;
   Completer<void>? tokenContinue;
+  Completer<void>? refreshStarted;
+  Completer<void>? refreshContinue;
 
   setUp(() async {
     storage = _Storage();
@@ -99,6 +101,8 @@ void main() {
     omitScope = false;
     tokenStarted = null;
     tokenContinue = null;
+    refreshStarted = null;
+    refreshContinue = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     endpoint = Uri.parse('http://127.0.0.1:${server.port}');
     server.listen((request) async {
@@ -117,7 +121,10 @@ void main() {
           fields['refresh_token'],
           incremental ? 'new-refresh-secret' : 'refresh-secret',
         );
-        if (revoked) {
+        final wasRevoked = revoked;
+        refreshStarted?.complete();
+        if (refreshContinue != null) await refreshContinue!.future;
+        if (wasRevoked) {
           request.response.statusCode = 400;
           request.response.write(jsonEncode({'error': 'invalid_grant'}));
         } else {
@@ -320,7 +327,7 @@ void main() {
     );
     final uri = await launched.future;
     auth.cancelPendingSignIn();
-    await failure.timeout(const Duration(seconds: 2));
+    await failure;
     auth.cancelPendingSignIn();
     final client = HttpClient();
     try {
@@ -441,10 +448,13 @@ void main() {
     expect(await makeAuth().signIn(), 'user@example.com');
   });
 
-  test('malformed callback queries return 400 without aborting sign in', () async {
-    malformedQuery = true;
-    expect(await makeAuth().signIn(), 'user@example.com');
-  });
+  test(
+    'malformed callback queries return 400 without aborting sign in',
+    () async {
+      malformedQuery = true;
+      expect(await makeAuth().signIn(), 'user@example.com');
+    },
+  );
 
   test(
     'sign in reports unavailable storage without setting credentials',
@@ -505,6 +515,49 @@ void main() {
     );
     expect(storage.values, isEmpty);
   });
+
+  for (final invalidGrant in [false, true]) {
+    for (final sameRefresh in [false, true]) {
+      test(
+        'ignores stale refresh after reauthorization ($invalidGrant, $sameRefresh)',
+        () async {
+          final auth = makeAuth();
+          await auth.signIn();
+          final generation = auth.generation;
+          refreshStarted = Completer<void>();
+          refreshContinue = Completer<void>();
+          revoked = invalidGrant;
+          final pending = expectLater(
+            auth.accessToken(forceRefresh: true),
+            throwsA(
+              isA<StarSyncGoogleAuthException>().having(
+                (error) => error.kind,
+                'kind',
+                StarSyncGoogleAuthErrorKind.notSignedIn,
+              ),
+            ),
+          );
+          await refreshStarted!.future;
+          incremental = !sameRefresh;
+          changedAccount = !sameRefresh;
+          await auth.signIn(
+            optionalScopes: incremental ? [googleDriveFileScope] : [],
+          );
+          final credentials = storage.values[starSyncGoogleTokenKey];
+          expect(auth.generation, greaterThan(generation));
+          refreshContinue!.complete();
+          await pending;
+          expect(
+            auth.currentEmail,
+            sameRefresh ? 'user@example.com' : 'other@example.com',
+          );
+          expect(storage.values[starSyncGoogleTokenKey], credentials);
+          expect(await auth.accessToken(), 'initial');
+          expect(refreshes, 1);
+        },
+      );
+    }
+  }
 
   test('invalid grant clears memory even when deletion fails', () async {
     final auth = makeAuth();

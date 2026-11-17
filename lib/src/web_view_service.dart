@@ -109,11 +109,13 @@ class GakujoWebViewDownload {
     required this.url,
     this.resultFilePath = '',
     this.mimeType = '',
+    this.contentDisposition = '',
   });
 
   final String url;
   final String resultFilePath;
   final String mimeType;
+  final String contentDisposition;
 }
 
 class GakujoNavigationDelegate {
@@ -1487,6 +1489,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
           url: event.url,
           resultFilePath: event.resultFilePath,
           mimeType: event.mimeType,
+          contentDisposition: event.contentDisposition,
         ),
       );
     } on Object catch (error, stackTrace) {

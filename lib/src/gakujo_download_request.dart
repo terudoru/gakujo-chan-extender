@@ -11,6 +11,8 @@ class GakujoDownloadRequest {
     required this.courseName,
     required this.fileName,
     required this.formFields,
+    this.formFieldPairs,
+    this.courseNameAmbiguous = false,
   });
 
   final String url;
@@ -18,6 +20,36 @@ class GakujoDownloadRequest {
   final String courseName;
   final String fileName;
   final Map<String, String> formFields;
+  final List<List<String>>? formFieldPairs;
+  final bool courseNameAmbiguous;
+
+  List<List<String>> get orderedFormFields =>
+      formFieldPairs ??
+      [for (final field in formFields.entries) [field.key, field.value]];
+
+  List<List<String>> get canonicalFormFields {
+    final grouped = <String, List<String>>{};
+    for (final field in orderedFormFields) {
+      (grouped[field[0]] ??= []).add(field[1]);
+    }
+    final names = grouped.keys.toList()..sort();
+    return [
+      for (final name in names)
+        for (final value in grouped[name]!) [name, value],
+    ];
+  }
+
+  static List<List<String>>? _parsePairs(Object? raw) {
+    if (raw is! List) return null;
+    return [
+      for (final pair in raw)
+        if (pair is List &&
+            pair.length == 2 &&
+            pair[0] != null &&
+            pair[1] != null)
+          [pair[0].toString(), pair[1].toString()],
+    ];
+  }
 
   factory GakujoDownloadRequest.fromJsonText(String text) {
     final raw = jsonDecode(text);
@@ -36,7 +68,7 @@ class GakujoDownloadRequest {
     }
 
     final rawFileName = raw['fileName']?.toString();
-    final fileName = rawFileName == null || rawFileName.trim().isEmpty
+    final fileName = !DownloadFileNamePolicy.isUsefulDisplayedName(rawFileName)
         ? ''
         : DownloadFileNamePolicy.safeFileName(
             preferredName: rawFileName,
@@ -51,6 +83,8 @@ class GakujoDownloadRequest {
           DownloadFileNamePolicy.safeFolderName(raw['courseName']?.toString()),
       fileName: fileName,
       formFields: fields,
+      formFieldPairs: _parsePairs(raw['formFieldPairs']),
+      courseNameAmbiguous: raw['courseNameAmbiguous'] == true,
     );
   }
 
@@ -61,6 +95,8 @@ class GakujoDownloadRequest {
       'courseName': courseName,
       'fileName': fileName,
       'formFields': formFields,
+      if (formFieldPairs != null) 'formFieldPairs': formFieldPairs,
+      if (courseNameAmbiguous) 'courseNameAmbiguous': true,
       if (userAgent != null && userAgent.isNotEmpty) 'userAgent': userAgent,
     };
   }
@@ -72,6 +108,8 @@ class GakujoDownloadRequest {
       'courseName': courseName,
       'fileName': fileName,
       'formFields': formFields,
+      if (formFieldPairs != null) 'formFieldPairs': formFieldPairs,
+      if (courseNameAmbiguous) 'courseNameAmbiguous': true,
     };
   }
 
@@ -103,7 +141,7 @@ class GakujoDownloadRequest {
     }
 
     final rawFileName = raw['fileName']?.toString();
-    final fileName = rawFileName == null || rawFileName.trim().isEmpty
+    final fileName = !DownloadFileNamePolicy.isUsefulDisplayedName(rawFileName)
         ? ''
         : DownloadFileNamePolicy.safeFileName(
             preferredName: rawFileName,
@@ -117,6 +155,8 @@ class GakujoDownloadRequest {
           DownloadFileNamePolicy.safeFolderName(raw['courseName']?.toString()),
       fileName: fileName,
       formFields: fields,
+      formFieldPairs: _parsePairs(raw['formFieldPairs']),
+      courseNameAmbiguous: raw['courseNameAmbiguous'] == true,
     );
   }
 }
@@ -165,14 +205,12 @@ class GakujoDownloadOperationGate {
   }
 
   String _requestKey(GakujoDownloadRequest request) {
-    final fields = request.formFields.entries.toList()
-      ..sort((left, right) => left.key.compareTo(right.key));
     final url = Uri.tryParse(request.url)?.replace(fragment: '').toString() ??
         request.url;
     return jsonEncode([
       request.method.toUpperCase(),
       url,
-      for (final field in fields) [field.key, field.value],
+      ...request.canonicalFormFields,
     ]);
   }
 }

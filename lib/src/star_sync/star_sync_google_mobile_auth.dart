@@ -21,6 +21,10 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   String? _restoredEmail;
   String? _token;
   final Set<String> _scopes = {...starSyncGoogleScopes};
+  int _generation = 0;
+
+  @override
+  int get generation => _generation;
 
   Future<void> _initialize() => _initialization ??= GoogleSignIn.instance
       .initialize(
@@ -45,6 +49,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   }
 
   void _clearAccount() {
+    _generation++;
     _restoredEmail = null;
     _account = null;
     _token = null;
@@ -125,6 +130,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   @override
   Future<String?> restore({String? expectedEmail}) => _guard(() async {
     await _initialize();
+    _generation++;
     if (_isAndroid) {
       _account = null;
       _restoredEmail = null;
@@ -179,6 +185,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
         await client.authorizationForScopes(starSyncGoogleScopes) ??
         await client.authorizeScopes(starSyncGoogleScopes);
     // Keep the previous account until this one has been authorized.
+    _generation++;
     _account = account;
     _restoredEmail = null;
     _token = authorization.accessToken;
@@ -261,6 +268,7 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
 
   @override
   Future<void> signOut() async {
+    _generation++;
     try {
       await _initialize();
       if (_account == null && _restoredEmail != null && _isAndroid) {

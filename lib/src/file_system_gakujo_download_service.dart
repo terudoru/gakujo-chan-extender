@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -15,6 +16,7 @@ import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
 import 'download_response_policy.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_download_history_store.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'secure_storage_factory.dart';
@@ -83,15 +85,40 @@ class AuthenticatedDownloadedFile {
   }
 
   Future<void> saveTo(String path) async {
-    final file = _file;
-    if (file != null) {
-      await file.copy(path);
-    } else {
-      await File(path).writeAsBytes(_bytes!);
-    }
+    await writeDownloadFileAtomically(path, openRead());
   }
 
+  Stream<List<int>> openRead() => _file?.openRead() ?? Stream.value(_bytes!);
+
   Future<void> dispose() async => _cleanup?.call();
+}
+
+@visibleForTesting
+Future<void> writeDownloadFileAtomically(
+  String path,
+  Stream<List<int>> bytes,
+) async {
+  final parent = File(path).parent;
+  final random = Random.secure();
+  final suffix = List.generate(4, (_) => random.nextInt(1 << 32).toRadixString(16))
+      .join();
+  final temporary = File('${parent.path}/.mbg-download-$suffix.tmp');
+  await temporary.create(exclusive: true);
+  try {
+    final output = await temporary.open(mode: FileMode.writeOnly);
+    try {
+      await for (final chunk in bytes) {
+        await output.writeFrom(chunk);
+      }
+      await output.flush();
+    } finally {
+      await output.close();
+    }
+    // Dart uses a replacing rename on Windows as well as Unix.
+    await temporary.rename(path);
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
 }
 
 @visibleForTesting
@@ -243,6 +270,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     String? cookieHeader,
     Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
+    bool retainUploadSnapshot = false,
   }) async {
     AuthenticatedDownloadedFile? downloaded;
     try {
@@ -268,42 +296,64 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       // .html from the page's own Content-Type and slip past the check.
       await downloaded.validateResponse(request.fileName,
           requestUrl: request.url);
-      final courseFolderName = DownloadFileNamePolicy.courseFolderName(
+      // Prefer a page course, then history matches, then filename heuristics.
+      var courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,
-        fileName: fileName,
+        fileName: '',
+        courseNameAmbiguous: request.courseNameAmbiguous,
       );
+      if (!request.courseNameAmbiguous &&
+          courseFolderName == DownloadFileNamePolicy.unknownCourseFolderName) {
+        var knownCourseNames = <String>[];
+        if (saveMode.autoSortByCourse) {
+          try {
+            final history = await GakujoDownloadHistoryStore(
+              secureStorage: _secureStorage,
+            ).load().timeout(const Duration(seconds: 3));
+            knownCourseNames = history.map((entry) => entry.courseName).toList();
+          } on Object {
+            // Optional course hints must not stop a save when storage is unavailable.
+          }
+        }
+        courseFolderName = DownloadFileNamePolicy.courseFolderName(
+          requestedCourseName: request.courseName,
+          fileName: fileName,
+          knownCourseNames: knownCourseNames,
+        );
+      }
 
+      final GakujoDownloadResult result;
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
         if (Platform.isIOS) {
-          return await _exportToNativePicker(
+          result = await _exportToNativePicker(
             bytes: await downloaded.readBytes(),
             fileName: fileName,
             mimeType: downloaded.mimeType,
           );
+        } else {
+          result = await _saveToPickedFlutterFile(
+            downloaded: downloaded,
+            fileName: fileName,
+          );
         }
-
-        return await _saveToPickedFlutterFile(
-          downloaded: downloaded,
-          fileName: fileName,
-        );
-      }
-
-      if (_usesNativeDownloadRoot) {
-        return await _saveToNativeConfiguredFolder(
+      } else if (_usesNativeDownloadRoot) {
+        result = await _saveToNativeConfiguredFolder(
           bytes: await downloaded.readBytes(),
           fileName: fileName,
           courseFolderName: courseFolderName,
           mimeType: downloaded.mimeType,
           autoSortByCourse: saveMode.autoSortByCourse,
         );
+      } else {
+        result = await _saveToConfiguredFlutterFolder(
+          downloaded: downloaded,
+          fileName: fileName,
+          courseFolderName: courseFolderName,
+          autoSortByCourse: saveMode.autoSortByCourse,
+        );
       }
-
-      return await _saveToConfiguredFlutterFolder(
-        downloaded: downloaded,
-        fileName: fileName,
-        courseFolderName: courseFolderName,
-        autoSortByCourse: saveMode.autoSortByCourse,
-      );
+      if (!retainUploadSnapshot || result.uploadBytes != null) return result;
+      return await result.retainUpload(downloaded.openRead());
     } on PlatformException {
       rethrow;
     } on Object catch (error) {
@@ -462,14 +512,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
 
     var method = request.method.toUpperCase() == 'POST' ? 'POST' : 'GET';
-    var uri = method == 'GET' && request.formFields.isNotEmpty
-        ? Uri.parse(request.url).replace(
-            queryParameters: {
-              ...Uri.parse(request.url).queryParameters,
-              ...request.formFields,
-            },
-          )
-        : Uri.parse(request.url);
+    var uri = Uri.parse(request.url);
+    final fields = request.orderedFormFields;
+    if (method == 'GET' && fields.isNotEmpty) {
+      final names = fields.map((field) => field[0]).toSet();
+      uri = uri.replace(query: _encodeForm([
+        for (final entry in uri.queryParametersAll.entries)
+          if (!names.contains(entry.key))
+            for (final value in entry.value) [entry.key, value],
+        ...fields,
+      ]));
+    }
 
     final client = _httpClientFactory();
     client.connectionTimeout = _requestTimeout;
@@ -498,7 +551,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         }
 
         if (method == 'POST') {
-          final body = _encodeForm(request.formFields);
+          final body = _encodeForm(fields);
           final encodedBody = utf8.encode(body);
           httpRequest.headers
               .set(HttpHeaders.contentLengthHeader, encodedBody.length);
@@ -761,11 +814,11 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
   }
 
-  static String _encodeForm(Map<String, String> fields) {
-    return fields.entries
+  static String _encodeForm(List<List<String>> fields) {
+    return fields
         .map(
           (entry) =>
-              '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
+              '${Uri.encodeQueryComponent(entry[0])}=${Uri.encodeQueryComponent(entry[1])}',
         )
         .join('&');
   }

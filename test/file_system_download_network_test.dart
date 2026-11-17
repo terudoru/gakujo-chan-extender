@@ -10,6 +10,46 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final method in ['GET', 'POST']) {
+    test('$method sends every repeated form value in order', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = _LocalClient(server.port);
+      final directory = await Directory.systemTemp.createTemp('mbg-pairs-');
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_download_root_path': directory.path,
+      });
+      final received = Completer<String>();
+      server.listen((request) async {
+        received.complete(method == 'GET'
+            ? client.requests.single.query
+            : await utf8.decoder.bind(request).join());
+        request.response.add([1, 2, 3]);
+        await request.response.close();
+      });
+      try {
+        await FileSystemGakujoDownloadService(
+          httpClientFactory: () => client,
+          usesNativeDownloadRoot: false,
+        ).download(
+          GakujoDownloadRequest(
+            url: 'https://gakujo.iess.niigata-u.ac.jp/file?keep=x&fileId=old',
+            method: method, fileName: 'notes.pdf', courseName: '',
+            formFields: const {'fileId': 'B'},
+            formFieldPairs: const [['fileId', 'A'], ['event', 'download'], ['fileId', 'B']],
+          ),
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+        expect(await received.future, method == 'GET'
+            ? 'keep=x&fileId=A&event=download&fileId=B'
+            : 'fileId=A&event=download&fileId=B');
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    });
+  }
+
   for (final mimeType in ['text/html', 'application/octet-stream']) {
     test('HTTP 200 page responses fail without saving: $mimeType', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -54,9 +94,16 @@ void main() {
     });
   }
 
-  for (final responseName in [null, 'course-files.zip']) {
+  for (final (responseName, extended, displayName) in [
+    (null, false, ''),
+    ('course-files.zip', false, ''),
+    ('bulk11.zip', false, '一括ダウンロード'),
+    ('一括資料11.zip', true, '一括ダウンロード'),
+    ('一括資料11.zip', true, '一括ダウンロード (3件)'),
+    ('bulk-save.zip', false, '一括保存（３件）'),
+  ]) {
     test(
-        'bulk POST preserves fields and saves ZIP as ${responseName ?? 'document.zip'}',
+        'bulk POST preserves fields and saves ZIP as ${responseName ?? 'document.zip'} (display: $displayName)',
         () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final client = _LocalClient(server.port);
@@ -81,8 +128,12 @@ void main() {
         request.response.headers.contentType =
             ContentType('application', 'zip');
         if (responseName != null) {
-          request.response.headers.set(HttpHeaders.contentDisposition,
-              'attachment; filename="$responseName"');
+          final disposition = extended
+              ? 'attachment; filename="fallback.zip"; '
+                  "filename*=UTF-8''${Uri.encodeComponent(responseName)}"
+              : 'attachment; filename="$responseName"';
+          request.response.headers
+              .set(HttpHeaders.contentDisposition, disposition);
         }
         request.response.add(zipBytes);
         await request.response.close();
@@ -96,16 +147,18 @@ void main() {
             'url':
                 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
             'method': 'POST',
-            'fileName': '',
-            'courseName': '',
+            'fileName': displayName,
+            'courseName': '未分類',
+            'courseNameAmbiguous': true,
             'formFields': fields,
           })),
-          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+          saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
         );
         expect(methods, ['POST']);
         expect(Uri.splitQueryString(bodies.single), fields);
         expect(contentTypes, ['application/x-www-form-urlencoded']);
         final saved = File(result.location!);
+        expect(result.courseName, '未分類');
         expect(saved.uri.pathSegments.last, responseName ?? 'document.zip');
         expect(await saved.readAsBytes(), zipBytes);
         expect(client.closed, isTrue);

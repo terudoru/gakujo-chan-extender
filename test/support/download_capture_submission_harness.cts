@@ -36,6 +36,7 @@ class FakeFormData {
   }
 
   set(name, value) { this.values.set(name, value); }
+  append(name, value) { this.values.set(name, value); }
 
   forEach(callback) {
     this.values.forEach((value, key) => callback(value, key));

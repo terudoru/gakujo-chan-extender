@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/drive_download_preference.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
@@ -131,5 +132,52 @@ void main() {
     resume.complete();
     await finished.future;
     expect(calls, ['started']);
+  });
+
+  test('queued snapshots are immutable and cleaned on completion or cancel', () async {
+    final queue = DriveDownloadQueue();
+    final started = Completer<void>();
+    final resume = Completer<void>();
+    final completed = Completer<void>();
+    queue.add((_) async {
+      started.complete();
+      await resume.future;
+    });
+    await started.future;
+    final directory = await Directory.systemTemp.createTemp('mbg-drive-test-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/notes.pdf');
+    await file.writeAsBytes([1]);
+    final first = await GakujoDownloadSnapshot.capture(file.openRead());
+    await file.writeAsBytes([2]);
+    queue.add((_) async {
+      expect(await first.openRead().expand((bytes) => bytes).toList(), [1]);
+    }, cleanUp: () async {
+      await first.dispose();
+      completed.complete();
+    });
+    resume.complete();
+    await completed.future;
+    await expectLater(first.openRead().drain<void>(),
+        throwsA(isA<FileSystemException>()));
+
+    final blocked = Completer<void>();
+    final blockedStarted = Completer<void>();
+    queue.add((_) async {
+      blockedStarted.complete();
+      await blocked.future;
+    });
+    await blockedStarted.future;
+    final second = await GakujoDownloadSnapshot.capture(file.openRead());
+    final discarded = Completer<void>();
+    queue.add((_) async => fail('Cancelled job ran'), cleanUp: () async {
+      await second.dispose();
+      discarded.complete();
+    });
+    queue.cancel();
+    await discarded.future;
+    await expectLater(second.openRead().drain<void>(),
+        throwsA(isA<FileSystemException>()));
+    blocked.complete();
   });
 }
