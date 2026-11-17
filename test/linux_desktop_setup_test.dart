@@ -59,6 +59,64 @@ void main() {
     expect(await pickGakujoBackupFile(), isNull);
   });
 
+  for (final initialDirectory in [null, '/home/student/Documents']) {
+    test(
+      'Linux calendar save picker keeps the ICS filter ($initialDirectory)',
+      () async {
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'pickSaveFile');
+          expect(call.arguments, {
+            'initialDirectory': initialDirectory,
+            'suggestedName': 'classes.ics',
+            'allowedTypeGroups': [
+              {
+                'label': 'iCalendar',
+                'extensions': ['ics'],
+                'mimeTypes': ['text/calendar'],
+              },
+            ],
+          });
+          return '/home/student/calendar.ics';
+        });
+
+        expect(
+          await pickGakujoCalendarSavePath(
+            fileName: 'classes.ics',
+            initialDirectory: initialDirectory,
+          ),
+          '/home/student/calendar.ics',
+        );
+      },
+    );
+  }
+
+  test('Linux calendar save picker cancellation returns no path', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickSaveFile');
+      return null;
+    });
+
+    expect(await pickGakujoCalendarSavePath(fileName: 'classes.ics'), isNull);
+  });
+
+  test('Linux calendar save picker preserves native errors', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickSaveFile');
+      throw PlatformException(code: 'picker_failed', message: '保存先を開けませんでした');
+    });
+
+    await expectLater(
+      pickGakujoCalendarSavePath(fileName: 'classes.ics'),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'picker_failed',
+        ),
+      ),
+    );
+  });
+
   for (final existing in [false, true]) {
     test(
       'Linux save picker saves to the chosen path (existing: $existing)',

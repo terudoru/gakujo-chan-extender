@@ -143,6 +143,42 @@ List<GakujoCalendarCourse> applyGakujoAmbiguousCourseTermSelections(
 }
 
 @visibleForTesting
+Future<String?> pickGakujoCalendarSavePath({
+  required String fileName,
+  String? initialDirectory,
+}) async {
+  const types = [
+    XTypeGroup(
+      label: 'iCalendar',
+      extensions: ['ics'],
+      mimeTypes: ['text/calendar'],
+    ),
+  ];
+  if (defaultTargetPlatform == TargetPlatform.linux) {
+    const channel = MethodChannel('net.yoshida.morebettergakujo/window');
+    return channel.invokeMethod<String>('pickSaveFile', {
+      'initialDirectory': initialDirectory,
+      'suggestedName': fileName,
+      'allowedTypeGroups': [
+        for (final type in types)
+          {
+            'label': type.label,
+            'extensions': type.extensions,
+            'mimeTypes': type.mimeTypes,
+          },
+      ],
+    });
+  }
+  return (await getSaveLocation(
+    initialDirectory: initialDirectory,
+    suggestedName: fileName,
+    confirmButtonText: '保存',
+    acceptedTypeGroups: types,
+    canCreateDirectories: true,
+  ))?.path;
+}
+
+@visibleForTesting
 Future<GakujoDownloadResult> exportGakujoCalendarWithNativePicker({
   required String ics,
   required String fileName,
@@ -2232,26 +2268,17 @@ extension _GakujoWebAppCalendar on _GakujoWebAppState {
     String fileName = 'more-better-gakujo-classes.ics',
   }) async {
     try {
-      final location = await getSaveLocation(
+      final path = await pickGakujoCalendarSavePath(
         initialDirectory: await _defaultExportDirectoryPath(),
-        suggestedName: fileName,
-        confirmButtonText: '保存',
-        acceptedTypeGroups: const [
-          XTypeGroup(
-            label: 'iCalendar',
-            extensions: ['ics'],
-            mimeTypes: ['text/calendar'],
-          ),
-        ],
-        canCreateDirectories: true,
+        fileName: fileName,
       );
-      if (location == null) {
+      if (path == null) {
         throw PlatformException(
           code: 'cancelled',
           message: '保存をキャンセルしました',
         );
       }
-      final file = File(location.path);
+      final file = File(path);
       await file.writeAsString(ics, flush: true);
       return file;
     } on MissingPluginException {
