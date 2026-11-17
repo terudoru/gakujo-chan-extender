@@ -10,6 +10,46 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final method in ['GET', 'POST']) {
+    test('$method sends every repeated form value in order', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final client = _LocalClient(server.port);
+      final directory = await Directory.systemTemp.createTemp('mbg-pairs-');
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_download_root_path': directory.path,
+      });
+      final received = Completer<String>();
+      server.listen((request) async {
+        received.complete(method == 'GET'
+            ? client.requests.single.query
+            : await utf8.decoder.bind(request).join());
+        request.response.add([1, 2, 3]);
+        await request.response.close();
+      });
+      try {
+        await FileSystemGakujoDownloadService(
+          httpClientFactory: () => client,
+          usesNativeDownloadRoot: false,
+        ).download(
+          GakujoDownloadRequest(
+            url: 'https://gakujo.iess.niigata-u.ac.jp/file?keep=x&fileId=old',
+            method: method, fileName: 'notes.pdf', courseName: '',
+            formFields: const {'fileId': 'B'},
+            formFieldPairs: const [['fileId', 'A'], ['event', 'download'], ['fileId', 'B']],
+          ),
+          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        );
+        expect(await received.future, method == 'GET'
+            ? 'keep=x&fileId=A&event=download&fileId=B'
+            : 'fileId=A&event=download&fileId=B');
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    });
+  }
+
   for (final mimeType in ['text/html', 'application/octet-stream']) {
     test('HTTP 200 page responses fail without saving: $mimeType', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

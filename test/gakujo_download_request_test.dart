@@ -2,6 +2,33 @@ import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('keeps repeated fields ordered through JSON, retry and native arguments', () {
+    final request = GakujoDownloadRequest.fromJsonText('''{
+      "url":"https://gakujo.iess.niigata-u.ac.jp/file", "method":"POST",
+      "formFields":{"fileId":"B","_eventId":"download"},
+      "formFieldPairs":[["fileId","A"],["_eventId","download"],["fileId","B"]]
+    }''');
+    const pairs = [['fileId', 'A'], ['_eventId', 'download'], ['fileId', 'B']];
+    expect(request.orderedFormFields, pairs);
+    expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).orderedFormFields,
+        pairs);
+    expect(request.toMethodChannelArguments()['formFieldPairs'], pairs);
+    expect(request.toExternalJson(), isNot(contains('formFieldPairs')));
+    final reversed = GakujoDownloadRequest.fromJsonMap({
+      ...request.toJson(),
+      'formFieldPairs': [['fileId', 'B'], ['_eventId', 'download'], ['fileId', 'A']],
+    });
+    final gate = GakujoDownloadOperationGate();
+    expect(gate.tryStart(request), isNotNull);
+    expect(gate.tryStart(reversed), isNotNull);
+    expect(gate.tryStart(request), isNull);
+    final legacy = GakujoDownloadRequest.fromJsonMap({
+      'formFields': {'fileId': 'A'},
+    });
+    expect(legacy.orderedFormFields, [['fileId', 'A']]);
+    expect(legacy.toJson(), isNot(contains('formFieldPairs')));
+  });
+
   test('limits concurrent downloads and releases slots after completion', () {
     final gate = GakujoDownloadOperationGate(maxConcurrentDownloads: 2);
     GakujoDownloadRequest request(int number) => GakujoDownloadRequest(

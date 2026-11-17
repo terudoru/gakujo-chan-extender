@@ -954,6 +954,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             courseName: courseName,
             fileName: request.fileName,
             formFields: request.formFields,
+            formFieldPairs: request.formFieldPairs,
           );
         }
       }

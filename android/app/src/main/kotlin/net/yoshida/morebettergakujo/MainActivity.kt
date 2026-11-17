@@ -1008,7 +1008,7 @@ class MainActivity : FlutterActivity() {
     ): SavedDownload {
         val originalUrl = args["url"].toString()
         val method = args["method"]?.toString()?.uppercase(Locale.ROOT) ?: "GET"
-        val formFields = (args["formFields"] as? Map<*, *>).orEmpty()
+        val formFields = GakujoDownloadFormFields.parse(args)
         val requestedCourseName = sanitizeName(args["courseName"]?.toString()).ifBlank { "未分類" }
         val requestedFileName = sanitizeName(args["fileName"]?.toString())
         val userAgent = args["userAgent"]?.toString()?.takeIf { it.isNotBlank() }
@@ -1022,7 +1022,7 @@ class MainActivity : FlutterActivity() {
         if (isDebuggable()) {
             Log.i(
                 TAG,
-                "Download start method=$method url=${redactSession(url)} fields=${formFields.keys.joinToString(",")}"
+                "Download start method=$method url=${redactSession(url)} fields=${formFields.joinToString(",") { it.first }}"
             )
         }
 
@@ -1119,7 +1119,7 @@ class MainActivity : FlutterActivity() {
     private fun performDownloadToUri(args: Map<*, *>, destination: Uri): SavedDownload {
         val originalUrl = args["url"].toString()
         val method = args["method"]?.toString()?.uppercase(Locale.ROOT) ?: "GET"
-        val formFields = (args["formFields"] as? Map<*, *>).orEmpty()
+        val formFields = GakujoDownloadFormFields.parse(args)
         val requestedFileName = sanitizeName(args["fileName"]?.toString())
         val userAgent = args["userAgent"]?.toString()?.takeIf { it.isNotBlank() }
 
@@ -1132,7 +1132,7 @@ class MainActivity : FlutterActivity() {
         if (isDebuggable()) {
             Log.i(
                 TAG,
-                "Download start method=$method url=${redactSession(url)} fields=${formFields.keys.joinToString(",")}"
+                "Download start method=$method url=${redactSession(url)} fields=${formFields.joinToString(",") { it.first }}"
             )
         }
 
@@ -1266,7 +1266,7 @@ class MainActivity : FlutterActivity() {
     private fun openAllowedDownloadConnection(
         initialUrl: String,
         initialMethod: String,
-        formFields: Map<*, *>,
+        formFields: List<Pair<String, String>>,
         userAgent: String?
     ): HttpURLConnection {
         var currentUrl = initialUrl
@@ -1525,15 +1525,15 @@ class MainActivity : FlutterActivity() {
         return rawUrl.replace(Regex(";jsessionid=[^?#]+", RegexOption.IGNORE_CASE), ";jsessionid=<redacted>")
     }
 
-    private fun appendQuery(rawUrl: String, fields: Map<*, *>): String {
+    private fun appendQuery(rawUrl: String, fields: List<Pair<String, String>>): String {
         val separator = if (rawUrl.contains("?")) "&" else "?"
         return rawUrl + separator + encodeForm(fields)
     }
 
-    private fun encodeForm(fields: Map<*, *>): String {
-        return fields.entries.joinToString("&") { entry ->
-            "${URLEncoder.encode(entry.key.toString(), "UTF-8")}=${
-                URLEncoder.encode(entry.value?.toString().orEmpty(), "UTF-8")
+    private fun encodeForm(fields: List<Pair<String, String>>): String {
+        return fields.joinToString("&") { entry ->
+            "${URLEncoder.encode(entry.first, "UTF-8")}=${
+                URLEncoder.encode(entry.second, "UTF-8")
             }"
         }
     }

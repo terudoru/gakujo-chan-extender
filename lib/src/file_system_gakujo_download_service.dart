@@ -490,14 +490,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
 
     var method = request.method.toUpperCase() == 'POST' ? 'POST' : 'GET';
-    var uri = method == 'GET' && request.formFields.isNotEmpty
-        ? Uri.parse(request.url).replace(
-            queryParameters: {
-              ...Uri.parse(request.url).queryParameters,
-              ...request.formFields,
-            },
-          )
-        : Uri.parse(request.url);
+    var uri = Uri.parse(request.url);
+    final fields = request.orderedFormFields;
+    if (method == 'GET' && fields.isNotEmpty) {
+      final names = fields.map((field) => field[0]).toSet();
+      uri = uri.replace(query: _encodeForm([
+        for (final entry in uri.queryParametersAll.entries)
+          if (!names.contains(entry.key))
+            for (final value in entry.value) [entry.key, value],
+        ...fields,
+      ]));
+    }
 
     final client = _httpClientFactory();
     client.connectionTimeout = _requestTimeout;
@@ -526,7 +529,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         }
 
         if (method == 'POST') {
-          final body = _encodeForm(request.formFields);
+          final body = _encodeForm(fields);
           final encodedBody = utf8.encode(body);
           httpRequest.headers
               .set(HttpHeaders.contentLengthHeader, encodedBody.length);
@@ -789,11 +792,11 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
   }
 
-  static String _encodeForm(Map<String, String> fields) {
-    return fields.entries
+  static String _encodeForm(List<List<String>> fields) {
+    return fields
         .map(
           (entry) =>
-              '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}',
+              '${Uri.encodeQueryComponent(entry[0])}=${Uri.encodeQueryComponent(entry[1])}',
         )
         .join('&');
   }

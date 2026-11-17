@@ -5,9 +5,26 @@
 const String gakujoDownloadCaptureJs = r'''
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
-    var captureVersion = 20;
+    var captureVersion = 21;
     if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
       if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
         window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -468,17 +485,17 @@ const String gakujoDownloadCaptureJs = r'''
       return /^(提出|提出する|送信|送信する)$/.test(text) || /^(取消|取消し|取り消し|取り消す|キャンセル|中止)$/.test(text) || /^(戻る|前へ|次へ|進む|確認|確認する)$/.test(text) || /^(確定保存|一時保存|保存|クリア|削除|登録|確定)(する)?$/.test(text) || /^(save|submit|confirm|back|clear|delete|register|cancel)$/.test(text) || /^(レポート|小テスト)?提出(確認)?$/.test(text) || /^(レポート|小テスト)?提出(用)?(画面|ページ)(へ|に進む|へ進む)?$/.test(text);
     }
     function formFields(form, submitter) {
-      var fields = /* @__PURE__ */ Object.create(null);
+      var fields = [];
       if (!form) {
         return fields;
       }
       var data = new FormData(form);
       if (submitter && submitter.name) {
-        data.set(submitter.name, submitter.value || "");
+        data.append(submitter.name, submitter.value || "");
       }
       data.forEach(function(value, key) {
         if (typeof value === "string") {
-          fields[key] = value;
+          fields.push([key, value]);
         }
       });
       return fields;
@@ -542,19 +559,23 @@ const String gakujoDownloadCaptureJs = r'''
       var target = submissionAttribute(form, submitter, "target") || "_self";
       if (!/^(GET|POST)$/.test(method) || method === "POST" && enctype !== "application/x-www-form-urlencoded" || !/^_self$/i.test(target)) return false;
       var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute("formaction") ? submitter : form, action);
-      var fields = formFields(form, submitter);
+      var pairs = formFields(form, submitter);
+      var fields = /* @__PURE__ */ Object.create(null);
+      pairs.forEach(function(field) {
+        fields[field[0]] = field[1];
+      });
       var signals = formDownloadSignals(absoluteAction, fields);
       if (signals.workflow) return false;
       if (explicitOnly) {
         if (new URL(absoluteAction).host !== "gakujo.iess.niigata-u.ac.jp" || !signals.explicit) return false;
       } else if (!shouldCapture(submitter || form, absoluteAction, fields)) return false;
-      post({
+      post(__spreadValues({
         url: absoluteAction,
         method,
         fileName: downloadFileName(submitter, form),
         courseName: estimateCourseName(),
         formFields: fields
-      });
+      }, pairs.length > Object.keys(fields).length ? { formFieldPairs: pairs } : {}));
       return true;
     }
     window.__MBG_DOWNLOAD_CAPTURE_SUBMIT_HANDLER = function(event) {

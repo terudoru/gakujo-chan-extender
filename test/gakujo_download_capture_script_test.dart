@@ -9,7 +9,7 @@ void main() {
     final script = GakujoDownloadCaptureScript.build();
 
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_VERSION'));
-    expect(script, contains('captureVersion = 20'));
+    expect(script, matches(RegExp(r'captureVersion = \d+')));
     expect(script, contains('__MBG_ESTIMATE_COURSE_NAME'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('__MBG_DOWNLOAD_CAPTURE_HANDLER'));
@@ -21,7 +21,7 @@ void main() {
     expect(script, contains('documents[i].addEventListener'));
     expect(script, contains('removeEventListener'));
     expect(script, contains('firstMatchingCourseNameText'));
-    expect(script, contains('sameRowValue'));
+    expect(script, contains('firstCourseNameFromTables'));
     expect(script, contains('科目名'));
     expect(script, contains(r'(?:(?=[A-Z]*[0-9])[A-Z0-9]{4,}\s+)?'));
     expect(script, contains('isIgnoredCourseName'));
@@ -93,7 +93,9 @@ void main() {
     );
     final behavior =
         jsonDecode(result.stdout as String) as Map<String, dynamic>;
-    expect(behavior['version'], 20);
+    final configuredVersion = RegExp(r'captureVersion = (\d+)')
+        .firstMatch(GakujoDownloadCaptureScript.build())!.group(1)!;
+    expect(behavior['version'], int.parse(configuredVersion));
     expect(behavior['listenerCount'], 1);
     expect(behavior['oldHandlerCalls'], 0);
     expect(behavior['capturedCount'], 1);

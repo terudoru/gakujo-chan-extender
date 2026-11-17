@@ -13,6 +13,30 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  test('failed retries retain repeated values and distinguish their order', () async {
+    final store = GakujoDownloadHistoryStore();
+    GakujoDownloadRequest request(List<List<String>> pairs) => GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/download',
+      method: 'POST', courseName: 'Physics', fileName: 'notes.pdf',
+      formFields: const {'id': 'B'}, formFieldPairs: pairs,
+    );
+    const pairs = [['id', 'A'], ['id', 'B']];
+    await store.addFailedDownload(request: request(pairs), errorMessage: 'first');
+    await store.addFailedDownload(request: request(pairs), errorMessage: 'retry');
+    await store.addFailedDownload(
+      request: request(const [['id', 'B'], ['id', 'A']]), errorMessage: 'other');
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(2));
+    expect(entries.singleWhere((entry) => entry.errorMessage == 'retry')
+        .request.orderedFormFields, pairs);
+    for (final entry in entries) {
+      final exported = entry.toExternalJson();
+      expect((exported['request'] as Map), isNot(contains('formFieldPairs')));
+      expect(GakujoFailedDownloadEntry.fromExternalJson(entry.toJson())
+          .request.orderedFormFields, isEmpty);
+    }
+  });
+
   test('download history entries round-trip through json', () {
     final savedAt = DateTime.utc(2026, 6, 26, 12, 30);
     final entry = GakujoDownloadHistoryEntry(

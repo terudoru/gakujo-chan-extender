@@ -1,6 +1,6 @@
 export {};
 function downloadCapture() {
-  var captureVersion = 20;
+  var captureVersion = 21;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -547,23 +547,23 @@ function downloadCapture() {
   }
 
   function formFields(form: HTMLFormElement | null, submitter: HTMLButtonElement | HTMLInputElement | null | undefined) {
-    var fields: Record<string, string> = Object.create(null);
+    var fields: [string, string][] = [];
     if (!form) {
       return fields;
     }
     var data = new FormData(form);
     if (submitter && submitter.name) {
-      data.set(submitter.name, submitter.value || '');
+      data.append(submitter.name, submitter.value || '');
     }
     data.forEach(function(value, key) {
       if (typeof value === 'string') {
-        fields[key] = value;
+        fields.push([key, value]);
       }
     });
     return fields;
   }
 
-  function post(payload: {url: string; method: string; fileName: string; courseName: string; formFields: Record<string, string>}) {
+  function post(payload: {url: string; method: string; fileName: string; courseName: string; formFields: Record<string, string>; formFieldPairs?: [string, string][]}) {
     window.MoreBetterGakujoDownloads.postMessage(JSON.stringify(payload));
   }
 
@@ -634,7 +634,9 @@ function downloadCapture() {
         method === 'POST' && enctype !== 'application/x-www-form-urlencoded' ||
         !/^_self$/i.test(target)) return false;
     var absoluteAction = absoluteUrlOf(submitter && submitter.getAttribute('formaction') ? submitter : form, action);
-    var fields = formFields(form, submitter);
+    var pairs = formFields(form, submitter);
+    var fields: Record<string, string> = Object.create(null);
+    pairs.forEach(function(field) { fields[field[0]] = field[1]; });
     var signals = formDownloadSignals(absoluteAction, fields);
     if (signals.workflow) return false;
     if (explicitOnly) {
@@ -646,7 +648,8 @@ function downloadCapture() {
       method: method,
       fileName: downloadFileName(submitter, form),
       courseName: estimateCourseName(),
-      formFields: fields
+      formFields: fields,
+      ...(pairs.length > Object.keys(fields).length ? {formFieldPairs: pairs} : {})
     });
     return true;
   }
