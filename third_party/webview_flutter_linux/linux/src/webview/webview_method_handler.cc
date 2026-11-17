@@ -1171,6 +1171,13 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  if (strcmp(method, "setPermissionPromptsObscured") == 0) {
+    set_webview_permission_obscured(webview->web_view,
+                                    map_lookup_bool(args, "obscured", FALSE));
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "completePermissionRequest") == 0 ||
       strcmp(method, "showPermissionRequest") == 0) {
     gint request_id = static_cast<gint>(map_lookup_int(args, "requestId", -1));
@@ -1189,7 +1196,7 @@ void instance_method_call_cb(FlMethodChannel *channel,
         } else {
           show_webview_permission_dialog(
               webview->web_view, request, origin,
-              webview_permission_description(webview_permission_resources(request)));
+              webview_permission_resources(request));
         }
       } else if (map_lookup_bool(args, "grant", FALSE)) {
         webkit_permission_request_allow(request);

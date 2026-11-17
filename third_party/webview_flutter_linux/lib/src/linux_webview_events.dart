@@ -401,7 +401,9 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
     final int requestId = (event['requestId'] as num?)?.toInt() ?? -1;
     final rawTypes = (event['types'] as List<Object?>?) ?? const <Object?>[];
     const supported = {'camera', 'microphone', 'geolocation', 'notifications'};
-    if (rawTypes.isEmpty || rawTypes.any((type) => !supported.contains(type))) {
+    if (_permissionPromptsObscured ||
+        rawTypes.isEmpty ||
+        rawTypes.any((type) => !supported.contains(type))) {
       await _invoke<void>('completePermissionRequest', <String, Object?>{
         'requestId': requestId,
         'grant': false,

@@ -79,6 +79,38 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  test('obscured Linux pages deny without a prompt and resume after closing',
+      () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    controller.setLinuxPageObscured(true);
+    await emitEvent({
+      'type': 'permissionRequest',
+      'requestId': 21,
+      'types': ['geolocation'],
+    });
+    expect(calls.map((call) => call.method), [
+      'setPermissionPromptsObscured',
+      'completePermissionRequest',
+    ]);
+    expect(calls.first.arguments, {'obscured': true});
+    expect(calls.last.arguments, {'requestId': 21, 'grant': false});
+
+    calls.clear();
+    controller.setLinuxPageObscured(false);
+    await emitEvent({
+      'type': 'permissionRequest',
+      'requestId': 22,
+      'types': ['geolocation'],
+    });
+    expect(calls.map((call) => call.method), [
+      'setPermissionPromptsObscured',
+      'showPermissionRequest',
+    ]);
+    expect(calls.first.arguments, {'obscured': false});
+  });
+
   for (final types in [
     ['camera'],
     ['microphone'],

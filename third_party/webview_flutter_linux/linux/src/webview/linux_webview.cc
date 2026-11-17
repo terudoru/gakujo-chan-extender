@@ -733,7 +733,7 @@ static gboolean permission_request_cb(WebKitWebView *widget,
   }
 
   const guint resources = webview_permission_resources(request);
-  if (resources == 0) {
+  if (resources == 0 || webview_permission_obscured(widget)) {
     webkit_permission_request_deny(request);
     return TRUE;
   }

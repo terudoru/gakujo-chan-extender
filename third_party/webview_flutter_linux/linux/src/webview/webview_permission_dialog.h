@@ -4,6 +4,9 @@
 #include <webkit2/webkit2.h>
 
 constexpr const char *kPermissionPageOrigin = "mbg-permission-page-origin";
+constexpr const char *kPermissionDecisions = "mbg-permission-decisions";
+constexpr const char *kPermissionObscured = "mbg-permission-obscured";
+constexpr const char *kPermissionDialogView = "mbg-permission-dialog-view";
 enum WebViewPermissionResource {
   kPermissionCamera = 1,
   kPermissionMicrophone = 2,
@@ -51,8 +54,63 @@ inline gchar *webview_permission_page_origin(const gchar *uri) {
   return result;
 }
 
+inline GHashTable *webview_permission_decisions(WebKitWebView *view) {
+  auto *decisions = static_cast<GHashTable *>(
+      g_object_get_data(G_OBJECT(view), kPermissionDecisions));
+  if (decisions == nullptr) {
+    decisions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    g_object_set_data_full(G_OBJECT(view), kPermissionDecisions, decisions,
+        [](gpointer value) { g_hash_table_unref(static_cast<GHashTable *>(value)); });
+  }
+  return decisions;
+}
+
+inline gint webview_permission_decision(GHashTable *decisions,
+                                        const gchar *origin, guint resources) {
+  if (webview_permission_description(resources) == nullptr) return -1;
+  bool allowed = true;
+  for (guint kind = kPermissionCamera; kind <= kPermissionNotifications; kind <<= 1) {
+    if (!(resources & kind)) continue;
+    g_autofree gchar *key = g_strdup_printf("%s\n%u", origin, kind);
+    const gint value = GPOINTER_TO_INT(g_hash_table_lookup(decisions, key));
+    if (value == 1) return 0;
+    if (value == 0) allowed = false;
+  }
+  return allowed ? 1 : -1;
+}
+
+inline void remember_webview_permission(GHashTable *decisions, const gchar *origin,
+                                        guint resources, bool allowed) {
+  for (guint kind = kPermissionCamera; kind <= kPermissionNotifications; kind <<= 1) {
+    if (resources & kind)
+      g_hash_table_replace(decisions, g_strdup_printf("%s\n%u", origin, kind),
+                            GINT_TO_POINTER(allowed ? 2 : 1));
+  }
+}
+
+inline bool webview_permission_obscured(WebKitWebView *view) {
+  return g_object_get_data(G_OBJECT(view), kPermissionObscured) != nullptr;
+}
+
+inline void set_webview_permission_obscured(WebKitWebView *view, bool obscured) {
+  g_object_set_data(G_OBJECT(view), kPermissionObscured,
+                    GINT_TO_POINTER(obscured));
+  if (!obscured) return;
+  GList *windows = gtk_window_list_toplevels();
+  for (GList *item = windows; item != nullptr; item = item->next)
+    g_object_ref(item->data);
+  for (GList *item = windows; item != nullptr; item = item->next) {
+    if (g_object_get_data(G_OBJECT(item->data), kPermissionDialogView) == view)
+      gtk_widget_destroy(GTK_WIDGET(item->data));
+  }
+  g_list_free_full(windows, g_object_unref);
+}
+
 struct WebViewPermissionDialog {
   WebKitPermissionRequest *request;
+  GHashTable *decisions;
+  gchar *origin;
+  guint resources;
   bool completed = false;
 };
 
@@ -61,6 +119,8 @@ inline void webview_permission_dialog_destroy(GtkWidget *dialog, gpointer value)
   g_signal_handlers_disconnect_by_data(dialog, data);
   if (!data->completed) webkit_permission_request_deny(data->request);
   g_object_unref(data->request);
+  g_hash_table_unref(data->decisions);
+  g_free(data->origin);
   delete data;
 }
 
@@ -68,6 +128,10 @@ inline void webview_permission_dialog_response(GtkDialog *dialog, gint response,
                                                gpointer value) {
   auto *data = static_cast<WebViewPermissionDialog *>(value);
   data->completed = true;
+  if (response == GTK_RESPONSE_ACCEPT || response == GTK_RESPONSE_REJECT) {
+    remember_webview_permission(data->decisions, data->origin, data->resources,
+                                response == GTK_RESPONSE_ACCEPT);
+  }
   if (response == GTK_RESPONSE_ACCEPT)
     webkit_permission_request_allow(data->request);
   else
@@ -84,14 +148,22 @@ inline void webview_permission_dialog_load_changed(WebKitWebView *,
 inline GtkWidget *show_webview_permission_dialog(WebKitWebView *view,
                                                 WebKitPermissionRequest *request,
                                                 const gchar *origin,
-                                                const gchar *description) {
+                                                guint resources) {
+  const gchar *description = webview_permission_description(resources);
   GtkWidget *parent = gtk_widget_get_toplevel(GTK_WIDGET(view));
-  if (!GTK_IS_WINDOW(parent) || origin == nullptr || description == nullptr) {
+  if (webview_permission_obscured(view) || !GTK_IS_WINDOW(parent) ||
+      origin == nullptr || description == nullptr) {
     webkit_permission_request_deny(request);
     return nullptr;
   }
-  // These WebKit requests expose no frame origin; name the current page and
-  // never reuse its choice for a later request from a potentially different frame.
+  GHashTable *decisions = webview_permission_decisions(view);
+  const gint decision = webview_permission_decision(decisions, origin, resources);
+  if (decision >= 0) {
+    if (decision) webkit_permission_request_allow(request);
+    else webkit_permission_request_deny(request);
+    return nullptr;
+  }
+  // WebKit exposes no frame origin here; scope session choices to the page origin.
   GtkWidget *dialog = gtk_message_dialog_new(
       GTK_WINDOW(parent), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
       GTK_BUTTONS_NONE, "%s のページで%sを求めています", origin, description);
@@ -100,8 +172,10 @@ inline GtkWidget *show_webview_permission_dialog(WebKitWebView *view,
   gtk_dialog_add_buttons(GTK_DIALOG(dialog), "許可しない", GTK_RESPONSE_REJECT,
                          "許可", GTK_RESPONSE_ACCEPT, nullptr);
   gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_REJECT);
-  auto *data = new WebViewPermissionDialog{WEBKIT_PERMISSION_REQUEST(
-      g_object_ref(request))};
+  auto *data = new WebViewPermissionDialog{
+      WEBKIT_PERMISSION_REQUEST(g_object_ref(request)), g_hash_table_ref(decisions),
+      g_strdup(origin), resources};
+  g_object_set_data(G_OBJECT(dialog), kPermissionDialogView, view);
   g_signal_connect(dialog, "response",
                    G_CALLBACK(webview_permission_dialog_response), data);
   g_signal_connect(dialog, "destroy",

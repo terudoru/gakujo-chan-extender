@@ -732,6 +732,18 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     return platform is LinuxWebViewController ? platform.takeSnapshot() : null;
   }
 
+  void setLinuxPageObscured(bool obscured) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      unawaited(platform.setPermissionPromptsObscured(obscured).catchError(
+        (Object error, StackTrace stackTrace) {
+          developer.log('Failed to update Linux permission prompt visibility',
+              name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+        },
+      ));
+    }
+  }
+
   Future<bool> hasLinuxFocus() async {
     final platform = _inner.platform;
     return platform is LinuxWebViewController && await platform.hasFocus();

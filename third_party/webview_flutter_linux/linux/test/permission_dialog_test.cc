@@ -55,9 +55,11 @@ static void response_test(gconstpointer value) {
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
   auto *request = static_cast<TestPermissionRequest *>(
       g_object_new(test_permission_request_get_type(), nullptr));
+  g_autoptr(GHashTable) decisions =
+      g_hash_table_ref(webview_permission_decisions(view));
   GtkWidget *dialog = show_webview_permission_dialog(
       view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
-      "マイクの使用");
+      kPermissionMicrophone);
   g_assert_nonnull(dialog);
   g_assert_true(gtk_window_get_modal(GTK_WINDOW(dialog)));
   g_assert_true(gtk_window_get_transient_for(GTK_WINDOW(dialog)) ==
@@ -70,6 +72,17 @@ static void response_test(gconstpointer value) {
     gtk_dialog_response(GTK_DIALOG(dialog), response);
   g_assert_cmpuint(request->allowed, ==, response == GTK_RESPONSE_ACCEPT ? 1 : 0);
   g_assert_cmpuint(request->denied, ==, response == GTK_RESPONSE_ACCEPT ? 0 : 1);
+  const bool remembered = response == GTK_RESPONSE_ACCEPT || response == GTK_RESPONSE_REJECT;
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://example.edu", kPermissionMicrophone), ==,
+      remembered ? (response == GTK_RESPONSE_ACCEPT ? 1 : 0) : -1);
+  if (remembered) {
+    g_assert_null(show_webview_permission_dialog(
+        view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+        kPermissionMicrophone));
+    g_assert_cmpuint(request->allowed, ==, response == GTK_RESPONSE_ACCEPT ? 2 : 0);
+    g_assert_cmpuint(request->denied, ==, response == GTK_RESPONSE_ACCEPT ? 0 : 2);
+  }
   if (response != GTK_RESPONSE_DELETE_EVENT) gtk_widget_destroy(window);
   g_object_unref(request);
 }
@@ -82,11 +95,101 @@ static void unknown_request_test() {
   g_object_unref(request);
 }
 
+static void session_scope_test() {
+  auto *view = WEBKIT_WEB_VIEW(webkit_web_view_new());
+  g_object_ref_sink(view);
+  GHashTable *decisions = webview_permission_decisions(view);
+  remember_webview_permission(decisions, "https://example.edu",
+      kPermissionCamera | kPermissionMicrophone, true);
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://example.edu", kPermissionCamera), ==, 1);
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://example.edu", kPermissionMicrophone), ==, 1);
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://example.edu", kPermissionGeolocation), ==, -1);
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://other.edu", kPermissionCamera), ==, -1);
+  remember_webview_permission(decisions, "https://example.edu",
+      kPermissionMicrophone, false);
+  g_assert_cmpint(webview_permission_decision(decisions, "https://example.edu",
+      kPermissionCamera | kPermissionMicrophone), ==, 0);
+  gtk_widget_destroy(GTK_WIDGET(view));
+  g_object_unref(view);
+  view = WEBKIT_WEB_VIEW(webkit_web_view_new());
+  g_object_ref_sink(view);
+  g_assert_cmpint(webview_permission_decision(webview_permission_decisions(view),
+      "https://example.edu", kPermissionCamera), ==, -1);
+  gtk_widget_destroy(GTK_WIDGET(view));
+  g_object_unref(view);
+}
+
+static void obscured_test(gconstpointer value) {
+  const bool already_open = GPOINTER_TO_INT(value);
+  GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  auto *view = WEBKIT_WEB_VIEW(webkit_web_view_new());
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  auto *request = static_cast<TestPermissionRequest *>(
+      g_object_new(test_permission_request_get_type(), nullptr));
+  if (already_open) {
+    g_assert_nonnull(show_webview_permission_dialog(
+        view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+        kPermissionGeolocation));
+  }
+  set_webview_permission_obscured(view, true);
+  if (!already_open) {
+    g_assert_null(show_webview_permission_dialog(
+        view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+        kPermissionGeolocation));
+  }
+  g_assert_cmpuint(request->denied, ==, 1);
+  g_assert_cmpint(webview_permission_decision(webview_permission_decisions(view),
+      "https://example.edu", kPermissionGeolocation), ==, -1);
+  set_webview_permission_obscured(view, false);
+  GtkWidget *dialog = show_webview_permission_dialog(
+      view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+      kPermissionGeolocation);
+  g_assert_nonnull(dialog);
+  gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
+  g_assert_cmpuint(request->allowed, ==, 1);
+  gtk_widget_destroy(window);
+  g_object_unref(request);
+}
+
+static void obscured_keeps_choice_test() {
+  GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  auto *view = WEBKIT_WEB_VIEW(webkit_web_view_new());
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  GHashTable *decisions = webview_permission_decisions(view);
+  remember_webview_permission(decisions, "https://example.edu",
+                              kPermissionGeolocation, true);
+  auto *request = static_cast<TestPermissionRequest *>(
+      g_object_new(test_permission_request_get_type(), nullptr));
+  set_webview_permission_obscured(view, true);
+  g_assert_null(show_webview_permission_dialog(
+      view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+      kPermissionGeolocation));
+  g_assert_cmpuint(request->denied, ==, 1);
+  g_assert_cmpint(webview_permission_decision(
+      decisions, "https://example.edu", kPermissionGeolocation), ==, 1);
+  set_webview_permission_obscured(view, false);
+  g_assert_null(show_webview_permission_dialog(
+      view, WEBKIT_PERMISSION_REQUEST(request), "https://example.edu",
+      kPermissionGeolocation));
+  g_assert_cmpuint(request->allowed, ==, 1);
+  gtk_widget_destroy(window);
+  g_object_unref(request);
+}
+
 int main(int argc, char **argv) {
   gtk_test_init(&argc, &argv, nullptr);
   g_test_add_func("/permission/descriptions", descriptions_test);
   g_test_add_func("/permission/origin", origin_test);
   g_test_add_func("/permission/unknown", unknown_request_test);
+  g_test_add_func("/permission/session-scope", session_scope_test);
+  g_test_add_func("/permission/obscured-keeps-choice", obscured_keeps_choice_test);
+  g_test_add_data_func("/permission/obscured", GINT_TO_POINTER(FALSE), obscured_test);
+  g_test_add_data_func("/permission/obscure-open-dialog", GINT_TO_POINTER(TRUE),
+                       obscured_test);
   g_test_add_data_func("/permission/allow", GINT_TO_POINTER(GTK_RESPONSE_ACCEPT),
                        response_test);
   g_test_add_data_func("/permission/deny", GINT_TO_POINTER(GTK_RESPONSE_REJECT),
