@@ -1045,6 +1045,8 @@ void main() {
 
 class _FakeGoogleAuth implements StarSyncGoogleAuth {
   @override
+  int get generation => 0;
+  @override
   void cancelPendingSignIn() {}
   String? email = 'first@example.test';
   Completer<String>? pendingToken;

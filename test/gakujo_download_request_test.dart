@@ -1,7 +1,49 @@
+import 'dart:convert';
+
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('keeps ambiguous courses unresolved across capture and retry', () {
+    final request = GakujoDownloadRequest.fromJsonText('''{
+      "url":"https://gakujo.iess.niigata-u.ac.jp/file",
+      "courseName":"未分類", "courseNameAmbiguous":true
+    }''');
+    expect(request.courseNameAmbiguous, isTrue);
+    expect(request.courseName, '未分類');
+    expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).courseNameAmbiguous,
+        isTrue);
+    expect(request.toMethodChannelArguments()['courseNameAmbiguous'], isTrue);
+    expect(GakujoDownloadRequest.fromJsonMap({}).courseNameAmbiguous, isFalse);
+  });
+
+  test('keeps repeated fields ordered through JSON, retry and native arguments', () {
+    final request = GakujoDownloadRequest.fromJsonText('''{
+      "url":"https://gakujo.iess.niigata-u.ac.jp/file", "method":"POST",
+      "formFields":{"fileId":"B","_eventId":"download"},
+      "formFieldPairs":[["fileId","A"],["_eventId","download"],["fileId","B"]]
+    }''');
+    const pairs = [['fileId', 'A'], ['_eventId', 'download'], ['fileId', 'B']];
+    expect(request.orderedFormFields, pairs);
+    expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).orderedFormFields,
+        pairs);
+    expect(request.toMethodChannelArguments()['formFieldPairs'], pairs);
+    expect(request.toExternalJson(), isNot(contains('formFieldPairs')));
+    final reversed = GakujoDownloadRequest.fromJsonMap({
+      ...request.toJson(),
+      'formFieldPairs': [['fileId', 'B'], ['_eventId', 'download'], ['fileId', 'A']],
+    });
+    final gate = GakujoDownloadOperationGate();
+    expect(gate.tryStart(request), isNotNull);
+    expect(gate.tryStart(reversed), isNotNull);
+    expect(gate.tryStart(request), isNull);
+    final legacy = GakujoDownloadRequest.fromJsonMap({
+      'formFields': {'fileId': 'A'},
+    });
+    expect(legacy.orderedFormFields, [['fileId', 'A']]);
+    expect(legacy.toJson(), isNot(contains('formFieldPairs')));
+  });
+
   test('limits concurrent downloads and releases slots after completion', () {
     final gate = GakujoDownloadOperationGate(maxConcurrentDownloads: 2);
     GakujoDownloadRequest request(int number) => GakujoDownloadRequest(
@@ -33,6 +75,29 @@ void main() {
     );
 
     expect(request.fileName, '講義資料.pdf');
+  });
+
+  test('keeps action labels unresolved through capture and retry', () {
+    for (final label in [
+      '一括ダウンロード',
+      '一括保存（３件）',
+      'ダウンロード (3件)',
+      '保存',
+      'Download all files (3)',
+    ]) {
+      final payload = {
+        'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+        'method': 'POST',
+        'fileName': label,
+        'mimeType': 'application/zip',
+      };
+      final request = GakujoDownloadRequest.fromJsonText(jsonEncode(payload));
+      expect(request.fileName, isEmpty, reason: label);
+      expect(GakujoDownloadRequest.fromJsonMap(payload).fileName, isEmpty);
+      expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).fileName,
+          isEmpty);
+      expect(request.toMethodChannelArguments()['fileName'], isEmpty);
+    }
   });
 
   test('fromJsonMap keeps an empty file name unresolved', () {

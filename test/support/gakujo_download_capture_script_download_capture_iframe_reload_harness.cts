@@ -41,6 +41,7 @@ window.window = window;
 class FakeFormData {
   [key: string]: any;
   set() {}
+  append() {}
   forEach() {}
 }
 

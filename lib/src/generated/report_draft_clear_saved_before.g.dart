@@ -8,6 +8,7 @@ const String gakujoReportDraftClearSavedBeforeJs = r'''
 (() => {
   // web_scripts/src/report_draft/storage_helpers.ts
   var retentionMs = 14 * 24 * 60 * 60 * 1e3;
+  var migrationPrefix = "mbg-report-draft:migration:";
   function draftDocuments() {
     var docs = [document];
     var frames = [];
@@ -36,6 +37,10 @@ const String gakujoReportDraftClearSavedBeforeJs = r'''
         var key = store.key(i);
         if (!/^mbg-report-draft:v[12]:/.test(key)) continue;
         store.removeItem(key);
+      }
+      for (var i = store.length - 1; i >= 0; i -= 1) {
+        var key = store.key(i);
+        if (key.indexOf(migrationPrefix) === 0) store.removeItem(key);
       }
     });
     return true;

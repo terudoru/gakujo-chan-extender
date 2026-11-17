@@ -16,7 +16,7 @@ class WindowsWebViewAuthenticatedDownloadScript {
     'requestId': requestId,
     'url': request.url,
     'method': request.method.toUpperCase() == 'POST' ? 'POST' : 'GET',
-    'fields': jsonEncode(request.formFields),
+    'fields': jsonEncode(request.formFieldPairs ?? request.formFields),
     'fileName': request.fileName,
     'byteLimit': maxGakujoDownloadBytes,
     'pageReturnedMessage': DownloadResponsePolicy.pageReturnedMessage,

@@ -21,7 +21,7 @@ class DownloadFileNamePolicy {
     // Gakujo's response filename can be an internal name that differs from the
     // name shown to the user. Keep the visible page name authoritative and use
     // response metadata only as a fallback or extension hint.
-    final displayedName = _isUsefulDisplayedName(preferred) ? preferred : null;
+    final displayedName = isUsefulDisplayedName(preferred) ? preferred : null;
     final base =
         displayedName ?? disposition ?? usableUrlName ?? fallbackBaseName;
     return boundedName(_withExtension(
@@ -103,12 +103,16 @@ class DownloadFileNamePolicy {
   static String courseFolderName({
     required String requestedCourseName,
     required String fileName,
+    Iterable<String> knownCourseNames = const [],
+    bool courseNameAmbiguous = false,
   }) {
+    if (courseNameAmbiguous) return unknownCourseFolderName;
     final requested = safeFolderName(requestedCourseName);
     if (_isUsefulCourseName(requested)) {
       return requested;
     }
-    return _inferCourseNameFromFileName(fileName) ?? unknownCourseFolderName;
+    return _inferCourseNameFromFileName(fileName, knownCourseNames) ??
+        unknownCourseFolderName;
   }
 
   static String uniqueName(String desiredName, Set<String> existingNames) {
@@ -335,14 +339,17 @@ class DownloadFileNamePolicy {
     return name?.toLowerCase() == 'campussquare.do';
   }
 
-  static bool _isUsefulDisplayedName(String? name) {
-    if (name == null || _isCampussquareDo(name)) {
+  static bool isUsefulDisplayedName(String? name) {
+    final candidate = _cleanCandidate(name);
+    if (candidate == null || _isCampussquareDo(candidate)) {
       return false;
     }
-    final normalized = name.replaceAll(RegExp(r'\s+'), '').toLowerCase();
-    return !RegExp(
-      r'^(?:ダウンロード(?:する)?|保存(?:する)?|download(?:file)?|save(?:file)?)$',
-    ).hasMatch(normalized);
+    final normalized = candidate.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    const count = r'[（(][0-9０-９]+(?:件|個|ファイル|files?|items?)?[）)]';
+    const action = r'(?:一括|まとめて|すべて|全て|選択(?:した)?(?:ファイルを)?)?'
+        r'(?:ダウンロード|保存)(?:する)?|'
+        r'(?:bulk|batch)?(?:download|save)(?:all|selected)?(?:files?)?';
+    return !RegExp('^(?:$count)?(?:$action)(?:$count)?\$').hasMatch(normalized);
   }
 
   static bool _isUsefulCourseName(String name) {
@@ -373,12 +380,27 @@ class DownloadFileNamePolicy {
         !name.contains('学務情報システム');
   }
 
-  static String? _inferCourseNameFromFileName(String fileName) {
+  static String? _inferCourseNameFromFileName(
+    String fileName,
+    Iterable<String> knownCourseNames,
+  ) {
     var base = fileName;
     final dot = base.lastIndexOf('.');
     if (dot > 0) {
       base = base.substring(0, dot);
     }
+    String normalize(String value) =>
+        value.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+    final normalized = normalize(base);
+    final matches = knownCourseNames
+        .map(safeFolderName)
+        .where(_isUsefulCourseName)
+        .where((course) => normalized.contains(normalize(course)))
+        .toSet();
+    if (matches.isNotEmpty) {
+      return matches.length == 1 ? matches.single : null;
+    }
+
     base = base.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (base.isEmpty) {
       return null;
@@ -416,7 +438,11 @@ class DownloadFileNamePolicy {
     if (base.isEmpty || base.length < 3) {
       return null;
     }
-    if (RegExp(r'^[0-9A-Za-z_ -]+$').hasMatch(base)) {
+    if (RegExp(r'^[0-9A-Za-z_ -]+$').hasMatch(base) ||
+        !isUsefulDisplayedName(base) ||
+        RegExp(r'^(?:(?:講義|授業|資料|課題|レポート)+(?:第?[0-9０-９]+回?)?|'
+                r'第[0-9０-９]+回)$')
+            .hasMatch(base.replaceAll(RegExp(r'\s+'), ''))) {
       return null;
     }
     final folderName = safeFolderName(base);

@@ -34,6 +34,7 @@ class WebviewDownloadEvent {
 
   /// The response MIME type, or an empty string if unavailable.
   final String mimeType;
+  final String contentDisposition;
 
   /// The number of bytes received so far.
   final int bytesReceived;
@@ -49,6 +50,7 @@ class WebviewDownloadEvent {
     this.bytesReceived,
     this.totalBytesToReceive, {
     this.mimeType = '',
+    this.contentDisposition = '',
   });
 }
 
@@ -478,6 +480,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
           map['value']['bytesReceived'],
           map['value']['totalBytesToReceive'],
           mimeType: map['value']['mimeType'] as String? ?? '',
+          contentDisposition: map['value']['contentDisposition'] as String? ?? '',
         );
         _downloadEventStreamController.add(value);
         break;

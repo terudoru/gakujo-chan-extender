@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../secure_storage_factory.dart';
+import 'star_sync_config.dart';
 import 'star_sync_google_desktop_auth.dart';
 import 'star_sync_google_mobile_auth.dart';
 
@@ -69,6 +70,7 @@ class StarSyncGoogleRevocationException implements Exception {
 
 abstract interface class StarSyncGoogleAuth {
   String? get currentEmail;
+  int get generation;
   Future<String?> restore({String? expectedEmail});
 
   /// [optionalScopes] are asked for too, but sign-in succeeds without them.
@@ -83,6 +85,33 @@ abstract interface class StarSyncGoogleAuth {
   Future<bool> hasScope(String scope);
   Future<void> requestScopes(List<String> scopes);
   Future<void> signOut();
+}
+
+class StarSyncGoogleAuthSession {
+  StarSyncGoogleAuthSession(this.auth, {required this.email})
+    : generation = auth.generation {
+    checkCurrent();
+  }
+
+  final StarSyncGoogleAuth auth;
+  final String? email;
+  final int generation;
+
+  void checkCurrent() {
+    if (auth.generation != generation ||
+        !sameGoogleAccount(email, auth.currentEmail)) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
+  }
+
+  Future<String> accessToken({bool forceRefresh = false}) async {
+    checkCurrent();
+    final token = await auth.accessToken(forceRefresh: forceRefresh);
+    checkCurrent();
+    return token;
+  }
 }
 
 StarSyncGoogleAuth createStarSyncGoogleAuth({

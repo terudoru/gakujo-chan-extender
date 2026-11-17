@@ -287,6 +287,52 @@ class _Transport implements StarSyncTransport {
   }
 }
 
+class _GoogleAuth implements StarSyncGoogleAuth {
+  @override
+  String? currentEmail = 'a@example.com';
+  @override
+  int generation = 0;
+  Completer<void>? tokenRelease;
+
+  @override
+  Future<String> accessToken({bool forceRefresh = false}) async {
+    await tokenRelease?.future;
+    return currentEmail!;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _AccountTransport implements StarSyncTransport {
+  _AccountTransport(this.session, this.remotes);
+  final StarSyncGoogleAuthSession session;
+  final Map<String, _Transport> remotes;
+
+  Future<_Transport> _remote() async => remotes[await session.accessToken()]!;
+  @override
+  Future<void> ensureDirectory(String path) async =>
+      (await _remote()).ensureDirectory(path);
+  @override
+  Future<List<StarSyncRemoteEntry>> list(String directory) async =>
+      (await _remote()).list(directory);
+  @override
+  Future<StarSyncRemoteObject?> get(
+    String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async => (await _remote()).get(path, maxBytes: maxBytes);
+  @override
+  Future<void> put(
+    String path,
+    List<int> bytes, {
+    bool createOnly = false,
+  }) async => (await _remote()).put(path, bytes, createOnly: createOnly);
+  @override
+  Future<void> delete(String path) async => (await _remote()).delete(path);
+  @override
+  void close() {}
+}
+
 class _TestTimer implements Timer {
   _TestTimer(this.callback);
   final void Function() callback;
@@ -347,6 +393,74 @@ class _Collection extends StarSyncCollection {
 
 void main() {
   const config = StarSyncConfig();
+
+  test(
+    'serializes setup dialogs and never resets the newly signed-in account',
+    () async {
+      final auth = _GoogleAuth();
+      final a = _Transport();
+      final b = _Transport()..files['stars/devices/keep'] = [1, 2, 3];
+      final started = a.getStarted = Completer<void>();
+      final release = a.getRelease = Completer<void>();
+      final storage = _Storage();
+      var factories = 0;
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        loginId: () => 'student',
+        setupGuard: (config) => StarSyncGoogleAuthSession(
+          auth,
+          email: config.googleEmail,
+        ).checkCurrent,
+        transportFactory: (config) {
+          factories++;
+          return _AccountTransport(
+            StarSyncGoogleAuthSession(auth, email: config.googleEmail),
+            {'a@example.com': a, 'b@example.com': b},
+          );
+        },
+      );
+      addTearDown(engine.dispose);
+      final oldSetup = expectLater(
+        engine.setUpWithDrive(
+          const StarSyncConfig(googleEmail: 'a@example.com'),
+          resetExisting: true,
+        ),
+        throwsA(isA<StarSyncGoogleAuthException>()),
+      );
+      await started.future;
+      auth.currentEmail = 'b@example.com';
+      auth.generation++;
+      final newSetup = engine.setUpWithDrive(
+        const StarSyncConfig(googleEmail: 'b@example.com'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(factories, 1);
+      expect(b.lists, 0);
+      release.complete();
+      await oldSetup;
+      expect(await newSetup, StarSyncDriveSetup.needsLegacyReset);
+      expect(b.deletes, 0);
+      expect(b.files['stars/devices/keep'], [1, 2, 3]);
+      expect(storage.values[starSyncConfigKey], isNull);
+    },
+  );
+
+  test('an account-bound token rejects switching during refresh and same-account reauthorization', () async {
+    final auth = _GoogleAuth();
+    final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    auth.tokenRelease = Completer<void>();
+    final pending = expectLater(
+      session.accessToken(),
+      throwsA(isA<StarSyncGoogleAuthException>()),
+    );
+    auth.currentEmail = 'b@example.com';
+    auth.generation++;
+    auth.tokenRelease!.complete();
+    await pending;
+    auth.currentEmail = 'a@example.com';
+    expect(session.checkCurrent, throwsA(isA<StarSyncGoogleAuthException>()));
+  });
 
   test('identity gap state round-trips and defaults to false', () {
     final state = StarSyncState(

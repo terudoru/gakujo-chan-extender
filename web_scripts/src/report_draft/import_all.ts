@@ -1,4 +1,4 @@
-import { draftDocuments, isRetainedDraft } from './storage_helpers.js';
+import { draftDocuments, isRetainedDraft, migrationPrefix, migrationSources } from './storage_helpers.js';
 
 declare const __mbgConfig: { drafts: string; basedOn: string };
 
@@ -43,6 +43,10 @@ function reportDraftImportAll() {
         return;
       }
       if (!Object.prototype.hasOwnProperty.call(drafts, key)) {
+        migrationSources(store, key).concat([migrationPrefix + key]).forEach(function(source) {
+          var before = store.getItem(source);
+          if (before !== null) writes.push({store: store, key: source, before: before, value: null});
+        });
         if (current !== undefined) writes.push({store: store, key: key, before: raw, value: null});
         return;
       }

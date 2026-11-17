@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'download_file_name_policy.dart';
 import 'gakujo_download_request.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
@@ -355,16 +356,12 @@ class GakujoDownloadHistoryStore {
   }
 
   String _failedRequestKey(GakujoDownloadRequest request) {
-    final fields = request.formFields.entries.toList()
-      ..sort((left, right) => left.key.compareTo(right.key));
     return jsonEncode([
       request.method.toUpperCase(),
       request.url,
       request.fileName,
-      request.courseName,
-      [
-        for (final field in fields) [field.key, field.value],
-      ],
+      DownloadFileNamePolicy.safeFolderName(request.courseName),
+      request.canonicalFormFields,
     ]);
   }
 

@@ -17,6 +17,21 @@ const String _gakujoReportDraftDeleteJsPrefix = r'''(function(__mbgConfig) {
   function isDraftKey(key) {
     return typeof key === "string" && /^mbg-report-draft:v[12]:/.test(key);
   }
+  var migrationPrefix = "mbg-report-draft:migration:";
+  function migrationSources(store, key) {
+    var raw = store.getItem(migrationPrefix + key);
+    if (!raw) return [];
+    var sources = JSON.parse(raw);
+    return Array.isArray(sources) ? sources.filter(function(source) {
+      return isDraftKey(source) && source !== key;
+    }) : [];
+  }
+  function cleanupMigrationSources(store, key) {
+    migrationSources(store, key).forEach(function(source) {
+      store.removeItem(source);
+    });
+    store.removeItem(migrationPrefix + key);
+  }
   function draftDocuments() {
     var docs = [document];
     var frames = [];
@@ -45,6 +60,7 @@ const String _gakujoReportDraftDeleteJsPrefix = r'''(function(__mbgConfig) {
     var failed = false;
     draftDocuments().forEach(function(doc) {
       try {
+        cleanupMigrationSources(doc.defaultView.localStorage, key);
         doc.defaultView.localStorage.removeItem(key);
         var win = doc.defaultView;
         var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS || (win.__MBG_REPORT_DRAFT_DELETED_KEYS = /* @__PURE__ */ Object.create(null));

@@ -13,6 +13,67 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final course in ['', ' \t ']) {
+    final label = course.isEmpty ? 'empty' : 'whitespace';
+    test('blank-course retries match after reload ($label)', () async {
+      final request = GakujoDownloadRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/download',
+        method: 'POST',
+        courseName: course,
+        fileName: 'notes.pdf',
+        formFields: const {'id': '42'},
+      );
+      await GakujoDownloadHistoryStore().addFailedDownload(
+        request: request,
+        errorMessage: 'first failure',
+      );
+
+      final reloadedStore = GakujoDownloadHistoryStore();
+      final restored = (await reloadedStore.loadFailedDownloads()).single;
+      expect(restored.request.courseName, '未分類');
+      await reloadedStore.addFailedDownload(
+        request: request,
+        errorMessage: 'retry failure',
+      );
+      final entries = await GakujoDownloadHistoryStore().loadFailedDownloads();
+      expect(entries, hasLength(1));
+      expect(entries.single.errorMessage, 'retry failure');
+      expect(entries.single.request.formFields, request.formFields);
+
+      await reloadedStore.addFailedDownload(
+        request: restored.request,
+        errorMessage: 'restored retry failure',
+      );
+      final retried = await GakujoDownloadHistoryStore().loadFailedDownloads();
+      expect(retried, hasLength(1));
+      expect(retried.single.errorMessage, 'restored retry failure');
+    });
+  }
+
+  test('failed retries retain repeated values and distinguish their order', () async {
+    final store = GakujoDownloadHistoryStore();
+    GakujoDownloadRequest request(List<List<String>> pairs) => GakujoDownloadRequest(
+      url: 'https://gakujo.iess.niigata-u.ac.jp/download',
+      method: 'POST', courseName: 'Physics', fileName: 'notes.pdf',
+      formFields: const {'id': 'B'}, formFieldPairs: pairs,
+    );
+    const pairs = [['id', 'A'], ['id', 'B']];
+    await store.addFailedDownload(request: request(pairs), errorMessage: 'first');
+    await store.addFailedDownload(request: request(pairs), errorMessage: 'retry');
+    await store.addFailedDownload(
+      request: request(const [['id', 'B'], ['id', 'A']]), errorMessage: 'other');
+    final entries = await store.loadFailedDownloads();
+    expect(entries, hasLength(2));
+    expect(entries.singleWhere((entry) => entry.errorMessage == 'retry')
+        .request.orderedFormFields, pairs);
+    for (final entry in entries) {
+      final exported = entry.toExternalJson();
+      expect((exported['request'] as Map), isNot(contains('formFieldPairs')));
+      expect(GakujoFailedDownloadEntry.fromExternalJson(entry.toJson())
+          .request.orderedFormFields, isEmpty);
+    }
+  });
+
   test('download history entries round-trip through json', () {
     final savedAt = DateTime.utc(2026, 6, 26, 12, 30);
     final entry = GakujoDownloadHistoryEntry(

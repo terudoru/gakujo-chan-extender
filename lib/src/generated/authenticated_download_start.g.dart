@@ -59,7 +59,8 @@ const String _gakujoAuthenticatedDownloadStartJsPrefix =
       try {
         const inputUrl = __mbgConfig.url;
         const method = __mbgConfig.method;
-        const fields = JSON.parse(__mbgConfig.fields);
+        const rawFields = JSON.parse(__mbgConfig.fields);
+        const fields = Array.isArray(rawFields) ? rawFields : Object.entries(rawFields || {});
         const url = new URL(inputUrl, window.location.href);
         const options = {
           method,
@@ -70,13 +71,16 @@ const String _gakujoAuthenticatedDownloadStartJsPrefix =
           signal: controller.signal
         };
         if (method === "GET") {
-          Object.keys(fields || {}).forEach(function(key) {
-            url.searchParams.set(key, String(fields[key]));
+          fields.forEach(function(field) {
+            url.searchParams.delete(field[0]);
+          });
+          fields.forEach(function(field) {
+            url.searchParams.append(field[0], field[1]);
           });
         } else {
           const body = new URLSearchParams();
-          Object.keys(fields || {}).forEach(function(key) {
-            body.append(key, String(fields[key]));
+          fields.forEach(function(field) {
+            body.append(field[0], field[1]);
           });
           options.body = body.toString();
           options.headers = {
