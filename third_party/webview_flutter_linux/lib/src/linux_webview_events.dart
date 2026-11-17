@@ -399,17 +399,23 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
     Map<dynamic, dynamic> event,
   ) async {
     final int requestId = (event['requestId'] as num?)?.toInt() ?? -1;
-    final callback = _onPermissionRequest;
-    if (callback == null) {
+    final rawTypes = (event['types'] as List<Object?>?) ?? const <Object?>[];
+    const supported = {'camera', 'microphone', 'geolocation', 'notifications'};
+    if (rawTypes.isEmpty || rawTypes.any((type) => !supported.contains(type))) {
       await _invoke<void>('completePermissionRequest', <String, Object?>{
         'requestId': requestId,
         'grant': false,
       });
       return;
     }
+    final callback = _onPermissionRequest;
+    if (callback == null) {
+      await _invoke<void>('showPermissionRequest', <String, Object?>{
+        'requestId': requestId,
+      });
+      return;
+    }
 
-    final List<Object?> rawTypes =
-        (event['types'] as List<Object?>?) ?? const <Object?>[];
     final Set<WebViewPermissionResourceType> types = rawTypes
         .map((Object? type) => _parsePermissionType(type as String?))
         .whereType<WebViewPermissionResourceType>()
