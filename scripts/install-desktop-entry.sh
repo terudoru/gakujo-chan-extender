@@ -58,3 +58,11 @@ fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$icons_dir" || true
 fi
+if command -v gdbus >/dev/null 2>&1; then
+  gdbus call --session --dest org.freedesktop.DBus \
+    --object-path /org/freedesktop/DBus \
+    --method org.freedesktop.DBus.ReloadConfig >/dev/null 2>&1 || true
+elif command -v dbus-send >/dev/null 2>&1; then
+  dbus-send --session --dest=org.freedesktop.DBus --type=method_call \
+    /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig >/dev/null 2>&1 || true
+fi
