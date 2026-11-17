@@ -40,6 +40,14 @@ class _LinuxFindBarState extends State<LinuxFindBar> {
     widget.onClose();
   }
 
+  void _escape() {
+    if (LinuxTextSelectionToolbar.isShown) {
+      ContextMenuController.removeAny();
+      return;
+    }
+    _close();
+  }
+
   @override
   void dispose() {
     _debounce?.cancel();
@@ -72,7 +80,7 @@ class _LinuxFindBarState extends State<LinuxFindBar> {
           shift: true,
         ): () =>
             _find(false),
-        const SingleActivator(LogicalKeyboardKey.escape): _close,
+        const SingleActivator(LogicalKeyboardKey.escape): _escape,
       },
       child: Material(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,

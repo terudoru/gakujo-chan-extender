@@ -10,6 +10,8 @@ final _selectionToolbarObscured = ValueNotifier<bool>(false);
 class LinuxTextSelectionToolbar extends StatefulWidget {
   const LinuxTextSelectionToolbar({super.key, required this.child});
 
+  static bool get isShown => _selectionToolbars.isNotEmpty;
+
   final Widget child;
 
   @override

@@ -706,7 +706,6 @@ void instance_method_call_cb(FlMethodChannel *channel,
           WEBKIT_FIND_OPTIONS_WRAP_AROUND |
           (forward ? 0 : WEBKIT_FIND_OPTIONS_BACKWARDS);
       webkit_find_controller_search(fc, text, options, G_MAXUINT);
-      webkit_find_controller_count_matches(fc, text, options, G_MAXUINT);
     }
     respond(method_call, success_response());
     return;

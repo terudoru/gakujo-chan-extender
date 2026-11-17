@@ -3,6 +3,7 @@
 #include "webview/download_policy.h"
 #include "webview/webview_context_menu.h"
 #include "webview/webview_environment.h"
+#include "webview/webview_find.h"
 #include "webview/webview_history_navigation.h"
 #include "webview/webview_internal.h"
 #include "webview/webview_load_errors.h"
@@ -541,7 +542,8 @@ static void send_find_result(LinuxWebView *webview, guint matches,
 
 static void found_text_cb(WebKitFindController *controller, guint match_count,
                           gpointer user_data) {
-  send_find_result(static_cast<LinuxWebView *>(user_data), match_count, TRUE);
+  recount_find_matches(controller,
+                        static_cast<LinuxWebView *>(user_data)->find_text);
 }
 
 static void failed_to_find_text_cb(WebKitFindController *controller,
