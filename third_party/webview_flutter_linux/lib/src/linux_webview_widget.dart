@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/rendering.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 import 'linux_webview_controller.dart';
@@ -75,6 +75,7 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.controller.initializationError.addListener(_initializationChanged);
     _applicationVisible = _isApplicationVisible(
       WidgetsBinding.instance.lifecycleState,
     );
@@ -113,6 +114,10 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
       return;
     }
 
+    oldWidget.controller.initializationError.removeListener(
+      _initializationChanged,
+    );
+    widget.controller.initializationError.addListener(_initializationChanged);
     final _LinuxViewGeometry currentGeometry = _lastGeometry;
     _setFrameSafely(
       oldWidget.controller,
@@ -131,12 +136,24 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller.initializationError.removeListener(
+      _initializationChanged,
+    );
     _setFrameSafely(
       widget.controller,
       _LinuxViewGeometry.hidden,
       visible: false,
     );
     super.dispose();
+  }
+
+  void _initializationChanged() {
+    if (!mounted) return;
+    setState(() => _geometryVisible = false);
+    if (widget.controller.initializationError.value == null) {
+      _markGeometryNeedsUpdate();
+      _scheduleVisibilityCheck();
+    }
   }
 
   void _pushGeometry(_LinuxViewGeometry geometry, {required bool visible}) {
@@ -166,7 +183,9 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
   }
 
   void _scheduleVisibilityCheck() {
-    if (_visibilityCheckScheduled || !_applicationVisible) {
+    if (_visibilityCheckScheduled ||
+        !_applicationVisible ||
+        widget.controller.initializationError.value != null) {
       return;
     }
     _visibilityCheckScheduled = true;
@@ -227,6 +246,37 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.controller.initializationError.value != null) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Webページの表示を開始できませんでした。\n'
+                '次のライブラリを確認してから、再試行してください。\n\n'
+                'Ubuntu / Debian: libgtk-3-0、libwebkit2gtk-4.1-0、libsecret-1-0\n'
+                'Fedora: gtk3、webkit2gtk4.1、libsecret\n'
+                'Arch Linux: gtk3、webkit2gtk-4.1、libsecret',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () async {
+                  try {
+                    await widget.controller.retryInitialization();
+                  } on Object {
+                    // The next initialization error is shown by the listener.
+                  }
+                },
+                child: const Text('再試行'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return _LinuxGeometryObserver(
       onGeometryChanged: _handleGeometryChanged,
       onDetached: () =>

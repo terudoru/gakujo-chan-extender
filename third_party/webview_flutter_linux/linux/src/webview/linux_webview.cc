@@ -402,10 +402,36 @@ static void web_process_terminated_cb(WebKitWebView *widget,
   send_event(webview, event);
 }
 
-// More Better Gakujo patch: hide downloads that bypass the app's handling.
-static gboolean context_menu_cb(WebKitWebView *, WebKitContextMenu *menu,
-                                 GdkEvent *, WebKitHitTestResult *, gpointer) {
+static void print_webview(WebKitWebView *web_view) {
+  WebKitPrintOperation *operation = webkit_print_operation_new(web_view);
+  GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(web_view));
+  webkit_print_operation_run_dialog(
+      operation, GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
+  g_object_unref(operation);
+}
+
+static void print_action_cb(GSimpleAction *, GVariant *, gpointer user_data) {
+  print_webview(WEBKIT_WEB_VIEW(user_data));
+}
+
+// More Better Gakujo patch: hide unmanaged downloads and add page printing.
+static gboolean context_menu_cb(WebKitWebView *web_view, WebKitContextMenu *menu,
+                                 GdkEvent *, WebKitHitTestResult *hit, gpointer) {
   remove_unmanaged_download_items(menu);
+#if WEBKIT_CHECK_VERSION(2, 18, 0)
+  if (hit != nullptr && webkit_hit_test_result_get_context(hit) ==
+                            WEBKIT_HIT_TEST_RESULT_CONTEXT_DOCUMENT) {
+    g_autoptr(GSimpleAction) action = g_simple_action_new("mbg-print", nullptr);
+    g_signal_connect_object(action, "activate", G_CALLBACK(print_action_cb),
+                            web_view, static_cast<GConnectFlags>(0));
+    if (webkit_context_menu_get_n_items(menu) > 0) {
+      webkit_context_menu_append(menu, webkit_context_menu_item_new_separator());
+    }
+    webkit_context_menu_append(
+        menu, webkit_context_menu_item_new_from_gaction(
+                  G_ACTION(action), "印刷", nullptr));
+  }
+#endif
   return FALSE;
 }
 
@@ -481,14 +507,9 @@ static gboolean history_key_press_event_cb(GtkWidget *widget,
   case BrowserKeyAction::kReloadBypassCache:
     webkit_web_view_reload_bypass_cache(web_view);
     return TRUE;
-  case BrowserKeyAction::kPrint: {
-    WebKitPrintOperation *operation = webkit_print_operation_new(web_view);
-    GtkWidget *toplevel = gtk_widget_get_toplevel(GTK_WIDGET(web_view));
-    webkit_print_operation_run_dialog(
-        operation, GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel) : nullptr);
-    g_object_unref(operation);
+  case BrowserKeyAction::kPrint:
+    print_webview(web_view);
     return TRUE;
-  }
   case BrowserKeyAction::kNone:
     return FALSE;
   }

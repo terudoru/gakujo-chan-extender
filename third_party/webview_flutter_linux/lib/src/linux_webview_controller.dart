@@ -37,7 +37,7 @@ class LinuxWebViewController extends PlatformWebViewController {
                 params,
               ),
       ) {
-    _readyFuture = _initialize(WeakReference<LinuxWebViewController>(this));
+    _startInitialization();
   }
 
   static final Finalizer<_LinuxWebViewDisposal> _finalizer =
@@ -113,6 +113,32 @@ class LinuxWebViewController extends PlatformWebViewController {
   );
 
   Future<void>? _readyFuture;
+  final ValueNotifier<Object?> initializationError = ValueNotifier(null);
+  Completer<void> _initializationRetry = Completer<void>();
+
+  Future<void> get ready => _readyFuture!;
+
+  void _startInitialization() {
+    final attempt = _initialize(WeakReference<LinuxWebViewController>(this));
+    _readyFuture = attempt;
+    unawaited(attempt.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        if (!_disposed) initializationError.value = error;
+      },
+    ));
+  }
+
+  Future<void> retryInitialization() async {
+    if (_disposed) throw StateError('This LinuxWebViewController is disposed.');
+    if (initializationError.value == null) return;
+    final previousRetry = _initializationRetry;
+    _initializationRetry = Completer<void>();
+    initializationError.value = null;
+    _startInitialization();
+    previousRetry.complete();
+    await ready;
+  }
   MethodChannel? _channel;
   EventChannel? _eventChannel;
   StreamSubscription<dynamic>? _eventSubscription;
@@ -322,7 +348,17 @@ class LinuxWebViewController extends PlatformWebViewController {
   }
 
   Future<void> _ensureReady() async {
-    await _readyFuture;
+    while (!_disposed) {
+      final attempt = _readyFuture!;
+      final retry = _initializationRetry.future;
+      try {
+        await attempt;
+        break;
+      } on Object {
+        // Keep startup configuration and the requested page queued for retry.
+        if (!_disposed) await retry;
+      }
+    }
     if (_disposed) {
       throw StateError(
         'This LinuxWebViewController has already been disposed.',
@@ -824,6 +860,7 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   Future<void> _dispose() async {
     _disposed = true;
+    if (!_initializationRetry.isCompleted) _initializationRetry.complete();
     // More Better Gakujo patch: no fork-only download or async state.
     _finalizer.detach(this);
     Object? initializationError;
@@ -854,6 +891,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onFindRequest = null;
     _onFindAgain = null;
     _onFindResult = null;
+    this.initializationError.dispose();
     if (initializationError != null) {
       Error.throwWithStackTrace(
         initializationError,
