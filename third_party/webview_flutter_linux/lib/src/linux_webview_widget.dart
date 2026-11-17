@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
@@ -246,7 +247,14 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.controller.initializationError.value != null) {
+    final error = widget.controller.initializationError.value;
+    if (error != null) {
+      final details = switch (error) {
+        PlatformException(:final message) => message,
+        MissingPluginException(:final message) => message,
+        StateError(:final message) => message.toString(),
+        _ => null,
+      };
       return Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -255,10 +263,15 @@ class _LinuxPlatformWebViewState extends State<_LinuxPlatformWebView>
             children: [
               const Text(
                 'Webページの表示を開始できませんでした。\n'
-                '次のライブラリを確認してから、再試行してください。\n\n'
+                'ライブラリが入っているか、アプリのデータフォルダに書き込めるか確認して再試行してください。\n\n'
                 'Ubuntu / Debian: libgtk-3-0、libwebkit2gtk-4.1-0、libsecret-1-0\n'
                 'Fedora: gtk3、webkit2gtk4.1、libsecret\n'
                 'Arch Linux: gtk3、webkit2gtk-4.1、libsecret',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '詳細: ${details?.trim().isNotEmpty == true ? details!.trim() : '詳細を取得できませんでした。'}',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),

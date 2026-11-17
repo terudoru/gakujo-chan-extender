@@ -718,6 +718,29 @@ class GakujoWebApp extends StatefulWidget {
 const _settingsSaveFailureMessage = '設定を保存できませんでした。しばらくしてからもう一度お試しください';
 
 @visibleForTesting
+class GakujoStartupFlow {
+  Future<bool>? _settingsLoad;
+  bool _storageRecoveryShown = false;
+  bool _setupShown = false;
+  bool continuedWithoutStorage = false;
+
+  Future<bool> loadSettings(Future<bool> Function() load) =>
+      _settingsLoad ??= Future<bool>.sync(load);
+
+  bool claimStorageRecovery({bool automatic = true}) {
+    if (automatic && _storageRecoveryShown) return false;
+    _storageRecoveryShown = true;
+    return true;
+  }
+
+  bool claimSetup() {
+    if (_setupShown) return false;
+    _setupShown = true;
+    return true;
+  }
+}
+
+@visibleForTesting
 class ProtectedSecretPromptGate {
   bool paused = false;
   bool _backgrounded = false;
@@ -1654,6 +1677,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
   final _linuxSessionSettings = LinuxSessionSettings();
+  final _startupFlow = GakujoStartupFlow();
   final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
   bool _loginAutofillStorageLoadAttempted = false;
   bool _secureStorageRecoveryDialogVisible = false;
@@ -3973,6 +3997,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _showInitialSetupWizard() async {
     if (_isSettingsDialogOpen) {
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_startupFlow.claimSetup()) {
       return;
     }
 
@@ -8024,7 +8052,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<bool> _loadAppSettings({bool allowMacosKeychainPrompt = false}) async {
+  Future<bool> _loadAppSettings({
+    bool allowMacosKeychainPrompt = false,
+    bool? automaticRecovery,
+  }) {
+    Future<bool> read() => _readAppSettings(
+      allowMacosKeychainPrompt: allowMacosKeychainPrompt,
+      automaticRecovery: automaticRecovery ?? !allowMacosKeychainPrompt,
+    );
+    // WebView recovery must retain the settings and choices from this run.
+    return defaultTargetPlatform == TargetPlatform.linux &&
+            !allowMacosKeychainPrompt
+        ? _startupFlow.loadSettings(read)
+        : read();
+  }
+
+  Future<bool> _readAppSettings({
+    required bool allowMacosKeychainPrompt,
+    required bool automaticRecovery,
+  }) async {
     if (Platform.isMacOS && !allowMacosKeychainPrompt) {
       // Unsigned development builds can trigger a macOS Keychain prompt on
       // every launch. Keep startup usable and only touch Keychain after an
@@ -8159,7 +8205,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           (Platform.isMacOS && allowMacosKeychainPrompt)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            unawaited(_showSecureStorageRecoveryDialog(error));
+            unawaited(_showSecureStorageRecoveryDialog(
+              error,
+              automatic: automaticRecovery,
+            ));
           }
         });
       }
@@ -8170,10 +8219,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           !allowMacosKeychainPrompt) {
         unawaited(settingsLoad.then(
           (_) {
-            if (mounted) unawaited(_retrySecureStorageLoad());
+            if (mounted && !_startupFlow.continuedWithoutStorage) {
+              unawaited(_retrySecureStorageLoad(automatic: true));
+            }
           },
           onError: (Object later) {
-            if (mounted) unawaited(_showSecureStorageRecoveryDialog(later));
+            if (mounted) {
+              unawaited(_showSecureStorageRecoveryDialog(later, automatic: true));
+            }
           },
         ));
       }
@@ -8181,12 +8234,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _retrySecureStorageLoad() async {
+  Future<void> _retrySecureStorageLoad({bool automatic = false}) async {
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        automatic && _startupFlow.continuedWithoutStorage) {
+      return;
+    }
     _protectedSecretPromptGate.reset();
     SecureStorageFactory.resetMacosCache();
     SecureStorageFactory.reopenLinuxKeyringGate();
     _loginAutofillStorageLoadAttempted = true;
-    if (!await _loadAppSettings(allowMacosKeychainPrompt: true)) {
+    if (!await _loadAppSettings(
+      allowMacosKeychainPrompt: true,
+      automaticRecovery: automatic,
+    )) {
       // Other platforms keep storage access; only macOS defers the keychain.
       if (Platform.isMacOS) {
         _secureStorageAccessAllowed = false;
@@ -8201,8 +8261,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectTwoFactorAutofillIfAllowed();
   }
 
-  Future<void> _showSecureStorageRecoveryDialog(Object error) async {
+  Future<void> _showSecureStorageRecoveryDialog(
+    Object error, {
+    bool automatic = false,
+  }) async {
     if (_secureStorageRecoveryDialogVisible || !mounted) {
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_startupFlow.claimStorageRecovery(automatic: automatic)) {
       return;
     }
 
@@ -8279,6 +8346,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (defaultTargetPlatform == TargetPlatform.linux &&
         action == _SecureStorageRecoveryAction.continueWithoutStorage) {
+      _startupFlow.continuedWithoutStorage = true;
       await gakujoWaitForDialogDismissal(dialogRoute);
       if (mounted && !_appSettings.setupCompleted) {
         await _showInitialSetupWizard();

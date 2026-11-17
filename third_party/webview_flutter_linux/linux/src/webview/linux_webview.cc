@@ -429,7 +429,7 @@ static gboolean context_menu_cb(WebKitWebView *web_view, WebKitContextMenu *menu
     }
     webkit_context_menu_append(
         menu, webkit_context_menu_item_new_from_gaction(
-                  G_ACTION(action), "印刷", nullptr));
+                  G_ACTION(action), "印刷(_P)", nullptr));
   }
 #endif
   return FALSE;
