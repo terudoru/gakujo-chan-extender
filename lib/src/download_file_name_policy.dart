@@ -103,12 +103,16 @@ class DownloadFileNamePolicy {
   static String courseFolderName({
     required String requestedCourseName,
     required String fileName,
+    Iterable<String> knownCourseNames = const [],
+    bool courseNameAmbiguous = false,
   }) {
+    if (courseNameAmbiguous) return unknownCourseFolderName;
     final requested = safeFolderName(requestedCourseName);
     if (_isUsefulCourseName(requested)) {
       return requested;
     }
-    return _inferCourseNameFromFileName(fileName) ?? unknownCourseFolderName;
+    return _inferCourseNameFromFileName(fileName, knownCourseNames) ??
+        unknownCourseFolderName;
   }
 
   static String uniqueName(String desiredName, Set<String> existingNames) {
@@ -373,12 +377,27 @@ class DownloadFileNamePolicy {
         !name.contains('学務情報システム');
   }
 
-  static String? _inferCourseNameFromFileName(String fileName) {
+  static String? _inferCourseNameFromFileName(
+    String fileName,
+    Iterable<String> knownCourseNames,
+  ) {
     var base = fileName;
     final dot = base.lastIndexOf('.');
     if (dot > 0) {
       base = base.substring(0, dot);
     }
+    String normalize(String value) =>
+        value.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+    final normalized = normalize(base);
+    final matches = knownCourseNames
+        .map(safeFolderName)
+        .where(_isUsefulCourseName)
+        .where((course) => normalized.contains(normalize(course)))
+        .toSet();
+    if (matches.isNotEmpty) {
+      return matches.length == 1 ? matches.single : null;
+    }
+
     base = base.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (base.isEmpty) {
       return null;
@@ -416,7 +435,10 @@ class DownloadFileNamePolicy {
     if (base.isEmpty || base.length < 3) {
       return null;
     }
-    if (RegExp(r'^[0-9A-Za-z_ -]+$').hasMatch(base)) {
+    if (RegExp(r'^[0-9A-Za-z_ -]+$').hasMatch(base) ||
+        RegExp(r'^(?:(?:講義|授業|資料|課題|レポート)+(?:第?[0-9０-９]+回?)?|'
+                r'第[0-9０-９]+回)$')
+            .hasMatch(base.replaceAll(RegExp(r'\s+'), ''))) {
       return null;
     }
     final folderName = safeFolderName(base);

@@ -137,15 +137,17 @@ void main() {
                 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
             'method': 'POST',
             'fileName': '',
-            'courseName': '',
+            'courseName': '未分類',
+            'courseNameAmbiguous': true,
             'formFields': fields,
           })),
-          saveMode: DownloadSaveMode.flatToConfiguredFolder,
+          saveMode: DownloadSaveMode.autoSortToConfiguredFolder,
         );
         expect(methods, ['POST']);
         expect(Uri.splitQueryString(bodies.single), fields);
         expect(contentTypes, ['application/x-www-form-urlencoded']);
         final saved = File(result.location!);
+        expect(result.courseName, '未分類');
         expect(saved.uri.pathSegments.last, responseName ?? 'document.zip');
         expect(await saved.readAsBytes(), zipBytes);
         expect(client.closed, isTrue);

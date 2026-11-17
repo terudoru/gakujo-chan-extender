@@ -405,14 +405,87 @@ void main() {
     );
   });
 
-  test('infers course folder from file name when requested name is generic',
+  test('matches a known course in a file name when requested name is generic',
       () {
     expect(
       DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: '開設一覧',
         fileName: '情報数学 - 第1回 資料.pdf',
+        knownCourseNames: const ['情報数学', '情報リテラシー'],
       ),
       '情報数学',
+    );
+  });
+
+  test('matches a known course before applying filename heuristics', () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '未分類',
+        fileName: '配布資料_情報数学_第1回.pdf',
+        knownCourseNames: const ['情報数学'],
+      ),
+      '情報数学',
+    );
+  });
+
+  test('infers documented course names when none match the history', () {
+    for (final (name, course) in [
+      ('線形代数_第3回.pdf', '線形代数'),
+      ('情報数学 - 第1回 資料.pdf', '情報数学'),
+      ('01_統計学_第3回.pdf', '統計学'),
+    ]) {
+      expect(
+        DownloadFileNamePolicy.courseFolderName(
+          requestedCourseName: '未分類',
+          fileName: name,
+          knownCourseNames: const ['別科目'],
+        ),
+        course,
+      );
+    }
+  });
+
+  test('does not invent a course from ordinary file names', () {
+    for (final name in [
+      '講義資料1.pdf',
+      '講義資料12.pdf',
+      '資料2.pdf',
+      '課題3.docx',
+      'レポート4.pdf',
+      '講義５.pdf',
+      '第３回.pdf',
+      '第1回 レポート3.pdf',
+    ]) {
+      expect(
+        DownloadFileNamePolicy.courseFolderName(
+          requestedCourseName: '未分類',
+          fileName: name,
+        ),
+        '未分類',
+      );
+    }
+  });
+
+  test('keeps an ambiguous page unclassified even with a known course hint', () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '未分類',
+        fileName: '情報数学 - 第1回 資料.pdf',
+        knownCourseNames: const ['情報数学', '情報リテラシー'],
+        courseNameAmbiguous: true,
+      ),
+      '未分類',
+    );
+  });
+
+  test('does not choose between multiple known courses in a file name', () {
+    expect(
+      DownloadFileNamePolicy.courseFolderName(
+        requestedCourseName: '未分類',
+        fileName: '情報数学・情報リテラシー 第1回 資料.pdf',
+        knownCourseNames: const ['情報数学', '情報リテラシー'],
+      ),
+      '未分類',
     );
   });
 

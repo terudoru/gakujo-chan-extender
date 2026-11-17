@@ -16,6 +16,7 @@ import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
 import 'download_response_policy.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_download_history_store.dart';
 import 'gakujo_download_request.dart';
 import 'gakujo_download_service.dart';
 import 'secure_storage_factory.dart';
@@ -295,10 +296,31 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       // .html from the page's own Content-Type and slip past the check.
       await downloaded.validateResponse(request.fileName,
           requestUrl: request.url);
-      final courseFolderName = DownloadFileNamePolicy.courseFolderName(
+      // Prefer a page course, then history matches, then filename heuristics.
+      var courseFolderName = DownloadFileNamePolicy.courseFolderName(
         requestedCourseName: request.courseName,
-        fileName: fileName,
+        fileName: '',
+        courseNameAmbiguous: request.courseNameAmbiguous,
       );
+      if (!request.courseNameAmbiguous &&
+          courseFolderName == DownloadFileNamePolicy.unknownCourseFolderName) {
+        var knownCourseNames = <String>[];
+        if (saveMode.autoSortByCourse) {
+          try {
+            final history = await GakujoDownloadHistoryStore(
+              secureStorage: _secureStorage,
+            ).load().timeout(const Duration(seconds: 3));
+            knownCourseNames = history.map((entry) => entry.courseName).toList();
+          } on Object {
+            // Optional course hints must not stop a save when storage is unavailable.
+          }
+        }
+        courseFolderName = DownloadFileNamePolicy.courseFolderName(
+          requestedCourseName: request.courseName,
+          fileName: fileName,
+          knownCourseNames: knownCourseNames,
+        );
+      }
 
       final GakujoDownloadResult result;
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
