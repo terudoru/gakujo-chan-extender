@@ -34,7 +34,7 @@ else
       Exec=*) printf 'Exec="%s"\n' "$exec_path" ;;
       *) printf '%s\n' "$line" ;;
     esac
-  done < "$bundle_dir/$app_id.desktop" > "$desktop_file"
+  done < "$bundle_dir/share/$app_id.desktop.in" > "$desktop_file"
   chmod 0644 "$desktop_file"
   for size in 16 32 64 128 256 512; do
     icon_dir="$icons_dir/${size}x${size}/apps"

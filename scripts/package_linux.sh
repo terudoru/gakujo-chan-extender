@@ -48,11 +48,12 @@ chmod 0755 "$work_dir/archive/$name/morebettergakujo_flutter"
 cp -a "$work_dir/archive/$name/." "$work_dir/deb/opt/morebettergakujo/"
 ln -s /opt/morebettergakujo/morebettergakujo_flutter "$work_dir/deb/usr/bin/morebettergakujo"
 
-cat > "$work_dir/archive/$name/net.yoshida.morebettergakujo.desktop" <<'EOF'
+mkdir -p "$work_dir/archive/$name/share"
+cat > "$work_dir/archive/$name/share/net.yoshida.morebettergakujo.desktop.in" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=More Better Gakujo
-Exec=sh -c "exec \\"\\$(dirname \\"\\$1\\")/morebettergakujo_flutter\\"" sh %k
+Exec=morebettergakujo_flutter
 Icon=net.yoshida.morebettergakujo
 Categories=Education;Network;
 StartupWMClass=net.yoshida.morebettergakujo
@@ -60,7 +61,7 @@ EOF
 install -m 0755 scripts/install-desktop-entry.sh \
   "$work_dir/archive/$name/install-desktop-entry.sh"
 sed 's/^Exec=.*/Exec=morebettergakujo/' \
-  "$work_dir/archive/$name/net.yoshida.morebettergakujo.desktop" > \
+  "$work_dir/archive/$name/share/net.yoshida.morebettergakujo.desktop.in" > \
   "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop"
 
 for size in 16 32 64 128 256 512; do
