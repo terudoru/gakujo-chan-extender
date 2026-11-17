@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/linux_overlay_guard.dart';
+import 'package:morebettergakujo_flutter/src/widgets/linux_find_bar.dart';
 
 void main() {
   testWidgets('hides the web view for menus and nested dialogs until closed',
@@ -101,6 +103,126 @@ void main() {
   Uint8List pagePng() =>
       File('macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_16.png')
           .readAsBytesSync();
+
+  for (final selectAll in [false, true]) {
+    testWidgets(
+      'find context menu keeps page pixels until ${selectAll ? 'select all' : 'dismissed'}',
+      (tester) async {
+        final obscured = ValueNotifier(false);
+        final key = GlobalKey<LinuxOverlayGuardState>();
+        final controller = TextEditingController(text: 'find me');
+        final focusNode = FocusNode();
+        final reports = <bool>[];
+        final bytes = pagePng();
+        addTearDown(obscured.dispose);
+        addTearDown(() async {
+          ContextMenuController.removeAny();
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump();
+          controller.dispose();
+          focusNode.dispose();
+        });
+        await showSnapshotGuard(
+          tester,
+          obscured: obscured,
+          key: key,
+          takeSnapshot: () async => bytes,
+          onObscuredChanged: reports.add,
+          footer: LinuxFindBar(
+            controller: controller,
+            focusNode: focusNode,
+            onFind: (_, {bool forward = true}) {},
+            onClose: () {},
+          ),
+        );
+        // Only populate the image cache here; the menu must initiate capture.
+        await tester.runAsync(
+          () => precacheImage(
+            MemoryImage(bytes, scale: 2),
+            tester.element(find.byType(LinuxOverlayGuard)),
+          ),
+        );
+        controller.selection = const TextSelection.collapsed(offset: 2);
+        await tester.tap(
+          find.byType(TextField),
+          kind: PointerDeviceKind.mouse,
+          buttons: kSecondaryMouseButton,
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(LinuxTextSelectionToolbar), findsOneWidget);
+        expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
+        expect(obscured.value, isFalse);
+        expect(reports, [false, true]);
+        expect(find.text('native page'), findsNothing);
+        expect(find.byType(Image), findsOneWidget);
+
+        if (selectAll) {
+          await tester.tap(find.text('Select all'));
+          expect(
+            controller.selection,
+            TextSelection(baseOffset: 0, extentOffset: controller.text.length),
+          );
+        } else {
+          await tester.tap(find.byType(Image), kind: PointerDeviceKind.mouse);
+        }
+        await tester.pumpAndSettle();
+        expect(reports, [false, true, false]);
+        expect(find.byType(LinuxTextSelectionToolbar), findsNothing);
+        expect(find.byType(Image), findsNothing);
+        expect(find.text('native page'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+  }
+
+  testWidgets('replacing a toolbar keeps coverage until routes also close', (
+    tester,
+  ) async {
+    final obscured = ValueNotifier(false);
+    final key = GlobalKey<LinuxOverlayGuardState>();
+    final first = ContextMenuController();
+    final second = ContextMenuController();
+    final reports = <bool>[];
+    addTearDown(obscured.dispose);
+    addTearDown(() async {
+      ContextMenuController.removeAny();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    });
+    await showSnapshotGuard(
+      tester,
+      obscured: obscured,
+      key: key,
+      takeSnapshot: () async => null,
+      onObscuredChanged: reports.add,
+    );
+    final context = tester.element(find.byType(LinuxOverlayGuard));
+    first.show(
+      context: context,
+      contextMenuBuilder: (_) =>
+          const LinuxTextSelectionToolbar(child: Text('first toolbar')),
+    );
+    await tester.pumpAndSettle();
+    expect(reports, [false, true]);
+    second.show(
+      context: context,
+      contextMenuBuilder: (_) =>
+          const LinuxTextSelectionToolbar(child: Text('second toolbar')),
+    );
+    await tester.pumpAndSettle();
+    expect(first.isShown, isFalse);
+    expect(second.isShown, isTrue);
+    expect(reports, [false, true]);
+    obscured.value = true;
+    second.remove();
+    await tester.pumpAndSettle();
+    expect(find.text('native page'), findsNothing);
+    expect(reports, [false, true]);
+    obscured.value = false;
+    await tester.pumpAndSettle();
+    expect(find.text('native page'), findsOneWidget);
+    expect(reports, [false, true, false]);
+  });
 
   testWidgets('obscuring is reported before the snapshot hides the page',
       (tester) async {

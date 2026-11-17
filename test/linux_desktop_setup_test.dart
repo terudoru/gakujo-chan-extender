@@ -34,6 +34,31 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test('Linux backup picker keeps the JSON extension and MIME filters', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickOpenFile');
+      expect(call.arguments, {
+        'allowedTypeGroups': [
+          {
+            'label': 'JSON',
+            'extensions': ['json'],
+            'mimeTypes': ['application/json', 'text/plain'],
+          },
+        ],
+      });
+      return '/home/student/backup.json';
+    });
+    expect((await pickGakujoBackupFile())?.path, '/home/student/backup.json');
+  });
+
+  test('Linux backup picker cancellation returns no file', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickOpenFile');
+      return null;
+    });
+    expect(await pickGakujoBackupFile(), isNull);
+  });
+
   for (final existing in [false, true]) {
     test(
       'Linux save picker saves to the chosen path (existing: $existing)',

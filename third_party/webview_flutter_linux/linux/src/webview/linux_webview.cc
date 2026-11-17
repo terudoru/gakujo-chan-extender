@@ -384,8 +384,10 @@ static gboolean load_failed_cb(WebKitWebView *widget,
       error->code == WEBKIT_NETWORK_ERROR_CANCELLED) {
     return FALSE;
   }
-  emit_load_error(static_cast<LinuxWebView *>(user_data), error, failing_url);
-  return FALSE;
+  emit_load_error(webview, error, failing_url);
+  // The app reports connectivity failures and retries. WebKit's error document
+  // would start another load and clear that failed-navigation state.
+  return should_suppress_connectivity_error_page(error, webview->event_listening);
 }
 
 static void web_process_terminated_cb(WebKitWebView *widget,

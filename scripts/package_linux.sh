@@ -39,7 +39,7 @@ trap 'rm -rf "$work_dir"' EXIT
 
 mkdir -p "$work_dir/archive/$name" "$work_dir/deb/DEBIAN" \
   "$work_dir/deb/opt/morebettergakujo" "$work_dir/deb/usr/bin" \
-  "$work_dir/deb/usr/share/applications"
+  "$work_dir/deb/usr/share/applications" "$work_dir/deb/usr/share/dbus-1/services"
 cp -a "$bundle/." "$work_dir/archive/$name/"
 find "$work_dir/archive/$name" -type d -exec chmod 0755 {} +
 find "$work_dir/archive/$name" -type f -exec chmod 0644 {} +
@@ -57,12 +57,19 @@ Exec=morebettergakujo_flutter
 Icon=net.yoshida.morebettergakujo
 Categories=Education;Network;
 StartupWMClass=net.yoshida.morebettergakujo
+DBusActivatable=true
+X-GNOME-UsesNotifications=true
 EOF
 install -m 0755 scripts/install-desktop-entry.sh \
   "$work_dir/archive/$name/install-desktop-entry.sh"
 sed 's/^Exec=.*/Exec=morebettergakujo/' \
   "$work_dir/archive/$name/share/net.yoshida.morebettergakujo.desktop.in" > \
   "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop"
+cat > "$work_dir/deb/usr/share/dbus-1/services/net.yoshida.morebettergakujo.service" <<'EOF'
+[D-BUS Service]
+Name=net.yoshida.morebettergakujo
+Exec=/opt/morebettergakujo/morebettergakujo_flutter
+EOF
 
 for size in 16 32 64 128 256 512; do
   for root in "$work_dir/archive/$name" "$work_dir/deb/usr/share"; do
@@ -89,7 +96,8 @@ Description: 学務情報システムを使うための非公式アプリ
  An unofficial desktop app for the Gakujo student information system.
 EOF
 chmod 0644 "$work_dir/deb/DEBIAN/control" \
-  "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop"
+  "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop" \
+  "$work_dir/deb/usr/share/dbus-1/services/net.yoshida.morebettergakujo.service"
 find "$work_dir/deb" -type d -exec chmod 0755 {} +
 dpkg-deb --root-owner-group --build "$work_dir/deb" "$deb_path"
 echo "Wrote $tar_path"

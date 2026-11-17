@@ -569,6 +569,33 @@ bool isMissingKeychainEntitlementError(Object error) {
 }
 
 @visibleForTesting
+Future<XFile?> pickGakujoBackupFile() async {
+  const types = [
+    XTypeGroup(
+      label: 'JSON',
+      extensions: ['json'],
+      mimeTypes: ['application/json', 'text/plain'],
+      uniformTypeIdentifiers: ['public.json'],
+    ),
+  ];
+  if (defaultTargetPlatform == TargetPlatform.linux) {
+    const channel = MethodChannel('net.yoshida.morebettergakujo/window');
+    final path = await channel.invokeMethod<String>('pickOpenFile', {
+      'allowedTypeGroups': [
+        for (final type in types)
+          {
+            'label': type.label,
+            'extensions': type.extensions,
+            'mimeTypes': type.mimeTypes,
+          },
+      ],
+    });
+    return path == null ? null : XFile(path);
+  }
+  return openFile(acceptedTypeGroups: types);
+}
+
+@visibleForTesting
 String gakujoUserFacingMessage(
   String message, {
   required TargetPlatform platform,
@@ -6837,16 +6864,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _restoreSettingsFromFile() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(
-          label: 'JSON',
-          extensions: ['json'],
-          mimeTypes: ['application/json', 'text/plain'],
-          uniformTypeIdentifiers: ['public.json'],
-        ),
-      ],
-    );
+    final file = await pickGakujoBackupFile();
     if (file == null) {
       return;
     }

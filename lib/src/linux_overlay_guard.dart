@@ -3,6 +3,45 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+final _selectionToolbars = <Object>{};
+final _selectionToolbarObscured = ValueNotifier<bool>(false);
+
+/// Tracks selection toolbars, which use overlay entries rather than routes.
+class LinuxTextSelectionToolbar extends StatefulWidget {
+  const LinuxTextSelectionToolbar({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<LinuxTextSelectionToolbar> createState() =>
+      _LinuxTextSelectionToolbarState();
+}
+
+class _LinuxTextSelectionToolbarState extends State<LinuxTextSelectionToolbar> {
+  void _updateAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _selectionToolbarObscured.value = _selectionToolbars.isNotEmpty;
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _selectionToolbars.add(this);
+    _updateAfterFrame();
+  }
+
+  @override
+  void dispose() {
+    _selectionToolbars.remove(this);
+    _updateAfterFrame();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 /// Tracks routes above the main page until their exit animations finish.
 class LinuxOverlayObserver extends NavigatorObserver {
   final ValueNotifier<bool> obscured = ValueNotifier<bool>(false);
@@ -56,7 +95,7 @@ class LinuxOverlayObserver extends NavigatorObserver {
   }
 }
 
-/// Replaces GTK's native view with visible page pixels while a route is up.
+/// Replaces GTK's native view with visible page pixels while an overlay is up.
 class LinuxOverlayGuard extends StatefulWidget {
   const LinuxOverlayGuard({
     super.key,
@@ -100,12 +139,15 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
       _visibleReady?.future ?? Future<void>.value();
 
   bool get _obscured =>
-      widget.forceObscured || (widget.obscured?.value ?? false);
+      widget.forceObscured ||
+      (widget.obscured?.value ?? false) ||
+      _selectionToolbarObscured.value;
 
   @override
   void initState() {
     super.initState();
     widget.obscured?.addListener(_update);
+    _selectionToolbarObscured.addListener(_update);
     widget.navigation?.addListener(_navigationChanged);
     _update();
   }
@@ -263,6 +305,7 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   @override
   void dispose() {
     widget.obscured?.removeListener(_update);
+    _selectionToolbarObscured.removeListener(_update);
     widget.navigation?.removeListener(_navigationChanged);
     ++_request;
     _capturing = false;

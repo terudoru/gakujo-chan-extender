@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../linux_overlay_guard.dart';
+
 class LinuxFindBar extends StatefulWidget {
   const LinuxFindBar({
     super.key,
@@ -84,6 +86,12 @@ class _LinuxFindBarState extends State<LinuxFindBar> {
                   focusNode: widget.focusNode,
                   autofocus: true,
                   textInputAction: TextInputAction.search,
+                  contextMenuBuilder: (context, state) =>
+                      LinuxTextSelectionToolbar(
+                        child: AdaptiveTextSelectionToolbar.editableText(
+                          editableTextState: state,
+                        ),
+                      ),
                   decoration: const InputDecoration(
                     hintText: 'ページ内を検索',
                     isDense: true,
