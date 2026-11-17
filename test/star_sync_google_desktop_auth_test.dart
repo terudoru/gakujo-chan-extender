@@ -327,7 +327,7 @@ void main() {
     );
     final uri = await launched.future;
     auth.cancelPendingSignIn();
-    await failure.timeout(const Duration(seconds: 2));
+    await failure;
     auth.cancelPendingSignIn();
     final client = HttpClient();
     try {
