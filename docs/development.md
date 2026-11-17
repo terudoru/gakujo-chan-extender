@@ -60,13 +60,13 @@ flutter build linux --debug
 | Windows アプリ | `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe` |
 | Linux アプリ | `build/linux/x64/debug/bundle/` |
 
-## 報告フォームの有効化
+## 不具合・要望の受付
 
-アカウントなしで使える報告フォームは `report_form/` にあります。現時点では未公開のため、アプリの `lib/src/report_form.dart` にある `reportFormBaseUrl` は `null` のままにします。この状態では、設定にフォームのボタンや案内は出ません。
+アカウントなしで報告を受け付ける仕組みは `report_form/` にあります。Google Apps Script のウェブアプリが報告を受け取り、非公開のスプレッドシートに保存します。開発者はスプレッドシートで報告を確認し、公開欄だけを入れた GitHub の Issue 作成画面を開きます。公開の手順と制限は [report_form/README.md](../report_form/README.md) を見てください。
 
-[report_form/README.md](../report_form/README.md) に従って公開し、送信と非公開での保存を確認してから、同じ定数に `'https://gakujo-report.terudoru.com/'` を設定してください。URL に付けるのは `type`（`bug` / `request`）、アプリの `version`、`platform` だけです。ログイン情報、設定、診断情報は URL に含めません。
-
-利用者が軽量版のエラー報告パッケージを任意で貼り付ける欄は非公開です。開発者が報告を確認して公開用の GitHub Issue にまとめる際も、この欄は公開しません。アプリから診断情報は自動送信しません。有効・無効の両状態は `test/app_support_section_test.dart`、URL の内容は `test/report_form_test.dart` で確認します。
+- アプリ: `lib/src/report_form.dart` の `reportEndpointUrl` が `null` のあいだは、設定に「アプリから報告する」を出しません。ウェブアプリを公開して送信を確認してから、公開 URL（`https://script.google.com/macros/s/…/exec`）を設定します。送る診断情報は軽量版（`includeStoredData: false`）だけです。
+- ブラウザー: `site/report/index.html` の `REPORT_APP_URL` が `null` のあいだは、準備中の案内だけを表示します。同じ公開 URL を設定すると、フォームを埋め込みます。
+- テスト: `report_form/` で `npm test`（Node.js 22.13 以降、依存パッケージなし）。CI は `.github/workflows/report-form.yml` で実行します。
 
 ## WebView に注入するスクリプト
 
