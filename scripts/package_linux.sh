@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+output_dir=""
+if [[ -n "${OUTPUT_DIR:-}" ]]; then
+  mkdir -p -- "$OUTPUT_DIR"
+  output_dir="$(cd -- "$OUTPUT_DIR" && pwd)"
+fi
+cd -- "$repo_root"
+
 pubspec_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
 version="${pubspec_version%%+*}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -28,9 +36,11 @@ if [ ! -d "$bundle" ] || [ ! -f "$bundle/morebettergakujo_flutter" ]; then
   exit 66
 fi
 
-output_dir="${OUTPUT_DIR:-dist}"
-mkdir -p "$output_dir"
-output_dir="$(cd "$output_dir" && pwd)"
+if [[ -z "${output_dir:-}" ]]; then
+  output_dir="dist"
+  mkdir -p -- "$output_dir"
+  output_dir="$(cd -- "$output_dir" && pwd)"
+fi
 name="MoreBetterGakujo-${release_tag}-linux-x64"
 tar_path="$output_dir/$name.tar.gz"
 deb_path="$output_dir/MoreBetterGakujo-${release_tag}-linux-amd64.deb"
