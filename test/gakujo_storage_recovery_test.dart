@@ -42,6 +42,8 @@ void main() {
   late int settingsReads;
   late int loginProbes;
   final eventSinks = <String, MockStreamHandlerEventSink>{};
+  final methodCalls = <String>[];
+  var channelGuardScripts = 0;
   var retrying = false;
   var setupCompleted = false;
 
@@ -51,9 +53,12 @@ void main() {
     settingsReads = 0;
     loginProbes = 0;
     eventSinks.clear();
+    methodCalls.clear();
+    channelGuardScripts = 0;
     retrying = false;
     setupCompleted = false;
     messenger.setMockMethodCallHandler(storage, (call) async {
+      methodCalls.add('storage.${call.method}');
       if (call.method == 'containsKey') return false;
       if (call.method == 'readAll' ||
           (call.method == 'read' &&
@@ -74,24 +79,40 @@ void main() {
       return null;
     });
     messenger.setMockMethodCallHandler(window, (call) async {
+      methodCalls.add('window.${call.method}');
       if (call.method == 'secretServiceStatus') return 'running';
       return null;
     });
     messenger.setMockMethodCallHandler(paths, (call) async {
+      methodCalls.add('paths.${call.method}');
       throw MissingPluginException('No local preferences in this test');
     });
     messenger.setMockMethodCallHandler(windowsPlugin, (call) async {
+      methodCalls.add('windowsPlugin.${call.method}');
       if (call.method == 'initialize') return {'textureId': 73};
       return null;
     });
-    messenger.setMockMethodCallHandler(windowsView, (call) async => null);
+    messenger.setMockMethodCallHandler(windowsView, (call) async {
+      methodCalls.add('windowsView.${call.method}');
+      return null;
+    });
     messenger.setMockMethodCallHandler(LinuxWebViewController.rootChannel, (
       call,
     ) async {
+      methodCalls.add('linuxRoot.${call.method}');
       if (call.method == 'createWebView') return 91;
       return null;
     });
     messenger.setMockMethodCallHandler(linuxView, (call) async {
+      methodCalls.add('linuxView.${call.method}');
+      if (call.method == 'runJavaScript' &&
+          ((call.arguments as Map)['script'] as String).contains(
+            '// web_scripts/src/channel_guard/main.ts',
+          )) {
+        // Classify the install call without retaining its script/capability.
+        channelGuardScripts++;
+        methodCalls.add('channelGuardInstallObserved');
+      }
       if (call.method == 'runJavaScriptReturningResult') {
         final script = (call.arguments as Map)['script'];
         if (script == gakujoPortalAuthStateProbeScript) {
@@ -108,6 +129,7 @@ void main() {
         MockStreamHandler.inline(
           onListen: (arguments, sink) {
             eventSinks[channel.name] = sink;
+            methodCalls.add('listen:${channel.name}');
           },
         ),
       );
@@ -137,6 +159,42 @@ void main() {
       testWidgets(
         '$platform storage retry opens setup only when incomplete ($completed)',
         (tester) async {
+          final uiSnapshots = <String>[];
+          int countCalls(String method) =>
+              methodCalls.where((call) => call == method).length;
+          void recordUi(String stage) {
+            final texts = tester
+                .widgetList<Text>(find.byType(Text, skipOffstage: false))
+                .map((text) => text.data)
+                .whereType<String>();
+            final ui = <String, bool>{
+              'preparing': texts.contains('準備中'),
+              'loadingPortal': texts.any(
+                (text) =>
+                    text.startsWith('読み込み中:') &&
+                    text.contains('campusportal.do'),
+              ),
+              'displayingPortal': texts.any(
+                (text) =>
+                    text.startsWith('表示中:') && text.contains('campusportal.do'),
+              ),
+              'recovery': texts.contains('保存データにアクセスできません'),
+              'setup': texts.contains('初回セットアップ'),
+            };
+            uiSnapshots.add(
+              '$stage: createWebView=${countCalls('linuxRoot.createWebView')}, '
+              'loadRequest=${countCalls('linuxView.loadRequest')}, '
+              'channelGuardScripts=$channelGuardScripts, '
+              'loginProbes=$loginProbes, sinks=${eventSinks.keys.toList()}, '
+              'ui=$ui',
+            );
+          }
+
+          String diagnostics() =>
+              'Storage recovery diagnostics (method names/counts and synthetic UI only):\n'
+              '${uiSnapshots.join('\n')}\n'
+              'methodCalls=${methodCalls.asMap().entries.map((entry) => '${entry.key}:${entry.value}').join(', ')}';
+
           expect(
             gakujoPortalAuthStateFromJavaScriptResult(loginProbeResult),
             GakujoPortalAuthState.login,
@@ -149,9 +207,10 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
+          recordUi('initial pumpAndSettle completed');
           if (Platform.isMacOS) {
             // macOS starts from the local mirror without touching Keychain.
-            expect(settingsReads, 0);
+            expect(settingsReads, 0, reason: diagnostics());
             expect(find.text('初回セットアップ'), findsNothing);
             expect(
               find.widgetWithText(AlertDialog, '保存データにアクセスできません'),
@@ -161,17 +220,24 @@ void main() {
             const url =
                 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
             final sink = eventSinks[linuxEvents.name]!;
+            methodCalls.add('send:pageStarted');
             sink.success({'type': 'pageStarted', 'url': url});
+            recordUi('after pageStarted queued');
+            methodCalls.add('send:pageFinished');
             sink.success({'type': 'pageFinished', 'url': url});
+            recordUi('after pageFinished queued');
+            // Preserve the failing event/pump order; queued UI can predate
+            // delivery, while the settled snapshot shows rendered effects.
             await tester.pumpAndSettle();
-            expect(loginProbes, greaterThan(0));
+            recordUi('after events pumpAndSettle completed');
+            expect(loginProbes, greaterThan(0), reason: diagnostics());
           } else {
-            expect(settingsReads, greaterThan(0));
+            expect(settingsReads, greaterThan(0), reason: diagnostics());
           }
-          expect(settingsReads, greaterThan(0));
+          expect(settingsReads, greaterThan(0), reason: diagnostics());
           final initialReads = settingsReads;
           final recovery = find.widgetWithText(AlertDialog, '保存データにアクセスできません');
-          expect(recovery, findsOneWidget);
+          expect(recovery, findsOneWidget, reason: diagnostics());
           expect(find.text('初回セットアップ'), findsNothing);
           final route = ModalRoute.of(tester.element(recovery))!;
           var recoveryDismissed = false;
