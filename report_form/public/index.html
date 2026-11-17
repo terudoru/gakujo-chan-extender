@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="turnstile-site-key" content="__TURNSTILE_SITE_KEY__">
+  <meta name="report-available" content="__REPORT_AVAILABLE__">
+  <title>不具合・要望を送る | More Better Gakujo</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script type="module" src="/assets/js/form.js"></script>
+</head>
+<body>
+<main>
+  <p class="eyebrow">More Better Gakujo</p>
+  <h1>不具合・要望を送る</h1>
+  <p>GitHub アカウントは不要です。送った内容は開発者が確認してから、誰でも見られる公開ページ（GitHub の Issue）にすることがあります。</p>
+  <p>個別の返信はできません。対応状況は <a href="https://github.com/terudoru/gakujo-chan-extender/issues" target="_blank" rel="noopener noreferrer">公開ページの一覧（新しいタブで開きます）</a>で確認できます。</p>
+  <noscript><p class="notice">送信には JavaScript が必要です。ブラウザで有効にしてください。</p></noscript>
+  <section id="success" hidden aria-labelledby="success-title">
+    <h2 id="success-title" tabindex="-1">受け付けました</h2>
+    <p id="receipt"></p>
+    <p>受付番号は、このフォーム専用です。公開ページの Issue 番号とは別の番号です。</p>
+    <p>開発者が内容を確認します。必要に応じて公開ページにまとめるため、すぐに一覧に載るとは限りません。</p>
+    <p><a href="https://github.com/terudoru/gakujo-chan-extender/issues" target="_blank" rel="noopener noreferrer">公開ページの一覧を見る（新しいタブで開きます）</a></p>
+    <button id="another" type="button">もう1件送る</button>
+  </section>
+  <form id="report-form" novalidate>
+    <p class="hint">「必須」以外は、分かる範囲で構いません。</p>
+    <fieldset aria-describedby="type-error">
+      <legend>種類 <span class="required">必須</span></legend>
+      <label class="choice"><input type="radio" name="type" value="bug" checked> <span>不具合<small>思ったとおりに動かない・エラーが出る</small></span></label>
+      <label class="choice"><input type="radio" name="type" value="request"> <span>要望・改善案<small>あったら便利な機能・使いにくい所</small></span></label>
+      <p class="error" id="type-error"></p>
+    </fieldset>
+    <div class="field">
+      <label for="title">件名 <span class="required">必須</span></label>
+      <input id="title" name="title" required maxlength="80" aria-describedby="title-error title-count" autocomplete="off">
+      <div class="field-note"><span id="title-error" class="error"></span><span id="title-count" class="counter"></span></div>
+    </div>
+    <div class="field">
+      <label for="content">内容 <span class="required">必須</span></label>
+      <textarea id="content" name="content" required maxlength="4000" rows="7" placeholder="何をしたら何が起きたか" aria-describedby="content-error content-count"></textarea>
+      <div class="field-note"><span id="content-error" class="error"></span><span id="content-count" class="counter"></span></div>
+    </div>
+    <div id="bug-fields">
+      <div class="field">
+        <label for="steps">問題が起きるまでの手順</label>
+        <textarea id="steps" name="steps" maxlength="2000" rows="4" aria-describedby="steps-error steps-count"></textarea>
+        <div class="field-note"><span id="steps-error" class="error"></span><span id="steps-count" class="counter"></span></div>
+      </div>
+      <div class="field">
+        <label for="expected">本来どうなってほしかったか</label>
+        <textarea id="expected" name="expected" maxlength="1000" rows="3" aria-describedby="expected-error expected-count"></textarea>
+        <div class="field-note"><span id="expected-error" class="error"></span><span id="expected-count" class="counter"></span></div>
+      </div>
+    </div>
+    <div class="environment">
+      <div class="field">
+        <label for="version">アプリのバージョン</label>
+        <input id="version" name="version" maxlength="40" aria-describedby="version-error version-hint version-count" autocomplete="off">
+        <p id="version-hint" class="hint">アプリの 設定 → このアプリについて で確認できます。</p>
+        <div class="field-note"><span id="version-error" class="error"></span><span id="version-count" class="counter"></span></div>
+      </div>
+      <div class="field">
+        <label for="platform">OS（Windows・Mac・Android など）</label>
+        <select id="platform" name="platform" aria-describedby="platform-error">
+          <option value="">選択しない</option><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option><option value="android">Android</option><option value="ios">iOS / iPadOS</option><option value="other">その他</option>
+        </select>
+        <p id="platform-error" class="error"></p>
+      </div>
+    </div>
+    <div class="field private">
+      <label for="diagnostic">診断情報（非公開・任意）</label>
+      <p id="diagnostic-hint" class="hint">アプリの設定 → このアプリについて → エラー報告パッケージ作成 →「軽量版」を貼り付けてください。開発者だけが見て、公開ページには載せません。詳細版や画面の内容は個人情報を含むことがあるので貼らないでください。</p>
+      <textarea id="diagnostic" name="diagnostic" maxlength="20000" rows="4" aria-describedby="diagnostic-error diagnostic-hint diagnostic-count" spellcheck="false"></textarea>
+      <div class="field-note"><span id="diagnostic-error" class="error"></span><span id="diagnostic-count" class="counter"></span></div>
+    </div>
+    <div class="field">
+      <label class="choice"><input type="checkbox" id="consent" name="consent" required aria-describedby="consent-error"> <span>氏名・学籍番号・パスワード・成績・学情の画面の内容など、個人情報を書いていないことを確認しました。件名・内容・問題が起きるまでの手順（不具合の場合）・本来どうなってほしかったか（不具合の場合）・アプリのバージョン・OS が GitHub で公開される場合があることに同意します。 <span class="required">必須</span></span></label>
+      <p id="consent-error" class="error"></p>
+    </div>
+    <div class="honeypot" aria-hidden="true"><label for="website">この欄は空欄にしてください</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+    <div id="turnstile"></div>
+    <p id="verification-help" class="hint">認証が完了するまで送信できません。完了までお待ちください。</p>
+    <button id="verification-retry" type="button" class="secondary" hidden>もう一度確認する</button>
+    <p id="status" role="status" aria-live="polite" tabindex="-1"></p>
+    <button id="submit" type="submit" disabled aria-describedby="verification-help">送信する</button>
+  </form>
+  <footer><a href="https://github.com/terudoru/gakujo-chan-extender/issues/new" target="_blank" rel="noopener noreferrer">GitHub アカウントをお持ちの方は GitHub から直接報告できます（新しいタブで開きます）</a></footer>
+</main>
+</body>
+</html>
