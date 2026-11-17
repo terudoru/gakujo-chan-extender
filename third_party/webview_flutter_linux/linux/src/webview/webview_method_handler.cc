@@ -449,7 +449,7 @@ void instance_method_call_cb(FlMethodChannel *channel,
 
   if (strcmp(method, "takeSnapshot") == 0) {
     take_webview_snapshot(
-        webview->web_view, 100,
+        webview->web_view, 1000,
         [](GObject *object, GAsyncResult *result, gpointer data) {
           FlMethodCall *call = FL_METHOD_CALL(data);
           g_autoptr(GError) error = nullptr;
@@ -467,6 +467,31 @@ void instance_method_call_cb(FlMethodChannel *channel,
           g_object_unref(call);
         },
         g_object_ref(method_call));
+    return;
+  }
+
+  if (strcmp(method, "hasFocus") == 0) {
+    GtkWidget *widget = GTK_WIDGET(webview->web_view);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+    GtkWidget *focus = GTK_IS_WINDOW(toplevel)
+                           ? gtk_window_get_focus(GTK_WINDOW(toplevel))
+                           : nullptr;
+    const gboolean focused =
+        focus == widget ||
+        (focus != nullptr && gtk_widget_is_ancestor(focus, widget));
+    g_autoptr(FlValue) value = fl_value_new_bool(focused);
+    respond(method_call, success_response(value));
+    return;
+  }
+
+  if (strcmp(method, "requestFocus") == 0) {
+    GtkWidget *widget = GTK_WIDGET(webview->web_view);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+    if (webview->visible && gtk_widget_get_mapped(widget) &&
+        GTK_IS_WINDOW(toplevel) && gtk_window_is_active(GTK_WINDOW(toplevel))) {
+      gtk_widget_grab_focus(widget);
+    }
+    respond(method_call, success_response());
     return;
   }
 

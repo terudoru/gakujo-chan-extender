@@ -805,6 +805,12 @@ class LinuxWebViewController extends PlatformWebViewController {
   /// Returns visible pixels as PNG, or null when unavailable or timed out.
   Future<Uint8List?> takeSnapshot() => _invoke<Uint8List>('takeSnapshot');
 
+  /// Whether the native page currently owns the keyboard focus.
+  Future<bool> hasFocus() async => await _invoke<bool>('hasFocus') ?? false;
+
+  /// Gives the keyboard to the visible page in the active window.
+  Future<void> requestFocus() => _invoke<void>('requestFocus');
+
   /// Sets the page zoom factor.
   Future<void> setZoomFactor(double zoomFactor) {
     return _invoke<void>('setZoomFactor', <String, Object?>{

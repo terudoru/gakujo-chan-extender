@@ -65,12 +65,16 @@ class LinuxOverlayGuard extends StatefulWidget {
     this.forceObscured = false,
     this.navigation,
     this.takeSnapshot,
+    this.hasNativeFocus,
+    this.restoreNativeFocus,
   });
 
   final ValueListenable<bool>? obscured;
   final bool forceObscured;
   final ValueListenable<int>? navigation;
   final Future<Uint8List?> Function()? takeSnapshot;
+  final Future<bool> Function()? hasNativeFocus;
+  final Future<void> Function()? restoreNativeFocus;
   final Widget child;
 
   @override
@@ -81,10 +85,16 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   MemoryImage? _snapshot;
   bool _nativeHidden = false;
   bool _capturing = false;
+  bool _wasObscured = false;
+  Timer? _hideTimer;
+  Completer<void>? _visibleReady;
+  Future<bool> _hadNativeFocus = Future<bool>.value(false);
   int _request = 0;
   Future<void> _snapshotReady = Future<void>.value();
 
   Future<void> get snapshotReady => _snapshotReady;
+  Future<void> get overlayReady =>
+      _visibleReady?.future ?? Future<void>.value();
 
   bool get _obscured =>
       widget.forceObscured || (widget.obscured?.value ?? false);
@@ -121,6 +131,8 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   void _navigationChanged() {
     ++_request;
     _capturing = false;
+    _finishWaiting();
+    _hadNativeFocus = Future<bool>.value(false);
     _discardSnapshot();
     setState(() => _nativeHidden = _obscured);
   }
@@ -161,14 +173,12 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   ) async {
     MemoryImage? provider;
     try {
-      provider = await _loadSnapshot(
-        request,
-        takeSnapshot,
-      ).timeout(const Duration(milliseconds: 150), onTimeout: () => null);
+      provider = await _loadSnapshot(request, takeSnapshot);
     } on Object {
       // A hidden, disposed or busy renderer can legitimately have no snapshot.
     }
     if (!_isCurrent(request)) return;
+    _finishWaiting();
     setState(() {
       _snapshot = provider;
       _capturing = false;
@@ -176,13 +186,52 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
     });
   }
 
+  void _finishWaiting() {
+    _hideTimer?.cancel();
+    _hideTimer = null;
+    final ready = _visibleReady;
+    if (ready != null && !ready.isCompleted) ready.complete();
+  }
+
+  bool get _flutterFieldFocused {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    return focusContext?.widget is EditableText ||
+        focusContext?.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  Future<void> _restoreFocus(int request) async {
+    try {
+      if (!await _hadNativeFocus) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted ||
+          _obscured ||
+          request != _request ||
+          _flutterFieldFocused) {
+        return;
+      }
+      await widget.restoreNativeFocus?.call();
+    } on Object {
+      // Closing a window or replacing its renderer can invalidate the view.
+    }
+  }
+
   void _update() {
     if (!_obscured) {
-      ++_request;
+      final restore = _wasObscured;
+      _wasObscured = false;
+      final request = ++_request;
       _capturing = false;
+      _finishWaiting();
       _discardSnapshot();
       setState(() => _nativeHidden = false);
+      if (restore) unawaited(_restoreFocus(request));
       return;
+    }
+    if (!_wasObscured) {
+      _wasObscured = true;
+      _hadNativeFocus = Future<bool>.sync(
+        () => widget.hasNativeFocus?.call() ?? false,
+      ).catchError((Object _) => false);
     }
     if (_nativeHidden || _capturing) return;
     final takeSnapshot = widget.takeSnapshot;
@@ -191,7 +240,14 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
       return;
     }
     _capturing = true;
-    _snapshotReady = _capture(++_request, takeSnapshot);
+    _visibleReady = Completer<void>();
+    final request = ++_request;
+    _hideTimer = Timer(const Duration(milliseconds: 300), () {
+      if (!_isCurrent(request)) return;
+      setState(() => _nativeHidden = true);
+      _finishWaiting();
+    });
+    unawaited(_snapshotReady = _capture(request, takeSnapshot));
   }
 
   @override
@@ -200,6 +256,7 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
     widget.navigation?.removeListener(_navigationChanged);
     ++_request;
     _capturing = false;
+    _finishWaiting();
     _discardSnapshot();
     super.dispose();
   }

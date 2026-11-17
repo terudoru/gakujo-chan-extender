@@ -96,6 +96,22 @@ void main() {
     },
   );
 
+  test(
+    'Linux focus queries and restoration use the native controller',
+    () async {
+      messenger.setMockMethodCallHandler(instance, (call) async {
+        calls.add(call);
+        return call.method == 'hasFocus' ? true : null;
+      });
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+      expect(await controller.hasLinuxFocus(), isTrue);
+      await controller.restoreLinuxFocus();
+      expect(calls.map((call) => call.method), ['hasFocus', 'requestFocus']);
+    },
+  );
+
   test('unavailable Linux snapshots return null', () async {
     expect(await native.takeSnapshot(), isNull);
     expect(calls.map((call) => call.method), ['takeSnapshot']);

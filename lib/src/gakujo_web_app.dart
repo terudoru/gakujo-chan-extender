@@ -2372,6 +2372,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         takeSnapshot: controller is WebViewFlutterGakujoWebViewController
             ? controller.takeLinuxSnapshot
             : null,
+        hasNativeFocus: controller is WebViewFlutterGakujoWebViewController
+            ? controller.hasLinuxFocus
+            : null,
+        restoreNativeFocus: controller is WebViewFlutterGakujoWebViewController
+            ? controller.restoreLinuxFocus
+            : null,
         child: content,
       );
     }
@@ -3028,7 +3034,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // from remaining the macOS keyboard first responder behind the dialog.
     await WidgetsBinding.instance.endOfFrame;
     if (defaultTargetPlatform == TargetPlatform.linux && mounted) {
-      await _linuxOverlayGuardKey.currentState?.snapshotReady;
+      await _linuxOverlayGuardKey.currentState?.overlayReady;
       await WidgetsBinding.instance.endOfFrame;
     }
     if (!mounted) {

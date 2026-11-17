@@ -62,6 +62,10 @@ void main() {
     required Future<Uint8List?> Function() takeSnapshot,
     ValueNotifier<int>? navigation,
     bool forceObscured = false,
+    Future<bool> Function()? hasNativeFocus,
+    Future<void> Function()? restoreNativeFocus,
+    Widget? child,
+    Widget? footer,
   }) => tester.pumpWidget(
     MaterialApp(
       builder: (context, child) => MediaQuery(
@@ -69,17 +73,24 @@ void main() {
         child: child!,
       ),
       home: Scaffold(
-        body: SizedBox(
-          width: 320,
-          height: 200,
-          child: LinuxOverlayGuard(
-            key: key,
-            obscured: obscured,
-            forceObscured: forceObscured,
-            navigation: navigation,
-            takeSnapshot: takeSnapshot,
-            child: const Text('native page'),
-          ),
+        body: Column(
+          children: [
+            SizedBox(
+              width: 320,
+              height: 200,
+              child: LinuxOverlayGuard(
+                key: key,
+                obscured: obscured,
+                forceObscured: forceObscured,
+                navigation: navigation,
+                takeSnapshot: takeSnapshot,
+                hasNativeFocus: hasNativeFocus,
+                restoreNativeFocus: restoreNativeFocus,
+                child: child ?? const Text('native page'),
+              ),
+            ),
+            ?footer,
+          ],
         ),
       ),
     ),
@@ -128,7 +139,7 @@ void main() {
   );
 
   testWidgets(
-    'slow snapshots keep the page for at most 150ms and ignore late bytes',
+    'slow snapshots reveal menus at 300ms and still replace blank with pixels',
     (tester) async {
       final obscured = ValueNotifier(false);
       final key = GlobalKey<LinuxOverlayGuardState>();
@@ -142,20 +153,118 @@ void main() {
       );
       obscured.value = true;
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 149));
+      await tester.pump(const Duration(milliseconds: 299));
       expect(find.text('native page'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 1));
       expect(find.text('native page'), findsNothing);
       expect(find.byType(Image), findsNothing);
-      pending.complete(pagePng());
+      final bytes = pagePng();
+      await tester.runAsync(
+        () => precacheImage(
+          MemoryImage(bytes, scale: 2),
+          tester.element(find.byType(LinuxOverlayGuard)),
+        ),
+      );
+      pending.complete(bytes);
       await tester.pump();
-      expect(find.byType(Image), findsNothing);
+      await tester.pump();
+      expect(find.byType(Image), findsOneWidget);
 
       obscured.value = false;
       await tester.pump();
       expect(find.text('native page'), findsOneWidget);
     },
   );
+
+  testWidgets('a snapshot ready before 300ms replaces the live page directly', (
+    tester,
+  ) async {
+    final obscured = ValueNotifier(false);
+    final key = GlobalKey<LinuxOverlayGuardState>();
+    final pending = Completer<Uint8List?>();
+    addTearDown(obscured.dispose);
+    await showSnapshotGuard(
+      tester,
+      obscured: obscured,
+      key: key,
+      takeSnapshot: () => pending.future,
+    );
+    obscured.value = true;
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('native page'), findsOneWidget);
+    final bytes = pagePng();
+    await tester.runAsync(
+      () => precacheImage(
+        MemoryImage(bytes, scale: 2),
+        tester.element(find.byType(LinuxOverlayGuard)),
+      ),
+    );
+    pending.complete(bytes);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('native page'), findsNothing);
+  });
+
+  for (final hadFocus in [false, true]) {
+    testWidgets(
+      'closing an overlay restores only prior page focus ($hadFocus)',
+      (tester) async {
+        final obscured = ValueNotifier(false);
+        final key = GlobalKey<LinuxOverlayGuardState>();
+        var restores = 0;
+        addTearDown(obscured.dispose);
+        await showSnapshotGuard(
+          tester,
+          obscured: obscured,
+          key: key,
+          takeSnapshot: () async => null,
+          hasNativeFocus: () async => hadFocus,
+          restoreNativeFocus: () async {
+            restores++;
+          },
+        );
+        obscured.value = true;
+        await tester.pump();
+        obscured.value = false;
+        await tester.pump();
+        await tester.pump();
+        expect(restores, hadFocus ? 1 : 0);
+      },
+    );
+  }
+
+  testWidgets('restoring the page does not take focus from a Flutter input', (
+    tester,
+  ) async {
+    final obscured = ValueNotifier(false);
+    final key = GlobalKey<LinuxOverlayGuardState>();
+    final input = FocusNode();
+    var restores = 0;
+    addTearDown(obscured.dispose);
+    addTearDown(input.dispose);
+    await showSnapshotGuard(
+      tester,
+      obscured: obscured,
+      key: key,
+      takeSnapshot: () async => null,
+      hasNativeFocus: () async => true,
+      restoreNativeFocus: () async {
+        restores++;
+      },
+      footer: TextField(focusNode: input),
+    );
+    obscured.value = true;
+    await tester.pump();
+    input.requestFocus();
+    await tester.pump();
+    expect(input.hasFocus, isTrue);
+    obscured.value = false;
+    await tester.pump();
+    await tester.pump();
+    expect(input.hasFocus, isTrue);
+    expect(restores, 0);
+  });
 
   for (final fails in [false, true]) {
     testWidgets(
