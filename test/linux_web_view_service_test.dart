@@ -280,6 +280,47 @@ void main() {
     },
   );
 
+  for (final (type, code) in [
+    ('hostLookup', 0),
+    ('connect', 38),
+    ('timeout', 24),
+  ]) {
+    test(
+      'Linux $type errors survive load-finished until a successful retry',
+      () async {
+        final controller = WebViewFlutterGakujoWebViewController(
+          WebViewController.fromPlatform(native),
+        );
+        final errors = <GakujoWebResourceError>[];
+        final finished = <String>[];
+        await controller.setNavigationDelegate(
+          GakujoNavigationDelegate(
+            onWebResourceError: errors.add,
+            onPageFinished: finished.add,
+          ),
+        );
+        const url = 'https://gakujo.iess.niigata-u.ac.jp/';
+        await emitEvent({'type': 'pageStarted', 'url': url});
+        await emitEvent({
+          'type': 'webResourceError',
+          'description': 'Could not connect.',
+          'errorCode': code,
+          'errorType': type,
+          'isForMainFrame': true,
+          'url': url,
+        });
+        await emitEvent({'type': 'pageFinished', 'url': url});
+        expect(errors.single.isConnectivityError, isTrue);
+        expect(errors.single.isForMainFrame, isTrue);
+        expect(finished, isEmpty);
+
+        await emitEvent({'type': 'pageStarted', 'url': url});
+        await emitEvent({'type': 'pageFinished', 'url': url});
+        expect(finished, [url]);
+      },
+    );
+  }
+
   test(
     'Linux TLS errors remain visible and certificates are rejected',
     () async {
