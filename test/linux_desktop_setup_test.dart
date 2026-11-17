@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/main.dart';
 import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/keyring_lock_gate_storage.dart';
+import 'package:morebettergakujo_flutter/src/linux_session_settings.dart';
+import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -78,31 +84,388 @@ void main() {
     },
   );
 
-  test('Linux locked storage is explained without the raw exception', () async {
+  test(
+    'a locked keyring still allows choosing and clearing a session folder',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+      addTearDown(() => directory.delete(recursive: true));
+      final storage = _FolderStorage()..readError = _lockedError();
+      messenger.setMockMethodCallHandler(
+        channel,
+        (call) async => directory.path,
+      );
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: storage,
+        usesNativeDownloadRoot: false,
+      );
+
+      final result = await service.pickDownloadRoot();
+
+      expect(result.path, directory.path);
+      expect(result.isConfigured, isTrue);
+      expect(result.isSessionOnly, isTrue);
+      expect((await service.getDownloadRoot()).path, directory.path);
+      expect(storage.readCalls, 1);
+      expect(storage.writeCalls, 0);
+      final cleared = await service.clearDownloadRoot();
+      expect(cleared.isConfigured, isFalse);
+      expect(cleared.isSessionOnly, isTrue);
+      expect((await service.getDownloadRoot()).path, isNull);
+      expect(storage.deleteCalls, 0);
+    },
+  );
+
+  test('the folder picker leaves a closed keyring gate closed', () async {
+    final inner = _FolderStorage()..readError = _lockedError();
+    final gate = KeyringLockGateStorage(inner: inner);
+    await expectLater(
+      gate.read(key: rootKey),
+      throwsA(isA<PlatformException>()),
+    );
     var pickerOpened = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
       pickerOpened = true;
       return null;
     });
     final service = FileSystemGakujoDownloadService(
-      secureStorage: _LockedStorage(),
+      secureStorage: gate,
       usesNativeDownloadRoot: false,
     );
-    try {
-      await service.pickDownloadRoot();
-      fail('Expected locked storage to prevent loading the configured folder');
-    } on PlatformException catch (error) {
-      final message = gakujoUserFacingMessage(
-        '保存先を設定できませんでした: ${error.message ?? error.code}',
-        platform: TargetPlatform.linux,
-      );
-      expect(message, contains('キーリング'));
-      expect(message, contains('ロックを解除'));
-      expect(message, isNot(contains('KeyringLocked')));
-      expect(message, isNot(contains('PlatformException')));
-    }
-    expect(pickerOpened, isFalse);
+
+    final result = await service.pickDownloadRoot();
+
+    expect(pickerOpened, isTrue);
+    expect(result.isSessionOnly, isTrue);
+    expect(inner.readCalls, 1);
   });
+
+  test(
+    'a read timeout opens the picker without making its selection session-only',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+      addTearDown(() => directory.delete(recursive: true));
+      final pending = Completer<String?>();
+      final storage = _FolderStorage()..pendingRead = pending.future;
+      var pickerOpened = false;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        pickerOpened = true;
+        return directory.path;
+      });
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: storage,
+        usesNativeDownloadRoot: false,
+      );
+
+      final result = await service.pickDownloadRoot().timeout(
+        const Duration(seconds: 5),
+      );
+
+      expect(pickerOpened, isTrue);
+      expect(result.path, directory.path);
+      expect(result.isSessionOnly, isFalse);
+      expect(storage.writeCalls, 1);
+      expect(storage.readValue, directory.path);
+      pending.complete('old-folder');
+      await Future<void>.delayed(Duration.zero);
+      storage.pendingRead = null;
+      expect((await service.getDownloadRoot()).path, directory.path);
+    },
+  );
+
+  test('a slow healthy keyring read keeps folder persistence', () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+    addTearDown(() => directory.delete(recursive: true));
+    final pending = Completer<String?>();
+    final storage = _FolderStorage()..pendingRead = pending.future;
+    var pickerOpened = false;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      pickerOpened = true;
+      expect(call.arguments, {'initialDirectory': directory.path});
+      return directory.path;
+    });
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: storage,
+      usesNativeDownloadRoot: false,
+    );
+
+    final selection = service.pickDownloadRoot();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(pickerOpened, isFalse);
+    pending.complete(directory.path);
+    final result = await selection;
+
+    expect(pickerOpened, isTrue);
+    expect(result.isSessionOnly, isFalse);
+    expect(storage.writeCalls, 1);
+  });
+
+  test('a slow healthy folder write has no read timeout', () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+    addTearDown(() => directory.delete(recursive: true));
+    final pending = Completer<void>();
+    final storage = _FolderStorage()
+      ..readValue = directory.path
+      ..pendingWrite = pending.future;
+    messenger.setMockMethodCallHandler(channel, (call) async => directory.path);
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: storage,
+      usesNativeDownloadRoot: false,
+    );
+
+    var completed = false;
+    final selection = service.pickDownloadRoot().then((result) {
+      completed = true;
+      return result;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 3100));
+    expect(storage.writeCalls, 1);
+    expect(completed, isFalse);
+    pending.complete();
+    final result = await selection;
+
+    expect(result.path, directory.path);
+    expect(result.isSessionOnly, isFalse);
+    expect(storage.readValue, directory.path);
+  });
+
+  test('a locked folder write keeps the selection for the session', () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+    addTearDown(() => directory.delete(recursive: true));
+    final storage = _FolderStorage()
+      ..readValue = directory.path
+      ..writeError = _lockedError();
+    messenger.setMockMethodCallHandler(channel, (call) async => directory.path);
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: storage,
+      usesNativeDownloadRoot: false,
+    );
+
+    final result = await service.pickDownloadRoot();
+
+    expect(result.path, directory.path);
+    expect(result.isSessionOnly, isTrue);
+    expect((await service.getDownloadRoot()).path, directory.path);
+    expect(storage.readCalls, 1);
+    expect(storage.writeCalls, 1);
+  });
+
+  test(
+    'a folder write timeout error is not treated as a locked keyring',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-picker-');
+      addTearDown(() => directory.delete(recursive: true));
+      final error = TimeoutException('storage unavailable');
+      final storage = _FolderStorage()
+        ..readValue = directory.path
+        ..writeError = error;
+      messenger.setMockMethodCallHandler(
+        channel,
+        (call) async => directory.path,
+      );
+      final service = FileSystemGakujoDownloadService(
+        secureStorage: storage,
+        usesNativeDownloadRoot: false,
+      );
+
+      await expectLater(service.pickDownloadRoot(), throwsA(same(error)));
+
+      expect((await service.getDownloadRoot()).isSessionOnly, isFalse);
+    },
+  );
+
+  test('other storage failures still propagate from the picker', () async {
+    final error = PlatformException(
+      code: 'io_error',
+      message: 'permission denied',
+    );
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: _FolderStorage()..readError = error,
+      usesNativeDownloadRoot: false,
+    );
+    await expectLater(service.pickDownloadRoot(), throwsA(same(error)));
+  });
+
+  test('Windows keeps rejecting unavailable secure folder storage', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    final error = _lockedError();
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: _FolderStorage()..readError = error,
+      usesNativeDownloadRoot: false,
+    );
+    await expectLater(service.pickDownloadRoot(), throwsA(same(error)));
+  });
+
+  test('Linux locked storage is explained without the raw exception', () {
+    final message = gakujoUserFacingMessage(
+      '保存先を設定できませんでした: KeyringLocked',
+      platform: TargetPlatform.linux,
+    );
+    expect(message, contains('キーリング'));
+    expect(message, contains('ロックを解除'));
+    expect(message, isNot(contains('KeyringLocked')));
+    expect(message, isNot(contains('PlatformException')));
+  });
+
+  test('Linux initial folder prefers Downloads before HOME', () async {
+    final home = await Directory.systemTemp.createTemp('mbg-home-');
+    addTearDown(() => home.delete(recursive: true));
+    final downloads = await Directory('${home.path}/Downloads').create();
+    expect(
+      await linuxDownloadInitialDirectory(
+        downloadsDirectory: () async => downloads,
+        homeDirectory: home.path,
+      ),
+      downloads.path,
+    );
+  });
+
+  for (final missing in [false, true]) {
+    test(
+      'Linux initial folder falls back to HOME without xdg-user-dirs ($missing)',
+      () async {
+        final home = await Directory.systemTemp.createTemp('mbg-home-');
+        addTearDown(() => home.delete(recursive: true));
+        expect(
+          await linuxDownloadInitialDirectory(
+            downloadsDirectory: () async {
+              if (missing) {
+                throw MissingPlatformDirectoryException('unavailable');
+              }
+              return null;
+            },
+            homeDirectory: home.path,
+          ),
+          home.path,
+        );
+      },
+    );
+  }
+
+  for (final home in [null, '', 'nonexistent-mbg-home-directory']) {
+    test(
+      'Linux picker needs no initial directory when HOME is missing ($home)',
+      () async {
+        expect(
+          await linuxDownloadInitialDirectory(
+            downloadsDirectory: () async =>
+                throw MissingPlatformDirectoryException('unavailable'),
+            homeDirectory: home,
+          ),
+          isNull,
+        );
+      },
+    );
+  }
+
+  test(
+    'session settings changes compose and show one notice without writes',
+    () async {
+      final session = LinuxSessionSettings();
+      final operations = StorageOperationQueue();
+      final messages = <String>[];
+      var settings = const GakujoAppSettings();
+      var writes = 0;
+      Future<void> disable(GakujoFeatureFlag flag) => saveGakujoSettingsChange(
+        operations: operations,
+        save: () async {
+          expect(
+            await session.save(
+              () async {
+                writes++;
+              },
+              storageAvailable: false,
+              showSnackBar: messages.add,
+            ),
+            isFalse,
+          );
+        },
+        currentSettings: () => settings,
+        update: (latest) => latest.copyWith(
+          disabledFeatureFlags: {...latest.disabledFeatureFlags, flag},
+        ),
+        apply: (latest) => settings = latest,
+        mirror: (_) async {},
+      );
+
+      await Future.wait([
+        disable(GakujoFeatureFlag.downloadCapture),
+        disable(GakujoFeatureFlag.uploadCompression),
+      ]);
+      session.showNotice(messages.add); // Setup and folder selection share it.
+
+      expect(settings.disabledFeatureFlags, {
+        GakujoFeatureFlag.downloadCapture,
+        GakujoFeatureFlag.uploadCompression,
+      });
+      expect(writes, 0);
+      expect(messages, [LinuxSessionSettings.message]);
+    },
+  );
+
+  test(
+    'a newly locked keyring allows a non-secret setting change in memory',
+    () async {
+      final session = LinuxSessionSettings();
+      final messages = <String>[];
+      var settings = const GakujoAppSettings();
+      await saveGakujoSettingsChange(
+        save: () async {
+          expect(
+            await session.save(
+              () async => throw _lockedError(),
+              storageAvailable: true,
+              showSnackBar: messages.add,
+            ),
+            isFalse,
+          );
+        },
+        currentSettings: () => settings,
+        update: (latest) => latest.copyWith(pageMode: GakujoPageMode.desktop),
+        apply: (latest) => settings = latest,
+        mirror: (_) async {},
+      );
+      expect(settings.pageMode, GakujoPageMode.desktop);
+      expect(messages, [LinuxSessionSettings.message]);
+    },
+  );
+
+  test(
+    'available storage still saves settings without a session notice',
+    () async {
+      final session = LinuxSessionSettings();
+      final messages = <String>[];
+      var writes = 0;
+      expect(
+        await session.save(
+          () async {
+            writes++;
+          },
+          storageAvailable: true,
+          showSnackBar: messages.add,
+        ),
+        isTrue,
+      );
+      expect(writes, 1);
+      expect(messages, isEmpty);
+    },
+  );
+
+  test(
+    'unrelated settings failures are not treated as a locked keyring',
+    () async {
+      final error = PlatformException(code: 'io_error');
+      final messages = <String>[];
+      await expectLater(
+        LinuxSessionSettings().save(
+          () async => throw error,
+          storageAvailable: true,
+          showSnackBar: messages.add,
+        ),
+        throwsA(same(error)),
+      );
+      expect(messages, isEmpty);
+    },
+  );
 
   test('Linux preserves the same error details as Windows', () {
     for (final message in [
@@ -149,7 +512,19 @@ void main() {
   });
 }
 
-class _LockedStorage extends FlutterSecureStorage {
+PlatformException _lockedError() =>
+    PlatformException(code: 'KeyringLocked', message: 'KeyringLocked');
+
+class _FolderStorage extends FlutterSecureStorage {
+  String? readValue;
+  Object? readError;
+  Object? writeError;
+  Future<String?>? pendingRead;
+  Future<void>? pendingWrite;
+  int readCalls = 0;
+  int writeCalls = 0;
+  int deleteCalls = 0;
+
   @override
   Future<String?> read({
     required String key,
@@ -160,6 +535,38 @@ class _LockedStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    throw PlatformException(code: 'KeyringLocked', message: 'KeyringLocked');
+    readCalls++;
+    if (readError != null) throw readError!;
+    return pendingRead == null ? readValue : await pendingRead;
+  }
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    writeCalls++;
+    if (writeError != null) throw writeError!;
+    await pendingWrite;
+    readValue = value;
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    deleteCalls++;
   }
 }

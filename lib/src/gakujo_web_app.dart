@@ -92,6 +92,7 @@ import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
 import 'login_autofill_assist_script.dart';
 import 'linux_overlay_guard.dart';
+import 'linux_session_settings.dart';
 import 'macos_input_focus_service.dart';
 import 'totp_generator.dart';
 import 'two_factor_autofill_script.dart';
@@ -1652,6 +1653,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _settingsOperations = StorageOperationQueue();
   bool _appSettingsLoaded = false;
   bool _secureStorageAccessAllowed = !Platform.isMacOS;
+  final _linuxSessionSettings = LinuxSessionSettings();
   final _startupPlaceholderFeatureFlags = <GakujoFeatureFlag>{};
   bool _loginAutofillStorageLoadAttempted = false;
   bool _secureStorageRecoveryDialogVisible = false;
@@ -3116,6 +3118,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   setState(() {
                     _downloadRoot = next;
                   });
+                  _noticeSessionDownloadRoot(next);
                   if (!dialogContext.mounted) {
                     return;
                   }
@@ -3140,9 +3143,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 if (!await _trySaveSettings(
                   () => saveGakujoSettingsChange(
                     operations: _settingsOperations,
-                    save: () => _appSettingsStore.saveFeatureEnabled(
-                      flag,
-                      enabled: enabled,
+                    save: () => _saveAppSettings(
+                      () => _appSettingsStore.saveFeatureEnabled(
+                        flag,
+                        enabled: enabled,
+                      ),
                     ),
                     currentSettings: () => _appSettings,
                     update: (settings) => settings.copyWith(
@@ -3365,7 +3370,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           final saved = await _settingsOperations.runExclusive(
                             () async {
                               if (!await _trySaveSettings(
-                                () => _appSettingsStore.savePageMode(mode),
+                                () => _saveAppSettings(
+                                  () => _appSettingsStore.savePageMode(mode),
+                                ),
                               )) {
                                 return false;
                               }
@@ -3474,8 +3481,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           final saved = await _settingsOperations.runExclusive(
                             () async {
                               if (!await _trySaveSettings(
-                                () => _appSettingsStore.saveDownloadSaveMode(
-                                  mode,
+                                () => _saveAppSettings(
+                                  () => _appSettingsStore.saveDownloadSaveMode(
+                                    mode,
+                                  ),
                                 ),
                               )) {
                                 return false;
@@ -4111,11 +4120,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       error: saveError,
                       stackTrace: saveStackTrace,
                     );
-                    _showSnackBar(
-                      defaultTargetPlatform == TargetPlatform.linux
-                          ? '設定は今回の起動中だけ使えます。保存するにはキーリングのロックを解除してください。'
-                          : '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
-                    );
+                    if (defaultTargetPlatform == TargetPlatform.linux) {
+                      _secureStorageAccessAllowed = false;
+                      _linuxSessionSettings.showNotice(_showSnackBar);
+                    } else {
+                      _showSnackBar(
+                        '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
+                      );
+                    }
                   }
                   _deferLoginAutofillDuringSetup = false;
                   await _loadAllowedPageUrl(selectedPageMode.startUrl);
@@ -4196,6 +4208,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             setState(() {
                               _downloadRoot = root;
                             });
+                            _noticeSessionDownloadRoot(root);
                             if (!dialogContext.mounted) {
                               return;
                             }
@@ -4229,6 +4242,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           setState(() {
                             _downloadRoot = root;
                           });
+                          _noticeSessionDownloadRoot(root);
                           if (!dialogContext.mounted) {
                             return;
                           }
@@ -5088,6 +5102,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return _currentPageUrl;
   }
 
+  Future<void> _saveAppSettings(Future<void> Function() save) async {
+    if (defaultTargetPlatform != TargetPlatform.linux) {
+      await save();
+      return;
+    }
+    if (!await _linuxSessionSettings.save(
+      save,
+      storageAvailable: _secureStorageAccessAllowed,
+      showSnackBar: _showSnackBar,
+    )) {
+      _secureStorageAccessAllowed = false;
+    }
+  }
+
+  void _noticeSessionDownloadRoot(DownloadDestinationSettings root) {
+    if (!root.isSessionOnly) return;
+    _secureStorageAccessAllowed = false;
+    _linuxSessionSettings.showNotice(_showSnackBar);
+  }
+
   Future<bool> _trySaveSettings(Future<void> Function() save) {
     return saveGakujoSettingsSafely(save, showSnackBar: _showSnackBar);
   }
@@ -5095,7 +5129,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _saveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
   ) => _settingsOperations.runExclusive(() async {
-    await _appSettingsStore.saveCalendarImportSettings(settings);
+    await _saveAppSettings(
+      () => _appSettingsStore.saveCalendarImportSettings(settings),
+    );
     final nextSettings = _appSettings.copyWith(
       calendarImportSettings: settings,
     );
@@ -5119,6 +5155,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _syncLocalSettingsMirror(
     GakujoAppSettings settings,
   ) async {
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        !_secureStorageAccessAllowed) {
+      return;
+    }
     try {
       await _localPrefsStore.saveAppSettings(_settingsForPersistence(settings));
     } on Object catch (error, stackTrace) {
@@ -5139,7 +5179,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         .copyWith(since: DateTime.now());
     if (!Platform.isMacOS || _secureStorageAccessAllowed) {
       try {
-        await _appSettingsStore.saveMessageNotification(messages);
+        await _saveAppSettings(
+          () => _appSettingsStore.saveMessageNotification(messages),
+        );
       } on Object catch (error, stackTrace) {
         if (!Platform.isMacOS) {
           rethrow;
@@ -5174,7 +5216,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       save: () async {
         if (!Platform.isMacOS || _secureStorageAccessAllowed) {
           try {
-            await _appSettingsStore.saveNotificationTopics(topics);
+            await _saveAppSettings(
+              () => _appSettingsStore.saveNotificationTopics(topics),
+            );
           } on Object catch (error, stackTrace) {
             if (!Platform.isMacOS) rethrow;
             // macOS starts from the local mirror before Keychain access.
@@ -5208,8 +5252,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           save: () async {
             if (!Platform.isMacOS || _secureStorageAccessAllowed) {
               try {
-                await _appSettingsStore
-                    .saveNotificationPreferences(preferences);
+                await _saveAppSettings(
+                  () => _appSettingsStore.saveNotificationPreferences(
+                    preferences,
+                  ),
+                );
               } on Object catch (error, stackTrace) {
                 if (!Platform.isMacOS) rethrow;
                 developer.log(
@@ -5261,7 +5308,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       update(_appSettings.messageExcludeKeywords),
     );
     if (!Platform.isMacOS) {
-      await _appSettingsStore.saveMessageExcludeKeywords(normalized);
+      await _saveAppSettings(
+        () => _appSettingsStore.saveMessageExcludeKeywords(normalized),
+      );
     }
     if (mounted) {
       setState(() {
