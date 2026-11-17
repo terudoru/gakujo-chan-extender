@@ -76,7 +76,7 @@ target_compile_options(environment_test PRIVATE -Wall -Wextra -Werror
 add_test(NAME environment COMMAND environment_test)
 foreach(test_name navigation_policy load_errors
                   permission_dialog file_chooser_dialog notification_activation
-                  find)
+                  find download_staging)
   add_executable(${test_name}_test ${test_name}_test.cc)
   target_link_libraries(${test_name}_test PRIVATE PkgConfig::WEBKIT)
   target_compile_options(${test_name}_test PRIVATE -Wall -Wextra -Werror
@@ -97,6 +97,7 @@ set_tests_properties(download_policy message_bridge scroll_hook
   history_navigation native_dialog_keys context_menu wheel_scroll pinch_zoom
   pinch_zoom_dispatch environment navigation_policy load_errors snapshot
   permission_dialog file_chooser_dialog notification_activation find
+  download_staging
   PROPERTIES
   TIMEOUT 60
   ENVIRONMENT "NO_AT_BRIDGE=1"
