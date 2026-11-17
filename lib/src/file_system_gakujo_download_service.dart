@@ -363,23 +363,30 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     required AuthenticatedDownloadedFile downloaded,
     required String fileName,
   }) async {
-    final location = await getSaveLocation(
-      initialDirectory: await _defaultDirectoryPath(),
-      suggestedName: fileName,
-      confirmButtonText: '保存',
-      canCreateDirectories: true,
-    );
-    if (location == null) {
+    final initialDirectory = await _defaultDirectoryPath();
+    final path = defaultTargetPlatform == TargetPlatform.linux
+        ? await const MethodChannel('net.yoshida.morebettergakujo/window')
+              .invokeMethod<String>('pickSaveFile', {
+                'initialDirectory': initialDirectory,
+                'suggestedName': fileName,
+              })
+        : (await getSaveLocation(
+            initialDirectory: initialDirectory,
+            suggestedName: fileName,
+            confirmButtonText: '保存',
+            canCreateDirectories: true,
+          ))?.path;
+    if (path == null) {
       throw PlatformException(
         code: 'cancelled',
         message: '保存をキャンセルしました',
       );
     }
-    await downloaded.saveTo(location.path);
+    await downloaded.saveTo(path);
     return GakujoDownloadResult(
-      fileName: _baseName(location.path),
+      fileName: _baseName(path),
       courseName: '',
-      location: location.path,
+      location: path,
     );
   }
 

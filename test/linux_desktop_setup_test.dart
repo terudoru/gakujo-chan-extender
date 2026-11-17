@@ -10,6 +10,7 @@ import 'package:morebettergakujo_flutter/main.dart';
 import 'package:morebettergakujo_flutter/src/file_system_gakujo_download_service.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:morebettergakujo_flutter/src/keyring_lock_gate_storage.dart';
 import 'package:morebettergakujo_flutter/src/linux_session_settings.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
@@ -31,6 +32,95 @@ void main() {
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
     messenger.setMockMethodCallHandler(channel, null);
+  });
+
+  for (final existing in [false, true]) {
+    test(
+      'Linux save picker saves to the chosen path (existing: $existing)',
+      () async {
+        final directory = await Directory.systemTemp.createTemp('mbg-save-');
+        addTearDown(() => directory.delete(recursive: true));
+        final selected = File('${directory.path}/saved.pdf');
+        if (existing) await selected.writeAsString('old contents');
+        final bytes = Uint8List.fromList('%PDF-1.7\nnew contents'.codeUnits);
+        final initialDirectory = await linuxDownloadInitialDirectory(
+          downloadsDirectory: getDownloadsDirectory,
+          homeDirectory: Platform.environment['HOME'],
+        );
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'pickSaveFile');
+          expect(call.arguments, {
+            'initialDirectory': initialDirectory,
+            'suggestedName': 'lecture.pdf',
+          });
+          return selected.path;
+        });
+        final service = FileSystemGakujoDownloadService(
+          authenticatedBytesLoader: (request, {userAgent}) async =>
+              AuthenticatedDownloadedFile(
+                bytes: bytes,
+                finalUrl: request.url,
+                mimeType: 'application/pdf',
+              ),
+        );
+
+        final result = await service.download(
+          const GakujoDownloadRequest(
+            url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+            method: 'GET',
+            fileName: 'lecture.pdf',
+            courseName: '',
+            formFields: {},
+          ),
+          saveMode: DownloadSaveMode.flatWithPickerEachTime,
+        );
+
+        expect(result.location, selected.path);
+        expect(result.fileName, 'saved.pdf');
+        expect(await selected.readAsBytes(), bytes);
+      },
+    );
+  }
+
+  test('cancelling the Linux save picker cleans up without saving', () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-save-');
+    addTearDown(() => directory.delete(recursive: true));
+    final temporary = File('${directory.path}/payload');
+    await temporary.writeAsString('%PDF-1.7\ncontents');
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'pickSaveFile');
+      return null;
+    });
+    final service = FileSystemGakujoDownloadService(
+      authenticatedBytesLoader: (request, {userAgent}) async =>
+          AuthenticatedDownloadedFile.fromFile(
+            file: temporary,
+            cleanup: temporary.delete,
+            finalUrl: request.url,
+            mimeType: 'application/pdf',
+          ),
+    );
+
+    await expectLater(
+      service.download(
+        const GakujoDownloadRequest(
+          url: 'https://gakujo.iess.niigata-u.ac.jp/file',
+          method: 'GET',
+          fileName: 'lecture.pdf',
+          courseName: '',
+          formFields: {},
+        ),
+        saveMode: DownloadSaveMode.flatWithPickerEachTime,
+      ),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'cancelled',
+        ),
+      ),
+    );
+    expect(await directory.list().toList(), isEmpty);
   });
 
   test(
