@@ -567,6 +567,19 @@ bool isMissingKeychainEntitlementError(Object error) {
 }
 
 @visibleForTesting
+String gakujoUserFacingMessage(
+  String message, {
+  required TargetPlatform platform,
+}) {
+  if (platform != TargetPlatform.linux) return message;
+  if (message.contains('KeyringLocked')) {
+    return 'キーリングがロックされているため、設定を読み書きできません。'
+        'キーリング管理アプリでロックを解除してから、アプリを起動し直してください。';
+  }
+  return message;
+}
+
+@visibleForTesting
 String secureStorageRecoveryGuidance(
   Object error, {
   required TargetPlatform platform,
@@ -4085,7 +4098,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       stackTrace: saveStackTrace,
                     );
                     _showSnackBar(
-                      '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
+                      defaultTargetPlatform == TargetPlatform.linux
+                          ? '設定は今回の起動中だけ使えます。保存するにはキーリングのロックを解除してください。'
+                          : '初回セットアップを保存できませんでした。キーチェーン設定を確認してください。',
                     );
                   }
                   _deferLoginAutofillDuringSetup = false;
@@ -4269,7 +4284,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
-      return;
+      if (!Platform.isLinux) return;
     }
     if (mounted) {
       setState(() {
@@ -4713,7 +4728,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('アップデートを確認できませんでした'),
-          content: SelectableText(error.toString()),
+          content: SelectableText(
+            gakujoUserFacingMessage(
+              error.toString(),
+              platform: defaultTargetPlatform,
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
@@ -8050,6 +8070,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         isMacOS: Platform.isMacOS,
         error: error,
       );
+      if (Platform.isLinux) {
+        _secureStorageAccessAllowed = false;
+      }
       setState(() {
         _appSettings = fallbackSettings;
         if (!Platform.isMacOS) {
@@ -8124,9 +8147,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       }
     }
+    ModalRoute<_SecureStorageRecoveryAction>? dialogRoute;
     final action = await showDialog<_SecureStorageRecoveryAction>(
       context: context,
       builder: (context) {
+        dialogRoute = ModalRoute.of<_SecureStorageRecoveryAction>(context);
         final details = error is PlatformException
             ? (error.message ?? error.code)
             : error.toString();
@@ -8140,8 +8165,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           title: const Text('保存データにアクセスできません'),
           content: Text(
             '保存済みログイン情報や2FA設定を読み込めませんでした。\n\n'
-            '$guidance\n\n'
-            '詳細: $details',
+            '$guidance'
+            '${defaultTargetPlatform == TargetPlatform.linux ? '' : '\n\n詳細: $details'}',
           ),
           actions: [
             TextButton(
@@ -8181,6 +8206,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _retrySecureStorageLoad();
     } else if (action == _SecureStorageRecoveryAction.reset && mounted) {
       await _resetSecureStorageAfterConfirmation();
+    }
+    if (defaultTargetPlatform == TargetPlatform.linux &&
+        action == _SecureStorageRecoveryAction.continueWithoutStorage) {
+      await gakujoWaitForDialogDismissal(dialogRoute);
+      if (mounted && !_appSettings.setupCompleted) {
+        await _showInitialSetupWizard();
+      }
     }
   }
 
@@ -8826,7 +8858,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     setState(() {
-      _status = status;
+      _status = gakujoUserFacingMessage(
+        status,
+        platform: defaultTargetPlatform,
+      );
     });
   }
 
@@ -8837,6 +8872,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!mounted) {
       return;
     }
+    message = gakujoUserFacingMessage(message, platform: defaultTargetPlatform);
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     if (defaultTargetPlatform == TargetPlatform.linux) {

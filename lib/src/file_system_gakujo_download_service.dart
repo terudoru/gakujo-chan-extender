@@ -128,6 +128,9 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
 
   @override
   Future<DownloadDestinationSettings> pickDownloadRoot() async {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      SecureStorageFactory.reopenLinuxKeyringGate();
+    }
     final current = await getDownloadRoot();
     if (_usesNativeDownloadRoot) {
       final raw =
@@ -137,11 +140,17 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
       return DownloadDestinationSettings.fromMap(raw);
     }
 
-    final selected = await getDirectoryPath(
-      initialDirectory: current.path ?? await _defaultDirectoryPath(),
-      confirmButtonText: '保存先にする',
-      canCreateDirectories: true,
-    );
+    final initialDirectory = current.path ?? await _defaultDirectoryPath();
+    final selected = defaultTargetPlatform == TargetPlatform.linux
+        ? await const MethodChannel('net.yoshida.morebettergakujo/window')
+              .invokeMethod<String>('pickDownloadDirectory', {
+                'initialDirectory': initialDirectory,
+              })
+        : await getDirectoryPath(
+            initialDirectory: initialDirectory,
+            confirmButtonText: '保存先にする',
+            canCreateDirectories: true,
+          );
     if (selected == null || selected.trim().isEmpty) {
       return current;
     }

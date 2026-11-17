@@ -45,26 +45,34 @@ find "$work_dir/archive/$name" -type d -exec chmod 0755 {} +
 find "$work_dir/archive/$name" -type f -exec chmod 0644 {} +
 find "$work_dir/archive/$name" -type f -name '*.so*' -exec chmod 0755 {} +
 chmod 0755 "$work_dir/archive/$name/morebettergakujo_flutter"
-tar -czf "$tar_path" -C "$work_dir/archive" "$name"
 cp -a "$work_dir/archive/$name/." "$work_dir/deb/opt/morebettergakujo/"
 ln -s /opt/morebettergakujo/morebettergakujo_flutter "$work_dir/deb/usr/bin/morebettergakujo"
 
-cat > "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop" <<'EOF'
+cat > "$work_dir/archive/$name/net.yoshida.morebettergakujo.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=More Better Gakujo
-Exec=morebettergakujo
+Exec=sh -c "exec \\"\\$(dirname \\"\\$1\\")/morebettergakujo_flutter\\"" sh %k
 Icon=net.yoshida.morebettergakujo
 Categories=Education;Network;
 StartupWMClass=net.yoshida.morebettergakujo
 EOF
+install -m 0755 scripts/install-desktop-entry.sh \
+  "$work_dir/archive/$name/install-desktop-entry.sh"
+sed 's/^Exec=.*/Exec=morebettergakujo/' \
+  "$work_dir/archive/$name/net.yoshida.morebettergakujo.desktop" > \
+  "$work_dir/deb/usr/share/applications/net.yoshida.morebettergakujo.desktop"
 
 for size in 16 32 64 128 256 512; do
-  icon_dir="$work_dir/deb/usr/share/icons/hicolor/${size}x${size}/apps"
-  mkdir -p "$icon_dir"
-  install -m 0644 "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_${size}.png" \
-    "$icon_dir/net.yoshida.morebettergakujo.png"
+  for root in "$work_dir/archive/$name" "$work_dir/deb/usr/share"; do
+    icon_dir="$root/icons/hicolor/${size}x${size}/apps"
+    mkdir -p "$icon_dir"
+    install -m 0644 "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_${size}.png" \
+      "$icon_dir/net.yoshida.morebettergakujo.png"
+  done
 done
+
+tar -czf "$tar_path" -C "$work_dir/archive" "$name"
 
 cat > "$work_dir/deb/DEBIAN/control" <<EOF
 Package: morebettergakujo
