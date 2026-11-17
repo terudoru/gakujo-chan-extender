@@ -97,6 +97,72 @@ void main() {
     );
   });
 
+  test('does not use generic button text as a filename fallback', () {
+    expect(
+      DownloadFileNamePolicy.safeFileName(
+        preferredName: '一括ダウンロード',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/files/course-files.zip',
+      ),
+      'course-files.zip',
+    );
+    expect(
+      DownloadFileNamePolicy.safeFileName(
+        preferredName: '一括ダウンロード',
+        url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+        mimeType: 'application/zip',
+      ),
+      'document.zip',
+    );
+  });
+
+  test('keeps meaningful display names ahead of a different URL filename', () {
+    for (final name in [
+      '保存版の講義資料.pdf',
+      '一括ダウンロードの手順.pdf',
+      '講義資料(3件).pdf',
+    ]) {
+      expect(
+        DownloadFileNamePolicy.safeFileName(
+          preferredName: name,
+          url: 'https://gakujo.iess.niigata-u.ac.jp/files/internal.pdf',
+        ),
+        name,
+      );
+    }
+  });
+
+  test('uses the server name for bulk action labels with or without counts', () {
+    for (final label in [
+      '一括ダウンロード',
+      'ダウンロード',
+      '一括保存',
+      '保存',
+      'まとめてダウンロードする',
+      '選択したファイルを保存',
+      'Download',
+      'Download all files',
+      'Bulk download',
+      'Save file',
+    ]) {
+      for (final counted in [
+        label,
+        '$label (3件)',
+        '$label（３件）',
+        '(3件) $label',
+      ]) {
+        expect(
+          DownloadFileNamePolicy.safeFileName(
+            preferredName: counted,
+            contentDispositionName: '一括資料11.zip',
+            mimeType: 'application/zip',
+          ),
+          '一括資料11.zip',
+          reason: counted,
+        );
+      }
+    }
+  });
+
   test('keeps a display name ending in digits without extension metadata', () {
     expect(
       DownloadFileNamePolicy.safeFileName(preferredName: 'Lecture 1.2'),
@@ -455,6 +521,8 @@ void main() {
       '講義５.pdf',
       '第３回.pdf',
       '第1回 レポート3.pdf',
+      '一括ダウンロード.zip',
+      '一括保存.zip',
     ]) {
       expect(
         DownloadFileNamePolicy.courseFolderName(

@@ -68,7 +68,7 @@ class GakujoDownloadRequest {
     }
 
     final rawFileName = raw['fileName']?.toString();
-    final fileName = rawFileName == null || rawFileName.trim().isEmpty
+    final fileName = !DownloadFileNamePolicy.isUsefulDisplayedName(rawFileName)
         ? ''
         : DownloadFileNamePolicy.safeFileName(
             preferredName: rawFileName,
@@ -141,7 +141,7 @@ class GakujoDownloadRequest {
     }
 
     final rawFileName = raw['fileName']?.toString();
-    final fileName = rawFileName == null || rawFileName.trim().isEmpty
+    final fileName = !DownloadFileNamePolicy.isUsefulDisplayedName(rawFileName)
         ? ''
         : DownloadFileNamePolicy.safeFileName(
             preferredName: rawFileName,

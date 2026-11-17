@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:morebettergakujo_flutter/src/gakujo_download_request.dart';
 import 'package:test/test.dart';
 
@@ -73,6 +75,29 @@ void main() {
     );
 
     expect(request.fileName, '講義資料.pdf');
+  });
+
+  test('keeps action labels unresolved through capture and retry', () {
+    for (final label in [
+      '一括ダウンロード',
+      '一括保存（３件）',
+      'ダウンロード (3件)',
+      '保存',
+      'Download all files (3)',
+    ]) {
+      final payload = {
+        'url': 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do',
+        'method': 'POST',
+        'fileName': label,
+        'mimeType': 'application/zip',
+      };
+      final request = GakujoDownloadRequest.fromJsonText(jsonEncode(payload));
+      expect(request.fileName, isEmpty, reason: label);
+      expect(GakujoDownloadRequest.fromJsonMap(payload).fileName, isEmpty);
+      expect(GakujoDownloadRequest.fromJsonMap(request.toJson()).fileName,
+          isEmpty);
+      expect(request.toMethodChannelArguments()['fileName'], isEmpty);
+    }
   });
 
   test('fromJsonMap keeps an empty file name unresolved', () {
