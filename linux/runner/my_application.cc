@@ -1,8 +1,10 @@
 #include "my_application.h"
 #include "file_chooser_dialog.h"
+#include "notification_activation.h"
 
 #include <flutter_linux/flutter_linux.h>
 #include <gio/gio.h>
+#include <gio/gdesktopappinfo.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -29,6 +31,7 @@ struct _MyApplication {
   guint notification_action_subscription;
   guint notification_closed_subscription;
   gboolean notifications_shutdown;
+  NotificationActivation notification_activation;
   GDBusConnection* appearance_connection;
   GCancellable* appearance_cancellable;
   guint appearance_subscription;
@@ -223,6 +226,30 @@ static void close_notification(GDBusConnection* connection, guint32 id) {
       nullptr, G_DBUS_CALL_FLAGS_NONE, 1000, nullptr, nullptr, nullptr);
 }
 
+static void open_notification_url(MyApplication* self, const gchar* url) {
+  const gboolean deferred =
+      defer_notification_url(&self->notification_activation, url);
+  g_application_activate(G_APPLICATION(self));
+  if (!deferred && self->notification_channel != nullptr) {
+    g_autoptr(FlValue) args = fl_value_new_map();
+    fl_value_set_string_take(args, "url", fl_value_new_string(url));
+    // Dart applies the same notification URL policy as an in-app click.
+    fl_method_channel_invoke_method(self->notification_channel,
+                                   "deadlineNotificationTapped", args,
+                                   nullptr, nullptr, nullptr);
+  }
+}
+
+static void notification_action_cb(GSimpleAction* action, GVariant* target,
+                                    gpointer user_data) {
+  const gchar* id;
+  const gchar* url;
+  if (!notification_activation_target(target, &id, &url)) return;
+  MyApplication* self = MY_APPLICATION(user_data);
+  open_notification_url(self, url);
+  g_application_withdraw_notification(G_APPLICATION(self), id);
+}
+
 static void notification_signal_cb(GDBusConnection* connection,
                                    const gchar* sender_name,
                                    const gchar* object_path,
@@ -254,15 +281,7 @@ static void notification_signal_cb(GDBusConnection* connection,
   if (g_strcmp0(action, "default") != 0 || url == nullptr) {
     return;
   }
-  if (self->window != nullptr) {
-    gtk_window_deiconify(self->window);
-    gtk_window_present(self->window);
-    g_autoptr(FlValue) args = fl_value_new_map();
-    fl_value_set_string_take(args, "url", fl_value_new_string(url));
-    fl_method_channel_invoke_method(self->notification_channel,
-                                   "deadlineNotificationTapped", args,
-                                   nullptr, nullptr, nullptr);
-  }
+  open_notification_url(self, url);
   close_notification(connection, id);
   g_hash_table_remove(self->notification_urls, GUINT_TO_POINTER(id));
 }
@@ -303,7 +322,7 @@ static void notify_deadline_cb(GObject* object,
   notification_request_complete(request, shown);
 }
 
-static void notify_deadline(NotificationRequest* request) {
+static void notify_freedesktop_deadline(NotificationRequest* request) {
   MyApplication* self = request->application;
   const char* title =
       notification_string_arg(request->method_call, "title", "課題期限");
@@ -338,6 +357,52 @@ static void notify_deadline(NotificationRequest* request) {
                     g_variant_builder_end(&hints), -1),
       G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
       notify_deadline_cb, request);
+}
+
+static void gtk_notifications_owner_cb(GObject* object, GAsyncResult* result,
+                                        gpointer user_data) {
+  auto* request = static_cast<NotificationRequest*>(user_data);
+  MyApplication* self = request->application;
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, &error);
+  gboolean available = FALSE;
+  if (reply != nullptr) g_variant_get(reply, "(b)", &available);
+  g_autoptr(GDesktopAppInfo) desktop =
+      g_desktop_app_info_new(APPLICATION_ID ".desktop");
+  if (self->notifications_shutdown || self->window == nullptr) {
+    notification_request_complete(request, FALSE);
+    return;
+  }
+  if (!available || desktop == nullptr ||
+      !g_desktop_app_info_get_boolean(desktop, "DBusActivatable")) {
+    notify_freedesktop_deadline(request);
+    return;
+  }
+  // GNOME stores application actions and their targets for activation after exit.
+  g_autoptr(GNotification) notification = g_notification_new(
+      notification_string_arg(request->method_call, "title", "課題期限"));
+  g_notification_set_body(notification,
+      notification_string_arg(request->method_call, "body", "提出期限を検出しました"));
+  g_autoptr(GIcon) icon = g_themed_icon_new(APPLICATION_ID);
+  g_notification_set_icon(notification, icon);
+  g_autofree gchar* id = g_uuid_string_random();
+  g_autoptr(GVariant) target = g_variant_ref_sink(g_variant_new(
+      "(ss)", id, notification_string_arg(request->method_call, "url", "")));
+  g_notification_set_default_action_and_target_value(
+      notification, "app.open-notification", target);
+  g_notification_add_button_with_target_value(
+      notification, "開く", "app.open-notification", target);
+  g_application_send_notification(G_APPLICATION(self), id, notification);
+  notification_request_complete(request, TRUE);
+}
+
+static void notify_deadline(NotificationRequest* request) {
+  g_dbus_connection_call(
+      request->application->notification_connection, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
+      g_variant_new("(s)", "org.gtk.Notifications"), G_VARIANT_TYPE("(b)"),
+      G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, gtk_notifications_owner_cb, request);
 }
 
 static void notification_bus_cb(GObject* object,
@@ -378,7 +443,11 @@ static void notification_method_call_cb(FlMethodChannel* channel,
     g_autoptr(FlValue) result = fl_value_new_bool(TRUE);
     fl_method_call_respond_success(method_call, result, nullptr);
   } else if (g_strcmp0(method, "takePendingNotificationUrl") == 0) {
-    fl_method_call_respond_success(method_call, nullptr, nullptr);
+    g_autofree gchar* url =
+        take_pending_notification_url(&self->notification_activation);
+    g_autoptr(FlValue) result =
+        url != nullptr ? fl_value_new_string(url) : fl_value_new_null();
+    fl_method_call_respond_success(method_call, result, nullptr);
   } else if (g_strcmp0(method, "notifyDeadline") == 0) {
     if (self->notifications_shutdown) {
       g_autoptr(FlValue) result = fl_value_new_bool(FALSE);
@@ -388,7 +457,7 @@ static void notification_method_call_cb(FlMethodChannel* channel,
     NotificationRequest* request = g_new0(NotificationRequest, 1);
     request->application = MY_APPLICATION(g_object_ref(self));
     request->method_call = FL_METHOD_CALL(g_object_ref(method_call));
-    // Wait for the notification ID before shutdown so it can be closed too.
+    // Complete delivery before shutdown, including the notification-daemon check.
     g_application_hold(G_APPLICATION(self));
     if (self->notification_connection != nullptr) {
       notify_deadline(request);
@@ -403,13 +472,7 @@ static void notification_method_call_cb(FlMethodChannel* channel,
 static void shutdown_notifications(MyApplication* self) {
   self->notifications_shutdown = TRUE;
   if (self->notification_connection != nullptr) {
-    GHashTableIter iter;
-    gpointer id;
-    g_hash_table_iter_init(&iter, self->notification_urls);
-    while (g_hash_table_iter_next(&iter, &id, nullptr)) {
-      close_notification(self->notification_connection, GPOINTER_TO_UINT(id));
-    }
-    // The process exits right after shutdown; send the queued closes first.
+    // Leave shown notifications with the daemon; flush any queued delivery.
     g_dbus_connection_flush_sync(self->notification_connection, nullptr,
                                  nullptr);
     g_dbus_connection_signal_unsubscribe(
@@ -914,11 +977,12 @@ static gboolean my_application_local_command_line(GApplication* application,
 
 // Implements GApplication::startup.
 static void my_application_startup(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application startup.
-
   G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
+  g_autoptr(GSimpleAction) action =
+      g_simple_action_new("open-notification", G_VARIANT_TYPE("(ss)"));
+  g_signal_connect(action, "activate", G_CALLBACK(notification_action_cb),
+                    application);
+  g_action_map_add_action(G_ACTION_MAP(application), G_ACTION(action));
 }
 
 // Implements GApplication::shutdown.
@@ -949,6 +1013,7 @@ static void my_application_dispose(GObject* object) {
     g_clear_object(&self->notification_channel);
   }
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_pointer(&self->notification_activation.pending_url, g_free);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
