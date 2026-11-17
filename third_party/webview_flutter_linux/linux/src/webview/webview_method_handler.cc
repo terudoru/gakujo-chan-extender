@@ -1,6 +1,7 @@
 #include "common/method_channel_utils.h"
 #include "webview/download_policy.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_permission_dialog.h"
 #include "webview/webview_snapshot.h"
 
 #include <libsoup/soup.h>
@@ -1170,14 +1171,34 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
-  if (strcmp(method, "completePermissionRequest") == 0) {
+  if (strcmp(method, "setPermissionPromptsObscured") == 0) {
+    set_webview_permission_obscured(webview->web_view,
+                                    map_lookup_bool(args, "obscured", FALSE));
+    respond(method_call, success_response());
+    return;
+  }
+
+  if (strcmp(method, "completePermissionRequest") == 0 ||
+      strcmp(method, "showPermissionRequest") == 0) {
     gint request_id = static_cast<gint>(map_lookup_int(args, "requestId", -1));
     cancel_pending_request_timeout(webview, request_id);
     WebKitPermissionRequest *request =
         WEBKIT_PERMISSION_REQUEST(g_hash_table_lookup(
             webview->pending_permission_requests, GINT_TO_POINTER(request_id)));
     if (request != nullptr) {
-      if (map_lookup_bool(args, "grant", FALSE)) {
+      if (strcmp(method, "showPermissionRequest") == 0) {
+        const auto *origin = static_cast<const gchar *>(
+            g_object_get_data(G_OBJECT(request), kPermissionPageOrigin));
+        g_autofree gchar *current = webview_permission_page_origin(
+            webkit_web_view_get_uri(webview->web_view));
+        if (g_strcmp0(origin, current) != 0) {
+          webkit_permission_request_deny(request);
+        } else {
+          show_webview_permission_dialog(
+              webview->web_view, request, origin,
+              webview_permission_resources(request));
+        }
+      } else if (map_lookup_bool(args, "grant", FALSE)) {
         webkit_permission_request_allow(request);
       } else {
         webkit_permission_request_deny(request);

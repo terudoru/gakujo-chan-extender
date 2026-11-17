@@ -2393,6 +2393,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         obscured: widget.linuxOverlayObscured,
         forceObscured: _isSettingsDialogOpen,
         navigation: _linuxOverlayNavigation,
+        onObscuredChanged: controller is WebViewFlutterGakujoWebViewController
+            ? controller.setLinuxPageObscured
+            : null,
         takeSnapshot: controller is WebViewFlutterGakujoWebViewController
             ? controller.takeLinuxSnapshot
             : null,

@@ -8,6 +8,7 @@
 #include "webview/webview_load_errors.h"
 #include "webview/webview_native_dialog_keys.h"
 #include "webview/webview_navigation_policy.h"
+#include "webview/webview_permission_dialog.h"
 #include "webview/webview_pinch_zoom.h"
 #include "webview/webview_wheel_scroll.h"
 
@@ -731,6 +732,14 @@ static gboolean permission_request_cb(WebKitWebView *widget,
     return FALSE;
   }
 
+  const guint resources = webview_permission_resources(request);
+  if (resources == 0 || webview_permission_obscured(widget)) {
+    webkit_permission_request_deny(request);
+    return TRUE;
+  }
+  g_object_set_data_full(
+      G_OBJECT(request), kPermissionPageOrigin,
+      webview_permission_page_origin(webkit_web_view_get_uri(widget)), g_free);
   gint request_id = next_request_id(webview);
   g_hash_table_insert(webview->pending_permission_requests,
                       GINT_TO_POINTER(request_id), g_object_ref(request));
@@ -739,16 +748,14 @@ static gboolean permission_request_cb(WebKitWebView *widget,
 
   FlValue *event = make_event("permissionRequest");
   FlValue *types = fl_value_new_list();
-  if (WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST(request)) {
-    WebKitUserMediaPermissionRequest *media_request =
-        WEBKIT_USER_MEDIA_PERMISSION_REQUEST(request);
-    if (webkit_user_media_permission_is_for_video_device(media_request)) {
-      fl_value_append_take(types, fl_value_new_string("camera"));
-    }
-    if (webkit_user_media_permission_is_for_audio_device(media_request)) {
-      fl_value_append_take(types, fl_value_new_string("microphone"));
-    }
-  }
+  if (resources & kPermissionCamera)
+    fl_value_append_take(types, fl_value_new_string("camera"));
+  if (resources & kPermissionMicrophone)
+    fl_value_append_take(types, fl_value_new_string("microphone"));
+  if (resources & kPermissionGeolocation)
+    fl_value_append_take(types, fl_value_new_string("geolocation"));
+  if (resources & kPermissionNotifications)
+    fl_value_append_take(types, fl_value_new_string("notifications"));
   fl_value_set_string_take(event, "requestId", fl_value_new_int(request_id));
   fl_value_set_string_take(event, "types", types);
   send_event(webview, event);

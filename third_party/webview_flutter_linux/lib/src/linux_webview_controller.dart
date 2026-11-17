@@ -154,6 +154,7 @@ class LinuxWebViewController extends PlatformWebViewController {
   bool _canGoBack = false;
   bool _canGoForward = false;
   bool _disposed = false;
+  bool _permissionPromptsObscured = false;
   int _frameSequence = 0;
   Future<void>? _disposeFuture;
 
@@ -840,6 +841,12 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   /// Returns visible pixels as PNG, or null when unavailable or timed out.
   Future<Uint8List?> takeSnapshot() => _invoke<Uint8List>('takeSnapshot');
+
+  /// Suppresses page permission prompts while Flutter covers the page.
+  Future<void> setPermissionPromptsObscured(bool obscured) {
+    _permissionPromptsObscured = obscured;
+    return _invoke<void>('setPermissionPromptsObscured', {'obscured': obscured});
+  }
 
   /// Whether the native page currently owns the keyboard focus.
   Future<bool> hasFocus() async => await _invoke<bool>('hasFocus') ?? false;

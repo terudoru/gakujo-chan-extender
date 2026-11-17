@@ -1,4 +1,5 @@
 #include "my_application.h"
+#include "file_chooser_dialog.h"
 
 #include <flutter_linux/flutter_linux.h>
 #include <gio/gio.h>
@@ -502,12 +503,18 @@ static void window_method_call_cb(FlMethodChannel* channel,
              g_strcmp0(method, "pickSaveFile") == 0) {
     // file_selector exposes the accept label, but not the title or cancel label.
     const gboolean save_file = g_strcmp0(method, "pickSaveFile") == 0;
-    g_autoptr(GtkFileChooserNative) dialog = gtk_file_chooser_native_new(
+    g_autoptr(GtkWidget) dialog = gtk_file_chooser_dialog_new(
         save_file ? "名前を付けて保存" : "ダウンロードの保存先を選択",
         self->window,
         save_file ? GTK_FILE_CHOOSER_ACTION_SAVE
                   : GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-        save_file ? "保存" : "保存先にする", "キャンセル");
+        "キャンセル", GTK_RESPONSE_CANCEL,
+        save_file ? "保存" : "保存先にする", GTK_RESPONSE_ACCEPT, nullptr);
+    g_object_ref_sink(dialog);
+    gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
+    gtk_window_set_position(GTK_WINDOW(dialog), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
     gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dialog), TRUE);
     if (save_file) {
       gtk_file_chooser_set_do_overwrite_confirmation(
@@ -529,8 +536,13 @@ static void window_method_call_cb(FlMethodChannel* channel,
         }
       }
     }
+    // GTK restores its own chooser size, including sizes from larger screens.
+    g_signal_connect_after(dialog, "map",
+        G_CALLBACK(fit_file_chooser_to_parent_monitor), self->window);
+    gtk_widget_realize(dialog);
+    fit_file_chooser_to_parent_monitor(dialog, self->window);
     g_autoptr(FlValue) result = fl_value_new_null();
-    if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
       g_autofree gchar* path =
           gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
       if (path != nullptr) {
@@ -538,6 +550,7 @@ static void window_method_call_cb(FlMethodChannel* channel,
         result = fl_value_new_string(path);
       }
     }
+    gtk_widget_destroy(dialog);
     fl_method_call_respond_success(method_call, result, nullptr);
   } else if (g_strcmp0(method, "waitUntilShown") != 0) {
     fl_method_call_respond_not_implemented(method_call, nullptr);

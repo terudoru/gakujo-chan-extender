@@ -67,6 +67,7 @@ class LinuxOverlayGuard extends StatefulWidget {
     this.takeSnapshot,
     this.hasNativeFocus,
     this.restoreNativeFocus,
+    this.onObscuredChanged,
   });
 
   final ValueListenable<bool>? obscured;
@@ -75,6 +76,7 @@ class LinuxOverlayGuard extends StatefulWidget {
   final Future<Uint8List?> Function()? takeSnapshot;
   final Future<bool> Function()? hasNativeFocus;
   final Future<void> Function()? restoreNativeFocus;
+  final ValueChanged<bool>? onObscuredChanged;
   final Widget child;
 
   @override
@@ -86,6 +88,7 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   bool _nativeHidden = false;
   bool _capturing = false;
   bool _wasObscured = false;
+  bool? _reportedObscured;
   Timer? _hideTimer;
   Completer<void>? _visibleReady;
   Future<bool> _hadNativeFocus = Future<bool>.value(false);
@@ -110,6 +113,9 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   @override
   void didUpdateWidget(LinuxOverlayGuard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.onObscuredChanged != widget.onObscuredChanged) {
+      _reportedObscured = null;
+    }
     if (oldWidget.obscured != widget.obscured) {
       oldWidget.obscured?.removeListener(_update);
       widget.obscured?.addListener(_update);
@@ -216,6 +222,10 @@ class LinuxOverlayGuardState extends State<LinuxOverlayGuard> {
   }
 
   void _update() {
+    if (_reportedObscured != _obscured) {
+      _reportedObscured = _obscured;
+      widget.onObscuredChanged?.call(_obscured);
+    }
     if (!_obscured) {
       final restore = _wasObscured;
       _wasObscured = false;

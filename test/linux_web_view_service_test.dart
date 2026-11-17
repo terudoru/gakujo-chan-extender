@@ -79,6 +79,98 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  test('obscured Linux pages deny without a prompt and resume after closing',
+      () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    controller.setLinuxPageObscured(true);
+    await emitEvent({
+      'type': 'permissionRequest',
+      'requestId': 21,
+      'types': ['geolocation'],
+    });
+    expect(calls.map((call) => call.method), [
+      'setPermissionPromptsObscured',
+      'completePermissionRequest',
+    ]);
+    expect(calls.first.arguments, {'obscured': true});
+    expect(calls.last.arguments, {'requestId': 21, 'grant': false});
+
+    calls.clear();
+    controller.setLinuxPageObscured(false);
+    await emitEvent({
+      'type': 'permissionRequest',
+      'requestId': 22,
+      'types': ['geolocation'],
+    });
+    expect(calls.map((call) => call.method), [
+      'setPermissionPromptsObscured',
+      'showPermissionRequest',
+    ]);
+    expect(calls.first.arguments, {'obscured': false});
+  });
+
+  for (final types in [
+    ['camera'],
+    ['microphone'],
+    ['camera', 'microphone'],
+    ['geolocation'],
+    ['notifications'],
+  ]) {
+    test(
+      'Linux permissions use the native prompt by default: $types',
+      () async {
+        await emitEvent({
+          'type': 'permissionRequest',
+          'requestId': 5,
+          'types': types,
+        });
+
+        expect(calls.map((call) => call.method), ['showPermissionRequest']);
+        expect(calls.single.arguments, {'requestId': 5});
+      },
+    );
+  }
+
+  for (final types in [
+    [],
+    ['display'],
+    ['camera', 'display'],
+    [1],
+  ]) {
+    test('unknown Linux permission types stay denied: $types', () async {
+      await emitEvent({
+        'type': 'permissionRequest',
+        'requestId': 6,
+        'types': types,
+      });
+
+      expect(calls.map((call) => call.method), ['completePermissionRequest']);
+      expect(calls.single.arguments, {'requestId': 6, 'grant': false});
+    });
+  }
+
+  for (final grant in [true, false]) {
+    test(
+      'a custom Linux permission handler keeps its decision: $grant',
+      () async {
+        await native.setOnPlatformPermissionRequest((request) async {
+          expect(request.types, {WebViewPermissionResourceType.microphone});
+          await (grant ? request.grant() : request.deny());
+        });
+        await emitEvent({
+          'type': 'permissionRequest',
+          'requestId': 7,
+          'types': ['microphone'],
+        });
+
+        expect(calls.map((call) => call.method), ['completePermissionRequest']);
+        expect(calls.single.arguments, {'requestId': 7, 'grant': grant});
+      },
+    );
+  }
+
   test(
     'Linux snapshots forward typed PNG bytes through the app controller',
     () async {

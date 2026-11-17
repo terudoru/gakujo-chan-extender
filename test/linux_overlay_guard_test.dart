@@ -64,6 +64,7 @@ void main() {
     bool forceObscured = false,
     Future<bool> Function()? hasNativeFocus,
     Future<void> Function()? restoreNativeFocus,
+    ValueChanged<bool>? onObscuredChanged,
     Widget? child,
     Widget? footer,
   }) => tester.pumpWidget(
@@ -86,6 +87,7 @@ void main() {
                 takeSnapshot: takeSnapshot,
                 hasNativeFocus: hasNativeFocus,
                 restoreNativeFocus: restoreNativeFocus,
+                onObscuredChanged: onObscuredChanged,
                 child: child ?? const Text('native page'),
               ),
             ),
@@ -99,6 +101,52 @@ void main() {
   Uint8List pagePng() =>
       File('macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_16.png')
           .readAsBytesSync();
+
+  testWidgets('obscuring is reported before the snapshot hides the page',
+      (tester) async {
+    final obscured = ValueNotifier(false);
+    final key = GlobalKey<LinuxOverlayGuardState>();
+    final pending = Completer<Uint8List?>();
+    final reports = <bool>[];
+    addTearDown(obscured.dispose);
+    Future<void> show({bool force = false}) => showSnapshotGuard(
+      tester,
+      obscured: obscured,
+      key: key,
+      takeSnapshot: () => pending.future,
+      forceObscured: force,
+      onObscuredChanged: reports.add,
+    );
+    await show();
+    expect(reports, [false]);
+    obscured.value = true;
+    expect(reports, [false, true]);
+    expect(find.text('native page'), findsOneWidget);
+    await show(force: true);
+    obscured.value = false;
+    expect(reports, [false, true]);
+    await show();
+    expect(reports, [false, true, false]);
+    pending.complete(null);
+    await tester.pump();
+  });
+
+  testWidgets('initial forced overlays suppress native prompts immediately',
+      (tester) async {
+    final obscured = ValueNotifier(false);
+    final key = GlobalKey<LinuxOverlayGuardState>();
+    final reports = <bool>[];
+    addTearDown(obscured.dispose);
+    await showSnapshotGuard(
+      tester,
+      obscured: obscured,
+      key: key,
+      takeSnapshot: () async => null,
+      forceObscured: true,
+      onObscuredChanged: reports.add,
+    );
+    expect(reports, [true]);
+  });
 
   testWidgets(
     'snapshot fills the view at device scale and is dropped on close',
