@@ -500,16 +500,21 @@ static void window_method_call_cb(FlMethodChannel* channel,
     g_bus_get(G_BUS_TYPE_SESSION, nullptr, secret_service_bus_cb,
               g_object_ref(method_call));
   } else if (g_strcmp0(method, "pickDownloadDirectory") == 0 ||
-             g_strcmp0(method, "pickSaveFile") == 0) {
+             g_strcmp0(method, "pickSaveFile") == 0 ||
+             g_strcmp0(method, "pickOpenFile") == 0) {
     // file_selector exposes the accept label, but not the title or cancel label.
     const gboolean save_file = g_strcmp0(method, "pickSaveFile") == 0;
+    const gboolean open_file = g_strcmp0(method, "pickOpenFile") == 0;
     g_autoptr(GtkWidget) dialog = gtk_file_chooser_dialog_new(
-        save_file ? "名前を付けて保存" : "ダウンロードの保存先を選択",
+        open_file ? "バックアップファイルを選択"
+                  : save_file ? "名前を付けて保存" : "ダウンロードの保存先を選択",
         self->window,
-        save_file ? GTK_FILE_CHOOSER_ACTION_SAVE
+        open_file ? GTK_FILE_CHOOSER_ACTION_OPEN
+                  : save_file ? GTK_FILE_CHOOSER_ACTION_SAVE
                   : GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
         "キャンセル", GTK_RESPONSE_CANCEL,
-        save_file ? "保存" : "保存先にする", GTK_RESPONSE_ACCEPT, nullptr);
+        open_file ? "開く" : save_file ? "保存" : "保存先にする",
+        GTK_RESPONSE_ACCEPT, nullptr);
     g_object_ref_sink(dialog);
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
@@ -522,6 +527,35 @@ static void window_method_call_cb(FlMethodChannel* channel,
     }
     FlValue* args = fl_method_call_get_args(method_call);
     if (args != nullptr && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
+      FlValue* groups = fl_value_lookup_string(args, "allowedTypeGroups");
+      if (groups != nullptr && fl_value_get_type(groups) == FL_VALUE_TYPE_LIST) {
+        for (size_t i = 0; i < fl_value_get_length(groups); ++i) {
+          FlValue* group = fl_value_get_list_value(groups, i);
+          if (fl_value_get_type(group) != FL_VALUE_TYPE_MAP) continue;
+          GtkFileFilter* filter = gtk_file_filter_new();
+          FlValue* label = fl_value_lookup_string(group, "label");
+          if (label != nullptr && fl_value_get_type(label) == FL_VALUE_TYPE_STRING)
+            gtk_file_filter_set_name(filter, fl_value_get_string(label));
+          const char* keys[] = {"extensions", "mimeTypes"};
+          for (const char* key : keys) {
+            FlValue* values = fl_value_lookup_string(group, key);
+            if (values == nullptr || fl_value_get_type(values) != FL_VALUE_TYPE_LIST)
+              continue;
+            for (size_t j = 0; j < fl_value_get_length(values); ++j) {
+              FlValue* value = fl_value_get_list_value(values, j);
+              if (fl_value_get_type(value) != FL_VALUE_TYPE_STRING) continue;
+              if (g_str_equal(key, "extensions")) {
+                g_autofree gchar* pattern =
+                    g_strconcat("*.", fl_value_get_string(value), nullptr);
+                gtk_file_filter_add_pattern(filter, pattern);
+              } else {
+                gtk_file_filter_add_mime_type(filter, fl_value_get_string(value));
+              }
+            }
+          }
+          gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+        }
+      }
       FlValue* directory = fl_value_lookup_string(args, "initialDirectory");
       if (directory != nullptr &&
           fl_value_get_type(directory) == FL_VALUE_TYPE_STRING) {
