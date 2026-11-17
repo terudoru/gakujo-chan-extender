@@ -123,17 +123,6 @@ void main() {
       }
       return null;
     });
-    for (final channel in [windowsEvents, linuxEvents]) {
-      messenger.setMockStreamHandler(
-        channel,
-        MockStreamHandler.inline(
-          onListen: (arguments, sink) {
-            eventSinks[channel.name] = sink;
-            methodCalls.add('listen:${channel.name}');
-          },
-        ),
-      );
-    }
   });
 
   tearDown(() {
@@ -201,6 +190,18 @@ void main() {
           );
           debugDefaultTargetPlatformOverride = platform;
           setupCompleted = completed;
+          // Create the event streams in this widget test's FakeAsync zone.
+          for (final channel in [windowsEvents, linuxEvents]) {
+            messenger.setMockStreamHandler(
+              channel,
+              MockStreamHandler.inline(
+                onListen: (arguments, sink) {
+                  eventSinks[channel.name] = sink;
+                  methodCalls.add('listen:${channel.name}');
+                },
+              ),
+            );
+          }
           await tester.pumpWidget(
             MaterialApp(
               home: GakujoWebApp(localPrefsStore: _StartupLocalPrefsStore()),
