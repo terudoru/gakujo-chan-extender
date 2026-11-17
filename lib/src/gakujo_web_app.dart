@@ -1640,6 +1640,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _lastSessionRecoveryNoticeUrl;
   bool _loginRestoreAttempted = false;
   bool _isSettingsDialogOpen = false;
+  final _linuxOverlayGuardKey = GlobalKey<LinuxOverlayGuardState>();
+  final _linuxOverlayNavigation = ValueNotifier<int>(0);
   // The setup wizard can open before macOS reads the saved download folder.
   VoidCallback? _refreshSetupWizard;
   DateTime? _lastAssignmentRefresh;
@@ -1896,6 +1898,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       controller.onFindAgain = null;
       controller.onFindResult = null;
     }
+    _linuxOverlayNavigation.dispose();
     _linuxFindController.dispose();
     _linuxFindFocusNode.dispose();
     unawaited(_controller.dispose());
@@ -2319,7 +2322,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               // page (often a submit button) stays under the navigation bar.
               child: SafeArea(
                 top: compactPreviewForKeyboard,
-                child: _isSettingsDialogOpen
+                child: _isSettingsDialogOpen &&
+                        defaultTargetPlatform != TargetPlatform.linux
                     ? const SizedBox.expand()
                     : _buildWebViewArea(),
               ),
@@ -2356,10 +2360,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
     );
 
-    if (defaultTargetPlatform == TargetPlatform.linux &&
-        widget.linuxOverlayObscured != null) {
+    if (defaultTargetPlatform == TargetPlatform.linux) {
+      final controller = _controller;
       content = LinuxOverlayGuard(
-        obscured: widget.linuxOverlayObscured!,
+        key: _linuxOverlayGuardKey,
+        obscured: widget.linuxOverlayObscured,
+        forceObscured: _isSettingsDialogOpen,
+        navigation: _linuxOverlayNavigation,
+        takeSnapshot: controller is WebViewFlutterGakujoWebViewController
+            ? controller.takeLinuxSnapshot
+            : null,
         child: content,
       );
     }
@@ -3015,6 +3025,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     // Removing WKWebView and waiting for that frame prevents its native view
     // from remaining the macOS keyboard first responder behind the dialog.
     await WidgetsBinding.instance.endOfFrame;
+    if (defaultTargetPlatform == TargetPlatform.linux && mounted) {
+      await _linuxOverlayGuardKey.currentState?.snapshotReady;
+      await WidgetsBinding.instance.endOfFrame;
+    }
     if (!mounted) {
       return;
     }
@@ -5291,6 +5305,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _offlineRetry.cancel();
     _offlineRetryPausedInBackground = false;
     _navigationRevision += 1;
+    _linuxOverlayNavigation.value = _navigationRevision;
     _pendingPageFinishedNavigationRevision = null;
   }
 

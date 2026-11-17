@@ -1,6 +1,7 @@
 #include "common/method_channel_utils.h"
 #include "webview/download_policy.h"
 #include "webview/webview_internal.h"
+#include "webview/webview_snapshot.h"
 
 #include <libsoup/soup.h>
 
@@ -445,6 +446,29 @@ void instance_method_call_cb(FlMethodChannel *channel,
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
   const gchar *method = fl_method_call_get_name(method_call);
   FlValue *args = fl_method_call_get_args(method_call);
+
+  if (strcmp(method, "takeSnapshot") == 0) {
+    take_webview_snapshot(
+        webview->web_view, 100,
+        [](GObject *object, GAsyncResult *result, gpointer data) {
+          FlMethodCall *call = FL_METHOD_CALL(data);
+          g_autoptr(GError) error = nullptr;
+          g_autoptr(GBytes) bytes = take_webview_snapshot_finish(
+              WEBKIT_WEB_VIEW(object), result, &error);
+          g_autoptr(FlValue) value = fl_value_new_null();
+          if (bytes != nullptr) {
+            gsize length = 0;
+            const auto *png =
+                static_cast<const guint8 *>(g_bytes_get_data(bytes, &length));
+            g_clear_pointer(&value, fl_value_unref);
+            value = fl_value_new_uint8_list(png, length);
+          }
+          respond(call, success_response(value));
+          g_object_unref(call);
+        },
+        g_object_ref(method_call));
+    return;
+  }
 
   if (strcmp(method, "setFrame") == 0) {
     GtkWidget *widget = GTK_WIDGET(webview->web_view);

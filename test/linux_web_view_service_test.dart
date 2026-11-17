@@ -79,6 +79,28 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
+  test(
+    'Linux snapshots forward typed PNG bytes through the app controller',
+    () async {
+      final bytes = Uint8List.fromList([137, 80, 78, 71]);
+      messenger.setMockMethodCallHandler(instance, (call) async {
+        calls.add(call);
+        return call.method == 'takeSnapshot' ? bytes : null;
+      });
+      final controller = WebViewFlutterGakujoWebViewController(
+        WebViewController.fromPlatform(native),
+      );
+
+      expect(await controller.takeLinuxSnapshot(), bytes);
+      expect(calls.map((call) => call.method), ['takeSnapshot']);
+    },
+  );
+
+  test('unavailable Linux snapshots return null', () async {
+    expect(await native.takeSnapshot(), isNull);
+    expect(calls.map((call) => call.method), ['takeSnapshot']);
+  });
+
   test('Linux navigation events preserve main-frame classification', () async {
     final controller = WebViewFlutterGakujoWebViewController(
       WebViewController.fromPlatform(native),

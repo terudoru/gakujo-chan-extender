@@ -727,6 +727,11 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  Future<Uint8List?> takeLinuxSnapshot() async {
+    final platform = _inner.platform;
+    return platform is LinuxWebViewController ? platform.takeSnapshot() : null;
+  }
+
   Future<void> findText(String text, {bool forward = true}) async {
     final platform = _inner.platform;
     if (platform is LinuxWebViewController) {

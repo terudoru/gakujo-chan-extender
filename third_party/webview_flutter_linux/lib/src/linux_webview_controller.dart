@@ -802,6 +802,9 @@ class LinuxWebViewController extends PlatformWebViewController {
     });
   }
 
+  /// Returns visible pixels as PNG, or null when unavailable or timed out.
+  Future<Uint8List?> takeSnapshot() => _invoke<Uint8List>('takeSnapshot');
+
   /// Sets the page zoom factor.
   Future<void> setZoomFactor(double zoomFactor) {
     return _invoke<void>('setZoomFactor', <String, Object?>{
