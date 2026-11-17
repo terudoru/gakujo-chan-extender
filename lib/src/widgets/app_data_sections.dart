@@ -1,12 +1,11 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 import '../gakujo_app_settings.dart';
 import '../report_form.dart';
+import 'report_dialog.dart';
 import 'settings_sections.dart';
 
 class SettingsAction {
@@ -198,12 +197,16 @@ class AppSupportSection extends StatelessWidget {
     super.key,
     required this.onCreateErrorReport,
     required this.onOpenUrl,
-    this.reportFormUri,
+    this.reportEndpoint,
+    this.collectDiagnostics,
+    this.reportClient,
     this.loadVersion,
   });
   final Future<void> Function() onCreateErrorReport;
   final Future<void> Function(Uri) onOpenUrl;
-  final Uri? reportFormUri;
+  final Uri? reportEndpoint;
+  final Future<String> Function()? collectDiagnostics;
+  final ReportClient? reportClient;
   final Future<String> Function()? loadVersion;
   @override
   Widget build(BuildContext context) => Column(
@@ -211,34 +214,30 @@ class AppSupportSection extends StatelessWidget {
     children: [
       Text('不具合・要望の報告', style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
-      if (reportFormUri != null) ...[
-        const Text('GitHub のアカウントがなくても、フォームから不具合や要望を送れます。ブラウザーで開きます。'),
+      if (reportEndpoint != null) ...[
+        const Text('GitHub のアカウントがなくても、アプリから不具合や要望を送れます。'),
         const SizedBox(height: 8),
       ],
       SettingsActionGroup(
         actions: [
-          if (reportFormUri case final baseUri?)
+          if (reportEndpoint case final endpoint?)
             SettingsAction(
-              label: '報告フォームを開く',
-              icon: Icons.open_in_new,
+              label: 'アプリから報告する',
+              icon: Icons.feedback_outlined,
               run: () async {
-                var version = '';
-                try {
-                  version =
-                      await (loadVersion?.call() ??
-                          PackageInfo.fromPlatform().then(
-                            (info) => info.version,
-                          ));
-                } on Object {
-                  // Version is optional; reporting remains available.
-                }
-                if (!context.mounted) return;
-                await onOpenUrl(
-                  buildReportFormUri(
-                    baseUri: baseUri,
-                    type: ReportType.bug,
-                    version: version,
-                    platform: defaultTargetPlatform,
+                unawaited(
+                  showDialog<void>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => ReportDialog(
+                      client: reportClient ?? ReportClient(endpoint: endpoint),
+                      collectDiagnostics:
+                          collectDiagnostics ??
+                          () async =>
+                              throw StateError('Diagnostics unavailable'),
+                      onOpenUrl: onOpenUrl,
+                      loadVersion: loadVersion,
+                    ),
                   ),
                 );
               },

@@ -114,7 +114,7 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
           title: const Text('エラー報告パッケージ'),
           content: Text(
             '軽量版は件数と設定状態だけを含みます。詳細版は履歴、URL、失敗したダウンロード、保存済み課題一覧も含みます。'
-            '${reportFormBaseUri == null ? '' : '\nフォームには軽量版だけを添えてください。'}',
+            '${reportEndpointUrl == null ? '' : '\n「アプリから報告する」のバグ報告では、軽量版を自動で添えられます。'}',
           ),
           actions: [
             TextButton(

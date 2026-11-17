@@ -4036,7 +4036,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         onOpenUrl: (url) async {
                           await _launchExternalUrl(url);
                         },
-                        reportFormUri: reportFormBaseUri,
+                        reportEndpoint: reportEndpointUrl == null
+                            ? null
+                            : Uri.parse(reportEndpointUrl!),
+                        collectDiagnostics: () async =>
+                            const JsonEncoder.withIndent('  ').convert(
+                              await _diagnosticPayload(
+                                includeStoredData: false,
+                              ),
+                            ),
                       ),
                     ],
                   ),
