@@ -11,14 +11,29 @@ import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
 
 class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
+  _StartupLocalPrefsStore({required this.onObservation});
+
+  final void Function(String) onObservation;
+
   // Recovery must use the secure store's setup flag, not this startup mirror.
   @override
-  Future<GakujoLocalPrefs?> load() async => const GakujoLocalPrefs(
-    appSettings: GakujoAppSettings(setupCompleted: true),
-  );
+  Future<GakujoLocalPrefs?> load() async {
+    onObservation('localPrefs.load.called:setupCompleted=true');
+    onObservation('localPrefs.load.completed:setupCompleted=true');
+    return const GakujoLocalPrefs(
+      appSettings: GakujoAppSettings(setupCompleted: true),
+    );
+  }
 
   @override
-  Future<void> saveAppSettings(GakujoAppSettings settings) async {}
+  Future<void> saveAppSettings(GakujoAppSettings settings) async {
+    onObservation(
+      'localPrefs.saveAppSettings.called:setupCompleted=${settings.setupCompleted}',
+    );
+    onObservation(
+      'localPrefs.saveAppSettings.completed:setupCompleted=${settings.setupCompleted}',
+    );
+  }
 }
 
 void main() {
@@ -68,7 +83,13 @@ void main() {
         if (!retrying) {
           throw PlatformException(code: 'KeyringLocked');
         }
+        methodCalls.add(
+          'storage.${call.method}.unlockWaiting:setupCompleted=$setupCompleted',
+        );
         await unlock.future;
+        methodCalls.add(
+          'storage.${call.method}.unlockCompleted:setupCompleted=$setupCompleted',
+        );
         if (call.method == 'readAll') {
           return <String, String>{
             if (setupCompleted) 'more_better_gakujo_setup_completed': 'true',
@@ -204,7 +225,11 @@ void main() {
           }
           await tester.pumpWidget(
             MaterialApp(
-              home: GakujoWebApp(localPrefsStore: _StartupLocalPrefsStore()),
+              home: GakujoWebApp(
+                localPrefsStore: _StartupLocalPrefsStore(
+                  onObservation: methodCalls.add,
+                ),
+              ),
             ),
           );
           await tester.pumpAndSettle();
@@ -258,11 +283,13 @@ void main() {
           await tester.pump();
           expect(find.text('初回セットアップ'), findsNothing);
           await tester.pumpAndSettle();
+          recordUi('after retry pumpAndSettle completed');
           expect(recoveryDismissed, isTrue);
           expect(recovery, findsNothing);
           expect(
             find.text('初回セットアップ'),
             completed ? findsNothing : findsOneWidget,
+            reason: diagnostics(),
           );
           if (!completed) {
             Navigator.of(tester.element(find.text('初回セットアップ'))).pop();
