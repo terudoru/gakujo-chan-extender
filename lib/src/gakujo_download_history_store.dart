@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'download_file_name_policy.dart';
 import 'gakujo_download_request.dart';
 import 'secure_storage_factory.dart';
 import 'secure_storage_transaction.dart';
@@ -359,7 +360,7 @@ class GakujoDownloadHistoryStore {
       request.method.toUpperCase(),
       request.url,
       request.fileName,
-      request.courseName,
+      DownloadFileNamePolicy.safeFolderName(request.courseName),
       request.canonicalFormFields,
     ]);
   }

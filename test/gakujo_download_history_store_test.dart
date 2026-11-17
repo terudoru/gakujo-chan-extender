@@ -13,6 +13,43 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final course in ['', ' \t ']) {
+    final label = course.isEmpty ? 'empty' : 'whitespace';
+    test('blank-course retries match after reload ($label)', () async {
+      final request = GakujoDownloadRequest(
+        url: 'https://gakujo.iess.niigata-u.ac.jp/download',
+        method: 'POST',
+        courseName: course,
+        fileName: 'notes.pdf',
+        formFields: const {'id': '42'},
+      );
+      await GakujoDownloadHistoryStore().addFailedDownload(
+        request: request,
+        errorMessage: 'first failure',
+      );
+
+      final reloadedStore = GakujoDownloadHistoryStore();
+      final restored = (await reloadedStore.loadFailedDownloads()).single;
+      expect(restored.request.courseName, '未分類');
+      await reloadedStore.addFailedDownload(
+        request: request,
+        errorMessage: 'retry failure',
+      );
+      final entries = await GakujoDownloadHistoryStore().loadFailedDownloads();
+      expect(entries, hasLength(1));
+      expect(entries.single.errorMessage, 'retry failure');
+      expect(entries.single.request.formFields, request.formFields);
+
+      await reloadedStore.addFailedDownload(
+        request: restored.request,
+        errorMessage: 'restored retry failure',
+      );
+      final retried = await GakujoDownloadHistoryStore().loadFailedDownloads();
+      expect(retried, hasLength(1));
+      expect(retried.single.errorMessage, 'restored retry failure');
+    });
+  }
+
   test('failed retries retain repeated values and distinguish their order', () async {
     final store = GakujoDownloadHistoryStore();
     GakujoDownloadRequest request(List<List<String>> pairs) => GakujoDownloadRequest(
