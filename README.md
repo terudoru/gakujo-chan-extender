@@ -30,10 +30,13 @@ More Better Gakujo は、新潟大学の学務情報システム（学情）を�
 - `MoreBetterGakujo-vX.Y.Z-linux-x64.tar.gz` は展開し、展開したフォルダの `morebettergakujo_flutter` を起動する。実行には `libgtk-3-0`、`libwebkit2gtk-4.1-0`、`libsecret-1-0` が必要
 - tar.gz 版は、展開したフォルダで `bash install-desktop-entry.sh` を実行するとアプリ一覧とドックにアイコンを登録できる。フォルダを移動したらもう一度実行し、登録を消すときは `bash install-desktop-entry.sh --uninstall` を使う
 - Fedora と Arch Linux では tar.gz を使う。先に必要なライブラリを入れておく（Fedora: `sudo dnf install gtk3 webkit2gtk4.1 libsecret google-noto-sans-cjk-fonts`、Arch: `sudo pacman -S gtk3 webkit2gtk-4.1 libsecret noto-fonts-cjk`）。日本語フォントがないと文字が表示されない
-- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要。キーリングがロックされていると起動時にロック解除の画面が出る。キャンセルしても「このまま使う」で使え、「再試行」でもう一度解除できる
-- アプリが取り込まないダウンロード（保存機能をオフにしたときなど）はダウンロードフォルダに保存され、画面下に通知と「開く」が出る
-- Windows と同じく、アプリを開いている間はデスクトップの通知サービスを通じて提出期限を通知する。二重に起動すると、起動済みのウィンドウを前面に表示する
-- Windows と同じく、F5/Ctrl+R で再読み込み、Ctrl+P で印刷、Ctrl+F でページ内検索、Alt+←/→ で戻る・進む、Ctrl+ホイール、ピンチ、Ctrl+=/Ctrl+-（Ctrl+0 で元の大きさ）で拡大・縮小できる
+- WebKit を起動できないときは、原因（必要なライブラリの不足や、アプリのデータフォルダに書き込めないこと）を説明する画面が出て、「再試行」でやり直せる
+- 仮想マシンなどでページが白くなるのを防ぐため、WebKit の DMA-BUF レンダラーは既定で無効にしてある（`WEBKIT_DISABLE_DMABUF_RENDERER` を自分で設定するとそちらが優先される）
+- パスワードの保存と Google ログインには、稼働中の Secret Service（GNOME Keyring / KWallet など）が必要。キーリングがロックされていると起動時にロック解除の画面が出る。キャンセルしても「このまま使う」で使え、初回セットアップも開く。「再試行」でもう一度解除できる。ロックされたままだと、設定と保存先はアプリを閉じるまで有効になる（その旨の案内が1度出る）
+- アプリが取り込まないダウンロード（保存機能をオフにしたときなど）はダウンロードフォルダに保存され、画面下に通知と「開く」が出る。保存先フォルダを選ぶダイアログは日本語で表示される
+- Windows と同じく、Cookie は再起動後も残り、アプリを開いている間はデスクトップの通知サービスを通じて提出期限を通知する。二重に起動すると、起動済みのウィンドウを前面に表示する
+- メニュー、ダイアログ、設定画面を開いている間も、背後のページは静止画として表示されたままになる
+- Windows と同じく、F5/Ctrl+R で再読み込み、Ctrl+P で印刷、Ctrl+F でページ内検索、Alt+←/→ で戻る・進む、Ctrl+ホイール、ピンチ、Ctrl+=/Ctrl+-（Ctrl+0 で元の大きさ）で拡大・縮小できる。ページの背景を右クリックしても「印刷」を選べる
 
 ### iOS/iPadOS
 
