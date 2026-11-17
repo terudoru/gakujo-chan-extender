@@ -40,6 +40,7 @@ public:
   void SetDelegateEnabled(bool enabled) { delegate_enabled_ = enabled; }
   bool Resolve(const std::string &id, const std::string &action,
                const std::string &path, const std::string &error = {});
+  bool Cancel(const std::string &id);
   bool HandleResponsePolicy(WebKitPolicyDecision *decision);
   // Custom-method/header requests use Soup. Consume their original response
   // body without replaying a POST (or losing authenticated request state).
@@ -56,6 +57,7 @@ private:
   static void PublishThread(GTask *, gpointer, gpointer, GCancellable *);
   static void Published(GObject *, GAsyncResult *, gpointer);
   void Emit(Task &task, const std::string &type);
+  void ReportProgress(Task &task, bool force = false);
   bool PrepareStaging(Task &task, GError **error);
   void RequestDecision(Task &task);
   void Complete(Task &task);

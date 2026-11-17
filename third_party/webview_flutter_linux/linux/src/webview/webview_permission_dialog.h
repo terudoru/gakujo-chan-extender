@@ -92,31 +92,21 @@ inline bool webview_permission_obscured(WebKitWebView *view) {
   return g_object_get_data(G_OBJECT(view), kPermissionObscured) != nullptr;
 }
 
-inline void set_webview_permission_obscured(WebKitWebView *view, bool obscured) {
-  g_object_set_data(G_OBJECT(view), kPermissionObscured,
-                    GINT_TO_POINTER(obscured));
-  if (!obscured) return;
-  GList *windows = gtk_window_list_toplevels();
-  for (GList *item = windows; item != nullptr; item = item->next)
-    g_object_ref(item->data);
-  for (GList *item = windows; item != nullptr; item = item->next) {
-    if (g_object_get_data(G_OBJECT(item->data), kPermissionDialogView) == view)
-      gtk_widget_destroy(GTK_WIDGET(item->data));
-  }
-  g_list_free_full(windows, g_object_unref);
-}
-
 struct WebViewPermissionDialog {
   WebKitPermissionRequest *request;
   GHashTable *decisions;
   gchar *origin;
   guint resources;
   bool completed = false;
+  guint timeout = 0;
 };
 
 inline void webview_permission_dialog_destroy(GtkWidget *dialog, gpointer value) {
   auto *data = static_cast<WebViewPermissionDialog *>(value);
   g_signal_handlers_disconnect_by_data(dialog, data);
+  g_object_set_data(G_OBJECT(dialog), kPermissionDialogView, nullptr);
+  g_object_set_data(G_OBJECT(dialog), "mbg-permission-dialog-data", nullptr);
+  if (data->timeout) g_source_remove(data->timeout);
   if (!data->completed) webkit_permission_request_deny(data->request);
   g_object_unref(data->request);
   g_hash_table_unref(data->decisions);
@@ -145,20 +135,55 @@ inline void webview_permission_dialog_load_changed(WebKitWebView *,
   if (event == WEBKIT_LOAD_STARTED) gtk_widget_destroy(dialog);
 }
 
+inline gboolean webview_permission_dialog_timeout(gpointer value) {
+  auto *dialog = GTK_WIDGET(value);
+  auto *data = static_cast<WebViewPermissionDialog *>(
+      g_object_get_data(G_OBJECT(dialog), "mbg-permission-dialog-data"));
+  data->timeout = 0;
+  gtk_widget_destroy(dialog);
+  return G_SOURCE_REMOVE;
+}
+
+inline void set_webview_permission_obscured(WebKitWebView *view, bool obscured) {
+  g_object_set_data(G_OBJECT(view), kPermissionObscured,
+                    GINT_TO_POINTER(obscured));
+  GList *windows = gtk_window_list_toplevels();
+  for (GList *item = windows; item != nullptr; item = item->next)
+    g_object_ref(item->data);
+  for (GList *item = windows; item != nullptr; item = item->next) {
+    auto *dialog = GTK_WIDGET(item->data);
+    if (g_object_get_data(G_OBJECT(dialog), kPermissionDialogView) != view)
+      continue;
+    if (obscured) {
+      gtk_widget_hide(dialog);
+    } else {
+      auto *data = static_cast<WebViewPermissionDialog *>(
+          g_object_get_data(G_OBJECT(dialog), "mbg-permission-dialog-data"));
+      const gint decision = webview_permission_decision(
+          data->decisions, data->origin, data->resources);
+      if (decision >= 0)
+        gtk_dialog_response(GTK_DIALOG(dialog),
+                            decision ? GTK_RESPONSE_ACCEPT : GTK_RESPONSE_REJECT);
+      else
+        gtk_widget_show_all(dialog);
+    }
+  }
+  g_list_free_full(windows, g_object_unref);
+}
+
 inline GtkWidget *show_webview_permission_dialog(WebKitWebView *view,
                                                 WebKitPermissionRequest *request,
                                                 const gchar *origin,
                                                 guint resources) {
   const gchar *description = webview_permission_description(resources);
   GtkWidget *parent = gtk_widget_get_toplevel(GTK_WIDGET(view));
-  if (webview_permission_obscured(view) || !GTK_IS_WINDOW(parent) ||
-      origin == nullptr || description == nullptr) {
+  if (!GTK_IS_WINDOW(parent) || origin == nullptr || description == nullptr) {
     webkit_permission_request_deny(request);
     return nullptr;
   }
   GHashTable *decisions = webview_permission_decisions(view);
   const gint decision = webview_permission_decision(decisions, origin, resources);
-  if (decision >= 0) {
+  if (decision >= 0 && !webview_permission_obscured(view)) {
     if (decision) webkit_permission_request_allow(request);
     else webkit_permission_request_deny(request);
     return nullptr;
@@ -176,6 +201,11 @@ inline GtkWidget *show_webview_permission_dialog(WebKitWebView *view,
       WEBKIT_PERMISSION_REQUEST(g_object_ref(request)), g_hash_table_ref(decisions),
       g_strdup(origin), resources};
   g_object_set_data(G_OBJECT(dialog), kPermissionDialogView, view);
+  g_object_set_data(G_OBJECT(dialog), "mbg-permission-dialog-data", data);
+  // WebKitGTK 4.1 has no permission cancellation signal. Bound the hold
+  // even if the page stays covered; navigation/destruction also deny it.
+  data->timeout = g_timeout_add_seconds(
+      120, webview_permission_dialog_timeout, dialog);
   g_signal_connect(dialog, "response",
                    G_CALLBACK(webview_permission_dialog_response), data);
   g_signal_connect(dialog, "destroy",
@@ -185,7 +215,7 @@ inline GtkWidget *show_webview_permission_dialog(WebKitWebView *view,
   g_signal_connect_object(view, "load-changed",
                           G_CALLBACK(webview_permission_dialog_load_changed),
                           dialog, static_cast<GConnectFlags>(0));
-  gtk_widget_show_all(dialog);
+  if (!webview_permission_obscured(view)) gtk_widget_show_all(dialog);
   return dialog;
 }
 

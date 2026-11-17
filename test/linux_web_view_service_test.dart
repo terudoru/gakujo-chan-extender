@@ -79,7 +79,7 @@ void main() {
   Future<void> emit(Object? direction) =>
       emitEvent({'type': 'mouseHistoryNavigation', 'direction': direction});
 
-  test('obscured Linux pages deny without a prompt and resume after closing',
+  test('obscured Linux pages forward requests for native deferral',
       () async {
     final controller = WebViewFlutterGakujoWebViewController(
       WebViewController.fromPlatform(native),
@@ -92,10 +92,10 @@ void main() {
     });
     expect(calls.map((call) => call.method), [
       'setPermissionPromptsObscured',
-      'completePermissionRequest',
+      'showPermissionRequest',
     ]);
     expect(calls.first.arguments, {'obscured': true});
-    expect(calls.last.arguments, {'requestId': 21, 'grant': false});
+    expect(calls.last.arguments, {'requestId': 21});
 
     calls.clear();
     controller.setLinuxPageObscured(false);
@@ -555,6 +555,51 @@ void main() {
     await emitEvent({'type': 'keyZoom', 'action': 'out'});
     expect(actions, hasLength(3));
     expect(calls, isEmpty);
+  });
+
+  test('app adapter forwards unmanaged download progress and cancellation',
+      () async {
+    final controller = WebViewFlutterGakujoWebViewController(
+      WebViewController.fromPlatform(native),
+    );
+    final progress = <LinuxDownloadProgress>[];
+    controller.onDownloadProgress = progress.add;
+    final event = <String, Object?>{
+      'type': 'unmanagedDownloadProgress',
+      'id': '12',
+      'suggestedFilename': '資料.pdf',
+      'bytesReceived': 250,
+      'totalBytes': 1000,
+      'status': 'downloading',
+    };
+    await emitEvent(event);
+    expect(progress.single.fileName, '資料.pdf');
+    expect(progress.single.fraction, 0.25);
+    expect(progress.single.isActive, isTrue);
+    await controller.cancelLinuxDownload(progress.single.id);
+    expect(calls.single.method, 'cancelDownload');
+    expect(calls.single.arguments, {'id': '12'});
+
+    await emitEvent({...event, 'totalBytes': -1});
+    expect(progress.last.totalBytes, isNull);
+    expect(progress.last.fraction, isNull);
+    for (final status in ['completed', 'failed', 'cancelled']) {
+      await emitEvent({...event, 'status': status});
+      expect(progress.last.isActive, isFalse);
+    }
+    expect(progress, hasLength(5));
+    for (final invalid in [
+      {...event, 'type': 'downloadProgress'},
+      {...event, 'id': ''},
+      {...event, 'bytesReceived': -1},
+      {...event, 'status': 'unknown'},
+    ]) {
+      await emitEvent(invalid);
+    }
+    expect(progress, hasLength(5));
+    controller.onDownloadProgress = null;
+    await emitEvent(event);
+    expect(progress, hasLength(5));
   });
 
   test('app adapter forwards WebKit download outcomes', () async {

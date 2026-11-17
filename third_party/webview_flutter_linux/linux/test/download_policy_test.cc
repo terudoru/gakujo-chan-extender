@@ -79,7 +79,8 @@ public:
                 soup_server_message_get_response_headers(message),
                 "Content-Disposition", "attachment; filename=test.txt");
           soup_server_message_set_response(
-              message, fixture->mime_, SOUP_MEMORY_STATIC, "download test", 13);
+              message, fixture->mime_, SOUP_MEMORY_STATIC, fixture->payload_.data(),
+              fixture->payload_.size());
         },
         this, nullptr);
     soup_server_listen_local(server_, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, &error);
@@ -144,6 +145,11 @@ public:
       }
     } else if (event.type == "downloadResult") {
       results_.push_back(event);
+    } else if (event.type == "unmanagedDownloadProgress") {
+      progress_.push_back(event);
+      progress_times_.push_back(g_get_monotonic_time());
+      if (cancel_progress_ && event.status == "downloading")
+        g_assert_true(policy->Cancel(event.id));
     } else if (event.type == "downloadSaved" ||
                event.type == "downloadFailed") {
       undelegated_.push_back(event);
@@ -168,6 +174,9 @@ public:
   std::unique_ptr<DownloadPolicy> second_policy_;
   std::vector<DownloadEvent> results_;
   std::vector<DownloadEvent> undelegated_;
+  std::vector<DownloadEvent> progress_;
+  std::vector<gint64> progress_times_;
+  bool cancel_progress_ = false;
   std::vector<std::pair<DownloadPolicy *, std::string>> pending_;
   std::string action_ = "platformDefault";
   std::string target_;
@@ -175,6 +184,7 @@ public:
   unsigned requests_ = 0;
   bool attachment_ = true;
   const char *mime_ = "text/plain";
+  std::string payload_ = "download test";
 
 private:
   WebKitWebContext *context_;
@@ -279,6 +289,45 @@ void TestDefaultWithoutDelegate() {
   g_assert_cmpstr(fixture.undelegated_.back().type.c_str(), ==,
                   "downloadSaved");
   g_assert_cmpstr(fixture.undelegated_.back().path.c_str(), ==, path.c_str());
+  g_assert_cmpuint(fixture.progress_.size(), >=, 2);
+  g_assert_cmpstr(fixture.progress_.front().status.c_str(), ==, "downloading");
+  g_assert_cmpstr(fixture.progress_.front().suggested_filename.c_str(), ==, "test.txt");
+  g_assert_cmpint(fixture.progress_.front().total_bytes, ==, 13);
+  g_assert_cmpstr(fixture.progress_.back().status.c_str(), ==, "completed");
+  g_assert_cmpint(fixture.progress_.back().bytes_received, ==, 13);
+  for (size_t i = 1; i + 1 < fixture.progress_.size(); ++i)
+    g_assert_cmpint(fixture.progress_times_[i] - fixture.progress_times_[i - 1],
+                    >=, 100 * 1000);
+  g_assert_false(fixture.first_policy_->Cancel(fixture.progress_.back().id));
+}
+
+void TestProgressThrottle() {
+  Fixture fixture;
+  fixture.first_policy_->SetDelegateEnabled(false);
+  fixture.payload_.assign(8 * 1024 * 1024, 'x');
+  fixture.Start();
+  Wait([&] { return !fixture.progress_.empty() &&
+                    fixture.progress_.back().status == "completed"; });
+  g_assert_cmpint(fixture.progress_.back().bytes_received, ==,
+                  static_cast<gint64>(fixture.payload_.size()));
+  for (size_t i = 1; i + 1 < fixture.progress_.size(); ++i)
+    g_assert_cmpint(fixture.progress_times_[i] - fixture.progress_times_[i - 1],
+                    >=, 100 * 1000);
+}
+
+void TestCancelWithoutDelegate() {
+  Fixture fixture;
+  fixture.first_policy_->SetDelegateEnabled(false);
+  fixture.cancel_progress_ = true;
+  fixture.Start();
+  Wait([&] { return !fixture.progress_.empty() &&
+                    fixture.progress_.back().status == "cancelled"; });
+  g_assert_cmpuint(fixture.requests_, ==, 0);
+  g_assert_true(fixture.results_.empty());
+  g_assert_true(fixture.undelegated_.empty());
+  g_assert_false(g_file_test((fixture.directory_ + "/test.txt").c_str(),
+                            G_FILE_TEST_EXISTS));
+  g_assert_false(fixture.first_policy_->Cancel(fixture.progress_.back().id));
 }
 
 void TestInvalidTargetAndCallbackError() {
@@ -417,6 +466,8 @@ int main(int argc, char **argv) {
                   TestDisabledScopeAndDisposal);
   g_test_add_func("/downloads/default-without-delegate",
                   TestDefaultWithoutDelegate);
+  g_test_add_func("/downloads/cancel-without-delegate", TestCancelWithoutDelegate);
+  g_test_add_func("/downloads/progress-throttle", TestProgressThrottle);
   g_test_add_func("/downloads/invalid-target-and-callback-error",
                   TestInvalidTargetAndCallbackError);
   g_test_add_func("/downloads/navigation-error-correlation",

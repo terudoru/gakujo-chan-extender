@@ -693,6 +693,18 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
     }
   }
 
+  set onDownloadProgress(void Function(LinuxDownloadProgress)? handler) {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) {
+      platform.setOnDownloadProgress(handler);
+    }
+  }
+
+  Future<void> cancelLinuxDownload(String id) async {
+    final platform = _inner.platform;
+    if (platform is LinuxWebViewController) await platform.cancelDownload(id);
+  }
+
   set onDownloadSaved(void Function(String url, String path)? handler) {
     final platform = _inner.platform;
     if (platform is LinuxWebViewController) {

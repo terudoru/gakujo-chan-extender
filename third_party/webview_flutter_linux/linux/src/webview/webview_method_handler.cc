@@ -953,6 +953,13 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  if (strcmp(method, "cancelDownload") == 0) {
+    const gchar *id = map_lookup_string(args, "id");
+    if (id != nullptr) webview->download_policy->Cancel(id);
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "setDownloadsEnabled") == 0) {
     FlValue *enabled = map_lookup(args, "enabled");
     if (enabled == nullptr || fl_value_get_type(enabled) != FL_VALUE_TYPE_BOOL) {

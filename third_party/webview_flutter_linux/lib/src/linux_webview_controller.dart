@@ -10,6 +10,7 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 import 'linux_navigation_delegate.dart';
 import 'linux_webview_constants.dart';
 import 'linux_webview_creation_params.dart';
+import 'linux_webview_download.dart';
 import 'linux_webview_requests.dart';
 
 part 'linux_webview_events.dart';
@@ -154,7 +155,6 @@ class LinuxWebViewController extends PlatformWebViewController {
   bool _canGoBack = false;
   bool _canGoForward = false;
   bool _disposed = false;
-  bool _permissionPromptsObscured = false;
   int _frameSequence = 0;
   Future<void>? _disposeFuture;
 
@@ -194,6 +194,15 @@ class LinuxWebViewController extends PlatformWebViewController {
   void setOnKeyZoom(void Function(LinuxKeyZoomAction action)? handler) {
     _onKeyZoom = handler;
   }
+
+  void Function(LinuxDownloadProgress progress)? _onDownloadProgress;
+
+  void setOnDownloadProgress(void Function(LinuxDownloadProgress)? handler) {
+    _onDownloadProgress = handler;
+  }
+
+  Future<void> cancelDownload(String id) =>
+      _invoke<void>('cancelDownload', <String, Object?>{'id': id});
 
   // More Better Gakujo patch: WebKitGTK saves undelegated downloads silently.
   void Function(String url, String path)? _onDownloadSaved;
@@ -844,7 +853,6 @@ class LinuxWebViewController extends PlatformWebViewController {
 
   /// Suppresses page permission prompts while Flutter covers the page.
   Future<void> setPermissionPromptsObscured(bool obscured) {
-    _permissionPromptsObscured = obscured;
     return _invoke<void>('setPermissionPromptsObscured', {'obscured': obscured});
   }
 
@@ -891,6 +899,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _onHistoryNavigationRequest = null;
     _onWheelZoom = null;
     _onKeyZoom = null;
+    _onDownloadProgress = null;
     _onDownloadSaved = null;
     _onDownloadFailed = null;
     _onWheelScroll = null;
