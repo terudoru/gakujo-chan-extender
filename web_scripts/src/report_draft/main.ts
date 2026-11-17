@@ -1,4 +1,5 @@
 import { watchPage } from '../shared/page_watch.js';
+import { cleanupMigrationSources, rememberMigration } from './storage_helpers.js';
 export {};
 type DraftValue = string | boolean | string[] | null;
 type DraftItem = { key: string; value: DraftValue; kind: string };
@@ -648,6 +649,8 @@ function reportDraft() {
       if (found && found.key === key && found.legacyKey) {
         deleted = removeDraft(store, found.legacyKey) && deleted;
       }
+      try { if (store && key) cleanupMigrationSources(store, key); }
+      catch (_) { deleted = false; }
       if (!deleted) {
         updateStatus(doc, '下書きを削除できませんでした', clearStoredDraft);
         return;
@@ -804,6 +807,10 @@ function reportDraft() {
 
   function restoreDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[], force?: boolean) {
     var draft = readDraft(store, key);
+    if (draft && store) {
+      try { cleanupMigrationSources(store, key); }
+      catch (_) { /* Retry source cleanup on the next update. */ }
+    }
     var legacyKey = null;
     if (!draft) {
       var rawKey = draftKey(doc, fields, true);
@@ -928,8 +935,9 @@ function reportDraft() {
       doc.__MBG_REPORT_DRAFT_RESTORING = false;
     }
     // Keep the original until the converted answers (including conflicts) persist.
-    if (legacyKey && writeDraft(store, key, draft)) {
-      removeDraft(store, legacyKey);
+    if (legacyKey && rememberMigration(store, key, legacyKey) && writeDraft(store, key, draft)) {
+      try { cleanupMigrationSources(store!, key); }
+      catch (_) { /* Keep the link for a later cleanup or synchronized deletion. */ }
       doc.__MBG_REPORT_DRAFT_LEGACY_CHECKED = key;
     }
     if (conflict) {

@@ -17,6 +17,18 @@ const String _gakujoReportDraftImportAllJsPrefix = r'''(function(__mbgConfig) {
   function isRetainedDraft(draft, now) {
     return !!draft && typeof draft === "object" && !Array.isArray(draft) && typeof draft.savedAt === "number" && isFinite(draft.savedAt) && !!draft.savedAt && Array.isArray(draft.fields) && now - draft.savedAt <= retentionMs;
   }
+  function isDraftKey(key) {
+    return typeof key === "string" && /^mbg-report-draft:v[12]:/.test(key);
+  }
+  var migrationPrefix = "mbg-report-draft:migration:";
+  function migrationSources(store, key) {
+    var raw = store.getItem(migrationPrefix + key);
+    if (!raw) return [];
+    var sources = JSON.parse(raw);
+    return Array.isArray(sources) ? sources.filter(function(source) {
+      return isDraftKey(source) && source !== key;
+    }) : [];
+  }
   function draftDocuments() {
     var docs = [document];
     var frames = [];
@@ -85,6 +97,10 @@ const String _gakujoReportDraftImportAllJsPrefix = r'''(function(__mbgConfig) {
           return;
         }
         if (!Object.prototype.hasOwnProperty.call(drafts, key)) {
+          migrationSources(store, key).concat([migrationPrefix + key]).forEach(function(source) {
+            var before = store.getItem(source);
+            if (before !== null) writes.push({ store, key: source, before, value: null });
+          });
           if (current !== void 0) writes.push({ store, key, before: raw, value: null });
           return;
         }
