@@ -1786,20 +1786,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _starSyncGoogleAuth = createStarSyncGoogleAuth();
     _driveDownloadsLoad = _loadDriveDownloadsPreference();
     _starSyncEngine = StarSyncEngine(
-      googleDriveTransport: () => StarSyncGoogleDriveTransport(
-        accessToken: ({bool forceRefresh = false}) async {
-          final config = _starSyncEngine.config;
-          final email = _starSyncGoogleAuth.currentEmail;
-          if (config != null &&
-              !sameGoogleAccount(config.googleEmail, email)) {
-            throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
-          }
-          final token = await _starSyncGoogleAuth.accessToken(forceRefresh: forceRefresh);
-          if (_starSyncGoogleAuth.currentEmail != email) {
-            throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
-          }
-          return token;
-        },
+      setupGuard: (config) => StarSyncGoogleAuthSession(
+        _starSyncGoogleAuth, email: config.googleEmail,
+      ).checkCurrent,
+      transportFactory: (config) => StarSyncGoogleDriveTransport(
+        accessToken: StarSyncGoogleAuthSession(
+          _starSyncGoogleAuth, email: config.googleEmail,
+        ).accessToken,
       ),
       activityStore: _activityStore,
       collections: [
@@ -3189,6 +3182,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final messageNotificationKeywordController = TextEditingController();
     var starSyncBusy = false;
     var googleSetupHadDriveSession = false;
+    int? googleSetupAuthGeneration;
     final messageExcludeKeywordFocusNode = FocusNode(
       debugLabel: 'message-exclude-keyword',
     );
@@ -3881,6 +3875,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                 _starSyncGoogleAuth.currentEmail != null;
                             SecureStorageFactory.reopenLinuxKeyringGate();
                             _starSyncGoogleEmail = await _signInGoogle();
+                            final authGeneration = _starSyncGoogleAuth.generation;
+                            googleSetupAuthGeneration = authGeneration;
                             try {
                               if (cancelGeneration != _googleCancelGeneration) {
                                 throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.cancelled);
@@ -3891,16 +3887,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                                 clearLocalStars: clearLocalStars, expectedAccount: expectedAccount, expectedGeneration: expectedGeneration,
                               );
                             } on Object {
-                              if (!googleSetupHadDriveSession && !_starSyncEngine.status.value.enabled) {
+                              await _driveDownloadQueue.runExclusive(() async {
+                                if (_starSyncGoogleAuth.generation != authGeneration ||
+                                    googleSetupHadDriveSession || _starSyncEngine.status.value.enabled) {
+                                  return;
+                                }
                                 await _setDriveDownloadsEnabled(false);
-                                await _signOutGoogle();
+                                await _signOutGoogle(warn: false);
                                 _starSyncGoogleEmail = null;
-                              }
+                              });
                               rethrow;
                             }
                           },
-                          onGoogleSetupAbandoned: () async {
-                            if (googleSetupHadDriveSession) return;
+                          onGoogleSetupAbandoned: () => _driveDownloadQueue.runExclusive(() async {
+                            if (googleSetupHadDriveSession ||
+                                googleSetupAuthGeneration != _starSyncGoogleAuth.generation) {
+                              return;
+                            }
                             try {
                               await _setDriveDownloadsEnabled(false);
                               await _warnPendingDriveChecks();
@@ -3908,7 +3911,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                               await _signOutGoogle(warn: false);
                               _starSyncGoogleEmail = null;
                             }
-                          },
+                          }),
                           onGoogleSignOut: () async {
                             try {
                               // Off first: a failing warning must not leave it on.

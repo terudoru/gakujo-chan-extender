@@ -58,6 +58,10 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   Completer<String>? _pendingAuthorization;
   bool _authorizationInProgress = false;
   bool _authorizationCancelled = false;
+  int _generation = 0;
+
+  @override
+  int get generation => _generation;
 
   void _throwIfAuthorizationCancelled() {
     if (_authorizationCancelled) {
@@ -126,6 +130,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   void _clear() {
+    _generation++;
     _refreshToken = null;
     _email = null;
     _accessToken = null;
@@ -430,6 +435,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           StarSyncGoogleAuthErrorKind.storageUnavailable,
         );
       }
+      _generation++;
       _setAccess(data);
       _refreshToken = refresh;
       _email = payload['email'] as String;
@@ -487,6 +493,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   @override
   Future<void> signOut() async {
+    _generation++;
     var revocationFailed = false;
     var deleteFailed = false;
     try {
