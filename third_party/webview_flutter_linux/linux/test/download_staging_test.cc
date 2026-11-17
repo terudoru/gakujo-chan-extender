@@ -190,7 +190,8 @@ void TestSigterm() {
     RunApplication(true);
     return;
   }
-  g_test_trap_subprocess(nullptr, 5 * G_USEC_PER_SEC, G_TEST_SUBPROCESS_DEFAULT);
+  g_test_trap_subprocess(nullptr, 5 * G_USEC_PER_SEC,
+                         static_cast<GTestSubprocessFlags>(0));
   g_test_trap_assert_passed();
 }
 } // namespace
