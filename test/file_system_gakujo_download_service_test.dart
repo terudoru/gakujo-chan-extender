@@ -67,6 +67,37 @@ void main() {
     expect(await directory.list().length, 2);
   });
 
+  test('upload snapshot retains the response after the saved file is overwritten',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('mbg-snapshot-');
+    addTearDown(() => directory.delete(recursive: true));
+    final source = File('${directory.path}/response');
+    await source.writeAsBytes([1, 2, 3]);
+    final service = FileSystemGakujoDownloadService(
+      secureStorage: _MemorySecureStorage({
+        'more_better_gakujo_download_root_path': directory.path,
+      }),
+      usesNativeDownloadRoot: false,
+      authenticatedBytesLoader: (request, {userAgent}) async =>
+          AuthenticatedDownloadedFile.fromFile(
+        file: source,
+        cleanup: () async => source.delete(),
+        finalUrl: request.url,
+      ),
+    );
+    final result = await service.download(_dedupeRequest,
+        saveMode: DownloadSaveMode.flatToConfiguredFolder,
+        retainUploadSnapshot: true);
+    final snapshot = result.uploadSnapshot!;
+    expect(await source.exists(), isFalse);
+    await File(result.location!).writeAsBytes([9]);
+    expect(snapshot.length, 3);
+    expect(await snapshot.openRead().expand((bytes) => bytes).toList(), [1, 2, 3]);
+    await snapshot.dispose();
+    await expectLater(snapshot.openRead().drain<void>(),
+        throwsA(isA<FileSystemException>()));
+  });
+
   for (final fromFile in [false, true]) {
     for (final mimeType in [
       'text/html; charset=UTF-8',

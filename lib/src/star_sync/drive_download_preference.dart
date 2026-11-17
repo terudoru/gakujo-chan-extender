@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -106,7 +107,7 @@ class DriveDownloadPreference {
 }
 
 class DriveDownloadQueue {
-  final _jobs = Queue<Future<void> Function()>();
+  final _jobs = Queue<_DriveDownloadJob>();
   bool _running = false;
   int _generation = 0;
 
@@ -115,12 +116,14 @@ class DriveDownloadQueue {
 
   void cancel() {
     _generation++;
-    _jobs.clear();
+    while (_jobs.isNotEmpty) {
+      unawaited(_cleanUp(_jobs.removeFirst()));
+    }
   }
 
-  void add(Future<void> Function(int) job) {
+  void add(Future<void> Function(int) job, {Future<void> Function()? cleanUp}) {
     final generation = _generation;
-    _jobs.add(() => job(generation));
+    _jobs.add(_DriveDownloadJob(() => job(generation), cleanUp));
     if (!_running) unawaited(_drain());
   }
 
@@ -128,10 +131,31 @@ class DriveDownloadQueue {
     _running = true;
     try {
       while (_jobs.isNotEmpty) {
-        await _jobs.removeFirst()();
+        final job = _jobs.removeFirst();
+        try {
+          await job.run();
+        } finally {
+          await _cleanUp(job);
+        }
       }
     } finally {
       _running = false;
     }
   }
+
+  Future<void> _cleanUp(_DriveDownloadJob job) async {
+    try {
+      await job.cleanUp?.call();
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to remove a Google Drive upload snapshot',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+}
+
+class _DriveDownloadJob {
+  const _DriveDownloadJob(this.run, this.cleanUp);
+
+  final Future<void> Function() run;
+  final Future<void> Function()? cleanUp;
 }

@@ -269,6 +269,7 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     String? cookieHeader,
     Rect? sharePositionOrigin,
     required DownloadSaveMode saveMode,
+    bool retainUploadSnapshot = false,
   }) async {
     AuthenticatedDownloadedFile? downloaded;
     try {
@@ -299,37 +300,38 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
         fileName: fileName,
       );
 
+      final GakujoDownloadResult result;
       if (saveMode == DownloadSaveMode.flatWithPickerEachTime) {
         if (Platform.isIOS) {
-          return await _exportToNativePicker(
+          result = await _exportToNativePicker(
             bytes: await downloaded.readBytes(),
             fileName: fileName,
             mimeType: downloaded.mimeType,
           );
+        } else {
+          result = await _saveToPickedFlutterFile(
+            downloaded: downloaded,
+            fileName: fileName,
+          );
         }
-
-        return await _saveToPickedFlutterFile(
-          downloaded: downloaded,
-          fileName: fileName,
-        );
-      }
-
-      if (_usesNativeDownloadRoot) {
-        return await _saveToNativeConfiguredFolder(
+      } else if (_usesNativeDownloadRoot) {
+        result = await _saveToNativeConfiguredFolder(
           bytes: await downloaded.readBytes(),
           fileName: fileName,
           courseFolderName: courseFolderName,
           mimeType: downloaded.mimeType,
           autoSortByCourse: saveMode.autoSortByCourse,
         );
+      } else {
+        result = await _saveToConfiguredFlutterFolder(
+          downloaded: downloaded,
+          fileName: fileName,
+          courseFolderName: courseFolderName,
+          autoSortByCourse: saveMode.autoSortByCourse,
+        );
       }
-
-      return await _saveToConfiguredFlutterFolder(
-        downloaded: downloaded,
-        fileName: fileName,
-        courseFolderName: courseFolderName,
-        autoSortByCourse: saveMode.autoSortByCourse,
-      );
+      if (!retainUploadSnapshot || result.uploadBytes != null) return result;
+      return await result.retainUpload(downloaded.openRead());
     } on PlatformException {
       rethrow;
     } on Object catch (error) {
