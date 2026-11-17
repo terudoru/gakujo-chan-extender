@@ -609,6 +609,21 @@ String gakujoUserFacingMessage(
 }
 
 @visibleForTesting
+String gakujoBlockedNavigationUrlLabel(
+  String url, {
+  required TargetPlatform platform,
+}) {
+  if (platform == TargetPlatform.linux && Uri.tryParse(url)?.scheme == 'file') {
+    try {
+      return Uri.decodeFull(url);
+    } on FormatException {
+      return 'ローカルファイル';
+    }
+  }
+  return url;
+}
+
+@visibleForTesting
 String secureStorageRecoveryGuidance(
   Object error, {
   required TargetPlatform platform,
@@ -887,8 +902,14 @@ Future<T?> readGakujoSavedData<T extends Object>(
 }) async {
   try {
     return await read();
-  } on Object {
-    showSnackBar('保存データを読み込めませんでした。しばらくしてからもう一度お試しください');
+  } on Object catch (error) {
+    final message =
+        defaultTargetPlatform == TargetPlatform.linux &&
+            error is PlatformException &&
+            error.code == 'KeyringLocked'
+        ? gakujoUserFacingMessage(error.code, platform: defaultTargetPlatform)
+        : '保存データを読み込めませんでした。しばらくしてからもう一度お試しください';
+    showSnackBar(message);
     return null;
   }
 }
@@ -2852,7 +2873,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       debugAllowed: _debugAllowed,
     );
     if (!canNavigate) {
-      _setStatus('ブロック: ${_displayUrl(request.url)}');
+      final label = gakujoBlockedNavigationUrlLabel(
+        _displayUrl(request.url),
+        platform: defaultTargetPlatform,
+      );
+      _setStatus('ブロック: $label');
       // Gakujo links to sites such as its own support form; keep them out of
       // this WebView but let the student open them in the browser on request.
       final external = Uri.tryParse(request.url);

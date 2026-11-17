@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -63,6 +64,39 @@ void main() {
     expect(messages, hasLength(1));
     expect(storage.writeAttempts, 0);
   });
+
+  for (final platform in [TargetPlatform.linux, TargetPlatform.windows]) {
+    for (final code in ['KeyringLocked', 'read_failed']) {
+      test(
+        'saved data $code read on $platform keeps the appropriate guidance',
+        () async {
+          debugDefaultTargetPlatformOverride = platform;
+          addTearDown(() => debugDefaultTargetPlatformOverride = null);
+          final messages = <String>[];
+
+          final loaded = await readGakujoSavedData<int>(
+            () async => throw PlatformException(code: code),
+            showSnackBar: messages.add,
+          );
+
+          expect(loaded, isNull);
+          expect(messages, hasLength(1));
+          if (platform == TargetPlatform.linux && code == 'KeyringLocked') {
+            expect(
+              messages.single,
+              gakujoUserFacingMessage(code, platform: platform),
+            );
+            expect(messages.single, contains('キーリング'));
+            expect(messages.single, contains('ロックを解除'));
+            expect(messages.single, isNot(contains('KeyringLocked')));
+            expect(messages.single, isNot(contains('PlatformException')));
+          } else {
+            expect(messages.single, '保存データを読み込めませんでした。しばらくしてからもう一度お試しください');
+          }
+        },
+      );
+    }
+  }
 
   test('failed settings save preserves memory and mirror and skips its action',
       () async {
