@@ -60,6 +60,14 @@ flutter build linux --debug
 | Windows アプリ | `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe` |
 | Linux アプリ | `build/linux/x64/debug/bundle/` |
 
+## 報告フォームの有効化
+
+アカウントなしで使える報告フォームは `report_form/` にあります。現時点では未公開のため、アプリの `lib/src/report_form.dart` にある `reportFormBaseUrl` は `null` のままにします。この状態では、設定にフォームのボタンや案内は出ません。
+
+[report_form/README.md](../report_form/README.md) に従って公開し、送信と非公開での保存を確認してから、同じ定数に `'https://gakujo-report.terudoru.com/'` を設定してください。URL に付けるのは `type`（`bug` / `request`）、アプリの `version`、`platform` だけです。ログイン情報、設定、診断情報は URL に含めません。
+
+利用者が軽量版のエラー報告パッケージを任意で貼り付ける欄は非公開です。開発者が報告を確認して公開用の GitHub Issue にまとめる際も、この欄は公開しません。アプリから診断情報は自動送信しません。有効・無効の両状態は `test/app_support_section_test.dart`、URL の内容は `test/report_form_test.dart` で確認します。
+
 ## WebView に注入するスクリプト
 
 `web_scripts/src/` の TypeScript を、主に Dart の文字列として `lib/src/generated/*.g.dart` に書き出しています。生成したファイルもコミットします。TypeScript を変えたら、次のコマンドで再生成してからコミットしてください。

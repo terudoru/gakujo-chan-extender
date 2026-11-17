@@ -187,7 +187,11 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 | Windows で画面が表示されない | Microsoft Edge WebView2 Runtime を入れる |
 | iOS でアプリが起動しなくなった | 署名の期限（無料の Apple Account では通常7日）が切れていないかを確かめ、Sideloadly か SideStore で署名し直す |
 
-不具合は、設定で作れる診断情報かエラー報告パッケージを添えて、[GitHub Issues](https://github.com/terudoru/gakujo-chan-extender/issues) に報告してください。
+不具合や要望は、設定 →「このアプリについて」→「GitHub で報告」から送れます。[GitHub Issues](https://github.com/terudoru/gakujo-chan-extender/issues/new) への投稿には GitHub アカウントが必要です。投稿内容はすぐに公開されるので、氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。
+
+アカウントなしで使える報告フォームは準備中です。公開後にアプリで有効になると、同じ場所に「報告フォームを開く」が表示されます。フォームの報告は非公開で保管し、開発者が確認して公開用の GitHub Issue にまとめます。
+
+フォームで不具合を報告するときは、必要に応じて「エラー報告パッケージ作成」で軽量版を選び、内容を確認して非公開欄に貼り付けてください。この欄は公開しません。詳細版には履歴や URL が含まれるため、貼り付けないでください。アプリが診断情報を自動送信することはありません。
 
 ## 関連資料
 

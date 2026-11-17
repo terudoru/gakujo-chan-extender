@@ -1816,6 +1816,7 @@ void main() {
           ),
           SettingsActionGroup(actions: [SettingsAction(label: '保存先を確認', icon: Icons.health_and_safety_outlined, run: () async { checked = true; })]),
           AppSupportSection(
+            onOpenUrl: (_) async {},
             onCreateErrorReport: () async {
               createdReport = true;
             },

@@ -77,6 +77,7 @@ import 'gakujo_upload_compression_script.dart';
 import 'gakujo_upload_preview_script.dart';
 import 'google_drive_file_saver.dart';
 import 'platform/platform_service.dart';
+import 'report_form.dart';
 import 'secure_storage_factory.dart';
 import 'protected_secret_page_probe.dart';
 import 'protected_secrets_vault.dart';
@@ -4016,7 +4017,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: 'このアプリについて',
                   icon: Icons.info_outline,
-                  subtitle: 'バージョン・アップデート・不具合の報告',
+                  subtitle: 'バージョン・アップデート・不具合や要望の報告',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -4032,6 +4033,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       const Divider(height: 32),
                       AppSupportSection(
                         onCreateErrorReport: _createErrorReportPackage,
+                        onOpenUrl: (url) async {
+                          await _launchExternalUrl(url);
+                        },
+                        reportFormUri: reportFormBaseUri,
                       ),
                     ],
                   ),

@@ -112,8 +112,9 @@ extension _GakujoWebAppDiagnostics on _GakujoWebAppState {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('エラー報告パッケージ'),
-          content: const Text(
-            '軽量版は件数と設定状態だけを含みます。詳細版は履歴、URL、失敗したダウンロード、保存済み課題一覧も含みます。',
+          content: Text(
+            '軽量版は件数と設定状態だけを含みます。詳細版は履歴、URL、失敗したダウンロード、保存済み課題一覧も含みます。'
+            '${reportFormBaseUri == null ? '' : '\nフォームには軽量版だけを添えてください。'}',
           ),
           actions: [
             TextButton(

@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../gakujo_app_settings.dart';
+import '../report_form.dart';
 import 'settings_sections.dart';
 
 class SettingsAction {
@@ -194,23 +197,70 @@ class AppSupportSection extends StatelessWidget {
   const AppSupportSection({
     super.key,
     required this.onCreateErrorReport,
+    required this.onOpenUrl,
+    this.reportFormUri,
+    this.loadVersion,
   });
   final Future<void> Function() onCreateErrorReport;
+  final Future<void> Function(Uri) onOpenUrl;
+  final Uri? reportFormUri;
+  final Future<String> Function()? loadVersion;
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Text('不具合の報告', style: Theme.of(context).textTheme.titleSmall),
+      Text('不具合・要望の報告', style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
+      if (reportFormUri != null) ...[
+        const Text('GitHub のアカウントがなくても、フォームから不具合や要望を送れます。ブラウザーで開きます。'),
+        const SizedBox(height: 8),
+      ],
       SettingsActionGroup(
         actions: [
+          if (reportFormUri case final baseUri?)
+            SettingsAction(
+              label: '報告フォームを開く',
+              icon: Icons.open_in_new,
+              run: () async {
+                var version = '';
+                try {
+                  version =
+                      await (loadVersion?.call() ??
+                          PackageInfo.fromPlatform().then(
+                            (info) => info.version,
+                          ));
+                } on Object {
+                  // Version is optional; reporting remains available.
+                }
+                if (!context.mounted) return;
+                await onOpenUrl(
+                  buildReportFormUri(
+                    baseUri: baseUri,
+                    type: ReportType.bug,
+                    version: version,
+                    platform: defaultTargetPlatform,
+                  ),
+                );
+              },
+            ),
           SettingsAction(
             label: 'エラー報告パッケージ作成',
             icon: Icons.inventory_2_outlined,
             run: onCreateErrorReport,
           ),
+          SettingsAction(
+            label: 'GitHub で報告（アカウントが必要）',
+            icon: Icons.open_in_new,
+            run: () => onOpenUrl(
+              Uri.parse(
+                'https://github.com/terudoru/gakujo-chan-extender/issues/new',
+              ),
+            ),
+          ),
         ],
       ),
+      const SizedBox(height: 8),
+      const Text('GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。'),
     ],
   );
 }
