@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-// デプロイと動作確認の後、Apps Script の exec URL を設定（report_form/README.md）。
-const String? reportEndpointUrl = null;
+// 匿名送信を確認済みの共通受付。停止時は null（report_form/README.md）。
+const _reportEndpointUrl =
+    'https://script.google.com/macros/s/AKfycbz0NObSZdcrMBX2TGZYsrM0NPPtcNm35nzzMLeiWsJnnGr1LoyHjlSyIfA1RxWJw6-Y/exec';
+
+String? get reportEndpointUrl => _reportEndpointUrl;
 
 enum ReportType {
   bug,

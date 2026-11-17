@@ -164,6 +164,12 @@ test('success shows receipt near submit, prevents repeat and explicit another re
 });
 
 const siteHtml = readFileSync(new URL('../../site/report/index.html', import.meta.url), 'utf8');
+function siteWithUrl(url) {
+  const declaration = /const REPORT_APP_URL = [^;\r\n]+;/g;
+  assert.equal([...siteHtml.matchAll(declaration)].length, 1);
+  return siteHtml.replace(declaration, `const REPORT_APP_URL = ${JSON.stringify(url)};`);
+}
+
 function renderSite(html) {
   const nodes = { available: { hidden: true }, unavailable: { hidden: false }, fallback: {}, 'form-container': { children: [], appendChild(child) { this.children.push(child); } } };
   const created = [];
@@ -171,8 +177,7 @@ function renderSite(html) {
   return { nodes, created };
 }
 
-test('Pages is fail closed: literal null renders preparation copy with no iframe', () => {
-  assert.match(siteHtml, /const REPORT_APP_URL = null;/);
+test('Pages is fail closed: null configuration renders preparation copy with no iframe', () => {
   assert.doesNotMatch(siteHtml, /<iframe\b/i);
   assert.match(siteHtml, /フォームは現在準備中/);
   assert.match(siteHtml, /href="https:\/\/github.com\/terudoru\/gakujo-chan-extender\/issues\/new"/);
@@ -180,13 +185,23 @@ test('Pages is fail closed: literal null renders preparation copy with no iframe
   assert.match(siteHtml, /氏名・学籍番号・パスワード・成績・学情の画面の内容は書かないでください。/);
   assert.match(siteHtml, /個別の返信はありません。すべての報告が公開されるとは限りません。/);
   assert.equal([...siteHtml.matchAll(/<script\b/g)].length, 1);
-  const rendered = renderSite(siteHtml); assert.equal(rendered.created.length, 0); assert.equal(rendered.nodes.available.hidden, true); assert.equal(rendered.nodes.unavailable.hidden, false);
+  const rendered = renderSite(siteWithUrl(null)); assert.equal(rendered.created.length, 0); assert.equal(rendered.nodes.available.hidden, true); assert.equal(rendered.nodes.unavailable.hidden, false);
 });
 
 test('configured Pages embeds only a validated exec URL with title and fallback link', () => {
   const exec = 'https://script.google.com/macros/s/EXAMPLE_ID/exec';
-  const rendered = renderSite(siteHtml.replace('const REPORT_APP_URL = null;', `const REPORT_APP_URL = '${exec}';`));
+  const rendered = renderSite(siteWithUrl(exec));
   assert.equal(rendered.created.length, 1); assert.equal(rendered.created[0].tag, 'iframe'); assert.equal(rendered.created[0].src, exec); assert.ok(rendered.created[0].title);
   assert.equal(rendered.nodes.fallback.href, exec); assert.equal(rendered.nodes.available.hidden, false); assert.equal(rendered.nodes.unavailable.hidden, true);
-  for (const invalid of ['javascript:alert(1)', 'https://example.com/exec', 'https://script.google.com/macros/s/EXAMPLE_ID/dev']) assert.equal(renderSite(siteHtml.replace('const REPORT_APP_URL = null;', `const REPORT_APP_URL = '${invalid}';`)).created.length, 0);
+  for (const invalid of ['javascript:alert(1)', 'https://example.com/exec', 'https://script.google.com/macros/s/EXAMPLE_ID/dev']) assert.equal(renderSite(siteWithUrl(invalid)).created.length, 0);
+});
+
+test('published app and Pages use the same validated intake URL', () => {
+  const app = readFileSync(new URL('../../lib/src/report_form.dart', import.meta.url), 'utf8');
+  const endpoint = app.match(/const _reportEndpointUrl =\s*'([^']+)';/)[1];
+  assert.match(endpoint, /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/);
+  const rendered = renderSite(siteHtml);
+  assert.equal(rendered.created.length, 1);
+  assert.equal(rendered.created[0].src, endpoint);
+  assert.equal(rendered.nodes.fallback.href, endpoint);
 });

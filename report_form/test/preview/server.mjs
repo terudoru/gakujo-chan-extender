@@ -36,7 +36,7 @@ export function createPreviewServer() {
     const path = new URL(request.url, 'http://localhost').pathname;
     let html;
     if (path === '/' || path === '/form') html = readFileSync(new URL('../../apps_script/intake/Form.html', import.meta.url), 'utf8').replace('<script>', fake + '\n<script>');
-    else if (path === '/site') html = readFileSync(new URL('../../../site/report/index.html', import.meta.url), 'utf8');
+    else if (path === '/site') html = readFileSync(new URL('../../../site/report/index.html', import.meta.url), 'utf8').replace(/const REPORT_APP_URL = [^;\r\n]+;/, 'const REPORT_APP_URL = null;');
     else { response.writeHead(404); response.end('Not found'); return; }
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(html);
   });

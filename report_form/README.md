@@ -4,7 +4,7 @@ More Better Gakujo の不具合・要望を Google Apps Script のウェブア�
 
 Apps Script は受付用の `intake/` と、削除管理用の `admin/` の2プロジェクトに分けます。公開するのは受付用だけです。アプリとブラウザーは同じ非公開保存関数・検証・ロック・重複確認・全体上限を通り、同じ `reports` シートに保存します。Google フォームや別の診断情報保管先は使いません。初回は「保守者が初回に行う設定」を順に進め、運用時は「シートでの確認と削除」を参照してください。
 
-現時点では未公開です。`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `reportEndpointUrl` は、動作確認が済むまで `null` にします。ブラウザー向けの案内は `https://gakujo.terudoru.com/report/` に置きます。
+専用アカウントで受付を公開し、匿名のアプリ送信・ブラウザー送信と、同じシートへの保存を確認しています。`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `_reportEndpointUrl`（`reportEndpointUrl` の参照元）には、同じ確認済みの `/exec` URL を設定しています。ブラウザー向けの入口は `https://gakujo.terudoru.com/report/` です。受付を無効にする場合は、両方の受付 URL の設定を `null` に戻します。
 
 ## 保存する内容と公開する内容
 
@@ -69,7 +69,7 @@ receipt	submissionKey	createdAt	client	type	title	content	steps	expected	version
 2. 「次のユーザーとして実行」は**自分（専用アカウント）**、「アクセスできるユーザー」は**全員（Anyone）**にします。「Google アカウントを持つ全員」では匿名送信できません。マニフェスト上は `executeAs: USER_DEPLOYING`、`access: ANYONE_ANONYMOUS` です。
 3. 専用アカウントで権限の内容を確認して承認し、デプロイします。組織の制限などで匿名公開を選べないアカウントでは、この方式は使えません。
 4. 発行された `/exec` で終わるウェブアプリ URL を控えます。開発用の `/dev` URL は使いません。ログアウトした別のブラウザーでフォームを開き、個人情報のないテスト報告を1件送って、シートと受付番号を確認します。
-5. 動作確認後、`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `reportEndpointUrl` に**同じ `/exec` URL**を設定します。サイトとアプリの反映はそれぞれの公開手順に従います。シート ID は設定しません。
+5. 動作確認後、`site/report/index.html` の `REPORT_APP_URL` と `lib/src/report_form.dart` の `_reportEndpointUrl` に**同じ `/exec` URL**を設定します。サイトとアプリの反映はそれぞれの公開手順に従います。シート ID は設定しません。
 
 埋め込み用のフォームページだけで `XFrameOptionsMode.ALLOWALL` を指定します。他サイトからも埋め込めるため、クリックジャッキングのリスクがあります。このページの操作は利用者自身が入力し、明示的に同意した報告の送信だけなので、そのリスクを受け入れる設計です。管理機能や報告の閲覧機能は置きません。設定不足の受付停止ページには `ALLOWALL` を指定しません。
 
@@ -121,6 +121,6 @@ node --test
 node test/preview/server.mjs
 ```
 
-`http://127.0.0.1:8788/form` でフォーム、`http://127.0.0.1:8788/site` で準備中の Pages ページを表示します。送信はテスト用の `google.script.run` に置き換えています。失敗時は `/form?scenario=transport`、待ち秒数は `scenario=rate_limited`、ほかに `busy`・`unavailable`・`full`・`invalid`・`conflict` で確認できます。`scenario=pending` では応答を保留します。開発者コンソールで `failPreview()` を呼ぶと失敗、`finishPreview({ok:true,receipt:'R-PREVIEW234',duplicate:false})` を呼ぶと成功になり、送信中・失敗後・成功後の入力固定を確認できます。プレビューは受付番号を表示するだけで、どこにも保存しません。終了は Ctrl+C です。
+`http://127.0.0.1:8788/form` でフォーム、`http://127.0.0.1:8788/site` で準備中の Pages ページを表示します。プレビューでは公開 URL の設定を `null` に置き換えるため、Google の実フォームへ接続しません。送信はテスト用の `google.script.run` に置き換えています。失敗時は `/form?scenario=transport`、待ち秒数は `scenario=rate_limited`、ほかに `busy`・`unavailable`・`full`・`invalid`・`conflict` で確認できます。`scenario=pending` では応答を保留します。開発者コンソールで `failPreview()` を呼ぶと失敗、`finishPreview({ok:true,receipt:'R-PREVIEW234',duplicate:false})` を呼ぶと成功になり、送信中・失敗後・成功後の入力固定を確認できます。プレビューは受付番号を表示するだけで、どこにも保存しません。終了は Ctrl+C です。
 
 ローカルテストでは、実際の匿名公開、Google の権限同意、POST のリダイレクト、iframe 内での Google の画面、実シートの URL 表示、時間主導トリガーの動作までは確認できません。これらは専用アカウントで設定した後の確認が必要です。

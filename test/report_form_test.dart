@@ -28,8 +28,13 @@ ReportSubmission submission({
 );
 
 void main() {
-  test('release default is disabled; keys are unique lowercase UUID v4', () {
-    expect(reportEndpointUrl, isNull);
+  test('release endpoint is valid; keys are unique lowercase UUID v4', () {
+    expect(
+      reportEndpointUrl,
+      matches(
+        RegExp(r'^https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec$'),
+      ),
+    );
     expect(ReportType.values.map((type) => type.name), [
       'bug',
       'request',
