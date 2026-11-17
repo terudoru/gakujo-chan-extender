@@ -5,22 +5,17 @@ part of 'gakujo_web_app.dart';
 @visibleForTesting
 String gakujoNativeDownloadSuggestedName(
   String resultFilePath, {
-  required bool Function(String path) exists,
+  String? contentDisposition,
 }) {
   final path = resultFilePath.replaceAll('\\', '/');
   final separator = path.lastIndexOf('/');
   final name = path.substring(separator + 1);
-  final strippedName =
-      name.replaceFirst(RegExp(r' \(\d+\)(?=\.[^.]*$|$)'), '');
-  if (separator < 0 || strippedName == name) return name;
-  try {
-    if (exists('${path.substring(0, separator + 1)}$strippedName')) {
-      return strippedName;
-    }
-  } on Object {
-    // Keep the suggested name if its directory cannot be checked.
-  }
-  return name;
+  final original = DownloadFileNamePolicy.fileNameFromContentDisposition(
+    contentDisposition,
+  );
+  // A numbered server name is legitimate; the Downloads directory is no proof
+  // that WebView2 added a collision suffix.
+  return original == null || original.isEmpty ? name : original;
 }
 
 @visibleForTesting
@@ -46,11 +41,9 @@ Future<void> handleGakujoNativeDownload(
     return;
   }
 
-  // WebView2 suggests a path in Windows' Downloads folder and appends " (n)"
-  // when that folder already holds the name; the course folder does not.
   final suggestedName = gakujoNativeDownloadSuggestedName(
     download.resultFilePath,
-    exists: (path) => File(path).existsSync(),
+    contentDisposition: download.contentDisposition,
   );
   await onDownload(
     GakujoDownloadRequest(

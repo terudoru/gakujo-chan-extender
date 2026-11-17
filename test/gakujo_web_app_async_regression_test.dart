@@ -201,6 +201,7 @@ void main() {
           url:
               'https://gakujo.iess.niigata-u.ac.jp/download.do?_eventId=download',
           resultFilePath: '${directory.path}/02 (1).pdf',
+          contentDisposition: 'attachment; filename="02.pdf"',
           mimeType: 'application/pdf',
         ),
         onDownload: requests.add,
@@ -209,36 +210,28 @@ void main() {
       expect(requests.single.fileName, '02.pdf');
     });
 
-    test('keeps a numbered name when the unsuffixed file does not exist', () {
+    test('preserves a genuine numbered name despite an unsuffixed file', () async {
+      final directory = await Directory.systemTemp.createTemp('mbg-name-');
+      addTearDown(() => directory.delete(recursive: true));
+      await File('${directory.path}/Exam.pdf').writeAsBytes([]);
+      for (final header in [null, 'attachment; filename="Exam (2026).pdf"']) {
+        expect(
+          gakujoNativeDownloadSuggestedName(
+            '${directory.path}/Exam (2026).pdf',
+            contentDisposition: header,
+          ),
+          'Exam (2026).pdf',
+        );
+      }
+    });
+
+    test('uses the original extended server name before collision renaming', () {
       expect(
         gakujoNativeDownloadSuggestedName(
-          r'C:\Users\student\Downloads\Exam (2026).pdf',
-          exists: (path) {
-            expect(path, 'C:/Users/student/Downloads/Exam.pdf');
-            return false;
-          },
+          '/Downloads/Exam (2026) (1).pdf',
+          contentDisposition: "attachment; filename*=UTF-8''Exam%20%282026%29.pdf",
         ),
         'Exam (2026).pdf',
-      );
-    });
-
-    test('keeps a numbered name without a directory', () {
-      expect(
-        gakujoNativeDownloadSuggestedName(
-          '02 (1).pdf',
-          exists: (_) => fail('A name without a directory cannot be checked'),
-        ),
-        '02 (1).pdf',
-      );
-    });
-
-    test('keeps a numbered name if checking the directory fails', () {
-      expect(
-        gakujoNativeDownloadSuggestedName(
-          '/Downloads/02 (1).pdf',
-          exists: (_) => throw const FileSystemException('Cannot check file'),
-        ),
-        '02 (1).pdf',
       );
     });
 
