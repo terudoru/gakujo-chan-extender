@@ -41,6 +41,10 @@ void main() {
   const storage = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   const window = MethodChannel('net.yoshida.morebettergakujo/window');
   const paths = MethodChannel('plugins.flutter.io/path_provider');
+  const downloads = MethodChannel('net.yoshida.morebettergakujo/downloads');
+  const notifications = MethodChannel(
+    'net.yoshida.morebettergakujo/notifications',
+  );
   const windowsPlugin = MethodChannel('io.jns.webview.win');
   const windowsView = MethodChannel('io.jns.webview.win/73');
   const windowsEvents = EventChannel('io.jns.webview.win/73/events');
@@ -108,6 +112,16 @@ void main() {
       methodCalls.add('paths.${call.method}');
       throw MissingPluginException('No local preferences in this test');
     });
+    messenger.setMockMethodCallHandler(downloads, (call) async {
+      methodCalls.add('downloads.${call.method}');
+      if (call.method == 'getDownloadRoot') return {'isConfigured': false};
+      throw MissingPluginException();
+    });
+    messenger.setMockMethodCallHandler(notifications, (call) async {
+      methodCalls.add('notifications.${call.method}');
+      if (call.method == 'takePendingNotificationUrl') return null;
+      throw MissingPluginException();
+    });
     messenger.setMockMethodCallHandler(windowsPlugin, (call) async {
       methodCalls.add('windowsPlugin.${call.method}');
       if (call.method == 'initialize') return {'textureId': 73};
@@ -152,6 +166,8 @@ void main() {
       storage,
       window,
       paths,
+      downloads,
+      notifications,
       windowsPlugin,
       windowsView,
       LinuxWebViewController.rootChannel,
