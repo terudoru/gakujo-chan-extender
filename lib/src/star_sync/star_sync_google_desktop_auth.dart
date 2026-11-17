@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../secure_storage_transaction.dart';
 import 'star_sync_config.dart';
 import 'star_sync_google_auth.dart';
 import 'star_sync_transport.dart';
@@ -58,10 +59,19 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   Completer<String>? _pendingAuthorization;
   bool _authorizationInProgress = false;
   bool _authorizationCancelled = false;
+  final _credentials = StorageOperationQueue();
   int _generation = 0;
 
   @override
   int get generation => _generation;
+
+  void _checkRefresh(int generation, String refresh) {
+    if (_generation != generation || _refreshToken != refresh) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
+  }
 
   void _throwIfAuthorizationCancelled() {
     if (_authorizationCancelled) {
@@ -83,7 +93,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   Future<Map<String, dynamic>> _post(
     Uri uri,
     Map<String, String> fields, {
-    bool clearOnInvalidGrant = true,
+    int? refreshGeneration,
   }) async {
     final client = HttpClient();
     try {
@@ -99,14 +109,17 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           : jsonDecode(utf8.decode(response.bytes));
       if (decoded is! Map<String, dynamic>) throw const FormatException();
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        if (decoded['error'] == 'invalid_grant' && clearOnInvalidGrant) {
-          try {
-            await storage.delete(key: starSyncGoogleTokenKey);
-          } catch (_) {
-            // The grant is revoked even if local deletion fails.
-          } finally {
-            _clear();
-          }
+        if (decoded['error'] == 'invalid_grant' && refreshGeneration != null) {
+          await _credentials.run(() async {
+            _checkRefresh(refreshGeneration, fields['refresh_token']!);
+            try {
+              await storage.delete(key: starSyncGoogleTokenKey);
+            } catch (_) {
+              // The grant is revoked even if local deletion fails.
+            } finally {
+              _clear();
+            }
+          });
           throw const StarSyncGoogleAuthException(
             StarSyncGoogleAuthErrorKind.revoked,
           );
@@ -155,7 +168,10 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   String? get currentEmail => _email;
 
   @override
-  Future<String?> restore({String? expectedEmail}) async {
+  Future<String?> restore({String? expectedEmail}) =>
+      _credentials.run(_restore);
+
+  Future<String?> _restore() async {
     String? stored;
     try {
       stored = await storage.read(key: starSyncGoogleTokenKey);
@@ -354,7 +370,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'redirect_uri': redirect,
           'code_verifier': verifier,
           'grant_type': 'authorization_code',
-        }, clearOnInvalidGrant: false);
+        });
       } finally {
         _throwIfAuthorizationCancelled();
       }
@@ -412,34 +428,36 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       server = null;
       _throwIfAuthorizationCancelled();
       try {
-        final previous = await storage.read(key: starSyncGoogleTokenKey);
-        _throwIfAuthorizationCancelled();
-        await storage.write(
-          key: starSyncGoogleTokenKey,
-          value: jsonEncode({
-            'refreshToken': refresh,
-            'email': payload['email'],
-            'scopes': granted.toList(),
-          }),
-        );
-        if (_authorizationCancelled) {
-          if (previous == null) {
-            await storage.delete(key: starSyncGoogleTokenKey);
-          } else {
-            await storage.write(key: starSyncGoogleTokenKey, value: previous);
-          }
+        await _credentials.run(() async {
+          final previous = await storage.read(key: starSyncGoogleTokenKey);
           _throwIfAuthorizationCancelled();
-        }
+          await storage.write(
+            key: starSyncGoogleTokenKey,
+            value: jsonEncode({
+              'refreshToken': refresh,
+              'email': payload['email'],
+              'scopes': granted.toList(),
+            }),
+          );
+          if (_authorizationCancelled) {
+            if (previous == null) {
+              await storage.delete(key: starSyncGoogleTokenKey);
+            } else {
+              await storage.write(key: starSyncGoogleTokenKey, value: previous);
+            }
+            _throwIfAuthorizationCancelled();
+          }
+          _generation++;
+          _setAccess(data);
+          _refreshToken = refresh;
+          _email = payload['email'] as String;
+          _scopes = granted;
+        });
       } on PlatformException {
         throw const StarSyncGoogleAuthException(
           StarSyncGoogleAuthErrorKind.storageUnavailable,
         );
       }
-      _generation++;
-      _setAccess(data);
-      _refreshToken = refresh;
-      _email = payload['email'] as String;
-      _scopes = granted;
       return _email!;
     } on TimeoutException {
       throw const StarSyncGoogleAuthException(
@@ -470,6 +488,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   @override
   Future<String> accessToken({bool forceRefresh = false}) async {
     final refresh = _refreshToken;
+    final generation = _generation;
     if (refresh == null) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.notSignedIn,
@@ -486,13 +505,14 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       'client_secret': config.desktopClientSecret,
       'refresh_token': refresh,
       'grant_type': 'refresh_token',
-    });
+    }, refreshGeneration: generation);
+    _checkRefresh(generation, refresh);
     _setAccess(data);
     return _accessToken!;
   }
 
   @override
-  Future<void> signOut() async {
+  Future<void> signOut() => _credentials.run(() async {
     _generation++;
     var revocationFailed = false;
     var deleteFailed = false;
@@ -528,5 +548,5 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
       );
     }
     if (revocationFailed) throw const StarSyncGoogleRevocationException();
-  }
+  });
 }
