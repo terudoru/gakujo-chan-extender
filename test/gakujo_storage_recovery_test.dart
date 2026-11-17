@@ -9,8 +9,6 @@ import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
-import 'package:webview_flutter_windows/webview_flutter_windows.dart'
-    as windows;
 
 class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
   // Recovery must use the secure store's setup flag, not this startup mirror.
@@ -33,10 +31,16 @@ void main() {
   const windowsEvents = EventChannel('io.jns.webview.win/73/events');
   const linuxView = MethodChannel('com.abandoft.webview_all_linux/91');
   const linuxEvents = EventChannel('com.abandoft.webview_all_linux/91/events');
+  const loginProbeResult = <String, bool>{
+    'hasLoginFields': true,
+    'hasTwoFactorField': false,
+    'hasAuthenticatedMarker': false,
+  };
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late Completer<void> unlock;
   late int settingsReads;
+  late int loginProbes;
   final eventSinks = <String, MockStreamHandlerEventSink>{};
   var retrying = false;
   var setupCompleted = false;
@@ -45,6 +49,7 @@ void main() {
     LinuxWebViewPlatform.registerWith();
     unlock = Completer<void>();
     settingsReads = 0;
+    loginProbes = 0;
     eventSinks.clear();
     retrying = false;
     setupCompleted = false;
@@ -79,13 +84,7 @@ void main() {
       if (call.method == 'initialize') return {'textureId': 73};
       return null;
     });
-    messenger.setMockMethodCallHandler(windowsView, (call) async {
-      if (call.method == 'executeScript' &&
-          call.arguments == gakujoPortalAuthStateProbeScript) {
-        return '"login"';
-      }
-      return null;
-    });
+    messenger.setMockMethodCallHandler(windowsView, (call) async => null);
     messenger.setMockMethodCallHandler(LinuxWebViewController.rootChannel, (
       call,
     ) async {
@@ -95,7 +94,11 @@ void main() {
     messenger.setMockMethodCallHandler(linuxView, (call) async {
       if (call.method == 'runJavaScriptReturningResult') {
         final script = (call.arguments as Map)['script'];
-        return script == gakujoPortalAuthStateProbeScript ? 'login' : '';
+        if (script == gakujoPortalAuthStateProbeScript) {
+          loginProbes++;
+          return loginProbeResult;
+        }
+        return '';
       }
       return null;
     });
@@ -134,6 +137,10 @@ void main() {
       testWidgets(
         '$platform storage retry opens setup only when incomplete ($completed)',
         (tester) async {
+          expect(
+            gakujoPortalAuthStateFromJavaScriptResult(loginProbeResult),
+            GakujoPortalAuthState.login,
+          );
           debugDefaultTargetPlatformOverride = platform;
           setupCompleted = completed;
           await tester.pumpWidget(
@@ -150,26 +157,17 @@ void main() {
               find.widgetWithText(AlertDialog, '保存データにアクセスできません'),
               findsNothing,
             );
-          } else {
-            expect(settingsReads, greaterThan(0));
-          }
-          // A loaded login page requests secure settings on macOS. Other hosts
-          // have already reached the same recovery dialog during startup.
-          const url =
-              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
-          if (Platform.isWindows) {
-            final sink = eventSinks[windowsEvents.name]!;
-            sink.success({'type': 'urlChanged', 'value': url});
-            sink.success({
-              'type': 'loadingStateChanged',
-              'value': windows.LoadingState.navigationCompleted.index,
-            });
-          } else {
+            // Only macOS needs a login page to begin the secure-settings read.
+            const url =
+                'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
             final sink = eventSinks[linuxEvents.name]!;
             sink.success({'type': 'pageStarted', 'url': url});
             sink.success({'type': 'pageFinished', 'url': url});
+            await tester.pumpAndSettle();
+            expect(loginProbes, greaterThan(0));
+          } else {
+            expect(settingsReads, greaterThan(0));
           }
-          await tester.pumpAndSettle();
           expect(settingsReads, greaterThan(0));
           final initialReads = settingsReads;
           final recovery = find.widgetWithText(AlertDialog, '保存データにアクセスできません');
