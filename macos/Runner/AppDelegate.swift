@@ -438,7 +438,8 @@ private final class MacosCalendarBridge {
         added += 1
       }
       try eventStore.commit()
-      clearPendingCleanupCalendars(title: title)
+      // Only this namespace was cleaned. Keep old calendar identifiers so
+      // later imports can still find events belonging to other terms.
       rememberSyncedRange(
         calendar: calendar,
         uidNamespace: uidNamespace,
@@ -503,9 +504,8 @@ private final class MacosCalendarBridge {
         calendars: calendars,
         uidNamespace: uidNamespace
       )
-      if let calendarTitle, !calendarTitle.isEmpty {
-        clearPendingCleanupCalendars(title: calendarTitle)
-      }
+      // A date-limited deletion may leave other app events in old calendars.
+      // Keep their identifiers for subsequent imports and deletions.
       result(["removed": removed])
     } catch {
       eventStore.reset()
@@ -664,12 +664,6 @@ private final class MacosCalendarBridge {
       }
       return calendar
     }
-  }
-
-  private func clearPendingCleanupCalendars(title: String) {
-    UserDefaults.standard.removeObject(
-      forKey: pendingCalendarCleanupKey(for: title)
-    )
   }
 
   private func uniqueCalendars(_ calendars: [EKCalendar]) -> [EKCalendar] {
