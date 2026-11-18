@@ -17,35 +17,28 @@ import 'selection_menu.dart';
 import 'thumbnails_view.dart';
 import 'image_view.dart';
 import 'text_view.dart';
+import 'clipboard_messenger.dart';
+import 'viewer_actions_web.dart';
+import 'preview_app.dart';
 
 const _maxPdfBytes = 512 * 1024 * 1024;
+final _clipboardMessenger = GlobalKey<ScaffoldMessengerState>();
 
 void main(List<String> args) {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    // Name the bundled fonts on the whole theme (not only textTheme), so
-    // banners, buttons and menus also fall back to Unifont for any glyph.
-    final theme = ThemeData(
-      fontFamily: 'MBGPreviewUI',
-      fontFamilyFallback: const ['Unifont'],
-    );
-    return MaterialApp(
-      title: 'PDFプレビュー',
-      locale: const Locale('ja'),
-      supportedLocales: const [Locale('ja')],
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: theme.copyWith(
-        textTheme: theme.textTheme.apply(fontFamilyFallback: const ['Unifont']),
+  PreviewClipboardBinding(
+    writeText: writePreviewClipboard,
+    onError: () => _clipboardMessenger.currentState?.showSnackBar(
+      const SnackBar(
+        content: Text('テキストをコピーできませんでした。もう一度お試しください。'),
       ),
+    ),
+  );
+  runApp(
+    PreviewApp(
+      scaffoldMessengerKey: _clipboardMessenger,
       home: const MainPage(),
-    );
-  }
+    ),
+  );
 }
 
 class MainPage extends StatefulWidget {
@@ -81,6 +74,18 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   void _update() {
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  Future<void> _openExternalLink(Uri url) async {
+    try {
+      await openPreviewLink(url);
+    } catch (_) {
+      if (mounted) {
+        _clipboardMessenger.currentState?.showSnackBar(
+          const SnackBar(content: Text('リンクを外部ブラウザーで開けませんでした。')),
+        );
+      }
     }
   }
 
@@ -494,6 +499,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                             : PdfPageAnchor.bottom,
                         textSelectionParams: const PdfTextSelectionParams(),
                         buildContextMenu: buildSelectionMenu,
+                        onKey: (_, key, isRealKeyPress) => handleSelectionCopyKey(
+                          controller.textSelectionDelegate,
+                          key,
+                          isRealKeyPress,
+                        ),
                         keyHandlerParams: PdfViewerKeyHandlerParams(
                           autofocus: true,
                         ),
@@ -588,6 +598,8 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                           onLinkTap: (link) {
                             if (link.dest != null) {
                               unawaited(controller.goToDest(link.dest));
+                            } else if (link.url != null) {
+                              unawaited(_openExternalLink(link.url!));
                             }
                           },
                         ),

@@ -2,17 +2,30 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'generated/popup_relay.g.dart';
 
 /// Serves only bundled viewer resources. PDF bytes never pass through HTTP.
 class GakujoPdfPreviewServer {
-  GakujoPdfPreviewServer({AssetBundle? bundle})
-    : _bundle = bundle ?? rootBundle;
+  GakujoPdfPreviewServer({
+    AssetBundle? bundle,
+    Future<void> Function(String)? writeClipboard,
+    Future<bool> Function(Uri)? openExternalLink,
+  }) : _bundle = bundle ?? rootBundle,
+       _writeClipboard =
+           writeClipboard ??
+           ((text) => Clipboard.setData(ClipboardData(text: text))),
+       _openExternalLink =
+           openExternalLink ??
+           ((url) => launchUrl(url, mode: LaunchMode.externalApplication));
 
   final AssetBundle _bundle;
+  final Future<void> Function(String) _writeClipboard;
+  final Future<bool> Function(Uri) _openExternalLink;
   HttpServer? _server;
   Future<Uri>? _starting;
   bool _closed = false;
@@ -104,10 +117,18 @@ class GakujoPdfPreviewServer {
       if (server == null ||
           request.headers.value(HttpHeaders.hostHeader) !=
               '127.0.0.1:${server.port}' ||
-          (request.method != 'GET' && request.method != 'HEAD') ||
           request.uri.hasQuery ||
           segments.isEmpty ||
-          segments.first != _token ||
+          segments.first != _token) {
+        response.statusCode = HttpStatus.notFound;
+        return;
+      }
+      if ((name == 'clipboard' || name == 'open-link') &&
+          request.method == 'POST') {
+        await _handleViewerAction(request, name);
+        return;
+      }
+      if ((request.method != 'GET' && request.method != 'HEAD') ||
           !_resources.contains(name)) {
         response.statusCode = HttpStatus.notFound;
         return;
@@ -165,6 +186,58 @@ class GakujoPdfPreviewServer {
         // The viewer may be closed while an asset is still being delivered.
       }
     }
+  }
+
+  Future<void> _handleViewerAction(HttpRequest request, String action) async {
+    final response = request.response;
+    response.headers
+      ..set('Access-Control-Allow-Origin', '*')
+      ..set(HttpHeaders.cacheControlHeader, 'no-store')
+      ..set('X-Content-Type-Options', 'nosniff');
+    // A sandboxed iframe has an opaque origin; Apple popups use our origin.
+    final origin = request.headers.value('origin');
+    final viewerOrigin = 'http://127.0.0.1:${_server!.port}';
+    if ((origin != 'null' && origin != viewerOrigin) ||
+        request.headers.contentType?.mimeType != 'text/plain') {
+      response.statusCode = HttpStatus.forbidden;
+      return;
+    }
+    final maxBytes = action == 'clipboard' ? 16 * 1024 * 1024 : 8192;
+    if (request.contentLength > maxBytes) {
+      response.statusCode = HttpStatus.requestEntityTooLarge;
+      return;
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in request.timeout(const Duration(seconds: 10))) {
+      if (bytes.length + chunk.length > maxBytes) {
+        response.statusCode = HttpStatus.requestEntityTooLarge;
+        return;
+      }
+      bytes.add(chunk);
+    }
+    final text = utf8.decode(bytes.takeBytes());
+    if (text.isEmpty || text.length > 4000000 || _closed) {
+      response.statusCode = HttpStatus.badRequest;
+      return;
+    }
+    if (action == 'clipboard') {
+      await _writeClipboard(text);
+    } else {
+      final url = Uri.tryParse(text);
+      if (url == null ||
+          (url.scheme != 'https' && url.scheme != 'http') ||
+          url.host.isEmpty ||
+          url.userInfo.isNotEmpty ||
+          text.contains(RegExp(r'[\x00-\x20\x7f\\]'))) {
+        response.statusCode = HttpStatus.badRequest;
+        return;
+      }
+      if (!await _openExternalLink(url)) {
+        response.statusCode = HttpStatus.serviceUnavailable;
+        return;
+      }
+    }
+    response.statusCode = HttpStatus.noContent;
   }
 
   // The isolated viewer expects its PDF from its parent frame. A macOS
