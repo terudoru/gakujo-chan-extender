@@ -647,6 +647,7 @@ window.setTimeout = function(callback) {
       List<Object> steps, {
       bool inFrame = false,
       bool teardown = false,
+      List<String>? frameVisibilities,
     }) {
       return _evaluateGeneratedLoginAssist(
         LoginAutofillAssistScript.build(
@@ -662,6 +663,7 @@ window.setTimeout = function(callback) {
         ],
         steps: steps,
         frameBodyText: inFrame ? '' : null,
+        frameVisibilities: frameVisibilities,
         teardownScript: teardown
             ? LoginAutofillAssistScript.buildTeardown()
             : null,
@@ -685,6 +687,82 @@ window.setTimeout = function(callback) {
       );
       final reports = (result['reports'] as List).cast<Map<String, dynamic>>();
       expect(reports.where((r) => r['event'] == 'submit'), hasLength(1));
+    }
+
+    const untouchedFields = [
+      ['', null],
+      ['', null],
+    ];
+
+    test('selects the sibling of a hidden frame containing a visible frame',
+        () async {
+      final result = await run([
+        'add-sibling-form',
+        'notify',
+        350,
+        'inspect-fields',
+      ], frameVisibilities: ['hidden', 'visible']);
+      expect(result['fieldSnapshots'], [untouchedFields]);
+      expectSingleSubmit(result, 'sibling', 350);
+    });
+
+    test('waits to hint, fill and submit until the only frame is revealed',
+        () async {
+      final result = await run([
+        300,
+        'inspect-fields',
+        'checkpoint',
+        {'visibility': 'visible'},
+        'notify',
+        350,
+      ], frameVisibilities: ['hidden']);
+      expect(result['fieldSnapshots'], [untouchedFields]);
+      expect(result['checkpoints'], [noAttempt]);
+      expectSingleSubmit(result, 'login-form', 650);
+    });
+
+    test('a frame hidden at 225 ms loses its pending submit at 250 ms',
+        () async {
+      final result = await run([
+        'add-sibling-form',
+        225,
+        {'visibility': 'hidden'},
+        'notify',
+        25,
+        'checkpoint',
+        325,
+      ], inFrame: true);
+      expect(result['checkpoints'], [noAttempt]);
+      expectSingleSubmit(result, 'sibling', 575);
+    });
+
+    for (final visibility in ['hidden', 'collapse', 'visible']) {
+      test('logout in a $visibility frame after a genuine attempt', () async {
+        final result = await run([
+          250,
+          'checkpoint',
+          'show-logout',
+          {'visibility': visibility},
+          'notify',
+          100,
+          'checkpoint',
+          'replace-form',
+          {'visibility': 'visible'},
+          'notify',
+          350,
+        ], inFrame: true);
+        final phases = result['checkpoints'] as List;
+        expect(phases.first['attempts'], 1);
+        expect(phases.first['submittedKey'], isNotNull);
+        expect(phases.first['submitReports'], 1);
+        final reset = visibility == 'visible';
+        expect(phases.last['attempts'], reset ? 0 : 1);
+        expect(phases.last['submittedKey'],
+            reset ? null : phases.first['submittedKey']);
+        expect(_hasReport(result, 'authenticated', 'attempt-reset'), reset);
+        expect((result['submissions'] as List).map((s) => s['id']),
+            ['login-form', if (reset) 'current']);
+      });
     }
 
     for (final change in ['replace-form', 'replace-fields']) {
@@ -825,6 +903,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String? url,
   String? teardownScript,
   String? frameBodyText,
+  List<String>? frameVisibilities,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
   List<Object>? steps,
@@ -837,6 +916,7 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
       'url': url,
       'teardownScript': teardownScript,
       'frameBodyText': frameBodyText,
+      'frameVisibilities': frameVisibilities,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
       'steps': steps,

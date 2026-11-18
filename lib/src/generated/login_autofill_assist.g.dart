@@ -274,8 +274,25 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       }
       setSessionValue(key, String(attempts + 1));
     }
+    function hasVisibleFrameChain(doc) {
+      var _a, _b, _c;
+      try {
+        while (doc !== document) {
+          var view = doc.defaultView;
+          if (!view || view.document !== doc) return false;
+          var frame = view.frameElement;
+          if (!frame || !frame.getClientRects().length) return false;
+          doc = frame.ownerDocument;
+          var style = (_a = doc.defaultView) == null ? void 0 : _a.getComputedStyle(frame);
+          if ((style == null ? void 0 : style.visibility) !== "visible" || style.opacity === "0" || ((_b = frame.checkVisibility) == null ? void 0 : _b.call(frame, { checkOpacity: true })) === false) return false;
+        }
+        return ((_c = doc.defaultView) == null ? void 0 : _c.document) === doc;
+      } catch (_) {
+        return false;
+      }
+    }
     function visible(element) {
-      if (!element) {
+      if (!element || !hasVisibleFrameChain(element.ownerDocument)) {
         return false;
       }
       var pageWindow = element.ownerDocument.defaultView || window;

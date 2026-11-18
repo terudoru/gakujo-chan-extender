@@ -16,6 +16,7 @@ let authenticatedControlScanCount: any = 0;
 let now = 0;
 const submissions: any[] = [];
 const checkpoints: any[] = [];
+const fieldSnapshots: any[] = [];
 
 class FakeEvent {
   [key: string]: any;
@@ -63,6 +64,7 @@ class FakeElement {
   }
 
   get isConnected(): boolean {
+    if (this.tagName === 'IFRAME') return this.ownerDocument.frames.includes(this);
     if (this.tagName === 'FORM') return this.ownerDocument?.currentForm === this;
     return !!this.parentForm?.isConnected && this.parentForm.children.includes(this);
   }
@@ -182,6 +184,7 @@ const window: any = {
     removeItem(key: any) { sessionValues.delete(key); }
   },
   getComputedStyle(element: any) {
+    if (element.ownerDocument !== this.document) throw new Error('Wrong style owner');
     return {
       display: element.getAttribute('display') || 'block',
       visibility: element.getAttribute('visibility') || 'visible',
@@ -210,18 +213,34 @@ const window: any = {
 };
 window.window = window;
 document.defaultView = window;
-let loginDocument = document;
-let frameWindow: any;
-if (spec.frameBodyText != null) {
-  loginDocument = makeDocument(spec.frameBodyText);
-  frameWindow = {...window, document: loginDocument, frames: []};
-  loginDocument.defaultView = frameWindow;
-  document.frames.push({contentWindow: frameWindow});
+Object.defineProperty(window, 'frames', {get: () => document.frames.map(frame => frame.contentWindow)});
+
+function appendFrame(parent: any, visibility = 'visible') {
+  const frame = new FakeElement('iframe', {visibility});
+  frame.ownerDocument = parent;
+  const doc = makeDocument();
+  const view = {
+    ...window,
+    document: doc,
+    frameElement: frame,
+    parent: parent.defaultView,
+    get frames() { return this.document.frames.map(host => host.contentWindow); }
+  };
+  view.window = view;
+  doc.defaultView = view;
+  frame.contentWindow = view;
+  parent.frames.push(frame);
+  return doc;
 }
+
+let loginDocument = document;
+for (const visibility of spec.frameVisibilities ?? (spec.frameBodyText != null ? ['visible'] : [])) {
+  loginDocument = appendFrame(loginDocument, visibility);
+}
+if (spec.frameBodyText != null) loginDocument.body = {innerText: spec.frameBodyText, textContent: spec.frameBodyText};
 const form = installForm(loginDocument, 'login-form');
 const elements = form.children;
 if (spec.steps) {
-  Object.defineProperty(window, 'frames', {get: () => document.frames.map(frame => frame.contentWindow)});
   window.MutationObserver = class {
     root: any;
     notify: () => void;
@@ -272,6 +291,10 @@ if (spec.simulateAuthenticatedTimeout) {
 }
 for (const step of spec.steps || []) {
   if (typeof step === 'number') { advance(step); continue; }
+  if (typeof step === 'object' && 'visibility' in step) {
+    document.frames[0].setAttribute('visibility', step.visibility);
+    continue;
+  }
   switch (step) {
     case 'notify': document.documentElement.notify(); break;
     case 'replace-form': installForm(loginDocument, 'current'); break;
@@ -286,11 +309,24 @@ for (const step of spec.steps || []) {
       loginDocument.defaultView = null;
       loginDocument = document;
       break;
-    case 'navigate-frame':
+    case 'navigate-frame': {
+      const frameWindow = loginDocument.defaultView;
       loginDocument.defaultView = null;
       loginDocument = makeDocument();
       frameWindow.document = loginDocument;
       loginDocument.defaultView = frameWindow;
+      break;
+    }
+    case 'add-sibling-form': installForm(appendFrame(document), 'sibling'); break;
+    case 'show-logout': {
+      const logout = new FakeElement('a', {text: 'Log out'});
+      logout.ownerDocument = loginDocument;
+      logout.parentForm = loginDocument.currentForm;
+      loginDocument.currentForm.children = [logout];
+      break;
+    }
+    case 'inspect-fields':
+      fieldSnapshots.push(elements.slice(0, 2).map(input => [input.value, input.getAttribute('autocomplete')]));
       break;
     case 'show-error': loginDocument.body.innerText = 'Login failed'; break;
     case 'clear-error': loginDocument.body.innerText = ''; break;
@@ -319,6 +355,7 @@ process.stdout.write(JSON.stringify({
   clickedNames,
   submissions,
   checkpoints,
+  fieldSnapshots,
   pendingTimers,
   requestSubmitCount,
   formSubmitCount,

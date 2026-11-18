@@ -163,8 +163,28 @@ function loginAutofillAssist() {
     setSessionValue(key, String(attempts + 1));
   }
 
+  // A field or logout control can have layout inside a hidden frame. Keep
+  // frame visibility out of allDocuments so hidden error text is still read.
+  function hasVisibleFrameChain(doc: Document) {
+    try {
+      while (doc !== document) {
+        var view = doc.defaultView;
+        if (!view || view.document !== doc) return false;
+        var frame = view.frameElement;
+        if (!frame || !frame.getClientRects().length) return false;
+        doc = frame.ownerDocument;
+        var style = doc.defaultView?.getComputedStyle(frame);
+        if (style?.visibility !== 'visible' || style.opacity === '0' ||
+            frame.checkVisibility?.({checkOpacity: true}) === false) return false;
+      }
+      return doc.defaultView?.document === doc;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function visible(element: Element | null) {
-    if (!element) {
+    if (!element || !hasVisibleFrameChain(element.ownerDocument)) {
       return false;
     }
     var pageWindow = element.ownerDocument.defaultView || window;
