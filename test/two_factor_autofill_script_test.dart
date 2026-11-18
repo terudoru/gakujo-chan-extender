@@ -175,6 +175,61 @@ void main() {
     expect(result['consoleLogs'], isEmpty);
   });
 
+  for (final (visibility, nested) in [
+    ('hidden', false),
+    ('collapse', false),
+    ('hidden', true),
+  ]) {
+    test('skips a $visibility frame host (nested visible host: $nested)',
+        () async {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(token: '654321'),
+        formSettings: {
+          'frameVisibility': visibility,
+          'inFrame': '$nested',
+          'laterFrame': 'true',
+        },
+      );
+
+      expect(result['visibleValue'], isEmpty);
+      expect(result['visibleType'], 'password');
+      expect(result['originalTypeAfterTeardown'], isNull);
+      expect(result['laterValue'], '654321');
+      expect(result['clickedNames'], ['later']);
+    });
+  }
+
+  for (final attempts in [19, 20]) {
+    test('revealing a hidden frame after $attempts polling attempts', () async {
+      final result = await _evaluateTwoFactorAssist(
+        TwoFactorAutofillScript.build(token: '654321'),
+        formSettings: {
+          'frameVisibility': 'hidden',
+          'revealAfterAttempts': '$attempts',
+        },
+      );
+      final hasRetry = attempts < 20;
+      expect(result['beforeReveal'], {
+        'value': '',
+        'type': 'password',
+        'originalType': null,
+        'clickCount': 0,
+        'sessionValues': {},
+        'pendingDelays': [if (hasRetry) 250],
+      });
+      expect(result['visibleValue'], hasRetry ? '654321' : '');
+      expect(result['visibleType'], hasRetry ? 'text' : 'password');
+      expect(result['originalTypeAfterTeardown'], hasRetry ? 'password' : null);
+      expect(result['clickCount'], hasRetry ? 1 : 0);
+      expect(result['sessionValues'], {
+        if (hasRetry)
+          'MBG_2FA_AUTOFILL_SUBMIT_COUNT:https://gakujo.iess.niigata-u.ac.jp/'
+              'campussmart.do:no-secret': '1',
+      });
+      expect(result['activeTimerCount'], 0);
+    });
+  }
+
   test('rejects cross-origin form action, submit override and hostile base', () async {
     for (final settings in [
       {'formAction': 'https://untrusted.example/collect'},
