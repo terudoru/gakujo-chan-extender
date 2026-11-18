@@ -65,10 +65,13 @@ const String _gakujoReportDraftDeleteJsPrefix = r'''(function(__mbgConfig) {
         var win = doc.defaultView;
         var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS || (win.__MBG_REPORT_DRAFT_DELETED_KEYS = /* @__PURE__ */ Object.create(null));
         suppressed[key] = true;
-        var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
-        if (pending && pending.key === key) {
-          win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
-          delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+        var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
+        if (pending) {
+          delete pending[key];
+          if (!Object.keys(pending).length) {
+            win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
+            delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
+          }
         }
         var status = doc.getElementById("mbg-report-draft-status");
         if (status && status.__MBG_REPORT_DRAFT_KEY === key) {

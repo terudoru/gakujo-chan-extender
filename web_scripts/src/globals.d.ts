@@ -131,7 +131,7 @@ interface Window {
 
 interface Window {
   __MBG_REPORT_DRAFT_DELETED_KEYS?: Record<string, boolean>;
-  __MBG_REPORT_DRAFT_PENDING_CONTEXT?: { key: string };
+  __MBG_REPORT_DRAFT_PENDING_CONTEXTS?: Record<string, { key: string }>;
   __MBG_REPORT_DRAFT_SAVE_TIMER?: number;
 }
 interface HTMLElement {

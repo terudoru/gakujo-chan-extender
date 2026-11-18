@@ -5,7 +5,7 @@ type DraftValue = string | boolean | string[] | null;
 type DraftItem = { key: string; value: DraftValue; kind: string };
 type Draft = { savedAt: number; title: string; url: string; heading?: string; fields: DraftItem[] };
 type DraftField = HTMLInputElement & HTMLSelectElement & { __MBG_REPORT_DRAFT_LAST_VALUE?: string; __MBG_REPORT_DRAFT_DIRTY?: boolean; __MBG_REPORT_DRAFT_TOUCHED?: boolean; __MBG_REPORT_DRAFT_BOUND?: boolean; __MBG_REPORT_DRAFT_CONFLICT?: DraftItem };
-type DraftContext = { fields: DraftField[]; store: Storage | null; key: string };
+type DraftContext = { fields: DraftField[]; store: Storage | null; key: string; draft?: Draft };
 type DraftWindow = Window & typeof globalThis;
 type DraftDocument = Document & { defaultView: DraftWindow };
 declare global {
@@ -15,7 +15,7 @@ declare global {
 }
 
 function reportDraft() {
-  var version = 11;
+  var version = 12;
   var prefix = 'mbg-report-draft:v2:';
   var retentionMs = 14 * 24 * 60 * 60 * 1000;
   if (window.__MBG_REPORT_DRAFT_VERSION === version) {
@@ -659,10 +659,13 @@ function reportDraft() {
       var suppressed = win.__MBG_REPORT_DRAFT_DELETED_KEYS ||
         (win.__MBG_REPORT_DRAFT_DELETED_KEYS = Object.create(null));
       suppressed[key as string] = true;
-      var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
-      if (pending && pending.key === key) {
-        win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
-        delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+      var pending = win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
+      if (pending && key) {
+        delete pending[key];
+        if (!Object.keys(pending).length) {
+          win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
+          delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
+        }
       }
       fields.forEach(function(field) {
         field.__MBG_REPORT_DRAFT_DIRTY = false;
@@ -771,24 +774,24 @@ function reportDraft() {
     }).filter(Boolean) as DraftItem[];
   }
 
-  function saveDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[]) {
+  function saveDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[], showStatus: boolean, draft?: Draft) {
     var suppressed = doc.defaultView.__MBG_REPORT_DRAFT_DELETED_KEYS;
     if (suppressed && suppressed[key]) return true;
     store = store || storageFor(doc);
-    var values = collectValues(fields);
+    var values = draft ? draft.fields : collectValues(fields);
     var hasContent = values.some(function(item) {
       return item.kind !== 'text' || compactText(item.value).length > 0;
     });
     var savedAt = Date.now();
     var saved = hasContent ? writeDraft(store, key, {
       savedAt: savedAt,
-      title: doc.title || '',
-      url: (doc.location && doc.location.href) || '',
-      heading: headingFor(doc),
+      title: draft ? draft.title : doc.title || '',
+      url: draft ? draft.url : (doc.location && doc.location.href) || '',
+      heading: draft ? draft.heading : headingFor(doc),
       fields: values
     }) : removeDraft(store, key);
     if (!saved) {
-      updateStatus(doc, '下書きを保存できませんでした。入力内容をコピーして保管してください', function() {
+      if (showStatus) updateStatus(doc, '下書きを保存できませんでした。入力内容をコピーして保管してください', function() {
         saveCurrentDraft(doc);
       });
       return false;
@@ -797,17 +800,17 @@ function reportDraft() {
       field.__MBG_REPORT_DRAFT_DIRTY = false;
       field.__MBG_REPORT_DRAFT_LAST_VALUE = observedFieldValue(field);
     });
-    updateStatus(doc, hasContent
+    if (showStatus) updateStatus(doc, hasContent
       ? '下書きを保存しました（' + savedTime(savedAt, false) + '）' : '下書きは空です');
-    if (fields.some(function(field) { return field.__MBG_REPORT_DRAFT_CONFLICT; })) {
-      restoreDraft(doc, store, key, fields);
-    }
     return true;
   }
 
   function restoreDraft(doc: DraftDocument, store: Storage | null, key: string, fields: DraftField[], force?: boolean) {
-    var draft = readDraft(store, key);
-    if (draft && store) {
+    var pending = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
+    var context = pending && pending[key] as DraftContext | undefined;
+    var pendingDraft = context && context.draft;
+    var draft = pendingDraft || readDraft(store, key);
+    if (draft && store && !pendingDraft) {
       try { cleanupMigrationSources(store, key); }
       catch (_) { /* Retry source cleanup on the next update. */ }
     }
@@ -934,6 +937,10 @@ function reportDraft() {
     } finally {
       doc.__MBG_REPORT_DRAFT_RESTORING = false;
     }
+    if (context && pendingDraft) {
+      // Report the retry result on this form after its pending answers return.
+      context.fields = fields.slice();
+    }
     // Keep the original until the converted answers (including conflicts) persist.
     if (legacyKey && rememberMigration(store, key, legacyKey) && writeDraft(store, key, draft)) {
       try { cleanupMigrationSources(store!, key); }
@@ -942,8 +949,14 @@ function reportDraft() {
     }
     if (conflict) {
       ensureStatus(doc, store, key);
-      updateStatus(doc, '保存済みの下書きがあります（' + savedTime(draft.savedAt, true) + '）',
-        null, function() { restoreDraft(doc, store, key, saveableFields(doc), true); });
+      updateStatus(doc, pendingDraft ? '未保存の下書きがあります' :
+        '保存済みの下書きがあります（' + savedTime(draft.savedAt, true) + '）',
+        pendingDraft ? function() { saveCurrentDraft(doc); } : null,
+        function() { restoreDraft(doc, store, key, saveableFields(doc), true); });
+    } else if (pendingDraft) {
+      ensureStatus(doc, store, key);
+      updateStatus(doc, '未保存の下書きがあります。再試行してください',
+        function() { saveCurrentDraft(doc); });
     } else if (restored) {
       ensureStatus(doc, store, key);
       updateStatus(doc, '保存済みの下書きを復元しました（' +
@@ -964,25 +977,58 @@ function reportDraft() {
     };
   }
 
+  function snapshotContext(doc: DraftDocument, context: DraftContext) {
+    context.fields = context.fields.slice();
+    context.draft = {
+      savedAt: Date.now(), title: doc.title || '',
+      url: (doc.location && doc.location.href) || '',
+      heading: headingFor(doc), fields: collectValues(context.fields)
+    };
+    return context;
+  }
+
   function saveCurrentDraft(doc: DraftDocument) {
-    var context = (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT as DraftContext | undefined) ||
-      currentDraftContext(doc);
-    if (!context) {
-      return true;
+    var win = doc.defaultView;
+    var pending = (win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS ||
+      Object.create(null)) as Record<string, DraftContext>;
+    var current = currentDraftContext(doc);
+    var currentKey = current ? current.key : '';
+    var currentFields = current ? current.fields : [];
+    var hasPending = Object.keys(pending).length > 0;
+    if (current && current.fields.some(function(field) {
+      return field.__MBG_REPORT_DRAFT_DIRTY ||
+        field.__MBG_REPORT_DRAFT_TOUCHED &&
+        (pending[currentKey] || !hasPending ||
+          observedFieldValue(field) !== field.__MBG_REPORT_DRAFT_LAST_VALUE);
+    })) {
+      // Only live fields can supply fresher values; detached forms keep theirs.
+      pending[current.key] = snapshotContext(doc, current);
     }
-    if (!doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT &&
-        !context.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_TOUCHED; })) {
-      return true;
-    }
-    if (saveDraft(doc, context.store, context.key, context.fields)) {
-      if (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT === context) {
-        delete doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+    if (!Object.keys(pending).length) return true;
+    win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS = pending;
+    var saved = true;
+    Object.keys(pending).forEach(function(key) {
+      var context = pending[key];
+      var isCurrent = key === currentKey && context.fields.length === currentFields.length &&
+        context.fields.every(function(field, index) { return field === currentFields[index]; });
+      if (saveDraft(doc, context.store, key, context.fields, isCurrent, context.draft)) {
+        if (pending[key] === context) delete pending[key];
+        if (isCurrent && context.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_CONFLICT; })) {
+          restoreDraft(doc, context.store, key, context.fields);
+        }
+      } else {
+        saved = false;
       }
-    } else {
-      doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT = context;
-      return false;
+    });
+    if (!Object.keys(pending).length) {
+      win.clearTimeout(win.__MBG_REPORT_DRAFT_SAVE_TIMER);
+      delete win.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
     }
-    return true;
+    // A later successful save must not hide an older answer's retry action.
+    if (!saved) updateStatus(doc,
+      '下書きを保存できませんでした。入力内容をコピーして保管してください',
+      function() { saveCurrentDraft(doc); });
+    return saved;
   }
 
   function bindDraft(doc: DraftDocument) {
@@ -1023,23 +1069,14 @@ function reportDraft() {
       }
       var suppressed = doc.defaultView.__MBG_REPORT_DRAFT_DELETED_KEYS;
       if (suppressed) delete suppressed[pendingContext.key];
-      var pendingFields = pendingContext.fields.slice();
-      var pendingStore = pendingContext.store;
-      var pendingKey = pendingContext.key;
-      var pendingSnapshot = {
-        fields: pendingFields,
-        store: pendingStore,
-        key: pendingKey
-      };
-      doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT = pendingSnapshot;
+      // Keep each assignment's values and metadata before its DOM is replaced.
+      var snapshot = snapshotContext(doc, pendingContext);
+      var pending = doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXTS ||
+        (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXTS = Object.create(null));
+      pending[snapshot.key] = snapshot;
       doc.defaultView.clearTimeout(doc.defaultView.__MBG_REPORT_DRAFT_SAVE_TIMER);
       doc.defaultView.__MBG_REPORT_DRAFT_SAVE_TIMER = doc.defaultView.setTimeout(function() {
-        if (doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT !== pendingSnapshot) return;
-        var saved = saveDraft(doc, pendingStore, pendingKey, pendingFields);
-        if (saved && doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT ===
-            pendingSnapshot) {
-          delete doc.defaultView.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
-        }
+        saveCurrentDraft(doc);
       }, 250);
     }
 

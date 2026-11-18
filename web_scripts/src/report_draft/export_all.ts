@@ -4,7 +4,7 @@ function reportDraftExportAll() {
   var entries = Object.create(null);
   var now = Date.now();
   draftDocuments().forEach(function(doc) {
-    var pending = doc.defaultView!.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+    var pending = doc.defaultView!.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
     var identity = doc.__MBG_REPORT_DRAFT_IDENTITY;
     if ((pending || (identity && identity.fields.some(function(field) {
       return field.__MBG_REPORT_DRAFT_DIRTY;

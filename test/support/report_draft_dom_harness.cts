@@ -22,7 +22,7 @@ class FakeStorage {
   get length() { return this.values.size; }
   getItem(key: any) { return this.values.get(key) || null; }
   setItem(key: any, value: any) {
-    if (this.failWrite) throw new Error('QuotaExceededError');
+    if (this.failWrite || this.failWriteKey === key) throw new Error('QuotaExceededError');
     this.values.set(key, String(value));
   }
   removeItem(key: any) {
@@ -333,6 +333,171 @@ function flushTimersForStatus() { const callbacks: any = Array.from(pendingTimer
 
 function runExtendedScenario() {
   const storage: any = new FakeStorage();
+  if (spec.scenario === 'pendingLiveValue') {
+    const page: any = textPage(storage);
+    page.window.deferSaveTimer = true;
+    runPage(page);
+    const key = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    page.field.value = 'before';
+    page.field.dispatchEvent(new FakeEvent('input'));
+    page.field.value = 'latest live value';
+    if (spec.hideBeforeTimer) hidePage(page);
+    else flushTimersForStatus();
+    return {draft: JSON.parse(storage.getItem(key)),
+      dirty: !!page.field.__MBG_REPORT_DRAFT_DIRTY};
+  }
+  if (spec.scenario === 'detachedConflict') {
+    function twoFields(title: string, value: string) {
+      const page: any = textPage(storage, {title, pageText: title + ' 本文 入力', value});
+      page.document.fields = [page.field,
+        new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+      return page;
+    }
+    const original: any = twoFields('レポート提出 A', 'Saved A');
+    runPage(original);
+    original.field.dispatchEvent(new FakeEvent('input'));
+    const page: any = twoFields('レポート提出 A', 'Server A');
+    runPage(page);
+    const firstKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    page.window.deferSaveTimer = true;
+    page.document.fields[1].value = 'Second A';
+    page.document.fields[1].dispatchEvent(new FakeEvent('input'));
+
+    page.document.title = 'レポート提出 B';
+    page.document.pageText = 'レポート提出 B 本文 入力';
+    page.field = new FakeControl(page.document, 'textarea',
+      {name: 'gakuComment', id: 'gakuComment'});
+    page.document.field = page.field;
+    page.document.fields = [page.field,
+      new FakeControl(page.document, 'textarea', {name: 'Q2'})];
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    const secondKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    if (spec.editSecond) {
+      page.field.value = 'Answer B';
+      page.field.dispatchEvent(new FakeEvent('input'));
+    }
+    flushTimersForStatus();
+    const status = page.document.getElementById('mbg-report-draft-status');
+    const replace = page.document.getElementById('mbg-report-draft-replace');
+    const replaceVisible = replace.style.display !== 'none';
+    if (replaceVisible) replace.listeners.click();
+    const beforeDelete = {
+      first: JSON.parse(storage.getItem(firstKey)),
+      second: JSON.parse(storage.getItem(secondKey)),
+      statusMatchesCurrent: status.__MBG_REPORT_DRAFT_KEY === secondKey,
+      replaceVisible, values: page.document.fields.map((field: any) => field.value)
+    };
+    status.children.find((child: any) => child.textContent === '下書きを削除').listeners.click();
+    hidePage(page);
+    return {beforeDelete, first: JSON.parse(storage.getItem(firstKey)),
+      second: JSON.parse(storage.getItem(secondKey))};
+  }
+  if (spec.scenario === 'switchPendingDrafts') {
+    const page: any = textPage(storage, {
+      title: 'レポート提出 A', pageText: 'レポート提出 本文 入力 A'
+    });
+    page.window.deferSaveTimer = true;
+    runPage(page);
+    const firstField = page.field;
+    const firstKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    if (spec.persistFirstOld) {
+      firstField.value = 'older stored answer';
+      firstField.dispatchEvent(new FakeEvent('input'));
+      flushTimersForStatus();
+    }
+    firstField.value = 'Answer A';
+    firstField.dispatchEvent(new FakeEvent('input'));
+    if (spec.failFirst) {
+      storage.failWriteKey = firstKey;
+      flushTimersForStatus();
+      if (!spec.keepFirstFailing) storage.failWriteKey = null;
+    }
+
+    page.document.title = 'レポート提出 B';
+    page.document.pageText = 'レポート提出 本文 入力 B';
+    page.document.location.href = 'https://gakujo.example/report/input?assignment=B';
+    page.field = new FakeControl(page.document, 'textarea',
+      {name: 'gakuComment', id: 'gakuComment'});
+    if (spec.prebindingSecond) page.field.value = 'Answer B';
+    page.document.field = page.field;
+    page.window.__MBG_REPORT_DRAFT_UPDATE();
+    const secondKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+    if (!spec.prebindingSecond) {
+      page.field.value = 'Answer B';
+      page.field.dispatchEvent(new FakeEvent('input'));
+    }
+    if (spec.resetDetachedFirst) firstField.value = '';
+    let imported: any = null;
+    if (spec.importPending) {
+      const incoming = {[firstKey]: {savedAt: Date.now(), fields: []}};
+      const script = importScript
+        .replace('var drafts = JSON.parse(__mbgConfig.drafts);',
+          'var drafts = ' + JSON.stringify(incoming) + ';')
+        .replace('var basedOn = JSON.parse(__mbgConfig.basedOn);', 'var basedOn = {};');
+      imported = runPage(page, script);
+    }
+    let deleted: any = null;
+    if (spec.deletePending) {
+      const key = spec.deletePending === 'first' ? firstKey : secondKey;
+      deleted = runPage(page, deleteScript.replace(
+        JSON.stringify('mbg-report-draft:v2:delete"\\key'), JSON.stringify(key)));
+    }
+    let exported: any = null;
+    let exportFailed = false;
+    if (spec.exportPending) {
+      try { exported = JSON.parse(runPage(page, exportScript)); }
+      catch (_) { exportFailed = true; }
+    }
+    if (spec.hideBeforeTimer) hidePage(page);
+    else if (!(spec.revisitFirst && !spec.failFirst)) flushTimersForStatus();
+    if (spec.changeCurrentAfterSave) {
+      page.field.value = 'Answer B updated without event';
+      hidePage(page);
+    }
+    const readDraft = (key: string) => JSON.parse(storage.getItem(key));
+    const beforeRetry = {
+      first: readDraft(firstKey), second: readDraft(secondKey),
+      firstDirty: !!firstField.__MBG_REPORT_DRAFT_DIRTY,
+      retryVisible: page.document.getElementById('mbg-report-draft-retry').style.display !== 'none'
+    };
+    let returned: any = null;
+    let returnKey: any = null;
+    let returnConflict: any = null;
+    if (spec.revisitFirst) {
+      page.document.title = 'レポート提出 A';
+      page.document.pageText = 'レポート提出 本文 入力 A';
+      page.document.location.href = 'https://gakujo.example/report/input';
+      page.field = new FakeControl(page.document, 'textarea',
+        {name: 'gakuComment', id: 'gakuComment'}, {value: spec.returnServerValue});
+      if (spec.returnUserTyped) page.field.value = 'typed before revisit binding';
+      page.document.field = page.field;
+      page.window.__MBG_REPORT_DRAFT_UPDATE();
+      returnKey = page.document.__MBG_REPORT_DRAFT_IDENTITY.key;
+      returned = page.field.value;
+      const replace = page.document.getElementById('mbg-report-draft-replace');
+      returnConflict = replace.style.display !== 'none';
+      if (returnConflict) replace.listeners.click();
+      if (!spec.revisitWithoutEdit) {
+        page.field.value += ' + new text';
+        page.field.dispatchEvent(new FakeEvent('input'));
+      }
+    }
+    storage.failWriteKey = null;
+    if (spec.keepFirstFailing) {
+      page.document.getElementById('mbg-report-draft-retry').listeners.click();
+    } else {
+      hidePage(page);
+    }
+    if (spec.revisitWithoutEdit) page.window.__MBG_REPORT_DRAFT_UPDATE();
+    return {distinctKeys: firstKey !== secondKey, beforeRetry, imported, deleted, exportFailed,
+      returned, returnKeyMatches: returnKey === firstKey, returnConflict,
+      finalStatus: statusFor(page),
+      finalRetryVisible: page.document.getElementById('mbg-report-draft-retry').style.display !== 'none',
+      pending: !!page.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS,
+      first: readDraft(firstKey), second: readDraft(secondKey),
+      exportedFirst: exported && exported[firstKey],
+      exportedSecond: exported && exported[secondKey]};
+  }
   if (spec.scenario === 'deleteMigrationSource' || spec.scenario === 'remoteDeleteMigrationSource') {
     const legacy = spec.source === 'legacy';
     const pathname = legacy ? '/report/input' : '/campusweb/report/input;jsessionid=A';
@@ -705,7 +870,7 @@ function runExtendedScenario() {
       eventsDispatched: restoring.document.fields.every((field: any) =>
         field.events.includes('input') && field.events.includes('change')),
       eventsAfterRestore, eventsAfterSecondUpdate: eventCount(),
-      pendingAfterRestore: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT,
+      pendingAfterRestore: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS,
       touchedAfterRestore: restoring.document.fields.some((field: any) => field.__MBG_REPORT_DRAFT_TOUCHED),
       dirtyAfterRestore: restoring.document.fields.some((field: any) => field.__MBG_REPORT_DRAFT_DIRTY),
       unchangedAfterHide: storage.getItem(key) === beforeHide,
@@ -820,7 +985,7 @@ function runExtendedScenario() {
     const result: any = {
       storedUnchanged: storage.getItem(key) === original,
       replaceVisible: restoring.document.getElementById('mbg-report-draft-replace').style.display !== 'none',
-      pending: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT,
+      pending: !!restoring.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS,
       touched: !!restoring.field.__MBG_REPORT_DRAFT_TOUCHED
     };
     // Input remains an edit even when the visible value is unchanged.
@@ -957,7 +1122,7 @@ function runExtendedScenario() {
     const frame: any = textPage(frameStorage);
     top.document.frame = {contentWindow: frame.window};
     const deleted: any = runPage(top, deleteScript);
-    const pendingCancelled: any = !top.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT && pendingTimers.size === 0;
+    const pendingCancelled: any = !top.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS && pendingTimers.size === 0;
     hidePage(top);
     const remainingAfterPageHide: any = storage.getItem(target) !== null;
     const targetRemovedEverywhere: any = storage.getItem(target) === null && frameStorage.getItem(target) === null;
@@ -1011,7 +1176,7 @@ if (['dirtyImport', 'pendingExport', 'touchedImport', 'untouchedImport'].include
   if (spec.scenario === 'pendingExport') {
     const result = JSON.parse(runPage(savingPage, exportScript));
     return process.stdout.write(JSON.stringify({value: result[key].fields[0].value,
-      pending: !!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT}));
+      pending: !!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS}));
   }
   const replacement = {...original, fields: [{key: 'remote', value: 'remote', kind: 'text'}]};
   const script = importScript.replaceAll('placeholder-key', key.slice('mbg-report-draft:v2:'.length))
@@ -1051,7 +1216,7 @@ if (spec.scenario === 'selfRowContentEditable') {
 }
 if (spec.scenario === 'saveFailure') {
   const failureStatus: any=statusText(), dirtyAfterFailure: any=!!savingPage.field.__MBG_REPORT_DRAFT_DIRTY;
-  const pendingAfterFailure: any=!!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+  const pendingAfterFailure: any=!!savingPage.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
   storage.failWrite=false;
   savingPage.document.field=null;
   pageHide();

@@ -33,9 +33,9 @@ function reportDraftImportAll() {
         matched = false;
         return;
       }
-      var pending = doc.defaultView!.__MBG_REPORT_DRAFT_PENDING_CONTEXT;
+      var pending = doc.defaultView!.__MBG_REPORT_DRAFT_PENDING_CONTEXTS;
       var identity = doc.__MBG_REPORT_DRAFT_IDENTITY;
-      var touched = pending && pending.key === key || identity && identity.key === key &&
+      var touched = pending && pending[key] || identity && identity.key === key &&
         identity.fields.some(function(field) { return field.__MBG_REPORT_DRAFT_TOUCHED || field.__MBG_REPORT_DRAFT_DIRTY; });
       var incoming = Object.prototype.hasOwnProperty.call(drafts, key) ? drafts[key] : undefined;
       if (touched && JSON.stringify(canonical(current)) !== JSON.stringify(canonical(incoming))) {

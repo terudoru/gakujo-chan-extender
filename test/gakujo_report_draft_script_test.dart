@@ -290,6 +290,246 @@ void main() {
     expect(result['storedAfterRetry'], '未保存の本文');
   });
 
+  for (final failFirst in [false, true]) {
+    test('assignment switch retains both pending drafts (failed: $failFirst)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'switchPendingDrafts',
+        'failFirst': failFirst,
+      });
+      expect(result['distinctKeys'], isTrue);
+      final beforeRetry = result['beforeRetry'] as Map<String, dynamic>;
+      expect(beforeRetry['first'], isNotNull,
+          reason: 'The earlier assignment must remain in the save queue');
+      expect(beforeRetry['first']['fields'][0]['value'], 'Answer A');
+      expect(beforeRetry['second']['fields'][0]['value'], 'Answer B');
+      expect(result['first']['title'], 'レポート提出 A');
+      expect(result['first']['heading'], 'レポート提出 A');
+      expect(result['first']['url'], 'https://gakujo.example/report/input');
+      expect(result['second']['title'], 'レポート提出 B');
+    });
+  }
+
+  test('pagehide saves both assignments even if the detached form was reset',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'resetDetachedFirst': true,
+      'hideBeforeTimer': true,
+    });
+    final beforeRetry = result['beforeRetry'] as Map<String, dynamic>;
+    expect(beforeRetry['first']['fields'][0]['value'], 'Answer A');
+    expect(beforeRetry['second']['fields'][0]['value'], 'Answer B');
+  });
+
+  for (final hideBeforeTimer in [false, true]) {
+    test('pending save reads the latest live value (pagehide: $hideBeforeTimer)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'pendingLiveValue',
+        'hideBeforeTimer': hideBeforeTimer,
+      });
+      expect(result['draft']['fields'][0]['value'], 'latest live value');
+      expect(result['dirty'], isFalse);
+    });
+  }
+
+  test('prebinding edits on the new assignment join an older pending save',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'prebindingSecond': true,
+      'hideBeforeTimer': true,
+    });
+    final beforeRetry = result['beforeRetry'] as Map<String, dynamic>;
+    expect(beforeRetry['first']['fields'][0]['value'], 'Answer A');
+    expect(beforeRetry['second'], isNotNull);
+    expect(beforeRetry['second']['fields'][0]['value'], 'Answer B');
+  });
+
+  for (final failFirst in [false, true]) {
+    test('revisiting an assignment restores its pending draft (failed: $failFirst)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'switchPendingDrafts',
+        'failFirst': failFirst,
+        'keepFirstFailing': failFirst,
+        'revisitFirst': true,
+      });
+      expect(result['returnKeyMatches'], isTrue);
+      expect(result['returned'], 'Answer A');
+      expect(result['first']['fields'][0]['value'], 'Answer A + new text');
+      expect(result['second']['fields'][0]['value'], 'Answer B');
+    });
+  }
+
+  test('revisiting a pending draft preserves the server answer until replacement',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+      'revisitFirst': true,
+      'returnServerValue': 'server answer',
+    });
+    expect(result['returned'], 'server answer');
+    expect(result['returnConflict'], isTrue);
+    expect(result['first']['fields'][0]['value'], 'Answer A + new text');
+  });
+
+  test('revisiting a pending draft preserves already typed input', () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+      'revisitFirst': true,
+      'returnUserTyped': true,
+    });
+    expect(result['returned'], 'typed before revisit binding');
+    expect(result['first'], isNotNull);
+    expect(result['first']['fields'][0]['value'],
+        'typed before revisit binding + new text');
+  });
+
+  test('revisiting prefers the pending draft over its older stored answer',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+      'persistFirstOld': true,
+      'revisitFirst': true,
+    });
+    expect(result['returned'], 'Answer A');
+    expect(result['first']['fields'][0]['value'], 'Answer A + new text');
+  });
+
+  for (final failFirst in [false, true]) {
+    test('saving an untouched restored draft clears retry status (failed: $failFirst)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'switchPendingDrafts',
+        'failFirst': failFirst,
+        'keepFirstFailing': failFirst,
+        'revisitFirst': true,
+        'revisitWithoutEdit': true,
+      });
+      expect(result['returned'], 'Answer A');
+      expect(result['first']['fields'][0]['value'], 'Answer A');
+      expect(result['second']['fields'][0]['value'], 'Answer B');
+      expect(result['pending'], isFalse);
+      expect(result['finalStatus'], contains('下書きを保存しました'));
+      expect(result['finalRetryVisible'], isFalse);
+    });
+  }
+
+  test('a failing older draft does not block saving or retrying another draft',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+    });
+    final beforeRetry = result['beforeRetry'] as Map<String, dynamic>;
+    expect(beforeRetry['first'], isNull);
+    expect(beforeRetry['second']['fields'][0]['value'], 'Answer B');
+    expect(beforeRetry['firstDirty'], isTrue);
+    expect(beforeRetry['retryVisible'], isTrue);
+    expect(result['first']['fields'][0]['value'], 'Answer A');
+    expect(result['second']['fields'][0]['value'], 'Answer B');
+  });
+
+  test('an older failed save does not hide a later change to the current answer',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+      'changeCurrentAfterSave': true,
+    });
+    expect(result['first']['fields'][0]['value'], 'Answer A');
+    expect(result['second']['fields'][0]['value'],
+        'Answer B updated without event');
+  });
+
+  test('export flushes pending drafts from both sides of an assignment switch',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'exportPending': true,
+    });
+    expect(result['exportFailed'], isFalse);
+    expect(result['exportedFirst'], isNotNull);
+    expect(result['exportedFirst']['fields'][0]['value'], 'Answer A');
+    expect(result['exportedSecond']['fields'][0]['value'], 'Answer B');
+  });
+
+  test('export refuses to omit a failing draft from an earlier assignment',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'failFirst': true,
+      'keepFirstFailing': true,
+      'exportPending': true,
+    });
+    expect(result['exportFailed'], isTrue);
+    expect(result['exportedFirst'], isNull);
+    expect(result['first']['fields'][0]['value'], 'Answer A');
+    expect(result['second']['fields'][0]['value'], 'Answer B');
+  });
+
+  test('import cannot replace a pending draft from an earlier assignment',
+      () async {
+    final result = await _evaluateDraft({
+      'scenario': 'switchPendingDrafts',
+      'importPending': true,
+    });
+    expect(result['imported'], isFalse);
+    expect(result['first']['fields'][0]['value'], 'Answer A');
+    expect(result['second']['fields'][0]['value'], 'Answer B');
+  });
+
+  for (final deleted in ['first', 'second']) {
+    test('deleting the $deleted pending draft preserves the other save',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'switchPendingDrafts',
+        'deletePending': deleted,
+      });
+      expect(result['deleted'], isTrue);
+      final remaining = deleted == 'first' ? 'second' : 'first';
+      final beforeRetry = result['beforeRetry'] as Map<String, dynamic>;
+      expect(beforeRetry[deleted], isNull);
+      expect(beforeRetry[remaining], isNotNull,
+          reason: 'Deleting one draft must keep the other debounce timer');
+      expect(result[deleted], isNull);
+      expect(result[remaining]['fields'][0]['value'],
+          remaining == 'first' ? 'Answer A' : 'Answer B');
+    });
+  }
+
+  for (final editSecond in [false, true]) {
+    test('detached conflict cannot target the current assignment (edited: $editSecond)',
+        () async {
+      final result = await _evaluateDraft({
+        'scenario': 'detachedConflict',
+        'editSecond': editSecond,
+      });
+      final beforeDelete = result['beforeDelete'] as Map<String, dynamic>;
+      expect(beforeDelete['first']['fields'][0]['value'], 'Saved A');
+      expect(beforeDelete['first']['fields'][1]['value'], 'Second A');
+      expect(beforeDelete['statusMatchesCurrent'], isTrue);
+      expect(beforeDelete['replaceVisible'], isFalse);
+      expect(beforeDelete['values'], [editSecond ? 'Answer B' : '', '']);
+      if (editSecond) {
+        expect(beforeDelete['second']['fields'][0]['value'], 'Answer B');
+      }
+      expect(result['first'], beforeDelete['first'],
+          reason: 'Deleting the current assignment must retain the earlier one');
+      expect(result['second'], isNull);
+    });
+  }
+
   test('failed deletion can be retried without claiming success', () async {
     final result = await _evaluateContentEditableDraft(
         initialHtml: '削除対象', initialText: '削除対象', scenario: 'deleteFailure');
@@ -338,7 +578,7 @@ void main() {
     final script = GakujoReportDraftScript.build();
 
     expect(script, contains('__MBG_REPORT_DRAFT_VERSION'));
-    expect(script, contains('var version = 11;'));
+    expect(script, contains('var version = 12;'));
     expect(script, contains('document.querySelectorAll("iframe,frame")'));
     expect(script, contains('mbg-report-draft:v2:'));
     expect(script, contains('localStorage'));
