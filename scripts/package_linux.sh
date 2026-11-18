@@ -96,7 +96,7 @@ cat > "$work_dir/deb/DEBIAN/control" <<EOF
 Package: morebettergakujo
 Version: $deb_version
 Architecture: amd64
-Maintainer: Teruhiko Yoshida <terudoru6741@gmail.com>
+Maintainer: Teruhiko Yoshida <morebettergakujo.sys@gmail.com>
 Section: education
 Priority: optional
 Depends: libgtk-3-0 | libgtk-3-0t64, libwebkit2gtk-4.1-0, libsecret-1-0, libglib2.0-0 | libglib2.0-0t64

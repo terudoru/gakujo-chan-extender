@@ -196,6 +196,8 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 
 GitHub アカウントをお持ちの方は、[GitHub Issues](https://github.com/terudoru/gakujo-chan-extender/issues/new) に直接投稿することもできます。この投稿はすぐに公開されます。
 
+メールでのお問い合わせや報告データの削除依頼は、[morebettergakujo.sys@gmail.com](mailto:morebettergakujo.sys@gmail.com) へお願いします。削除依頼には受付番号を添えてください。
+
 ## 関連資料
 
 | 資料 | 内容 |
