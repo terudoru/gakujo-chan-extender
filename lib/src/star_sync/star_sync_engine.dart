@@ -31,6 +31,7 @@ const _deferredDraftClearKey = '\u0000draft-clear-before';
 
 class _CollectionTooLarge implements Exception {}
 class _CollectionCommitUncertain implements Exception {}
+class _AutomaticBackupCancelled implements Exception {}
 
 enum StarSyncTrigger { localChange, startup, resume, manual }
 
@@ -294,6 +295,7 @@ class StarSyncEngine {
     this.loginId,
     this.accountHash,
     this.canSync,
+    this.canUploadAutomaticBackup,
     this.onLocalStarsChanged,
     this.clearDraftsBefore,
     List<StarSyncCollection> collections = const [],
@@ -365,6 +367,8 @@ class StarSyncEngine {
   final String? Function()? loginId;
   final String? Function()? accountHash;
   final bool Function()? canSync;
+  // Independent of collection sync; read again after automatic-backup waits.
+  final bool Function()? canUploadAutomaticBackup;
   final void Function()? onLocalStarsChanged;
   final Future<bool> Function(DateTime)? clearDraftsBefore;
   final StorageOperationQueue _queue = StorageOperationQueue();
@@ -2755,7 +2759,9 @@ class StarSyncEngine {
 
   bool shouldUploadAutomaticBackup(DateTime now) {
     final state = _state;
-    if (_config == null ||
+    if (_disposed ||
+        canUploadAutomaticBackup?.call() == false ||
+        _config == null ||
         state == null ||
         state.localReviewRequired ||
         _currentAccount() != state.boundAccount ||
@@ -2766,23 +2772,35 @@ class StarSyncEngine {
     return last == null || now.difference(last) >= const Duration(hours: 24);
   }
 
+  void _requireAutomaticBackupAllowed() {
+    if (_disposed || canUploadAutomaticBackup?.call() == false) {
+      throw _AutomaticBackupCancelled();
+    }
+  }
+
   Future<bool> uploadAutomaticBackupIfDue(Future<List<int>> Function() build) =>
       _queue.runExclusive(() async {
         if (!shouldUploadAutomaticBackup(_now())) {
           _pendingAutomaticBackup = null;
           return false;
         }
-        if (!await _allowsAutomaticQuota(100)) {
-          _pendingAutomaticBackup = build;
-          unawaited(_scheduleQuotaRetry());
-          _publish();
-          return false;
-        }
-        final bytes = await build();
         try {
+          final quotaAllowed = await _allowsAutomaticQuota(100);
+          _requireAutomaticBackupAllowed();
+          if (!quotaAllowed) {
+            _pendingAutomaticBackup = build;
+            unawaited(_scheduleQuotaRetry());
+            _publish();
+            return false;
+          }
+          final bytes = await build();
+          _requireAutomaticBackupAllowed();
           await uploadBackup(bytes, automatic: true);
           _pendingAutomaticBackup = null;
           return true;
+        } on _AutomaticBackupCancelled {
+          _pendingAutomaticBackup = null;
+          return false;
         } on StarSyncQuotaExceeded catch (error) {
           _pendingAutomaticBackup = build;
           unawaited(_scheduleQuotaRetry(error.units));
@@ -2800,6 +2818,7 @@ class StarSyncEngine {
     int? expectedGeneration,
   }) =>
       _queue.run(() async {
+        if (automatic) _requireAutomaticBackupAllowed();
         if (expectedAccount != null &&
             !isBoundAccountCurrent(
               expectedAccount: expectedAccount,
@@ -2808,6 +2827,7 @@ class StarSyncEngine {
           throw const StarSyncAccountMismatchException();
         }
         await _requireBackupAccount();
+        if (automatic) _requireAutomaticBackupAllowed();
         final state = _state!;
         final transport = _transportFactory(_config!);
         if (transport is StarSyncGoogleDriveTransport) {
@@ -2815,6 +2835,7 @@ class StarSyncEngine {
         }
         try {
           final keyring = await _readKeyring(transport);
+          if (automatic) _requireAutomaticBackupAllowed();
           if (keyring.keyId != state.keyId) {
             throw StateError('Sync key has changed');
           }
@@ -2838,6 +2859,7 @@ class StarSyncEngine {
           await transport.ensureDirectory(_backupDirectory);
           await _requireBackupAccount();
           _assertCurrentAccount(state);
+          if (automatic) _requireAutomaticBackupAllowed();
           await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
           state.lastBackupUploadAt = _now().toUtc();
           if (state.lastError == 'バックアップを保存できませんでした') {
@@ -2845,6 +2867,8 @@ class StarSyncEngine {
           }
           await _saveState();
           _publish();
+        } on _AutomaticBackupCancelled {
+          rethrow;
         } on Object {
           state.lastError ??= 'バックアップを保存できませんでした';
           _publish();

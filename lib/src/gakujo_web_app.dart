@@ -1971,6 +1971,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       loginId: () => _appSettings.savedLoginId,
       accountHash: () => _activeLoginAccount,
       canSync: () => _canSyncStars,
+      canUploadAutomaticBackup: () => mounted && _appSettingsLoaded &&
+          _secureStorageAccessAllowed &&
+          _appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup),
       onLocalStarsChanged: () {
         if (_canSyncStars) {
           unawaited(_refreshMessageStars());

@@ -180,12 +180,16 @@ class _Transport implements StarSyncTransport {
   StarSyncTransportErrorKind? driveFailure;
   Completer<void>? devicePut;
   void Function(String, int)? onGet;
+  Future<void> Function(String)? beforeEnsureDirectory;
+  Future<void> Function(String)? afterPut;
 
   @override
   void close() {}
 
   @override
-  Future<void> ensureDirectory(String path) async {}
+  Future<void> ensureDirectory(String path) async {
+    await beforeEnsureDirectory?.call(path);
+  }
 
   @override
   Future<List<StarSyncRemoteEntry>> list(String directory) async {
@@ -298,6 +302,7 @@ class _Transport implements StarSyncTransport {
     }
     puts++;
     if (path.startsWith('stars/devices/')) devicePut?.complete();
+    await afterPut?.call(path);
   }
 
   @override
@@ -3408,6 +3413,175 @@ void main() {
       jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
       isFalse,
     );
+  });
+
+  for (final boundary in ['quota', 'build', 'keyring', 'directory', 'disposal']) {
+    for (final disable in boundary == 'disposal' ? [true] : [false, true]) {
+      test('automatic backup policy after $boundary wait: cancel=$disable', () async {
+        final remote = _Transport();
+        final storage = _Storage();
+        final quotaStorage = _Storage();
+        var allowed = true;
+        final engine = StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
+          canSync: () => false,
+          canUploadAutomaticBackup: () => allowed,
+        );
+        addTearDown(engine.dispose);
+        await engine.setUpWithDrive(const StarSyncConfig());
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        Future<void> wait() async {
+          entered.complete();
+          await release.future;
+        }
+        if (boundary == 'quota') {
+          quotaStorage.beforeWrite = (key) async {
+            if (key == starSyncGoogleQuotaKey) {
+              quotaStorage.beforeWrite = null;
+              await wait();
+            }
+          };
+        } else if (boundary == 'keyring') {
+          remote.getStarted = entered;
+          remote.getRelease = release;
+        } else if (boundary == 'directory' || boundary == 'disposal') {
+          remote.beforeEnsureDirectory = (path) async {
+            if (path == 'backups') await wait();
+          };
+        }
+        var builds = 0;
+        final uploading = engine.uploadAutomaticBackupIfDue(() async {
+          builds++;
+          if (boundary == 'build') await wait();
+          return [1, 2, 3];
+        });
+        await entered.future;
+        if (boundary == 'disposal') {
+          engine.dispose();
+        } else {
+          allowed = !disable;
+        }
+        release.complete();
+        expect(await uploading, !disable);
+        expect(remote.files.keys.where((path) => path.startsWith('backups/')),
+            hasLength(disable ? 0 : 1));
+        expect(builds, disable && boundary == 'quota' ? 0 : 1);
+        final saved = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+        expect(saved['lastBackupUploadAt'], disable ? isNull : isNotNull);
+        expect(saved['lastError'], isNull);
+      });
+    }
+  }
+
+  for (final policy in ['off', 'unchanged', 're-enabled']) {
+    test('automatic backup retry respects current policy: $policy', () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      var now = DateTime.utc(2026, 1, 1, 12);
+      var allowed = true;
+      final meter = StarSyncQuotaMeter(storage: _Storage(), now: () => now);
+      _TestTimer? timer;
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        quotaMeter: meter,
+        canSync: () => false,
+        canUploadAutomaticBackup: () => allowed,
+        now: () => now,
+        timerFactory: (duration, callback) => timer = _TestTimer(callback),
+      );
+      addTearDown(engine.dispose);
+      await engine.setUpWithDrive(const StarSyncConfig());
+      await meter.charge(starSyncGoogleSoftLimit - 50);
+      var builds = 0;
+      expect(await engine.uploadAutomaticBackupIfDue(() async {
+        builds++;
+        return [1, 2, 3];
+      }), isFalse);
+      await pumpEventQueue();
+      expect(builds, 0);
+      if (policy != 'unchanged') allowed = false;
+      if (policy == 're-enabled') allowed = true;
+      now = now.add(const Duration(hours: 25));
+      timer!.fire();
+      await pumpEventQueue(times: 100);
+      expect(builds, policy == 'off' ? 0 : 1);
+      expect(await engine.listBackups(), hasLength(policy == 'off' ? 0 : 1));
+      expect(engine.status.value.lastError, isNull);
+    });
+  }
+
+  test('queued automatic backup checks policy when its turn starts', () async {
+    final storage = _Storage();
+    final remote = _Transport();
+    var allowed = true;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      canUploadAutomaticBackup: () => allowed,
+    );
+    addTearDown(engine.dispose);
+    await engine.setUpWithDrive(const StarSyncConfig());
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final change = engine.runAccountChange(() async {
+      entered.complete();
+      await release.future;
+    });
+    await entered.future;
+    var builds = 0;
+    final uploading = engine.uploadAutomaticBackupIfDue(() async {
+      builds++;
+      return [1];
+    });
+    allowed = false;
+    release.complete();
+    await change;
+    expect(await uploading, isFalse);
+    expect(builds, 0);
+    expect(await engine.listBackups(), isEmpty);
+    await engine.uploadBackup([9]);
+    expect(await engine.listBackups(), hasLength(1));
+  });
+
+  test('automatic backup already submitted completes after policy turns off', () async {
+    final storage = _Storage();
+    final remote = _Transport();
+    var allowed = true;
+    final engine = StarSyncEngine(
+      loginId: () => 'student',
+      activityStore: GakujoActivityStore(secureStorage: storage),
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      canUploadAutomaticBackup: () => allowed,
+    );
+    addTearDown(engine.dispose);
+    await engine.setUpWithDrive(const StarSyncConfig());
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    remote.afterPut = (path) async {
+      if (path.startsWith('backups/')) {
+        entered.complete();
+        await release.future;
+      }
+    };
+    final uploading = engine.uploadAutomaticBackupIfDue(() async => [1, 2, 3]);
+    await entered.future;
+    allowed = false;
+    release.complete();
+    expect(await uploading, isTrue);
+    expect(await engine.listBackups(), hasLength(1));
+    expect(jsonDecode(storage.values[starSyncStateKey]!)['lastBackupUploadAt'],
+        isNotNull);
   });
 
   test('quota timer retries a blocked automatic backup', () async {
