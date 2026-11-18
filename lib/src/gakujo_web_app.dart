@@ -1918,6 +1918,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _autoBackupWrittenThisLaunch = false;
   DateTime? _lastAutomaticBackupAt;
   Completer<String>? _nextPageFinishedCompleter;
+  ({String url, int revision, Completer<void> disposed})? _deferredPageNavigation;
   ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
   final GakujoCalendarOperationGate _calendarOperationGate =
@@ -2137,6 +2138,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     _cancelDriveUploads();
+    _deferredPageNavigation?.disposed.complete();
     _status.dispose();
     unawaited(_pdfPreviewServer.close());
     _cancelOfflineRetry();
@@ -5784,6 +5786,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final failedUrl = _currentPageUrl;
       if (failedUrl != null &&
           AllowedWebOrigins.canLoad(failedUrl, debugAllowed: _debugAllowed)) {
+        final deferred = _deferredPageNavigation;
+        if (deferred != null && deferred.url == failedUrl) {
+          // This retry can finish without another SourceChanged. Keep the
+          // existing wait and deadline, but recognize the reissued navigation.
+          _deferredPageNavigation = (
+            url: failedUrl,
+            revision: navigationRevision,
+            disposed: deferred.disposed,
+          );
+        }
         await _controller.loadUrl(failedUrl);
       } else {
         await _controller.reload();
@@ -5832,17 +5844,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.loadUrl(url);
   }
 
+  void _clearNavigationRestoreFor(String url) {
+    if (_pendingLoginRestoreUrl == url) {
+      _pendingLoginRestoreUrl = null;
+    }
+    if (_navigationRecoveryCandidateUrl == url) {
+      _navigationRecoveryCandidateUrl = null;
+      _navigationRecoveryCandidateFailed = false;
+    }
+  }
+
   void _setPendingMessageUrl(String? url) {
     final previous = _pendingMessageOpen;
-    if (previous != null) {
-      if (_pendingLoginRestoreUrl == previous.url) {
-        _pendingLoginRestoreUrl = null;
-      }
-      if (_navigationRecoveryCandidateUrl == previous.url) {
-        _navigationRecoveryCandidateUrl = null;
-        _navigationRecoveryCandidateFailed = false;
-      }
-    }
+    if (previous != null) _clearNavigationRestoreFor(previous.url);
     _pendingMessageOpenTimer?.cancel();
     _pendingMessageOpen = null;
     final message = url == null ? null : gakujoMessageTargetFromUrl(url);
@@ -5962,8 +5976,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<String?> _waitForNextPageFinished({
     Duration timeout = const Duration(seconds: 4),
+    Completer<String>? waiter,
   }) {
-    final completer = Completer<String>();
+    final completer = waiter ?? Completer<String>();
     _nextPageFinishedCompleter = completer;
     return completer.future.timeout(timeout, onTimeout: () => '').then(
       (url) async {
@@ -8051,6 +8066,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     _setPendingMessageUrl(targetUrl);
+    _reserveNotificationRestore(targetUrl);
+    _beginPendingMessageNavigation(targetUrl);
+    await _controller.loadUrl(targetUrl);
+  }
+
+  String? _reserveNotificationRestore(String targetUrl) {
     final restoreTarget = gakujoNotificationRestoreTarget(
       targetUrl,
       debugAllowed: _debugAllowed,
@@ -8064,8 +8085,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _navigationRecoveryCandidateUrl = restoreTarget;
       _navigationRecoveryCandidateFailed = false;
     }
-    _beginPendingMessageNavigation(targetUrl);
-    await _controller.loadUrl(targetUrl);
+    return restoreTarget;
   }
 
   Future<String?> _loadInitialLastPageUrl() async {
@@ -8164,8 +8184,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           final navigationRevision = _navigationRevision;
           bool stillCurrent() =>
               _isCurrentPageCallback(url, navigationRevision);
-          if (!mounted) {
-            return;
+          if (!mounted) return;
+          final deferred = _deferredPageNavigation;
+          if (deferred != null &&
+              _pendingPageFinishedNavigationRevision != navigationRevision) {
+            // A previous page can finish before the next deferred page starts.
+            // WebView2 can also finish the issued URL without a SourceChanged
+            // event when it is already displayed.
+            final finishedIssuedPage = deferred.revision == navigationRevision &&
+                deferred.url == url && stillCurrent();
+            if (!finishedIssuedPage) return;
           }
           if (_currentPageUrl != url &&
               _pendingPageFinishedNavigationRevision == navigationRevision) {
@@ -9380,48 +9408,53 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _finishPageNavigationOperation() async {
-    final deferredNotificationUrl = _deferredNotificationAfterPageOperationUrl;
-    final deferredUrl =
-        deferredNotificationUrl ?? _deferredNavigationAfterPageOperationUrl;
-    _deferredNotificationAfterPageOperationUrl = null;
-    _deferredNavigationAfterPageOperationUrl = null;
+    String? previousRestoreTarget;
     try {
-      if (!mounted ||
-          deferredUrl == null ||
-          !AllowedWebOrigins.canLoad(
-            deferredUrl,
-            debugAllowed: _debugAllowed,
-          )) {
-        return;
-      }
-      _setPendingMessageUrl(deferredUrl);
-      if (deferredNotificationUrl != null) {
-        final restoreTarget = gakujoNotificationRestoreTarget(
-          deferredNotificationUrl,
-          debugAllowed: _debugAllowed,
-        );
-        if (restoreTarget != null) {
-          _pendingLoginRestoreUrl = restoreTarget;
-          _loginRestoreAttempted = false;
-          _navigationRecoveryCandidateUrl = restoreTarget;
-          _navigationRecoveryCandidateFailed = false;
+      while (true) {
+        final notification = _deferredNotificationAfterPageOperationUrl;
+        final url = notification ?? _deferredNavigationAfterPageOperationUrl;
+        _deferredNotificationAfterPageOperationUrl = null;
+        _deferredNavigationAfterPageOperationUrl = null;
+        if (!mounted || url == null ||
+            !AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+          break;
         }
-      }
-      final pageFinished = _waitForNextPageFinished(
-        timeout: const Duration(seconds: 8),
-      );
-      _beginPendingMessageNavigation(deferredUrl);
-      await _controller.loadUrl(deferredUrl);
-      await pageFinished;
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to open navigation deferred by a page operation',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      if (mounted) {
-        _showSnackBar('保留したページを開けませんでした');
+        // A failed or timed-out notification may still own the login restore.
+        // Its replacement must also win when the next page authenticates.
+        if (previousRestoreTarget != null) {
+          _clearNavigationRestoreFor(previousRestoreTarget);
+        }
+        _setPendingMessageUrl(url);
+        previousRestoreTarget = notification == null
+            ? null
+            : _reserveNotificationRestore(notification);
+        final waiter = Completer<String>();
+        final disposed = Completer<void>();
+        final pageFinished = _waitForNextPageFinished(
+          waiter: waiter,
+          timeout: const Duration(seconds: 8),
+        );
+        try {
+          _beginPendingMessageNavigation(url);
+          _deferredPageNavigation =
+              (url: url, revision: _navigationRevision, disposed: disposed);
+          // Disposal can interrupt either the load reply or the scripts that
+          // process a page-finished event after its timeout has been cancelled.
+          final settled = Future.any<void>([pageFinished, disposed.future]);
+          await Future.any<void>([_controller.loadUrl(url), settled]);
+          await settled;
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to open navigation deferred by a page operation',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          if (mounted) _showSnackBar('保留したページを開けませんでした');
+        } finally {
+          _deferredPageNavigation = null;
+          if (!waiter.isCompleted) waiter.complete('');
+        }
       }
     } finally {
       _calendarOperationGate.finish();
