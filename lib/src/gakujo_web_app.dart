@@ -5018,12 +5018,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool pruneAfterWrite = true,
     String? pruneFileNamePrefix,
   }) async {
+    final text = encodeGakujoBackupPayload(payload);
     final documents = await getApplicationDocumentsDirectory();
     final directory = Directory(_joinLocalPath(documents.path, directoryName));
     await directory.create(recursive: true);
     final file = File(_joinLocalPath(directory.path, fileName));
     await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(payload),
+      text,
       flush: true,
     );
     if (pruneAfterWrite) {

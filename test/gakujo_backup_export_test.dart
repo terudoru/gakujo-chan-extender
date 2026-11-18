@@ -10,6 +10,83 @@ import 'package:morebettergakujo_flutter/src/gakujo_external_url.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('local backup rejects oversized supported collections without truncation', () {
+    final now = DateTime.now();
+    final body = 'あ' * 4000;
+    final payload = buildGakujoBackupPayload(
+      appSettings: const GakujoAppSettings(),
+      downloadHistory: const [],
+      failedDownloads: const [],
+      favorites: const [],
+      starredMessages: [
+        for (var i = 0; i < 300; i += 1)
+          GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '$i',
+            title: 'notice $i',
+            body: body,
+            starredAt: now,
+          ),
+      ],
+      deadlines: [
+        for (var i = 0; i < 80; i += 1)
+          GakujoDeadlineEntry(
+            title: 'deadline $i',
+            url:
+                'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussmart.do?seqNo=$i',
+            dueText: '2099/07/01 17:00',
+            detectedAt: now,
+            source: '連絡通知',
+            messageText: body,
+          ),
+      ],
+      reportLists: [
+        for (var i = 0; i < 20; i += 1)
+          GakujoCachedReportList(
+            title: 'reports $i',
+            url:
+                'https://gakujo.iess.niigata-u.ac.jp/campusweb/reports?course=$i',
+            capturedAt: now,
+            items: [for (var j = 0; j < 100; j += 1) '$j ${'あ' * 120}'],
+          ),
+      ],
+    );
+    final original = jsonEncode(payload);
+    expect(utf8.encode(original).length, greaterThan(maxGakujoBackupBytes));
+    expect(() {
+      encodeGakujoBackupPayload(payload);
+    }, throwsA(isA<GakujoBackupExportException>()));
+    expect(jsonEncode(payload), original);
+  });
+
+  test('local backup measures pretty UTF-8 bytes at the import boundary', () {
+    final payload = <String, Object?>{'version': 2, 'padding': ''};
+    final overhead = utf8
+        .encode(const JsonEncoder.withIndent('  ').convert(payload))
+        .length;
+    final available = maxGakujoBackupBytes - overhead;
+    payload['padding'] = '${'あ' * (available ~/ 3)}${'a' * (available % 3)}';
+    final text = encodeGakujoBackupPayload(payload);
+    expect(utf8.encode(text), hasLength(maxGakujoBackupBytes));
+    expect(text, const JsonEncoder.withIndent('  ').convert(payload));
+    expect(parseGakujoBackup(text).version, 2);
+    payload['padding'] = '${payload['padding']}あ';
+    expect(() {
+      encodeGakujoBackupPayload(payload);
+    }, throwsA(isA<GakujoBackupExportException>()));
+  });
+
+  test('local backup rejects pretty output even when compact JSON fits', () {
+    final payload = <String, Object?>{'version': 2, 'padding': ''};
+    payload['padding'] =
+        'a' * (maxGakujoBackupBytes - jsonEncode(payload).length);
+    expect(utf8.encode(jsonEncode(payload)), hasLength(maxGakujoBackupBytes));
+    expect(() {
+      encodeGakujoBackupPayload(payload);
+    }, throwsA(isA<GakujoBackupExportException>()));
+  });
+
   test('external URLs retain safe portal navigation and remove credentials', () {
     final sanitized = sanitizeGakujoExternalUrl(
       'https://user:password@gakujo.iess.niigata-u.ac.jp/'
@@ -49,7 +126,7 @@ void main() {
     );
     expect(payload, isNot(contains('starredMessages')));
     expect(jsonEncode(payload), isNot(contains('private body')));
-    expect(parseGakujoBackup(jsonEncode(payload)).starredMessages, isNull);
+    expect(parseGakujoBackup(encodeGakujoBackupPayload(payload)).starredMessages, isNull);
   });
 
   test('backup removes session data from activity URLs and notification keys', () {

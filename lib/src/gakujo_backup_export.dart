@@ -1,8 +1,28 @@
+import 'dart:convert';
+
 import 'gakujo_activity_store.dart';
 import 'gakujo_app_settings.dart';
+import 'gakujo_backup_import.dart';
 import 'gakujo_download_history_store.dart';
 import 'gakujo_external_url.dart';
 import 'secure_storage_transaction.dart';
+
+class GakujoBackupExportException implements Exception {
+  const GakujoBackupExportException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+String encodeGakujoBackupPayload(Map<String, Object?> payload) {
+  final text = const JsonEncoder.withIndent('  ').convert(payload);
+  if (utf8.encode(text).length > maxGakujoBackupBytes) {
+    throw const GakujoBackupExportException('バックアップが大きすぎます（上限5 MiB）');
+  }
+  return text;
+}
 
 Future<Map<String, Object?>> readGakujoBackupPayload({
   required GakujoAppSettings Function() currentSettings,
