@@ -8,15 +8,29 @@ const String gakujoCourseNameTablesJs = r'''
 (() => {
   // web_scripts/src/course_name_tables/main.ts
   function courseNameTables() {
+    var _a;
     function textOf(element) {
       return (element && (element.innerText || element.textContent) || "").replace(/\s+/g, " ").trim();
     }
+    function inlineCourseName(cells) {
+      let sawValueCell = false;
+      for (const cell of cells) {
+        if (cell.tagName.toLowerCase() === "th") {
+          if (sawValueCell) break;
+          continue;
+        }
+        sawValueCell = true;
+        const value = textOf(cell);
+        if (value) return value;
+      }
+      return "";
+    }
     function collectDocuments() {
-      var documents2 = [];
+      var documents = [];
       function collect(win) {
         try {
           if (win.document) {
-            documents2.push(win.document);
+            documents.push(win.document);
           }
           for (var i = 0; i < win.frames.length; i += 1) {
             collect(win.frames[i]);
@@ -25,48 +39,33 @@ const String gakujoCourseNameTablesJs = r'''
         }
       }
       collect(window);
-      return documents2;
+      return documents;
     }
-    var documents = collectDocuments();
-    for (var d = 0; d < documents.length; d += 1) {
-      var tables = documents[d].querySelectorAll("table");
-      for (var t = 0; t < tables.length; t += 1) {
-        var rows = tables[t].querySelectorAll("tr");
-        for (var r = 0; r < rows.length; r += 1) {
-          var cells = rows[r].querySelectorAll("th,td");
-          var courseIndex = -1;
-          for (var c = 0; c < cells.length; c += 1) {
-            if (textOf(cells[c]) === "科目名") {
-              courseIndex = c;
-              break;
-            }
-          }
-          if (courseIndex < 0) {
-            continue;
-          }
-          for (var same = courseIndex + 1; same < cells.length; same += 1) {
-            if (cells[same].tagName.toLowerCase() === "th") {
+    const courseNameCandidates = [];
+    for (const doc of collectDocuments()) {
+      for (const table of Array.from(doc.querySelectorAll("table"))) {
+        let courseColumn = -1;
+        for (const row of Array.from(table.rows)) {
+          const cells = Array.from(row.cells);
+          const label = cells.findIndex((cell) => textOf(cell) === "科目名");
+          if (label >= 0) {
+            const value = inlineCourseName(cells.slice(label + 1));
+            if (value) courseNameCandidates.push(value);
+            courseColumn = value ? -1 : label;
+          } else if (courseColumn >= 0) {
+            const cell = cells[courseColumn];
+            if (!cell) continue;
+            if (cell.scope === "col" || ((_a = row.parentElement) == null ? void 0 : _a.tagName) === "THEAD" || cells.length > 1 && cells.every((value2) => value2.tagName.toLowerCase() === "th")) {
+              courseColumn = -1;
               continue;
             }
-            var sameRowValue = textOf(cells[same]);
-            if (sameRowValue) {
-              return sameRowValue;
-            }
-          }
-          for (var next = r + 1; next < rows.length; next += 1) {
-            var nextCells = rows[next].querySelectorAll("th,td");
-            if (nextCells.length <= courseIndex) {
-              continue;
-            }
-            var value = textOf(nextCells[courseIndex]);
-            if (value) {
-              return value;
-            }
+            const value = textOf(cell);
+            if (value) courseNameCandidates.push(value);
           }
         }
       }
     }
-    return "";
+    return JSON.stringify({ courseNameCandidates });
   }
   __mbgEntryResult = courseNameTables();
 })();

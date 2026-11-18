@@ -1,6 +1,6 @@
 export {};
 function downloadCapture() {
-  var captureVersion = 21;
+  var captureVersion = 22;
   if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
     if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
       window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -284,6 +284,15 @@ function downloadCapture() {
     return documents;
   }
 
+  function courseFromNames(names: Set<string>): MbgCourseEstimate | null {
+    if (!names.size) return null;
+    const courseNameAmbiguous = names.size > 1;
+    return {
+      courseName: courseNameAmbiguous ? '未分類' : normalizeCourseName(Array.from(names)[0]),
+      courseNameAmbiguous
+    };
+  }
+
   function firstUsefulText(selectors: string[], documents = collectDocuments()) {
     for (var i = 0; i < selectors.length; i += 1) {
       var names = new Set<string>();
@@ -296,22 +305,17 @@ function downloadCapture() {
           }
         }
       }
-      if (names.size) return names.size > 1 ? '未分類' : Array.from(names)[0];
+      if (names.size) return courseFromNames(names);
     }
-    return '';
+    return null;
   }
 
-  var courseNameAmbiguous = false;
-  function estimateCourseName(source?: HTMLElement | null) {
-    courseNameAmbiguous = false;
+  function estimateCourseName(source?: HTMLElement | null): MbgCourseEstimate {
     var documents = source && source.ownerDocument ? [source.ownerDocument] : collectDocuments();
     var row = source && source.closest ? source.closest('tr') : null;
-    var tableCourse = row ? firstCourseNameFromTables(documents, row) : '';
+    var tableCourse = row ? firstCourseNameFromTables(documents, row) : null;
     if (!tableCourse) tableCourse = firstCourseNameFromTables(documents);
-    if (tableCourse) {
-      courseNameAmbiguous = tableCourse === '未分類';
-      return normalizeCourseName(tableCourse);
-    }
+    if (tableCourse) return tableCourse;
 
     var explicitCourse = firstMatchingCourseNameText([
       'tr',
@@ -320,10 +324,7 @@ function downloadCapture() {
       'p',
       'span'
     ], documents);
-    if (explicitCourse) {
-      courseNameAmbiguous = explicitCourse === '未分類';
-      return normalizeCourseName(explicitCourse);
-    }
+    if (explicitCourse) return explicitCourse;
 
     var candidate = firstUsefulText([
       'h1',
@@ -337,18 +338,21 @@ function downloadCapture() {
       '.selected',
       '.active'
     ], documents);
-    if (candidate) {
-      courseNameAmbiguous = candidate === '未分類';
-      return normalizeCourseName(candidate);
-    }
+    if (candidate) return candidate;
     if (source) return estimateCourseName();
-    return normalizeCourseName(document.title || '未分類');
+    return {courseName: normalizeCourseName(document.title || '未分類'), courseNameAmbiguous: false};
   }
 
-  window.__MBG_ESTIMATE_COURSE_NAME = estimateCourseName;
+  function pageCourseName(): string;
+  function pageCourseName(detailed: true): MbgCourseEstimate;
+  function pageCourseName(detailed?: true) {
+    const estimate = estimateCourseName();
+    return detailed ? estimate : estimate.courseName;
+  }
+  window.__MBG_ESTIMATE_COURSE_NAME = pageCourseName;
 
   function coursePayload(source: HTMLElement) {
-    var courseName = estimateCourseName(source);
+    const {courseName, courseNameAmbiguous} = estimateCourseName(source);
     return {courseName: courseName,
       ...(courseNameAmbiguous ? {courseNameAmbiguous: true} : {})};
   }
@@ -393,7 +397,7 @@ function downloadCapture() {
         }
       }
     }
-    return names.size > 1 ? '未分類' : Array.from(names)[0] || '';
+    return courseFromNames(names);
   }
 
   function firstMatchingCourseNameText(selectors: string[], documents = collectDocuments()) {
@@ -409,9 +413,9 @@ function downloadCapture() {
           }
         }
       }
-      if (names.size) return names.size > 1 ? '未分類' : Array.from(names)[0];
+      if (names.size) return courseFromNames(names);
     }
-    return '';
+    return null;
   }
 
   function normalizeCourseName(text: string) {

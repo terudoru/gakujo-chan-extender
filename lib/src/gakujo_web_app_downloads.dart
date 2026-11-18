@@ -73,14 +73,31 @@ String? resolveGakujoDownloadCourseName({
   required String? initialCourseName,
   required int navigationRevision,
   required int currentNavigationRevision,
+}) => resolveGakujoDownloadCourseEstimate(
+  pageEstimate: GakujoCourseEstimate.fromName(
+    pageCourseName,
+    isUsefulGakujoCourseName,
+  ),
+  initialCourseName: initialCourseName,
+  navigationRevision: navigationRevision,
+  currentNavigationRevision: currentNavigationRevision,
+).courseName;
+
+@visibleForTesting
+GakujoCourseEstimate resolveGakujoDownloadCourseEstimate({
+  required GakujoCourseEstimate pageEstimate,
+  required String? initialCourseName,
+  required int navigationRevision,
+  required int currentNavigationRevision,
 }) {
   if (navigationRevision == currentNavigationRevision &&
-      isUsefulGakujoCourseName(pageCourseName ?? '')) {
-    return pageCourseName;
+      pageEstimate.courseName != null) {
+    return pageEstimate;
   }
-  return isUsefulGakujoCourseName(initialCourseName ?? '')
-      ? initialCourseName
-      : null;
+  return GakujoCourseEstimate.fromName(
+    initialCourseName,
+    isUsefulGakujoCourseName,
+  );
 }
 
 @visibleForTesting
@@ -937,16 +954,17 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     GakujoDownloadSnapshot? uploadSnapshot;
     try {
       if (!request.courseNameAmbiguous &&
-          !_isUsefulCourseName(request.courseName)) {
-        final pageCourseName = mounted && revision == _navigationRevision
+          !isUsefulGakujoCourseName(request.courseName)) {
+        final pageEstimate = mounted && revision == _navigationRevision
             ? await _estimateCourseNameFromPage(await _controller.getTitle())
-            : null;
-        final courseName = resolveGakujoDownloadCourseName(
-          pageCourseName: pageCourseName,
+            : const GakujoCourseEstimate.absent();
+        final course = resolveGakujoDownloadCourseEstimate(
+          pageEstimate: pageEstimate,
           initialCourseName: initialCourseName,
           navigationRevision: revision,
           currentNavigationRevision: _navigationRevision,
         );
+        final courseName = course.courseName;
         if (courseName != null) {
           effectiveRequest = GakujoDownloadRequest(
             url: request.url,
@@ -955,7 +973,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             fileName: request.fileName,
             formFields: request.formFields,
             formFieldPairs: request.formFieldPairs,
-            courseNameAmbiguous: request.courseNameAmbiguous,
+            courseNameAmbiguous: course.isAmbiguous,
           );
         }
       }

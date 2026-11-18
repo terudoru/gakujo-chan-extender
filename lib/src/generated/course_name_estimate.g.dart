@@ -7,7 +7,9 @@ const String gakujoCourseNameEstimateJs = r'''
 "use strict";
 (() => {
   // web_scripts/src/course_name_estimate/main.ts
-  __mbgEntryResult = window.__MBG_ESTIMATE_COURSE_NAME && window.__MBG_ESTIMATE_COURSE_NAME() || "";
+  var hook = window.__MBG_ESTIMATE_COURSE_NAME;
+  var estimate = typeof hook === "function" ? hook(true) : null;
+  __mbgEntryResult = JSON.stringify(typeof estimate === "string" ? { courseName: estimate, courseNameAmbiguous: false } : estimate != null ? estimate : null);
 })();
 var __mbgEntryResult;
 return __mbgEntryResult;

@@ -15,7 +15,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart'
     show LinuxDownloadProgress, LinuxKeyZoomAction;
 
-import 'generated/course_name_estimate.g.dart';
 import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
 import 'generated/navigator_user_agent.g.dart';
@@ -24,8 +23,6 @@ import 'generated/pdf_preview_ready.g.dart';
 import 'generated/preview_navigate.g.dart';
 import 'generated/portal_auth_state_probe.g.dart';
 import 'generated/authenticated_session_reset.g.dart';
-import 'generated/course_name_body_text.g.dart';
-import 'generated/course_name_tables.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
@@ -3138,20 +3135,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
       final revision = _navigationRevision;
       final title = await _controller.getTitle();
-      final pageCourseName = await _estimateCourseNameFromPage(title);
-      final courseName =
-          resolveGakujoDownloadCourseName(
-            pageCourseName: pageCourseName,
-            initialCourseName: null,
-            navigationRevision: revision,
-            currentNavigationRevision: _navigationRevision,
-          ) ??
-          '';
+      final pageEstimate = await _estimateCourseNameFromPage(title);
+      final course = resolveGakujoDownloadCourseEstimate(
+        pageEstimate: pageEstimate,
+        initialCourseName: null,
+        navigationRevision: revision,
+        currentNavigationRevision: _navigationRevision,
+      );
       await _handleDownloadRequest(
         GakujoDownloadRequest(
           url: request.url,
           method: 'GET',
-          courseName: courseName,
+          courseName: course.courseName ?? '',
+          courseNameAmbiguous: course.isAmbiguous,
           fileName: '',
           formFields: const {},
         ),
@@ -3168,56 +3164,27 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return GakujoNavigationDecision.navigate;
   }
 
-  Future<String> _estimateCourseNameFromPage(String? fallbackTitle) async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameEstimateJs,
-      );
-      final estimated = _stringFromJavaScriptResult(result).trim();
-      if (kDebugMode) {
-        debugPrint('MoreBetterGakujo course estimate script="$estimated"');
-      }
-      if (_isUsefulCourseName(estimated)) {
-        return estimated;
-      }
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to estimate course name from page',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    final tableEstimate = await _estimateCourseNameFromTables();
-    if (_isUsefulCourseName(tableEstimate)) {
-      return tableEstimate;
-    }
-
-    final bodyEstimate = await _estimateCourseNameFromBodyText();
-    if (_isUsefulCourseName(bodyEstimate)) {
-      return bodyEstimate;
-    }
-
-    final fallback = fallbackTitle?.trim() ?? '';
-    if (_isUsefulCourseName(fallback)) {
-      return fallback;
-    }
-    return '未分類';
-  }
+  Future<GakujoCourseEstimate> _estimateCourseNameFromPage(
+    String? fallbackTitle,
+  ) => estimateGakujoPageCourseName(
+    evaluate: _controller.runJavaScriptReturningResult,
+    isUseful: isUsefulGakujoCourseName,
+    fallbackTitle: fallbackTitle,
+  );
 
   Future<void> _refreshEstimatedCourseName() async {
     final revision = _navigationRevision;
     final estimated = await _estimateCourseNameFromPage(
       await _controller.getTitle(),
     );
-    if (!mounted || revision != _navigationRevision ||
-        !_isUsefulCourseName(estimated)) {
+    if (!mounted ||
+        revision != _navigationRevision ||
+        estimated.courseName == null) {
       return;
     }
-    _currentCourseName = estimated;
+    _currentCourseName = estimated.isAmbiguous ? null : estimated.courseName;
     if (kDebugMode) {
-      debugPrint('MoreBetterGakujo current course="$estimated"');
+      debugPrint('MoreBetterGakujo current course="$_currentCourseName"');
     }
   }
 
@@ -9457,80 +9424,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _boolFromJavaScriptResult(Object? result) {
     return javaScriptResultAsBool(result);
   }
-
-  Future<String> _estimateCourseNameFromBodyText() async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameBodyTextJs,
-      );
-      final bodyText = _stringFromJavaScriptResult(result);
-      final candidates = _courseNameCandidatesFromBodyText(bodyText);
-      final estimated = GakujoCourseNameEstimator.estimateFromCandidates(
-        candidates,
-      );
-      if (kDebugMode) {
-        debugPrint(
-          'MoreBetterGakujo course estimate body="$estimated" '
-          'candidates="${candidates.take(3).join(' / ')}"',
-        );
-      }
-      return estimated;
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to estimate course name from body text',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      return '未分類';
-    }
-  }
-
-  Future<String> _estimateCourseNameFromTables() async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameTablesJs,
-      );
-      final rawEstimate = _stringFromJavaScriptResult(result).trim();
-      final estimated = GakujoCourseNameEstimator.estimateFromCandidates([
-        rawEstimate,
-      ]);
-      if (kDebugMode) {
-        debugPrint(
-          'MoreBetterGakujo course estimate table="$estimated" '
-          'raw="$rawEstimate"',
-        );
-      }
-      return estimated;
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint('MoreBetterGakujo course estimate table failed: $error');
-      }
-      return '未分類';
-    }
-  }
-
-  List<String> _courseNameCandidatesFromBodyText(String bodyText) {
-    final lines = bodyText
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    final labeledLines = lines
-        .where(
-          (line) => RegExp(
-            r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]|\s)|科目\s*[:：])',
-          ).hasMatch(line),
-        )
-        .toList();
-    final compactBody = bodyText.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return [
-      ...labeledLines,
-      compactBody,
-    ];
-  }
-
-  bool _isUsefulCourseName(String value) => isUsefulGakujoCourseName(value);
 }
 
 /// Whether [url] is Gakujo's shared downloads tab.

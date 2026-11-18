@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:morebettergakujo_flutter/src/gakujo_download_capture_script.dart';
+import 'package:morebettergakujo_flutter/src/generated/course_name_estimate.g.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -321,6 +322,25 @@ void main() {
         ['線形代数', '物理学基礎BⅠ', '情報基礎']);
   });
 
+  test(
+    'fresh detailed and legacy estimates survive reinjection and teardown',
+    () async {
+      final result = await _evaluateBehavior('pageCourseEstimates', [
+        gakujoCourseNameEstimateJs,
+      ]);
+      const ambiguous = {'courseName': '未分類', 'courseNameAmbiguous': true};
+      const useful = {'courseName': 'Physics', 'courseNameAmbiguous': false};
+      const absent = {'courseName': '未分類', 'courseNameAmbiguous': false};
+      expect(result['names'], ['未分類', 'Physics', '未分類']);
+      expect(result['details'], [ambiguous, useful, absent]);
+      expect(result['primary'], [ambiguous, useful, absent]);
+      expect(result['tornDown'], isNull);
+      expect(result['legacyUnknown'], absent);
+      expect(result['legacyCourse'], useful);
+      expect(result['reinstalled'], absent);
+    },
+  );
+
   test('preserves English course names and strips only digit-bearing codes',
       () async {
     final result = await _evaluateBehavior('courseNameCodes');
@@ -505,12 +525,16 @@ void main() {
   });
 }
 
-Future<Map<String, dynamic>> _evaluateBehavior(String scenario) async {
+Future<Map<String, dynamic>> _evaluateBehavior(
+  String scenario, [
+  List<String> scripts = const [],
+]) async {
   final result = await _runNode([
     'test/support/gakujo_download_capture_script_download_capture_behavior_harness.cts',
     GakujoDownloadCaptureScript.build(),
     scenario,
     GakujoDownloadCaptureScript.buildTeardown(),
+    ...scripts,
   ], stdoutEncoding: utf8, stderrEncoding: utf8);
   expect(result.exitCode, 0, reason: result.stderr as String);
   return jsonDecode(result.stdout as String) as Map<String, dynamic>;

@@ -1,4 +1,10 @@
+import 'dart:convert';
+import 'dart:developer' as developer;
+
 import 'download_file_name_policy.dart';
+import 'generated/course_name_body_text.g.dart';
+import 'generated/course_name_estimate.g.dart';
+import 'generated/course_name_tables.g.dart';
 
 class GakujoCourseNameEstimator {
   const GakujoCourseNameEstimator._();
@@ -197,4 +203,110 @@ class GakujoCourseNameEstimator {
         .firstMatch(html);
     return match?.group(1);
   }
+}
+
+/// The evidence from a single page read. Only confirmed ambiguity suppresses
+/// both the starting-course fallback and filename inference.
+class GakujoCourseEstimate {
+  const GakujoCourseEstimate.absent() : courseName = null, isAmbiguous = false;
+  const GakujoCourseEstimate.ambiguous()
+    : courseName = DownloadFileNamePolicy.unknownCourseFolderName,
+      isAmbiguous = true;
+  const GakujoCourseEstimate._named(String name)
+    : courseName = name,
+      isAmbiguous = false;
+
+  factory GakujoCourseEstimate.fromName(
+    String? name,
+    bool Function(String) isUseful,
+  ) => name != null && isUseful(name)
+      ? GakujoCourseEstimate._named(name)
+      : const GakujoCourseEstimate.absent();
+
+  final String? courseName;
+  final bool isAmbiguous;
+}
+
+Future<GakujoCourseEstimate> estimateGakujoPageCourseName({
+  required Future<Object?> Function(String script) evaluate,
+  required bool Function(String name) isUseful,
+  String? fallbackTitle,
+}) async {
+  Future<Object?> read(String script, {bool json = true}) async {
+    try {
+      final result = await evaluate(script);
+      if (result is! String || result.isEmpty) return null;
+      // WebViews may wrap a JavaScript string in another JSON string.
+      var raw = result;
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        try {
+          raw = jsonDecode(raw) as String;
+        } on FormatException {
+          // Plain body text can itself start and end with a quote.
+        }
+      }
+      return json ? jsonDecode(raw) : raw;
+    } on FormatException {
+      return null;
+    } catch (error, stackTrace) {
+      developer.log(
+        'Failed to read course name evidence',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
+  final primary = await read(gakujoCourseNameEstimateJs);
+  if (primary case {
+    'courseName': final String name,
+    'courseNameAmbiguous': final bool ambiguous,
+  }) {
+    if (ambiguous && name == DownloadFileNamePolicy.unknownCourseFolderName) {
+      return const GakujoCourseEstimate.ambiguous();
+    }
+    if (!ambiguous && isUseful(name.trim())) {
+      return GakujoCourseEstimate._named(name.trim());
+    }
+  }
+
+  final tables = await read(gakujoCourseNameTablesJs);
+  if (tables case {'courseNameCandidates': final List<Object?> candidates}
+      when candidates.every((value) => value is String)) {
+    final names = candidates
+        .cast<String>()
+        .map((raw) => GakujoCourseNameEstimator.estimateFromCandidates([raw]))
+        .where(isUseful)
+        .toSet();
+    if (names.length > 1) return const GakujoCourseEstimate.ambiguous();
+    if (names.isNotEmpty) return GakujoCourseEstimate._named(names.single);
+  }
+
+  final body = await read(gakujoCourseNameBodyTextJs, json: false);
+  if (body is String) {
+    final name = GakujoCourseNameEstimator.estimateFromCandidates(
+      _courseNameCandidatesFromBodyText(body),
+    );
+    if (isUseful(name)) return GakujoCourseEstimate._named(name);
+  }
+  return GakujoCourseEstimate.fromName(fallbackTitle?.trim(), isUseful);
+}
+
+List<String> _courseNameCandidatesFromBodyText(String bodyText) {
+  final lines = bodyText
+      .split(RegExp(r'[\r\n]+'))
+      .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  final labeledLines = lines
+      .where(
+        (line) => RegExp(
+          r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]|\s)|科目\s*[:：])',
+        ).hasMatch(line),
+      )
+      .toList();
+  final compactBody = bodyText.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return [...labeledLines, compactBody];
 }

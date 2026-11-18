@@ -11,7 +11,7 @@ void main() {
         source.indexOf(
           'Future<GakujoNavigationDecision> _handleNavigationRequest(',
         ),
-        source.indexOf('Future<String> _estimateCourseNameFromPage('),
+        source.indexOf('Future<GakujoCourseEstimate> _estimateCourseNameFromPage('),
       );
 
       expect(
@@ -22,13 +22,13 @@ void main() {
         navigation,
         matches(
           RegExp(
-            r'final pageCourseName = await _estimateCourseNameFromPage\(title\);\s*'
-            r'final courseName =\s*resolveGakujoDownloadCourseName\(\s*'
-            r'pageCourseName: pageCourseName,\s*'
+            r'final pageEstimate = await _estimateCourseNameFromPage\(title\);\s*'
+            r'final course =\s*resolveGakujoDownloadCourseEstimate\(\s*'
+            r'pageEstimate: pageEstimate,\s*'
             r'initialCourseName: null,\s*'
             r'navigationRevision: revision,\s*'
             r'currentNavigationRevision: _navigationRevision,\s*'
-            r"\)\s*\?\?\s*'';",
+            r'\);',
           ),
         ),
       );
@@ -37,7 +37,8 @@ void main() {
         matches(
           RegExp(
             r'await _handleDownloadRequest\(\s*GakujoDownloadRequest\('
-            r'[\s\S]*?courseName: courseName,[\s\S]*?\),\s*'
+            r"[\s\S]*?courseName: course\.courseName \?\? '',\s*"
+            r'courseNameAmbiguous: course\.isAmbiguous,[\s\S]*?\),\s*'
             r'navigationRevision: revision,\s*\);',
           ),
         ),
@@ -74,11 +75,11 @@ void main() {
       handler,
       matches(
         RegExp(
-          r'final pageCourseName = mounted && revision == _navigationRevision\s*'
+          r'final pageEstimate = mounted && revision == _navigationRevision\s*'
           r'\? await _estimateCourseNameFromPage\(await _controller.getTitle\(\)\)\s*'
-          r': null;\s*'
-          r'final courseName = resolveGakujoDownloadCourseName\(\s*'
-          r'pageCourseName: pageCourseName,\s*'
+          r': const GakujoCourseEstimate\.absent\(\);\s*'
+          r'final course = resolveGakujoDownloadCourseEstimate\(\s*'
+          r'pageEstimate: pageEstimate,\s*'
           r'initialCourseName: initialCourseName,\s*'
           r'navigationRevision: revision,\s*'
           r'currentNavigationRevision: _navigationRevision,',
