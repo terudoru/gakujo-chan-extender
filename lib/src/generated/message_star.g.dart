@@ -13,6 +13,25 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
   // web_scripts/src/shared/page_watch.ts
+  function collectPageDocuments(win) {
+    var docs = [];
+    function collect(current) {
+      try {
+        var doc = current.document;
+        if (!doc || docs.indexOf(doc) >= 0 || doc.defaultView === null) return;
+        docs.push(doc);
+        for (var i = 0; i < current.frames.length; i += 1) {
+          try {
+            collect(current.frames[i]);
+          } catch (_) {
+          }
+        }
+      } catch (_) {
+      }
+    }
+    collect(win);
+    return docs;
+  }
   function watchPage(win, callback, options) {
     var Observer = win.MutationObserver;
     if (typeof Observer !== "function") {
@@ -35,23 +54,7 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
         run();
       }, 100);
     }
-    function sync() {
-      var docs = [];
-      function collect(current) {
-        try {
-          var doc = current.document;
-          if (!doc || docs.indexOf(doc) >= 0 || doc.defaultView === null) return;
-          docs.push(doc);
-          for (var i2 = 0; i2 < current.frames.length; i2 += 1) {
-            try {
-              collect(current.frames[i2]);
-            } catch (_) {
-            }
-          }
-        } catch (_) {
-        }
-      }
-      collect(win);
+    function sync(docs) {
       for (var i = entries.length - 1; i >= 0; i -= 1) {
         if (docs.indexOf(entries[i].doc) < 0) {
           remove(entries[i]);
@@ -85,33 +88,37 @@ const String _gakujoMessageStarJsPrefix = r'''(function(__mbgConfig) {
       entry.doc.removeEventListener("input", schedule, true);
       entry.doc.removeEventListener("change", schedule, true);
     }
-    function run() {
-      if (disposed) return;
+    function run(docs) {
+      if (disposed) return false;
       if (timer !== void 0) {
         win.clearTimeout(timer);
         timer = void 0;
       }
-      sync();
+      sync(docs || collectPageDocuments(win));
       running = true;
       state.running += 1;
+      var changed = false;
       try {
         callback();
       } catch (_) {
       } finally {
         state.observers.forEach(function(observer) {
-          observer.takeRecords();
+          if (observer.takeRecords().length) changed = true;
         });
         state.running -= 1;
         running = false;
       }
+      return changed;
     }
-    sync();
+    sync(collectPageDocuments(win));
     var fallbackKey = String(options.fallbackMs);
     var fallback = fallbacks[fallbackKey];
     if (!fallback) {
       fallback = { timer: win.setInterval(function() {
+        var docs;
         fallback.runs.slice().forEach(function(registeredRun) {
-          registeredRun();
+          if (!docs) docs = collectPageDocuments(win);
+          if (registeredRun(docs)) docs = void 0;
         });
       }, options.fallbackMs), runs: [] };
       fallbacks[fallbackKey] = fallback;

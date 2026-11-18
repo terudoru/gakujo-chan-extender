@@ -1,7 +1,23 @@
 declare global {
   interface Window {
-    __MBG_PAGE_WATCH_STATE?: { running: number; observers: MutationObserver[]; fallbacks?: { [ms: string]: { timer: number; runs: Array<() => void> } } };
+    __MBG_PAGE_WATCH_STATE?: { running: number; observers: MutationObserver[]; fallbacks?: { [ms: string]: { timer: number; runs: Array<(docs: Document[]) => boolean> } } };
   }
+}
+
+function collectPageDocuments(win: Window): Document[] {
+  var docs: Document[] = [];
+  function collect(current: Window) {
+    try {
+      var doc = current.document;
+      if (!doc || docs.indexOf(doc) >= 0 || doc.defaultView === null) return;
+      docs.push(doc);
+      for (var i = 0; i < current.frames.length; i += 1) {
+        try { collect(current.frames[i]); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+  collect(win);
+  return docs;
 }
 
 export function watchPage(win: Window, callback: () => void, options: { fallbackMs: number; legacyIntervalMs: number; onMutation?: (doc: Document) => void }): () => void {
@@ -24,19 +40,7 @@ export function watchPage(win: Window, callback: () => void, options: { fallback
     timer = win.setTimeout(function() { timer = undefined; run(); }, 100);
   }
 
-  function sync() {
-    var docs: Document[] = [];
-    function collect(current: Window) {
-      try {
-        var doc = current.document;
-        if (!doc || docs.indexOf(doc) >= 0 || doc.defaultView === null) return;
-        docs.push(doc);
-        for (var i = 0; i < current.frames.length; i += 1) {
-          try { collect(current.frames[i]); } catch (_) {}
-        }
-      } catch (_) {}
-    }
-    collect(win);
+  function sync(docs: Document[]) {
     for (var i = entries.length - 1; i >= 0; i -= 1) {
       if (docs.indexOf(entries[i].doc) < 0) {
         remove(entries[i]);
@@ -69,25 +73,34 @@ export function watchPage(win: Window, callback: () => void, options: { fallback
     entry.doc.removeEventListener('change', schedule, true);
   }
 
-  function run() {
-    if (disposed) return;
+  function run(docs?: Document[]): boolean {
+    if (disposed) return false;
     if (timer !== undefined) { win.clearTimeout(timer); timer = undefined; }
-    sync();
+    sync(docs || collectPageDocuments(win));
     running = true;
     state.running += 1;
+    var changed = false;
     try { callback(); } catch (_) {} finally {
-      state.observers.forEach(function(observer) { observer.takeRecords(); });
+      state.observers.forEach(function(observer) {
+        if (observer.takeRecords().length) changed = true;
+      });
       state.running -= 1;
       running = false;
     }
+    return changed;
   }
 
-  sync();
+  sync(collectPageDocuments(win));
   var fallbackKey = String(options.fallbackMs);
   var fallback = fallbacks[fallbackKey];
   if (!fallback) {
     fallback = { timer: win.setInterval(function() {
-      fallback.runs.slice().forEach(function(registeredRun) { registeredRun(); });
+      var docs: Document[] | undefined;
+      fallback.runs.slice().forEach(function(registeredRun) {
+        if (!docs) docs = collectPageDocuments(win);
+        // A callback can insert or remove a frame before the next watcher runs.
+        if (registeredRun(docs)) docs = undefined;
+      });
     }, options.fallbackMs), runs: [] };
     fallbacks[fallbackKey] = fallback;
   }

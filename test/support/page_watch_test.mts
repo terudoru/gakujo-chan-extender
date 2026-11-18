@@ -13,7 +13,11 @@ class FakeObserver {
   constructor(callback: () => void) { this.callback = callback; observers.push(this); }
   observe(target: any) { this.target = target; this.active = true; }
   disconnect() { this.active = false; }
-  takeRecords() { this.pending = false; return []; }
+  takeRecords() {
+    const records = this.pending ? [{}] : [];
+    this.pending = false;
+    return records;
+  }
 }
 function makeDocument() {
   const listeners = new Map<string, Set<() => void>>();
@@ -97,3 +101,45 @@ assert.ok(win.__MBG_PAGE_WATCH_STATE);
 secondDispose();
 assert.equal(intervals.size, 0);
 assert.equal(win.__MBG_PAGE_WATCH_STATE, undefined);
+
+let documentReads = 0;
+const nextChild = makeDocument();
+const readableFrame = {
+  get document() { documentReads++; return nextChild; },
+  frames: [],
+};
+Object.defineProperty(win, 'document', {
+  get() { documentReads++; return doc; },
+});
+win.frames = [{ document: child, frames: [] }];
+let fallbackRuns = 0;
+const disposers = Array.from({ length: 4 }, () =>
+  watchPage(win, () => { fallbackRuns++; }, { fallbackMs: 5000, legacyIntervalMs: 500 }));
+win.frames = [readableFrame, {
+  get document() { throw new Error('inaccessible frame'); },
+}];
+documentReads = 0;
+intervals.values().next().value!.callback();
+assert.equal(fallbackRuns, 4);
+assert.equal(documentReads, 2);
+assert.equal(child.listenerCount(), 0);
+assert.equal(nextChild.listenerCount(), 12);
+disposers.forEach(dispose => dispose());
+assert.equal(nextChild.listenerCount(), 0);
+assert.equal(intervals.size, 0);
+
+win.frames = [];
+const injectFrame = watchPage(win, () => {
+  win.frames = [readableFrame];
+  observers.filter(o => o.active).forEach(o => { o.pending = true; });
+}, { fallbackMs: 5000, legacyIntervalMs: 500 });
+let frameRuns = 0;
+const watchFrame = watchPage(win, () => { frameRuns++; }, {
+  fallbackMs: 5000, legacyIntervalMs: 500,
+});
+intervals.values().next().value!.callback();
+nextChild.emit('input');
+flush();
+assert.equal(frameRuns, 2);
+injectFrame();
+watchFrame();

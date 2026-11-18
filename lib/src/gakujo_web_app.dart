@@ -1821,7 +1821,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final bool _debugAllowed;
   String? _currentPageUrl;
   String? _lastAllowedPageUrl;
-  String _status = '準備中';
+  final _status = ValueNotifier('準備中');
   SnackBar? _linuxSnackBar;
   final _linuxDownloads = <String, LinuxDownloadProgress>{};
   bool _linuxFindOpen = false;
@@ -2094,7 +2094,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     if (_secureStorageAccessAllowed) {
       unawaited(_loadDownloadRoot());
-      unawaited(_compactStoredData());
     }
     _initialPageLoaded = _loadInitialPage();
     _notificationService.setDeadlineNotificationTappedHandler(
@@ -2118,6 +2117,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     _cancelDriveUploads();
+    _status.dispose();
     unawaited(_pdfPreviewServer.close());
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
@@ -2521,11 +2521,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   ),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      _status,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
+                    child: ValueListenableBuilder<String>(
+                      valueListenable: _status,
+                      builder: (context, status, _) => Text(
+                        status,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                   ),
                 ),
@@ -5708,8 +5711,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   });
 
   void _beginNavigation({bool preservesPendingMessageOpen = false}) {
-    _virtualPreviewForward = false;
-    _returnDialogMarker = null;
+    if (mounted && (_virtualPreviewForward || _returnDialogMarker != null)) {
+      setState(() {
+        _virtualPreviewForward = false;
+        _returnDialogMarker = null;
+      });
+    }
     _activePreviewToken = null;
     if (_previewNavigationState != 'none' && mounted) {
       _handlePreviewNavigationState('none');
@@ -5765,7 +5772,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool ownsPageNavigationOperation = false,
   }) async {
     _detachedPreviewToken = null;
-    _virtualPreviewForward = false;
+    if (mounted && _virtualPreviewForward) {
+      setState(() => _virtualPreviewForward = false);
+    }
     if (!AllowedWebOrigins.canNavigate(url, debugAllowed: _debugAllowed)) {
       _setPendingReturnDialog(null);
       _showSnackBar('許可されていない外部URLは開けません');
@@ -5963,7 +5972,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool ownsPageNavigationOperation = false,
   }) async {
     _detachedPreviewToken = null;
-    _virtualPreviewForward = false;
+    if (mounted && _virtualPreviewForward) {
+      setState(() => _virtualPreviewForward = false);
+    }
     if (_calendarOperationGate.isRunning && !ownsPageNavigationOperation) {
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return false;
@@ -8109,7 +8120,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
             _lastAllowedPageUrl = url;
           }
-          unawaited(_refreshNavigationState());
+          unawaited(_refreshNavigationState(revision: _navigationRevision));
           _setStatus('読み込み中: ${_displayUrl(url)}');
         },
         onPageFinished: (url) async {
@@ -8208,15 +8219,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               stillCurrent: stillCurrent,
             );
             if (!stillCurrent()) return;
-            await _refreshNavigationState();
-            if (!stillCurrent()) {
-              return;
-            }
             await _injectExpiredPageRecoveryIfAllowed();
-            if (!stillCurrent()) {
-              return;
-            }
-            await _injectTimeoutPopupIfAllowed();
             if (!stillCurrent()) {
               return;
             }
@@ -8227,11 +8230,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             // Both read the keychain, which can wait on a macOS access dialog
             // indefinitely; do not hold back download capture and the rest.
             unawaited(() async {
-              await _injectLoginAutofillAssistIfAllowed();
-              if (stillCurrent()) {
+              if (authState == GakujoPortalAuthState.twoFactor &&
+                  _secureStorageAccessAllowed) {
                 await _injectTwoFactorAutofillIfAllowed();
+                if (stillCurrent()) await _injectLoginAutofillAssistIfAllowed();
+              } else {
+                await _injectLoginAutofillAssistIfAllowed();
+                if (stillCurrent()) await _injectTwoFactorAutofillIfAllowed();
               }
             }());
+            await _refreshNavigationState(revision: navigationRevision);
+            if (!stillCurrent()) return;
+            await _injectTimeoutPopupIfAllowed();
+            if (!stillCurrent()) return;
             await _injectDownloadCaptureIfAllowed();
             if (!stillCurrent()) {
               return;
@@ -9289,12 +9300,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
-    setState(() {
-      _status = gakujoUserFacingMessage(
-        status,
-        platform: defaultTargetPlatform,
-      );
-    });
+    _status.value = gakujoUserFacingMessage(
+      status,
+      platform: defaultTargetPlatform,
+    );
   }
 
   void _showSnackBar(

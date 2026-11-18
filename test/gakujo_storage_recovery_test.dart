@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,8 @@ import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart';
+import 'package:webview_flutter_windows/webview_flutter_windows.dart'
+    as windows;
 
 class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
   _StartupLocalPrefsStore({required this.onObservation});
@@ -65,6 +68,8 @@ void main() {
   var channelGuardScripts = 0;
   var retrying = false;
   var setupCompleted = false;
+  var twoFactorFixture = false;
+  Completer<void>? popupPause;
 
   setUp(() {
     LinuxWebViewPlatform.registerWith();
@@ -76,9 +81,16 @@ void main() {
     channelGuardScripts = 0;
     retrying = false;
     setupCompleted = false;
+    twoFactorFixture = false;
+    popupPause = null;
     messenger.setMockMethodCallHandler(storage, (call) async {
       methodCalls.add('storage.${call.method}');
       if (call.method == 'containsKey') return false;
+      if (twoFactorFixture &&
+          call.method == 'read' &&
+          (call.arguments as Map)['key'] == 'more_better_gakujo_2fa_secret') {
+        return 'JBSWY3DPEHPK3PXP';
+      }
       if (call.method == 'readAll' ||
           (call.method == 'read' &&
               (call.arguments as Map)['key'] ==
@@ -90,7 +102,7 @@ void main() {
         methodCalls.add(
           'storage.${call.method}.unlockWaiting:setupCompleted=$setupCompleted',
         );
-        await unlock.future;
+        if (!unlock.isCompleted) await unlock.future;
         methodCalls.add(
           'storage.${call.method}.unlockCompleted:setupCompleted=$setupCompleted',
         );
@@ -129,6 +141,29 @@ void main() {
     });
     messenger.setMockMethodCallHandler(windowsView, (call) async {
       methodCalls.add('windowsView.${call.method}');
+      if (call.method == 'executeScript' && popupPause != null) {
+        final script = call.arguments as String;
+        if (script == gakujoPortalAuthStateProbeScript) {
+          return jsonEncode({
+            ...loginProbeResult,
+            'hasLoginFields': !twoFactorFixture,
+            'hasTwoFactorField': twoFactorFixture,
+          });
+        }
+        // Classify the scripts without storing their configs.
+        if (script.contains('// web_scripts/src/timeout_popup/main.ts')) {
+          methodCalls.add('timeoutPopup');
+          await popupPause!.future;
+        } else if (script.contains(
+          '// web_scripts/src/login_autofill_assist/main.ts',
+        )) {
+          methodCalls.add('passwordAutofill');
+        } else if (script.contains(
+          '// web_scripts/src/two_factor_autofill/main.ts',
+        )) {
+          methodCalls.add('twoFactorAutofill');
+        }
+      }
       return null;
     });
     messenger.setMockMethodCallHandler(LinuxWebViewController.rootChannel, (
@@ -179,6 +214,69 @@ void main() {
       messenger.setMockStreamHandler(channel, null);
     }
   });
+
+  for (final twoFactor in [false, true]) {
+    testWidgets(
+      'autofill proceeds while the popup script is pending (2FA=$twoFactor)',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+        twoFactorFixture = twoFactor;
+        retrying = true;
+        setupCompleted = true;
+        unlock.complete();
+        messenger.setMockStreamHandler(
+          windowsEvents,
+          MockStreamHandler.inline(
+            onListen: (_, sink) {
+              eventSinks[windowsEvents.name] = sink;
+            },
+          ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GakujoWebApp(
+              localPrefsStore: _StartupLocalPrefsStore(
+                onObservation: methodCalls.add,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        const url =
+            'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do';
+        final sink = eventSinks[windowsEvents.name]!;
+        sink.success({'type': 'urlChanged', 'value': url});
+        await tester.pumpAndSettle();
+        expect(find.text('読み込み中: $url'), findsOneWidget);
+
+        final blockedPopup = popupPause = Completer<void>();
+        try {
+          methodCalls.clear();
+          sink.success({
+            'type': 'loadingStateChanged',
+            'value': windows.LoadingState.navigationCompleted.index,
+          });
+          await tester.pumpAndSettle();
+          expect(methodCalls, contains('timeoutPopup'));
+          final autofill = methodCalls.where(
+            (call) => call.endsWith('Autofill'),
+          );
+          expect(
+            autofill.firstOrNull,
+            twoFactor ? 'twoFactorAutofill' : 'passwordAutofill',
+            reason: methodCalls.join(', '),
+          );
+        } finally {
+          blockedPopup.complete();
+        }
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+        debugDefaultTargetPlatformOverride = null;
+      },
+      skip: !Platform.isWindows,
+    );
+  }
 
   for (final platform in [TargetPlatform.linux, TargetPlatform.windows]) {
     for (final completed in [false, true]) {
