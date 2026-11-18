@@ -736,6 +736,7 @@ class GakujoWebApp extends StatefulWidget {
     this._debugAllowed,
     this._gakujoReachable,
     this._updateService,
+    this.updateNow = DateTime.now,
     this.linuxOverlayObscured,
   });
 
@@ -749,6 +750,7 @@ class GakujoWebApp extends StatefulWidget {
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
   final AppUpdateService? _updateService;
+  final DateTime Function() updateNow;
   final ValueListenable<bool>? linuxOverlayObscured;
 
   @override
@@ -1807,7 +1809,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _deadlineNotificationCoordinator;
   late final AppUpdateService _updateService;
   AppUpdateInfo? _availableUpdate;
-  DateTime? _nextUpdateCheckAt;
+  DateTime? _lastDailyUpdateCheckAt;
+  DateTime? _updateRetryNotBefore;
   bool _isCheckingUpdateInBackground = false;
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
@@ -2539,12 +2542,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (_availableUpdate != null &&
                 _appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) &&
                 !compactPreviewForKeyboard)
-              AppUpdateBanner(
-                latestVersion: _availableUpdate!.latestVersion,
-                currentVersion: _availableUpdate!.currentVersion,
-                onOpen: () => unawaited(_openUpdateReleasePage()),
-                onDismiss: () => unawaited(_dismissUpdateNotice()),
-              ),
+              _buildUpdateBanner(_availableUpdate!),
             if (defaultTargetPlatform == TargetPlatform.linux &&
                 _linuxFindOpen &&
                 !_isSettingsDialogOpen)
@@ -4911,12 +4909,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _checkForUpdatesInBackground() async {
-    final now = DateTime.now();
     if (!mounted ||
         !_appSettingsLoaded ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
-        _isCheckingUpdateInBackground ||
-        (_nextUpdateCheckAt?.isAfter(now) ?? false)) {
+        _isCheckingUpdateInBackground) {
+      return;
+    }
+    final now = widget.updateNow();
+    if ((_updateRetryNotBefore?.isAfter(now) ?? false) ||
+        !isUpdateCheckDue(_lastDailyUpdateCheckAt, now)) {
       return;
     }
     _isCheckingUpdateInBackground = true;
@@ -4925,8 +4926,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final prefs = await _localPrefsStore.load();
       if (!mounted) return;
       if (!isUpdateCheckDue(prefs?.lastUpdateCheckAt, now)) {
-        _nextUpdateCheckAt =
-            prefs!.lastUpdateCheckAt!.add(appUpdateCheckInterval);
+        _lastDailyUpdateCheckAt = prefs!.lastUpdateCheckAt;
+        _updateRetryNotBefore = null;
         return;
       }
       final packageInfo = await PackageInfo.fromPlatform();
@@ -4934,26 +4935,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final info = await _updateService.checkLatestRelease(
         currentVersion: packageInfo.version,
       );
-      if (!mounted) return;
-      if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
-          (previouslyAvailable != null &&
-              _availableUpdate != previouslyAvailable)) {
+      if (!mounted ||
+          !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice)) {
         return;
       }
-      if (shouldNotifyAboutUpdate(
-        info,
-        platform: defaultTargetPlatform,
-        dismissedVersion: prefs?.dismissedUpdateVersion,
-      )) {
+      final current = _availableUpdate;
+      if (current != null && !identical(current, previouslyAvailable)) return;
+      // Only dismissal can clear the banner while this single check is running.
+      // Its queued save owns the dismissal timestamp.
+      final dismissedDuringCheck = current == null ? previouslyAvailable : null;
+      if (info.latestVersion != dismissedDuringCheck?.latestVersion &&
+          shouldNotifyAboutUpdate(
+            info,
+            platform: defaultTargetPlatform,
+            dismissedVersion: prefs?.dismissedUpdateVersion,
+          )) {
         setState(() => _availableUpdate = info);
-      } else {
-        if (_availableUpdate != null) {
+      } else if (dismissedDuringCheck == null) {
+        if (current != null) {
           setState(() => _availableUpdate = null);
         }
         await _localPrefsStore.saveUpdateCheck(checkedAt: now);
         if (!mounted) return;
       }
-      _nextUpdateCheckAt = now.add(appUpdateCheckInterval);
+      _lastDailyUpdateCheckAt = now;
+      _updateRetryNotBefore = null;
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to check for application updates in background',
@@ -4961,20 +4967,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
-      _nextUpdateCheckAt = now.add(const Duration(hours: 1));
+      _lastDailyUpdateCheckAt = null;
+      _updateRetryNotBefore = now.add(const Duration(hours: 1));
     } finally {
       _isCheckingUpdateInBackground = false;
     }
   }
 
-  Future<void> _dismissUpdateNotice() async {
-    final info = _availableUpdate;
-    if (info == null) return;
-    setState(() => _availableUpdate = null);
+  AppUpdateBanner _buildUpdateBanner(AppUpdateInfo displayed) {
+    var dismissed = false;
+    return AppUpdateBanner(
+      latestVersion: displayed.latestVersion,
+      currentVersion: displayed.currentVersion,
+      onOpen: () => unawaited(_openUpdateReleasePage()),
+      onDismiss: () {
+        // The same button can still receive taps before the next frame.
+        if (dismissed) return;
+        dismissed = true;
+        unawaited(_dismissUpdateNotice(displayed.latestVersion));
+      },
+    );
+  }
+
+  Future<void> _dismissUpdateNotice(String displayedVersion) async {
+    if (!mounted) return;
+    if (_availableUpdate?.latestVersion == displayedVersion) {
+      setState(() => _availableUpdate = null);
+    }
     try {
       await _localPrefsStore.saveUpdateCheck(
-        checkedAt: DateTime.now(),
-        dismissedVersion: info.latestVersion,
+        checkedAt: widget.updateNow(),
+        dismissedVersion: displayedVersion,
       );
     } on Object catch (error, stackTrace) {
       developer.log(
