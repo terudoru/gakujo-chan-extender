@@ -313,6 +313,7 @@ class Webview {
  private:
   HWND hwnd_;
   HWND flutter_view_hwnd_;
+  bool file_drop_registered_ = false;
   bool owns_window_;
   bool is_valid_ = false;
   // The geometry last applied by SetSurfaceSize and the bounds derived from
@@ -363,6 +364,7 @@ class Webview {
       WebviewHost* host, HWND hwnd, HWND flutter_view_hwnd, bool owns_window,
       bool offscreen_only);
 
+  void RegisterFileDropTarget();
   bool CreateSurface(
       winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor,
       HWND hwnd, bool offscreen_only);

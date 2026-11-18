@@ -125,6 +125,7 @@ part 'gakujo_web_app_calendar.dart';
 part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_assignment_files.dart';
+part 'gakujo_web_app_toolbar_links.dart';
 part 'gakujo_web_app_models.dart';
 part 'gakujo_web_app_message_stars.dart';
 part 'gakujo_web_app_report_drafts.dart';
@@ -739,6 +740,7 @@ class GakujoWebApp extends StatefulWidget {
     this._lastPageStore,
     this._appSettingsStore,
     this._localPrefsStore,
+    this._toolbarLinksStore,
     this._startUrl,
     this._initialTwoFactorSecret,
     this._debugAllowed,
@@ -752,6 +754,7 @@ class GakujoWebApp extends StatefulWidget {
   final GakujoLastPageStore? _lastPageStore;
   final GakujoAppSettingsStore? _appSettingsStore;
   final GakujoLocalPrefsStore? _localPrefsStore;
+  final GakujoToolbarLinksStore? _toolbarLinksStore;
   final String? _startUrl;
   final String? _initialTwoFactorSecret;
   final bool? _debugAllowed;
@@ -1821,6 +1824,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoLastPageStore _lastPageStore;
   late final GakujoAppSettingsStore _appSettingsStore;
   late final GakujoLocalPrefsStore _localPrefsStore;
+  late final GakujoToolbarLinksStore _toolbarLinksStore;
+  bool _toolbarEditorOpen = false;
+  List<GakujoToolbarLink>? _toolbarLinks;
+  Future<bool>? _toolbarLinksLoad;
+  int _toolbarLinksGeneration = 0;
   late final MacosInputFocusService _macosInputFocusService;
   late final bool _debugAllowed;
   String? _currentPageUrl;
@@ -2006,6 +2014,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _academicCalendarResolver = const GakujoAcademicCalendarResolver();
     _lastPageStore = widget._lastPageStore ?? GakujoLastPageStore();
     _localPrefsStore = widget._localPrefsStore ?? GakujoLocalPrefsStore();
+    _toolbarLinksStore = widget._toolbarLinksStore ?? GakujoToolbarLinksStore();
+    unawaited(_loadToolbarLinks());
     unawaited(_restoreSavedGpa());
     _macosInputFocusService = const MacosInputFocusService();
     _debugAllowed = widget._debugAllowed ?? kDebugMode;
@@ -2483,12 +2493,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 iconSize: _toolbarIconSize,
                 icon: const Icon(Icons.more_vert),
                 itemBuilder: (context) => [
-                  for (final destination in GakujoQuickJumpDestination.values)
+                  for (final link in _toolbarLinks ?? GakujoToolbarLink.defaults)
                     PopupMenuItem<Object>(
-                      value: destination,
-                      child: Text('${destination.label}へ移動'),
+                      value: link,
+                      child: Text(link.label, maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
-                  const PopupMenuDivider(),
+                  if ((_toolbarLinks ?? GakujoToolbarLink.defaults).isNotEmpty)
+                    const PopupMenuDivider(),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
@@ -3711,10 +3722,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                 SettingsExpansionSection(
                   title: '学務情報システムの画面',
                   icon: Icons.web_asset_outlined,
-                  subtitle: '開く画面・自動圧縮・除外キーワード',
+                  subtitle: '開く画面・︙メニュー・自動圧縮',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.more_vert),
+                        title: const Text('︙メニューを編集'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => unawaited(_editToolbarLinks(dialogContext)),
+                      ),
+                      const Divider(height: 32),
                       GakujoPageModeSection(
                         pageMode: selectedPageMode,
                         onChanged: (mode) async {
@@ -5039,9 +5058,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       launched = await launchUrl(url, mode: LaunchMode.externalApplication);
     } on Object catch (error, stackTrace) {
       developer.log(
-        'Failed to open an external URL',
+        'Failed to open an external URL: ${error.runtimeType}',
         name: 'MoreBetterGakujo',
-        error: error,
         stackTrace: stackTrace,
       );
     }
@@ -5390,15 +5408,78 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _loadAllowedPageUrl(gakujoHomePortalUrl);
   }
 
+  Future<bool> _loadToolbarLinks() async {
+    if (_toolbarLinks != null) return true;
+    final pending = _toolbarLinksLoad;
+    if (pending != null) return pending;
+
+    final generation = _toolbarLinksGeneration;
+    final load = () async {
+      try {
+        final links = await _toolbarLinksStore.load();
+        if (!mounted || generation != _toolbarLinksGeneration) return false;
+        setState(() => _toolbarLinks = links);
+        return true;
+      } on Object {
+        // The default navigation stays available if preferences cannot be read.
+        return false;
+      }
+    }();
+    _toolbarLinksLoad = load;
+    try {
+      return await load;
+    } finally {
+      if (identical(_toolbarLinksLoad, load)) _toolbarLinksLoad = null;
+    }
+  }
+
+  Future<void> _editToolbarLinks(BuildContext settingsContext) async {
+    if (_toolbarEditorOpen) return;
+    _toolbarEditorOpen = true;
+    try {
+      await _showToolbarLinksEditor(settingsContext);
+    } finally {
+      _toolbarEditorOpen = false;
+    }
+  }
+
+  Future<void> _showToolbarLinksEditor(BuildContext settingsContext) async {
+    if (!await _loadToolbarLinks()) {
+      if (mounted) _showSnackBar('メニューの設定を読み込めませんでした');
+      return;
+    }
+    if (!mounted || !settingsContext.mounted) return;
+    final generation = _toolbarLinksGeneration;
+    await showDialog<void>(
+      context: settingsContext,
+      barrierDismissible: false,
+      builder: (_) => GakujoToolbarLinksDialog(
+        initialLinks: _toolbarLinks!,
+        onSave: (links) => _settingsOperations.runExclusive(() async {
+          if (!mounted || generation != _toolbarLinksGeneration) return false;
+          await _toolbarLinksStore.save(links);
+          if (!mounted || generation != _toolbarLinksGeneration) return false;
+          setState(() => _toolbarLinks = links);
+          return true;
+        }),
+      ),
+    );
+  }
+
   Future<void> _handleToolbarSelection(Object selection) async {
-    if (selection is GakujoQuickJumpDestination) {
+    if (selection is GakujoToolbarLink) {
       _setPendingReturnDialog(null);
       if (_calendarOperationGate.isRunning) {
         _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
         return;
       }
       _setPendingMessageUrl(null);
-      await _loadAllowedPageUrl(selection.portalUrl);
+      final address = selection.address;
+      if (AllowedWebOrigins.canLoad(address, debugAllowed: false)) {
+        await _loadAllowedPageUrl(address);
+      } else if (selection.url case final url?) {
+        await _launchExternalUrl(url);
+      }
       return;
     }
     await _handleToolbarAction(selection as _ToolbarAction);
@@ -8781,6 +8862,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _starSyncLoad = null;
       });
       await _localPrefsStore.clear();
+      await _settingsOperations.runExclusive(() async {
+        _toolbarLinksGeneration++;
+        _toolbarLinksLoad = null;
+        await _toolbarLinksStore.clear();
+        if (mounted) setState(() => _toolbarLinks = GakujoToolbarLink.defaults);
+      });
       await _pdfReadingProgress.clear();
       await _applyFeatureFlagRuntimeState(
         GakujoFeatureFlag.loginAutofill,

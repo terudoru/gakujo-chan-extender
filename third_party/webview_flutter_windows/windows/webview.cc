@@ -1,11 +1,13 @@
 #include "webview.h"
 
+#include <ole2.h>
 #include <wrl.h>
 
 #include <format>
 #include <iostream>
 
 #include "util/composition.desktop.interop.h"
+#include "util/file_drop_target.h"
 #include "util/string_converter.h"
 #include "util/surface_geometry.h"
 #include "webview_host.h"
@@ -101,9 +103,14 @@ Webview::Webview(
   RegisterEventHandlers();
 
   is_valid_ = CreateSurface(host->compositor(), hwnd, offscreen_only);
+  if (is_valid_) RegisterFileDropTarget();
 }
 
 Webview::~Webview() {
+  if (file_drop_registered_) {
+    RevokeDragDrop(flutter_view_hwnd_);
+    OleUninitialize();
+  }
   // Drop the focus callback before closing: Close() can synchronously raise
   // LostFocus, and by destruction time the owning bridge's event sink may
   // already be gone.
@@ -116,6 +123,31 @@ Webview::~Webview() {
   if (owns_window_) {
     DestroyWindow(hwnd_);
   }
+}
+
+void Webview::RegisterFileDropTarget() {
+  if (!flutter_view_hwnd_) return;
+  auto drop_controller =
+      composition_controller_.try_query<ICoreWebView2CompositionController3>();
+  if (!drop_controller || FAILED(OleInitialize(nullptr))) return;
+
+  auto target = Make<util::WebviewFileDropTarget>(
+      std::move(drop_controller),
+      [this](POINTL screen) -> std::optional<POINT> {
+        BOOL visible = FALSE;
+        POINT local{screen.x, screen.y};
+        if (!IsWindowVisible(flutter_view_hwnd_) ||
+            FAILED(webview_controller_->get_IsVisible(&visible)) || !visible ||
+            !ScreenToClient(flutter_view_hwnd_, &local) ||
+            !PtInRect(&bounds_, local)) {
+          return std::nullopt;
+        }
+        // WebView2 consumes the same physical surface coordinates as mouse input.
+        return POINT{local.x - bounds_.left, local.y - bounds_.top};
+      });
+  file_drop_registered_ =
+      target && SUCCEEDED(RegisterDragDrop(flutter_view_hwnd_, target.Get()));
+  if (!file_drop_registered_) OleUninitialize();
 }
 
 bool Webview::CreateSurface(

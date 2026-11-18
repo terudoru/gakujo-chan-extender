@@ -1,7 +1,8 @@
 import { watchPage } from '../shared/page_watch.js';
+import { createAttachmentDropZone, isFileDrag } from './desktop_drop.js';
 import { acceptsAttachment, setAssignmentAttachment } from '../shared/assignment_attachment.js';
 
-declare const __mbgConfig: { scan: boolean; shared: boolean };
+declare const __mbgConfig: { scan: boolean; shared: boolean; drop: boolean };
 const MAX_BYTES = 64 * 1024 * 1024;
 const CHUNK_BYTES = 256 * 1024;
 
@@ -45,6 +46,7 @@ function installAssignmentAttachment() {
   let transfer: Transfer | null = null;
   let requestAckTimer: number | undefined;
   const controls = new WeakMap<HTMLInputElement, HTMLSpanElement>();
+  const dropDocuments = new WeakSet<Document>();
 
   function hiddenValues(form: HTMLFormElement | null): string {
     return JSON.stringify(Array.from(form?.querySelectorAll<HTMLInputElement>('input[type=hidden]') || [],
@@ -80,6 +82,16 @@ function installAssignmentAttachment() {
   function attach(view: Window) {
     try {
       const doc = view.document;
+      if (__mbgConfig.drop && !dropDocuments.has(doc)) {
+        dropDocuments.add(doc);
+        // Dropping elsewhere on the page should never replace the form with a file.
+        doc.addEventListener('dragover', event => {
+          if (!isFileDrag(event) || event.defaultPrevented) return;
+          event.preventDefault();
+          event.dataTransfer!.dropEffect = 'none';
+        });
+        doc.addEventListener('drop', event => { if (isFileDrag(event)) event.preventDefault(); });
+      }
       for (const input of Array.from(doc.querySelectorAll<HTMLInputElement>('input[type=file]'))) {
         if (!input.parentNode) continue;
         let group = controls.get(input);
@@ -87,11 +99,18 @@ function installAssignmentAttachment() {
           group = doc.createElement('span');
           group.appendChild(button('共有したファイルを添付', 'share'));
           if (__mbgConfig.scan) group.appendChild(button('撮ってPDFにする', 'scan'));
+          if (__mbgConfig.drop) group.appendChild(createAttachmentDropZone(input));
           controls.set(input, group);
         }
         group.querySelector<HTMLButtonElement>('[data-mbg-share-attachment]')!.hidden = !shared;
         const scan = group.querySelector<HTMLButtonElement>('[data-mbg-scan-attachment]');
         if (scan) scan.hidden = !acceptsAttachment(input, '答案.pdf', 'application/pdf');
+        const drop = group.querySelector<HTMLElement>('[data-mbg-attachment-drop]');
+        if (drop) {
+          const hidden = input.hidden || input.matches(':disabled');
+          drop.hidden = hidden;
+          drop.style.display = hidden ? 'none' : 'block';
+        }
         if (group.previousSibling !== input) input.after(group);
         function button(label: string, kind: 'scan' | 'share') {
           const element = doc.createElement('button');

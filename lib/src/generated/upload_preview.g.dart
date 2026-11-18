@@ -236,20 +236,24 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     return !filters.length || filters.some((filter) => filter.startsWith(".") ? fileName.endsWith(filter) : filter.endsWith("/*") ? type.startsWith(filter.slice(0, -1)) : type === filter);
   }
   function setAssignmentAttachment(input, file, replace) {
+    return setAssignmentAttachments(input, [file], replace);
+  }
+  function setAssignmentAttachments(input, files, replace) {
     var _a;
     const view = input.ownerDocument.defaultView;
-    if (!view || !input.isConnected || input.type !== "file" || input.matches(":disabled") || !acceptsAttachment(input, file.name, file.type)) return false;
+    if (!view || !input.isConnected || input.type !== "file" || input.matches(":disabled") || !files.length || !input.multiple && files.length !== 1 || !files.every((file) => acceptsAttachment(input, file.name, file.type))) return false;
     const current = Array.from(input.files || []);
-    if (replace && !current.includes(replace)) return false;
-    const next = replace ? current.map((item) => item === replace ? file : item) : input.multiple ? [...current, file] : [file];
+    if (replace && (files.length !== 1 || !current.includes(replace))) return false;
+    const next = replace ? current.map((item) => item === replace ? files[0] : item) : input.multiple ? [...current, ...files] : files;
     try {
       const transfer = new view.DataTransfer();
       next.forEach((item) => transfer.items.add(item));
+      if (transfer.files.length !== next.length) return false;
       input.files = transfer.files;
-      if (((_a = input.files) == null ? void 0 : _a.length) !== next.length) return false;
     } catch (_) {
       return false;
     }
+    if (((_a = input.files) == null ? void 0 : _a.length) !== next.length) return false;
     input.dispatchEvent(new view.Event("input", { bubbles: true, composed: true }));
     input.dispatchEvent(new view.Event("change", { bubbles: true }));
     return true;

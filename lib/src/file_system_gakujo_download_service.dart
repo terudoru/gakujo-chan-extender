@@ -93,7 +93,7 @@ class AuthenticatedDownloadedFile {
   Future<void> dispose() async => _cleanup?.call();
 }
 
-@visibleForTesting
+/// Writes a complete replacement to the destination directory before renaming it.
 Future<void> writeDownloadFileAtomically(
   String path,
   Stream<List<int>> bytes,

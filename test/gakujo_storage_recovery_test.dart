@@ -39,6 +39,16 @@ class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
   }
 }
 
+class _MemoryToolbarLinksStore extends GakujoToolbarLinksStore {
+  List<GakujoToolbarLink> links = GakujoToolbarLink.defaults;
+
+  @override
+  Future<List<GakujoToolbarLink>> load() async => links;
+
+  @override
+  Future<void> save(List<GakujoToolbarLink> value) async => links = value;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const storage = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
@@ -222,6 +232,64 @@ void main() {
       messenger.setMockStreamHandler(channel, null);
     }
   });
+
+  testWidgets('toolbar links are edited from Settings and navigate in saved order', (tester) async {
+    retrying = true;
+    setupCompleted = true;
+    unlock.complete();
+    final menuStore = _MemoryToolbarLinksStore();
+    const gradeUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=si';
+    final visited = <String>[];
+    messenger.setMockMethodCallHandler(windowsView, (call) async {
+      if (call.method == 'loadUrl' && call.arguments is String) {
+        visited.add(call.arguments as String);
+      }
+      return null;
+    });
+    await tester.pumpWidget(MaterialApp(home: GakujoWebApp(toolbarLinksStore: menuStore)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('メニュー'));
+    await tester.pumpAndSettle();
+    expect(find.text('︙メニューを編集'), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('設定'));
+    await tester.pumpAndSettle();
+    final settings = find.text('学務情報システムの画面');
+    await tester.ensureVisible(settings);
+    await tester.tap(settings);
+    await tester.pumpAndSettle();
+    final editor = find.text('︙メニューを編集');
+    await tester.ensureVisible(editor);
+    await tester.tap(editor);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('初期状態に戻す'));
+    await tester.pumpAndSettle();
+    final existing = find.text('成績へ移動');
+    await tester.ensureVisible(existing);
+    await tester.tap(existing);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '成績表');
+    await tester.tap(find.text('適用'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('メニュー'));
+    await tester.pumpAndSettle();
+    expect(find.text('︙メニューを編集'), findsNothing);
+    expect(find.text('成績へ移動'), findsNothing);
+    expect(menuStore.links.first.label, '成績表');
+    await tester.tap(find.text('成績表'));
+    await tester.pumpAndSettle();
+    expect(visited, contains(gradeUrl));
+    await tester.pumpWidget(const SizedBox());
+  }, variant: const TargetPlatformVariant({TargetPlatform.windows}), skip: !Platform.isWindows);
 
   for (final twoFactor in [false, true]) {
     testWidgets(

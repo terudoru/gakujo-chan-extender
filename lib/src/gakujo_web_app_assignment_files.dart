@@ -32,11 +32,13 @@ extension _AssignmentFileActions on _GakujoWebAppState {
   }
 
   Future<void> _updateAssignmentFileControls() async {
-    if (!_supportsIncomingAttachments || !_canRunPageScripts) return;
+    final drop = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    if ((!_supportsIncomingAttachments && !drop) || !_canRunPageScripts) return;
     try {
       await _controller.runJavaScript(
         gakujoAssignmentAttachmentJs({
           'scan': Platform.isIOS,
+          'drop': drop,
           'shared': _incomingAttachments.pending.value != null,
         }),
       );
