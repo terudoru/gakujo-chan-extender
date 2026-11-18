@@ -749,9 +749,13 @@ class GakujoDeadlineNotificationCoordinator {
     _queuedReminderSyncs += 1;
     return _enqueueNotificationOperation(() async {
       try {
-        // With no reminder offsets every booking is cancelled, readable or not.
-        final shouldLoadAssignments = _reminderNotificationsEnabled &&
-            _reminderPreferences.reminderOffsets.isNotEmpty;
+        bool needsAssignments() => _reminderNotificationsEnabled &&
+            _reminderPreferences.reminderOffsets.isNotEmpty &&
+            (_reminderTopics.contains(GakujoNotificationTopic.coursework) ||
+                _reminderTopics.contains(GakujoNotificationTopic.survey));
+        // With no eligible reminder topic or offset, no assignment data is
+        // needed to cancel existing bookings.
+        final shouldLoadAssignments = needsAssignments();
         var assignments = shouldLoadAssignments
             ? await _activityStore.loadAssignmentsIfAvailable()
             : const <GakujoAssignment>[];
@@ -761,9 +765,8 @@ class GakujoDeadlineNotificationCoordinator {
         if (_reminderNotificationsEnabled) {
           await _loadNotifiedKeys();
         }
-        // Offsets may have been enabled while notification history was loading.
-        if (!shouldLoadAssignments && _reminderNotificationsEnabled &&
-            _reminderPreferences.reminderOffsets.isNotEmpty) {
+        // Topics or offsets may be enabled while history is loading.
+        if (!shouldLoadAssignments && needsAssignments()) {
           assignments = await _activityStore.loadAssignmentsIfAvailable();
           if (assignments == null) {
             return;

@@ -13,6 +13,94 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final change in [
+    'empty topics',
+    'other only',
+    'coursework retained',
+    'survey retained',
+    'readable clear',
+    'offsets off',
+    'notifications off',
+  ]) {
+    test('existing OS booking after topic selection: $change', () async {
+      const channel = MethodChannel(
+        'net.yoshida.morebettergakujo/notifications',
+      );
+      final now = DateTime.utc(2099, 7, 1, 8);
+      final storage = _BookingSecureStorage();
+      final store = GakujoActivityStore(secureStorage: storage);
+      final survey = change == 'survey retained';
+      final topic = survey
+          ? GakujoNotificationTopic.survey
+          : GakujoNotificationTopic.coursework;
+      await store.mergeAssignments([
+        GakujoAssignment(
+          kind: survey ? 'アンケート' : 'レポート',
+          title: '課題',
+          course: '科目',
+          status: '未提出',
+          dueAt: now.add(const Duration(hours: 2)),
+          capturedAt: now,
+        ),
+      ]);
+      storage.assignmentReads = 0;
+      var granted = true;
+      var pending = <Map<Object?, Object?>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'requestPermission' ||
+            call.method == 'checkPermission') {
+          return granted;
+        }
+        if (call.method == 'scheduleReminders') {
+          final args = Map<Object?, Object?>.from(call.arguments as Map);
+          pending = [
+            for (final item in args['reminders'] as List)
+              Map<Object?, Object?>.from(item as Map),
+          ];
+          return true;
+        }
+        throw StateError('Unexpected notification call: ${call.method}');
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+      });
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: GakujoNotificationService(now: () => now),
+        now: () => now,
+      );
+      const preferences = GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+      );
+      await coordinator.syncReminders(
+        notificationsEnabled: true,
+        topics: {topic},
+        preferences: preferences,
+      );
+      expect(pending, hasLength(1));
+      final original = List<Map<Object?, Object?>>.of(pending);
+      // The booking has completed. No earlier request is waiting in the queue.
+      storage.failLaterAssignmentReads = change != 'readable clear';
+      granted = false;
+      final retained = change.endsWith('retained');
+      await coordinator.syncReminders(
+        notificationsEnabled: change != 'notifications off',
+        topics: {
+          if (retained) topic,
+          if (change == 'other only') GakujoNotificationTopic.other,
+        },
+        preferences: preferences.copyWith(reminderOffsets: {
+          if (change != 'offsets off') GakujoReminderOffset.oneHour,
+        }),
+        allowPermissionRequest: false,
+      );
+      expect(pending, retained ? equals(original) : isEmpty);
+      expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+    });
+  }
+
   for (final boundary in ['assignment read', 'history read', 'permission']) {
     for (final change in [
       'unchanged',
@@ -22,6 +110,7 @@ void main() {
       'notifications off',
       'offsets off',
       if (boundary == 'history read') 'offsets enabled',
+      if (boundary == 'history read') 'topics enabled',
     ]) {
       test('OS bookings use current settings after $boundary: $change', () async {
         const channel = MethodChannel(
@@ -85,7 +174,9 @@ void main() {
         );
         final first = coordinator.syncReminders(
           notificationsEnabled: true,
-          topics: {GakujoNotificationTopic.coursework},
+          topics: {
+            if (change != 'topics enabled') GakujoNotificationTopic.coursework,
+          },
           preferences: preferences,
         );
         await (boundary == 'permission'
@@ -117,7 +208,8 @@ void main() {
         await first;
         await newer;
         final allowed = change == 'unchanged' ||
-            change == 'different offset' || change == 'offsets enabled';
+            change == 'different offset' || change == 'offsets enabled' ||
+            change == 'topics enabled';
         expect(bookings, isNotEmpty);
         for (final booking in bookings) {
           expect(booking, hasLength(allowed ? 1 : 0));
