@@ -37,6 +37,10 @@ abstract class StarSyncCollection {
   /// with the engine baseline. This does not make separate writes crash-atomic.
   BackupStorageParticipant? get localCommitStorage => null;
 
+  /// Journals an apply that cannot share a transaction with the baseline, such
+  /// as WebView localStorage. A thrown apply has an unknown write outcome.
+  bool get journalLocalApply => false;
+
   Future<bool> withLocalCommitLock(Future<bool> Function() operation) => operation();
 
   /// The runner resolves only after the local value, baseline and final guard

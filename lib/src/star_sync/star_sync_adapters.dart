@@ -267,6 +267,9 @@ class StarSyncSettingsCollection extends StarSyncCollection {
 class StarSyncReportDraftsCollection extends StarSyncCollection {
   StarSyncReportDraftsCollection({required this.read, required this.apply});
 
+  @override
+  bool get journalLocalApply => true;
+
   final Future<Map<String, Object?>?> Function() read;
   final Future<bool> Function(
     Map<String, Object?>, {

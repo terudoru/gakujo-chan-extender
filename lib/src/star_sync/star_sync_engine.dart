@@ -1967,6 +1967,9 @@ class StarSyncEngine {
       }
     }
     final participant = collection.localCommitStorage;
+    if (participant == null && collection.journalLocalApply) {
+      return _commitJournaledCollection(collection, state, live, local, next);
+    }
     if (participant == null) {
       if (!await collection.applyLocal(
         live, basedOn: local, stillCurrent: _writeGuard(state),
@@ -2081,6 +2084,75 @@ class StarSyncEngine {
         name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
     }
     return true;
+  }
+
+  Future<bool> _commitJournaledCollection(
+    StarSyncCollection collection,
+    StarSyncState state,
+    Map<String, Object?> live,
+    Map<String, Object?> local,
+    Map<String, dynamic> next,
+  ) async {
+    final name = collection.name;
+    final previous = state.collectionStates[name];
+    final hadPrevious = state.collectionStates.containsKey(name);
+    void restoreState() {
+      if (hadPrevious) {
+        state.collectionStates[name] = previous;
+      } else {
+        state.collectionStates.remove(name);
+      }
+    }
+    final guard = _writeGuard(state);
+    final pending = <String, dynamic>{
+      ...Map<String, dynamic>.from(previous as Map? ?? {}),
+      'pendingLocalCommit': true,
+    };
+    state.collectionStates[name] = pending;
+    try {
+      // Persist before a WebView operation can mutate independently of Dart.
+      await _saveState();
+    } on Object {
+      restoreState();
+      rethrow;
+    }
+    var applied = false;
+    var marked = pending;
+    try {
+      _assertWriteCurrent(guard);
+      applied = await collection.applyLocal(
+        live, basedOn: local, stillCurrent: guard,
+      );
+      if (applied) {
+        _assertWriteCurrent(guard);
+        marked = <String, dynamic>{...next, 'pendingLocalCommit': true};
+        state.collectionStates[name] = marked;
+        await _saveState();
+        _assertWriteCurrent(guard);
+      }
+    } on Object {
+      // The bridge may have lost its acknowledgement after writing. Never
+      // infer a new user edit from this uncertain local value on retry/restart.
+      state.collectionStates[name] = marked;
+      state.disabledCollections.add(name);
+      throw _CollectionCommitUncertain();
+    }
+    // A false result proves no writes occurred (CAS/pre-invocation refusal).
+    // A true result has a durable marked baseline. Neither case needs rollback.
+    if (applied) {
+      state.collectionStates[name] = next;
+    } else {
+      restoreState();
+    }
+    try {
+      await _saveState();
+    } on Object {
+      state.collectionStates[name] = marked;
+      state.disabledCollections.add(name);
+      throw _CollectionCommitUncertain();
+    }
+    _assertWriteCurrent(guard);
+    return applied;
   }
 
   Future<({bool changed, int skipped})> _syncCollection(

@@ -1010,6 +1010,38 @@ Future<bool> applyGakujoSyncedSettings({
 });
 
 @visibleForTesting
+Future<bool> applyGakujoSyncedReportDrafts({
+  required Map<String, Object?> drafts,
+  required Map<String, Object?> basedOn,
+  required int? readRevision,
+  required int Function() navigationRevision,
+  required Future<bool> Function() canSync,
+  required Future<String> Function(String script) evaluate,
+  bool Function()? stillCurrent,
+}) async {
+  final revision = navigationRevision();
+  if (revision != readRevision) return false;
+  try {
+    if (!await canSync()) return false;
+  } on Object {
+    // A failed page check precedes script invocation and cannot have written.
+    return false;
+  }
+  final script = GakujoReportDraftScript.buildImportAll(drafts, basedOn);
+  if (stillCurrent != null && !stillCurrent()) {
+    throw const StarSyncAccountMismatchException();
+  }
+  if (revision != navigationRevision()) return false;
+  final value = await evaluate(script);
+  // The script's false result guarantees no writes, even if the page moved.
+  if (value == 'false') return false;
+  if (value != 'true' || revision != navigationRevision() || !await canSync()) {
+    throw StateError('Draft write failed');
+  }
+  return true;
+}
+
+@visibleForTesting
 Future<GakujoLoginCredentials> saveGakujoLoginCredentials({
   required GakujoAppSettingsStore store,
   required String loginId,
@@ -7049,26 +7081,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Map<String, Object?> drafts, {
     required Map<String, Object?> basedOn,
     bool Function()? stillCurrent,
-  }) async {
-    final revision = _navigationRevision;
-    if (revision != _draftReadRevision || !await _canSyncReportDrafts()) {
-      throw StateError('Draft page unavailable');
-    }
-    final script = GakujoReportDraftScript.buildImportAll(drafts, basedOn);
-    if (stillCurrent != null && !stillCurrent()) {
-      throw const StarSyncAccountMismatchException();
-    }
-    if (revision != _navigationRevision) throw StateError('Draft page changed');
-    final result = await _controller.runJavaScriptReturningResult(
-      script,
-    );
-    if (revision != _navigationRevision || !await _canSyncReportDrafts()) {
-      throw StateError('Draft write failed');
-    }
-    final value = _stringFromJavaScriptResult(result);
-    if (value != 'true' && value != 'false') throw StateError('Draft write failed');
-    return value == 'true';
-  }
+  }) => applyGakujoSyncedReportDrafts(
+    drafts: drafts, basedOn: basedOn,
+    readRevision: _draftReadRevision,
+    navigationRevision: () => _navigationRevision,
+    canSync: _canSyncReportDrafts,
+    evaluate: (script) async => _stringFromJavaScriptResult(
+      await _controller.runJavaScriptReturningResult(script),
+    ),
+    stillCurrent: stillCurrent,
+  );
 
   Future<void> _restoreSettingsFromText(
     String text, {

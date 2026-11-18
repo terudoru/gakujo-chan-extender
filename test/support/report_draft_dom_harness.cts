@@ -1,12 +1,15 @@
 import type {} from 'node:fs';
 const vm: any = require('node:vm');
-const {generatedScript, spec, listScript, deleteScript, exportScript, importScript} = JSON.parse(
+const syncBridge = process.argv[2] === '--sync-bridge';
+let {generatedScript, spec, listScript, deleteScript, exportScript, importScript} = syncBridge ? {} : JSON.parse(
   require('node:fs').readFileSync(process.argv[2] === '-' ? 0 : process.argv[2], 'utf8')
 );
+spec ||= {};
 const storageValues: any = new Map();
 let xssExecutionCount: any = 0;
 let nextTimerId: any = 1;
 const pendingTimers: any = new Map();
+let bridgeNow: any;
 
 class FakeEvent {
   [key: string]: any;
@@ -272,6 +275,9 @@ function runPage(page: any, script: any = generatedScript) {
   return vm.runInNewContext(script, {
     window: page.window,
     document: page.document,
+    Date: bridgeNow === undefined ? Date : class extends Date {
+      static now() { return bridgeNow; }
+    },
     console: {log() {}}
   });
 }
@@ -1138,6 +1144,44 @@ function runExtendedScenario() {
 }
 
 (function runScenario() {
+if (syncBridge) {
+  const storage = new FakeStorage();
+  let page: any;
+  function fresh() {
+    pendingTimers.clear();
+    page = textPage(storage, {title: 'Report', pageText: 'レポート提出 本文入力'});
+    page.window.deferSaveTimer = true;
+    runPage(page);
+    if (!page.document.__MBG_REPORT_DRAFT_IDENTITY) throw Error('Draft editor did not bind');
+  }
+  require('node:readline').createInterface({input: process.stdin, crlfDelay: Infinity})
+    .on('line', (line: string) => {
+      try {
+        const request = JSON.parse(line);
+        if (request.now !== undefined) bridgeNow = request.now;
+        let result: any = true;
+        if (request.op === 'init') { generatedScript = request.script; fresh(); }
+        if (request.op === 'eval') result = runPage(page, request.script);
+        if (request.op === 'edit') {
+          page.field.value = request.text;
+          page.field.dispatchEvent(new FakeEvent('input', {bubbles: true}));
+          if (request.flush !== false) page.document.__MBG_REPORT_DRAFT_FLUSH();
+        }
+        if (request.op === 'navigate') { hidePage(page); fresh(); }
+        if (request.op === 'failWrites') storage.failWrite = request.value;
+        if (request.op === 'snapshot') result = {
+          key: page.document.__MBG_REPORT_DRAFT_IDENTITY.key,
+          field: page.field.value,
+          dirty: !!page.field.__MBG_REPORT_DRAFT_DIRTY,
+          pending: !!page.window.__MBG_REPORT_DRAFT_PENDING_CONTEXTS
+        };
+        process.stdout.write(JSON.stringify({ok: true, result}) + '\n');
+      } catch (error: any) {
+        process.stdout.write(JSON.stringify({ok: false, error: String(error)}) + '\n');
+      }
+    });
+  return;
+}
 const extended: any = runExtendedScenario();
 if (extended) return process.stdout.write(JSON.stringify(extended));
 const storage: any = new FakeStorage();
