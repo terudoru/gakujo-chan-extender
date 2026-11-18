@@ -1125,6 +1125,7 @@ Future<void> pruneJsonFilesForRetention(
   Directory directory, {
   required int keep,
   String? fileNamePrefix,
+  File? protectedFile,
 }) async {
   final files = await directory
       .list()
@@ -1141,6 +1142,17 @@ Future<void> pruneJsonFilesForRetention(
       .cast<File>()
       .toList();
   files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+  if (keep > 0 && protectedFile != null) {
+    // A clock correction can put the just-written file below the mtime cutoff.
+    final protectedUri = protectedFile.absolute.uri;
+    final index = files.indexWhere(
+      (file) => file.absolute.uri == protectedUri,
+      keep,
+    );
+    if (index != -1) {
+      files.insert(0, files.removeAt(index));
+    }
+  }
   for (final file in files.skip(keep)) {
     try {
       await file.delete();
@@ -5254,6 +5266,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         directory,
         keep: 10,
         fileNamePrefix: pruneFileNamePrefix,
+        protectedFile: file,
       );
     }
     return file;
