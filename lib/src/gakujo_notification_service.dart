@@ -131,7 +131,7 @@ String deadlineNotificationKey(
   Set<String> collidingAssignmentIds = const {},
 }) {
   if (entry.source == '連絡通知') {
-    return _messageNotificationKey(entry.url) ?? entry.key;
+    return gakujoMessageNotificationKey(entry.url) ?? entry.key;
   }
   if (assignment != null) {
     final id = collidingAssignmentIds.contains(assignment.notificationId)
@@ -148,14 +148,6 @@ String deadlineNotificationKey(
     )}';
   }
   return entry.key;
-}
-
-String? _messageNotificationKey(String url) {
-  final seqNo = Uri.tryParse(url)?.queryParameters['seqNo'];
-  if (seqNo == null || seqNo.isEmpty) {
-    return null;
-  }
-  return 'message|${gakujoMessageLinkFor(url)}';
 }
 
 /// A notification booked ahead of an assignment's closing time.
@@ -944,9 +936,7 @@ class GakujoDeadlineNotificationCoordinator {
     return {
       ...keys,
       for (final key in keys)
-        if (RegExp(r'^(?:deadline|notice|schedule)\|([^|]*)\|')
-            .firstMatch(key) case final match?)
-          ?_messageNotificationKey(match.group(1)!),
+        ?gakujoLegacyMessageNotificationKey(key),
     };
   }
 

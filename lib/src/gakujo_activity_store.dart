@@ -214,6 +214,22 @@ String gakujoMessageLinkFor(String url) {
   ).toString();
 }
 
+/// One notification identity for a message found in a list or detail page.
+String? gakujoMessageNotificationKey(String url) {
+  final seqNo = Uri.tryParse(url)?.queryParameters['seqNo'];
+  if (seqNo == null || seqNo.isEmpty) {
+    return null;
+  }
+  return 'message|${gakujoMessageLinkFor(url)}';
+}
+
+/// Projects old kind|URL|title|preview history without rewriting stored keys.
+String? gakujoLegacyMessageNotificationKey(String key) {
+  final match = RegExp(r'^(?:deadline|notice|schedule)\|([^|]*)\|')
+      .firstMatch(key);
+  return match == null ? null : gakujoMessageNotificationKey(match.group(1)!);
+}
+
 class GakujoCachedReportList {
   const GakujoCachedReportList({
     required this.title,
@@ -948,12 +964,18 @@ class GakujoActivityStore {
       // Only entries that name their message can be proven read.
       final notifiedRead = await _readNotifiedDeadlineKeys();
       if (notifiedRead.isSuccessful) {
-        final alreadyNotified = notifiedRead.value.toSet();
+        final alreadyNotified = {
+          ...notifiedRead.value,
+          for (final key in notifiedRead.value)
+            ?gakujoLegacyMessageNotificationKey(key),
+        };
         await _addNotifiedDeadlineKeys({
           for (final entry in entries.values)
             if (entry.source == '連絡通知' && !alreadyNotified.contains(entry.key))
               if (_messageSeqNo(entry.url) case final seqNo?)
-                if (!unread.contains(seqNo)) entry.key,
+                if (!unread.contains(seqNo))
+                  if (gakujoMessageNotificationKey(entry.url) case final key?)
+                    if (!alreadyNotified.contains(key)) key,
         });
       }
     }

@@ -31,6 +31,130 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  group('read-message notification history', () {
+    final now = DateTime.utc(2026, 11, 18);
+    GakujoDeadlineEntry message({bool detail = false}) => GakujoDeadlineEntry(
+      title: detail ? '授業資料の詳細' : '授業資料の一覧',
+      url:
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+          '?_flowExecutionKey=${detail ? 'detail' : 'list'}'
+          '&keijitype=1&genrecd=40&seqNo=1001',
+      dueText: '2099/11/30 17:00まで',
+      detectedAt: now,
+      kind: detail ? 'deadline' : 'notice',
+      source: '連絡通知',
+      messageText: '授業資料 2099/11/30 17:00まで',
+    );
+    const unreadUrl =
+        'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do?seqNo=9999';
+    const rules = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['授業資料'],
+    );
+
+    test(
+      'reconciliation does not evict history and repeat active coursework',
+      () async {
+        final store = GakujoActivityStore();
+        final service = _FakeNotificationService();
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: service,
+          now: () => now,
+        );
+        final coursework = GakujoDeadlineEntry(
+          title: 'レポート 未提出の課題',
+          url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=en',
+          dueText: '2099/11/30 17:00まで',
+          detectedAt: now.subtract(const Duration(days: 2)),
+          source: 'レポート・小テスト',
+          course: '対象科目',
+          courseCode: '260A0001',
+          assignment: '未提出の課題',
+        );
+        await store.mergeDeadlines([coursework]);
+        await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+        await store.mergeDeadlines([message()]);
+        await coordinator.notifyPendingDeadlines(
+          notificationsEnabled: true,
+          messages: rules,
+        );
+        expect(service.notified, [coursework.key, message().key]);
+        await store.mergeDeadlines([message(detail: true)]);
+        await store.addNotifiedDeadlineKeys([
+          for (var i = 0; i < 998; i++) 'assignment|earlier-$i',
+        ]);
+        final before = (await store.loadNotifiedDeadlineKeys()).toList();
+        expect(before, hasLength(1000));
+        await store.mergeDeadlines([], unreadMessageUrls: [unreadUrl]);
+        await coordinator.notifyPendingDeadlines(
+          notificationsEnabled: true,
+          messages: rules,
+        );
+        expect(
+          service.notified.where((key) => key == coursework.key),
+          hasLength(1),
+        );
+        expect((await store.loadNotifiedDeadlineKeys()).toList(), before);
+      },
+    );
+
+    for (final history in ['canonical', 'deadline', 'notice', 'schedule']) {
+      test(
+        'already-effective $history marker keeps its order and slot',
+        () async {
+          final store = GakujoActivityStore();
+          final list = message();
+          final detail = message(detail: true);
+          expect(list.key, isNot(detail.key));
+          final canonical = deadlineNotificationKey(list, null);
+          expect(deadlineNotificationKey(detail, null), canonical);
+          final key = history == 'canonical'
+              ? canonical
+              : '$history|${stableGakujoUrl(list.url)}|Old title|Old preview';
+          await store.addNotifiedDeadlineKeys([key, 'assignment|newer']);
+          await store.mergeDeadlines([list, detail]);
+          final before = (await store.loadNotifiedDeadlineKeys()).toList();
+          for (var pass = 0; pass < 2; pass++) {
+            await store.mergeDeadlines([], unreadMessageUrls: [unreadUrl]);
+            expect((await store.loadNotifiedDeadlineKeys()).toList(), before);
+          }
+        },
+      );
+    }
+
+    test(
+      'newly read list and detail share one durable persisted marker',
+      () async {
+        final store = GakujoActivityStore();
+        final list = message();
+        await store.mergeDeadlines([list, message(detail: true)]);
+        await store.mergeDeadlines([], unreadMessageUrls: [unreadUrl]);
+        expect(await store.loadNotifiedDeadlineKeys(), {
+          deadlineNotificationKey(list, null),
+        });
+        final service = _FakeNotificationService();
+        await GakujoDeadlineNotificationCoordinator(
+          activityStore: GakujoActivityStore(),
+          notificationService: service,
+          now: () => now,
+        ).notifyPendingDeadlines(notificationsEnabled: true, messages: rules);
+        expect(service.notified, isEmpty);
+      },
+    );
+  });
+
+  test('distinct notification keys still evict the oldest beyond 1000', () async {
+    final store = GakujoActivityStore();
+    await store.addNotifiedDeadlineKeys([
+      for (var i = 0; i <= 1000; i++) 'assignment|distinct-$i',
+    ]);
+    final keys = (await store.loadNotifiedDeadlineKeys()).toList();
+    expect(keys, hasLength(1000));
+    expect(keys.first, 'assignment|distinct-1');
+    expect(keys.last, 'assignment|distinct-1000');
+  });
+
   test('complete unread fetches silence read messages but keep their dates',
       () async {
     for (final rowCount in [0, 1, 59, 60]) {
