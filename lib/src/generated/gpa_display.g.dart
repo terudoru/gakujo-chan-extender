@@ -128,7 +128,7 @@ const String gakujoGpaDisplayJs = r'''
 
   // web_scripts/src/gpa_display/main.ts
   function gpaDisplay() {
-    var version = 11;
+    var version = 12;
     if (window.__MBG_GPA_DISPLAY_VERSION === version) {
       if (window.__MBG_UPDATE_GPA_DISPLAY) {
         window.__MBG_UPDATE_GPA_DISPLAY();
@@ -453,6 +453,16 @@ const String gakujoGpaDisplayJs = r'''
         }
       }
       if (!hasGradeTable) {
+        [
+          "mbg-grade-no-button",
+          "mbg-grade-open-number-button",
+          "mbg-grade-score-button"
+        ].forEach(function(id) {
+          var button = document.getElementById(id);
+          if (button && button.getAttribute("data-mbg-gpa-display-owned") === "true") {
+            button.remove();
+          }
+        });
         return;
       }
       addGradeSortButton("mbg-grade-no-button", "No.でソート", sortByNumber);

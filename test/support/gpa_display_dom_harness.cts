@@ -472,6 +472,39 @@ run(teardownScript, detachedPortal);
 detachedFrame.afterTeardownActiveObserverCount =
   detachedPortal.snapshot().activeObserverCount;
 
+function controlNavigation(foreignId: string) {
+  const top: any = createPage({hasGradeTable: false});
+  const firstGrade: any = createPage();
+  const otherPage: any = createPage({hasGradeTable: false});
+  const mainWindow: any = {document: firstGrade.context.document, frames: []};
+  const mainFrame: any = top.context.document.createElement('iframe');
+  mainFrame.id = 'main-frame-if';
+  mainFrame.contentWindow = mainWindow;
+  top.context.document.body.appendChild(mainFrame);
+  top.context.window.frames.push(mainWindow);
+  const foreign: any = top.context.document.createElement('button');
+  foreign.id = foreignId;
+  top.context.document.getElementById('tabmenutable').appendChild(foreign);
+  run(buildScript, top);
+  const withGrades = top.snapshot().controlIds;
+  mainWindow.document = otherPage.context.document;
+  top.tickInterval();
+  const withoutGrades = top.snapshot().controlIds;
+  const secondGrade: any = createPage();
+  mainWindow.document = secondGrade.context.document;
+  top.tickInterval();
+  run(buildScript, top);
+  top.tickInterval();
+  const returned = top.snapshot().controlIds;
+  const returnedGpa = secondGrade.gpaText();
+  top.context.window.frames = [];
+  mainFrame.remove();
+  top.tickInterval();
+  return {withGrades, withoutGrades, returned, returnedGpa,
+    afterRemoval: top.snapshot().controlIds,
+    foreignPreserved: top.context.document.getElementById(foreignId) === foreign};
+}
+
 process.stdout.write(JSON.stringify({
   afterBuild,
   afterTeardown,
@@ -491,5 +524,7 @@ process.stdout.write(JSON.stringify({
   gpaAfterHeaderMutation: mutatedPage.gpaText(),
   gpaInNewFrame: newFrame.gpaText(),
   frameNavigation,
-  detachedFrame
+  detachedFrame,
+  controlNavigation: controlNavigation('portal-action'),
+  foreignControlNavigation: controlNavigation('mbg-grade-score-button')
 }));

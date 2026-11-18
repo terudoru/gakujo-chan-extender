@@ -151,6 +151,32 @@ void main() {
     expect(afterFrameRemoval['removedObserversDisconnected'], isTrue);
   });
 
+  for (final foreign in [false, true]) {
+    test('grade sort controls follow frame navigation (foreign ID: $foreign)',
+        () async {
+      final result = await _evaluateGpaDisplayLifecycle(
+        buildScript: GakujoGpaDisplayScript.build(),
+        teardownScript: '',
+      );
+      final navigation = result[foreign
+          ? 'foreignControlNavigation'
+          : 'controlNavigation'] as Map<String, dynamic>;
+      final foreignId = foreign ? 'mbg-grade-score-button' : 'portal-action';
+      final expected = [
+        foreignId,
+        'mbg-grade-no-button',
+        'mbg-grade-open-number-button',
+        if (!foreign) 'mbg-grade-score-button',
+      ];
+      expect(navigation['withGrades'], expected);
+      expect(navigation['withoutGrades'], [foreignId]);
+      expect(navigation['returned'], expected);
+      expect(navigation['returnedGpa'], 'GPA:4.0000');
+      expect(navigation['afterRemoval'], [foreignId]);
+      expect(navigation['foreignPreserved'], isTrue);
+    });
+  }
+
   test('documents without a defaultView are disconnected and not reobserved',
       () async {
     final result = await _evaluateGpaDisplayLifecycle(
