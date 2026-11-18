@@ -8,14 +8,20 @@ class Element {
   [key: string]: any;
   constructor(tag, doc) {
     this.tagName = tag.toUpperCase(); this.ownerDocument = doc;
-    this.children = []; this.attributes = {}; this.listeners = {}; this.style = {};
+    this.children = []; this.attributes = {}; this.listeners = {}; this.listenerSets = {}; this.style = {};
     if (this.tagName === 'IFRAME') {
       this.contentDocument = {documentElement: {outerHTML: '<html><body>連絡通知</body></html>'}};
     }
   }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
-  addEventListener(name, callback) { this.listeners[name] = callback; }
+  addEventListener(name, callback) {
+    const callbacks = this.listenerSets[name] || (this.listenerSets[name] = new Set());
+    callbacks.add(callback);
+    this.listeners[name] = async (...args) => {
+      for (const listener of callbacks) await listener(...args);
+    };
+  }
   appendChild(node) { return this.insertBefore(node, null); }
   insertBefore(node, before) {
     if (node.parentNode) node.remove();
@@ -41,6 +47,7 @@ class Element {
   get isConnected() {
     return this === this.ownerDocument.body || !!this.parentNode?.isConnected;
   }
+  get parentElement() { return this.parentNode || null; }
 }
 
 function elements(root?: any) {
@@ -67,6 +74,9 @@ function makeDocument(hasList?: any) {
         node.getAttribute('data-mbg-message-reader-owned') === 'true');
       throw new Error('Unexpected selector: ' + selector);
     }
+  };
+  doc.defaultView = {
+    getComputedStyle(node) { return {display: node.computedDisplay || node.style.display || ''}; }
   };
   doc.body = new Element('body', doc);
   doc.body.textContent = hasList ? (options.unread ? '連絡通知 未読一覧' : '連絡通知 授業連絡') : '';
@@ -104,9 +114,19 @@ if (options.frame === 'empty' || options.frame === 'list') {
 }
 const docs = frameDocument ? [document, frameDocument] : [document];
 const listDoc = options.frame === 'list' ? frameDocument : document;
+let pendingOldRequest;
+let holdOldRequest = !!options.previousInFlight;
+let oldRequestCount = 0;
 const context: any = {
   document, URL, location: {reload() { reloadCount += 1; }},
-  fetch: async () => { throw new Error('Use the fake iframe fallback'); },
+  fetch: async () => {
+    if (holdOldRequest) {
+      holdOldRequest = false;
+      oldRequestCount++;
+      return new Promise(resolve => { pendingOldRequest = resolve; });
+    }
+    throw new Error('Use the fake iframe fallback');
+  },
   setInterval(fn) { intervals.set(++timerId, fn); return timerId; },
   clearInterval(id) { intervals.delete(id); },
   setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
@@ -116,13 +136,40 @@ context.window = context;
 vm.createContext(context);
 
 async function main() {
+  let oldRead;
+  if (options.previousVersion) {
+    vm.runInContext(options.script.replace(/var version = \d+;/, 'var version = 0;'), context);
+    listDoc.getElementById('mbg-read-num-input').value = '2';
+    if (options.previousInFlight) {
+      const oldButton = listDoc.getElementById('mbg-read-button');
+      await oldButton.listeners.click();
+      oldRead = oldButton.listeners.click();
+      if (!oldButton.disabled) throw new Error('Old batch did not disable its button');
+      context.__MBG_MESSAGE_READER_UPDATE();
+      if (!oldButton.disabled) throw new Error('Polling enabled the current busy button');
+    }
+  }
   vm.runInContext(options.script, context);
   vm.runInContext(options.script, context);
   for (const callback of intervals.values()) callback();
-  listDoc.messageRows[0].style.display = 'none'; // The exclude filter hides this message.
+  const rowStates = options.messageRows || [{display: 'none'}];
+  rowStates.forEach((state, index) => {
+    const row = listDoc.messageRows[index];
+    if (state.filtered !== undefined) row.setAttribute('data-mbg-message-filtered', state.filtered);
+    if (state.display !== undefined) row.style.display = state.display;
+    if (state.computedDisplay !== undefined) row.computedDisplay = state.computedDisplay;
+  });
   const input: any = listDoc.getElementById('mbg-read-num-input');
   const button: any = listDoc.getElementById('mbg-read-button');
-  if (input) input.value = '3';
+  const inputValueAfterAdoption = input?.value;
+  const buttonDisabledAfterAdoption = button?.disabled;
+  if (pendingOldRequest) {
+    pendingOldRequest({ok: true, text: async () => '<html>synthetic notification</html>'});
+    await oldRead;
+  }
+  const statusBeforeCurrent = listDoc.getElementById('mbg-read-status')?.textContent || '';
+  const reloadBeforeCurrent = reloadCount;
+  if (input) input.value = options.inputValue || '3';
   if (button) {
     // The first tap only asks for confirmation.
     await button.listeners.click();
@@ -148,7 +195,10 @@ async function main() {
     }),
     buttonText: button?.textContent, inputType: input?.type, defaultValue: input?.defaultValue,
     statusLive: status?.getAttribute('aria-live'), statusText: status?.textContent,
-    frameUrls, reloadCount, ownedElementCount: docs.reduce((sum, doc) => sum + doc.querySelectorAll(owned).length, 0)
+    frameUrls, reloadCount, ownedElementCount: docs.reduce((sum, doc) => sum + doc.querySelectorAll(owned).length, 0),
+    inputValueAfterAdoption, clickListenerCount: button?.listenerSets.click.size,
+    buttonDisabledAfterAdoption, oldRequestCount, statusBeforeCurrent, reloadBeforeCurrent,
+    intervalCount: intervals.size
   };
   vm.runInContext(options.teardown, context);
   result.ownedAfterTeardown = docs.reduce((sum, doc) => sum + doc.querySelectorAll(owned).length, 0);

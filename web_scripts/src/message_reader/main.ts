@@ -1,7 +1,7 @@
 import { watchPage } from '../shared/page_watch.js';
 export {};
 function messageReader() {
-  var version = 8;
+  var version = 9;
   if (window.__MBG_MESSAGE_READER_VERSION === version) {
     if (window.__MBG_MESSAGE_READER_UPDATE) {
       window.__MBG_MESSAGE_READER_UPDATE();
@@ -17,6 +17,7 @@ function messageReader() {
   var reloadTimeout: number | undefined | null;
   var cancelPendingFrame: (() => void) | null | undefined;
   var controlsDocument = document;
+  var boundButtons = new WeakSet<HTMLButtonElement>();
 
   window.__MBG_MESSAGE_READER_DISPOSE = function() {
     disposed = true;
@@ -48,7 +49,7 @@ function messageReader() {
       var doc = docs[i];
       var text = doc.body && (doc.body.innerText || doc.body.textContent) || '';
       if (text.indexOf('未読一覧') < 0) continue;
-      var items = doc.querySelectorAll('div.button[onclick*="seqNo="]');
+      var items = doc.querySelectorAll<HTMLElement>('div.button[onclick*="seqNo="]');
       var table = items.length && items[0].closest('table');
       // Skip the message's own inner table, including for a single-item list.
       table = table && table.parentNode && (table.parentNode as Element).closest('table');
@@ -104,6 +105,18 @@ function messageReader() {
     return parsed.href;
   }
 
+  function isHiddenMessageItem(item: HTMLElement) {
+    var owningWindow = item.ownerDocument.defaultView || window;
+    for (var node: HTMLElement | null = item; node; node = node.parentElement) {
+      if (node.getAttribute('data-mbg-message-filtered') === 'true' ||
+          node.style.display === 'none' ||
+          owningWindow.getComputedStyle(node).display === 'none') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function unreadUrls(limit: number) {
     var doc = mainFrameDocument();
     var table = messageTable(doc);
@@ -113,6 +126,7 @@ function messageReader() {
       if (list) {
         for (var m = 0; m < list.items.length && mobileUrls.length < limit; m += 1) {
           var item = list.items[m];
+          if (isHiddenMessageItem(item)) continue;
           var match = String(item.getAttribute('onclick') || '')
             .match(/\blocation\.href\s*=\s*(['"])(.*?)\1/);
           var mobileUrl = match && absoluteCampusUrl(
@@ -369,8 +383,16 @@ function messageReader() {
       button.type = 'button';
       button.setAttribute('data-mbg-message-reader-owned', 'true');
       button.textContent = '指定した個数を既読にする';
-      button.addEventListener('click', readerCall);
       target.appendChild(button);
+    }
+    // A disposed version may leave its owned button disabled by an old batch.
+    // Adopt once so polling never re-enables a batch owned by this instance.
+    var readButton = controlsDocument.getElementById('mbg-read-button') as HTMLButtonElement | null;
+    if (readButton && readButton.getAttribute('data-mbg-message-reader-owned') === 'true' &&
+        !boundButtons.has(readButton)) {
+      boundButtons.add(readButton);
+      readButton.disabled = false;
+      readButton.addEventListener('click', readerCall);
     }
     if (!controlsDocument.getElementById('mbg-read-num-input')) {
       var input = controlsDocument.createElement('input');

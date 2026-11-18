@@ -128,7 +128,7 @@ const String gakujoMessageReaderJs = r'''
 
   // web_scripts/src/message_reader/main.ts
   function messageReader() {
-    var version = 8;
+    var version = 9;
     if (window.__MBG_MESSAGE_READER_VERSION === version) {
       if (window.__MBG_MESSAGE_READER_UPDATE) {
         window.__MBG_MESSAGE_READER_UPDATE();
@@ -144,6 +144,7 @@ const String gakujoMessageReaderJs = r'''
     var reloadTimeout;
     var cancelPendingFrame;
     var controlsDocument = document;
+    var boundButtons = /* @__PURE__ */ new WeakSet();
     window.__MBG_MESSAGE_READER_DISPOSE = function() {
       disposed = true;
       window.clearTimeout(reloadTimeout);
@@ -222,6 +223,15 @@ const String gakujoMessageReaderJs = r'''
       }
       return parsed.href;
     }
+    function isHiddenMessageItem(item) {
+      var owningWindow = item.ownerDocument.defaultView || window;
+      for (var node = item; node; node = node.parentElement) {
+        if (node.getAttribute("data-mbg-message-filtered") === "true" || node.style.display === "none" || owningWindow.getComputedStyle(node).display === "none") {
+          return true;
+        }
+      }
+      return false;
+    }
     function unreadUrls(limit) {
       var doc = mainFrameDocument();
       var table = messageTable(doc);
@@ -231,6 +241,7 @@ const String gakujoMessageReaderJs = r'''
         if (list) {
           for (var m = 0; m < list.items.length && mobileUrls.length < limit; m += 1) {
             var item = list.items[m];
+            if (isHiddenMessageItem(item)) continue;
             var match = String(item.getAttribute("onclick") || "").match(/\blocation\.href\s*=\s*(['"])(.*?)\1/);
             var mobileUrl = match && absoluteCampusUrl(
               match[2].replace(/&amp;/g, "&"),
@@ -464,8 +475,13 @@ const String gakujoMessageReaderJs = r'''
         button.type = "button";
         button.setAttribute("data-mbg-message-reader-owned", "true");
         button.textContent = "指定した個数を既読にする";
-        button.addEventListener("click", readerCall);
         target.appendChild(button);
+      }
+      var readButton = controlsDocument.getElementById("mbg-read-button");
+      if (readButton && readButton.getAttribute("data-mbg-message-reader-owned") === "true" && !boundButtons.has(readButton)) {
+        boundButtons.add(readButton);
+        readButton.disabled = false;
+        readButton.addEventListener("click", readerCall);
       }
       if (!controlsDocument.getElementById("mbg-read-num-input")) {
         var input = controlsDocument.createElement("input");

@@ -354,7 +354,7 @@ void main() {
       expect(result['defaultValue'], '5');
       expect(result['statusLive'], 'polite');
       expect(result['frameUrls'], [
-        for (var index = 1; index <= 3; index += 1)
+        for (var index = 2; index <= 4; index += 1)
           'https://gakujo.iess.niigata-u.ac.jp/campusweb/mobile/'
               'campussquare.do?_flowExecutionKey=mobile%20key'
               '&_eventId=displayMidoku&keijitype=1&genrecd=40&seqNo=$index',
@@ -377,6 +377,90 @@ void main() {
     });
   }
 
+  for (final frame in ['none', 'list']) {
+    test('smartphone reader skips hidden outer rows before counting ($frame)',
+        () async {
+      for (final hidden in [
+        {'filtered': 'true', 'display': 'none'},
+        {'filtered': 'true'},
+        {'display': 'none'},
+        {'computedDisplay': 'none'},
+      ]) {
+        final result = await _evaluateSmartphoneReader(
+          frame: frame,
+          messageRows: [hidden, {'filtered': 'false'}],
+          inputValue: '1',
+        );
+        expect(result['frameUrls'], [
+          'https://gakujo.iess.niigata-u.ac.jp/campusweb/mobile/'
+              'campussquare.do?_flowExecutionKey=mobile%20key'
+              '&_eventId=displayMidoku&keijitype=1&genrecd=40&seqNo=2',
+        ], reason: '$hidden');
+        expect(result['statusText'], '1件を既読にしました（失敗0件）');
+      }
+    });
+
+    test('smartphone reader leaves an all-hidden list unread ($frame)', () async {
+      final result = await _evaluateSmartphoneReader(
+        frame: frame,
+        messageRows: List.generate(4, (_) => {'filtered': 'true'}),
+      );
+      expect(result['frameUrls'], isEmpty);
+      expect(result['reloadCount'], 0);
+      expect(result['statusText'], isNot(contains('既読にしました')));
+    });
+
+    test('smartphone reader preserves visible message order ($frame)', () async {
+      final result = await _evaluateSmartphoneReader(
+        frame: frame,
+        messageRows: [],
+      );
+      expect(
+          (result['frameUrls'] as List)
+              .map((url) => Uri.parse(url).queryParameters['seqNo']),
+          ['1', '2', '3']);
+      expect(result['statusText'], '3件を既読にしました（失敗0件）');
+    });
+
+    test('smartphone reader adopts controls after version change ($frame)',
+        () async {
+      final result = await _evaluateSmartphoneReader(
+        frame: frame,
+        previousVersion: true,
+        inputValue: '1',
+      );
+      expect(result['inputValueAfterAdoption'], '2');
+      expect(result['clickListenerCount'], 2);
+      expect(result['intervalCount'], 1);
+      expect(result['wrapperCount'], 1);
+      expect(
+          (result['frameUrls'] as List)
+              .map((url) => Uri.parse(url).queryParameters['seqNo']),
+          ['2']);
+    });
+
+    test('smartphone reader adopts a disabled old batch button ($frame)',
+        () async {
+      final result = await _evaluateSmartphoneReader(
+        frame: frame,
+        previousVersion: true,
+        previousInFlight: true,
+        inputValue: '1',
+      );
+      expect(result['oldRequestCount'], 1);
+      expect(result['buttonDisabledAfterAdoption'], isFalse);
+      expect(result['inputValueAfterAdoption'], '2');
+      expect(result['statusBeforeCurrent'], isEmpty);
+      expect(result['reloadBeforeCurrent'], 0);
+      expect(result['clickListenerCount'], 2);
+      expect(result['intervalCount'], 1);
+      expect(
+          (result['frameUrls'] as List)
+              .map((url) => Uri.parse(url).queryParameters['seqNo']),
+          ['2']);
+    });
+  }
+
   test('smartphone controls stay outside the only unread message row',
       () async {
     final result = await _evaluateSmartphoneReader(messageUrls: ['?seqNo=1']);
@@ -384,9 +468,7 @@ void main() {
     expect(result['wrapperIsPreviousSibling'], isTrue);
     expect(result['controlsOutsideMessageRows'], isTrue);
     expect(result['controlsVisibleAfterFirstRowHidden'], isTrue);
-    expect(result['frameUrls'], [
-      'https://gakujo.iess.niigata-u.ac.jp/campusweb/mobile/list.do?seqNo=1',
-    ]);
+    expect(result['frameUrls'], isEmpty);
   });
 
   test('smartphone onclick URLs retain the Gakujo origin restrictions',
@@ -412,6 +494,10 @@ Future<Map<String, dynamic>> _evaluateSmartphoneReader({
   String frame = 'empty',
   bool unread = true,
   List<String>? messageUrls,
+  List<Map<String, String>>? messageRows,
+  String inputValue = '3',
+  bool previousVersion = false,
+  bool previousInFlight = false,
 }) async {
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_reader_mobile_');
@@ -424,6 +510,10 @@ Future<Map<String, dynamic>> _evaluateSmartphoneReader({
           'frame': frame,
           'unread': unread,
           'messageUrls': messageUrls,
+          'messageRows': messageRows,
+          'inputValue': inputValue,
+          'previousVersion': previousVersion,
+          'previousInFlight': previousInFlight,
         }),
         encoding: utf8,
       );
