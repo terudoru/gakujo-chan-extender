@@ -51,6 +51,10 @@ class GakujoDeadlineEntry {
   /// in made the same deadline look new, and notify again, on every visit.
   String get key => '$kind|${stableGakujoUrl(url)}|$title|$dueText';
 
+  /// Collection identity keeps equally named courses separate. [key] remains
+  /// unchanged because existing notification history may contain that value.
+  String get storageKey => jsonEncode([key, courseCode.trim()]);
+
   Map<String, Object?> toJson() {
     return {
       'title': title,
@@ -116,6 +120,60 @@ List<GakujoDeadlineEntry> deadlineEntriesForAssignments(
           assignment: assignment.title,
         ),
   ];
+}
+
+/// Coursework dates extracted from the schedule page, before storage.
+List<GakujoDeadlineEntry> deadlineEntriesForSchedule(
+  String text, {
+  required String url,
+  required DateTime detectedAt,
+}) {
+  final entries = <GakujoDeadlineEntry>[];
+  final seen = <String>{};
+  for (final item in GakujoDatedActivity.scheduleCourseworkItems(text)) {
+    final dueText = GakujoDatedActivity.datedTextPreview(item.dueText);
+    if (GakujoDatedActivity.isNoiseText(dueText) ||
+        !GakujoDatedActivity.containsDate(dueText)) {
+      continue;
+    }
+    final entry = GakujoDeadlineEntry(
+      title: GakujoDatedActivity.compactText(item.title, maxLength: 80),
+      url: url,
+      dueText: dueText,
+      detectedAt: detectedAt,
+      source: 'スケジュール',
+      course: item.course,
+      courseCode: item.courseCode,
+      assignment: item.name,
+    );
+    if (seen.add(entry.storageKey)) entries.add(entry);
+  }
+  return _reconcileDeadlineEntries(entries).toList();
+}
+
+Iterable<GakujoDeadlineEntry> _reconcileDeadlineEntries(
+  List<GakujoDeadlineEntry> entries,
+) sync* {
+  (String, String, String) observationKey(GakujoDeadlineEntry entry) =>
+      (entry.key, entry.course.trim(), entry.assignment.trim());
+  final knownCodes = <(String, String, String), Set<String>>{};
+  for (final entry in entries) {
+    if (entry.courseCode.trim().isNotEmpty &&
+        entry.course.trim().isNotEmpty &&
+        entry.assignment.trim().isNotEmpty) {
+      (knownCodes[observationKey(entry)] ??= <String>{})
+          .add(entry.courseCode.trim());
+    }
+  }
+  for (final entry in entries) {
+    // Prefer known metadata only for a uniquely matching coursework record.
+    // An unknown observation remains when distinct known courses could fit.
+    if (entry.courseCode.trim().isEmpty &&
+        knownCodes[observationKey(entry)]?.length == 1) {
+      continue;
+    }
+    yield entry;
+  }
 }
 
 /// A link that still opens later. One carrying a per-visit
@@ -879,7 +937,7 @@ class GakujoActivityStore {
         : null;
     final entries = <String, GakujoDeadlineEntry>{
       for (final entry in deadlineRead.value)
-        if (_isUsefulDeadline(entry)) entry.key: entry,
+        if (_isUsefulDeadline(entry)) entry.storageKey: entry,
     };
     if (unread != null && unread.isNotEmpty) {
       // A message read on the web keeps its dates but is not announced later.
@@ -895,15 +953,18 @@ class GakujoActivityStore {
         });
       }
     }
-    final newEntries = <GakujoDeadlineEntry>[];
-    for (final entry
-        in nextEntries.where(_isUsefulDeadline).where(_isActiveDeadline)) {
-      if (!entries.containsKey(entry.key)) {
-        newEntries.add(entry);
-      }
-      entries[entry.key] = entry;
-    }
-    final sorted = entries.values.toList()
+    final merged = <String, GakujoDeadlineEntry>{
+      for (final entry in _reconcileDeadlineEntries([
+        ...entries.values,
+        ...nextEntries.where(_isUsefulDeadline).where(_isActiveDeadline),
+      ]))
+        entry.storageKey: entry,
+    };
+    final newEntries = [
+      for (final entry in merged.values)
+        if (!entries.containsKey(entry.storageKey)) entry,
+    ];
+    final sorted = merged.values.toList()
       ..sort((a, b) => b.detectedAt.compareTo(a.detectedAt));
     final capped = _capDeadlines(sorted);
     if (jsonEncode(capped.map((entry) => entry.toJson()).toList()) !=

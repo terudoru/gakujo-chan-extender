@@ -42,6 +42,167 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  group('distinct course codes with identical deadline labels', () {
+    const listUrl = 'https://gakujo.example/report';
+    final capturedAt = DateTime(2026, 10, 21);
+    final assignments = [
+      for (final code in ['260G1001', '260G1002'])
+        _assignment(_row(
+          'レポート', '第1回', '未提出', '2099/10/21 09:00 ～2099/10/28 17:00',
+          code: code, course: '特別研究',
+        )),
+    ];
+    List<GakujoDeadlineEntry> entries(bool schedule) => schedule
+        ? deadlineEntriesForSchedule(
+            [for (final assignment in assignments)
+              '[レポート][${assignment.courseCode} 特別研究]第1回【2099/10/28まで】',
+            ].join('\n'),
+            url: 'https://gakujo.example/schedule', detectedAt: capturedAt,
+          )
+        : deadlineEntriesForAssignments(
+            assignments, url: listUrl, detectedAt: capturedAt,
+          );
+
+    for (final schedule in [false, true]) {
+      for (final reversed in [false, true]) {
+        test('preserves both and notifies once (schedule:$schedule reverse:$reversed)',
+            () async {
+          final extracted = entries(schedule);
+          expect(extracted, hasLength(2));
+          // Notification history retains its legacy entry keys.
+          expect(extracted.map((entry) => entry.key).toSet(), hasLength(1));
+          final input = reversed ? extracted.reversed.toList() : extracted;
+          final store = GakujoActivityStore();
+          await store.mergeAssignments(assignments, isWholeList: true);
+          expect(await store.mergeDeadlines(input), hasLength(2));
+          expect(await store.mergeDeadlines(input), isEmpty);
+          expect((await GakujoActivityStore().loadDeadlines())
+              .map((entry) => entry.courseCode),
+              unorderedEquals(['260G1001', '260G1002']));
+          final service = _FakeNotificationService();
+          final coordinator = GakujoDeadlineNotificationCoordinator(
+            activityStore: store, notificationService: service,
+          );
+          await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+          await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+          expect(service.entries.map((entry) => entry.courseCode),
+              unorderedEquals(['260G1001', '260G1002']));
+          expect(await store.loadNotifiedDeadlineKeys(), containsAll([
+            'assignment|260G1001|第1回', 'assignment|260G1002|第1回',
+          ]));
+        });
+      }
+    }
+
+    test('rekeys existing serialized deadlines without changing their data', () async {
+      final original = entries(false);
+      FlutterSecureStorage.setMockInitialValues({
+        'more_better_gakujo_deadlines':
+            jsonEncode(original.map((entry) => entry.toJson()).toList()),
+      });
+      final store = GakujoActivityStore();
+      expect(await store.mergeDeadlines([]), isEmpty);
+      final restored = await store.loadDeadlines();
+      expect(restored.map((entry) => entry.toJson()),
+          unorderedEquals(original.map((entry) => entry.toJson())));
+    });
+
+    test('an existing assignment key suppresses only its own course', () async {
+      final store = GakujoActivityStore();
+      await store.mergeAssignments(assignments);
+      await store.mergeDeadlines(entries(false));
+      await store.addNotifiedDeadlineKeys(['assignment|260G1001|第1回']);
+      final service = _FakeNotificationService();
+      await GakujoDeadlineNotificationCoordinator(
+        activityStore: store, notificationService: service,
+      ).notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.entries.map((entry) => entry.courseCode), ['260G1002']);
+    });
+
+    test('a saved legacy deadline notification key prevents replay', () async {
+      final entry = entries(false).first;
+      final store = GakujoActivityStore();
+      await store.mergeAssignments([assignments.first]);
+      await store.mergeDeadlines([entry, entry]);
+      expect(await store.loadDeadlines(), hasLength(1));
+      await store.addNotifiedDeadlineKeys([entry.key]);
+      final service = _FakeNotificationService();
+      await GakujoDeadlineNotificationCoordinator(
+        activityStore: store, notificationService: service,
+      ).notifyPendingDeadlines(notificationsEnabled: true);
+      expect(service.entries, isEmpty);
+      expect(await store.loadNotifiedDeadlineKeys(), contains(entry.key));
+    });
+  });
+
+  group('mixed course metadata without an assignment cache', () {
+    const url = 'https://gakujo.example/schedule';
+    final detectedAt = DateTime(2026, 10, 21);
+    final lines = [
+      '[レポート][特別研究]第1回【2099/10/28まで】',
+      '[レポート][260G1001 特別研究]第1回【2099/10/28まで】',
+    ];
+    List<GakujoDeadlineEntry> extract(Iterable<String> input) =>
+        deadlineEntriesForSchedule(input.join('\n'),
+            url: url, detectedAt: detectedAt);
+    for (final reversed in [false, true]) {
+      for (final successive in [false, true]) {
+        test('one known assignment survives (reverse:$reversed successive:$successive)',
+            () async {
+          final input = reversed ? lines.reversed : lines;
+          final store = GakujoActivityStore();
+          if (successive) {
+            for (final line in input) {
+              await store.mergeDeadlines(extract([line]));
+            }
+          } else {
+            final extracted = extract(input);
+            expect(extracted, hasLength(1));
+            expect(extracted.single.courseCode, '260G1001');
+            await store.mergeDeadlines(extracted);
+          }
+          expect(await store.loadAssignments(), isEmpty);
+          final saved = await store.loadDeadlines();
+          expect(saved.map((entry) => entry.courseCode), ['260G1001']);
+          final service = _FakeNotificationService();
+          final coordinator = GakujoDeadlineNotificationCoordinator(
+            activityStore: store, notificationService: service,
+          );
+          await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+          await store.mergeDeadlines(extract(input));
+          await coordinator.notifyPendingDeadlines(notificationsEnabled: true);
+          expect(service.entries.map((entry) => entry.courseCode), ['260G1001']);
+        });
+      }
+    }
+
+    test('existing mixed records reconcile on the next merge', () async {
+      final original = [for (final line in lines) ...extract([line])];
+      final store = GakujoActivityStore();
+      await store.replaceDeadlines(original);
+      await store.mergeDeadlines([]);
+      expect((await store.loadDeadlines()).map((entry) => entry.courseCode),
+          ['260G1001']);
+    });
+
+    test('an unknown observation remains when two known courses match', () async {
+      final input = [
+        ...lines,
+        '[レポート][260G1002 特別研究]第1回【2099/10/28まで】',
+      ];
+      for (final order in [input, input.reversed.toList()]) {
+        FlutterSecureStorage.setMockInitialValues({});
+        final extracted = extract(order);
+        expect(extracted.map((entry) => entry.courseCode),
+            unorderedEquals(['', '260G1001', '260G1002']));
+        final store = GakujoActivityStore();
+        await store.mergeDeadlines(extracted);
+        expect((await store.loadDeadlines()).map((entry) => entry.courseCode),
+            unorderedEquals(['', '260G1001', '260G1002']));
+      }
+    });
+  });
+
   test('a list row gives the exact closing time and status', () {
     final open = _assignment(
       _row('小テスト', '第三回（通信とネットワーク）', '未提出',
@@ -778,6 +939,7 @@ void main() {
 
 class _FakeNotificationService extends GakujoNotificationService {
   final List<String> titles = [];
+  final List<GakujoDeadlineEntry> entries = [];
 
   @override
   Future<bool> requestPermission() async => true;
@@ -785,6 +947,7 @@ class _FakeNotificationService extends GakujoNotificationService {
   @override
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
     titles.add(entry.title);
+    entries.add(entry);
     return true;
   }
 }

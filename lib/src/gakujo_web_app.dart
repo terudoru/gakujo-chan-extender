@@ -5921,9 +5921,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       required String entryUrl,
       required String entryText,
       required String kind,
-      String course = '',
-      String courseCode = '',
-      String assignment = '',
       String messageText = '',
     }) {
       final normalizedText = _datedActivityText(entryText);
@@ -5950,9 +5947,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           detectedAt: now,
           kind: kind,
           source: category,
-          course: course,
-          courseCode: courseCode,
-          assignment: assignment,
           messageText: messageText.isEmpty || messageText.contains(entryTitle)
               ? messageText
               : '$messageText $entryTitle',
@@ -5989,18 +5983,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
 
     if (category == 'スケジュール') {
-      for (final item in GakujoDatedActivity.scheduleCourseworkItems(text)) {
-        addEntry(
-          entryTitle: item.title,
-          entryUrl: url,
-          entryText: item.dueText,
-          kind: 'deadline',
-          course: item.course,
-          courseCode: item.courseCode,
-          assignment: item.name,
-        );
-      }
-      return entries;
+      return deadlineEntriesForSchedule(
+        text,
+        url: durableGakujoLink(url, category),
+        detectedAt: now,
+      );
     }
 
     if (assignments.isNotEmpty) {
