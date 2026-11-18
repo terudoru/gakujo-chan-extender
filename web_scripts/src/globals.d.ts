@@ -251,7 +251,7 @@ interface Window {
   __MBG_PREVIEW_NAVIGATE?: (direction: string) => boolean;
   __MBG_PREVIEW_ZOOM?: (factor: number) => boolean;
   __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; zoomBy?: (factor: number) => void; __mbgToken?: string};
-  __MBG_OPEN_REMOTE_PREVIEW?: (request: MbgPreviewRequest) => boolean;
+  __MBG_OPEN_REMOTE_PREVIEW?: (request: MbgPreviewRequest, editOnOpen?: boolean) => boolean;
   __MBG_PDF_PREVIEW_URL?: string;
   __MBG_PDF_PREVIEW_POPUP?: boolean;
   __MBG_PDF_WORKER_URL?: string;

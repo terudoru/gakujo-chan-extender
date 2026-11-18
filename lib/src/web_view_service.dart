@@ -21,6 +21,7 @@ import 'generated/channel_guard.g.dart';
 import 'generated/document_title.g.dart';
 
 import 'allowed_web_origins.dart';
+import 'gakujo_photo_pdf_scan.dart';
 import 'macos_input_focus_service.dart';
 
 enum GakujoNavigationDecision {
@@ -321,8 +322,12 @@ class WebViewFlutterGakujoWebViewService extends GakujoWebViewService {
 @visibleForTesting
 Future<List<String>> pickAndroidUploadFiles(
   dynamic params, {
-  required Future<AndroidUploadSource?> Function() chooseSource,
+  required Future<AndroidUploadSource?> Function(
+    bool acceptsPhotos,
+    bool acceptsPdf,
+  ) chooseSource,
   String? Function()? takeRecoveredPhoto,
+  Future<XFile?> Function()? scanPdf,
   ValueChanged<String>? onError,
   ImagePicker? imagePicker,
 }) async {
@@ -333,21 +338,28 @@ Future<List<String>> pickAndroidUploadFiles(
     ];
     // iOS offers the camera for file inputs; Android WebView does not, so
     // photographed handwritten reports need an explicit camera option.
-    if (androidUploadAcceptsPhotos(acceptTypes)) {
-      final source = params.isCaptureEnabled == true
+    final acceptsPhotos = androidUploadAcceptsPhotos(acceptTypes);
+    final acceptsPdf = scanPdf != null && androidUploadAcceptsPdf(acceptTypes);
+    if (acceptsPhotos || acceptsPdf) {
+      final source = acceptsPhotos && params.isCaptureEnabled == true
           ? AndroidUploadSource.camera
-          : await chooseSource();
+          : await chooseSource(acceptsPhotos, acceptsPdf);
       if (source == null) {
         return const [];
       }
-      if (source == AndroidUploadSource.recoveredPhoto) {
+      if (source == AndroidUploadSource.scanPdf) {
+        if (scanPdf == null || !acceptsPdf) return const [];
+        final pdf = await scanPdf();
+        return [if (pdf != null) await androidUploadFileUri(pdf)];
+      }
+      if (source == AndroidUploadSource.recoveredPhoto && acceptsPhotos) {
         final path = takeRecoveredPhoto?.call();
         if (path == null || path.isEmpty) {
           throw StateError('撮影した写真が見つかりません');
         }
         return [await androidUploadFileUri(XFile(path))];
       }
-      if (source == AndroidUploadSource.camera) {
+      if (source == AndroidUploadSource.camera && acceptsPhotos) {
         final photo = await (imagePicker ?? ImagePicker())
             .pickImage(source: ImageSource.camera);
         return [
@@ -442,7 +454,7 @@ Future<String?> recoverAndroidUploadPhoto({
   }
 }
 
-enum AndroidUploadSource { recoveredPhoto, camera, files }
+enum AndroidUploadSource { recoveredPhoto, camera, scanPdf, files }
 
 /// Whether an input with this `accept` list can take a camera photo (JPEG).
 @visibleForTesting
@@ -456,6 +468,18 @@ bool androidUploadAcceptsPhotos(List<String> acceptTypes) {
           .any((type) => type == 'image/*' || type == 'image/jpeg') ||
       (group.extensions ?? const <String>[])
           .any((extension) => extension == 'jpg' || extension == 'jpeg');
+}
+
+@visibleForTesting
+bool androidUploadAcceptsPdf(List<String> acceptTypes) {
+  final groups = androidUploadTypeGroups(acceptTypes);
+  if (groups.isEmpty) return true;
+  final group = groups.single;
+  return (group.mimeTypes?.any(
+            (type) => type == 'application/pdf' || type == 'application/*',
+          ) ??
+          false) ||
+      (group.extensions?.contains('pdf') ?? false);
 }
 
 /// Registers the Android file chooser with a BuildContext so it can offer
@@ -530,12 +554,7 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
       // Without this callback Android WebView ignores <input type="file">,
       // so assignment attachments cannot be chosen.
       await (controller.platform as dynamic).setOnShowFileSelector(
-        (dynamic params) => pickAndroidUploadFiles(
-          params,
-          chooseSource: _chooseSource,
-          takeRecoveredPhoto: _takeRecoveredPhoto,
-          onError: _onError,
-        ),
+        (dynamic params) => _selectFiles(controller, params),
       );
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -547,7 +566,49 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
     }
   }
 
-  Future<AndroidUploadSource?> _chooseSource() async {
+  Future<List<String>> _selectFiles(
+    WebViewController controller,
+    dynamic params,
+  ) async {
+    final pageUrl = await controller.currentUrl().catchError((Object _) => null);
+    final canScan = AllowedWebOrigins.canLoad(pageUrl, debugAllowed: kDebugMode);
+    return pickAndroidUploadFiles(
+      params,
+      chooseSource: _chooseSource,
+      takeRecoveredPhoto: _takeRecoveredPhoto,
+      scanPdf: canScan ? () => _scanPdf(controller, pageUrl) : null,
+      onError: _onError,
+    );
+  }
+
+  Future<XFile?> _scanPdf(WebViewController controller, String? pageUrl) async {
+    if (!mounted || !identical(controller, widget.controller)) return null;
+    final file = await showGakujoPhotoPdfScanner(
+      context,
+      takeRecoveredPhoto: _recoveredPhotoPath == null
+          ? null
+          : () {
+              final path = _takeRecoveredPhoto();
+              return path == null ? null : XFile(path);
+            },
+    );
+    if (file == null) return null;
+
+    var handingOff = false;
+    try {
+      handingOff = await controller.currentUrl() == pageUrl &&
+          mounted &&
+          identical(controller, widget.controller);
+      return handingOff ? file : null;
+    } finally {
+      if (!handingOff) await discardGakujoPhotoPdf(file);
+    }
+  }
+
+  Future<AndroidUploadSource?> _chooseSource(
+    bool acceptsPhotos,
+    bool acceptsPdf,
+  ) async {
     if (!mounted) {
       return null;
     }
@@ -557,19 +618,27 @@ class _AndroidUploadHostState extends State<_AndroidUploadHost> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_recoveredPhotoPath != null)
+            if (acceptsPhotos && _recoveredPhotoPath != null)
               ListTile(
                 leading: const Icon(Icons.restore),
                 title: const Text('直前に撮った写真を使う'),
                 onTap: () => Navigator.of(sheetContext)
                     .pop(AndroidUploadSource.recoveredPhoto),
               ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera),
-              title: const Text('写真を撮る'),
-              onTap: () =>
-                  Navigator.of(sheetContext).pop(AndroidUploadSource.camera),
-            ),
+            if (acceptsPdf)
+              ListTile(
+                leading: const Icon(Icons.document_scanner_outlined),
+                title: const Text('撮ってPDFにする'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(AndroidUploadSource.scanPdf),
+              ),
+            if (acceptsPhotos)
+              ListTile(
+                leading: const Icon(Icons.photo_camera),
+                title: const Text('写真を撮る'),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(AndroidUploadSource.camera),
+              ),
             ListTile(
               leading: const Icon(Icons.folder_open),
               title: const Text('写真やファイルを選ぶ'),

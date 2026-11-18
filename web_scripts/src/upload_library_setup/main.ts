@@ -16,6 +16,12 @@ function uploadLibrarySetup() {
       window.__MBG_PDF_CMAPS = sources[4] as Record<string, string>;
       window.__MBG_PDF_STANDARD_FONTS = sources[5] as Record<string, string>;
     }
+  } else if (kind === 'preview-edit' && sources.length === 5) {
+    if (!window.__MBG_PDF_WORKER_URL) {
+      window.__MBG_PDF_WORKER_URL = URL.createObjectURL(new Blob([sources[0] as string], {type: 'text/javascript'}));
+    }
+    window.__MBG_PDF_CMAPS = sources[2] as Record<string, string>;
+    window.__MBG_PDF_STANDARD_FONTS = sources[3] as Record<string, string>;
   }
 }
 uploadLibrarySetup();

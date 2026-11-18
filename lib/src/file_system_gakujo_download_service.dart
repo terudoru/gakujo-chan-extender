@@ -371,6 +371,32 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
     }
   }
 
+
+  Future<void> exportEditedPdf(Uint8List bytes, String suggestedName) async {
+    const mime = 'application/pdf';
+    final fileName = DownloadFileNamePolicy.safeFileName(
+      preferredName: suggestedName,
+      url: '',
+      mimeType: mime,
+    );
+    if (Platform.isIOS) {
+      await _exportToNativePicker(
+        bytes: bytes,
+        fileName: fileName,
+        mimeType: mime,
+      );
+      return;
+    }
+    await _saveToPickedFlutterFile(
+      downloaded: AuthenticatedDownloadedFile(
+        bytes: bytes,
+        finalUrl: '',
+        mimeType: mime,
+      ),
+      fileName: fileName,
+    );
+  }
+
   Future<GakujoDownloadResult> _exportToNativePicker({
     required Uint8List bytes,
     required String fileName,
