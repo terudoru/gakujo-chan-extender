@@ -128,7 +128,7 @@ const String gakujoReportSorterJs = r'''
 
   // web_scripts/src/report_sorter/main.ts
   function reportSorter() {
-    var version = 4;
+    var version = 5;
     if (window.__MBG_REPORT_SORTER_VERSION === version) {
       if (window.__MBG_REPORT_SORTER_UPDATE) {
         window.__MBG_REPORT_SORTER_UPDATE();
@@ -284,6 +284,12 @@ const String gakujoReportSorterJs = r'''
     function update() {
       var table = reportTable();
       if (!table) {
+        ["mbg-report-title-button", "mbg-report-number-button", "mbg-report-date-button"].forEach(function(id) {
+          var button = document.getElementById(id);
+          if (button && button.getAttribute("data-mbg-report-sorter-owned") === "true") {
+            button.remove();
+          }
+        });
         return false;
       }
       addButton("mbg-report-title-button", "タイトルでソート", sortByTitle);

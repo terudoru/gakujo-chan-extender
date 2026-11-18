@@ -228,6 +228,63 @@ void main() {
     );
   });
 
+  for (final foreign in [false, true]) {
+    test('report controls follow frame navigation (foreign ID: $foreign)',
+        () async {
+      await evaluatePageScriptLifecycle(
+        feature: 'report',
+        buildScript: '''
+(function() {
+  const table = document.querySelector('#enqListForm table:nth-of-type(2)');
+  let frame = {contentWindow: {document: {querySelector: () => table}}};
+  const getElementById = document.getElementById;
+  document.getElementById = id => id === 'main-frame-if' ? frame : getElementById(id);
+  document.querySelector = () => null;
+  const menu = document.getElementById('tabmenutable');
+  const foreign = document.createElement('button');
+  foreign.id = ${jsonEncode(foreign ? 'mbg-report-date-button' : 'portal-action')};
+  menu.appendChild(foreign);
+  const grade = document.createElement('button');
+  grade.id = 'mbg-grade-no-button';
+  grade.setAttribute('data-mbg-gpa-display-owned', 'true');
+  menu.appendChild(grade);
+  const setInterval = window.setInterval;
+  let tick;
+  window.setInterval = function(callback, delay) {
+    tick = callback;
+    return setInterval(callback, delay);
+  };
+
+  ${GakujoReportSorterScript.build()}
+
+  function ownCount() {
+    return document.querySelectorAll('[data-mbg-report-sorter-owned="true"]').length;
+  }
+  const expected = ${foreign ? 2 : 3};
+  if (ownCount() !== expected) throw new Error('Missing initial report controls');
+  frame.contentWindow.document = {querySelector: () => null};
+  tick();
+  if (ownCount() !== 0) throw new Error('Report controls remained after leaving reports');
+  frame.contentWindow.document = {querySelector: () => table};
+  tick();
+  ${GakujoReportSorterScript.build()}
+  tick();
+  if (ownCount() !== expected) throw new Error('Report controls missing or duplicated on return');
+  frame = null;
+  tick();
+  if (ownCount() !== 0) throw new Error('Report controls remained after frame removal');
+  if (document.getElementById(foreign.id) !== foreign ||
+      document.getElementById(grade.id) !== grade) {
+    throw new Error('Unowned portal or GPA controls were removed');
+  }
+})();
+''',
+        teardownScript: '',
+        runOnce: true,
+      );
+    });
+  }
+
   test('auto-sorts each new iframe table once after navigation', () async {
     await evaluatePageScriptLifecycle(
       feature: 'report',

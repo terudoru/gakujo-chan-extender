@@ -1,7 +1,7 @@
 import { watchPage } from '../shared/page_watch.js';
 export {};
 function reportSorter() {
-  var version = 4;
+  var version = 5;
   if (window.__MBG_REPORT_SORTER_VERSION === version) {
     if (window.__MBG_REPORT_SORTER_UPDATE) {
       window.__MBG_REPORT_SORTER_UPDATE();
@@ -180,6 +180,13 @@ function reportSorter() {
   function update() {
     var table = reportTable();
     if (!table) {
+      ['mbg-report-title-button', 'mbg-report-number-button', 'mbg-report-date-button']
+        .forEach(function(id) {
+          var button = document.getElementById(id);
+          if (button && button.getAttribute('data-mbg-report-sorter-owned') === 'true') {
+            button.remove();
+          }
+        });
       return false;
     }
     addButton('mbg-report-title-button', 'タイトルでソート', sortByTitle);
