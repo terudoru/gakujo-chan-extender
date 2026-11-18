@@ -47,11 +47,15 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     Map<String, String> headers = const {},
     List<int> body = const [],
     int maxBytes = starSyncDefaultMaxBytes,
+    void Function()? beforeSend,
   }) async {
+    beforeSend?.call();
     var token = await accessToken();
     var refreshed = false;
     var retries = 0;
     while (true) {
+      // A guarded upload can be cancelled during token, quota or retry waits.
+      beforeSend?.call();
       final cost = method != 'GET'
           ? 50
           : uri.path.endsWith('/files')
@@ -67,6 +71,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         headers: {...headers, 'authorization': 'Bearer $token'},
         body: body,
         maxBytes: maxBytes,
+        beforeSend: beforeSend,
       );
       if (response.statusCode == 401 && !refreshed) {
         token = await accessToken(forceRefresh: true);
@@ -232,6 +237,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     String path,
     List<int> bytes, {
     bool createOnly = false,
+    void Function()? beforeSend,
   }) async {
     validateStarSyncPath(path);
     if (createOnly) await _refresh();
@@ -251,6 +257,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         }),
         headers: {'content-type': 'application/octet-stream'},
         body: bytes,
+        beforeSend: beforeSend,
       );
       checkStarSyncStatus(response.statusCode);
       _files[path]![0] = _updatedFile(response, path, files.first);
@@ -279,6 +286,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
       }),
       headers: {'content-type': 'multipart/related; boundary=$boundary'},
       body: body,
+      beforeSend: beforeSend,
     );
     checkStarSyncStatus(response.statusCode);
     String id;

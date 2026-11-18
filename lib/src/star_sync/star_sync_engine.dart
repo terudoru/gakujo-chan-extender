@@ -2860,7 +2860,15 @@ class StarSyncEngine {
           await _requireBackupAccount();
           _assertCurrentAccount(state);
           if (automatic) _requireAutomaticBackupAllowed();
-          await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
+          if (automatic && transport is StarSyncGoogleDriveTransport) {
+            await transport.put(
+              '$_backupDirectory/${state.deviceId}',
+              encrypted,
+              beforeSend: _requireAutomaticBackupAllowed,
+            );
+          } else {
+            await transport.put('$_backupDirectory/${state.deviceId}', encrypted);
+          }
           state.lastBackupUploadAt = _now().toUtc();
           if (state.lastError == 'バックアップを保存できませんでした') {
             state.lastError = null;

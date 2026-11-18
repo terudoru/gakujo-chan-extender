@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_drive_transport.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
@@ -41,6 +45,8 @@ class _FakeDrive {
   String failureBody = '{}';
   bool rejectOldToken = false;
   bool insertRace = false;
+  void Function(_File)? beforeReadResponse;
+  Future<void> Function()? afterUpload;
 
   Uri get base => Uri.parse('http://127.0.0.1:${server.port}');
 
@@ -101,6 +107,7 @@ class _FakeDrive {
         insertRace = false;
         add(file.name, [99], created: DateTime.utc(2020));
       }
+      await afterUpload?.call();
       response.write(jsonEncode(file.json));
     } else {
       final id = request.uri.pathSegments.last;
@@ -108,10 +115,12 @@ class _FakeDrive {
       if (matches.isEmpty) {
         response.statusCode = 404;
       } else if (request.method == 'GET') {
+        beforeReadResponse?.call(matches.first);
         response.add(matches.first.bytes);
       } else if (request.method == 'PATCH') {
         matches.first.bytes = body;
         matches.first.version++;
+        await afterUpload?.call();
         response.write(jsonEncode(matches.first.json));
       } else if (request.method == 'DELETE') {
         files.remove(matches.first);
@@ -121,6 +130,17 @@ class _FakeDrive {
       }
     }
     await response.close();
+  }
+}
+
+class _GatedQuotaMeter extends StarSyncQuotaMeter {
+  _GatedQuotaMeter() : super(storage: MemorySecureStorage());
+  Future<void> Function()? beforeCharge;
+
+  @override
+  Future<void> charge(int units, {bool automatic = false}) async {
+    await beforeCharge?.call();
+    await super.charge(units, automatic: automatic);
   }
 }
 
@@ -144,6 +164,173 @@ void main() {
     transport.close();
     await drive.server.close(force: true);
   });
+
+  int uploadCount() => drive.counts.entries
+      .where(
+        (entry) =>
+            entry.key.startsWith('POST /upload/') ||
+            entry.key.startsWith('PATCH /upload/'),
+      )
+      .fold(0, (total, entry) => total + entry.value);
+
+  for (final existing in [false, true]) {
+    test(
+      'automatic backup stops during write token wait, existing=$existing',
+      () async {
+        final storage = MemorySecureStorage();
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        var allowed = true;
+        var holdNextToken = false;
+        var now = DateTime.utc(2026, 11, 18);
+        final engine = StarSyncEngine(
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          loginId: () => 'synthetic-login',
+          canSync: () => false,
+          canUploadAutomaticBackup: () => allowed,
+          now: () => now,
+          quotaMeter: meter,
+          googleDriveTransport: () => StarSyncGoogleDriveTransport(
+            quotaMeter: meter,
+            apiBase: drive.base,
+            accessToken: ({bool forceRefresh = false}) async {
+              if (holdNextToken) {
+                holdNextToken = false;
+                entered.complete();
+                await release.future;
+              }
+              return 'token';
+            },
+          ),
+        );
+        addTearDown(engine.dispose);
+        await engine.setUpWithDrive(const StarSyncConfig());
+        if (existing) await engine.uploadBackup([1]);
+        final backup = drive.files
+            .where((file) => file.name.startsWith('backups/'))
+            .firstOrNull;
+        final original = backup == null ? null : List<int>.of(backup.bytes);
+        final previousTime = jsonDecode(
+          storage.values[starSyncStateKey]!,
+        )['lastBackupUploadAt'];
+        now = now.add(const Duration(hours: 25));
+        drive.beforeReadResponse = (file) {
+          if (file.name == 'stars/keyring.json') holdNextToken = true;
+        };
+        final count = uploadCount();
+        final pending = engine.uploadAutomaticBackupIfDue(() async => [2]);
+        await entered.future;
+        expect(uploadCount(), count);
+        allowed = false;
+        release.complete();
+        expect(await pending, isFalse);
+        expect(uploadCount(), count);
+        expect(
+          jsonDecode(storage.values[starSyncStateKey]!)['lastBackupUploadAt'],
+          previousTime,
+        );
+        expect(
+          jsonDecode(storage.values[starSyncStateKey]!)['lastError'],
+          isNull,
+        );
+        if (existing) {
+          expect(backup!.bytes, original);
+        } else {
+          expect(
+            drive.files.where((file) => file.name.startsWith('backups/')),
+            isEmpty,
+          );
+        }
+      },
+    );
+  }
+
+  for (final phase in ['token', 'quota', 'refresh', 'retry']) {
+    for (final cancel in [false, true]) {
+      test('guarded put after $phase wait, cancel=$cancel', () async {
+        transport.close();
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final gatedMeter = _GatedQuotaMeter();
+        var armed = false;
+        var allowed = true;
+        final cancelled = StateError('cancelled by current policy');
+        Future<void> hold() async {
+          entered.complete();
+          await release.future;
+        }
+
+        transport = StarSyncGoogleDriveTransport(
+          quotaMeter: gatedMeter,
+          apiBase: drive.base,
+          accessToken: ({bool forceRefresh = false}) async {
+            if (armed &&
+                (phase == 'token' || phase == 'refresh' && forceRefresh)) {
+              await hold();
+            }
+            return phase == 'refresh' && armed && !forceRefresh
+                ? 'old'
+                : 'token';
+          },
+          delay: (_) async {
+            if (armed && phase == 'retry') await hold();
+          },
+        );
+        final file = drive.add('backups/test', [1]);
+        await transport.get(file.name);
+        armed = true;
+        if (phase == 'quota') gatedMeter.beforeCharge = hold;
+        if (phase == 'refresh') drive.rejectOldToken = true;
+        if (phase == 'retry') drive.failures = 1;
+        final pending = transport.put(
+          file.name,
+          [2],
+          beforeSend: () {
+            if (!allowed) throw cancelled;
+          },
+        );
+        final result = cancel
+            ? expectLater(pending, throwsA(same(cancelled)))
+            : pending;
+        await entered.future;
+        allowed = !cancel;
+        release.complete();
+        // Only one asynchronous boundary is held; later successful retries run normally.
+        gatedMeter.beforeCharge = null;
+        await result;
+        final attempts = phase == 'refresh' || phase == 'retry' ? 1 : 0;
+        expect(uploadCount(), attempts + (cancel ? 0 : 1));
+        expect(file.bytes, cancel ? [1] : [2]);
+      });
+    }
+  }
+
+  test(
+    'guarded accepted upload remains successful after policy changes',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var allowed = true;
+      drive.afterUpload = () async {
+        entered.complete();
+        await release.future;
+      };
+      final pending = transport.put(
+        'backups/test',
+        [2],
+        beforeSend: () {
+          if (!allowed) throw StateError('cancelled');
+        },
+      );
+      await entered.future;
+      allowed = false;
+      release.complete();
+      await pending;
+      expect(drive.files.single.bytes, [2]);
+      expect(uploadCount(), 1);
+    },
+  );
 
   test('storage quota failure is distinct from authentication', () async {
     drive.failures = 1;

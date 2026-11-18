@@ -116,15 +116,23 @@ Future<StarSyncHttpResponse> starSyncRequest(
   List<int> body = const [],
   int maxBytes = starSyncDefaultMaxBytes,
   Duration? timeout,
+  void Function()? beforeSend,
 }) async {
   HttpClientRequest? activeRequest;
   var timedOut = false;
   Future<StarSyncHttpResponse> send() async {
+    beforeSend?.call();
     final request = await client.openUrl(method, uri);
     activeRequest = request;
     if (timedOut) {
       request.abort();
       throw const HttpException('Request timed out');
+    }
+    try {
+      beforeSend?.call();
+    } on Object {
+      request.abort();
+      rethrow;
     }
     request.followRedirects = false;
     headers.forEach((name, value) => request.headers.set(name, value));
