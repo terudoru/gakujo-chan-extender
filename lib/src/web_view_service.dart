@@ -1401,19 +1401,18 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
     }));
     _subscriptions.add(_inner.loadingState.listen((state) {
       if (state == windows.LoadingState.loading) {
-        _mainFrameConnectivityFailed = false;
-      } else if (state == windows.LoadingState.navigationCompleted &&
-          !_mainFrameConnectivityFailed &&
-          !_rendererRecoveryStopped) {
-        unawaited(_notifyPageFinished());
+        _failedNavigationAwaitingCompletion = false;
+      } else if (state == windows.LoadingState.navigationCompleted) {
+        if (!_failedNavigationAwaitingCompletion && !_rendererRecoveryStopped) {
+          unawaited(_notifyPageFinished());
+        }
+        _failedNavigationAwaitingCompletion = false;
       }
     }));
     _subscriptions.add(_inner.onLoadError.listen((error) {
+      // The native handler sends a completion immediately after every error.
+      _failedNavigationAwaitingCompletion = true;
       final mapped = GakujoWebResourceError.fromWindows(error);
-      // WebView2 reports completion after onLoadError even for error pages.
-      if (mapped.isConnectivityError) {
-        _mainFrameConnectivityFailed = true;
-      }
       _delegate?.onWebResourceError?.call(mapped);
     }));
     _subscriptions.add(_inner.webMessage.listen(_handleWebMessage));
@@ -1533,7 +1532,7 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
   bool _canGoForward = false;
   int _navigationGeneration = 0;
   bool _disposed = false;
-  bool _mainFrameConnectivityFailed = false;
+  bool _failedNavigationAwaitingCompletion = false;
   bool _rendererRecoveryStopped = false;
   final Stopwatch _recoveryClock = Stopwatch()..start();
   final Duration Function()? _recoveryElapsed;

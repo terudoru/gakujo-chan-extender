@@ -456,6 +456,42 @@ void main() {
     await tester.runAsync(controller.dispose);
   });
 
+  for (final status in [
+    windows.WebErrorStatus.errorHttpInvalidServerResponse,
+    windows.WebErrorStatus.disconnected,
+  ]) {
+    testWidgets('${status.name} suppresses only its paired completion',
+        (tester) async {
+      await tester.runAsync(() async {
+        final native = windows.WebviewController();
+        await native.initialize();
+        final controller = WindowsGakujoWebViewController(native);
+        final errors = <GakujoWebResourceError>[];
+        final finished = <String>[];
+        await controller.setNavigationDelegate(GakujoNavigationDelegate(
+          onWebResourceError: errors.add,
+          onPageFinished: finished.add,
+        ));
+        try {
+          await emit('urlChanged', pageA);
+          final completed = windows.LoadingState.navigationCompleted.index;
+          eventSink!.success({'type': 'onLoadError', 'value': status.index});
+          eventSink!.success({'type': 'loadingStateChanged', 'value': completed});
+          await flushEvents();
+          expect(errors.single.description, status.name);
+          expect(finished, isEmpty);
+
+          // WebView2 can complete a same-URL reload without ContentLoading.
+          await controller.reload();
+          await emit('loadingStateChanged', completed);
+          expect(finished, [pageA]);
+        } finally {
+          await controller.dispose();
+        }
+      });
+    });
+  }
+
   testWidgets('Windows service anchors page popups below app controls', (
     tester,
   ) async {

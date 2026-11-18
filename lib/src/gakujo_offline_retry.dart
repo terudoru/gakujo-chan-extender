@@ -24,11 +24,13 @@ class GakujoOfflineRetry {
   GakujoOfflineRetry({
     required this._probe,
     required this._onReachable,
+    this._onExpired,
     DateTime Function()? now,
   })  : _now = now ?? DateTime.now;
 
   final Future<bool> Function() _probe;
   final void Function() _onReachable;
+  final void Function()? _onExpired;
   final DateTime Function() _now;
   Timer? _timer;
   Timer? _deadlineTimer;
@@ -44,7 +46,10 @@ class GakujoOfflineRetry {
     }
     final generation = ++_generation;
     _deadline = _now().add(const Duration(minutes: 10));
-    _deadlineTimer = Timer(const Duration(minutes: 10), cancel);
+    _deadlineTimer = Timer(
+      const Duration(minutes: 10),
+      () => _expire(generation),
+    );
     _timer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(_check(generation));
     });
@@ -59,12 +64,18 @@ class GakujoOfflineRetry {
     _deadline = null;
   }
 
+  void _expire(int generation) {
+    if (generation != _generation) return;
+    cancel();
+    _onExpired?.call();
+  }
+
   Future<void> _check(int generation) async {
     if (!isActive || generation != _generation) {
       return;
     }
     if (!_now().isBefore(_deadline!)) {
-      cancel();
+      _expire(generation);
       return;
     }
     if (_checking) {
@@ -83,7 +94,7 @@ class GakujoOfflineRetry {
       return;
     }
     if (!_now().isBefore(_deadline!)) {
-      cancel();
+      _expire(generation);
       return;
     }
     if (reachable) {

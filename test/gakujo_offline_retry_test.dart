@@ -44,6 +44,7 @@ void main() {
         activeDuringReload = retry.isActive;
         reloads += 1;
       },
+      onExpired: () => fail('success is not expiration'),
       now: tester.binding.clock.now,
     );
     addTearDown(retry.cancel);
@@ -64,13 +65,15 @@ void main() {
   testWidgets('gives up after ten minutes without extending on another start',
       (tester) async {
     var probes = 0;
+    var expirations = 0;
     final retry = GakujoOfflineRetry(
       probe: () async {
         probes += 1;
         return false;
       },
       onReachable: () => fail('offline'),
-      now: tester.binding.clock.now,
+      onExpired: () => expirations++,
+      now: () => DateTime(2026, 10, 24), // Only the deadline timer can expire.
     );
     addTearDown(retry.cancel);
 
@@ -82,7 +85,9 @@ void main() {
     retry.start();
     await tester.pump(const Duration(seconds: 5));
     expect(retry.isActive, isFalse);
+    expect(expirations, 1);
     await tester.pump(const Duration(minutes: 1));
+    expect(expirations, 1);
     expect(probes, beforeDeadline);
   });
 
@@ -94,6 +99,7 @@ void main() {
         return false;
       },
       onReachable: () => fail('offline'),
+      onExpired: () => fail('explicit cancellation is not expiration'),
       now: tester.binding.clock.now,
     );
     addTearDown(retry.cancel);
@@ -121,6 +127,7 @@ void main() {
         return probes == 1 ? pending.future : Future.value(false);
       },
       onReachable: () => reloads += 1,
+      onExpired: () => fail('stale probes must not expire the current retry'),
       now: tester.binding.clock.now,
     );
     addTearDown(retry.cancel);
@@ -166,9 +173,11 @@ void main() {
       (tester) async {
     final pending = Completer<bool>();
     var reloads = 0;
+    var expirations = 0;
     final retry = GakujoOfflineRetry(
       probe: () => pending.future,
       onReachable: () => reloads += 1,
+      onExpired: () => expirations++,
       now: tester.binding.clock.now,
     );
     addTearDown(retry.cancel);
@@ -179,18 +188,21 @@ void main() {
     pending.complete(true);
     await tester.pump();
     expect(reloads, 0);
+    expect(expirations, 1);
   });
 
   testWidgets('a delayed timer observes the wall-clock deadline',
       (tester) async {
     var now = DateTime(2026, 10, 24);
     var probes = 0;
+    var expirations = 0;
     final retry = GakujoOfflineRetry(
       probe: () async {
         probes += 1;
         return true;
       },
       onReachable: () => fail('deadline has passed'),
+      onExpired: () => expirations++,
       now: () => now,
     );
     addTearDown(retry.cancel);
@@ -200,6 +212,35 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     expect(retry.isActive, isFalse);
     expect(probes, 0);
+    await tester.pump(const Duration(minutes: 10));
+    expect(expirations, 1);
+  });
+
+  testWidgets('a probe crossing the wall deadline expires its generation once',
+      (tester) async {
+    var now = DateTime(2026, 10, 24);
+    var expirations = 0;
+    final pending = Completer<bool>();
+    final retry = GakujoOfflineRetry(
+      probe: () => pending.future,
+      onReachable: () => fail('late probe must not reload'),
+      onExpired: () => expirations++,
+      now: () => now,
+    );
+    addTearDown(retry.cancel);
+
+    retry.start();
+    await tester.pump(const Duration(seconds: 5));
+    now = now.add(const Duration(minutes: 10));
+    pending.complete(true);
+    await tester.pump();
+    expect(retry.isActive, isFalse);
+    expect(expirations, 1);
+
+    retry.start();
+    now = now.add(const Duration(minutes: 10));
+    await tester.pump(const Duration(minutes: 10));
+    expect(expirations, 2);
   });
 
   testWidgets('a throwing probe leaves the next check active', (tester) async {

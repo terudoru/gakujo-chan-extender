@@ -681,6 +681,12 @@ String secureStorageRecoveryGuidance(
       'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
+const _offlineRetryStatus = 'オフラインのようです。接続が戻ると自動で再読み込みします';
+const _manualReloadStatus = '読み込めませんでした。接続を確認して再読み込みを押してください';
+
+bool _isHiddenOrPaused(AppLifecycleState? state) =>
+    state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+
 @visibleForTesting
 void handleGakujoWebResourceError(
   GakujoWebResourceError error, {
@@ -690,10 +696,10 @@ void handleGakujoWebResourceError(
 }) {
   if (error.isForMainFrame && error.isConnectivityError) {
     if (offlineAutoReloads >= 3) {
-      setStatus('読み込めませんでした。接続を確認して再読み込みを押してください');
+      setStatus(_manualReloadStatus);
       return;
     }
-    setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
+    setStatus(_offlineRetryStatus);
     startOfflineRetry();
     return;
   }
@@ -1783,7 +1789,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> Function()? _refreshOpenFavorites;
   Future<void> Function()? _refreshOpenStarredMessages;
   late final GakujoOfflineRetry _offlineRetry;
-  bool _offlineRetryPausedInBackground = false;
+  late bool _appInBackground;
+  int? _offlineRetryNavigationRevision;
   // Reloads since the last successful Gakujo page. The probe can reach the
   // host while the WebView still fails (proxy, captive portal), so cap it.
   int _offlineAutoReloads = 0;
@@ -1936,6 +1943,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void initState() {
     super.initState();
+    _appInBackground = _isHiddenOrPaused(WidgetsBinding.instance.lifecycleState);
     WidgetsBinding.instance.addObserver(this);
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _secretStore = widget._secretStore ?? TwoFactorSecretStore(
@@ -2095,6 +2103,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _offlineRetry = GakujoOfflineRetry(
       probe: widget._gakujoReachable ?? probeGakujoReachability,
       onReachable: () => unawaited(_reloadAfterConnectivityRestored()),
+      onExpired: _onOfflineRetryExpired,
     );
     _downloadService = Platform.isWindows
         ? FileSystemGakujoDownloadService(
@@ -2130,7 +2139,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _cancelDriveUploads();
     _status.dispose();
     unawaited(_pdfPreviewServer.close());
-    _offlineRetry.cancel();
+    _cancelOfflineRetry();
     _backgroundRefreshTimer?.cancel();
     _collectionSyncScheduler.dispose();
     _starSyncEngine.dispose();
@@ -2173,15 +2182,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _injectTwoFactorAutofillIfAllowed();
       }());
     }
-    // Do not probe the network every few seconds while the app is in the
-    // background; check again once it is back.
-    if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
+    if (_isHiddenOrPaused(state)) {
+      _appInBackground = true;
+      // Keep the failed navigation until the app is visible again.
       _offlineRetry.cancel();
-      _offlineRetryPausedInBackground = true;
-    } else if (state == AppLifecycleState.resumed &&
-        _offlineRetryPausedInBackground) {
-      _offlineRetryPausedInBackground = false;
-      _offlineRetry.start();
+    } else if (state == AppLifecycleState.resumed ||
+        (_appInBackground &&
+            defaultTargetPlatform == TargetPlatform.windows &&
+            state == AppLifecycleState.inactive)) {
+      // Windows can restore a minimized window without giving it focus.
+      _appInBackground = false;
+      if (_offlineRetryNavigationRevision == _navigationRevision) {
+        _offlineRetry.start();
+      }
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_checkForUpdatesInBackground());
@@ -5726,8 +5739,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!preservesPendingMessageOpen) {
       _setPendingMessageUrl(null);
     }
-    _offlineRetry.cancel();
-    _offlineRetryPausedInBackground = false;
+    _cancelOfflineRetry();
     _navigationRevision += 1;
     _linuxOverlayNavigation.value = _navigationRevision;
     _pendingPageFinishedNavigationRevision = null;
@@ -5738,8 +5750,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _pendingMessageOpen?.navigation.record(url, _navigationRevision);
   }
 
+  void _requestOfflineRetry() {
+    _offlineRetryNavigationRevision = _navigationRevision;
+    if (!_appInBackground) _offlineRetry.start();
+  }
+
+  void _cancelOfflineRetry() {
+    _offlineRetryNavigationRevision = null;
+    _offlineRetry.cancel();
+  }
+
+  void _onOfflineRetryExpired() {
+    if (!mounted || _offlineRetryNavigationRevision != _navigationRevision) {
+      return;
+    }
+    _offlineRetryNavigationRevision = null;
+    if (_status.value == _offlineRetryStatus) _setStatus(_manualReloadStatus);
+  }
+
   Future<void> _reloadAfterConnectivityRestored() async {
-    if (!mounted) {
+    if (!mounted ||
+        _appInBackground ||
+        _offlineRetryNavigationRevision != _navigationRevision) {
       return;
     }
     _beginNavigation();
@@ -8097,6 +8129,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onNavigationRequest: _handleNavigationRequest,
         // Windows SourceChanged only sees the final URL of an HTTP redirect.
         onNavigationStarting: (url) {
+          _cancelOfflineRetry();
           _invalidateLoginUrl(url);
           _captureNavigationRecoveryCandidate(url);
         },
@@ -8195,9 +8228,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
-              _offlineRetry.cancel();
-              // A page that loaded must not be reloaded again on resume.
-              _offlineRetryPausedInBackground = false;
+              _cancelOfflineRetry();
               _offlineAutoReloads = 0;
               _lastAllowedPageUrl = url;
             }
@@ -8338,7 +8369,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             error,
             offlineAutoReloads: _offlineAutoReloads,
             setStatus: _setStatus,
-            startOfflineRetry: _offlineRetry.start,
+            startOfflineRetry: _requestOfflineRetry,
           );
         },
       ),
