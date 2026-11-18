@@ -28,6 +28,8 @@ const _collectionMaxBytes = 8 * 1024 * 1024;
 const _clearCollectionsKey = '\u0000collection-snapshot';
 const starSyncPendingDraftClearKey = 'more_better_gakujo_pending_draft_clear';
 const _deferredDraftClearKey = '\u0000draft-clear-before';
+const _starCommitRecoveryMessage =
+    'スターの保存状態を確認できないため、同期を停止しました。同期を無効にしてから設定し直してください。';
 
 class _CollectionTooLarge implements Exception {}
 class _CollectionCommitUncertain implements Exception {}
@@ -138,6 +140,7 @@ class StarSyncState {
     this.status = StarSyncStatus.ok,
     this.pendingBulkReplace = false,
     this.pendingBulkReplaceStarIds,
+    this.pendingStarCommit = false,
     Map<String, String>? pendingLocalClear,
     this.keyringEtag,
     this.pendingLocalChange = false,
@@ -170,6 +173,7 @@ class StarSyncState {
   StarSyncStatus status;
   bool pendingBulkReplace;
   Set<String>? pendingBulkReplaceStarIds;
+  bool pendingStarCommit;
   Map<String, String> pendingLocalClear;
   String? keyringEtag;
   bool pendingLocalChange;
@@ -200,6 +204,7 @@ class StarSyncState {
     'status': status.name,
     'pendingBulkReplace': pendingBulkReplace,
     'pendingBulkReplaceStarIds': pendingBulkReplaceStarIds?.toList(),
+    if (pendingStarCommit) 'pendingStarCommit': true,
     'pendingLocalClear': pendingLocalClear,
     'keyringEtag': keyringEtag,
     'pendingLocalChange': pendingLocalChange,
@@ -252,6 +257,7 @@ class StarSyncState {
       pendingBulkReplaceStarIds: (json['pendingBulkReplaceStarIds'] as List?)
           ?.whereType<String>()
           .toSet(),
+      pendingStarCommit: json['pendingStarCommit'] == true,
       pendingLocalClear: {
         if (json['pendingLocalClear'] is Map)
           for (final entry in (json['pendingLocalClear'] as Map).entries)
@@ -525,6 +531,7 @@ class StarSyncEngine {
       final parsedState = StarSyncState.fromJson(stateJson);
       _config = parsedConfig;
       _state = parsedState;
+      if (parsedState.pendingStarCommit) _publish();
       try {
         final legacy =
             (parsedState.collectionStates['report-drafts']
@@ -559,12 +566,17 @@ class StarSyncEngine {
 
   void _publish({bool syncing = false}) {
     final state = _state;
+    final pendingStarCommit = state?.pendingStarCommit == true;
     _status.value = StarSyncStatusSnapshot(
       enabled: _config != null && state != null,
       activeAccountUnknown: accountHash != null && _currentAccount() == null,
-      status: state?.status ?? StarSyncStatus.disabled,
+      status: pendingStarCommit
+          ? StarSyncStatus.error
+          : state?.status ?? StarSyncStatus.disabled,
       lastSyncAt: state?.lastSyncAt,
-      lastError: state?.lastError,
+      lastError: pendingStarCommit
+          ? _starCommitRecoveryMessage
+          : state?.lastError,
       syncing: syncing,
       cooldownUntil: state?.cooldownUntil,
       googleQuotaUsed: _quotaMeter.usage.value,
@@ -639,7 +651,7 @@ class StarSyncEngine {
 
   Future<void> _finishPendingLocalClear() async {
     final state = _state!;
-    if (state.pendingLocalClear.isEmpty) return;
+    if (state.pendingStarCommit || state.pendingLocalClear.isEmpty) return;
     final pending = Map<String, String>.of(state.pendingLocalClear);
     try {
       final deferredDraftClear = pending[_deferredDraftClearKey];
@@ -845,6 +857,12 @@ class StarSyncEngine {
     }
   }
 
+  void _requireNoPendingStarCommit() {
+    if (_state?.pendingStarCommit == true) {
+      throw StateError(_starCommitRecoveryMessage);
+    }
+  }
+
   bool Function() _writeGuard(StarSyncState state) {
     final generation = _accountGeneration;
     return () {
@@ -1024,6 +1042,7 @@ class StarSyncEngine {
     String? retiredKeyId,
     void Function()? checkCurrent,
   }) => _queue.run(() async {
+    _requireNoPendingStarCommit();
     if (_currentAccount() != account ||
         (expectedGeneration != null &&
             accountGeneration != expectedGeneration)) {
@@ -1077,12 +1096,14 @@ class StarSyncEngine {
     int? expectedGeneration,
     void Function()? checkCurrent,
   }) async {
+    _requireNoPendingStarCommit();
     checkCurrent?.call();
     final account = _setupAccount(expectedAccount, expectedGeneration);
     final transport = _transportFactory(config);
     try {
       _setupAccount(account, expectedGeneration);
       await transport.ensureDirectory(_deviceDirectory);
+      _requireNoPendingStarCommit();
       final retiredKeyId = resetExisting
           ? await _deleteRemoteData(transport, account)
           : null;
@@ -1203,6 +1224,7 @@ class StarSyncEngine {
       final config = _config;
       final state = _state;
       if (config == null || state == null) throw StateError('Sync is disabled');
+      _requireNoPendingStarCommit();
       await _requireBoundAccount();
       final transport = _transportFactory(config);
       try {
@@ -1252,6 +1274,7 @@ class StarSyncEngine {
 
   Future<void> _resumeAfterAccountReturn({required bool discardLocal}) async {
     final resumed = await _queue.run(() async {
+      _requireNoPendingStarCommit();
       final state = _state;
       if (_config == null || state == null || !state.localReviewRequired) {
         return false;
@@ -1363,7 +1386,7 @@ class StarSyncEngine {
   Future<StarSyncResult> _triggerSync(StarSyncTrigger trigger) async {
     final config = _config;
     final state = _state;
-    if (_disposed || config == null || state == null) {
+    if (_disposed || config == null || state == null || state.pendingStarCommit) {
       return const StarSyncResult();
     }
     await _queue.run(() async {
@@ -1413,7 +1436,8 @@ class StarSyncEngine {
     return _queue.run(() async {
       if (_disposed ||
           !identical(_config, config) ||
-          !identical(_state, state)) {
+          !identical(_state, state) ||
+          state.pendingStarCommit) {
         return const StarSyncResult();
       }
       if (!await _accountMatches(state)) return const StarSyncResult();
@@ -1703,74 +1727,79 @@ class StarSyncEngine {
         state.records,
         ...documents.map((e) => e.records),
       ], now: now);
-      late Map<String, StarSyncRecord> mergedRecords;
       final writeGuard = _writeGuard(state);
-      final changed = await activityStore.transformStarredMessages<bool>((
-        current,
-      ) async {
-        if (_currentAccount() != state.boundAccount) {
-          throw const _AccountChanged();
-        }
-        final reconciled = reconcileLocalStars(
-          local: current,
-          state: state.records,
-          known: known,
-          clock: clock,
-          deviceId: state.deviceId,
-          now: now,
-          bulkReplace: state.pendingBulkReplace,
-          bulkReplaceStarIds: state.pendingBulkReplaceStarIds,
-        );
-        mergedRecords = mergeStarSyncRecords([
-          reconciled.state,
-          ...documents.map((e) => e.records),
-        ], now: now);
-        clock = reconciled.clock;
-        final live =
-            mergedRecords.values.where((record) => record.starred).toList()
-              ..sort((a, b) {
-                final date = b.starredAt.compareTo(a.starredAt);
-                return date != 0 ? date : a.id.compareTo(b.id);
-              });
-        for (final record in live.skip(starSyncMaxStars)) {
-          mergedRecords[record.id] = record.copyWith(
-            starred: false,
-            clock: ++clock,
+      void checkCurrent() => _assertWriteCurrent(writeGuard);
+      final changed = await _commitLocalStars(state, () async {
+        late Map<String, StarSyncRecord> mergedRecords;
+        final applied = await activityStore.transformStarredMessages<bool>((
+          current,
+        ) async {
+          checkCurrent();
+          final reconciled = reconcileLocalStars(
+            local: current,
+            state: state.records,
+            known: known,
+            clock: clock,
             deviceId: state.deviceId,
-            updatedAt: now,
+            now: now,
+            bulkReplace: state.pendingBulkReplace,
+            bulkReplaceStarIds: state.pendingBulkReplaceStarIds,
+          );
+          mergedRecords = mergeStarSyncRecords([
+            reconciled.state,
+            ...documents.map((e) => e.records),
+          ], now: now);
+          clock = reconciled.clock;
+          final live =
+              mergedRecords.values.where((record) => record.starred).toList()
+                ..sort((a, b) {
+                  final date = b.starredAt.compareTo(a.starredAt);
+                  return date != 0 ? date : a.id.compareTo(b.id);
+                });
+          for (final record in live.skip(starSyncMaxStars)) {
+            mergedRecords[record.id] = record.copyWith(
+              starred: false,
+              clock: ++clock,
+              deviceId: state.deviceId,
+              updatedAt: now,
+            );
+          }
+          mergedRecords = mergeStarSyncRecords([mergedRecords], now: now);
+          final next = applyStarSyncStateToLocal(
+            state: mergedRecords,
+            local: current,
+          );
+          for (final record in mergedRecords.values) {
+            clock = max(clock, record.clock);
+          }
+          return (
+            next: next,
+            result:
+                jsonEncode(current.map((e) => e.toJson()).toList()) !=
+                jsonEncode(next.map((e) => e.toJson()).toList()),
+          );
+        }, beforeWrite: checkCurrent);
+        state
+          ..records = mergedRecords
+          ..clock = clock
+          ..remoteCache = caches
+          ..pendingBulkReplace = false
+          ..pendingBulkReplaceStarIds = null;
+        return applied;
+      }, checkCurrent: checkCurrent);
+      checkCurrent();
+      if (changed) {
+        try {
+          onLocalStarsChanged?.call();
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to refresh committed stars',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
           );
         }
-        mergedRecords = mergeStarSyncRecords([mergedRecords], now: now);
-        final next = applyStarSyncStateToLocal(
-          state: mergedRecords,
-          local: current,
-        );
-        for (final record in mergedRecords.values) {
-          clock = max(clock, record.clock);
-        }
-        return (
-          next: next,
-          result:
-              jsonEncode(current.map((e) => e.toJson()).toList()) !=
-              jsonEncode(next.map((e) => e.toJson()).toList()),
-        );
-      }, beforeWrite: () => _assertWriteCurrent(writeGuard));
-      if (changed) onLocalStarsChanged?.call();
-      final previousRecords = state.records;
-      final previousClock = state.clock;
-      state.records = mergedRecords;
-      state.clock = clock;
-      try {
-        await _saveState();
-      } on Object {
-        state.records = previousRecords;
-        state.clock = previousClock;
-        rethrow;
       }
-      state.remoteCache = caches;
-      state.pendingBulkReplace = false;
-      state.pendingBulkReplaceStarIds = null;
-      await _saveState();
       final document = StarSyncDocument(
         deviceId: state.deviceId,
         writtenAt: now,
@@ -1888,6 +1917,9 @@ class StarSyncEngine {
       await _saveState();
       rethrow;
     } on Object catch (error) {
+      // Recovery state is already durable when the pair might be inconsistent.
+      // Leave the persisted baseline as it was after the failing write.
+      if (state.pendingStarCommit) rethrow;
       if (error is StarSyncTransportException &&
           error.kind == StarSyncTransportErrorKind.auth) {
         state.status = StarSyncStatus.needsGoogleSignIn;
@@ -1922,6 +1954,67 @@ class StarSyncEngine {
       _scheduleApplyRetry(state);
       _publish();
     }
+  }
+
+  Future<bool> _commitLocalStars(
+    StarSyncState state,
+    Future<bool> Function() apply, {
+    required void Function() checkCurrent,
+  }) {
+    final local = activityStore.starredMessagesStorage;
+    return local.queue.runExclusive(() async {
+      checkCurrent();
+      final previousRecords = state.records;
+      final previousClock = state.clock;
+      final previousCache = state.remoteCache;
+      final previousBulkReplace = state.pendingBulkReplace;
+      final previousStarIds = state.pendingBulkReplaceStarIds;
+
+      Future<void> clearMarker() async {
+        state.pendingStarCommit = false;
+        try {
+          await _saveState();
+        } on Object {
+          state.pendingStarCommit = true;
+          rethrow;
+        }
+      }
+
+      state.pendingStarCommit = true;
+      late bool changed;
+      try {
+        await _saveState();
+        await runBackupStorageTransaction(
+          [
+            local,
+            // The engine queue is held. Reenter the activity queue instead.
+            BackupStorageParticipant(local.queue, _storage, const [
+              starSyncStateKey,
+            ]),
+          ],
+          () async {
+            changed = await apply();
+            checkCurrent();
+            await _saveState();
+          },
+          beforeOperation: checkCurrent,
+          afterOperation: checkCurrent,
+        );
+      } on Object catch (error) {
+        state
+          ..records = previousRecords
+          ..clock = previousClock
+          ..remoteCache = previousCache
+          ..pendingBulkReplace = previousBulkReplace
+          ..pendingBulkReplaceStarIds = previousStarIds;
+        if (error is! BackupRollbackException) await clearMarker();
+        rethrow;
+      }
+
+      // Once the pair commits, a completion failure leaves the new baseline.
+      await clearMarker();
+      return changed;
+    });
   }
 
   Set<String> _collectionNames() => {
@@ -2763,6 +2856,7 @@ class StarSyncEngine {
         canUploadAutomaticBackup?.call() == false ||
         _config == null ||
         state == null ||
+        state.pendingStarCommit ||
         state.localReviewRequired ||
         _currentAccount() != state.boundAccount ||
         _currentAccount() == null) {
@@ -2773,7 +2867,9 @@ class StarSyncEngine {
   }
 
   void _requireAutomaticBackupAllowed() {
-    if (_disposed || canUploadAutomaticBackup?.call() == false) {
+    if (_disposed ||
+        _state?.pendingStarCommit == true ||
+        canUploadAutomaticBackup?.call() == false) {
       throw _AutomaticBackupCancelled();
     }
   }
