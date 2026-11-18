@@ -460,6 +460,7 @@ internal object GakujoCalendarEventPolicy {
 }
 
 class MainActivity : FlutterActivity() {
+    private val incomingAttachments = IncomingAttachmentReceiver()
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
     private var pendingPickFileArgs: Map<*, *>? = null
@@ -482,6 +483,8 @@ class MainActivity : FlutterActivity() {
         pendingNotificationUrl = notificationUrlFromIntent(intent)
             ?.takeIf { it != consumedNotificationUrl }
         super.onCreate(savedInstanceState)
+        incomingAttachments.prune(this)
+        if (savedInstanceState == null) incomingAttachments.receive(this, intent)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -489,9 +492,13 @@ class MainActivity : FlutterActivity() {
         consumedNotificationUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
     }
 
+    override fun shouldHandleDeeplinking(): Boolean =
+        intent?.action != Intent.ACTION_SEND && super.shouldHandleDeeplinking()
+
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
         setIntent(intent)
+        super.onNewIntent(intent)
+        incomingAttachments.receive(this, intent)
         val url = notificationUrlFromIntent(intent) ?: return
         pendingNotificationUrl = url
         notificationsChannel?.invokeMethod(
@@ -514,6 +521,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        incomingAttachments.register(this, flutterEngine.dartExecutor.binaryMessenger)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -603,6 +611,11 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        incomingAttachments.detach()
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onRequestPermissionsResult(

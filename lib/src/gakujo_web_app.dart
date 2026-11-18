@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart'
     show LinuxDownloadProgress, LinuxKeyZoomAction;
 
+import 'generated/assignment_attachment.g.dart';
 import 'generated/course_name_estimate.g.dart';
 import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
@@ -65,6 +66,8 @@ import 'gakujo_message_star_script.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_offline_retry.dart';
 import 'gakujo_pdf_preview_server.dart';
+import 'gakujo_pdf_reading_progress.dart';
+import 'gakujo_photo_pdf_scan.dart';
 import 'gakujo_report_draft_script.dart';
 import 'gakujo_quick_jump_script.dart';
 import 'gakujo_report_sorter_script.dart';
@@ -75,6 +78,7 @@ import 'gakujo_upload_compression_libraries.dart';
 import 'gakujo_upload_compression_script.dart';
 import 'gakujo_upload_preview_script.dart';
 import 'google_drive_file_saver.dart';
+import 'incoming_attachment_service.dart';
 import 'platform/platform_service.dart';
 import 'report_form.dart';
 import 'secure_storage_factory.dart';
@@ -120,6 +124,7 @@ part 'widgets/gakujo_web_app_private_widgets.dart';
 part 'gakujo_web_app_calendar.dart';
 part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
+part 'gakujo_web_app_assignment_files.dart';
 part 'gakujo_web_app_models.dart';
 part 'gakujo_web_app_message_stars.dart';
 part 'gakujo_web_app_report_drafts.dart';
@@ -1907,6 +1912,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       GakujoDownloadOperationGate();
   final GakujoUploadLibraryGate _uploadLibraryGate = GakujoUploadLibraryGate();
   final GakujoPdfPreviewServer _pdfPreviewServer = GakujoPdfPreviewServer();
+  final GakujoPdfReadingProgress _pdfReadingProgress = GakujoPdfReadingProgress();
+  final IncomingAttachmentService _incomingAttachments = IncomingAttachmentService.instance;
+  bool _receivingAssignmentAttachment = false;
+  bool _exportingWorksheet = false;
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   static final _protectedSecretPromptGate = ProtectedSecretPromptGate();
@@ -2118,6 +2127,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _cancelDriveUploads();
     _status.dispose();
     unawaited(_pdfPreviewServer.close());
+    _incomingAttachments.pending.removeListener(_onIncomingAttachmentChanged);
+    _incomingAttachments.error.removeListener(_onIncomingAttachmentError);
     _offlineRetry.cancel();
     _backgroundRefreshTimer?.cancel();
     _collectionSyncScheduler.dispose();
@@ -4849,6 +4860,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _activityStore.clearNotifiedDeadlineTimes(),
         _activityStore.replaceNotifiedDeadlineKeys(const []),
         StarSyncQuotaMeter.shared.clear(),
+        _pdfReadingProgress.clear(),
         _activityStore.clearReportLists(),
         _activityStore.replaceFavorites(const []),
         _activityStore.replaceStarredMessages(const []),
@@ -7592,6 +7604,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _controller.runJavaScript(
         GakujoUploadPreviewScript.build(compactAndroid: Platform.isAndroid),
       );
+      await _updateAssignmentFileControls();
       await _controller.runJavaScript(
         gakujoHistoryMarkerJs({'action': 'install-preview-tracker'}),
       );
@@ -8089,6 +8102,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       'MbgPreviewNavigation',
       onMessageReceived: _handlePreviewNavigationState,
     );
+    await _addGakujoJavaScriptChannel(
+      'MbgPdfReadingProgress',
+      onMessageReceived: _handlePdfReadingProgress,
+    );
+    await _addGakujoJavaScriptChannel(
+      'MbgWorksheetExport',
+      onMessageReceived: _handleWorksheetExport,
+    );
+    if (_supportsIncomingAttachments) {
+      await _addGakujoJavaScriptChannel(
+        'MbgAssignmentAttachment',
+        onMessageReceived: _handleAssignmentAttachment,
+      );
+      _initializeIncomingAttachments();
+    }
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
@@ -8753,6 +8781,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _starSyncLoad = null;
       });
       await _localPrefsStore.clear();
+      await _pdfReadingProgress.clear();
       await _applyFeatureFlagRuntimeState(
         GakujoFeatureFlag.loginAutofill,
         enabled: false,

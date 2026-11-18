@@ -22,6 +22,7 @@ import 'viewer_actions_web.dart';
 import 'preview_app.dart';
 
 const _maxPdfBytes = 512 * 1024 * 1024;
+const _maxPdfPages = 2000;
 final _clipboardMessenger = GlobalKey<ScaffoldMessengerState>();
 
 void main(List<String> args) {
@@ -58,6 +59,9 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   int _outlineRequest = 0;
   bool _textLimitReached = false;
   bool _receivedDocument = false;
+  bool _reportReadingProgress = false;
+  int _initialPdfPage = 1;
+  int? _lastPdfPage;
   String _title = 'PDFプレビュー';
   Uint8List? _imageData;
   String? _textData;
@@ -178,7 +182,15 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           }
         } else if (!_receivedDocument && type != null && type.isA<JSString>()) {
           final kind = (type as JSString).toDart;
-          if (kind == 'mbg-preview-image') {
+          if (kind == 'mbg-preview-pdf') {
+            final raw = object.getProperty<JSAny?>('data'.toJS);
+            if (raw == null || !raw.isA<JSArrayBuffer>()) return;
+            final initialPage = object.getProperty<JSAny?>('initialPage'.toJS);
+            _receivePdf(
+              raw as JSArrayBuffer,
+              initialPage: _parseInitialPdfPage(initialPage),
+            );
+          } else if (kind == 'mbg-preview-image') {
             final raw = object.getProperty<JSAny?>('data'.toJS);
             final mime = object.getProperty<JSAny?>('mime'.toJS);
             if (raw != null && raw.isA<JSArrayBuffer>() && mime != null &&
@@ -211,29 +223,57 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
         return;
       }
       if (data == null || !data.isA<JSArrayBuffer>()) return;
-      final bytes = (data as JSArrayBuffer).toDart.asUint8List();
-      if (_receivedDocument ||
-          bytes.isEmpty ||
-          bytes.lengthInBytes > _maxPdfBytes) {
-        return;
-      }
-      _receivedDocument = true;
-      if (_textLimitReached) setState(() => _textLimitReached = false);
-      _lastPassword = null;
-      final ref = PdfDocumentRefData(
-        bytes,
-        sourceName: 'preview.pdf',
-        passwordProvider: _requestPassword,
-        useProgressiveLoading: true,
-      );
-      _releaseDocument?.call();
-      // Keep one shared load alive while viewport/keyboard changes rebuild the
-      // viewer. Otherwise an in-flight password prompt can be orphaned.
-      _releaseDocument = ref.resolveListenable().addListener(() {});
-      documentRef.value = ref;
+      _receivePdf(data as JSArrayBuffer);
     }).toJS;
     web.window.addEventListener('message', _previewListener);
     web.window.parent?.postMessage('mbg-preview-ready'.toJS, '*'.toJS);
+  }
+
+  int _parseInitialPdfPage(JSAny? value) {
+    if (value == null || !value.isA<JSNumber>()) return 1;
+    final page = (value as JSNumber).toDartDouble;
+    if (!page.isFinite || page < 1 || page > _maxPdfPages) return 1;
+    final integer = page.toInt();
+    return page == integer ? integer : 1;
+  }
+
+  void _receivePdf(JSArrayBuffer data, {int? initialPage}) {
+    if (_receivedDocument) return;
+    final bytes = data.toDart.asUint8List();
+    if (bytes.isEmpty || bytes.lengthInBytes > _maxPdfBytes) return;
+    _receivedDocument = true;
+    _reportReadingProgress = initialPage != null;
+    _initialPdfPage = initialPage ?? 1;
+    if (_textLimitReached) setState(() => _textLimitReached = false);
+    _lastPassword = null;
+    final ref = PdfDocumentRefData(
+      bytes,
+      sourceName: 'preview.pdf',
+      passwordProvider: _requestPassword,
+      useProgressiveLoading: true,
+    );
+    _releaseDocument?.call();
+    // Keep one shared load alive while viewport/keyboard changes rebuild the
+    // viewer. Otherwise an in-flight password prompt can be orphaned.
+    _releaseDocument = ref.resolveListenable().addListener(() {});
+    documentRef.value = ref;
+  }
+
+  void _reportPdfPage(int? page) {
+    if (!mounted ||
+        !_reportReadingProgress ||
+        _lastPdfPage == null ||
+        page == null ||
+        page < 1 ||
+        page > _maxPdfPages ||
+        page == _lastPdfPage) {
+      return;
+    }
+    _lastPdfPage = page;
+    web.window.parent?.postMessage(
+      {'type': 'mbg-preview-page', 'page': page}.jsify(),
+      '*'.toJS,
+    );
   }
 
   @override
@@ -475,7 +515,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                       docRef,
                       controller: controller,
                       fontManager: _fontManager,
+                      initialPageNumber: _initialPdfPage,
                       params: PdfViewerParams(
+                        // A font reload can initialize the same document again.
+                        calculateInitialPageNumber: (_, _) => _lastPdfPage,
+                        onPageChanged: _reportPdfPage,
                         layoutPages: _layoutPages[_layoutTypeIndex],
                         maxImageBytesCachedOnMemory:
                             determineWhetherMobileDeviceOrNot()
@@ -646,6 +690,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                           return const Center(child: Text('PDFを開けませんでした。'));
                         },
                         onViewerReady: (document, controller) async {
+                          _lastPdfPage = controller.pageNumber;
                           final outlineRequest = ++_outlineRequest;
                           outline.value = null;
                           outlineError.value = false;

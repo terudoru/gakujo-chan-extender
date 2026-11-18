@@ -792,16 +792,19 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
-  /// Injects pdf.js/pdf-lib or JSZip when the upload compression script
-  /// meets an oversized PDF or Office file.
+  /// Loads PDF or Office libraries when the page asks to process a file.
   Future<void> _handleUploadCompressionLibraryRequest(String message) async {
     final kind = message.trim();
-    if (!_canRunPageScripts ||
-        (kind != 'preview' && kind != 'preview-office' &&
-            !_appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression))) {
+    if (!_canRunPageScripts) {
       return;
     }
-    if (kind != 'preview' && kind != 'preview-office' && kind != 'pdf' && kind != 'office') return;
+    const previewKinds = {'preview', 'preview-office', 'preview-edit'};
+    const compressionKinds = {'pdf', 'office'};
+    if (!previewKinds.contains(kind) &&
+        !(compressionKinds.contains(kind) &&
+            _appSettings.isFeatureEnabled(GakujoFeatureFlag.uploadCompression))) {
+      return;
+    }
     final revision = _navigationRevision;
     try {
       await _uploadLibraryGate.run(
