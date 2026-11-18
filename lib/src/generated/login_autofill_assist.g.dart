@@ -157,6 +157,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
     window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
     if (window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE) window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE();
     window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
+    var pendingTarget = null;
     function report(event, detail) {
       var payload = {
         event,
@@ -413,7 +414,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       if (!password) {
         return null;
       }
-      var form = password.form || password.closest("form");
+      var form = password.form;
       var formInputs = form ? Array.prototype.slice.call(form.querySelectorAll("input")) : inputs;
       var visiblePasswordInputs = formInputs.filter(function(input) {
         return visible(input) && isPasswordInput(input);
@@ -421,7 +422,9 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       if (visiblePasswordInputs.length >= 2 || visiblePasswordInputs.some(isPasswordChangeField)) {
         return null;
       }
-      var username = firstVisible(formInputs, isKnownUsernameField);
+      var username = firstVisible(formInputs, function(input) {
+        return input.form === form && isKnownUsernameField(input);
+      });
       if (!username) {
         return null;
       }
@@ -441,6 +444,9 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
         }
       }
       return null;
+    }
+    function sameLoginTarget(a, b) {
+      return b !== null && a.doc === b.doc && a.form === b.form && a.username === b.username && a.password === b.password;
     }
     function setInputValue(input, value) {
       var pageWindow = input.ownerDocument.defaultView || window;
@@ -541,7 +547,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       }
     }
     function submitForm(target) {
-      if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+      if (window.__MBG_LOGIN_AUTOFILL_DISABLED || !sameLoginTarget(target, findLoginTarget())) {
         return;
       }
       var submitter = findSubmitControl(target);
@@ -593,6 +599,10 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
         return;
       }
       var target = findLoginTarget();
+      if (pendingTarget && !sameLoginTarget(pendingTarget, target)) {
+        window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+        pendingTarget = null;
+      }
       if (!target) {
         window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
         if (hasAttemptToReset() && hasAuthenticatedMarker()) {
@@ -620,7 +630,11 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       report("fill", "target-found form=" + (target.form ? target.form.id : "none"));
       setInputValue(target.username, savedUsername);
       setInputValue(target.password, savedPassword);
+      if (pendingTarget) return;
+      pendingTarget = target;
       window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
+        if (pendingTarget !== target) return;
+        pendingTarget = null;
         submitForm(target);
       }, 250);
     }

@@ -23,6 +23,7 @@ function loginAutofillAssist() {
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
   if (window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE) window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE();
   window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
+  var pendingTarget: LoginTarget | null = null;
 
   function report(event: string, detail: string) {
     var payload = {
@@ -324,7 +325,7 @@ function loginAutofillAssist() {
       return null;
     }
 
-    var form = password.form || password.closest('form');
+    var form = password.form;
     var formInputs: HTMLInputElement[] = form ?
       Array.prototype.slice.call(form.querySelectorAll('input')) :
       inputs;
@@ -336,7 +337,9 @@ function loginAutofillAssist() {
       return null;
     }
 
-    var username = firstVisible(formInputs, isKnownUsernameField);
+    var username = firstVisible(formInputs, function(input) {
+      return input.form === form && isKnownUsernameField(input);
+    });
 
     if (!username) {
       return null;
@@ -359,6 +362,11 @@ function loginAutofillAssist() {
       }
     }
     return null;
+  }
+
+  function sameLoginTarget(a: LoginTarget, b: LoginTarget | null) {
+    return b !== null && a.doc === b.doc && a.form === b.form &&
+      a.username === b.username && a.password === b.password;
   }
 
   function setInputValue(input: HTMLInputElement, value: string) {
@@ -474,7 +482,7 @@ function loginAutofillAssist() {
   }
 
   function submitForm(target: LoginTarget) {
-    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+    if (window.__MBG_LOGIN_AUTOFILL_DISABLED || !sameLoginTarget(target, findLoginTarget())) {
       return;
     }
     var submitter = findSubmitControl(target);
@@ -532,6 +540,10 @@ function loginAutofillAssist() {
       return;
     }
     var target = findLoginTarget();
+    if (pendingTarget && !sameLoginTarget(pendingTarget, target)) {
+      window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+      pendingTarget = null;
+    }
     if (!target) {
       window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
       if (hasAttemptToReset() && hasAuthenticatedMarker()) {
@@ -562,7 +574,11 @@ function loginAutofillAssist() {
     report('fill', 'target-found form=' + (target.form ? target.form.id : 'none'));
     setInputValue(target.username, savedUsername);
     setInputValue(target.password, savedPassword);
+    if (pendingTarget) return;
+    pendingTarget = target;
     window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
+      if (pendingTarget !== target) return;
+      pendingTarget = null;
       submitForm(target!);
     }, 250);
   }
