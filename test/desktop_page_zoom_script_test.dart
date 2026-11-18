@@ -66,6 +66,27 @@ void main() {
     expect(desktopWheelZoom(1, 100), closeTo(.905, .001));
     expect(desktopWheelZoom(1, -10000), lessThan(1.3));
   });
+
+  test('late image loads refit without moving a scrolled viewport', () async {
+    final result = await Process.run('node', [
+      'test/support/desktop_page_zoom_script_reapply_harness.cts',
+      DesktopPageZoomScript.build(1.5, originX: 400, originY: 300),
+      'image',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    for (final name in ['imageUnscrolled', 'imageChild', 'imageCoalesced']) {
+      expect(data[name]['zoom'], closeTo(1, .0001), reason: name);
+      expect(data[name]['x'], 0, reason: name);
+      expect(data[name]['y'], 0, reason: name);
+      expect(data[name]['scrollCalls'], 0, reason: name);
+    }
+    expect(data['imageScrolled']['zoom'], closeTo(1.5, .0001));
+    expect(data['imageScrolled']['x'], 300);
+    expect(data['imageScrolled']['y'], 1500);
+    expect(data['imageScrolled']['scrollCalls'], 0);
+  });
+
   test('uses visual transform zoom without relayout zoom CSS', () {
     final script = DesktopPageZoomScript.build(
       1.25,

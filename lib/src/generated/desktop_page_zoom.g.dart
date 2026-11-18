@@ -236,11 +236,15 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
               scheduleReapply(win, "resize");
             }, true);
             win.document.addEventListener("load", function(event) {
-              var frame = event.target;
-              if (!frame || !/^(iframe|frame)$/i.test(frame.tagName)) {
+              var target = event.target;
+              if (!target) {
                 return;
               }
-              attachNativeZoomBlockers();
+              if (/^(iframe|frame)$/i.test(target.tagName)) {
+                attachNativeZoomBlockers();
+              } else if (!/^img$/i.test(target.tagName)) {
+                return;
+              }
               scheduleReapply(window, "shape");
             }, true);
             if (win.MutationObserver && win.document && win.document.body) {
