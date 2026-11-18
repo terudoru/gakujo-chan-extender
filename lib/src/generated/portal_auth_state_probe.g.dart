@@ -21,14 +21,32 @@ const String gakujoPortalAuthStateProbeJs = r'''
       } catch (_) {
       }
     }
+    function hostsDocument(frame, doc2, view) {
+      if (frame.localName !== "embed") {
+        return "contentDocument" in frame && frame.contentDocument === doc2 && "contentWindow" in frame && frame.contentWindow === view;
+      }
+      var parentView = frame.ownerDocument.defaultView;
+      return frame.isConnected && parentView !== null && parentView === view.parent && Array.prototype.indexOf.call(parentView.frames, view) !== -1 && (!("contentDocument" in frame) || frame.contentDocument === doc2) && (!("contentWindow" in frame) || frame.contentWindow === view);
+    }
     function visible(element) {
+      var _a;
       if (!element) {
         return false;
       }
       try {
-        var pageWindow = element.ownerDocument.defaultView || window;
-        var style = pageWindow.getComputedStyle(element);
-        return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && element.getClientRects().length > 0;
+        var current = element;
+        while (true) {
+          var doc2 = current.ownerDocument;
+          var view = doc2.defaultView;
+          if (!view || view.document !== doc2) return false;
+          var style = view.getComputedStyle(current);
+          if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || !current.getClientRects().length) return false;
+          if (current !== element && (style.visibility === "collapse" || ((_a = current.checkVisibility) == null ? void 0 : _a.call(current, { checkOpacity: true })) === false)) return false;
+          if (doc2 === document) return view === window;
+          var frame = view.frameElement;
+          if (!frame || !hostsDocument(frame, doc2, view)) return false;
+          current = frame;
+        }
       } catch (_) {
         return false;
       }

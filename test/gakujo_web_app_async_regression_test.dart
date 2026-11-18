@@ -755,6 +755,93 @@ void main() {
   });
 
   group('portal authentication state', () {
+    group('embedding frames', () {
+      const login = [
+        {'tag': 'input', 'name': 'userId'},
+        {'tag': 'input', 'type': 'password'},
+      ];
+      const twoFactor = [
+        {'tag': 'input', 'name': 'ninshoCode'},
+      ];
+      const logout = {'tag': 'a', 'text': 'Log out'};
+
+      for (final visibility in ['visible', 'hidden']) {
+        test('logout inside a $visibility HTML embed', () async {
+          final result = await _evaluateAuthProbe([
+            {
+              'tag': 'embed',
+              'type': 'text/html',
+              'visibility': visibility,
+              'children': [logout],
+            },
+          ]);
+          expect(
+            gakujoPortalAuthStateFromJavaScriptResult(result),
+            visibility == 'visible'
+                ? GakujoPortalAuthState.authenticated
+                : GakujoPortalAuthState.unknown,
+          );
+        });
+      }
+
+      test('hidden login leaves the visible logout marker', () async {
+        final result = await _evaluateAuthProbe([
+          logout,
+          {'tag': 'iframe', 'visibility': 'hidden', 'children': login},
+        ]);
+        expect(result['hasLoginFields'], isFalse);
+        expect(gakujoPortalAuthStateFromJavaScriptResult(result),
+            GakujoPortalAuthState.authenticated);
+      });
+
+      test('collapsed 2FA leaves the visible logout marker', () async {
+        final result = await _evaluateAuthProbe([
+          logout,
+          {'tag': 'iframe', 'visibility': 'collapse', 'children': twoFactor},
+        ]);
+        expect(result['hasTwoFactorField'], isFalse);
+        expect(gakujoPortalAuthStateFromJavaScriptResult(result),
+            GakujoPortalAuthState.authenticated);
+      });
+
+      for (final nested in [false, true]) {
+        test('hidden logout alone stays unknown (nested: $nested)', () async {
+          final result = await _evaluateAuthProbe([
+            {
+              'tag': 'iframe',
+              'visibility': 'hidden',
+              'children': [
+                if (nested)
+                  {'tag': 'iframe', 'visibility': 'visible', 'children': [logout]}
+                else
+                  logout,
+              ],
+            },
+          ]);
+          expect(result['hasAuthenticatedMarker'], isFalse);
+          expect(gakujoPortalAuthStateFromJavaScriptResult(result),
+              GakujoPortalAuthState.unknown);
+        });
+      }
+
+      test('selects a visible nested login beside a hidden 2FA frame', () async {
+        final result = await _evaluateAuthProbe([
+          logout,
+          {'tag': 'iframe', 'visibility': 'hidden', 'children': twoFactor},
+          {
+            'tag': 'iframe',
+            'children': [
+              {'tag': 'iframe', 'children': login},
+            ],
+          },
+        ]);
+        expect(result['hasLoginFields'], isTrue);
+        expect(result['hasAuthenticatedMarker'], isTrue);
+        expect(gakujoPortalAuthStateFromJavaScriptResult(result),
+            GakujoPortalAuthState.login);
+      });
+    });
+
     test('detects login fields when name and id repeat the same userId',
         () async {
       final result = await _evaluateAuthProbe([
@@ -2179,7 +2266,7 @@ List<GakujoCalendarCourse> _coursesForWeekdays(List<int> weekdays) {
 }
 
 Future<Map<String, dynamic>> _evaluateAuthProbe(
-  List<Map<String, String>> elements,
+  List<Map<String, Object>> elements,
 ) async {
   final result = await Process.run(
       'node',
