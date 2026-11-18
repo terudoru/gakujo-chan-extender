@@ -1783,6 +1783,28 @@ Future<String> googleDriveTokenForAccount(
   return token;
 }
 
+class _PageRestoreReservation {
+  String? url;
+  Object? _owner;
+
+  void reserve(String? target, {Object? owner}) {
+    url = target;
+    _owner = owner;
+  }
+
+  // Redirect and authentication callbacks can reselect the existing target.
+  // A new notification uses reserve even when it has exactly the same URL.
+  void update(String? target) {
+    if (url != target) reserve(target);
+  }
+
+  bool release(Object owner) {
+    if (!identical(_owner, owner)) return false;
+    reserve(null);
+    return true;
+  }
+}
+
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
@@ -1796,6 +1818,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   int _offlineAutoReloads = 0;
   late final Future<void> _webViewReady;
   late final Future<void> _initialPageLoaded;
+  late final NotificationTapConsumer _notificationConsumer;
+  late final Future<bool> _notificationNavigationReady;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
   late final GakujoWebViewService _webViewService;
@@ -1864,10 +1888,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   double? _reportedGpa;
   bool _externalServiceNoticeDismissed = false;
   String? _currentCourseName;
-  String? _pendingLoginRestoreUrl;
+  final _loginRestore = _PageRestoreReservation();
+  String? get _pendingLoginRestoreUrl => _loginRestore.url;
+  set _pendingLoginRestoreUrl(String? url) => _loginRestore.update(url);
   String? _sessionRecoveryUrl;
   String? _authenticatedPageUrl;
-  String? _navigationRecoveryCandidateUrl;
+  final _navigationRecovery = _PageRestoreReservation();
+  String? get _navigationRecoveryCandidateUrl => _navigationRecovery.url;
+  set _navigationRecoveryCandidateUrl(String? url) =>
+      _navigationRecovery.update(url);
   bool _navigationRecoveryCandidateFailed = false;
   String? _mainFrameNavigationUrl;
   String? _deferredNavigationAfterPageOperationUrl;
@@ -2116,10 +2145,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_secureStorageAccessAllowed) {
       unawaited(_loadDownloadRoot());
     }
-    _initialPageLoaded = _loadInitialPage();
-    _notificationService.setDeadlineNotificationTappedHandler(
-      _handleDeadlineNotificationTapped,
+    _notificationConsumer = _notificationService.bindNotificationTaps(
+      _acceptDeadlineNotification,
     );
+    _initialPageLoaded = _loadInitialPage();
+    _notificationNavigationReady = Future.any([
+      _initialPageLoaded.then((_) => true, onError: (Object _) => false),
+      _notificationConsumer.detached.then((_) => false),
+    ]);
     unawaited(_initialPageLoaded);
     // A desktop window can stay on one page all day; keep assignments and
     // 連絡通知 current anyway. The refresh itself runs at most half-hourly;
@@ -2137,6 +2170,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    _notificationConsumer.dispose();
     _cancelDriveUploads();
     _deferredPageNavigation?.disposed.complete();
     _status.dispose();
@@ -2165,7 +2199,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _linuxFindController.dispose();
     _linuxFindFocusNode.dispose();
     unawaited(_controller.dispose());
-    _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipe.dispose();
     _previewGestureTimer?.cancel();
     _autoBackupTimer?.cancel();
@@ -5854,7 +5887,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  void _setPendingMessageUrl(String? url) {
+  void _setPendingMessageUrl(String? url, {Object? owner}) {
     final previous = _pendingMessageOpen;
     if (previous != null) _clearNavigationRestoreFor(previous.url);
     _pendingMessageOpenTimer?.cancel();
@@ -5865,9 +5898,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final pending = _PendingMessageOpen(url: url, message: message);
     _pendingMessageOpen = pending;
-    _pendingLoginRestoreUrl = url;
+    _loginRestore.reserve(url, owner: owner);
     _loginRestoreAttempted = false;
-    _navigationRecoveryCandidateUrl = url;
+    _navigationRecovery.reserve(url, owner: owner);
     _navigationRecoveryCandidateFailed = false;
     _pendingMessageOpenTimer = Timer(const Duration(minutes: 3), () {
       if (identical(_pendingMessageOpen, pending)) {
@@ -8001,8 +8034,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<bool> _acceptDeadlineNotification(String url) async {
+    final targetUrl = _notificationService.targetUrl(
+      url,
+      debugAllowed: _debugAllowed,
+    );
+    if (targetUrl == null) return true; // A policy rejection is terminal.
+    if (!await _notificationNavigationReady || !_notificationConsumer.isCurrent) {
+      return false;
+    }
+    await _handleDeadlineNotificationTapped(targetUrl);
+    return true;
+  }
+
   Future<void> _loadInitialPage() async {
     await _webViewReady;
+    if (!_notificationConsumer.isCurrent) return;
     await _webViewService.configureController(
       _controller,
       debugAllowed: _debugAllowed,
@@ -8023,38 +8070,52 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       });
     }
     final savedUrl = appSettingsLoaded ? await _loadInitialLastPageUrl() : null;
-    final pendingNotificationUrl = _notificationService.targetUrl(
-      await _notificationService.takePendingNotificationUrl(),
-      debugAllowed: _debugAllowed,
-    );
-    // Preserve the requested page even when login will be completed manually.
-    // In particular, macOS can intentionally start from its non-secret mirror
-    // without loading credentials from Keychain.
-    _pendingLoginRestoreUrl = gakujoInitialPendingRestoreUrl(
-      pendingNotificationUrl: pendingNotificationUrl,
-      savedUrl: savedUrl,
-    );
-    _setPendingMessageUrl(pendingNotificationUrl);
-    final startUrl = pendingNotificationUrl != null &&
-            !_appSettings.hasLoginCredentials
-        ? pendingNotificationUrl
-        : _resolveStartUrl(_appSettings.hasLoginCredentials ? null : savedUrl);
-    _beginPendingMessageNavigation(startUrl);
-    await _controller.loadUrl(startUrl);
+    await _notificationConsumer.dispatchStartup((pendingNotificationUrl) async {
+      // Preserve the requested page even when login will be completed manually.
+      // In particular, macOS can intentionally start from its non-secret mirror
+      // without loading credentials from Keychain.
+      final owner = pendingNotificationUrl == null ? null : Object();
+      _loginRestore.reserve(
+        gakujoInitialPendingRestoreUrl(
+          pendingNotificationUrl: pendingNotificationUrl,
+          savedUrl: savedUrl,
+        ),
+        owner: owner,
+      );
+      _setPendingMessageUrl(pendingNotificationUrl, owner: owner);
+      final startUrl =
+          pendingNotificationUrl != null && !_appSettings.hasLoginCredentials
+          ? pendingNotificationUrl
+          : _resolveStartUrl(
+              _appSettings.hasLoginCredentials ? null : savedUrl,
+            );
+      await _loadReservedPage(startUrl, owner);
+    }, debugAllowed: _debugAllowed);
   }
 
-  Future<void> _handleDeadlineNotificationTapped(String url) async {
-    final targetUrl = _notificationService.targetUrl(
-      url,
-      debugAllowed: _debugAllowed,
-    );
-    if (targetUrl == null) {
-      return;
+  Future<void> _loadReservedPage(String url, Object? owner) async {
+    final message = _pendingMessageOpen;
+    try {
+      _beginPendingMessageNavigation(url);
+      await _controller.loadUrl(url);
+    } catch (_) {
+      // Native retains a rejected notification for the next consumer. Its
+      // former widget must release only reservations still held by this load.
+      if (owner != null) {
+        _loginRestore.release(owner);
+        if (_navigationRecovery.release(owner)) {
+          _navigationRecoveryCandidateFailed = false;
+        }
+        if (message != null && identical(message, _pendingMessageOpen)) {
+          _pendingMessageOpenTimer?.cancel();
+          _pendingMessageOpen = null;
+        }
+      }
+      rethrow;
     }
-    await _initialPageLoaded;
-    if (!mounted) {
-      return;
-    }
+  }
+
+  Future<void> _handleDeadlineNotificationTapped(String targetUrl) async {
     if (_calendarOperationGate.isRunning) {
       // Do not publish this as the auth restore target yet. An authenticated
       // callback from the in-flight calendar navigation would consume it and
@@ -8065,13 +8126,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _showSnackBar('処理完了後に通知のページを開きます');
       return;
     }
-    _setPendingMessageUrl(targetUrl);
-    _reserveNotificationRestore(targetUrl);
-    _beginPendingMessageNavigation(targetUrl);
-    await _controller.loadUrl(targetUrl);
+    final owner = Object();
+    _setPendingMessageUrl(targetUrl, owner: owner);
+    _reserveNotificationRestore(targetUrl, owner: owner);
+    await _loadReservedPage(targetUrl, owner);
   }
 
-  String? _reserveNotificationRestore(String targetUrl) {
+  String? _reserveNotificationRestore(String targetUrl, {Object? owner}) {
     final restoreTarget = gakujoNotificationRestoreTarget(
       targetUrl,
       debugAllowed: _debugAllowed,
@@ -8080,9 +8141,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // A notification can be tapped while a login shell is already visible.
       // Preserve its destination explicitly because onPageStarted cannot infer
       // the protected request from an unauthenticated current page.
-      _pendingLoginRestoreUrl = restoreTarget;
+      _loginRestore.reserve(restoreTarget, owner: owner);
       _loginRestoreAttempted = false;
-      _navigationRecoveryCandidateUrl = restoreTarget;
+      _navigationRecovery.reserve(restoreTarget, owner: owner);
       _navigationRecoveryCandidateFailed = false;
     }
     return restoreTarget;

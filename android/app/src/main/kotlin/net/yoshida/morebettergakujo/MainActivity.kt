@@ -22,6 +22,7 @@ import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -459,6 +460,141 @@ internal object GakujoCalendarEventPolicy {
     }
 }
 
+// All transitions and platform channel callbacks run on the engine's main thread.
+internal class NotificationActivationHandoff(
+    private val deliver: (String, String?, (Boolean) -> Unit) -> Unit
+) {
+    private class Activation(val url: String, var completed: Boolean = false) {
+        var owner: String? = null
+    }
+
+    private var latest: Activation? = null
+    private val claims = mutableMapOf<String, Activation>()
+    private var consumer: String? = null
+    private var lastToken: String? = null
+    private val retiredRuns = mutableSetOf<String>()
+    private var intentId: String? = null
+    private var currentIntent: Activation? = null
+    val consumedIntentUrl: String? get() = currentIntent?.takeIf { it.completed }?.url
+
+    fun attachIntent(id: String, url: String?, completed: Boolean) {
+        if (intentId == id) return // Same Activity intent on a surviving engine.
+        intentId = id
+        val event = url?.let { Activation(it, completed) }
+        currentIntent = event
+        if (event == null || completed) return
+        latest = event
+        consumer?.let { offer(event, it) }
+    }
+
+    private fun offer(event: Activation, token: String) {
+        event.owner = token
+        deliver(event.url, token.takeUnless { it == LEGACY }) { accepted ->
+            settle(event, token, accepted)
+        }
+    }
+
+    private fun settle(event: Activation, token: String, accepted: Boolean) {
+        if (latest !== event || event.owner != token) return
+        event.owner = null
+        if (accepted) {
+            event.completed = true
+            latest = null
+        } else {
+            consumer?.takeUnless { it == token }?.let { offer(event, it) }
+        }
+    }
+
+    fun take(token: String): String? {
+        if (consumer == token) return claims[token]?.url
+        val run = token.substringBefore(':')
+        val generation = token.substringAfter(':', "").toLongOrNull() ?: return null
+        val previous = lastToken
+        if (previous != null) {
+            val oldRun = previous.substringBefore(':')
+            if (run == oldRun && generation <= previous.substringAfter(':').toLong()) return null
+            if (run in retiredRuns) return null
+            if (oldRun != run) {
+                retiredRuns.add(oldRun)
+                claims.clear()
+                latest?.owner = null // The old isolate cannot return its disposition.
+            }
+        }
+        lastToken = token
+        consumer = token
+        val event = latest?.takeIf { it.owner == null } ?: return null
+        event.owner = token
+        claims[token] = event
+        return event.url
+    }
+
+    fun takeLegacy(): String? {
+        if (lastToken != null) return null
+        consumer = LEGACY
+        val event = latest?.takeIf { it.owner == null } ?: return null
+        event.completed = true
+        latest = null
+        return event.url
+    }
+
+    fun finish(token: String, accepted: Boolean) {
+        claims.remove(token)?.let { settle(it, token, accepted) }
+    }
+
+    fun end(token: String) {
+        if (consumer == token) consumer = null
+    }
+
+    private companion object { const val LEGACY = "legacy" }
+}
+
+private class NotificationActivationPlugin : FlutterPlugin {
+    lateinit var handoff: NotificationActivationHandoff
+        private set
+    private lateinit var channel: MethodChannel
+    var activity: MainActivity? = null
+
+    override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        channel = MethodChannel(binding.binaryMessenger, "net.yoshida.morebettergakujo/notifications")
+        handoff = NotificationActivationHandoff { url, token, reply ->
+            val args = mutableMapOf("url" to url)
+            if (token != null) args["consumer"] = token
+            channel.invokeMethod("deadlineNotificationTapped", args, object : MethodChannel.Result {
+                override fun success(result: Any?) = reply(result == true)
+                override fun error(code: String, message: String?, details: Any?) = reply(false)
+                override fun notImplemented() = reply(false)
+            })
+        }
+        channel.setMethodCallHandler { call, result ->
+            val args = call.arguments as? Map<*, *>
+            val token = args?.get("consumer") as? String
+            when (call.method) {
+                "takePendingNotificationUrl" -> {
+                    if (args?.get("version") == 1 && token != null) {
+                        result.success(mapOf("version" to 1, "consumer" to token, "url" to handoff.take(token)))
+                    } else {
+                        result.success(handoff.takeLegacy())
+                    }
+                }
+                "finishPendingNotification" -> {
+                    if (token != null) handoff.finish(token, args["accepted"] == true)
+                    result.success(null)
+                }
+                "endNotificationConsumer" -> {
+                    if (token != null) handoff.end(token)
+                    result.success(null)
+                }
+                else -> activity?.handleNotificationCall(call, result) ?: result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        channel.setMethodCallHandler(null)
+        activity = null
+    }
+}
+
 class MainActivity : FlutterActivity() {
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
@@ -469,47 +605,55 @@ class MainActivity : FlutterActivity() {
     private var pendingNotificationPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarPermissionResult: MethodChannel.Result? = null
     private var pendingCalendarCall: MethodCall? = null
-    private var notificationsChannel: MethodChannel? = null
-    private var pendingNotificationUrl: String? = null
-    private var consumedNotificationUrl: String? = null
+    private var notifications: NotificationActivationPlugin? = null
+    private lateinit var intentId: String
+    private var restoredConsumedUrl: String? = null
     private val downloadFolderLock = Any()
     private val calendarOperationLock = Any()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // A recreated activity keeps its launch Intent; do not reopen a tap
         // that was already handled before the process was killed.
-        consumedNotificationUrl = savedInstanceState?.getString(KEY_CONSUMED_NOTIFICATION_URL)
-        pendingNotificationUrl = notificationUrlFromIntent(intent)
-            ?.takeIf { it != consumedNotificationUrl }
+        intentId = savedInstanceState?.getString(KEY_NOTIFICATION_INTENT_ID)
+            ?: java.util.UUID.randomUUID().toString()
+        restoredConsumedUrl = savedInstanceState?.getString(KEY_CONSUMED_NOTIFICATION_URL)
         super.onCreate(savedInstanceState)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        consumedNotificationUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
+        outState.putString(KEY_NOTIFICATION_INTENT_ID, intentId)
+        rememberCurrentIntentState()
+        restoredConsumedUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val url = notificationUrlFromIntent(intent) ?: return
-        pendingNotificationUrl = url
-        notificationsChannel?.invokeMethod(
-            "deadlineNotificationTapped",
-            mapOf("url" to url),
-            object : MethodChannel.Result {
-                override fun success(result: Any?) {
-                    if (result == true && pendingNotificationUrl == url) {
-                        pendingNotificationUrl = null
-                        consumedNotificationUrl = url
-                    }
-                }
+        intentId = java.util.UUID.randomUUID().toString()
+        restoredConsumedUrl = null
+        val bridge = notifications ?: return
+        if (bridge.activity === this) bridge.handoff.attachIntent(intentId, notificationUrlFromIntent(intent), false)
+    }
 
-                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        detachNotificationActivity(flutterEngine.plugins.get(NotificationActivationPlugin::class.java))
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
 
-                override fun notImplemented() = Unit
-            }
-        )
+    private fun detachNotificationActivity(plugin: FlutterPlugin?) {
+        val bridge = notifications ?: return
+        if (bridge !== plugin) return
+        if (bridge.activity === this) {
+            rememberCurrentIntentState()
+            bridge.activity = null
+        }
+        notifications = null
+    }
+
+    private fun rememberCurrentIntentState() {
+        val bridge = notifications ?: return
+        if (bridge.activity === this) restoredConsumedUrl = bridge.handoff.consumedIntentUrl
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -557,41 +701,13 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        notificationsChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            NOTIFICATIONS_CHANNEL
-        ).also { channel ->
-            channel.setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "requestPermission" -> requestNotificationPermission(result)
-                    "checkPermission" -> result.success(
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            getSystemService(NotificationManager::class.java).areNotificationsEnabled()
-                        } else {
-                            null
-                        }
-                    )
-                    "openNotificationSettings" -> result.success(openNotificationSettings())
-                    "notifyDeadline" -> {
-                        result.success(showDeadlineNotification(call))
-                    }
-                    "scheduleReminders" -> {
-                        DeadlineReminders.replace(
-                            this,
-                            DeadlineReminders.parse(call.argument<List<*>>("reminders"))
-                        )
-                        result.success(true)
-                    }
-                    "takePendingNotificationUrl" -> {
-                        val url = pendingNotificationUrl
-                        pendingNotificationUrl = null
-                        if (url != null) consumedNotificationUrl = url
-                        result.success(url)
-                    }
-                    else -> result.notImplemented()
-                }
-            }
-        }
+        val bridge = flutterEngine.plugins.get(NotificationActivationPlugin::class.java)
+            as? NotificationActivationPlugin ?: NotificationActivationPlugin().also { flutterEngine.plugins.add(it) }
+        if (notifications !== bridge) detachNotificationActivity(notifications)
+        notifications = bridge
+        bridge.activity = this
+        val launchUrl = notificationUrlFromIntent(intent)
+        bridge.handoff.attachIntent(intentId, launchUrl, launchUrl != null && launchUrl == restoredConsumedUrl)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -602,6 +718,31 @@ class MainActivity : FlutterActivity() {
                 "deleteAddedEvents" -> deleteCalendarEvents(call, result)
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    internal fun handleNotificationCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "requestPermission" -> requestNotificationPermission(result)
+            "checkPermission" -> result.success(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+                } else {
+                    null
+                }
+            )
+            "openNotificationSettings" -> result.success(openNotificationSettings())
+            "notifyDeadline" -> {
+                result.success(showDeadlineNotification(call))
+            }
+            "scheduleReminders" -> {
+                DeadlineReminders.replace(
+                    this,
+                    DeadlineReminders.parse(call.argument<List<*>>("reminders"))
+                )
+                result.success(true)
+            }
+            else -> result.notImplemented()
         }
     }
 
@@ -2274,7 +2415,7 @@ class MainActivity : FlutterActivity() {
         const val TAG = "MoreBetterGakujo"
         const val DEBUG_LAUNCH_CHANNEL = "net.yoshida.morebettergakujo/debug_launch"
         const val DOWNLOADS_CHANNEL = "net.yoshida.morebettergakujo/downloads"
-        const val NOTIFICATIONS_CHANNEL = "net.yoshida.morebettergakujo/notifications"
+        const val KEY_NOTIFICATION_INTENT_ID = "notification_intent_id"
         const val CALENDAR_CHANNEL = "net.yoshida.morebettergakujo/calendar"
         const val EXTRA_DEBUG_URL = "net.yoshida.morebettergakujo.DEBUG_URL"
         const val EXTRA_NOTIFICATION_URL = "net.yoshida.morebettergakujo.NOTIFICATION_URL"

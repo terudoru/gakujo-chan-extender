@@ -1003,16 +1003,121 @@ private enum MacosCalendarBridgeError: LocalizedError {
   }
 }
 
+// The notification delegate and both directions of the channel serialize here on main.
+final class NotificationActivationHandoff {
+  private final class Activation {
+    let url: String
+    var owner: String?
+    init(_ url: String) { self.url = url }
+  }
+
+  private var latest: Activation?
+  private var claims: [String: Activation] = [:]
+  private var consumer: String?
+  private var lastRegistration: (run: String, generation: Int)?
+  private var retiredRuns = Set<String>()
+  private static let legacy = "legacy"
+  var deliver: (String, String?, @escaping (Bool) -> Void) -> Void = { _, _, reply in reply(false) }
+
+  func replaceMessenger() {
+    // Carry only the latest orphan. An old channel reply still holds its old object.
+    latest = latest.map { Activation($0.url) }
+    claims.removeAll()
+    consumer = nil
+    lastRegistration = nil
+    retiredRuns.removeAll()
+  }
+
+  func receive(_ url: String) {
+    let event = Activation(url)
+    latest = event
+    if let consumer { offer(event, to: consumer) }
+  }
+
+  private func offer(_ event: Activation, to token: String) {
+    event.owner = token
+    deliver(event.url, token == Self.legacy ? nil : token) { [weak self] accepted in
+      self?.settle(event, token, accepted)
+    }
+  }
+
+  private func settle(_ event: Activation, _ token: String, _ accepted: Bool) {
+    guard latest === event, event.owner == token else { return }
+    event.owner = nil
+    if accepted {
+      latest = nil
+    } else if let consumer, consumer != token {
+      offer(event, to: consumer)
+    }
+  }
+
+  func take(_ token: String) -> String? {
+    if consumer == token { return claims[token]?.url }
+    let parts = token.split(separator: ":", maxSplits: 1)
+    guard parts.count == 2, let generation = Int(parts[1]) else { return nil }
+    let run = String(parts[0])
+    if let previous = lastRegistration {
+      guard !retiredRuns.contains(run),
+            previous.run != run || generation > previous.generation else { return nil }
+      if previous.run != run {
+        retiredRuns.insert(previous.run)
+        claims.removeAll()
+        latest?.owner = nil
+      }
+    }
+    lastRegistration = (run, generation)
+    consumer = token
+    guard let event = latest, event.owner == nil else { return nil }
+    event.owner = token
+    claims[token] = event
+    return event.url
+  }
+
+  func takeLegacy() -> String? {
+    guard lastRegistration == nil else { return nil }
+    consumer = Self.legacy
+    guard let event = latest, event.owner == nil else { return nil }
+    latest = nil
+    return event.url
+  }
+
+  func finish(_ token: String, accepted: Bool) {
+    if let event = claims.removeValue(forKey: token) { settle(event, token, accepted) }
+  }
+
+  func end(_ token: String) {
+    if consumer == token { consumer = nil }
+  }
+}
+
+struct NotificationLaunchPair {
+  private var launched: String?
+  private var tapped: String?
+
+  mutating func acceptLaunch(_ identifier: String) -> Bool {
+    guard identifier != tapped else { return false }
+    launched = identifier
+    return true
+  }
+
+  mutating func acceptTap(_ identifier: String) -> Bool {
+    if identifier == launched {
+      launched = nil
+      return false
+    }
+    tapped = identifier
+    return true
+  }
+}
+
 private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenterDelegate {
   private static let channelName = "net.yoshida.morebettergakujo/notifications"
   private static let notificationURLKey = "url"
 
   private var channel: FlutterMethodChannel?
-  private var pendingNotificationURL: String?
-  // The tap that launched the app can reach both entry points, in either
-  // order; open it once.
-  private var launchResponseIdentifier: String?
-  private var tappedResponseIdentifier: String?
+  private weak var messenger: FlutterBinaryMessenger?
+  private let handoff = NotificationActivationHandoff()
+  private var launchPair = NotificationLaunchPair()
 
   override init() {
     super.init()
@@ -1021,12 +1126,29 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
 
   func register(messenger: FlutterBinaryMessenger) {
     UNUserNotificationCenter.current().delegate = self
+    guard self.messenger !== messenger else { return }
+    self.messenger = messenger
+    self.channel?.setMethodCallHandler(nil)
+    handoff.replaceMessenger()
     let channel = FlutterMethodChannel(
       name: Self.channelName,
       binaryMessenger: messenger
     )
     self.channel = channel
-    channel.setMethodCallHandler { [weak self] call, result in
+    handoff.deliver = { [weak channel] url, token, reply in
+      guard let channel else { reply(false); return }
+      var arguments = [Self.notificationURLKey: url]
+      arguments["consumer"] = token
+      channel.invokeMethod("deadlineNotificationTapped", arguments: arguments) { result in
+        let accepted = result as? Bool == true
+        DispatchQueue.main.async { reply(accepted) }
+      }
+    }
+    channel.setMethodCallHandler { [weak self, weak channel] call, result in
+      guard let self, let channel, self.channel === channel else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
       switch call.method {
       case "requestPermission":
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
@@ -1126,9 +1248,23 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
           }
         }
       case "takePendingNotificationUrl":
-        let url = self?.pendingNotificationURL
-        self?.pendingNotificationURL = nil
-        result(url)
+        if let args = call.arguments as? [String: Any], args["version"] as? Int == 1,
+           let token = args["consumer"] as? String {
+          let url = self.handoff.take(token)
+          result(["version": 1, "consumer": token, "url": url as Any])
+        } else {
+          result(self.handoff.takeLegacy())
+        }
+      case "finishPendingNotification":
+        if let args = call.arguments as? [String: Any], let token = args["consumer"] as? String {
+          self.handoff.finish(token, accepted: args["accepted"] as? Bool == true)
+        }
+        result(nil)
+      case "endNotificationConsumer":
+        if let args = call.arguments as? [String: Any], let token = args["consumer"] as? String {
+          self.handoff.end(token)
+        }
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -1149,10 +1285,9 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
 
   func rememberLaunchResponse(_ response: UNNotificationResponse) {
     guard let url = Self.url(of: response),
-          response.notification.request.identifier != tappedResponseIdentifier else { return }
+          launchPair.acceptLaunch(response.notification.request.identifier) else { return }
     NSLog("MoreBetterGakujo: app launched from a notification")
-    launchResponseIdentifier = response.notification.request.identifier
-    pendingNotificationURL = url
+    handoff.receive(url)
   }
 
   private static func url(of response: UNNotificationResponse) -> String? {
@@ -1168,26 +1303,12 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
-    defer { completionHandler() }
-    guard let url = Self.url(of: response) else {
-      return
-    }
-    if response.notification.request.identifier == launchResponseIdentifier {
-      // Already waiting in pendingNotificationURL for startup to take it.
-      launchResponseIdentifier = nil
-      return
-    }
-    tappedResponseIdentifier = response.notification.request.identifier
-    NSLog("MoreBetterGakujo: notification tapped (channel ready: %d)", channel == nil ? 0 : 1)
-    pendingNotificationURL = url
-    NSApp.activate(ignoringOtherApps: true)
-    channel?.invokeMethod(
-      "deadlineNotificationTapped",
-      arguments: [Self.notificationURLKey: url]
-    ) { [weak self] result in
-      if result as? Bool == true, self?.pendingNotificationURL == url {
-        self?.pendingNotificationURL = nil
-      }
+    DispatchQueue.main.async {
+      defer { completionHandler() }
+      guard let url = Self.url(of: response),
+            self.launchPair.acceptTap(response.notification.request.identifier) else { return }
+      NSApp.activate(ignoringOtherApps: true)
+      self.handoff.receive(url)
     }
   }
 }
