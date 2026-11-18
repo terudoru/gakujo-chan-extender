@@ -1010,6 +1010,42 @@ Future<bool> applyGakujoSyncedSettings({
 });
 
 @visibleForTesting
+Future<GakujoAppSettings> restoreGakujoSettingsLocally({
+  required StorageOperationQueue operations,
+  required GakujoBackupImport backup,
+  required GakujoAppSettings Function() currentSettings,
+  required Future<void> Function() restore,
+  required void Function(GakujoAppSettings next, bool flagsRestored) publish,
+  required Future<void> Function(GakujoAppSettings next) mirror,
+}) => operations.runExclusive(() async {
+  await restore();
+  final next = currentSettings().copyWith(
+    downloadSaveMode: backup.downloadSaveMode,
+    pageMode: backup.pageMode,
+    disabledFeatureFlags: backup.disabledFeatureFlags,
+    setupCompleted: backup.setupCompleted,
+    calendarImportSettings: backup.calendarImportSettings,
+    messageExcludeKeywords: backup.messageExcludeKeywords,
+    notificationTopics: backup.notificationTopics,
+    messageNotification: backup.messageNotification,
+    notificationPreferences: backup.notificationPreferences,
+  );
+  Future<void> afterRestore(FutureOr<void> Function() operation) async {
+    try {
+      await operation();
+    } on Object catch (error, stackTrace) {
+      // The raw restore committed. Do not let refresh/mirror failure make the
+      // engine remove the durable marker for this explicit replacement.
+      developer.log('Failed to refresh restored settings',
+        name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+  await afterRestore(() => publish(next, backup.disabledFeatureFlags != null));
+  await afterRestore(() => mirror(next));
+  return next;
+});
+
+@visibleForTesting
 Future<bool> applyGakujoSyncedReportDrafts({
   required Map<String, Object?> drafts,
   required Map<String, Object?> basedOn,
@@ -7171,35 +7207,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           notifiedDeadlineKeys: backup.notifiedDeadlineKeys,
           reportLists: backup.reportLists,
         );
-        await restoreGakujoBackup(
+        nextSettings = await restoreGakujoSettingsLocally(
+          operations: _settingsOperations,
           backup: restoreBackup,
-          settingsStore: _appSettingsStore,
-          historyStore: _downloadHistoryStore,
-          activityStore: _activityStore,
-          beforeWrite: beforeWrite,
-          isAllowedUrl: _isAllowedBackupUrl,
-          isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
+          currentSettings: () => _appSettings,
+          restore: () => restoreGakujoBackup(
+            backup: restoreBackup,
+            settingsStore: _appSettingsStore,
+            historyStore: _downloadHistoryStore,
+            activityStore: _activityStore,
+            beforeWrite: beforeWrite,
+            isAllowedUrl: _isAllowedBackupUrl,
+            isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
+          ),
+          publish: (next, flagsRestored) {
+            if (flagsRestored) _startupPlaceholderFeatureFlags.clear();
+            _appSettings = next;
+            if (mounted) setState(() {});
+          },
+          mirror: _syncLocalSettingsMirror,
         );
-        nextSettings = _appSettings.copyWith(
-          downloadSaveMode: backup.downloadSaveMode,
-          pageMode: backup.pageMode,
-          disabledFeatureFlags: backup.disabledFeatureFlags,
-          setupCompleted: backup.setupCompleted,
-          calendarImportSettings: backup.calendarImportSettings,
-          messageExcludeKeywords: backup.messageExcludeKeywords,
-          notificationTopics: backup.notificationTopics,
-          messageNotification: restoredMessageNotification(backup, backupKeys),
-          notificationPreferences: backup.notificationPreferences,
-        );
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          if (backup.disabledFeatureFlags != null) {
-            _startupPlaceholderFeatureFlags.clear();
-          }
-          _appSettings = nextSettings;
-        });
       }), stars: backup.starredMessages != null, collections: restoredCollections,
         starIdsAfterRestore: backup.starredMessages?.where((star) => star.isValid).map((star) => star.id).toSet(),
         collectionKeysAfterRestore: {
@@ -7208,7 +7235,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
       );
       if (!mounted) return;
-      await _syncLocalSettingsMirror(nextSettings);
       await _applyChangedRuntimeFeatureFlags(
         previousSettings,
         nextSettings,

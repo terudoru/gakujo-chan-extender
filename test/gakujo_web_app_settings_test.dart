@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -8,14 +9,193 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/download_destination_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_import.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_engine.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
+
+import 'support/memory_secure_storage.dart';
 
 void main() {
+  group('local restore mirror', () {
+    const backup = GakujoBackupImport(version: 2, messageExcludeKeywords: ['restored']);
+
+    test('queued later edit survives the final bulk-state await and startup merge', () async {
+      final app = await _LocalRestoreFixture.create();
+      final paused = Completer<void>(), resume = Completer<void>();
+      var writes = 0;
+      app.storage.beforeWrite = (key) async {
+        if (key == starSyncStateKey && ++writes == 2) {
+          paused.complete();
+          await resume.future;
+        }
+      };
+      final restoring = app.restore(backup);
+      await paused.future.timeout(const Duration(seconds: 5));
+      await app.addKeyword('later');
+      resume.complete();
+      await restoring;
+      expect(app.cache.messageExcludeKeywords, ['restored', 'later']);
+      expect(await app.startupReconcile(), ['restored', 'later']);
+    });
+
+    for (final afterMutation in [false, true]) {
+      test('final state failure cannot skip the committed mirror (afterMutation=$afterMutation)', () async {
+        final app = await _LocalRestoreFixture.create();
+        var writes = 0;
+        Future<void> fail(String key) async {
+          if (key == starSyncStateKey && ++writes == 2) throw StateError('Final state save failed');
+        }
+        if (afterMutation) {
+          app.storage.afterWrite = fail;
+        } else {
+          app.storage.beforeWrite = fail;
+        }
+        await expectLater(app.restore(backup), throwsStateError);
+        app.storage.beforeWrite = app.storage.afterWrite = null;
+        expect(app.cache.messageExcludeKeywords, ['restored']);
+        expect(app.settingsState['pendingBulkReplace'], true);
+        await app.engine.resetInMemory();
+        await app.engine.load();
+        expect(await app.startupReconcile(), ['restored']);
+      });
+
+      for (final initial in [false, true]) {
+        test('failure before local commit leaves cache and mirror unchanged '
+            '(initial=$initial, afterMutation=$afterMutation)', () async {
+          final app = await _LocalRestoreFixture.create();
+          var failed = false;
+          Future<void> fail(String key) async {
+            if (!failed && key == (initial ? starSyncStateKey : _restoreKeywordsKey)) {
+              failed = true;
+              throw StateError('Restore write failed');
+            }
+          }
+          if (afterMutation) {
+            app.storage.afterWrite = fail;
+          } else {
+            app.storage.beforeWrite = fail;
+          }
+          final publications = app.publications;
+          final mirrors = app.mirrors;
+          await expectLater(app.restore(backup), throwsStateError);
+          app.storage.beforeWrite = app.storage.afterWrite = null;
+          expect(app.publications, publications);
+          expect(app.mirrors, mirrors);
+          expect(app.cache.messageExcludeKeywords, ['original']);
+          expect(await app.startupReconcile(), ['original']);
+        });
+      }
+    }
+
+    test('disposal after local mutation still publishes model and mirrors', () async {
+      final app = await _LocalRestoreFixture.create();
+      app.storage.afterWrite = (key) async {
+        if (key == _restoreKeywordsKey) app.mounted = false;
+      };
+      await app.restore(backup);
+      expect(app.repaints, 0);
+      expect(app.cache.messageExcludeKeywords, ['restored']);
+      expect(await app.startupReconcile(), ['restored']);
+    });
+
+    test('edit queues behind the local restore mirror', () async {
+      final app = await _LocalRestoreFixture.create();
+      final paused = Completer<void>(), resume = Completer<void>();
+      app.beforeMirror = () async { paused.complete(); await resume.future; };
+      final restoring = app.restore(backup);
+      await paused.future.timeout(const Duration(seconds: 5));
+      var edited = false;
+      final edit = app.addKeyword('later').then((_) => edited = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(edited, false);
+      resume.complete();
+      await restoring;
+      await edit;
+      expect(await app.startupReconcile(), ['restored', 'later']);
+    });
+
+    test('partial restore preserves omitted values and startup placeholders', () async {
+      final app = await _LocalRestoreFixture.create();
+      app.placeholders.add(GakujoFeatureFlag.loginAutofill);
+      app.cache = app.cache.copyWith(disabledFeatureFlags: app.placeholders);
+      await app.restore(const GakujoBackupImport(
+        version: 2, pageMode: GakujoPageMode.desktop, setupCompleted: true,
+      ));
+      expect(await app.startupReconcile(), ['original']);
+      expect(app.cache.setupCompleted, true);
+      expect(app.cache.pageMode, GakujoPageMode.desktop);
+      expect(app.placeholders, {GakujoFeatureFlag.loginAutofill});
+      expect((await app.local.load())!.appSettings!.disabledFeatureFlags, isEmpty);
+      expect(app.settingsState['pendingBulkReplace'], isNull);
+    });
+
+    test('explicit restored flags cease being placeholders before mirroring', () async {
+      final app = await _LocalRestoreFixture.create();
+      app.placeholders.addAll({GakujoFeatureFlag.loginAutofill, GakujoFeatureFlag.twoFactorAutofill});
+      app.cache = app.cache.copyWith(disabledFeatureFlags: app.placeholders);
+      await app.restore(const GakujoBackupImport(
+        version: 2, disabledFeatureFlags: {GakujoFeatureFlag.loginAutofill},
+      ));
+      expect(app.placeholders, isEmpty);
+      expect((await app.local.load())!.appSettings!.disabledFeatureFlags,
+        {GakujoFeatureFlag.loginAutofill});
+      expect((await app.settings.load()).disabledFeatureFlags,
+        {GakujoFeatureFlag.loginAutofill});
+    });
+
+    test('publication exception cannot remove committed restore intent or skip mirror', () async {
+      final app = await _LocalRestoreFixture.create();
+      app.failPublication = true;
+      await app.restore(backup);
+      expect(app.settingsState['pendingBulkReplace'], true);
+      expect(await app.startupReconcile(), ['restored']);
+    });
+
+    test('mirror failure retains raw commit and restore intent for a later repair', () async {
+      final app = await _LocalRestoreFixture.create();
+      app.failMirror = true;
+      await app.restore(backup);
+      expect(app.settingsState['pendingBulkReplace'], true);
+      expect((await app.settings.load()).messageExcludeKeywords, ['restored']);
+      expect((await app.local.load())!.appSettings!.messageExcludeKeywords, ['original']);
+      app.failMirror = false;
+      await app.restore(backup);
+      expect(await app.startupReconcile(), ['restored']);
+    });
+
+    test('post-restore effects can await engine work after the bulk callback', () async {
+      final app = await _LocalRestoreFixture.create();
+      await app.restore(backup);
+      await app.engine.setCollectionEnabled('settings', false)
+          .timeout(const Duration(seconds: 5));
+      expect(app.engine.collectionEnabled('settings'), false);
+      expect(await app.startupReconcile(), ['restored']);
+    });
+
+    test('supplied account guard still rolls back a late refusal', () async {
+      final app = await _LocalRestoreFixture.create();
+      var valid = true;
+      app.storage.afterWrite = (key) async {
+        if (key == _restoreKeywordsKey) valid = false;
+      };
+      await expectLater(app.restore(backup, beforeWrite: () {
+        if (!valid) throw const StarSyncAccountMismatchException();
+      }), throwsA(isA<StarSyncAccountMismatchException>()));
+      expect(app.publications, 0);
+      expect(await app.startupReconcile(), ['original']);
+    });
+  });
+
   group('synced settings publication', () {
     test('unmounted or stale requests never enter the commit runner', () async {
       const current = GakujoAppSettings(messageExcludeKeywords: ['current']);
@@ -2166,5 +2346,150 @@ class _PendingLoginSettingsStore extends GakujoAppSettingsStore {
     expect(saved, isNotNull);
     expect(enabled, isTrue);
     enabledFeatures.add(flag);
+  }
+}
+
+const _restoreKeywordsKey = 'more_better_gakujo_message_exclude_keywords';
+
+class _LocalRestoreStorage extends MemorySecureStorage {
+  Future<void> Function(String key)? beforeWrite;
+  Future<void> Function(String key)? afterWrite;
+
+  @override
+  Future<Map<String, String>> readAll({
+    AppleOptions? iOptions, AndroidOptions? aOptions, LinuxOptions? lOptions,
+    WebOptions? webOptions, AppleOptions? mOptions, WindowsOptions? wOptions,
+  }) async => Map.of(values);
+
+  @override
+  Future<void> write({
+    required String key, required String? value,
+    AppleOptions? iOptions, AndroidOptions? aOptions, LinuxOptions? lOptions,
+    WebOptions? webOptions, AppleOptions? mOptions, WindowsOptions? wOptions,
+  }) async {
+    await beforeWrite?.call(key);
+    await super.write(key: key, value: value);
+    await afterWrite?.call(key);
+  }
+}
+
+class _LocalRestoreTransport implements StarSyncTransport {
+  final files = <String, List<int>>{};
+  @override
+  Future<void> ensureDirectory(String path) async {}
+  @override
+  Future<List<StarSyncRemoteEntry>> list(String directory) async => [
+    for (final entry in files.entries)
+      if (entry.key.startsWith('$directory/'))
+        StarSyncRemoteEntry(path: entry.key, etag: base64Encode(entry.value)),
+  ];
+  @override
+  Future<StarSyncRemoteObject?> get(String path, {
+    int maxBytes = starSyncDefaultMaxBytes,
+  }) async => files.containsKey(path) ? StarSyncRemoteObject(bytes: files[path]!) : null;
+  @override
+  Future<void> put(String path, List<int> bytes, {bool createOnly = false}) async {
+    if (createOnly && files.containsKey(path)) {
+      throw const StarSyncTransportException(StarSyncTransportErrorKind.alreadyExists, 'exists');
+    }
+    files[path] = List.of(bytes);
+  }
+  @override
+  Future<void> delete(String path) async { files.remove(path); }
+  @override
+  void close() {}
+}
+
+class _LocalRestoreFixture {
+  _LocalRestoreFixture(Directory directory)
+      : local = GakujoLocalPrefsStore(directory: directory) {
+    settings = GakujoAppSettingsStore(secureStorage: storage);
+    activity = GakujoActivityStore(secureStorage: storage);
+    history = GakujoDownloadHistoryStore(secureStorage: storage);
+    final remote = _LocalRestoreTransport();
+    engine = StarSyncEngine(
+      loginId: () => 'student', activityStore: activity,
+      secureStorage: storage, transportFactory: (_) => remote,
+      collections: [StarSyncSettingsCollection(
+        read: () async => exportStarSyncPortableSettings(cache),
+        // Setup has only this device's unchanged local values; these tests
+        // exercise explicit bulk restore, not incoming sync application.
+        apply: (_, {required basedOn, stillCurrent}) async => true,
+      )],
+    );
+  }
+
+  static Future<_LocalRestoreFixture> create() async {
+    final directory = await Directory.systemTemp.createTemp('local-restore-prefs-');
+    addTearDown(() => directory.delete(recursive: true));
+    final app = _LocalRestoreFixture(directory);
+    addTearDown(app.engine.dispose);
+    await app.settings.saveMessageExcludeKeywords(['original']);
+    await app.local.saveAppSettings(app.cache);
+    await app.engine.setUpWithDrive(const StarSyncConfig());
+    return app;
+  }
+
+  final storage = _LocalRestoreStorage();
+  final operations = StorageOperationQueue();
+  final GakujoLocalPrefsStore local;
+  late final GakujoAppSettingsStore settings;
+  late final GakujoActivityStore activity;
+  late final GakujoDownloadHistoryStore history;
+  late final StarSyncEngine engine;
+  GakujoAppSettings cache = const GakujoAppSettings(messageExcludeKeywords: ['original']);
+  final placeholders = <GakujoFeatureFlag>{};
+  bool mounted = true, failPublication = false, failMirror = false;
+  int publications = 0, mirrors = 0, repaints = 0;
+  Future<void> Function()? beforeMirror;
+  Map get settingsState => jsonDecode(storage.values[starSyncStateKey]!)['collectionStates']['settings'];
+
+  Future<void> restore(GakujoBackupImport backup, {void Function()? beforeWrite}) {
+    final collections = restoredSyncCollections(backup, starSyncPortableSettingKeys.toSet());
+    return engine.withBulkReplace(() async {
+    await restoreGakujoSettingsLocally(
+      operations: operations, backup: backup, currentSettings: () => cache,
+      restore: () => restoreGakujoBackup(
+        backup: backup, settingsStore: settings, historyStore: history,
+        activityStore: activity, beforeWrite: beforeWrite,
+        isAllowedUrl: (_) => false, isAllowedNavigationUrl: (_) => false,
+      ),
+      publish: (next, flagsRestored) {
+        publications++;
+        if (failPublication) throw StateError('Publication failed');
+        if (flagsRestored) placeholders.clear();
+        cache = next;
+        if (mounted) repaints++;
+      },
+      mirror: (next) async {
+        mirrors++;
+        final hook = beforeMirror;
+        beforeMirror = null;
+        await hook?.call();
+        if (failMirror) throw StateError('Mirror unavailable');
+        await local.saveAppSettings(gakujoSettingsForPersistence(
+          next, placeholderFeatureFlags: placeholders,
+        ));
+      },
+    );
+    }, stars: false, collections: collections, collectionKeysAfterRestore: {
+      if (collections['settings'] != null) 'settings': collections['settings']!,
+    });
+  }
+
+  Future<void> addKeyword(String value) => operations.runExclusive(() async {
+    final next = cache.copyWith(messageExcludeKeywords: [...cache.messageExcludeKeywords, value]);
+    cache = next;
+    await local.saveAppSettings(next);
+    await settings.saveMessageExcludeKeywords(next.messageExcludeKeywords);
+  });
+
+  Future<List<String>> startupReconcile() async {
+    final secure = await settings.load();
+    final merged = mergeMacosLocalMessageFiltersWithSecureSettings(
+      secureSettings: secure, localPrefs: await local.load(),
+    );
+    await settings.saveMessageExcludeKeywords(merged.messageExcludeKeywords);
+    return (await settings.load()).messageExcludeKeywords;
   }
 }
