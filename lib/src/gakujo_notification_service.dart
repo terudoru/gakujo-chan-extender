@@ -581,7 +581,8 @@ class GakujoDeadlineNotificationCoordinator {
   }
 
   /// Notifies new deadlines the student chose through [topics] and
-  /// [messages].
+  /// [messages]. When supplied, [currentSettings] also gates each send using
+  /// the latest saved choices, including changes made while an await is pending.
   Future<void> notifyPendingDeadlines({
     required bool notificationsEnabled,
     bool allowPermissionRequest = true,
@@ -595,6 +596,7 @@ class GakujoDeadlineNotificationCoordinator {
     GakujoNotificationPreferences preferences =
         const GakujoNotificationPreferences(),
     List<String> messageExcludeKeywords = const [],
+    GakujoAppSettings Function()? currentSettings,
   }) {
     return _enqueueNotificationOperation(
       () => _notifyPendingDeadlines(
@@ -604,6 +606,7 @@ class GakujoDeadlineNotificationCoordinator {
         messages: messages,
         preferences: preferences,
         messageExcludeKeywords: messageExcludeKeywords,
+        currentSettings: currentSettings,
       ),
     );
   }
@@ -615,10 +618,25 @@ class GakujoDeadlineNotificationCoordinator {
     required GakujoMessageNotificationSettings messages,
     required GakujoNotificationPreferences preferences,
     required List<String> messageExcludeKeywords,
+    required GakujoAppSettings Function()? currentSettings,
   }) async {
     if (!notificationsEnabled) {
       return;
     }
+    bool stillAllowed(
+      GakujoDeadlineEntry entry,
+      GakujoAssignment? assignment,
+      GakujoAppSettings? settings,
+    ) => settings == null ||
+        (settings.isFeatureEnabled(GakujoFeatureFlag.deadlineNotifications) &&
+            isNotifiableDeadline(
+              entry,
+              topics: settings.notificationTopics,
+              messages: settings.messageNotification,
+              excludeKeywords: settings.messageExcludeKeywords,
+            ) &&
+            !(settings.notificationPreferences.skipSubmitted &&
+                (assignment?.isSubmitted ?? false)));
     final deadlines = await _activityStore.loadDeadlines();
     late final Set<String> notifiedKeys;
     try {
@@ -635,6 +653,7 @@ class GakujoDeadlineNotificationCoordinator {
       }
     }
     final isWholeList = await _activityStore.assignmentsAreWholeList();
+    final latestSettings = currentSettings?.call();
     final pending = <String, GakujoDeadlineEntry>{};
     for (final entry in deadlines) {
       if (pending.length >= 5) {
@@ -662,6 +681,10 @@ class GakujoDeadlineNotificationCoordinator {
       if (preferences.skipSubmitted && (assignment?.isSubmitted ?? false)) {
         continue;
       }
+      // New choices may suppress this pass, but do not widen its original scope.
+      if (!stillAllowed(entry, assignment, latestSettings)) {
+        continue;
+      }
       final key = deadlineNotificationKey(entry, assignment,
           collidingAssignmentIds: collidingIds);
       if (notifiedKeys.contains(key) ||
@@ -681,6 +704,10 @@ class GakujoDeadlineNotificationCoordinator {
     final notifiedNow = <String>[];
     for (final MapEntry(:key, value: entry) in pending.entries) {
       final assignment = assignmentForDeadline(entry, assignments);
+      // Permission and the preceding native send can both outlive a settings save.
+      if (!stillAllowed(entry, assignment, currentSettings?.call())) {
+        continue;
+      }
       if (assignment != null
           ? !assignment.dueAt.isAfter(_now())
           : _activityStore.isDeadlinePassed(entry, now: _now())) {

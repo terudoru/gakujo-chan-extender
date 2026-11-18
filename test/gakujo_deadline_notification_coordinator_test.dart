@@ -250,6 +250,169 @@ void main() {
     }
   }
 
+  for (final boundary in ['storage', 'permission', 'send']) {
+    for (final change in [
+      'notifications off',
+      'topic off',
+      'skip submitted',
+      'messages off',
+      'keywords mismatch',
+      'exclude keyword',
+      'message cutoff',
+      'unchanged',
+    ]) {
+      test('pending delivery rechecks $change after $boundary wait', () async {
+        final storage = _GatedReminderSecureStorage();
+        final store = GakujoActivityStore(secureStorage: storage);
+        final service = _FakeNotificationService(notifyResult: true);
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: service,
+        );
+        var settings = const GakujoAppSettings(
+          notificationPreferences: GakujoNotificationPreferences(
+            skipSubmitted: false,
+          ),
+          messageNotification: GakujoMessageNotificationSettings(
+            mode: GakujoMessageNotificationMode.keywords,
+            keywords: ['対象'],
+          ),
+        );
+        final isMessage = [
+          'messages off',
+          'keywords mismatch',
+          'exclude keyword',
+          'message cutoff',
+        ].contains(change);
+        final assignments = [
+          for (var i = 0; i < 2; i += 1)
+            GakujoAssignment(
+              kind: 'レポート',
+              title: '対象課題$i',
+              course: '科目',
+              status: '提出済み',
+              dueAt: DateTime.utc(2099, 7, 1, 8),
+              capturedAt: DateTime.now(),
+            ),
+        ];
+        final entries = [
+          for (var i = 0; i < 2; i += 1)
+            GakujoDeadlineEntry(
+              title: assignments[i].title,
+              url: 'https://gakujo.iess.niigata-u.ac.jp/campusweb/notice-$i',
+              dueText: '2099/07/01 17:00まで',
+              detectedAt: DateTime.now(),
+              source: isMessage ? '連絡通知' : 'レポート・小テスト',
+              course: isMessage ? '' : assignments[i].course,
+              assignment: isMessage ? '' : assignments[i].title,
+              messageText: '掲載日時 2026/11/18 10:00 対象 2099/07/01まで',
+            ),
+        ];
+        await store.mergeAssignments(assignments);
+        await store.mergeDeadlines(entries);
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        if (boundary == 'storage') {
+          storage.gatedKey = 'more_better_gakujo_notified_deadline_keys';
+        } else if (boundary == 'permission') {
+          service.onRequestPermission = () async {
+            entered.complete();
+            await release.future;
+            return true;
+          };
+        } else {
+          service.onNotifyDeadlineAsync = (_) async {
+            if (!entered.isCompleted) {
+              entered.complete();
+              await release.future;
+            }
+          };
+        }
+        Future<void> notify() => coordinator.notifyPendingDeadlines(
+              notificationsEnabled: true,
+              preferences: const GakujoNotificationPreferences(
+                skipSubmitted: false,
+              ),
+              messages: settings.messageNotification,
+              currentSettings: () => settings,
+            );
+        final delivery = notify();
+        await (boundary == 'storage'
+            ? storage.readEntered.future
+            : entered.future);
+        settings = switch (change) {
+          'notifications off' => settings.copyWith(
+              disabledFeatureFlags: {GakujoFeatureFlag.deadlineNotifications}),
+          'topic off' => settings.copyWith(notificationTopics: {}),
+          'skip submitted' => settings.copyWith(
+              notificationPreferences:
+                  const GakujoNotificationPreferences(skipSubmitted: true)),
+          'messages off' => settings.copyWith(
+              messageNotification: settings.messageNotification
+                  .copyWith(mode: GakujoMessageNotificationMode.off)),
+          'keywords mismatch' => settings.copyWith(
+              messageNotification:
+                  settings.messageNotification.copyWith(keywords: ['別の語'])),
+          'exclude keyword' => settings.copyWith(messageExcludeKeywords: ['対象']),
+          'message cutoff' => settings.copyWith(
+              messageNotification: settings.messageNotification
+                  .copyWith(since: DateTime.utc(2026, 11, 19))),
+          _ => settings,
+        };
+        if (boundary == 'storage') {
+          storage.releaseRead.complete();
+        } else {
+          release.complete();
+        }
+        await delivery;
+        final expectedCount = change == 'unchanged'
+            ? 2
+            : boundary == 'send' ? 1 : 0;
+        expect(service.notifiedEntries, hasLength(expectedCount));
+        final expectedKeys = {
+          for (final entry in service.notifiedEntries)
+            deadlineNotificationKey(
+                entry, assignmentForDeadline(entry, assignments)),
+          if (!isMessage)
+            for (final entry in service.notifiedEntries)
+              'assignment|${assignmentForDeadline(entry, assignments)!.id}',
+        };
+        expect(await store.loadNotifiedDeadlineKeys(), expectedKeys);
+        service.onRequestPermission = null;
+        service.onNotifyDeadlineAsync = null;
+        await notify();
+        expect(service.notifiedEntries, hasLength(expectedCount));
+        expect(await store.loadNotifiedDeadlineKeys(), expectedKeys);
+      });
+    }
+  }
+
+  test('current settings do not widen captured topics or the five-entry limit',
+      () async {
+    final store = GakujoActivityStore();
+    final service = _FakeNotificationService(notifyResult: true);
+    final coordinator = GakujoDeadlineNotificationCoordinator(
+      activityStore: store,
+      notificationService: service,
+    );
+    await store.mergeDeadlines([
+      for (var i = 0; i < 7; i += 1) _deadline('課題$i'),
+    ]);
+    await coordinator.notifyPendingDeadlines(
+      notificationsEnabled: true,
+      topics: {},
+      currentSettings: () => const GakujoAppSettings(),
+    );
+    expect(service.notifiedEntries, isEmpty);
+    expect(service.permissionRequestCount, 0);
+    await coordinator.notifyPendingDeadlines(
+      notificationsEnabled: true,
+      currentSettings: () => const GakujoAppSettings(),
+    );
+    expect(service.notifiedEntries, hasLength(5));
+    expect(await store.loadNotifiedDeadlineKeys(), hasLength(5));
+  });
+
   for (final matched in [false, true]) {
     for (final delay in [
       const Duration(seconds: 59),
@@ -593,6 +756,7 @@ class _FakeNotificationService extends GakujoNotificationService {
   final List<List<GakujoReminder>> bookings = [];
   Future<bool> Function()? onRequestPermission;
   void Function(GakujoDeadlineEntry)? onNotifyDeadline;
+  Future<void> Function(GakujoDeadlineEntry)? onNotifyDeadlineAsync;
   Future<void> Function(GakujoReminder)? onInAppReminder;
   int permissionRequestCount = 0;
 
@@ -606,6 +770,7 @@ class _FakeNotificationService extends GakujoNotificationService {
   Future<bool> notifyDeadline(GakujoDeadlineEntry entry) async {
     notifiedEntries.add(entry);
     onNotifyDeadline?.call(entry);
+    await onNotifyDeadlineAsync?.call(entry);
     return notifyResult;
   }
 

@@ -6084,6 +6084,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       preferences: _appSettings.notificationPreferences,
       messageExcludeKeywords: _appSettings.messageExcludeKeywords,
       allowPermissionRequest: allowPermissionRequest,
+      currentSettings: () => _appSettings,
     );
   }
 
