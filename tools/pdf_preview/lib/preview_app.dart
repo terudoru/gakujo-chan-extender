@@ -1,5 +1,16 @@
 import 'package:material_ui/material_ui.dart';
 
+/// Zoom input intercepted by a native host, delivered once to the viewer.
+class PreviewZoomController extends ChangeNotifier {
+  double factor = 1;
+
+  void zoomBy(double value) {
+    if (!value.isFinite || value <= 0) return;
+    factor = value.clamp(.75, 1.33);
+    notifyListeners();
+  }
+}
+
 /// Shared by every preview type so selection menus, localization and failure
 /// feedback use the same Material widget family.
 class PreviewApp extends StatelessWidget {

@@ -5,13 +5,15 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'image_view.dart' show previewTitleStyle;
+import 'preview_app.dart' show PreviewZoomController;
 
 class TextPreview extends StatefulWidget {
-  const TextPreview({super.key, required this.title, required this.text, this.note, required this.onMessage});
+  const TextPreview({super.key, required this.title, required this.text, this.note, required this.onMessage, this.zoomController});
   final String title;
   final String text;
   final String? note;
   final ValueChanged<String> onMessage;
+  final PreviewZoomController? zoomController;
 
   @override
   State<TextPreview> createState() => _TextPreviewState();
@@ -32,7 +34,28 @@ class _TextPreviewState extends State<TextPreview> {
   double _fontSize = 16, _width = 0;
 
   @override
+  void initState() {
+    super.initState();
+    widget.zoomController?.addListener(_nativeZoom);
+  }
+
+  void _nativeZoom() => setState(() {
+    _fontSize = (_fontSize * widget.zoomController!.factor).clamp(10, 32);
+    _heights.clear();
+  });
+
+  @override
+  void didUpdateWidget(TextPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.zoomController != oldWidget.zoomController) {
+      oldWidget.zoomController?.removeListener(_nativeZoom);
+      widget.zoomController?.addListener(_nativeZoom);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.zoomController?.removeListener(_nativeZoom);
     _generation++;
     _search.dispose();
     _scroll.dispose();

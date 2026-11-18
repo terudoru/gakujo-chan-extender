@@ -1,15 +1,18 @@
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
+import 'preview_app.dart' show PreviewZoomController;
 
 /// Titles carry arbitrary file names, so name the bundled fonts explicitly.
 const previewTitleStyle = TextStyle(fontFamily: 'MBGPreviewUI', fontFamilyFallback: ['Unifont']);
 
 class ImagePreview extends StatefulWidget {
-  const ImagePreview({super.key, required this.title, required this.bytes, required this.onMessage});
+  const ImagePreview({super.key, required this.title, required this.bytes, required this.onMessage, this.zoomController});
   final String title;
   final Uint8List bytes;
   final ValueChanged<String> onMessage;
+  final PreviewZoomController? zoomController;
 
   @override
   State<ImagePreview> createState() => _ImagePreviewState();
@@ -17,6 +20,7 @@ class ImagePreview extends StatefulWidget {
 
 class _ImagePreviewState extends State<ImagePreview> {
   final _transform = TransformationController();
+  final _viewerKey = GlobalKey();
   int _rotation = 0;
   bool _reported = false;
   double _scale = 1;
@@ -25,6 +29,43 @@ class _ImagePreviewState extends State<ImagePreview> {
   void initState() {
     super.initState();
     _transform.addListener(_updateScale);
+    widget.zoomController?.addListener(_nativeZoom);
+  }
+
+  void _nativeZoom() {
+    final next = (_scale * widget.zoomController!.factor).clamp(.25, 8.0);
+    final ratio = next / _scale;
+    final viewport = _viewerKey.currentContext?.size ?? Size.zero;
+    final centre = viewport.center(Offset.zero);
+    final matrix = _transform.value.clone();
+    final translation = matrix.getTranslation();
+    matrix.scaleByDouble(ratio, ratio, 1, 1);
+    matrix.setTranslationRaw((translation.x - centre.dx) * ratio + centre.dx,
+        (translation.y - centre.dy) * ratio + centre.dy, 0);
+    _transform.value = matrix;
+  }
+
+  void _scroll(PointerSignalEvent event) {
+    // Browsers report trackpad two-finger scrolling as a mouse wheel, so
+    // trackpadScrollCausesScale alone cannot distinguish it from zoom.
+    if (event is! PointerScrollEvent || event.kind == PointerDeviceKind.trackpad) return;
+    final viewport = _viewerKey.currentContext?.size ?? Size.zero;
+    final matrix = _transform.value.clone();
+    final translation = matrix.getTranslation();
+    final width = viewport.width * (1 - _scale), height = viewport.height * (1 - _scale);
+    matrix.setTranslationRaw(
+      (translation.x - event.scrollDelta.dx).clamp(width < 0 ? width : 0, width > 0 ? width : 0),
+      (translation.y - event.scrollDelta.dy).clamp(height < 0 ? height : 0, height > 0 ? height : 0), 0);
+    _transform.value = matrix;
+  }
+
+  @override
+  void didUpdateWidget(ImagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.zoomController != oldWidget.zoomController) {
+      oldWidget.zoomController?.removeListener(_nativeZoom);
+      widget.zoomController?.addListener(_nativeZoom);
+    }
   }
 
   void _updateScale() {
@@ -47,6 +88,7 @@ class _ImagePreviewState extends State<ImagePreview> {
 
   @override
   void dispose() {
+    widget.zoomController?.removeListener(_nativeZoom);
     _transform.removeListener(_updateScale);
     _transform.dispose();
     super.dispose();
@@ -81,9 +123,12 @@ class _ImagePreviewState extends State<ImagePreview> {
             IconButton(tooltip: '閉じる', onPressed: () => widget.onMessage('mbg-preview-close'), icon: const Icon(Icons.close)),
           ],
         ),
-        body: InteractiveViewer(
+        body: Listener(onPointerSignal: _scroll, child: InteractiveViewer(
+          key: _viewerKey,
           transformationController: _transform,
-          minScale: .25, maxScale: 8, trackpadScrollCausesScale: true,
+          minScale: .25, maxScale: 8, trackpadScrollCausesScale: false,
+          // PointerScaleEvent and pan/zoom pinches still use their real scale.
+          scaleFactor: double.infinity,
           child: Center(child: RotatedBox(quarterTurns: _rotation, child: Image.memory(
             widget.bytes, fit: BoxFit.contain,
             frameBuilder: (context, child, frame, synchronous) {
@@ -95,7 +140,7 @@ class _ImagePreviewState extends State<ImagePreview> {
               return const Center(child: Text('画像を開けませんでした。', style: previewTitleStyle));
             },
           ))),
-        ),
+        )),
       )),
     );
   }

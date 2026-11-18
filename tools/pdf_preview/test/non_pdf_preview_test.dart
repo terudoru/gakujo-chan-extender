@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mbg_pdf_preview/image_view.dart';
 import 'package:mbg_pdf_preview/text_view.dart';
@@ -9,6 +10,66 @@ import 'package:mbg_pdf_preview/preview_app.dart';
 import 'package:mbg_pdf_preview/clipboard_messenger.dart';
 
 void main() {
+  testWidgets('image trackpad scroll pans while pinches alone change scale', (tester) async {
+    final nativeZoom = PreviewZoomController();
+    addTearDown(nativeZoom.dispose);
+    final png = base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==');
+    await tester.pumpWidget(PreviewApp(home: ImagePreview(
+      title: 'image.png', bytes: png, onMessage: (_) {}, zoomController: nativeZoom,
+    )));
+    await tester.pump();
+    for (var i = 0; i < 4; i++) { await tester.tap(find.byTooltip('拡大')); await tester.pump(); }
+    final viewer = tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+    final transform = viewer.transformationController!;
+    final centre = tester.getCenter(find.byType(InteractiveViewer));
+    final before = transform.value.clone();
+    await tester.sendEventToBinding(PointerScrollEvent(position: centre, scrollDelta: const Offset(30, 40)));
+    await tester.pump();
+    expect(transform.value.getMaxScaleOnAxis(), before.getMaxScaleOnAxis());
+    expect(transform.value.getTranslation(), isNot(before.getTranslation()));
+    final trackpad = await tester.createGesture(kind: PointerDeviceKind.trackpad);
+    await trackpad.panZoomStart(centre);
+    final panScale = transform.value.getMaxScaleOnAxis();
+    await trackpad.panZoomUpdate(centre, pan: const Offset(20, 10));
+    await tester.pump();
+    expect(transform.value.getMaxScaleOnAxis(), panScale);
+    await trackpad.panZoomEnd();
+    await trackpad.panZoomStart(centre);
+    await trackpad.panZoomUpdate(centre, scale: 1.25);
+    await tester.pump();
+    expect(transform.value.getMaxScaleOnAxis(), greaterThan(panScale));
+    await trackpad.panZoomEnd();
+    final webPinchScale = transform.value.getMaxScaleOnAxis();
+    await tester.sendEventToBinding(PointerScaleEvent(position: centre, scale: 1.1));
+    await tester.pump();
+    expect(transform.value.getMaxScaleOnAxis(), closeTo(webPinchScale * 1.1, .001),
+      reason:'web ctrl-wheel pinches still use the real scale event');
+    final nativeScale = transform.value.getMaxScaleOnAxis();
+    nativeZoom.zoomBy(1.1);
+    await tester.pump();
+    expect(transform.value.getMaxScaleOnAxis(), closeTo(nativeScale * 1.1, .001));
+    final afterNative = transform.value.clone();
+    nativeZoom.zoomBy(double.nan);
+    await tester.pump();
+    expect(transform.value, afterNative);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('host zoom changes text size without losing the current document', (tester) async {
+    final nativeZoom = PreviewZoomController();
+    addTearDown(nativeZoom.dispose);
+    await tester.pumpWidget(PreviewApp(home: TextPreview(
+      title: 'sample.txt', text: 'synthetic text', onMessage: (_) {}, zoomController: nativeZoom,
+    )));
+    final line = find.byWidgetPredicate((widget) => widget is Text && widget.textSpan != null);
+    final before = tester.widget<Text>(line.first).style!.fontSize!;
+    nativeZoom.zoomBy(1.25);
+    await tester.pump();
+    expect(tester.widget<Text>(line.first).style!.fontSize, before * 1.25);
+    expect(find.text('sample.txt'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('text search navigates matches and adjusts font size', (tester) async {
     final messages = <String>[];
     await tester.pumpWidget(PreviewApp(home: TextPreview(

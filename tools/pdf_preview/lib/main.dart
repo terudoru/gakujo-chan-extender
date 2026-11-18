@@ -51,6 +51,7 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   final documentRef = ValueNotifier<PdfDocumentRef?>(null);
   final controller = PdfViewerController();
+  final _nativeZoom = PreviewZoomController();
   final showLeftPane = ValueNotifier<bool>(false);
   final outline = ValueNotifier<List<PdfOutlineNode>?>(null);
   final outlineError = ValueNotifier<bool>(false);
@@ -160,6 +161,21 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
           setState(() => _title = trimmed.isEmpty
               ? 'PDFプレビュー'
               : trimmed.substring(0, math.min(trimmed.length, 200)));
+        } else if (type != null && type.isA<JSString>() &&
+            (type as JSString).toDart == 'mbg-preview-zoom') {
+          final raw = object.getProperty<JSAny?>('factor'.toJS);
+          if (raw != null && raw.isA<JSNumber>()) {
+            final factor = (raw as JSNumber).toDartDouble;
+            if (factor.isFinite && factor > 0) {
+              if (_imageData != null || _textData != null) {
+                _nativeZoom.zoomBy(factor);
+              } else if (controller.isReady) {
+                unawaited(controller.setZoom(controller.centerPosition,
+                    controller.currentZoom * factor.clamp(.75, 1.33),
+                    duration: Duration.zero));
+              }
+            }
+          }
         } else if (!_receivedDocument && type != null && type.isA<JSString>()) {
           final kind = (type as JSString).toDart;
           if (kind == 'mbg-preview-image') {
@@ -233,6 +249,7 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
     outline.dispose();
     outlineError.dispose();
     _lastPassword = null;
+    _nativeZoom.dispose();
     _releaseDocument?.call();
     documentRef.dispose();
     super.dispose();
@@ -261,11 +278,11 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_imageData != null) {
-      return ImagePreview(title: _title, bytes: _imageData!, onMessage: _postPreviewMessage);
+      return ImagePreview(title: _title, bytes: _imageData!, onMessage: _postPreviewMessage, zoomController: _nativeZoom);
     }
     if (_textData != null) {
       return TextPreview(title: _title, text: _textData!, note: _textNote,
-          onMessage: _postPreviewMessage);
+          onMessage: _postPreviewMessage, zoomController: _nativeZoom);
     }
     // Flutter Web's MediaQuery can lag the embedded frame's actual height
     // while Android's keyboard is animating. Use the frame's own viewport.

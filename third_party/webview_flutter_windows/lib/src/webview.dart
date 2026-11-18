@@ -1217,6 +1217,10 @@ class _WebviewState extends State<Webview> {
             },
             onPointerSignal: (signal) {
               if (signal is PointerScrollEvent) {
+                // The app routes modified wheels to the active page/viewer
+                // zoom controller. Forwarding them also would zoom twice.
+                if (HardwareKeyboard.instance.isControlPressed ||
+                    HardwareKeyboard.instance.isMetaPressed) return;
                 _controller._setScrollDelta(
                   -signal.scrollDelta.dx,
                   -signal.scrollDelta.dy,

@@ -7,7 +7,7 @@ let readers: any = 0, aborted: any = 0, workers: any = 0, activeViewers: any = 0
 const timers: any = new Map(), intervals: any = new Map(); let timerId: any = 0;
 class Element {
   [key: string]: any;
-  constructor(tag: any, doc: any) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.listeners={}; this.attributes={}; this.isConnected=true; if(tag==='iframe') this.contentWindow={messages:[],postMessage(...args: any[]){this.messages.push(args);}}; }
+  constructor(tag: any, doc: any) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.listeners={}; this.attributes={}; this.isConnected=true; this.scrollLeft=this.scrollTop=0; this.clientWidth=this.scrollWidth=800; this.clientHeight=600; if(tag==='iframe') this.contentWindow={messages:[],postMessage(...args: any[]){this.messages.push(args);}}; }
   append(...children: any[]) { children.forEach((child: any) => this.appendChild(child)); }
   appendChild(child: any) { this.children.push(child); child.parentNode=this; return child; }
   insertBefore(child: any) { return this.appendChild(child); }
@@ -22,6 +22,8 @@ class Element {
   getBoundingClientRect() { return {left:0, top:0}; }
 }
 const doc: any={createElement:(tag: any) =>new Element(tag,doc)}; doc.body=new Element('body',doc);
+let selecting = false;
+doc.getSelection = () => ({isCollapsed:!selecting});
 const parent: any=new Element('div',doc);doc.body.appendChild(parent);
 const file: any={name:'synthetic.pdf',type:'application/pdf',size:64};
 const inputs: any=[new Element('input',doc),new Element('input',doc)];
@@ -107,6 +109,51 @@ assert.equal(lastViewer.currentPageNumber,3,'horizontal swipe advances the page'
 area.fire('touchstart',{touches:[{clientX:100,clientY:100}]});
 area.fire('touchend',{touches:[],changedTouches:[{clientX:110,clientY:250}]});
 assert.equal(lastViewer.currentPageNumber,3,'vertical scrolling must not turn the page');
+const touch = (x: number, y: number, identifier = 1) => ({clientX:x,clientY:y,identifier});
+function beginSwipe() {
+  lastViewer.currentPageNumber = 2;
+  area.fire('touchstart',{touches:[touch(250,100)]});
+}
+function finishSwipe(reason: string) {
+  area.fire('touchend',{touches:[],changedTouches:[touch(100,105)]});
+  assert.equal(lastViewer.currentPageNumber,2,reason);
+}
+beginSwipe();
+area.fire('touchmove',{touches:[touch(245,130)]});
+finishSwipe('a vertical-first gesture cannot become a horizontal page turn');
+beginSwipe();
+area.scrollTop=25;
+finishSwipe('native document scrolling aborts page navigation');
+area.scrollTop=0;
+area.scrollWidth=1200;
+beginSwipe(); finishSwipe('wide content retains horizontal panning');
+area.scrollWidth=800;
+lastViewer.currentScale=2;
+beginSwipe(); finishSwipe('zoomed content never turns pages while panning');
+lastViewer.currentScale=1;
+beginSwipe();
+area.fire('touchstart',{touches:[touch(240,100),touch(280,100,2)]});
+area.fire('touchend',{touches:[touch(240,100)],changedTouches:[touch(280,100,2)]});
+finishSwipe('lifting a second finger cannot turn a pinch into a swipe');
+beginSwipe(); area.fire('touchcancel'); finishSwipe('cancelled gestures cannot turn pages');
+beginSwipe(); selecting=true; finishSwipe('text selection cannot turn pages'); selecting=false;
+selecting=true; beginSwipe(); selecting=false; finishSwipe('selection at gesture start also blocks page turns');
+beginSwipe();
+window.__MBG_PREVIEW_NAVIGATE('back');window.__MBG_PREVIEW_NAVIGATE('forward');
+finishSwipe('hide and reopen discard the old gesture');
+beginSwipe();
+area.fire('touchend',{touches:[],changedTouches:[touch(100,105,2)]});
+assert.equal(lastViewer.currentPageNumber,2,'a different touch cannot finish the gesture');
+beginSwipe();
+area.fire('touchend',{touches:[],changedTouches:[touch(100,105)]});
+assert.equal(lastViewer.currentPageNumber,3,'a fresh intentional swipe still advances after cancellation');
+lastViewer.currentPageNumber=2;
+area.fire('touchstart',{touches:[touch(100,100)]});
+area.fire('touchend',{touches:[],changedTouches:[touch(250,105)]});
+assert.equal(lastViewer.currentPageNumber,1,'a deliberate reverse swipe still goes to the previous page');
+let ordinaryPrevented = false;
+area.fire('wheel',{deltaX:80,deltaY:100,cancelable:true,preventDefault(){ordinaryPrevented=true;}});
+assert.equal(ordinaryPrevented,false,'ordinary trackpad scrolling stays with the document');
 area.fire('wheel',{ctrlKey:true,deltaY:-20,clientX:100,clientY:100,cancelable:true,preventDefault(){}});
 assert.ok(lastViewer.currentScale>1,'trackpad zoom changes scale');
 const beforePinch: any=lastViewer.currentScale;
@@ -114,6 +161,14 @@ area.fire('touchstart',{touches:[{clientX:100,clientY:100},{clientX:200,clientY:
 area.fire('touchmove',{touches:[{clientX:50,clientY:100},{clientX:250,clientY:100}],cancelable:true,preventDefault(){}});
 area.fire('touchend',{touches:[],changedTouches:[{clientX:250,clientY:100}]});
 assert.ok(lastViewer.currentScale>beforePinch,'pinch expands the page');
+const beforeNative = lastViewer.currentScale;
+assert.equal(window.__MBG_PREVIEW_ZOOM(1.1),true);
+assert.ok(Math.abs(lastViewer.currentScale-beforeNative*1.1)<.00001,'native host pinch zooms the fallback PDF exactly once');
+window.__MBG_PREVIEW_NAVIGATE('back');
+assert.equal(window.__MBG_PREVIEW_ZOOM(1.1),false,'hidden previews reject host zoom');
+window.__MBG_PREVIEW_NAVIGATE('forward');
+assert.equal(window.__MBG_PREVIEW_ZOOM(Number.NaN),false);
+assert.equal(window.__MBG_PREVIEW_ZOOM(-1),false);
 const search: any=bar.children.find((x: any) =>x.type==='search');search.value='日本語';search.fire('input');
 assert.equal(lastViewer.events.findEvents.at(-1).query,'日本語');
 bar.children.find((x: any) =>x.textContent==='次の検索結果').fire('click');assert.equal(lastViewer.events.findEvents.at(-1).type,'again');
@@ -162,6 +217,9 @@ assert.equal(iframe.contentWindow.messages[0][0].type,'mbg-preview-title');
 assert.equal(iframe.contentWindow.messages[0][0].name,file.name);
 assert.equal(iframe.contentWindow.messages[1][0].byteLength,4);
 assert.equal(iframe.contentWindow.messages[1][2][0],iframe.contentWindow.messages[1][0]);
+assert.equal(window.__MBG_PREVIEW_ZOOM(1.2),true);
+assert.equal(iframe.contentWindow.messages.at(-1)[0].type,'mbg-preview-zoom');
+assert.equal(iframe.contentWindow.messages.at(-1)[0].factor,1.2);
 for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-password-requested'});
 assert.equal(timers.size,0,'a password prompt must not time out while the user is typing');
 for(const fn of windowListeners.message||[])fn({source:iframe.contentWindow,data:'mbg-preview-password-finished'});

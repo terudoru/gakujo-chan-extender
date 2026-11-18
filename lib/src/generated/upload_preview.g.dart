@@ -220,6 +220,12 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       else return false;
       return true;
     };
+    window.__MBG_PREVIEW_ZOOM = function(factor) {
+      var preview = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+      if (!preview || !preview.visible || !preview.zoomBy || !Number.isFinite(factor) || factor <= 0) return false;
+      preview.zoomBy(Math.max(0.75, Math.min(1.33, factor)));
+      return true;
+    };
     var waiters = [];
     window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED = function() {
       var pending = waiters.splice(0);
@@ -394,6 +400,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       body.appendChild(status);
       overlay.append(bar, body);
       (doc.documentElement || doc.body).appendChild(overlay);
+      var gestureGeneration = 0;
       var closed = false, pdfStopped = false, worker = null, task = null, pdf = null, objectUrl = null, visual = null, zoom = 100, watchdog = null;
       var reader = null, cancelLibrary = null, pdfViewerCleanup = null, imageGestureCleanup = null;
       var textZoom = false;
@@ -411,6 +418,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
       function setVisible(visible) {
         if (closed) return;
+        gestureGeneration++;
         preview.visible = visible;
         overlay.style.display = visible ? "flex" : "none";
         if (!visible && visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || "")) {
@@ -522,16 +530,21 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         resizeToolbar();
         imageZoomLabel.hidden = false;
         imageZoomLabel.textContent = "100%";
-        imageGestureCleanup = mbgPreviewGestures(body, {
+        var gestures = mbgPreviewGestures(body, {
           min: 0.25,
           max: 5,
           getScale: function() {
             return zoom / 100;
           },
+          generation: function() {
+            return gestureGeneration;
+          },
           setScale: function(scale) {
             setZoom(scale * 100);
           }
         });
+        imageGestureCleanup = gestures;
+        preview.zoomBy = gestures.zoomBy;
       }
       function openFlutterViewer(send, onFailure, onTimeout) {
         flutterViewerActive = true;
@@ -578,6 +591,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         }
         sourceWindow.addEventListener("message", onViewerMessage);
         pdfViewerCleanup = function() {
+          preview.zoomBy = void 0;
           sourceWindow.removeEventListener("message", onViewerMessage);
           if (popupTimer) window.clearInterval(popupTimer);
           if (frame) frame.remove();
@@ -610,6 +624,9 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
           body.appendChild(frame);
           viewer = frame.contentWindow;
         }
+        preview.zoomBy = function(factor) {
+          if (sent && viewer) viewer.postMessage({ type: "mbg-preview-zoom", factor }, "*");
+        };
       }
       function showRichPreview(payload, fallback) {
         if (!window.__MBG_PDF_PREVIEW_URL && !(window.MbgUploadCompression && window.MbgUploadCompression.postMessage)) {
@@ -821,6 +838,12 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
                 window.clearTimeout(watchdog);
                 watchdog = null;
               }
+            },
+            function() {
+              return gestureGeneration;
+            },
+            function(zoomBy) {
+              preview.zoomBy = zoomBy;
             }
           );
         }).catch(fail);
@@ -1456,7 +1479,22 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     }
     function mbgPreviewGestures(node, callbacks) {
       var start = null, pinch = null, pending = null, frame = null;
-      node.style.touchAction = "pan-y";
+      var blocked = false, generation = 0, oldTouchAction = node.style.touchAction;
+      function currentGeneration() {
+        return callbacks.generation ? callbacks.generation() : 0;
+      }
+      function hasSelection() {
+        var _a, _b;
+        var selection = (_b = (_a = node.ownerDocument).getSelection) == null ? void 0 : _b.call(_a);
+        return selection && !selection.isCollapsed;
+      }
+      function canSwipe() {
+        return !!(callbacks.previous || callbacks.next) && callbacks.getScale() <= 1.001 && node.scrollWidth <= node.clientWidth + 1 && !hasSelection();
+      }
+      function updateTouchAction() {
+        node.style.touchAction = canSwipe() ? "pan-y" : "pan-x pan-y";
+      }
+      updateTouchAction();
       function distance(a, b) {
         return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       }
@@ -1470,11 +1508,16 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         var rect = node.getBoundingClientRect(), x = point.x - rect.left, y = point.y - rect.top;
         var left = node.scrollLeft, top = node.scrollTop;
         callbacks.setScale(next);
+        updateTouchAction();
         node.scrollLeft = (left + x) * next / old - x;
         node.scrollTop = (top + y) * next / old - y;
       }
       function flush() {
         frame = null;
+        if (generation !== currentGeneration()) {
+          onCancel();
+          return;
+        }
         if (pending) {
           var value = pending;
           pending = null;
@@ -1482,18 +1525,49 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         }
       }
       function onStart(event) {
-        if (event.target && event.target.closest && event.target.closest("a,button,input,textarea,select,audio,video")) return;
+        if (event.target && event.target.closest && event.target.closest("a,button,input,textarea,select,audio,video")) {
+          onCancel();
+          blocked = true;
+          return;
+        }
+        if (event.touches.length > 2) {
+          onCancel();
+          blocked = true;
+          return;
+        }
         if (event.touches.length === 2) {
+          onCancel();
+          blocked = true;
+          generation = currentGeneration();
           var length = distance(event.touches[0], event.touches[1]);
           pinch = length > 0 ? { distance: length, scale: callbacks.getScale() } : null;
           start = null;
-        } else if (event.touches.length === 1) {
+        } else if (event.touches.length === 1 && !blocked) {
+          generation = currentGeneration();
+          if (!canSwipe()) {
+            start = null;
+            return;
+          }
           var touch = event.touches[0];
-          start = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+          start = { id: touch.identifier, x: touch.clientX, y: touch.clientY, time: Date.now(), left: node.scrollLeft, top: node.scrollTop };
           pinch = null;
         }
       }
       function onMove(event) {
+        if (generation !== currentGeneration()) {
+          onCancel();
+          blocked = true;
+          return;
+        }
+        if (start) {
+          var touch = event.touches[0];
+          if (event.touches.length !== 1 || !touch || touch.identifier !== start.id || node.scrollLeft !== start.left || node.scrollTop !== start.top || !canSwipe()) {
+            start = null;
+          } else {
+            var dx = Math.abs(touch.clientX - start.x), dy = Math.abs(touch.clientY - start.y);
+            if (dy > 12 && dy * 1.5 >= dx) start = null;
+          }
+        }
         if (!pinch || event.touches.length !== 2) return;
         if (event.cancelable) event.preventDefault();
         pending = {
@@ -1503,6 +1577,11 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         if (frame === null) frame = window.requestAnimationFrame(flush);
       }
       function onEnd(event) {
+        if (generation !== currentGeneration()) {
+          onCancel();
+          blocked = !!event.touches.length;
+          return;
+        }
         if (pinch) {
           if (frame !== null) {
             window.cancelAnimationFrame(frame);
@@ -1513,11 +1592,13 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
             pinch = null;
             start = null;
           }
+          blocked = !!event.touches.length;
           return;
         }
+        if (!event.touches.length) blocked = false;
         if (!start || event.touches.length || !event.changedTouches.length) return;
         var touch = event.changedTouches[0], dx = touch.clientX - start.x, dy = touch.clientY - start.y;
-        if (Date.now() - start.time < 900 && Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (touch.identifier === start.id && canSwipe() && node.scrollLeft === start.left && node.scrollTop === start.top && Date.now() - start.time < 900 && Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy) * 1.5) {
           if (dx < 0 && callbacks.next) callbacks.next();
           else if (dx > 0 && callbacks.previous) callbacks.previous();
         }
@@ -1525,6 +1606,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       }
       function onCancel() {
         start = pinch = pending = null;
+        blocked = false;
         if (frame !== null) {
           window.cancelAnimationFrame(frame);
           frame = null;
@@ -1532,6 +1614,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       }
       function onWheel(event) {
         if (!event.ctrlKey && !event.metaKey) return;
+        onCancel();
+        generation = currentGeneration();
         if (event.cancelable) event.preventDefault();
         var multiplier = Math.max(0.75, Math.min(1.33, Math.exp(-event.deltaY * 0.01)));
         applyScale(callbacks.getScale() * multiplier, { x: event.clientX, y: event.clientY });
@@ -1541,16 +1625,23 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       node.addEventListener("touchend", onEnd, { passive: true });
       node.addEventListener("touchcancel", onCancel, { passive: true });
       node.addEventListener("wheel", onWheel, { passive: false });
-      return function() {
+      var cleanup = Object.assign(function() {
         onCancel();
+        node.style.touchAction = oldTouchAction;
         node.removeEventListener("touchstart", onStart);
         node.removeEventListener("touchmove", onMove);
         node.removeEventListener("touchend", onEnd);
         node.removeEventListener("touchcancel", onCancel);
         node.removeEventListener("wheel", onWheel);
-      };
+      }, { updateTouchAction, zoomBy: function(factor) {
+        onCancel();
+        generation = currentGeneration();
+        var rect = node.getBoundingClientRect();
+        applyScale(callbacks.getScale() * factor, { x: rect.left + node.clientWidth / 2, y: rect.top + node.clientHeight / 2 });
+      } });
+      return cleanup;
     }
-    function mbgCreatePdfViewer(doc, body, bar, status, pdf, previous, next, count, zoomOut, zoomIn, onFirstPage) {
+    function mbgCreatePdfViewer(doc, body, bar, status, pdf, previous, next, count, zoomOut, zoomIn, onFirstPage, generation, registerZoom) {
       var host = doc.createElement("div");
       host.style.cssText = "position:absolute;inset:0";
       var root = host.attachShadow({ mode: "closed" });
@@ -1754,6 +1845,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         getScale: function() {
           return viewer.currentScale;
         },
+        generation,
         setScale: function(value) {
           viewer.currentScale = value;
         },
@@ -1764,6 +1856,9 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
           if (viewer.currentPageNumber < pdf.numPages) viewer.currentPageNumber++;
         }
       });
+      events.on("scalechanging", removeGestures.updateTouchAction);
+      events.on("pagesinit", removeGestures.updateTouchAction);
+      registerZoom(removeGestures.zoomBy);
       previous.hidden = next.hidden = false;
       updatePage();
       viewer.setDocument(pdf);

@@ -234,7 +234,7 @@ interface Document { __mbgUploadCompressionAttached?: boolean; }
 
 interface MbgPreviewRequest { url: string; method: string; fileName: string; formFields: Record<string, string>; }
 interface MbgPreviewAnchor extends HTMLElement { form: HTMLFormElement | null; name: string; value: string; __mbgSubmittedPreviewButton?: HTMLButtonElement; }
-interface MbgPreviewGestureCallbacks { min: number; max: number; getScale(): number; setScale(scale: number): void; previous?: () => void; next?: () => void; }
+interface MbgPreviewGestureCallbacks { min: number; max: number; getScale(): number; setScale(scale: number): void; previous?: () => void; next?: () => void; generation?(): number; }
 interface MbgPdfDocument { numPages: number; }
 interface MbgPdfTask { promise: Promise<MbgPdfDocument>; destroy(): Promise<void>; }
 interface MbgPdfEvent { scale: number; error: Error; matchesCount: {current: number; total: number}; rawQuery: string; state: number; }
@@ -249,7 +249,8 @@ interface Window {
   __MBG_UPLOAD_PREVIEW_LIBRARY_LOADED?: () => void;
   __MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED?: () => void;
   __MBG_PREVIEW_NAVIGATE?: (direction: string) => boolean;
-  __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; __mbgToken?: string};
+  __MBG_PREVIEW_ZOOM?: (factor: number) => boolean;
+  __MBG_ACTIVE_UPLOAD_PREVIEW?: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; zoomBy?: (factor: number) => void; __mbgToken?: string};
   __MBG_OPEN_REMOTE_PREVIEW?: (request: MbgPreviewRequest) => boolean;
   __MBG_PDF_PREVIEW_URL?: string;
   __MBG_PDF_PREVIEW_POPUP?: boolean;

@@ -22,6 +22,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     else return false;
     return true;
   };
+  window.__MBG_PREVIEW_ZOOM = function(factor) {
+    var preview = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
+    if (!preview || !preview.visible || !preview.zoomBy || !Number.isFinite(factor) || factor <= 0) return false;
+    preview.zoomBy(Math.max(.75, Math.min(1.33, factor)));
+    return true;
+  };
   var waiters: (() => void)[] = [];
   window.__MBG_UPLOAD_PREVIEW_LIBRARY_LOADED = function() {
     var pending = waiters.splice(0);
@@ -180,6 +186,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     // CampusSquare scales its body with a CSS transform; a fixed descendant
     // would cover only the scaled body instead of the viewport.
     (doc.documentElement || doc.body).appendChild(overlay);
+    var gestureGeneration = 0;
     var closed = false, pdfStopped = false, worker: Worker | null = null, task: MbgPdfTask | null = null, pdf: MbgPdfDocument | null = null, objectUrl: string | null = null, visual: (HTMLElement & Partial<HTMLMediaElement>) | null = null, zoom = 100, watchdog: number | null = null;
     var reader: FileReader | null = null, cancelLibrary: (() => void) | null = null, pdfViewerCleanup: (() => void) | null = null, imageGestureCleanup: (() => void) | null = null;
     var textZoom = false;
@@ -190,12 +197,13 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       } catch (_) { detached = true; }
       if (detached) cleanup();
     }, 1000);
-    var preview: {close: () => void; visible: boolean; setVisible: (visible: boolean) => void; __mbgToken?: string} =
+    var preview: NonNullable<Window['__MBG_ACTIVE_UPLOAD_PREVIEW']> =
       {close: cleanup, visible: initiallyVisible !== false, setVisible: setVisible};
     if (inheritedToken) preview.__mbgToken = inheritedToken;
     owner.__MBG_ACTIVE_UPLOAD_PREVIEW = preview;
     function setVisible(visible: boolean) {
       if (closed) return;
+      gestureGeneration++;
       preview.visible = visible;
       overlay.style.display = visible ? 'flex' : 'none';
       if (!visible && visual && /^(AUDIO|VIDEO)$/i.test(visual.tagName || '')) {
@@ -260,10 +268,13 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       visual = element; textZoom = isText;
       resizeToolbar();
       imageZoomLabel.hidden = false; imageZoomLabel.textContent = '100%';
-      imageGestureCleanup = mbgPreviewGestures(body, {
+      var gestures = mbgPreviewGestures(body, {
         min: .25, max: 5, getScale: function() { return zoom / 100; },
+        generation: function() { return gestureGeneration; },
         setScale: function(scale) { setZoom(scale * 100); }
       });
+      imageGestureCleanup = gestures;
+      preview.zoomBy = gestures.zoomBy;
     }
     function openFlutterViewer(send: (viewer: Window) => void, onFailure: () => void, onTimeout?: () => void) {
       flutterViewerActive = true; resizeToolbar();
@@ -303,6 +314,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       }
       sourceWindow.addEventListener('message', onViewerMessage);
       pdfViewerCleanup = function() {
+        preview.zoomBy = undefined;
         sourceWindow.removeEventListener('message', onViewerMessage);
         if (popupTimer) window.clearInterval(popupTimer);
         if (frame) frame.remove();
@@ -323,6 +335,9 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         body.appendChild(frame!);
         viewer = frame!.contentWindow;
       }
+      preview.zoomBy = function(factor) {
+        if (sent && viewer) viewer.postMessage({type:'mbg-preview-zoom', factor:factor}, '*');
+      };
     }
     function showRichPreview(payload: () => Promise<object>, fallback: () => void) {
       if (!window.__MBG_PDF_PREVIEW_URL && !(window.MbgUploadCompression && window.MbgUploadCompression.postMessage)) { fallback(); return; }
@@ -443,7 +458,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         if (result.numPages > 2000) throw new Error('ページ数が安全な上限を超えています');
         pdf = result;
         pdfViewerCleanup = mbgCreatePdfViewer(doc, body, bar, status, pdf, previous, next, count, zoomOut, zoomIn,
-          function() { if (watchdog) { window.clearTimeout(watchdog); watchdog = null; } });
+          function() { if (watchdog) { window.clearTimeout(watchdog); watchdog = null; } },
+          function() { return gestureGeneration; }, function(zoomBy) { preview.zoomBy = zoomBy; });
       }).catch(fail);
     } else if (/^(mp3|m4a|wav|ogg|opus|mp4|m4v|webm)$/i.test(extension) ||
         /^(audio\/(mpeg|mp4|wav|ogg|opus)|video\/(mp4|webm))$/i.test(file.type)) {
@@ -947,8 +963,19 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
 // GakujoPdfViewerScript
 // Offline PDF.js viewer controls, kept inside the preview lifecycle.
   function mbgPreviewGestures(node: HTMLElement, callbacks: MbgPreviewGestureCallbacks) {
-    var start: {x: number; y: number; time: number} | null = null, pinch: {distance: number; scale: number} | null = null, pending: {scale: number; point: {x: number; y: number}} | null = null, frame: number | null = null;
-    node.style.touchAction = 'pan-y';
+    var start: {id: number; x: number; y: number; time: number; left: number; top: number} | null = null, pinch: {distance: number; scale: number} | null = null, pending: {scale: number; point: {x: number; y: number}} | null = null, frame: number | null = null;
+    var blocked = false, generation = 0, oldTouchAction = node.style.touchAction;
+    function currentGeneration() { return callbacks.generation ? callbacks.generation() : 0; }
+    function hasSelection() { var selection = node.ownerDocument.getSelection?.(); return selection && !selection.isCollapsed; }
+    function canSwipe() {
+      return !!(callbacks.previous || callbacks.next) && callbacks.getScale() <= 1.001 &&
+        node.scrollWidth <= node.clientWidth + 1 && !hasSelection();
+    }
+    function updateTouchAction() {
+      // A zoomed/oversized document must retain horizontal touch panning.
+      node.style.touchAction = canSwipe() ? 'pan-y' : 'pan-x pan-y';
+    }
+    updateTouchAction();
     function distance(a: Touch, b: Touch) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
     function centre(a: Touch, b: Touch) { return {x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2}; }
     function applyScale(value: number, point: {x: number; y: number}) {
@@ -958,24 +985,41 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var rect = node.getBoundingClientRect(), x = point.x - rect.left, y = point.y - rect.top;
       var left = node.scrollLeft, top = node.scrollTop;
       callbacks.setScale(next);
+      updateTouchAction();
       node.scrollLeft = (left + x) * next / old - x;
       node.scrollTop = (top + y) * next / old - y;
     }
     function flush() {
       frame = null;
+      if (generation !== currentGeneration()) { onCancel(); return; }
       if (pending) { var value = pending; pending = null; applyScale(value.scale, value.point); }
     }
     function onStart(event: TouchEvent) {
-      if (event.target && (event.target as Element).closest && (event.target as Element).closest('a,button,input,textarea,select,audio,video')) return;
+      if (event.target && (event.target as Element).closest && (event.target as Element).closest('a,button,input,textarea,select,audio,video')) { onCancel(); blocked = true; return; }
+      if (event.touches.length > 2) { onCancel(); blocked = true; return; }
       if (event.touches.length === 2) {
+        onCancel(); blocked = true; generation = currentGeneration();
         var length = distance(event.touches[0], event.touches[1]);
         pinch = length > 0 ? {distance:length, scale:callbacks.getScale()} : null; start = null;
-      } else if (event.touches.length === 1) {
+      } else if (event.touches.length === 1 && !blocked) {
+        generation = currentGeneration();
+        if (!canSwipe()) { start = null; return; }
         var touch = event.touches[0];
-        start = {x:touch.clientX, y:touch.clientY, time:Date.now()}; pinch = null;
+        start = {id:touch.identifier, x:touch.clientX, y:touch.clientY, time:Date.now(), left:node.scrollLeft, top:node.scrollTop}; pinch = null;
       }
     }
     function onMove(event: TouchEvent) {
+      if (generation !== currentGeneration()) { onCancel(); blocked = true; return; }
+      if (start) {
+        var touch = event.touches[0];
+        if (event.touches.length !== 1 || !touch || touch.identifier !== start.id ||
+            node.scrollLeft !== start.left || node.scrollTop !== start.top || !canSwipe()) { start = null; }
+        else {
+          var dx = Math.abs(touch.clientX-start.x), dy = Math.abs(touch.clientY-start.y);
+          // Once a gesture is scrolling vertically, its tail cannot turn pages.
+          if (dy > 12 && dy * 1.5 >= dx) start = null;
+        }
+      }
       if (!pinch || event.touches.length !== 2) return;
       if (event.cancelable) event.preventDefault();
       pending = {scale:pinch.scale * distance(event.touches[0], event.touches[1]) / pinch.distance,
@@ -983,15 +1027,19 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (frame === null) frame = window.requestAnimationFrame(flush);
     }
     function onEnd(event: TouchEvent) {
+      if (generation !== currentGeneration()) { onCancel(); blocked = !!event.touches.length; return; }
       if (pinch) {
         if (frame !== null) { window.cancelAnimationFrame(frame); frame = null; }
         if (pending) flush();
         if (event.touches.length < 2) { pinch = null; start = null; }
+        blocked = !!event.touches.length;
         return;
       }
+      if (!event.touches.length) blocked = false;
       if (!start || event.touches.length || !event.changedTouches.length) return;
       var touch = event.changedTouches[0], dx = touch.clientX-start.x, dy = touch.clientY-start.y;
-      if (Date.now()-start.time < 900 && Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy)*1.5) {
+      if (touch.identifier === start.id && canSwipe() && node.scrollLeft === start.left && node.scrollTop === start.top &&
+          Date.now()-start.time < 900 && Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy)*1.5) {
         if (dx < 0 && callbacks.next) callbacks.next();
         else if (dx > 0 && callbacks.previous) callbacks.previous();
       }
@@ -999,10 +1047,12 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     }
     function onCancel() {
       start = pinch = pending = null;
+      blocked = false;
       if (frame !== null) { window.cancelAnimationFrame(frame); frame = null; }
     }
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
+      onCancel(); generation = currentGeneration();
       if (event.cancelable) event.preventDefault();
       var multiplier = Math.max(0.75, Math.min(1.33, Math.exp(-event.deltaY * 0.01)));
       applyScale(callbacks.getScale()*multiplier, {x:event.clientX, y:event.clientY});
@@ -1012,14 +1062,20 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     node.addEventListener('touchend', onEnd, {passive:true});
     node.addEventListener('touchcancel', onCancel, {passive:true});
     node.addEventListener('wheel', onWheel, {passive:false});
-    return function() {
+    var cleanup = Object.assign(function() {
       onCancel();
+      node.style.touchAction = oldTouchAction;
       node.removeEventListener('touchstart', onStart); node.removeEventListener('touchmove', onMove);
       node.removeEventListener('touchend', onEnd); node.removeEventListener('touchcancel', onCancel);
       node.removeEventListener('wheel', onWheel);
-    };
+    }, {updateTouchAction:updateTouchAction, zoomBy:function(factor: number) {
+      onCancel(); generation = currentGeneration();
+      var rect = node.getBoundingClientRect();
+      applyScale(callbacks.getScale() * factor, {x:rect.left + node.clientWidth / 2, y:rect.top + node.clientHeight / 2});
+    }});
+    return cleanup;
   }
-  function mbgCreatePdfViewer(doc: Document, body: HTMLElement, bar: HTMLElement, status: HTMLElement, pdf: MbgPdfDocument, previous: HTMLButtonElement, next: HTMLButtonElement, count: HTMLElement, zoomOut: HTMLButtonElement, zoomIn: HTMLButtonElement, onFirstPage: () => void) {
+  function mbgCreatePdfViewer(doc: Document, body: HTMLElement, bar: HTMLElement, status: HTMLElement, pdf: MbgPdfDocument, previous: HTMLButtonElement, next: HTMLButtonElement, count: HTMLElement, zoomOut: HTMLButtonElement, zoomIn: HTMLButtonElement, onFirstPage: () => void, generation: () => number, registerZoom: (zoomBy: (factor: number) => void) => void) {
     var host = doc.createElement('div');
     host.style.cssText = 'position:absolute;inset:0';
     var root = host.attachShadow({mode:'closed'});
@@ -1138,10 +1194,14 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     fit.addEventListener('click', function() { viewer.currentScaleValue = 'page-width'; });
     var removeGestures = mbgPreviewGestures(container, {
       min:0.25, max:4, getScale:function() { return viewer.currentScale; },
+      generation:generation,
       setScale:function(value) { viewer.currentScale = value; },
       previous:function() { if (viewer.currentPageNumber > 1) viewer.currentPageNumber--; },
       next:function() { if (viewer.currentPageNumber < pdf.numPages) viewer.currentPageNumber++; }
     });
+    events.on('scalechanging', removeGestures.updateTouchAction);
+    events.on('pagesinit', removeGestures.updateTouchAction);
+    registerZoom(removeGestures.zoomBy);
     previous.hidden = next.hidden = false; updatePage();
     viewer.setDocument(pdf);
     return function() {

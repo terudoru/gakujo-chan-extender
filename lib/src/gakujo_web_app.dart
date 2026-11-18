@@ -1189,6 +1189,8 @@ enum GakujoHistoryNavigation {
 @visibleForTesting
 class DesktopHistorySwipeTracker {
   double _distance = 0;
+  double _horizontalTravel = 0;
+  double _verticalTravel = 0;
   bool _triggered = false;
   Timer? _timer;
 
@@ -1204,6 +1206,15 @@ class DesktopHistorySwipeTracker {
     }
     final horizontal = delta.dx.abs();
     final vertical = delta.dy.abs();
+    _horizontalTravel += horizontal;
+    _verticalTravel += vertical;
+    if (_verticalTravel > 12 &&
+        _verticalTravel * dominance >= _horizontalTravel) {
+      // A scroll stays a scroll even when its diagonal/momentum tail turns
+      // horizontal. Do not restart recognition in the middle of the stream.
+      suppress();
+      return null;
+    }
     if (horizontal <= vertical * dominance) {
       if (vertical > horizontal) {
         scheduleReset();
@@ -1226,10 +1237,17 @@ class DesktopHistorySwipeTracker {
     _timer = Timer(const Duration(milliseconds: 250), reset);
   }
 
+  void suppress() {
+    _triggered = true;
+    scheduleReset();
+  }
+
   void reset() {
     _timer?.cancel();
     _timer = null;
     _distance = 0;
+    _horizontalTravel = 0;
+    _verticalTravel = 0;
     _triggered = false;
   }
 
@@ -1864,6 +1882,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   double _desktopPanZoomStartZoom = 1.0;
   final _desktopPanZoomGesture = DesktopPanZoomGesture();
   final _desktopHistorySwipe = DesktopHistorySwipeTracker();
+  final _historyTouchPointers = <int>{};
+  bool _desktopPanZoomSuppressed = false;
+  bool _desktopPanZoomActive = false;
+  bool _desktopPanZoomInterrupted = false;
+  double _desktopLastPinchScale = 1;
+  int _previewGestureRevision = 0;
+  int? _desktopWheelZoomRevision;
+  Timer? _previewGestureTimer;
   int? _touchHistorySwipePointer;
   Offset? _touchHistorySwipeStart;
   double _touchHistorySwipeViewportWidth = 0;
@@ -2116,6 +2142,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_controller.dispose());
     _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipe.dispose();
+    _previewGestureTimer?.cancel();
     _autoBackupTimer?.cancel();
     _autoBackupDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -2639,6 +2666,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleTouchHistorySwipeDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.touch) {
+      _historyTouchPointers.add(event.pointer);
+    }
+    if (_previewNavigationState == 'visible' ||
+        _historyTouchPointers.length > 1) {
+      _resetTouchHistorySwipe();
+      return;
+    }
     if (supportsNativeGakujoHistoryGestures(defaultTargetPlatform) ||
         event.kind != PointerDeviceKind.touch ||
         _touchHistorySwipePointer != null) {
@@ -2656,6 +2691,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleTouchHistorySwipeMove(PointerMoveEvent event) {
+    if (_previewNavigationState == 'visible') {
+      _resetTouchHistorySwipe();
+      return;
+    }
     final start = _touchHistorySwipeStart;
     if (_touchHistorySwipePointer != event.pointer || start == null) {
       return;
@@ -2685,6 +2724,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleTouchHistorySwipeEnd(PointerEvent event) {
+    _historyTouchPointers.remove(event.pointer);
     if (_touchHistorySwipePointer == event.pointer) {
       _resetTouchHistorySwipe();
     }
@@ -2837,6 +2877,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _handleDesktopWheelZoom(double dy, Offset origin) {
     if (dy == 0) return;
+    _desktopHistorySwipe.suppress();
+    final interrupted = _desktopWheelZoomRevision != null &&
+        _desktopWheelZoomRevision != _previewGestureRevision;
+    _desktopWheelZoomRevision ??= _previewGestureRevision;
+    _schedulePreviewWheelIdle();
+    if (interrupted) return;
+    if (_previewNavigationState == 'visible') {
+      _zoomPreviewBy(desktopWheelZoom(1, dy));
+      return;
+    }
     _desktopZoomOrigin = origin;
     unawaited(_setDesktopZoomSmooth(
       desktopWheelZoom(_desktopZoom, dy),
@@ -2848,6 +2898,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _startDesktopPanZoom(Offset position) {
+    _desktopPanZoomActive = true;
+    _desktopPanZoomInterrupted = false;
+    _desktopPanZoomSuppressed = _previewNavigationState == 'visible';
+    _desktopLastPinchScale = 1;
     _desktopPanZoomStartZoom = _desktopZoom;
     _desktopPanZoomGesture.reset();
     _desktopZoomOrigin = position;
@@ -2855,12 +2909,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _handleDesktopPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_desktopPanZoomInterrupted) {
+      _desktopHistorySwipe.suppress();
+      return;
+    }
     _desktopZoomOrigin = event.localPosition;
     if (_desktopPanZoomGesture.update(event.panDelta, event.scale)) {
+      _desktopHistorySwipe.suppress();
       _updateDesktopPinchZoom(event.scale, event.localPosition);
       return;
     }
 
+    if (_desktopPanZoomSuppressed) {
+      _desktopHistorySwipe.suppress();
+      return;
+    }
     _handleDesktopHistorySwipeDelta(
       event.panDelta,
       positiveIsBack: true,
@@ -2868,6 +2931,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _updateDesktopPinchZoom(double scale, Offset position) {
+    if (_desktopPanZoomInterrupted) return;
+    if (!scale.isFinite || scale <= 0) return;
+    final factor = scale / _desktopLastPinchScale;
+    _desktopLastPinchScale = scale;
+    if (_previewNavigationState == 'visible') {
+      _desktopHistorySwipe.suppress();
+      _desktopPanZoomSuppressed = true;
+      _zoomPreviewBy(factor);
+      return;
+    }
+    if (_desktopPanZoomSuppressed) return;
     _desktopZoomOrigin = position;
     unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * scale));
   }
@@ -2877,6 +2951,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _endDesktopPanZoom() {
+    _desktopPanZoomActive = false;
     _desktopPanZoomGesture.reset();
     _scheduleDesktopHistorySwipeReset();
   }
@@ -2885,6 +2960,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Offset delta, {
     required bool positiveIsBack,
   }) {
+    if (_previewNavigationState == 'visible') {
+      _desktopHistorySwipe.suppress();
+      return;
+    }
     if (defaultTargetPlatform != TargetPlatform.windows &&
         defaultTargetPlatform != TargetPlatform.linux) {
       return;
@@ -2909,6 +2988,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   void _resetDesktopHistorySwipe() {
     _desktopHistorySwipe.reset();
+  }
+
+  void _schedulePreviewWheelIdle() {
+    _previewGestureTimer?.cancel();
+    _previewGestureTimer = Timer(const Duration(milliseconds: 250), () {
+      _desktopWheelZoomRevision = null;
+    });
+  }
+
+  void _zoomPreviewBy(double factor) {
+    if (!factor.isFinite || factor <= 0 || factor == 1) return;
+    unawaited(_controller.runJavaScript(
+      'window.__MBG_PREVIEW_ZOOM && window.__MBG_PREVIEW_ZOOM(${jsonEncode(factor)});',
+    ).catchError((Object error, StackTrace stackTrace) {
+      developer.log('Failed to zoom preview', name: 'MoreBetterGakujo',
+          error: error, stackTrace: stackTrace);
+    }));
   }
 
   Future<void> _changeDesktopZoomBy(double delta) {
@@ -9101,6 +9197,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     if (_previewNavigationState != state) {
+      // Opening/hiding a preview changes gesture ownership. A partial scroll
+      // or the remainder of its momentum must not become history navigation.
+      _desktopHistorySwipe.suppress();
+      _desktopPanZoomSuppressed = true;
+      _desktopPanZoomInterrupted = _desktopPanZoomActive;
+      _previewGestureRevision++;
+      _resetTouchHistorySwipe();
       setState(() => _previewNavigationState = state);
     }
     if (defaultTargetPlatform == TargetPlatform.macOS ||
