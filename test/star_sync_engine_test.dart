@@ -24,9 +24,12 @@ class _Storage extends FlutterSecureStorage {
   String? failReadKey;
   String? failWriteKey;
   String? failWriteKeyOnce;
+  String? failWriteKeyAfterCommitOnce;
   String? failDeleteKey;
   void Function()? onStarRead;
   void Function(String)? onWrite;
+  void Function(String, String?)? onWriteValue;
+  Future<void> Function(String)? beforeWrite;
 
   @override
   Future<String?> read({
@@ -55,6 +58,8 @@ class _Storage extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     onWrite?.call(key);
+    onWriteValue?.call(key, value);
+    if (beforeWrite != null) await beforeWrite!(key);
     if (key == failWriteKey) throw StateError('write failed');
     if (key == failWriteKeyOnce) {
       failWriteKeyOnce = null;
@@ -73,6 +78,10 @@ class _Storage extends FlutterSecureStorage {
       values.remove(key);
     } else {
       values[key] = value;
+    }
+    if (key == failWriteKeyAfterCommitOnce) {
+      failWriteKeyAfterCommitOnce = null;
+      throw StateError('write failed after changing storage');
     }
   }
 
@@ -145,6 +154,7 @@ class _DelayedActivityStore extends GakujoActivityStore {
 }
 
 class _Transport implements StarSyncTransport {
+  String? failPutPathOnce;
   final files = <String, List<int>>{};
   int puts = 0;
   int deletes = 0;
@@ -252,6 +262,10 @@ class _Transport implements StarSyncTransport {
     List<int> bytes, {
     bool createOnly = false,
   }) async {
+    if (path == failPutPathOnce) {
+      failPutPathOnce = null;
+      throw StateError('collection upload failed');
+    }
     if (failDevicePutOnce && path.startsWith('stars/devices/')) {
       failDevicePutOnce = false;
       throw StateError('device upload failed');
@@ -391,8 +405,438 @@ class _Collection extends StarSyncCollection {
   }
 }
 
+class _FavoriteSyncDevice {
+  _FavoriteSyncDevice(this.remote, {
+    _Storage? persisted,
+    Future<void> Function()? onChanged,
+    String? Function()? loginId,
+  })
+      : storage = persisted ?? _Storage() {
+    activity = GakujoActivityStore(secureStorage: storage);
+    engine = StarSyncEngine(
+      loginId: loginId ?? () => 'student',
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      collections: [StarSyncFavoritesCollection(activity, onChanged: onChanged)],
+    );
+    addTearDown(engine.dispose);
+  }
+
+  static const url = 'https://example.invalid/course';
+  static const favoritesKey = 'more_better_gakujo_favorites';
+  final _Transport remote;
+  final _Storage storage;
+  late final GakujoActivityStore activity;
+  late final StarSyncEngine engine;
+
+  Future<void> add([String title = 'Course']) => activity.addFavorite(
+    GakujoFavoritePage(
+      title: title, url: url, addedAt: DateTime.utc(2026, 11, 18),
+    ),
+  );
+
+  void failStateAfterFavoriteWrite() {
+    storage.onWrite = (key) {
+      if (key != favoritesKey) return;
+      storage.onWrite = null;
+      storage.failWriteKeyOnce = starSyncStateKey;
+    };
+  }
+}
+
+Future<({_FavoriteSyncDevice source, _FavoriteSyncDevice receiver})>
+    _favoriteSyncPair() async {
+  final remote = _Transport();
+  final source = _FavoriteSyncDevice(remote);
+  final receiver = _FavoriteSyncDevice(remote);
+  await source.engine.setUpWithDrive(const StarSyncConfig());
+  await receiver.engine.setUpWithDrive(const StarSyncConfig());
+  await source.add();
+  await source.engine.syncNow();
+  return (source: source, receiver: receiver);
+}
+
+Future<void> _deleteSyncedFavorite(_FavoriteSyncDevice device) async {
+  await device.activity.removeFavorite(_FavoriteSyncDevice.url);
+  await device.engine.syncNow();
+  expect(await device.activity.loadFavoritesForBackup(), isEmpty);
+}
+
 void main() {
   const config = StarSyncConfig();
+
+  group('favorite collection persistence', () {
+    for (final restart in [false, true]) {
+      test('failed post-apply save honors later remote deletion '
+          '(restart=$restart)', () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        receiver.failStateAfterFavoriteWrite();
+        await receiver.engine.syncNow();
+        expect(receiver.storage.failWriteKeyOnce, isNull);
+        expect(receiver.engine.status.value.lastError, contains('collections'));
+        await _deleteSyncedFavorite(source);
+        var receiving = receiver;
+        if (restart) {
+          receiver.engine.dispose();
+          receiving = _FavoriteSyncDevice(
+            receiver.remote, persisted: receiver.storage,
+          );
+          await receiving.engine.load();
+        }
+        await receiving.engine.syncNow();
+        await source.engine.syncNow();
+        expect(await receiving.activity.loadFavoritesForBackup(), isEmpty);
+        expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+      });
+    }
+
+    test('successful import and restart honor later remote deletion', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      await receiver.engine.syncNow();
+      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
+          'Course');
+      receiver.engine.dispose();
+      final restarted = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+      );
+      await restarted.engine.load();
+      await _deleteSyncedFavorite(source);
+      await restarted.engine.syncNow();
+      await source.engine.syncNow();
+      expect(await restarted.activity.loadFavoritesForBackup(), isEmpty);
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('failed local write does not resurrect later remote deletion', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      receiver.storage.failWriteKeyOnce = _FavoriteSyncDevice.favoritesKey;
+      await receiver.engine.syncNow();
+      expect(receiver.engine.status.value.lastError, contains('collections'));
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      await source.engine.syncNow();
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('successful retry before remote deletion repairs the baseline', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      receiver.failStateAfterFavoriteWrite();
+      await receiver.engine.syncNow();
+      await receiver.engine.syncNow();
+      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
+          'Course');
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('explicit local edit after failed save survives restart', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      receiver.failStateAfterFavoriteWrite();
+      await receiver.engine.syncNow();
+      await receiver.add('Explicit local change');
+      receiver.engine.dispose();
+      final restarted = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+      );
+      await restarted.engine.load();
+      await _deleteSyncedFavorite(source);
+      await restarted.engine.syncNow();
+      await source.engine.syncNow();
+      expect((await restarted.activity.loadFavoritesForBackup()).single.title,
+          'Explicit local change');
+      expect((await source.activity.loadFavoritesForBackup()).single.title,
+          'Explicit local change');
+    });
+
+    for (final existing in [false, true]) {
+      for (final stateWrite in [false, true]) {
+        test('restores exact raw values after a committed write throws '
+            '(existing=$existing, state=$stateWrite)', () async {
+          final (:source, :receiver) = await _favoriteSyncPair();
+          if (existing) {
+            await receiver.activity.addFavorite(GakujoFavoritePage(
+              title: 'Other local course',
+              url: 'https://example.invalid/other',
+              addedAt: DateTime.utc(2026, 11, 17),
+            ));
+          }
+          final before = receiver.storage.values[_FavoriteSyncDevice.favoritesKey];
+          final stateBefore = jsonDecode(receiver.storage.values[starSyncStateKey]!)
+              ['collectionStates']['favorites'];
+          if (stateWrite) {
+            receiver.storage.onWrite = (key) {
+              if (key != _FavoriteSyncDevice.favoritesKey) return;
+              receiver.storage.onWrite = null;
+              receiver.storage.failWriteKeyAfterCommitOnce = starSyncStateKey;
+            };
+          } else {
+            receiver.storage.failWriteKeyAfterCommitOnce =
+                _FavoriteSyncDevice.favoritesKey;
+          }
+          await receiver.engine.syncNow();
+          expect(receiver.storage.failWriteKeyAfterCommitOnce, isNull);
+          expect(receiver.storage.values[_FavoriteSyncDevice.favoritesKey], before);
+          expect(jsonDecode(receiver.storage.values[starSyncStateKey]!)
+              ['collectionStates']['favorites'], stateBefore);
+          expect(receiver.engine.status.value.lastError, contains('collections'));
+          await receiver.engine.syncNow();
+          expect(await receiver.activity.loadFavoritesForBackup(),
+              hasLength(existing ? 2 : 1));
+          expect(await source.activity.loadFavoritesForBackup(), hasLength(1));
+        });
+      }
+    }
+
+    test('snapshot read failure applies nothing and can retry', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      var writes = 0;
+      receiver.storage.onWriteValue = (key, value) {
+        if (key == _FavoriteSyncDevice.favoritesKey) writes++;
+        if (key == starSyncStateKey && value!.contains('pendingLocalCommit')) {
+          receiver.storage.failReadKey = _FavoriteSyncDevice.favoritesKey;
+        }
+      };
+      await receiver.engine.syncNow();
+      expect(writes, 0);
+      expect(receiver.storage.values[_FavoriteSyncDevice.favoritesKey], isNull);
+      receiver.storage.onWriteValue = null;
+      receiver.storage.failReadKey = null;
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('failed pre-apply marker save writes no favorites', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      var writes = 0;
+      receiver.storage.onWriteValue = (key, value) {
+        if (key == _FavoriteSyncDevice.favoritesKey) writes++;
+        if (key == starSyncStateKey && value!.contains('pendingLocalCommit')) {
+          receiver.storage.failWriteKeyOnce = starSyncStateKey;
+          receiver.storage.onWriteValue = null;
+        }
+      };
+      await receiver.engine.syncNow();
+      expect(writes, 0);
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('refresh follows commit and cannot discard its baseline', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      receiver.engine.dispose();
+      var refreshes = 0;
+      final refreshedStates = <Map>[];
+      final receiving = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+        onChanged: () async {
+          refreshes++;
+          final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+          refreshedStates.add(state['collectionStates']['favorites'] as Map);
+          throw StateError('panel refresh failed');
+        },
+      );
+      await receiving.engine.load();
+      receiving.failStateAfterFavoriteWrite();
+      await receiving.engine.syncNow();
+      expect(refreshes, 0);
+      await receiving.engine.syncNow();
+      expect(refreshes, 1);
+      expect(refreshedStates.single['pendingLocalCommit'], isNull);
+      expect(refreshedStates.single['records'][_FavoriteSyncDevice.url]['deleted'],
+          false);
+      await receiving.engine.syncNow();
+      expect(refreshes, 1);
+      await _deleteSyncedFavorite(source);
+      await receiving.engine.syncNow();
+      expect(await receiving.activity.loadFavoritesForBackup(), isEmpty);
+      await source.engine.syncNow();
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('later upload failure preserves committed baseline', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+      receiver.remote.failPutPathOnce = 'sync/favorites/${state['deviceId']}';
+      await receiver.engine.syncNow();
+      expect(receiver.remote.failPutPathOnce, isNull);
+      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
+          'Course');
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      await source.engine.syncNow();
+      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('user deletion queues behind rollback and survives restart', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      await receiver.engine.syncNow();
+      await source.add('Remote update');
+      await source.engine.syncNow();
+      final started = Completer<void>();
+      final release = Completer<void>();
+      receiver.failStateAfterFavoriteWrite();
+      receiver.storage.beforeWrite = (key) async {
+        if (key == starSyncStateKey &&
+            receiver.storage.failWriteKeyOnce == starSyncStateKey) {
+          receiver.storage.beforeWrite = null;
+          started.complete();
+          await release.future;
+        }
+      };
+      final sync = receiver.engine.syncNow();
+      await started.future.timeout(const Duration(seconds: 5));
+      var deleted = false;
+      final deletion = receiver.activity.removeFavorite(_FavoriteSyncDevice.url)
+          .then((_) => deleted = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(deleted, false);
+      release.complete();
+      await sync.timeout(const Duration(seconds: 5));
+      await deletion;
+      receiver.engine.dispose();
+      final restarted = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+      );
+      await restarted.engine.load();
+      await restarted.engine.syncNow();
+      await source.engine.syncNow();
+      expect(await restarted.activity.loadFavoritesForBackup(), isEmpty);
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+
+    test('account change during baseline write rolls back before review', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      receiver.engine.dispose();
+      var login = 'student';
+      final receiving = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage, loginId: () => login,
+      );
+      await receiving.engine.load();
+      var wroteFavorite = false;
+      receiver.storage.onWriteValue = (key, value) {
+        if (key == _FavoriteSyncDevice.favoritesKey) wroteFavorite = true;
+        if (key == starSyncStateKey && wroteFavorite) {
+          login = 'different-student';
+          receiver.storage.onWriteValue = null;
+        }
+      };
+      await receiving.engine.syncNow();
+      expect(await receiving.activity.loadFavoritesForBackup(), isEmpty);
+      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+      expect(state['localReviewRequired'], true);
+      expect(state['collectionStates']['favorites']['pendingLocalCommit'], isNull);
+      expect((await source.activity.loadFavoritesForBackup()).single.title, 'Course');
+    });
+
+    for (final afterMutation in [false, true]) {
+      test('state rollback outage never invents a deletion after restart '
+          '(afterMutation=$afterMutation)', () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        var wroteFavorite = false;
+        var stateWrites = 0;
+        receiver.storage.onWriteValue = (key, value) {
+          if (key == _FavoriteSyncDevice.favoritesKey) wroteFavorite = true;
+          if (key != starSyncStateKey || !wroteFavorite) return;
+          if (++stateWrites == 1) {
+            if (afterMutation) {
+              receiver.storage.failWriteKeyAfterCommitOnce = starSyncStateKey;
+            } else {
+              receiver.storage.failWriteKeyOnce = starSyncStateKey;
+            }
+          } else {
+            receiver.storage.failWriteKey = starSyncStateKey;
+          }
+        };
+        await expectLater(receiver.engine.syncNow(), throwsStateError);
+        expect(stateWrites, greaterThanOrEqualTo(3));
+        expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+        receiver.engine.dispose();
+        receiver.storage.onWriteValue = null;
+        receiver.storage.failWriteKey = null;
+        final restarted = _FavoriteSyncDevice(
+          receiver.remote, persisted: receiver.storage,
+        );
+        await restarted.engine.load();
+        await restarted.engine.syncNow();
+        await source.engine.syncNow();
+        expect((await source.activity.loadFavoritesForBackup()).map((p) => p.title),
+            ['Course'], reason: 'A rolled-back import is not a user deletion');
+        expect(restarted.engine.collectionEnabled('favorites'), false);
+      });
+
+      test('completion save outage preserves the committed pair '
+          '(afterMutation=$afterMutation)', () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        var wroteFavorite = false;
+        var stateWrites = 0;
+        receiver.storage.onWriteValue = (key, value) {
+          if (key == _FavoriteSyncDevice.favoritesKey) wroteFavorite = true;
+          if (key != starSyncStateKey || !wroteFavorite) return;
+          if (++stateWrites == 2) {
+            if (afterMutation) {
+              receiver.storage.failWriteKeyAfterCommitOnce = starSyncStateKey;
+            } else {
+              receiver.storage.failWriteKeyOnce = starSyncStateKey;
+            }
+          } else if (stateWrites > 2) {
+            receiver.storage.failWriteKey = starSyncStateKey;
+          }
+        };
+        await expectLater(receiver.engine.syncNow(), throwsStateError);
+        expect(stateWrites, greaterThanOrEqualTo(3));
+        expect((await receiver.activity.loadFavoritesForBackup()).single.title,
+            'Course');
+        receiver.engine.dispose();
+        receiver.storage.onWriteValue = null;
+        receiver.storage.failWriteKey = null;
+        final restarted = _FavoriteSyncDevice(
+          receiver.remote, persisted: receiver.storage,
+        );
+        await restarted.engine.load();
+        await restarted.engine.syncNow();
+        await source.engine.syncNow();
+        expect((await restarted.activity.loadFavoritesForBackup()).single.title,
+            'Course');
+        expect((await source.activity.loadFavoritesForBackup()).single.title,
+            'Course');
+      });
+    }
+
+    test('incomplete rollback quarantines favorites across restart', () async {
+      final (:source, :receiver) = await _favoriteSyncPair();
+      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+      final path = 'sync/favorites/${state['deviceId']}';
+      final uploadedBefore = List<int>.of(receiver.remote.files[path]!);
+      receiver.failStateAfterFavoriteWrite();
+      receiver.storage.failDeleteKey = _FavoriteSyncDevice.favoritesKey;
+      await receiver.engine.syncNow();
+      expect(receiver.engine.collectionEnabled('favorites'), false);
+      expect(receiver.engine.status.value.lastError, contains('同期を停止'));
+      await expectLater(receiver.engine.setCollectionEnabled('favorites', true),
+          throwsStateError);
+      receiver.storage.failDeleteKey = null;
+      await _deleteSyncedFavorite(source);
+      await receiver.engine.syncNow();
+      receiver.engine.dispose();
+      final restarted = _FavoriteSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+      );
+      await restarted.engine.load();
+      await restarted.engine.syncNow();
+      expect(restarted.engine.collectionEnabled('favorites'), false);
+      expect(receiver.remote.files[path], uploadedBefore);
+      await source.engine.syncNow();
+      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+    });
+  });
 
   test(
     'serializes setup dialogs and never resets the newly signed-in account',

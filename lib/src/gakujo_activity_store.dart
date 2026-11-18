@@ -386,6 +386,10 @@ class GakujoActivityStore {
   final FlutterSecureStorage _secureStorage;
   final _operations = StorageOperationQueue();
 
+  BackupStorageParticipant get favoritesStorage => BackupStorageParticipant(
+        _operations, _secureStorage, const [_favoritesKey],
+      );
+
   BackupStorageParticipant get backupStorage => BackupStorageParticipant(
         _operations,
         _secureStorage,

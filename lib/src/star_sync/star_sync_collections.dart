@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../secure_storage_transaction.dart';
 import 'star_sync_document.dart';
 
 abstract class StarSyncCollection {
@@ -20,6 +21,23 @@ abstract class StarSyncCollection {
     required Map<String, Object?> basedOn,
     bool Function()? stillCurrent,
   });
+
+  /// Optional local store lock and raw snapshot for a caught-error transaction
+  /// with the engine baseline. This does not make separate writes crash-atomic.
+  BackupStorageParticipant? get localCommitStorage => null;
+
+  Future<bool> applyLocalForSync(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
+  }) => applyLocal(entries, basedOn: basedOn, stillCurrent: stillCurrent);
+
+  /// Runs after a durable local/baseline commit, outside the storage lock.
+  Future<void> localCommitCompleted(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) async {}
+
   Map<String, Object?> clearSnapshot(
     Map<String, Object?> current,
     Map<String, Object?> snapshot,

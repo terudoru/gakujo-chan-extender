@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../gakujo_activity_store.dart';
 import '../gakujo_app_settings.dart';
 import '../gakujo_backup_import.dart';
+import '../secure_storage_transaction.dart';
 import 'star_sync_collections.dart';
 import 'star_sync_engine.dart' show StarSyncAccountMismatchException;
 
@@ -74,6 +75,9 @@ class StarSyncFavoritesCollection extends StarSyncCollection {
   final Future<void> Function()? onChanged;
 
   @override
+  BackupStorageParticipant get localCommitStorage => store.favoritesStorage;
+
+  @override
   String get name => 'favorites';
   @override
   bool get growOnly => false;
@@ -100,7 +104,19 @@ class StarSyncFavoritesCollection extends StarSyncCollection {
     required Map<String, Object?> basedOn,
     bool Function()? stillCurrent,
   }) async {
-    final applied = await store.compareAndReplaceFavorites([
+    final applied = await applyLocalForSync(
+      entries, basedOn: basedOn, stillCurrent: stillCurrent,
+    );
+    if (applied) await localCommitCompleted(entries, basedOn: basedOn);
+    return applied;
+  }
+
+  @override
+  Future<bool> applyLocalForSync(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
+  }) => store.compareAndReplaceFavorites([
       for (final entry in entries.entries)
         if (entry.value is Map)
           GakujoFavoritePage.fromJson({
@@ -108,11 +124,15 @@ class StarSyncFavoritesCollection extends StarSyncCollection {
             'url': entry.key,
           }),
     ], basedOn: basedOn, beforeWrite: () => _checkAccount(stillCurrent));
-    if (applied &&
-        starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
+
+  @override
+  Future<void> localCommitCompleted(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+  }) async {
+    if (starSyncCanonicalJson(entries) != starSyncCanonicalJson(basedOn)) {
       await onChanged?.call();
     }
-    return applied;
   }
 }
 

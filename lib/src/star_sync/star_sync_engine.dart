@@ -30,6 +30,7 @@ const starSyncPendingDraftClearKey = 'more_better_gakujo_pending_draft_clear';
 const _deferredDraftClearKey = '\u0000draft-clear-before';
 
 class _CollectionTooLarge implements Exception {}
+class _CollectionCommitUncertain implements Exception {}
 
 enum StarSyncTrigger { localChange, startup, resume, manual }
 
@@ -324,6 +325,10 @@ class StarSyncEngine {
         final state = _state;
         if (state == null || !_collections.any((item) => item.name == name)) {
           throw StateError('Collection is unavailable');
+        }
+        if (enabled &&
+            (state.collectionStates[name] as Map?)?['pendingLocalCommit'] == true) {
+          throw StateError('保存を復元できなかったため、同期を再設定してください');
         }
         final previous = Set<String>.of(state.disabledCollections);
         if (enabled) {
@@ -1802,6 +1807,8 @@ class StarSyncEngine {
           rethrow;
         } on StarSyncQuotaExceeded {
           rethrow;
+        } on _CollectionCommitUncertain {
+          collectionFailures++;
         } on _CollectionTooLarge {
           collectionTooLarge = true;
           collectionFailures++;
@@ -1832,7 +1839,12 @@ class StarSyncEngine {
         (entry) => ((entry.value as Map)['applyRefusals'] as int? ?? 0) >= 5,
       );
       state.status = StarSyncStatus.ok;
-      state.lastError = collectionTooLarge
+      final uncertainCommit = state.collectionStates.values.any(
+        (value) => value is Map && value['pendingLocalCommit'] == true,
+      );
+      state.lastError = uncertainCommit
+          ? '保存の復元を確認できない項目の同期を停止しました。同期を再設定してください'
+          : collectionTooLarge
           ? '同期データが大きすぎるため、一部の項目を同期できませんでした'
           : collectionFailures > 0 || retryWarning
           ? 'Some collections could not be synced (${collectionFailures + (retryWarning ? 1 : 0)})'
@@ -1927,12 +1939,133 @@ class StarSyncEngine {
         },
   };
 
+  Future<bool> _commitCollection(
+    StarSyncCollection collection,
+    StarSyncState state,
+    Map<String, Object?> live,
+    Map<String, Object?> local,
+    Map<String, dynamic> next,
+  ) async {
+    final name = collection.name;
+    final previous = state.collectionStates[name];
+    final hadPrevious = state.collectionStates.containsKey(name);
+    void restoreState() {
+      if (hadPrevious) {
+        state.collectionStates[name] = previous;
+      } else {
+        state.collectionStates.remove(name);
+      }
+    }
+    final participant = collection.localCommitStorage;
+    if (participant == null) {
+      if (!await collection.applyLocal(
+        live, basedOn: local, stillCurrent: _writeGuard(state),
+      )) {
+        return false;
+      }
+      if (!await _accountMatches(state)) throw const _AccountChanged();
+      state.collectionStates[name] = next;
+      try {
+        await _saveState();
+      } on Object {
+        restoreState();
+        rethrow;
+      }
+      return true;
+    }
+
+    final guard = _writeGuard(state);
+    final pending = <String, dynamic>{
+      ...Map<String, dynamic>.from(previous as Map? ?? {}),
+      'pendingLocalCommit': true,
+    };
+    // A leftover marker is deliberately fail-closed: snapshots alone cannot
+    // distinguish an interrupted apply from a subsequent explicit user edit.
+    state.collectionStates[name] = pending;
+    try {
+      await _saveState();
+    } on Object {
+      restoreState();
+      rethrow;
+    }
+    var applied = false;
+    final committed = <String, dynamic>{...next, 'pendingLocalCommit': true};
+    try {
+      await runBackupStorageTransaction([
+        participant,
+        // The engine queue is already held. Reenter the local queue instead.
+        BackupStorageParticipant(
+          participant.queue, _storage, const [starSyncStateKey],
+        ),
+      ], () async {
+        applied = await collection.applyLocalForSync(
+          live, basedOn: local, stillCurrent: guard,
+        );
+        if (!applied) return;
+        _assertWriteCurrent(guard);
+        // Keep the marker even in a write that mutates storage then throws:
+        // restoring the old state may fail while the local rollback succeeds.
+        state.collectionStates[name] = committed;
+        await _saveState();
+      }, beforeOperation: () => _assertWriteCurrent(guard),
+          afterOperation: () => _assertWriteCurrent(guard));
+    } on BackupRollbackException {
+      state.collectionStates[name] = pending;
+      state.disabledCollections.add(name);
+      throw _CollectionCommitUncertain();
+    } on Object {
+      restoreState();
+      try {
+        await _saveState();
+      } on Object {
+        state.collectionStates[name] = pending;
+        state.disabledCollections.add(name);
+        throw _CollectionCommitUncertain();
+      }
+      rethrow;
+    }
+    if (!applied) {
+      restoreState();
+      try {
+        await _saveState();
+      } on Object {
+        state.collectionStates[name] = pending;
+        state.disabledCollections.add(name);
+        throw _CollectionCommitUncertain();
+      }
+      return false;
+    }
+    // The pair and final transaction guard have committed. A failed completion
+    // save must never roll back the local value or restore the old baseline.
+    state.collectionStates[name] = next;
+    try {
+      await _saveState();
+    } on Object {
+      state.collectionStates[name] = committed;
+      state.disabledCollections.add(name);
+      throw _CollectionCommitUncertain();
+    }
+    _assertWriteCurrent(guard);
+    try {
+      await collection.localCommitCompleted(live, basedOn: local);
+    } on Object catch (error, stackTrace) {
+      // A failed panel refresh must not discard a committed sync baseline.
+      developer.log('Failed to refresh committed collection',
+        name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+    return true;
+  }
+
   Future<({bool changed, int skipped})> _syncCollection(
     StarSyncCollection collection,
     StarSyncTransport transport,
     StarSyncState state,
   ) async {
     final name = collection.name;
+    if ((state.collectionStates[name] as Map?)?['pendingLocalCommit'] == true) {
+      state.disabledCollections.add(name);
+      throw _CollectionCommitUncertain();
+    }
     if (name == 'report-drafts' && !await _prepareLocalDrafts(state)) {
       return (changed: false, skipped: 0);
     }
@@ -1962,21 +2095,21 @@ class StarSyncEngine {
       }
       if (!await _accountMatches(state)) throw const _AccountChanged();
       _assertCurrentAccount(state);
-      if (!await collection.applyLocal(
-        collection.restoreSnapshot(live),
-        basedOn: local,
-        stillCurrent: _writeGuard(state),
+      final next = Map<String, dynamic>.from(stored)
+        ..remove('pendingDiscardLocal')
+        ..remove('pendingApplyRetry')
+        ..remove('applyRefusals');
+      if (!await _commitCollection(
+        collection, state, collection.restoreSnapshot(live), local, next,
       )) {
         _refuseCollection(state, name);
         await _saveState();
         return (changed: false, skipped: 0);
       }
       if (!await _accountMatches(state)) throw const _AccountChanged();
-      stored.remove('pendingDiscardLocal');
-      stored.remove('pendingApplyRetry');
-      stored.remove('applyRefusals');
-      state.collectionStates[name] = stored;
-      await _saveState();
+      stored
+        ..clear()
+        ..addAll(next);
       local = await collection.readLocal();
       if (!await _accountMatches(state)) throw const _AccountChanged();
     }
@@ -2222,29 +2355,15 @@ class StarSyncEngine {
     final changed = starSyncCanonicalJson(local) != starSyncCanonicalJson(live);
     if (!await _accountMatches(state)) throw const _AccountChanged();
     _assertCurrentAccount(state);
-    if (!await collection.applyLocal(
-      live, basedOn: local, stillCurrent: _writeGuard(state),
-    )) {
-      _refuseCollection(state, name);
-      return (changed: false, skipped: skipped);
-    }
-    if (!await _accountMatches(state)) throw const _AccountChanged();
     final next = <String, dynamic>{
       'clock': clock,
       'records': merged.map((key, value) => MapEntry(key, value.toJson())),
       'remoteCache': cache,
       'lastUploadedHash': stored['lastUploadedHash'],
     };
-    state.collectionStates[name] = next;
-    try {
-      await _saveState();
-    } on Object {
-      if (stored.isEmpty) {
-        state.collectionStates.remove(name);
-      } else {
-        state.collectionStates[name] = stored;
-      }
-      rethrow;
+    if (!await _commitCollection(collection, state, live, local, next)) {
+      _refuseCollection(state, name);
+      return (changed: false, skipped: skipped);
     }
     if (encrypted != null) {
       _assertCurrentAccount(state);
