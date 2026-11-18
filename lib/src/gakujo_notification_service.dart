@@ -796,6 +796,17 @@ class GakujoDeadlineNotificationCoordinator {
   Future<void> _notifyReminderWithLatestSettings(
     GakujoReminder reminder,
   ) async {
+    final assignments = reminder.assignmentId != null
+        ? await _activityStore.loadAssignmentsIfAvailable()
+        : null;
+    late final Set<String> notifiedKeys;
+    try {
+      notifiedKeys = await _loadNotifiedKeys(strict: true);
+    } on StateError {
+      return;
+    }
+    // Settings can change while either storage read is in progress. Read them
+    // together after the awaits, immediately before deciding whether to send.
     final preferences = _reminderPreferences;
     final topics = _reminderTopics;
     final dueAt = reminder.dueAt;
@@ -808,21 +819,6 @@ class GakujoDeadlineNotificationCoordinator {
         (reminder.topic != null && !topics.contains(reminder.topic))) {
       return;
     }
-    await _notifyReminderOnce(
-      reminder,
-      topics: topics,
-      preferences: preferences,
-    );
-  }
-
-  Future<void> _notifyReminderOnce(
-    GakujoReminder reminder, {
-    required Set<GakujoNotificationTopic> topics,
-    required GakujoNotificationPreferences preferences,
-  }) async {
-    final assignments = reminder.assignmentId != null
-        ? await _activityStore.loadAssignmentsIfAvailable()
-        : null;
     if (assignments != null) {
       GakujoAssignment? current;
       for (final assignment in assignments) {
@@ -848,12 +844,6 @@ class GakujoDeadlineNotificationCoordinator {
     final legacyKeys = {
       for (final id in {reminder.id, ...reminder.legacyIds}) 'reminder|$id',
     };
-    late final Set<String> notifiedKeys;
-    try {
-      notifiedKeys = await _loadNotifiedKeys(strict: true);
-    } on StateError {
-      return;
-    }
     if (notifiedKeys.contains(key) ||
         legacyKeys
             .any((legacyKey) => notifiedKeys.contains('$legacyKey|$trigger'))) {
@@ -870,7 +860,6 @@ class GakujoDeadlineNotificationCoordinator {
         return;
       }
     }
-    final dueAt = reminder.dueAt;
     if ((dueAt != null && !dueAt.isAfter(_now())) ||
         await _notificationService.notifyReminder(reminder)) {
       await _activityStore.addNotifiedDeadlineKeys([key]);

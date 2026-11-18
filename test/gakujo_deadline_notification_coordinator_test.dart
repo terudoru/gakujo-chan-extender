@@ -173,6 +173,83 @@ void main() {
     });
   }
 
+  for (final boundary in ['assignments', 'history']) {
+    for (final change in [
+      'notifications off',
+      'reminders off',
+      'topic off',
+      'skip submitted',
+      'unchanged',
+    ]) {
+      test('in-flight reminder rechecks $change after $boundary read', () async {
+        var now = DateTime.now().toUtc();
+        final storage = _GatedReminderSecureStorage();
+        final store = GakujoActivityStore(secureStorage: storage);
+        final service = _FakeNotificationService(notifyResult: true);
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: service,
+          now: () => now,
+        );
+        final assignment = GakujoAssignment(
+          kind: 'レポート',
+          title: '課題',
+          course: '科目',
+          status: change == 'skip submitted' ? '提出済み' : '未提出',
+          dueAt: now.add(const Duration(hours: 2)),
+          capturedAt: now,
+        );
+        await store.mergeAssignments([assignment]);
+        var notificationsEnabled = true;
+        var topics = {GakujoNotificationTopic.coursework};
+        var preferences = const GakujoNotificationPreferences(
+          reminderOffsets: {GakujoReminderOffset.oneHour},
+          skipSubmitted: false,
+        );
+        Future<void> sync() => coordinator.syncReminders(
+          notificationsEnabled: notificationsEnabled,
+          topics: topics,
+          preferences: preferences,
+        );
+
+        await sync();
+        final reminder = service.bookings.single.single;
+        now = reminder.at;
+        storage.gatedKey = boundary == 'assignments'
+            ? 'more_better_gakujo_assignments'
+            : 'more_better_gakujo_notified_deadline_keys';
+        final delivery = service.onInAppReminder!(reminder);
+        await storage.readEntered.future;
+        notificationsEnabled = change != 'notifications off';
+        if (change == 'reminders off') {
+          preferences = preferences.copyWith(reminderOffsets: {});
+        }
+        if (change == 'topic off') topics = {};
+        if (change == 'skip submitted') {
+          preferences = preferences.copyWith(skipSubmitted: true);
+        }
+        final newerSync = sync();
+        storage.releaseRead.complete();
+        await delivery;
+        // The original callback must deliver when the settings still allow it.
+        expect(
+          service.notifiedReminders,
+          hasLength(change == 'unchanged' ? 1 : 0),
+        );
+        await newerSync;
+        expect(service.bookings.last, isEmpty);
+        expect(
+          service.notifiedReminders,
+          hasLength(change == 'unchanged' ? 1 : 0),
+        );
+        expect(
+          await store.loadNotifiedDeadlineKeys(),
+          hasLength(change == 'unchanged' ? 1 : 0),
+        );
+      });
+    }
+  }
+
   for (final matched in [false, true]) {
     for (final delay in [
       const Duration(seconds: 59),
@@ -546,6 +623,38 @@ class _FakeNotificationService extends GakujoNotificationService {
   Future<bool> notifyReminder(GakujoReminder reminder) async {
     notifiedReminders.add(reminder);
     return notifyResult;
+  }
+}
+
+class _GatedReminderSecureStorage extends FlutterSecureStorage {
+  String? gatedKey;
+  final readEntered = Completer<void>();
+  final releaseRead = Completer<void>();
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == gatedKey) {
+      gatedKey = null;
+      readEntered.complete();
+      await releaseRead.future;
+    }
+    return super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
   }
 }
 
