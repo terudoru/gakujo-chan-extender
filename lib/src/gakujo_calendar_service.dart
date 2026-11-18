@@ -273,8 +273,9 @@ class GakujoCalendarEventBuilder {
     final noClassKeys = noClassDates
         .map((date) => DateTime(date.year, date.month, date.day))
         .toSet();
-    final events = <GakujoCalendarEvent>[];
+    final events = <({GakujoCalendarEvent event, String courseCode})>[];
     for (final course in courses) {
+      final courseCode = GakujoCalendarExport.courseCodeFromText(course.courseCode);
       final time = GakujoCalendarExport.periodTimes[course.period];
       if (time == null ||
           course.title.trim().isEmpty ||
@@ -307,8 +308,9 @@ class GakujoCalendarEventBuilder {
             time.endHour,
             time.endMinute,
           );
-          events.add(
-            GakujoCalendarEvent(
+          events.add((
+            courseCode: courseCode,
+            event: GakujoCalendarEvent(
               id: _eventInstanceId(course, uidNamespace, start),
               title: GakujoCalendarExport.displayTitleForCourse(course),
               start: start,
@@ -321,7 +323,7 @@ class GakujoCalendarEventBuilder {
                 termLabel: termLabel,
               ),
             ),
-          );
+          ));
         }
       }
 
@@ -354,11 +356,26 @@ class GakujoCalendarEventBuilder {
     }
     // Gakujo also lists the meetings of a weekly class one by one; when the
     // weekly series is not cut on that date (no-class days not applied), the
-    // same meeting would otherwise appear twice.
-    final seen = <String>{};
+    // same meeting would otherwise appear twice. Distinct course codes may
+    // share a title and start, so retain that identity during deduplication.
+    final knownCodes = <(DateTime, String, String), Set<String>>{};
+    for (final (:event, :courseCode) in events) {
+      if (courseCode.isNotEmpty) {
+        (knownCodes[(event.start, event.title, event.location)] ??= <String>{})
+            .add(courseCode);
+      }
+    }
+    final seen = <(DateTime, String, String)>{};
     final unique = [
-      for (final event in events)
-        if (seen.add('${event.start.toIso8601String()}|${event.title}')) event,
+      for (final (:event, :courseCode) in events)
+        // Missing optional metadata identifies a duplicate only when exactly
+        // one known code matches the meeting, including its room. Keep an
+        // ambiguous observation rather than choosing among distinct courses.
+        if (!(courseCode.isEmpty &&
+                knownCodes[(event.start, event.title, event.location)]?.length ==
+                    1) &&
+            seen.add((event.start, event.title, courseCode)))
+          event,
     ];
     unique.sort((a, b) => a.start.compareTo(b.start));
     return unique;

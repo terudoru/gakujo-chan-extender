@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_academic_calendar.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_export.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_calendar_service.dart';
 
@@ -7,6 +8,149 @@ void main() {
   const channel = MethodChannel('net.yoshida.morebettergakujo/calendar');
 
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('buildEvents retains distinct parsed course codes in either order', () {
+    final range = GakujoCalendarTermRange(
+      start: DateTime(2026, 6, 15), end: DateTime(2026, 6, 15),
+    );
+    final courses = GakujoCalendarExport.filterCoursesForTerm(
+      courses: _officialCourses(
+        codes: ['262G5001', '262G5002'], dates: ['20260615', '20260622'],
+      ),
+      termRange: range, termName: '第2ターム',
+    );
+    List<GakujoCalendarEvent> build(List<GakujoCalendarCourse> input) =>
+        GakujoCalendarEventBuilder.buildEvents(
+          courses: input, rangeStart: range.start, rangeEnd: range.end,
+          uidNamespace: 'niigata-2026-第2ターム',
+        );
+    expect(courses.map((course) => course.courseCode),
+        unorderedEquals(['262G5001', '262G5002']));
+    final originalIds = [for (final course in courses) build([course]).single.id];
+    expect(originalIds.toSet(), hasLength(2));
+    expect(originalIds, unorderedEquals([
+      'niigata-2026-第2ターム|262G5001|1|1|A-101|2026|06|15',
+      'niigata-2026-第2ターム|262G5002|1|1|A-101|2026|06|15',
+    ]));
+    for (final input in [courses, courses.reversed.toList()]) {
+      expect(build(input).map((event) => event.id), unorderedEquals(originalIds));
+    }
+    final ics = GakujoCalendarExport.buildIcs(
+      courses: courses, rangeStart: range.start, rangeEnd: range.end,
+      uidNamespace: 'niigata-2026-第2ターム',
+    );
+    expect(RegExp('BEGIN:VEVENT').allMatches(ics), hasLength(2));
+  });
+
+  for (final code in ['262G5001', '']) {
+    test('buildEvents deduplicates repeated observations with code "$code"', () {
+      final course = _officialCourses(
+        codes: ['262G5001'], dates: ['20260615', '20260622'],
+      ).firstWhere((course) => course.recursWeekly).copyWith(courseCode: code);
+      final events = GakujoCalendarEventBuilder.buildEvents(
+        courses: [
+          course,
+          course.copyWith(
+            courseCode: code.isEmpty ? '' : '２６２ｇ５００１',
+            recursWeekly: false, sourceDate: DateTime(2026, 6, 15),
+          ),
+        ],
+        rangeStart: DateTime(2026, 6, 15), rangeEnd: DateTime(2026, 6, 15),
+      );
+      expect(events, hasLength(1));
+    });
+  }
+
+  test('buildEvents deduplicates parsed swap-day weekly and one-off meetings', () {
+    final range = GakujoCalendarTermRange(
+      start: DateTime(2026, 10, 13), end: DateTime(2026, 10, 13),
+      classDaySwaps: [
+        GakujoClassDaySwap(date: DateTime(2026, 10, 13), weekday: DateTime.monday),
+      ],
+    );
+    final courses = GakujoCalendarExport.filterCoursesForTerm(
+      courses: GakujoCalendarExport.applyClassDaySwaps(
+        _officialCourses(
+          codes: ['263T0506'], dates: ['20261005', '20261013', '20261019'],
+        ), range.classDaySwaps,
+      ),
+      termRange: range, termName: '第3ターム',
+    );
+    List<GakujoCalendarEvent> build(List<GakujoCalendarCourse> input) =>
+        GakujoCalendarEventBuilder.buildEvents(
+          courses: input, rangeStart: range.start, rangeEnd: range.end,
+          classDaySwaps: range.classDaySwaps,
+        );
+    expect(courses, hasLength(2));
+    expect(courses.map((course) => course.weekday).toSet(),
+        {DateTime.monday, DateTime.tuesday});
+    expect({for (final course in courses) build([course]).single.id},
+        hasLength(2));
+    expect(build(courses), hasLength(1));
+  });
+
+  for (final codes in [
+    ['263T0506'],
+    ['263T0506', '263T0507'],
+  ]) {
+    test('buildEvents resolves missing metadata only for a unique code $codes', () {
+      final range = GakujoCalendarTermRange(
+        start: DateTime(2026, 10, 13), end: DateTime(2026, 10, 13),
+        classDaySwaps: [
+          GakujoClassDaySwap(date: DateTime(2026, 10, 13), weekday: DateTime.monday),
+        ],
+      );
+      final courses = GakujoCalendarExport.filterCoursesForTerm(
+        courses: GakujoCalendarExport.applyClassDaySwaps(
+          _officialCourses(
+            codes: codes, dates: ['20261005', '20261013', '20261019'],
+            omitCodeOnDate: '20261013',
+          ), range.classDaySwaps,
+        ),
+        termRange: range, termName: '第3ターム',
+      );
+      expect(courses.where((course) => course.courseCode.isNotEmpty),
+          hasLength(codes.length));
+      expect(courses.where((course) => course.courseCode.isEmpty), hasLength(1));
+      final knownIds = {
+        for (final course in courses.where((course) => course.courseCode.isNotEmpty))
+          GakujoCalendarEventBuilder.buildEvents(
+            courses: [course], rangeStart: range.start, rangeEnd: range.end,
+            classDaySwaps: range.classDaySwaps,
+          ).single.id,
+      };
+      for (final input in [courses, courses.reversed.toList()]) {
+        final events = GakujoCalendarEventBuilder.buildEvents(
+          courses: input, rangeStart: range.start, rangeEnd: range.end,
+          classDaySwaps: range.classDaySwaps,
+        );
+        expect(events, hasLength(codes.length == 1 ? 1 : 3));
+        expect(events.map((event) => event.id), containsAll(knownIds));
+        if (codes.length == 1) {
+          expect(events.single.id, knownIds.single);
+        }
+      }
+    });
+  }
+
+  test('buildEvents retains a missing-code meeting in a different room', () {
+    final course = _officialCourses(
+      codes: ['262G5001'], dates: ['20260615', '20260622'],
+    ).firstWhere((course) => course.recursWeekly);
+    final events = GakujoCalendarEventBuilder.buildEvents(
+      courses: [
+        course,
+        course.copyWith(
+          courseCode: '', location: 'B-202', officialLocation: 'B-202',
+          recursWeekly: false,
+          sourceDate: DateTime(2026, 6, 15),
+        ),
+      ],
+      rangeStart: DateTime(2026, 6, 15), rangeEnd: DateTime(2026, 6, 15),
+    );
+    expect(events, hasLength(2));
+    expect(events.map((event) => event.location), unorderedEquals(['A-101', 'B-202']));
+  });
 
   test('event builder rejects invalid or excessively long ranges', () {
     for (final range in [
@@ -546,3 +690,23 @@ END:VCALENDAR
     expect(events.single.id, endsWith('|2026|06|15'));
   });
 }
+
+List<GakujoCalendarCourse> _officialCourses({
+  required List<String> codes,
+  required List<String> dates,
+  String? omitCodeOnDate,
+}) => GakujoCalendarExport.coursesFromOfficialScheduleExportText([
+  'BEGIN:VCALENDAR',
+  for (final code in codes)
+    for (final date in dates) ...[
+      'BEGIN:VEVENT',
+      'UID:$code-$date@example.invalid',
+      'SUMMARY:同名授業',
+      'DTSTART;TZID=Asia/Tokyo:${date}T084500',
+      'DTEND;TZID=Asia/Tokyo:${date}T101500',
+      'LOCATION:A-101',
+      if (date != omitCodeOnDate) 'DESCRIPTION:開講番号 $code',
+      'END:VEVENT',
+    ],
+  'END:VCALENDAR',
+].join('\r\n'));
