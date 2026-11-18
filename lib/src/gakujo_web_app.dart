@@ -950,6 +950,66 @@ Future<void> saveGakujoSettingsChange({
 }
 
 @visibleForTesting
+Future<bool> applyGakujoSyncedSettings({
+  required StorageOperationQueue operations,
+  required GakujoAppSettings Function() currentSettings,
+  required Map<String, Object?> entries,
+  required Map<String, Object?> basedOn,
+  required bool Function() isMounted,
+  required Future<void> Function(
+    GakujoBackupImport backup, void Function() beforeWrite,
+  ) restore,
+  required void Function(GakujoAppSettings next, bool flagsChanged) publish,
+  required Future<void> Function(GakujoAppSettings next) mirror,
+  List<Future<void> Function(GakujoAppSettings, GakujoAppSettings)> effects = const [],
+  bool Function()? stillCurrent,
+  StarSyncLocalCommit? commit,
+}) => operations.runExclusive(() async {
+  final previous = currentSettings();
+  if (!isMounted() || !portableSyncSettingsMatch(previous, basedOn)) return false;
+  void checkCurrent() {
+    if (stillCurrent != null && !stillCurrent()) {
+      throw const StarSyncAccountMismatchException();
+    }
+  }
+  final backup = importStarSyncPortableSettings(previous, entries);
+  Future<bool> writeLocal() async {
+    await restore(backup, checkCurrent);
+    return true;
+  }
+  final applied = commit == null ? await writeLocal() : await commit(writeLocal);
+  if (!applied) return false;
+  checkCurrent();
+  // Publish only after the pair and its final transaction guard commit. Rebase
+  // on the latest model so nonportable fields retain their current values.
+  final current = currentSettings();
+  final patch = importStarSyncPortableSettings(current, entries);
+  final next = current.copyWith(
+    disabledFeatureFlags: patch.disabledFeatureFlags,
+    calendarImportSettings: backup.calendarImportSettings,
+    messageExcludeKeywords: backup.messageExcludeKeywords,
+    notificationTopics: backup.notificationTopics,
+    messageNotification: backup.messageNotification,
+    notificationPreferences: backup.notificationPreferences,
+  );
+  publish(next, backup.disabledFeatureFlags != null);
+  Future<void> afterCommit(Future<void> Function() effect) async {
+    try {
+      await effect();
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to refresh committed settings',
+        name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
+    }
+  }
+  await afterCommit(() => mirror(next));
+  for (final effect in effects) {
+    if (!isMounted() || (stillCurrent != null && !stillCurrent())) break;
+    await afterCommit(() => effect(previous, next));
+  }
+  return true;
+});
+
+@visibleForTesting
 Future<GakujoLoginCredentials> saveGakujoLoginCredentials({
   required GakujoAppSettingsStore store,
   required String loginId,
@@ -1804,6 +1864,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         StarSyncSettingsCollection(
           read: () async => exportStarSyncPortableSettings(_appSettings),
           apply: _applySyncedSettings,
+          localCommitStorage: _appSettingsStore.backupStorage,
+          commitLock: _settingsOperations.runExclusive,
+          applyWithCommit: _applySyncedSettings,
         ),
         StarSyncReportDraftsCollection(
           read: _readSyncedReportDrafts,
@@ -6915,56 +6978,46 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
     bool Function()? stillCurrent,
-  }) => _settingsOperations.runExclusive(() async {
-    final previousSettings = _appSettings;
-    if (!portableSyncSettingsMatch(previousSettings, basedOn)) return false;
-    final backup = importStarSyncPortableSettings(previousSettings, entries);
-    await restoreGakujoBackup(
+    StarSyncLocalCommit? commit,
+  }) => applyGakujoSyncedSettings(
+    operations: _settingsOperations,
+    currentSettings: () => _appSettings,
+    entries: entries, basedOn: basedOn,
+    isMounted: () => mounted,
+    stillCurrent: stillCurrent, commit: commit,
+    restore: (backup, beforeWrite) => restoreGakujoBackup(
       backup: backup,
-      beforeWrite: () {
-        if (stillCurrent != null && !stillCurrent()) {
-          throw const StarSyncAccountMismatchException();
-        }
-      },
+      beforeWrite: beforeWrite,
       settingsStore: _appSettingsStore,
       historyStore: _downloadHistoryStore,
       activityStore: _activityStore,
       isAllowedUrl: _isAllowedBackupUrl,
       isAllowedNavigationUrl: _isAllowedBackupNavigationUrl,
-    );
-    // The values are persisted now, so returning false here would leave the
-    // store and the sync state disagreeing. Build from the latest in-memory
-    // settings instead: non-portable fields are never overwritten, and a
-    // concurrent edit of the same portable key loses like any other LWW edit.
-    final currentSettings = _appSettings;
-    final currentBackup = importStarSyncPortableSettings(currentSettings, entries);
-    final nextSettings = currentSettings.copyWith(
-      disabledFeatureFlags: currentBackup.disabledFeatureFlags,
-      calendarImportSettings: backup.calendarImportSettings,
-      messageExcludeKeywords: backup.messageExcludeKeywords,
-      notificationTopics: backup.notificationTopics,
-      messageNotification: backup.messageNotification,
-      notificationPreferences: backup.notificationPreferences,
-    );
-    if (!mounted) return false;
-    setState(() {
-      if (backup.disabledFeatureFlags != null) _startupPlaceholderFeatureFlags.clear();
-      _appSettings = nextSettings;
-    });
-    await _syncLocalSettingsMirror(nextSettings);
-    await _applyChangedRuntimeFeatureFlags(previousSettings, nextSettings);
-    await _injectMessageFilterIfAllowed();
-    unawaited(_syncReminders());
-    // Only real changes deserve a local backup; an identical sync must not
-    // rotate useful entries out of the short backup history.
-    if (!portableSyncSettingsMatch(
-      previousSettings,
-      exportStarSyncPortableSettings(nextSettings),
-    )) {
-      _scheduleAutoBackup();
-    }
-    return true;
-  });
+    ),
+    publish: (next, flagsChanged) {
+      void update() {
+        if (flagsChanged) _startupPlaceholderFeatureFlags.clear();
+        _appSettings = next;
+      }
+      if (mounted) {
+        setState(update);
+      } else {
+        update();
+      }
+    },
+    mirror: _syncLocalSettingsMirror,
+    effects: [
+      _applyChangedRuntimeFeatureFlags,
+      (_, _) => _injectMessageFilterIfAllowed(),
+      (_, _) async { unawaited(_syncReminders()); },
+      (previous, next) async {
+        // Identical syncs must not rotate useful local backups away.
+        if (!portableSyncSettingsMatch(previous, exportStarSyncPortableSettings(next))) {
+          _scheduleAutoBackup();
+        }
+      },
+    ],
+  );
 
   Future<bool> _canSyncReportDrafts() async => mounted &&
       AllowedWebOrigins.canLoad(await _controller.currentUrl(), debugAllowed: _debugAllowed);

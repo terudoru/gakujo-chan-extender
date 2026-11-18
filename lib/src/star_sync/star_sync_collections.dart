@@ -5,6 +5,17 @@ import 'package:crypto/crypto.dart';
 import '../secure_storage_transaction.dart';
 import 'star_sync_document.dart';
 
+typedef StarSyncLocalCommit = Future<bool> Function(
+  Future<bool> Function() writeLocal,
+);
+
+typedef StarSyncCommitApply = Future<bool> Function(
+  Map<String, Object?> entries, {
+  required Map<String, Object?> basedOn,
+  bool Function()? stillCurrent,
+  required StarSyncLocalCommit commit,
+});
+
 abstract class StarSyncCollection {
   bool get preferRemoteOnFirstSync => false;
   String get name;
@@ -25,6 +36,19 @@ abstract class StarSyncCollection {
   /// Optional local store lock and raw snapshot for a caught-error transaction
   /// with the engine baseline. This does not make separate writes crash-atomic.
   BackupStorageParticipant? get localCommitStorage => null;
+
+  Future<bool> withLocalCommitLock(Future<bool> Function() operation) => operation();
+
+  /// The runner resolves only after the local value, baseline and final guard
+  /// have committed. Callers can then publish their cached model safely.
+  Future<bool> applyLocalWithCommit(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
+    required StarSyncLocalCommit commit,
+  }) => commit(() => applyLocalForSync(
+    entries, basedOn: basedOn, stillCurrent: stillCurrent,
+  ));
 
   Future<bool> applyLocalForSync(
     Map<String, Object?> entries, {

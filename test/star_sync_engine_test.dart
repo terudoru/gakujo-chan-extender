@@ -5,6 +5,12 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_backup_restore.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_download_history_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart'
+    show applyGakujoSyncedSettings;
+import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_collections.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_config.dart';
@@ -405,6 +411,120 @@ class _Collection extends StarSyncCollection {
   }
 }
 
+class _SettingsSyncStorage extends _Storage {
+  @override
+  Future<Map<String, String>> readAll({
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => Map.of(values);
+}
+
+class _SettingsSyncDevice {
+  _SettingsSyncDevice(this.remote, {_SettingsSyncStorage? persisted})
+      : storage = persisted ?? _SettingsSyncStorage() {
+    settingsStore = GakujoAppSettingsStore(secureStorage: storage);
+    activity = GakujoActivityStore(secureStorage: storage);
+    history = GakujoDownloadHistoryStore(secureStorage: storage);
+    engine = StarSyncEngine(
+      loginId: () => login,
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      collections: [StarSyncSettingsCollection(
+        read: () async => exportStarSyncPortableSettings(cache),
+        apply: apply,
+        localCommitStorage: settingsStore.backupStorage,
+        commitLock: operations.runExclusive,
+        applyWithCommit: apply,
+      )],
+    );
+    addTearDown(engine.dispose);
+  }
+
+  final _Transport remote;
+  final _SettingsSyncStorage storage;
+  final operations = StorageOperationQueue();
+  late final GakujoAppSettingsStore settingsStore;
+  late final GakujoActivityStore activity;
+  late final GakujoDownloadHistoryStore history;
+  late final StarSyncEngine engine;
+  GakujoAppSettings cache = const GakujoAppSettings();
+  List<String> mirroredKeywords = [];
+  String login = 'student';
+  bool mounted = true;
+  bool failMirror = false;
+  bool failEffect = false;
+  int mirrorCalls = 0;
+  int effectCalls = 0;
+  int backups = 0;
+
+  Future<void> edit(String value) => operations.runExclusive(() async {
+    await settingsStore.saveMessageExcludeKeywords([value]);
+    cache = cache.copyWith(messageExcludeKeywords: [value]);
+    mirroredKeywords = cache.messageExcludeKeywords;
+  });
+
+  Future<bool> apply(Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
+    StarSyncLocalCommit? commit,
+  }) => applyGakujoSyncedSettings(
+    operations: operations,
+    currentSettings: () => cache,
+    entries: entries, basedOn: basedOn,
+    isMounted: () => mounted,
+    stillCurrent: stillCurrent, commit: commit,
+    restore: (backup, beforeWrite) => restoreGakujoBackup(
+      backup: backup, settingsStore: settingsStore,
+      historyStore: history, activityStore: activity,
+      beforeWrite: beforeWrite,
+      isAllowedUrl: (_) => false, isAllowedNavigationUrl: (_) => false,
+    ),
+    publish: (next, _) { cache = next; },
+    mirror: (next) async {
+      mirrorCalls++;
+      if (failMirror) throw StateError('mirror unavailable');
+      mirroredKeywords = next.messageExcludeKeywords;
+    },
+    effects: [
+      (_, _) async {
+        effectCalls++;
+        if (failEffect) throw StateError('runtime effect failed');
+      },
+      (before, after) async {
+        if (starSyncCanonicalJson(exportStarSyncPortableSettings(before)) !=
+            starSyncCanonicalJson(exportStarSyncPortableSettings(after))) {
+          backups++;
+        }
+      },
+    ],
+  );
+
+  void failStateAfterKeywords() {
+    storage.onWrite = (key) {
+      if (key != 'more_better_gakujo_message_exclude_keywords') return;
+      storage.onWrite = null;
+      storage.failWriteKeyOnce = starSyncStateKey;
+    };
+  }
+}
+
+Future<({_SettingsSyncDevice source, _SettingsSyncDevice receiver})>
+    _settingsSyncPair() async {
+  final remote = _Transport();
+  final source = _SettingsSyncDevice(remote);
+  await source.edit('base');
+  await source.engine.setUpWithDrive(const StarSyncConfig());
+  final receiver = _SettingsSyncDevice(remote);
+  await receiver.engine.setUpWithDrive(const StarSyncConfig());
+  expect(receiver.cache.messageExcludeKeywords, ['base']);
+  return (source: source, receiver: receiver);
+}
+
 class _FavoriteSyncDevice {
   _FavoriteSyncDevice(this.remote, {
     _Storage? persisted,
@@ -465,6 +585,250 @@ Future<void> _deleteSyncedFavorite(_FavoriteSyncDevice device) async {
 
 void main() {
   const config = StarSyncConfig();
+
+  group('settings collection persistence', () {
+    for (final restart in [false, true]) {
+      for (final fail in [false, true]) {
+        test('later remote edit survives baseline save '
+            '(failure=$fail, restart=$restart)', () async {
+          final (:source, :receiver) = await _settingsSyncPair();
+          await source.edit('imported');
+          await source.engine.syncNow();
+          if (fail) receiver.failStateAfterKeywords();
+          await receiver.engine.syncNow();
+          expect(receiver.storage.failWriteKeyOnce, isNull);
+          await source.edit('latest');
+          await source.engine.syncNow();
+          var receiving = receiver;
+          if (restart) {
+            receiver.engine.dispose();
+            receiving = _SettingsSyncDevice(
+              receiver.remote, persisted: receiver.storage,
+            );
+            receiving.cache = await receiving.settingsStore.load();
+            await receiving.engine.load();
+          }
+          await receiving.engine.syncNow();
+          await source.engine.syncNow();
+          expect(receiving.cache.messageExcludeKeywords, ['latest']);
+          expect(source.cache.messageExcludeKeywords, ['latest']);
+          expect((await receiving.settingsStore.load()).messageExcludeKeywords,
+              ['latest']);
+          expect(receiving.mirroredKeywords, ['latest']);
+        });
+      }
+      test('genuine local edit after failed save survives '
+          '(restart=$restart)', () async {
+        final (:source, :receiver) = await _settingsSyncPair();
+        await source.edit('imported');
+        await source.engine.syncNow();
+        receiver.failStateAfterKeywords();
+        await receiver.engine.syncNow();
+        await source.edit('latest');
+        await source.engine.syncNow();
+        await receiver.edit('explicit-local');
+        var receiving = receiver;
+        if (restart) {
+          receiver.engine.dispose();
+          receiving = _SettingsSyncDevice(
+            receiver.remote, persisted: receiver.storage,
+          );
+          receiving.cache = await receiving.settingsStore.load();
+          await receiving.engine.load();
+        }
+        await receiving.engine.syncNow();
+        await source.engine.syncNow();
+        expect(receiving.cache.messageExcludeKeywords, ['explicit-local']);
+        expect(source.cache.messageExcludeKeywords, ['explicit-local']);
+      });
+    }
+  });
+
+  group('settings commit boundaries', () {
+    const keywordsKey = 'more_better_gakujo_message_exclude_keywords';
+    for (final afterMutation in [false, true]) {
+      test('failed baseline restores store, cache and mirror '
+          '(afterMutation=$afterMutation)', () async {
+        final (:source, :receiver) = await _settingsSyncPair();
+        final beforeRaw = receiver.storage.values[keywordsKey];
+        final mirrors = receiver.mirrorCalls;
+        final effects = receiver.effectCalls;
+        final backups = receiver.backups;
+        await source.edit('imported');
+        await source.engine.syncNow();
+        receiver.storage.onWrite = (key) {
+          if (key != keywordsKey) return;
+          receiver.storage.onWrite = null;
+          if (afterMutation) {
+            receiver.storage.failWriteKeyAfterCommitOnce = starSyncStateKey;
+          } else {
+            receiver.storage.failWriteKeyOnce = starSyncStateKey;
+          }
+        };
+        await receiver.engine.syncNow();
+        expect(receiver.storage.values[keywordsKey], beforeRaw);
+        expect(receiver.cache.messageExcludeKeywords, ['base']);
+        expect(receiver.mirroredKeywords, ['base']);
+        expect(receiver.mirrorCalls, mirrors);
+        expect(receiver.effectCalls, effects);
+        expect(receiver.backups, backups);
+        final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+        expect(state['collectionStates']['settings']['records']
+            ['messageExcludeKeywords']['value'], ['base']);
+      });
+
+      for (final completion in [false, true]) {
+        test('continuing state outage preserves remote data '
+            '(afterMutation=$afterMutation, completion=$completion)', () async {
+          final (:source, :receiver) = await _settingsSyncPair();
+          await source.edit('imported');
+          await source.engine.syncNow();
+          var wroteKeywords = false;
+          var stateWrites = 0;
+          final failureWrite = completion ? 2 : 1;
+          receiver.storage.onWriteValue = (key, value) {
+            if (key == keywordsKey) wroteKeywords = true;
+            if (key != starSyncStateKey || !wroteKeywords) return;
+            if (++stateWrites == failureWrite) {
+              if (afterMutation) {
+                receiver.storage.failWriteKeyAfterCommitOnce = starSyncStateKey;
+              } else {
+                receiver.storage.failWriteKeyOnce = starSyncStateKey;
+              }
+            } else if (stateWrites > failureWrite) {
+              receiver.storage.failWriteKey = starSyncStateKey;
+            }
+          };
+          await expectLater(receiver.engine.syncNow(), throwsStateError);
+          final expected = completion ? ['imported'] : ['base'];
+          expect(receiver.cache.messageExcludeKeywords, expected);
+          expect((await receiver.settingsStore.load()).messageExcludeKeywords,
+              expected);
+          expect(receiver.mirroredKeywords, expected);
+          receiver.engine.dispose();
+          receiver.storage.onWriteValue = null;
+          receiver.storage.failWriteKey = null;
+          final restarted = _SettingsSyncDevice(
+            receiver.remote, persisted: receiver.storage,
+          );
+          restarted.cache = await restarted.settingsStore.load();
+          await restarted.engine.load();
+          await restarted.engine.syncNow();
+          await source.engine.syncNow();
+          expect(source.cache.messageExcludeKeywords, ['imported']);
+          if (!completion || !afterMutation) {
+            expect(restarted.engine.collectionEnabled('settings'), false);
+          }
+        });
+      }
+    }
+
+    test('real queued edit waits through rollback then survives restart', () async {
+      final (:source, :receiver) = await _settingsSyncPair();
+      await source.edit('imported');
+      await source.engine.syncNow();
+      final started = Completer<void>(), release = Completer<void>();
+      receiver.failStateAfterKeywords();
+      receiver.storage.beforeWrite = (key) async {
+        if (key != starSyncStateKey ||
+            receiver.storage.failWriteKeyOnce != starSyncStateKey) {
+          return;
+        }
+        receiver.storage.beforeWrite = null;
+        started.complete();
+        await release.future;
+      };
+      final syncing = receiver.engine.syncNow();
+      await started.future.timeout(const Duration(seconds: 5));
+      var edited = false;
+      final edit = receiver.edit('explicit-local').then((_) => edited = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(edited, false);
+      release.complete();
+      await syncing.timeout(const Duration(seconds: 5));
+      await edit.timeout(const Duration(seconds: 5));
+      expect(receiver.cache.messageExcludeKeywords, ['explicit-local']);
+      expect(receiver.mirroredKeywords, ['explicit-local']);
+      receiver.engine.dispose();
+      final restarted = _SettingsSyncDevice(
+        receiver.remote, persisted: receiver.storage,
+      );
+      restarted.cache = await restarted.settingsStore.load();
+      await restarted.engine.load();
+      await restarted.engine.syncNow();
+      await source.engine.syncNow();
+      expect(source.cache.messageExcludeKeywords, ['explicit-local']);
+    });
+
+    test('account switch at final guard publishes nothing', () async {
+      final (:source, :receiver) = await _settingsSyncPair();
+      await source.edit('imported');
+      await source.engine.syncNow();
+      final effects = receiver.effectCalls;
+      var wroteKeywords = false;
+      receiver.storage.onWriteValue = (key, value) {
+        if (key == keywordsKey) wroteKeywords = true;
+        if (key == starSyncStateKey && wroteKeywords) {
+          receiver.storage.onWriteValue = null;
+          receiver.login = 'other-student';
+        }
+      };
+      await receiver.engine.syncNow();
+      expect(receiver.cache.messageExcludeKeywords, ['base']);
+      expect((await receiver.settingsStore.load()).messageExcludeKeywords, ['base']);
+      expect(receiver.mirroredKeywords, ['base']);
+      expect(receiver.effectCalls, effects);
+      expect(jsonDecode(receiver.storage.values[starSyncStateKey]!)
+          ['localReviewRequired'], true);
+    });
+
+    test('disposal during persistence still publishes the committed model', () async {
+      final (:source, :receiver) = await _settingsSyncPair();
+      await source.edit('imported');
+      await source.engine.syncNow();
+      final effects = receiver.effectCalls;
+      receiver.storage.onWrite = (key) {
+        if (key != keywordsKey) return;
+        receiver.storage.onWrite = null;
+        receiver.mounted = false;
+      };
+      await receiver.engine.syncNow();
+      expect(receiver.cache.messageExcludeKeywords, ['imported']);
+      expect((await receiver.settingsStore.load()).messageExcludeKeywords,
+          ['imported']);
+      expect(receiver.mirroredKeywords, ['imported']);
+      expect(receiver.effectCalls, effects);
+      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+      expect(state['collectionStates']['settings']['pendingLocalCommit'], isNull);
+    });
+
+    test('effect and mirror exceptions cannot restore an old baseline', () async {
+      final (:source, :receiver) = await _settingsSyncPair();
+      await source.edit('imported');
+      await source.engine.syncNow();
+      final backups = receiver.backups;
+      receiver.failMirror = true;
+      receiver.failEffect = true;
+      await receiver.engine.syncNow();
+      expect(receiver.cache.messageExcludeKeywords, ['imported']);
+      expect((await receiver.settingsStore.load()).messageExcludeKeywords,
+          ['imported']);
+      expect(receiver.backups, backups + 1);
+      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+      expect(state['collectionStates']['settings']['records']
+          ['messageExcludeKeywords']['value'], ['imported']);
+      expect(state['collectionStates']['settings']['pendingLocalCommit'], isNull);
+      receiver.failMirror = false;
+      receiver.failEffect = false;
+      await source.edit('latest');
+      await source.engine.syncNow();
+      await receiver.engine.syncNow();
+      expect(receiver.cache.messageExcludeKeywords, ['latest']);
+      final finalBackups = receiver.backups;
+      await receiver.engine.syncNow();
+      expect(receiver.backups, finalBackups);
+    });
+  });
 
   group('favorite collection persistence', () {
     for (final restart in [false, true]) {

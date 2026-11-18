@@ -170,7 +170,43 @@ class StarSyncNotifiedDeadlinesCollection extends StarSyncCollection {
 }
 
 class StarSyncSettingsCollection extends StarSyncCollection {
-  StarSyncSettingsCollection({required this.read, required this.apply});
+  StarSyncSettingsCollection({
+    required this.read,
+    required this.apply,
+    this.localCommitStorage,
+    this.commitLock,
+    this.applyWithCommit,
+  }) {
+    final options = [localCommitStorage, commitLock, applyWithCommit];
+    if (options.any((value) => value != null) &&
+        options.any((value) => value == null)) {
+      throw ArgumentError('Settings commit requires storage, app lock and apply');
+    }
+  }
+
+  @override
+  final BackupStorageParticipant? localCommitStorage;
+  final Future<bool> Function(Future<bool> Function())? commitLock;
+  final StarSyncCommitApply? applyWithCommit;
+
+  @override
+  Future<bool> withLocalCommitLock(Future<bool> Function() operation) =>
+      commitLock == null ? operation() : commitLock!(operation);
+
+  @override
+  Future<bool> applyLocalWithCommit(
+    Map<String, Object?> entries, {
+    required Map<String, Object?> basedOn,
+    bool Function()? stillCurrent,
+    required StarSyncLocalCommit commit,
+  }) => applyWithCommit == null
+      ? super.applyLocalWithCommit(
+          entries, basedOn: basedOn, stillCurrent: stillCurrent, commit: commit,
+        )
+      : applyWithCommit!({
+          for (final key in starSyncPortableSettingKeys)
+            if (entries.containsKey(key)) key: entries[key],
+        }, basedOn: basedOn, stillCurrent: stillCurrent, commit: commit);
 
   final Future<Map<String, Object?>> Function() read;
   final Future<bool> Function(

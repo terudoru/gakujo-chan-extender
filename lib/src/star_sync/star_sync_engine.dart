@@ -1945,6 +1945,16 @@ class StarSyncEngine {
     Map<String, Object?> live,
     Map<String, Object?> local,
     Map<String, dynamic> next,
+  ) => collection.withLocalCommitLock(
+    () => _commitCollectionLocked(collection, state, live, local, next),
+  );
+
+  Future<bool> _commitCollectionLocked(
+    StarSyncCollection collection,
+    StarSyncState state,
+    Map<String, Object?> live,
+    Map<String, Object?> local,
+    Map<String, dynamic> next,
   ) async {
     final name = collection.name;
     final previous = state.collectionStates[name];
@@ -1989,31 +1999,48 @@ class StarSyncEngine {
       rethrow;
     }
     var applied = false;
+    var runnerCalled = false;
+    var pairCommitted = false;
     final committed = <String, dynamic>{...next, 'pendingLocalCommit': true};
     try {
-      await runBackupStorageTransaction([
-        participant,
-        // The engine queue is already held. Reenter the local queue instead.
-        BackupStorageParticipant(
-          participant.queue, _storage, const [starSyncStateKey],
-        ),
-      ], () async {
-        applied = await collection.applyLocalForSync(
-          live, basedOn: local, stillCurrent: guard,
-        );
-        if (!applied) return;
-        _assertWriteCurrent(guard);
-        // Keep the marker even in a write that mutates storage then throws:
-        // restoring the old state may fail while the local rollback succeeds.
-        state.collectionStates[name] = committed;
-        await _saveState();
-      }, beforeOperation: () => _assertWriteCurrent(guard),
-          afterOperation: () => _assertWriteCurrent(guard));
+      applied = await collection.applyLocalWithCommit(
+        live, basedOn: local, stillCurrent: guard,
+        commit: (writeLocal) async {
+          if (runnerCalled) throw StateError('Local commit ran twice');
+          runnerCalled = true;
+          var wrote = false;
+          await runBackupStorageTransaction([
+            participant,
+            // The engine queue is held; reenter the local store queue instead.
+            BackupStorageParticipant(
+              participant.queue, _storage, const [starSyncStateKey],
+            ),
+          ], () async {
+            wrote = await writeLocal();
+            if (!wrote) return;
+            _assertWriteCurrent(guard);
+            // Even a state write that mutates then throws retains the marker.
+            state.collectionStates[name] = committed;
+            await _saveState();
+          }, beforeOperation: () => _assertWriteCurrent(guard),
+              afterOperation: () => _assertWriteCurrent(guard));
+          pairCommitted = wrote;
+          return wrote;
+        },
+      );
+      if (applied != pairCommitted) {
+        throw StateError('Apply result disagrees with committed local state');
+      }
     } on BackupRollbackException {
-      state.collectionStates[name] = pending;
+      state.collectionStates[name] = pairCommitted ? committed : pending;
       state.disabledCollections.add(name);
       throw _CollectionCommitUncertain();
     } on Object {
+      if (pairCommitted) {
+        state.collectionStates[name] = committed;
+        state.disabledCollections.add(name);
+        throw _CollectionCommitUncertain();
+      }
       restoreState();
       try {
         await _saveState();

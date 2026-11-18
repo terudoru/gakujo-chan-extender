@@ -13,8 +13,66 @@ import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_factory.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_adapters.dart';
 
 void main() {
+  group('synced settings publication', () {
+    test('unmounted or stale requests never enter the commit runner', () async {
+      const current = GakujoAppSettings(messageExcludeKeywords: ['current']);
+      for (final mounted in [false, true]) {
+        var commits = 0, restores = 0, publications = 0, mirrors = 0;
+        final applied = await applyGakujoSyncedSettings(
+          operations: StorageOperationQueue(),
+          currentSettings: () => current,
+          entries: const {'messageExcludeKeywords': ['incoming']},
+          basedOn: exportStarSyncPortableSettings(mounted
+              ? const GakujoAppSettings() : current),
+          isMounted: () => mounted,
+          restore: (_, _) async { restores++; },
+          publish: (_, _) { publications++; },
+          mirror: (_) async { mirrors++; },
+          commit: (write) async { commits++; return write(); },
+        );
+        expect(applied, false);
+        expect([commits, restores, publications, mirrors], [0, 0, 0, 0]);
+      }
+    });
+
+    test('publication waits for final commit and preserves nonportable updates',
+        () async {
+      var current = const GakujoAppSettings(messageExcludeKeywords: ['before']);
+      final basedOn = exportStarSyncPortableSettings(current);
+      final started = Completer<void>(), finishCommit = Completer<void>();
+      final events = <String>[];
+      final applying = applyGakujoSyncedSettings(
+        operations: StorageOperationQueue(),
+        currentSettings: () => current,
+        entries: const {'messageExcludeKeywords': ['after']},
+        basedOn: basedOn, isMounted: () => true,
+        restore: (_, _) async { events.add('restore'); },
+        publish: (next, _) { current = next; events.add('publish'); },
+        mirror: (_) async { events.add('mirror'); },
+        commit: (write) async {
+          final applied = await write();
+          events.add('baseline');
+          started.complete();
+          await finishCommit.future;
+          events.add('guard');
+          return applied;
+        },
+      );
+      await started.future;
+      expect(current.messageExcludeKeywords, ['before']);
+      expect(events, ['restore', 'baseline']);
+      current = current.copyWith(setupCompleted: true);
+      finishCommit.complete();
+      expect(await applying, true);
+      expect(current.messageExcludeKeywords, ['after']);
+      expect(current.setupCompleted, true);
+      expect(events, ['restore', 'baseline', 'guard', 'publish', 'mirror']);
+    });
+  });
+
   group('protected secret prompt gate', () {
     test('late form claims at most once on its navigation', () {
       final gate = ProtectedSecretPromptGate();
