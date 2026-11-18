@@ -8909,7 +8909,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!_canRunPageScripts) return {};
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        gakujoHistoryMarkerJs({'action': 'read'}),
+        gakujoHistoryMarkerJs({
+          'action': 'read',
+          if (_detachedPreviewToken != null) 'token': _detachedPreviewToken,
+        }),
       );
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
       return decoded is Map<String, dynamic> ? decoded : {};

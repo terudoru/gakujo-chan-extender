@@ -17,7 +17,7 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
   var tokenPattern = /^[A-Za-z0-9_-]{8,64}$/;
   var kinds = ["starred", "favorites", "cachedReports"];
   function historyMarker(win, config) {
-    var _a;
+    var _a, _b;
     function documents(onVisit) {
       const docs = [];
       let visited = 0;
@@ -57,9 +57,9 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
       return values;
     }
     function marker(doc) {
-      var _a2, _b;
+      var _a2, _b2;
       try {
-        const value = (_b = (_a2 = doc.defaultView) == null ? void 0 : _a2.history.state) == null ? void 0 : _b.__mbgPreview;
+        const value = (_b2 = (_a2 = doc.defaultView) == null ? void 0 : _a2.history.state) == null ? void 0 : _b2.__mbgPreview;
         return value && typeof value.token === "string" && tokenPattern.test(value.token) && Number.isInteger(value.index) && value.index >= 0 && typeof value.name === "string" ? value : null;
       } catch (_) {
         return null;
@@ -82,19 +82,21 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
       const saved = (_a = win.history.state) == null ? void 0 : _a.__mbgReturnDialog;
       const kind = typeof saved === "string" ? saved : saved == null ? void 0 : saved.kind;
       const unchanged = typeof saved === "string" || Array.isArray(saved == null ? void 0 : saved.frames) && saved.frames.every((frame) => {
-        var _a2, _b;
+        var _a2, _b2;
         try {
           let current = win;
           for (const index of frame.path.split("/")) current = current.frames[Number(index)];
           const doc = current.document;
-          return doc.location.href === frame.url && (frame.token === void 0 || ((_b = (_a2 = doc.defaultView) == null ? void 0 : _a2.history.state) == null ? void 0 : _b.__mbgReturnDialogFrame) === frame.token);
+          return doc.location.href === frame.url && (frame.token === void 0 || ((_b2 = (_a2 = doc.defaultView) == null ? void 0 : _a2.history.state) == null ? void 0 : _b2.__mbgReturnDialogFrame) === frame.token);
         } catch (_) {
           return false;
         }
       });
-      const preview = documents().map(marker).find((value) => value !== null);
       const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
       const activeToken = active == null ? void 0 : active.__mbgToken;
+      const preferredToken = active ? activeToken : config.token;
+      const previews = documents().map(marker).filter((value) => value !== null);
+      const preview = (_b = previews.find((value) => value.token === preferredToken)) != null ? _b : previews[0];
       return JSON.stringify({
         dialog: unchanged && kinds.indexOf(kind) >= 0 ? kind : null,
         preview: (preview == null ? void 0 : preview.token) || null,
@@ -109,7 +111,7 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
           installed.add(doc);
           doc.addEventListener("load", attach2, true);
           doc.addEventListener("click", (event) => {
-            var _a2, _b;
+            var _a2, _b2;
             const target = event.target;
             const button = (_a2 = target == null ? void 0 : target.closest) == null ? void 0 : _a2.call(target, selector);
             if (!button || !doc.defaultView) return;
@@ -128,7 +130,7 @@ const String _gakujoHistoryMarkerJsPrefix = r'''(function(__mbgConfig) {
               if (active) active.__mbgToken = token;
             }, 0);
             try {
-              (_b = win.MbgPreviewNavigation) == null ? void 0 : _b.postMessage("token:" + token);
+              (_b2 = win.MbgPreviewNavigation) == null ? void 0 : _b2.postMessage("token:" + token);
             } catch (_) {
             }
           }, true);
