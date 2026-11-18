@@ -750,29 +750,50 @@ class GakujoDeadlineNotificationCoordinator {
     return _enqueueNotificationOperation(() async {
       try {
         // With no reminder offsets every booking is cancelled, readable or not.
-        final assignments =
-            notificationsEnabled && preferences.reminderOffsets.isNotEmpty
-                ? await _activityStore.loadAssignmentsIfAvailable()
-                : const <GakujoAssignment>[];
+        final shouldLoadAssignments = _reminderNotificationsEnabled &&
+            _reminderPreferences.reminderOffsets.isNotEmpty;
+        var assignments = shouldLoadAssignments
+            ? await _activityStore.loadAssignmentsIfAvailable()
+            : const <GakujoAssignment>[];
         if (assignments == null) {
           return;
         }
-        if (notificationsEnabled) {
+        if (_reminderNotificationsEnabled) {
           await _loadNotifiedKeys();
         }
+        // Offsets may have been enabled while notification history was loading.
+        if (!shouldLoadAssignments && _reminderNotificationsEnabled &&
+            _reminderPreferences.reminderOffsets.isNotEmpty) {
+          assignments = await _activityStore.loadAssignmentsIfAvailable();
+          if (assignments == null) {
+            return;
+          }
+        }
+        final availableAssignments = assignments;
         final lateReminders = <GakujoReminder>[];
-        final reminders = notificationsEnabled
-            ? planReminders(
-                assignments: assignments,
-                topics: topics,
-                preferences: preferences,
-                now: _now(),
-                lateReminders: lateReminders,
-              )
-            : const <GakujoReminder>[];
-        if (reminders.isNotEmpty &&
-            !await _hasPermission(allowPermissionRequest)) {
-          return;
+        List<GakujoReminder> planCurrentReminders() {
+          lateReminders.clear();
+          return _reminderNotificationsEnabled
+              ? planReminders(
+                  assignments: availableAssignments,
+                  topics: _reminderTopics,
+                  preferences: _reminderPreferences,
+                  now: _now(),
+                  lateReminders: lateReminders,
+                )
+              : const <GakujoReminder>[];
+        }
+        var reminders = planCurrentReminders();
+        if (reminders.isNotEmpty) {
+          final granted = await _hasPermission(allowPermissionRequest);
+          // Settings can be committed while the OS permission request waits.
+          // Reuse the readable assignment snapshot even if a later sync cannot
+          // read it, rather than booking the superseded policy or discarding it.
+          reminders = planCurrentReminders();
+          if (!granted &&
+              (reminders.isNotEmpty || lateReminders.isNotEmpty)) {
+            return;
+          }
         }
         // Only replacing bookings permanently invalidates their callbacks.
         _bookedReminderGeneration = generation;

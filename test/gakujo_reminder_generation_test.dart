@@ -13,6 +13,128 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final boundary in ['assignment read', 'history read', 'permission']) {
+    for (final change in [
+      'unchanged',
+      'topic off',
+      'skip submitted',
+      'different offset',
+      'notifications off',
+      'offsets off',
+      if (boundary == 'history read') 'offsets enabled',
+    ]) {
+      test('OS bookings use current settings after $boundary: $change', () async {
+        const channel = MethodChannel(
+          'net.yoshida.morebettergakujo/notifications',
+        );
+        final now = DateTime.utc(2099, 7, 1, 8);
+        final storage = _BookingSecureStorage();
+        final store = GakujoActivityStore(secureStorage: storage);
+        await store.mergeAssignments([
+          GakujoAssignment(
+            kind: 'レポート',
+            title: '課題',
+            course: '科目',
+            status: '提出済み',
+            dueAt: now.add(const Duration(hours: 4)),
+            capturedAt: now,
+          ),
+        ]);
+        storage.assignmentReads = 0;
+        final permissionEntered = Completer<void>();
+        final permission = Completer<bool>();
+        final bookings = <List<Map<Object?, Object?>>>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'requestPermission') {
+            if (boundary == 'permission' && !permissionEntered.isCompleted) {
+              permissionEntered.complete();
+              return permission.future;
+            }
+            return true;
+          }
+          if (call.method == 'scheduleReminders') {
+            final args = Map<Object?, Object?>.from(call.arguments as Map);
+            bookings.add([
+              for (final item in args['reminders'] as List)
+                Map<Object?, Object?>.from(item as Map),
+            ]);
+            return true;
+          }
+          throw StateError('Unexpected notification call: ${call.method}');
+        });
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null);
+        });
+        if (boundary != 'permission') {
+          storage.gatedKey = boundary == 'assignment read'
+              ? 'more_better_gakujo_assignments'
+              : 'more_better_gakujo_notified_deadline_keys';
+        }
+        final coordinator = GakujoDeadlineNotificationCoordinator(
+          activityStore: store,
+          notificationService: GakujoNotificationService(now: () => now),
+          now: () => now,
+        );
+        final preferences = GakujoNotificationPreferences(
+          reminderOffsets: {
+            if (change != 'offsets enabled') GakujoReminderOffset.oneHour,
+          },
+          skipSubmitted: false,
+        );
+        final first = coordinator.syncReminders(
+          notificationsEnabled: true,
+          topics: {GakujoNotificationTopic.coursework},
+          preferences: preferences,
+        );
+        await (boundary == 'permission'
+            ? permissionEntered.future
+            : storage.readEntered.future);
+        // A newer sync updates eligibility immediately. Its unreadable list
+        // must preserve the first operation's valid, current-policy bookings.
+        storage.failLaterAssignmentReads = true;
+        final newer = coordinator.syncReminders(
+          notificationsEnabled: change != 'notifications off',
+          topics: {
+            if (change != 'topic off') GakujoNotificationTopic.coursework,
+          },
+          preferences: preferences.copyWith(
+            skipSubmitted: change == 'skip submitted',
+            reminderOffsets: {
+              if (change != 'offsets off')
+                change == 'different offset'
+                    ? GakujoReminderOffset.threeHours
+                    : GakujoReminderOffset.oneHour,
+            },
+          ),
+        );
+        if (boundary == 'permission') {
+          permission.complete(true);
+        } else {
+          storage.releaseRead.complete();
+        }
+        await first;
+        await newer;
+        final allowed = change == 'unchanged' ||
+            change == 'different offset' || change == 'offsets enabled';
+        expect(bookings, isNotEmpty);
+        for (final booking in bookings) {
+          expect(booking, hasLength(allowed ? 1 : 0));
+          if (allowed) {
+            expect(
+              booking.single['atMillis'],
+              now.add(Duration(
+                hours: change == 'different offset' ? 1 : 3,
+              )).millisecondsSinceEpoch,
+            );
+          }
+        }
+        expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+      });
+    }
+  }
+
   for (final change in [
     'notifications off',
     'topic off',
@@ -564,6 +686,46 @@ void main() {
     await callback(reminders.last);
     expect(service.notifiedReminders, reminders);
   });
+}
+
+class _BookingSecureStorage extends FlutterSecureStorage {
+  String? gatedKey;
+  final readEntered = Completer<void>();
+  final releaseRead = Completer<void>();
+  int assignmentReads = 0;
+  bool failLaterAssignmentReads = false;
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'more_better_gakujo_assignments') {
+      assignmentReads += 1;
+      if (failLaterAssignmentReads && assignmentReads > 1) {
+        throw PlatformException(code: 'SyntheticAssignmentReadFailure');
+      }
+    }
+    if (key == gatedKey) {
+      gatedKey = null;
+      readEntered.complete();
+      await releaseRead.future;
+    }
+    return super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
 }
 
 class _ControlledAssignmentStore extends GakujoActivityStore {
