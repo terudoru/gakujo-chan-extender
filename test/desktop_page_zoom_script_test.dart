@@ -87,6 +87,28 @@ void main() {
     expect(data['imageScrolled']['scrollCalls'], 0);
   });
 
+  for (final entry in {
+    'top-scroll': 'child mutation waits for top scrolling',
+    'child-scroll': 'top mutation waits for child scrolling',
+    'top-resize': 'top resize and child mutation share a resize reapply',
+    'child-resize': 'child resize and top mutation share a resize reapply',
+    'replacement': 'replaced and nested frames share one reapply after reinjection',
+    'latest-zoom': 'explicit zoom applies immediately during a pending reapply',
+    'ignored-events': 'style mutations and unrelated loads do not reapply zoom',
+  }.entries) {
+    test(entry.value, () async {
+      final result = await Process.run('node', [
+        'test/support/desktop_page_zoom_script_reapply_harness.cts',
+        DesktopPageZoomScript.build(1.5, originX: 400, originY: 300),
+        'scheduler',
+        entry.key,
+        if (entry.key == 'latest-zoom')
+          DesktopPageZoomScript.build(2, originX: 400, originY: 300),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+    });
+  }
+
   test('uses visual transform zoom without relayout zoom CSS', () {
     final script = DesktopPageZoomScript.build(
       1.25,
@@ -172,7 +194,7 @@ void main() {
 
     expect(script, contains('addEventListener("resize"'));
     expect(script, contains('new win.MutationObserver'));
-    expect(script, contains('scheduleReapply(win, "shape")'));
+    expect(script, contains('scheduleReapply("shape")'));
   });
 
   test('applies visual zoom only to the top document', () {

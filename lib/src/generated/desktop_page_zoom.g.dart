@@ -181,22 +181,23 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
       applyEverywhere(zoom);
       return zoom;
     }
-    function scheduleReapply(win, cause) {
+    function scheduleReapply(cause) {
       try {
         let reapply2 = function() {
-          if (Date.now() - (win.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
-            win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply2, 150);
+          if (Date.now() - (window.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
+            window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = window.setTimeout(reapply2, 150);
             return;
           }
-          var resize = win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
-          win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
+          var resize = window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
+          window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
+          window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = void 0;
           var apply = window.__MBG_SET_PAGE_ZOOM || setZoom;
           apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom, resize ? "resize" : "shape");
         };
         var reapply = reapply2;
-        if (cause === "resize") win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
-        win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
-        win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply2, 150);
+        if (cause === "resize") window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
+        window.clearTimeout(window.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
+        window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = window.setTimeout(reapply2, 150);
       } catch (e) {
       }
     }
@@ -230,10 +231,10 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
               event.preventDefault();
             }, { capture: true, passive: false });
             win.addEventListener("scroll", function() {
-              win.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
+              window.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
             }, { capture: true, passive: true });
             win.addEventListener("resize", function() {
-              scheduleReapply(win, "resize");
+              scheduleReapply("resize");
             }, true);
             win.document.addEventListener("load", function(event) {
               var target = event.target;
@@ -245,7 +246,7 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
               } else if (!/^img$/i.test(target.tagName)) {
                 return;
               }
-              scheduleReapply(window, "shape");
+              scheduleReapply("shape");
             }, true);
             if (win.MutationObserver && win.document && win.document.body) {
               win.__MBG_PAGE_ZOOM_OBSERVER = new win.MutationObserver(function(mutations) {
@@ -253,7 +254,7 @@ const String _gakujoDesktopPageZoomJsPrefix = r'''(function(__mbgConfig) {
                   if (mutations[m].type === "attributes" && mutations[m].attributeName === "style") {
                     continue;
                   }
-                  scheduleReapply(win, "shape");
+                  scheduleReapply("shape");
                   return;
                 }
               });

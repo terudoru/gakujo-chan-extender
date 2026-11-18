@@ -188,21 +188,23 @@ function desktopPageZoom() {
     return zoom;
   }
 
-  function scheduleReapply(win: Window & typeof globalThis, cause: ZoomCause) {
+  // Events from any watched frame remeasure the same top document.
+  function scheduleReapply(cause: Exclude<ZoomCause, 'user'>) {
     try {
-      if (cause === 'resize') win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
-      win.clearTimeout(win.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
+      if (cause === 'resize') window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = true;
+      window.clearTimeout(window.__MBG_PAGE_ZOOM_REAPPLY_TIMER);
       function reapply() {
-        if (Date.now() - (win.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
-          win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply, 150);
+        if (Date.now() - (window.__MBG_PAGE_ZOOM_LAST_SCROLL || 0) < 150) {
+          window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = window.setTimeout(reapply, 150);
           return;
         }
-        var resize = win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
-        win.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
+        var resize = window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE;
+        window.__MBG_PAGE_ZOOM_REAPPLY_RESIZE = false;
+        window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = undefined;
         var apply = window.__MBG_SET_PAGE_ZOOM || setZoom;
         apply(window.__MBG_PAGE_ZOOM_VALUE || initialZoom, resize ? 'resize' : 'shape');
       }
-      win.__MBG_PAGE_ZOOM_REAPPLY_TIMER = win.setTimeout(reapply, 150);
+      window.__MBG_PAGE_ZOOM_REAPPLY_TIMER = window.setTimeout(reapply, 150);
     } catch (e) {}
   }
 
@@ -239,11 +241,11 @@ function desktopPageZoom() {
           }, { capture: true, passive: false });
 
           win.addEventListener('scroll', function() {
-            win.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
+            window.__MBG_PAGE_ZOOM_LAST_SCROLL = Date.now();
           }, { capture: true, passive: true });
 
           win.addEventListener('resize', function() {
-            scheduleReapply(win, 'resize');
+            scheduleReapply('resize');
           }, true);
 
           win.document.addEventListener('load', function(event) {
@@ -256,7 +258,7 @@ function desktopPageZoom() {
             } else if (!/^img$/i.test(target.tagName)) {
               return;
             }
-            scheduleReapply(window, 'shape');
+            scheduleReapply('shape');
           }, true);
 
           if (win.MutationObserver && win.document && win.document.body) {
@@ -266,7 +268,7 @@ function desktopPageZoom() {
                     mutations[m].attributeName === 'style') {
                   continue;
                 }
-                scheduleReapply(win, 'shape');
+                scheduleReapply('shape');
                 return;
               }
             });
