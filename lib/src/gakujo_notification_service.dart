@@ -568,13 +568,19 @@ class GakujoDeadlineNotificationCoordinator {
     required Set<GakujoNotificationTopic> topics,
     required GakujoNotificationPreferences preferences,
   }) async {
+    final generation = _reminderGeneration;
     final previouslyGranted = _notificationService.permissionGranted.value;
     final granted = await _notificationService.checkPermission();
-    if (granted == true && previouslyGranted != true && notificationsEnabled) {
+    // A settings sync during the OS check supersedes the resume snapshot.
+    final hasNewerSettings = generation != _reminderGeneration;
+    final enabled = hasNewerSettings
+        ? _reminderNotificationsEnabled
+        : notificationsEnabled;
+    if (granted == true && previouslyGranted != true && enabled) {
       await syncReminders(
-        notificationsEnabled: notificationsEnabled,
-        topics: topics,
-        preferences: preferences,
+        notificationsEnabled: enabled,
+        topics: hasNewerSettings ? _reminderTopics : topics,
+        preferences: hasNewerSettings ? _reminderPreferences : preferences,
         allowPermissionRequest: false,
       );
     }

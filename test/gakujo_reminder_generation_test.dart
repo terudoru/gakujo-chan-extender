@@ -13,6 +13,79 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  for (final change in [
+    'notifications off',
+    'topic off',
+    'offset off',
+    'skip submitted',
+    'notifications on',
+    'unchanged',
+    'no newer sync',
+  ]) {
+    test('resume permission check preserves newer settings: $change', () async {
+      final now = DateTime.now().toUtc();
+      final store = GakujoActivityStore();
+      final service = _ReminderNotificationService();
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => now,
+      );
+      await store.mergeAssignments([
+        GakujoAssignment(
+          kind: 'レポート',
+          title: '課題',
+          course: '科目',
+          status: change == 'skip submitted' ? '提出済み' : '未提出',
+          dueAt: now.add(const Duration(hours: 2)),
+          capturedAt: now,
+        ),
+      ]);
+      final entered = Completer<void>();
+      final permission = Completer<bool>();
+      service.onCheckPermission = () {
+        if (!entered.isCompleted) entered.complete();
+        return permission.future;
+      };
+      const preferences = GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+        skipSubmitted: false,
+      );
+      final resuming = coordinator.onAppResumed(
+        notificationsEnabled: change != 'notifications on',
+        topics: {GakujoNotificationTopic.coursework},
+        preferences: preferences,
+      );
+      await entered.future;
+      if (change != 'no newer sync') {
+        // A sync may fail before OS access is granted. Resume must still rebook
+        // permitted reminders using that sync's current settings.
+        service.onRequestPermission = () async => false;
+        await coordinator.syncReminders(
+          notificationsEnabled: change != 'notifications off',
+          topics: {if (change != 'topic off') GakujoNotificationTopic.coursework},
+          preferences: preferences.copyWith(
+            reminderOffsets: {
+              if (change != 'offset off') GakujoReminderOffset.oneHour,
+            },
+            skipSubmitted: change == 'skip submitted',
+          ),
+        );
+      }
+      permission.complete(true);
+      await resuming;
+      final expectedCount = const {
+        'notifications on',
+        'unchanged',
+        'no newer sync',
+      }.contains(change) ? 1 : 0;
+      expect(service.bookings, isNotEmpty);
+      expect(service.bookings.last, hasLength(expectedCount));
+      expect(service.notifiedReminders, isEmpty);
+      expect(await store.loadNotifiedDeadlineKeys(), isEmpty);
+    });
+  }
+
   for (final pause in ['assignment read', 'permission prompt']) {
     for (final change in [
       'unchanged',
@@ -520,11 +593,16 @@ class _ReminderNotificationService extends GakujoNotificationService {
   final List<GakujoReminder> notifiedReminders = [];
   final List<List<GakujoReminder>> bookings = [];
   Future<bool> Function()? onRequestPermission;
+  Future<bool?> Function()? onCheckPermission;
   Future<void> Function(GakujoReminder)? onInAppReminder;
 
   @override
   Future<bool> requestPermission() async =>
       await onRequestPermission?.call() ?? true;
+
+  @override
+  Future<bool?> checkPermission() =>
+      onCheckPermission?.call() ?? super.checkPermission();
 
   @override
   Future<bool> scheduleReminders(
