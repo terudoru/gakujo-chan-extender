@@ -47,6 +47,7 @@ function createDocument() {
   return {
     body,
     createElement: tagName => new Element(tagName),
+    addEventListener: (name, callback) => body.addEventListener(name, callback),
     getElementById: id => descendants(body).find(element => element.id === id) || null
   };
 }
@@ -174,6 +175,7 @@ process.stdout.write(JSON.stringify({
   buttons: banner ? banner.children.filter(child => child.tagName === 'button').map(child => child.textContent) : [],
   sameBanner: banner === firstBanner,
   sameTopWrapper, sameFrameWrapper, listenerCount: listeners.length,
+  loginObserverCount: doc.body.listeners.submit?.length ?? 0,
   sameReturnValue: result === originalResult,
   sameArguments: !!receivedArgs && receivedArgs.length === args.length && receivedArgs.every((arg, i) => arg === args[i]),
   sameReceiver: receivedThis === target,

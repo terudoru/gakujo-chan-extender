@@ -57,7 +57,6 @@ import 'file_system_gakujo_download_service.dart';
 import 'gakujo_gpa_display_script.dart';
 import 'gakujo_history_navigation.dart';
 import 'gakujo_last_page_store.dart';
-import 'gakujo_login_observer_script.dart';
 import 'gakujo_local_prefs_store.dart';
 import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_list_script.dart';
@@ -7546,16 +7545,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _injectTimeoutPopupIfAllowed() async {
+  Future<void> _injectLoginAndTimeoutHooksIfAllowed() async {
     if (!_canRunPageScripts) {
       return;
     }
 
     try {
-      await _controller.runJavaScript(GakujoTimeoutPopupScript.build());
+      await _controller.runJavaScript(
+        GakujoTimeoutPopupScript.buildWithLoginObserver(),
+      );
     } catch (error, stackTrace) {
       developer.log(
-        'Failed to inject timeout popup script',
+        'Failed to install login observer and timeout popup handler',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
@@ -8223,10 +8224,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (!stillCurrent()) {
               return;
             }
-            if (_canRunPageScripts) {
-              await _controller.runJavaScript(GakujoLoginObserverScript.build());
-              if (!stillCurrent()) return;
-            }
+            // Intercept timeout popups before autofill can submit the form.
+            await _injectLoginAndTimeoutHooksIfAllowed();
+            if (!stillCurrent()) return;
             // Both read the keychain, which can wait on a macOS access dialog
             // indefinitely; do not hold back download capture and the rest.
             unawaited(() async {
@@ -8240,8 +8240,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               }
             }());
             await _refreshNavigationState(revision: navigationRevision);
-            if (!stillCurrent()) return;
-            await _injectTimeoutPopupIfAllowed();
             if (!stillCurrent()) return;
             await _injectDownloadCaptureIfAllowed();
             if (!stillCurrent()) {

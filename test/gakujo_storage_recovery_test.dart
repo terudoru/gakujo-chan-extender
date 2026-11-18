@@ -151,8 +151,16 @@ void main() {
           });
         }
         // Classify the scripts without storing their configs.
-        if (script.contains('// web_scripts/src/timeout_popup/main.ts')) {
-          methodCalls.add('timeoutPopup');
+        final timeoutHook = script.indexOf(
+          '// web_scripts/src/timeout_popup/main.ts',
+        );
+        if (timeoutHook >= 0) {
+          methodCalls.add(
+            script.indexOf('window.__MBG_LOGIN_OBSERVER_INSTALLED') >
+                    timeoutHook
+                ? 'loginAndTimeoutHooks'
+                : 'timeoutPopup',
+          );
           await popupPause!.future;
         } else if (script.contains(
           '// web_scripts/src/login_autofill_assist/main.ts',
@@ -217,7 +225,7 @@ void main() {
 
   for (final twoFactor in [false, true]) {
     testWidgets(
-      'autofill proceeds while the popup script is pending (2FA=$twoFactor)',
+      'autofill follows the combined login and timeout hooks (2FA=$twoFactor)',
       (tester) async {
         debugDefaultTargetPlatformOverride = TargetPlatform.windows;
         twoFactorFixture = twoFactor;
@@ -249,7 +257,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('読み込み中: $url'), findsOneWidget);
 
-        final blockedPopup = popupPause = Completer<void>();
+        final pendingHooks = popupPause = Completer<void>();
+        final autofill = methodCalls.where((call) => call.endsWith('Autofill'));
         try {
           methodCalls.clear();
           sink.success({
@@ -257,19 +266,20 @@ void main() {
             'value': windows.LoadingState.navigationCompleted.index,
           });
           await tester.pumpAndSettle();
-          expect(methodCalls, contains('timeoutPopup'));
-          final autofill = methodCalls.where(
-            (call) => call.endsWith('Autofill'),
-          );
+          expect(autofill, isEmpty);
           expect(
-            autofill.firstOrNull,
-            twoFactor ? 'twoFactorAutofill' : 'passwordAutofill',
-            reason: methodCalls.join(', '),
+            methodCalls.where((call) => call == 'loginAndTimeoutHooks'),
+            hasLength(1),
           );
         } finally {
-          blockedPopup.complete();
+          pendingHooks.complete();
         }
         await tester.pumpAndSettle();
+        expect(
+          autofill.firstOrNull,
+          twoFactor ? 'twoFactorAutofill' : 'passwordAutofill',
+          reason: methodCalls.join(', '),
+        );
         await tester.pumpWidget(const SizedBox());
         await tester.pumpAndSettle();
         debugDefaultTargetPlatformOverride = null;

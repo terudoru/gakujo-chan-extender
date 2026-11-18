@@ -218,7 +218,7 @@ Future<Map<String, dynamic>> _evaluate(String scenario,
       ..writeAsStringSync(
           jsonEncode({
             'scripts':
-                List.filled(injections, GakujoTimeoutPopupScript.build()),
+                List.filled(injections, GakujoTimeoutPopupScript.buildWithLoginObserver()),
             'scenario': scenario,
             'url': url,
           }),
@@ -230,7 +230,9 @@ Future<Map<String, dynamic>> _evaluate(String scenario,
       stderrEncoding: utf8,
     );
     expect(result.exitCode, 0, reason: 'Node failed: ${result.stderr}');
-    return jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    final response = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+    expect(response['loginObserverCount'], 1);
+    return response;
   } finally {
     directory.deleteSync(recursive: true);
   }

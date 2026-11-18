@@ -1,3 +1,4 @@
+import 'gakujo_login_observer_script.dart';
 import 'generated/timeout_popup.g.dart';
 
 class GakujoTimeoutPopupScript {
@@ -6,4 +7,15 @@ class GakujoTimeoutPopupScript {
   static String build() {
     return gakujoTimeoutPopupJs;
   }
+
+  static String buildWithLoginObserver() =>
+      '''
+try {
+  (function() {
+${build()}
+  })();
+} finally {
+${GakujoLoginObserverScript.build()}
+}
+''';
 }
