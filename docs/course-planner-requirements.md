@@ -1,0 +1,93 @@
+# 新潟大学の進級・卒業要件と、履修計画でわかる残り単位
+
+進級までと卒業までの残り単位は、学部が定める科目区分ごとに計算する。修得済みの科目と履修予定の科目を並べると、どの授業で不足を補えるかがわかる。この資料では2026年度に新潟大学の1年次に入学した学生を対象に、全10学部の規程や便覧を調べた（2026年11月19日確認）。
+
+## 工学部の例で見る「あと何単位か」
+
+工学部の通常入学生が4年次に進むには、在学3年以上で、教養系32単位、学部専門系66単位、どちらかからさらに6単位の計104単位が必要になる。卒業時は在学4年以上で、それぞれ36、82、6の計124単位になる。専門の内訳は9つの学位プログラムで異なる。[工学部規程細則第10・11条][eng-detail]、[4年次進級基準][eng-4]、[卒業資格基準][eng-grad]
+
+次の表は架空の成績で、教養系だけを取り出した例。各単位は大学の区分に従って割り当ててあり、選択の余分な2単位は不足している選択必修の科目群には算入できないとする。[工学部規程別表第1][eng-edu]
+
+| 教養系の区分 | 4年次進級に必要 | 卒業に必要 | 修得済みの例 | 進級まであと | 卒業まであと |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 必修 | 13 | 13 | 13 | 0 | 0 |
+| 選択必修 | 12 | 12 | 10 | **2** | **2** |
+| 選択 | 7 | 11 | 9 | 0 | **2** |
+
+この学生の教養系は計32単位。選択必修には、情報リテラシー・自然系共通専門基礎・自然科学から10単位と、人文社会・教育科学・新潟大学個性化科目から2単位の指定がある。不足した群の対象科目を2単位修得すれば、教養系の進級条件を満たし、卒業には選択があと2単位残る。履修予定に入れた段階では、この変化を「修得した場合」の欄に表示する。[工学部規程別表第1][eng-edu]、[進級基準の教養系内訳][eng-4]
+
+## 10学部で異なる進級条件と卒業要件
+
+表の数字は単位数で、通常の卒業には4年以上、医学科と歯学科は6年以上の在学が必要。学則第60条の124単位・188単位は全学の下限で、各学部が対象科目と必要数を定める。表の「卒業研究の履修」「卒業論文の履修」は、その科目を登録できる条件を表す。[学修ガイドブック2026][guide]、[新潟大学学則第60条][rules]
+
+| 学部・学科 | 進級または指定科目を履修する条件 | 卒業に必要な単位と内訳 |
+| --- | --- | --- |
+| 人文学部 | 3年次進級は在学2年以上で54。その中に人文初年次演習2、同一の初修外国語4、入門講義4が必要。[人文学部便覧・第5セメスター][human-3] | 124。教養41、専門60、教養・専門のいずれかで23。卒業時の外国語12には英語2と同じ初修外国語8を含む。専門には卒業論文10も含む。[人文学部規程第15条][human-grad] |
+| 教育学部 | 卒業研究の履修は在学3年以上かつ95。教育実習にも事前に修得すべき教職科目がある。[教育学部規程第7条][ed-thesis]、[学生要覧・教育実習][ed-study] | 131。教養17の内訳は必修13・選択必修4。必修には日本国憲法2があり、別の人文社会系科目だけでは満たせない。残る114は専修等に応じた専門教育科目。[履修基準表][ed-total]、[教養の別表第2][ed-general] |
+| 法学部 | 4年次の必修D類（卒業研究等）の登録にはC類を修得し、3年次終了時にA類全科目と卒業要件のうち60以上が必要。編入・転部・早期卒業希望者等には例外がある。[法学部履修細則第7条][law-study] | 124。法学・法曹養成とも教養必修A類7。法学のB類4は、憲法・民法・刑法のいずれか同じ分野の講義2と基礎演習2を組み合わせる。法曹養成には別の必修区分がある。[法学部規程第12条][law-grad] |
+| 経済科学部 | 2・3年次進級はそれぞれ前の年次に1年以上在学。4年次進級は3年次の在学1年以上、学部在学3年以上、学部の教育課程で90以上。判定は各学期末。[学生便覧・履修細則第9条][econ-credit]、[進級及び卒業に関する基準][econ-year] | 124。卒業論文8は4プログラム共通。「教養教育に関する科目／外国語」の必要数は、経済学・経営学が18／10、学際日本学が12／12、地域リーダーが10／10。外国語には指定の英語と初修外国語6を含む。[経済科学部規程第14条・別表第2][econ-grad] |
+| 理学部 | 2年次進級は通算1年以上。3年次進級は2年次に1年以上在学し、プログラム選択要件と所属プログラムの進級要件を満たす。4年次進級は3年次に1年以上在学し、所属プログラムの進級要件を満たす。進級月は4月か10月。[理学部履修の手引「進級」][sci-year] | 124以上。うち教養21以上、専門84以上。健康スポーツ科学実習の複数履修には算入上限があり、科目によっては重複履修に申出が必要。[令和8年度履修の手引・訂正版21頁][sci-correct] |
+| 医学部医学科 | 2～6年次進級は年次別に判定。2年次は教養・専門の別表が1年次に指定する単位、以降は在籍年次に修得すべき科目の単位が必要。[医学部規程第7条][med] | 219。2026年度入学生の別表第1の教養43と別表第3の専門176の合計。専門には0.5単位刻みの科目もある。[医学部規程・教養の別表第1][med-gen]、[専門の別表第3][med-prof] |
+| 医学部保健学科 | 2・3年次進級は各年次に12か月在学後の4月。4年次進級はさらに、3年次までに開講する専門基礎・専門教育の必修全科目を修得し、教授会の議を経る。3年次編入生はこの必修条件の適用外。[保健学科の進級要件][health] | 124。教養26と専門98。看護学・放射線技術科学・検査技術科学で専門の内訳が異なる。教職に関する科目は卒業単位の対象外。[医学部規程別表第4][med-health]、[保健学科の卒業要件][health] |
+| 歯学部歯学科 | 2～4年次進級は前の年次の教養・専門の指定科目、5・6年次進級は前の年次の専門の指定科目を修得。臨床実習には5年次の履修条件が別にある。[歯学部規程第6・8条][dent] | 192。教養40（1～3年次に37・2・1）、専門152。年次ごとの配当を照合する。[歯学部規程・教養の別表第1][dent-g]、[専門の別表第3][dent-p] |
+| 歯学部口腔生命福祉学科 | 2年次進級は教養の最低修得単位数と1年次の指定専門科目、3・4年次進級は前の年次の指定専門科目を修得。[歯学部規程第8条][dent] | 150。教養30、専門120。[歯学部規程・教養の別表第2][oral-g]、[専門の別表第4][oral-p] |
+| 工学部 | 2年次進級は在学1年以上で32。指定5科目から4を含み、D科目は対象外。4年次進級は上の表の教養のほか、プログラム別の専門要件がある。細則別表第1の備考には3年次編入生向けの基準もある。[工学部規程細則第10条][eng-detail]、[別表第1の備考][eng-4] | 124。教養36、専門82、どちらかから6。専門の必修・選択必修は所属プログラムの欄と備考で確認する。[工学部規程細則別表第2][eng-grad] |
+| 農学部 | 卒業論文の履修は在学3年以上でプログラム別。生物資源科学では3年次末に計106以上、科学英語演習、所定の必修13のうち11以上、分野別指定科目が必要。流域環境学・フィールド科学人材育成では教養27以上（うち英語または初修外国語4以上）、専門68以上、かつ計100以上。[農学部規程第8条][agr-rule]、[履修の手引・卒業論文履修要件][agr-thesis] | 124。5プログラムとも教養34、専門85、どちらかから5。応用生命科学と食品科学では、教養の理系科目群10の中に自然系共通専門基礎6以上を含み、化学・生物学から各2を含める。[農学部規程別表第2][agr-grad] |
+| 創生学部 | 4年次進級は在学3年以上で90。導入・転換教育14、基礎科目①の指定科目6、領域学修26、指定の残りの区分から44。領域26の内訳は創生学修コースとDX共創コースで異なる。[学生便覧・進級基準][create-4] | 126。たとえば領域基礎科目は創生学修が20、DX共創が26。「ベーシック数学ゼミ」は進級・卒業の単位に算入されない。[創生学部規程第14条][create-grad]、[学生便覧の注記][create-4] |
+
+## 履修計画の画面にどう反映するか
+
+- **不足の理由を科目まで表示する。** 人文学部なら「同じ初修外国語があと4単位」、教育学部なら「日本国憲法が未修得」と出せる。各区分を開くと、修得済みの科目・修得年度、履修中の科目、該当する候補の授業とターム・時限が同じ画面で見える形を提案する。
+- **修得済みと履修予定を並べる。** 合格・認定が確定した科目から現在の残りを出す。履修中の科目や計画に選んだ授業を加えた見込みも、進級と卒業のそれぞれに表示する。人文学部では教養・専門の超過分を両者共通の23単位に充当できる。1科目の単位を同じ卒業合計に二重計上せず、どの枠に充てたかを表示する。[人文学部規程第15条第2・3項][human-grad]
+- **CAPは学期ごとの登録単位で計算する。** 例えば工学部は各学期28で集中講義等を除く。農学部は各学期24、前学期GPAが3.5以上なら28で、演習・実験などに除外規定がある。時間割をターム別に表示しても、同じ授業を同一学期のCAPに二度足さない。[工学部学生必携・履修登録][eng-cap]、[農学部履修の手引・CAP制][agr-cap]
+- **根拠となる科目と成績を突き合わせる。** 経済科学部の公式チェックシートも、必修科目と重複修得は成績確認表で別途確認するよう案内している。区分合計は履修科目確認表、科目名・成績は成績確認表から照合する方法が考えられる。実際の帳票の取込形式と他学部での共通性は未検証。[経済科学部のチェックシート使用マニュアル][econ-manual]
+- **共有リストを自分の計画に取り込む。** 共有リンクには作成時点の科目リストを表示し、受け手はブラウザで開いて自分用にコピー・編集する。コピーした科目がどの要件を満たすかは、受け手の所属と成績で再計算する案とする。
+
+## 入学年度・専攻・個別認定で確認が必要な場合
+
+工学部と医学部の2026年4月施行の改正は、2025年度以前の入学生には従前の履修・卒業要件を適用する。経済科学部では編入・転部学生の適用便覧が入学年度と異なる。所属と入学年度に加え、適用される便覧、プログラム・専修、在学期間、編入時の認定単位を確かめる必要がある。[工学部細則附則][eng-cohort]、[医学部規程附則][med-cohort]、[経済科学部の年度別便覧案内][econ-site]
+
+理学部の公開手引には学位プログラム別の進級条件を使うことまで記載されており、年度別の詳しい履修ガイドの閲覧には学内認証が要る。各プログラムの数値は未確認。教育・法・農で表に挙げたのは指定科目の履修条件で、これを学年全体の進級可否には使えない。適用規程、科目の読替、教授会・学部長による個別認定が不明な項目は画面で「要確認」とし、確認先をその項目に添える。表は通常履修の主要条件をまとめたもので、全専修・過年度・個人成績との照合は今後の対象となる。[理学部の年度別履修ガイド][sci-guide]、[新潟大学規程集の案内][regindex]
+
+[eng-detail]: https://public1.legalcrud.com/niigata_univ/act/110000532.html#at10
+[eng-4]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=30
+[eng-grad]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=31
+[eng-edu]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=11
+[guide]: https://www.niigata-u.ac.jp/wp-content/uploads/2026/04/01_gakushuu_2026.pdf
+[rules]: https://public1.legalcrud.com/niigata_univ/act/110000001.html#at60
+[human-3]: https://www.human.niigata-u.ac.jp/wp-content/uploads/2026/04/binran2026.pdf#page=44
+[human-grad]: https://public1.legalcrud.com/niigata_univ/act/110000378.html#at15
+[ed-thesis]: https://public1.legalcrud.com/niigata_univ/act/110000384.html#at7
+[ed-study]: https://www.ed.niigata-u.ac.jp/wp-content/uploads/2026/04/2026_gakuseiyoran.R8.pdf#page=10
+[ed-total]: https://www.ed.niigata-u.ac.jp/wp-content/uploads/2026/04/2026_gakuseiyoran.R8.pdf#page=104
+[ed-general]: https://www.ed.niigata-u.ac.jp/wp-content/uploads/2026/04/2026_gakuseiyoran.R8.pdf#page=105
+[law-study]: https://public1.legalcrud.com/niigata_univ/act/110000438.html#at3.2
+[law-grad]: https://public1.legalcrud.com/niigata_univ/act/110000435.html#at10
+[econ-credit]: https://www.econ.niigata-u.ac.jp/topics/files/elfinder/gakumu/HP_%E4%BB%A4%E5%92%8C%EF%BC%98%E5%B9%B4%E5%BA%A6%282026%E5%B9%B4%E5%BA%A6%29%E5%AD%A6%E7%94%9F%E4%BE%BF%E8%A6%A7.pdf#page=88
+[econ-year]: https://www.econ.niigata-u.ac.jp/topics/files/elfinder/gakumu/HP_%E4%BB%A4%E5%92%8C%EF%BC%98%E5%B9%B4%E5%BA%A6%282026%E5%B9%B4%E5%BA%A6%29%E5%AD%A6%E7%94%9F%E4%BE%BF%E8%A6%A7.pdf#page=90
+[econ-grad]: https://public1.legalcrud.com/niigata_univ/act/110001598.html#bt2
+[sci-year]: https://www.sc.niigata-u.ac.jp/sc/edu/rishu_tebiki/tebiki2026.pdf#page=26
+[sci-correct]: https://www.sc.niigata-u.ac.jp/sc/edu/rishu_tebiki/tebiki2026_mod1.pdf
+[med]: https://public1.legalcrud.com/niigata_univ/act/110000476.html#at7
+[med-gen]: https://public1.legalcrud.com/niigata_univ/act/110000476.html#bt1
+[med-prof]: https://public1.legalcrud.com/niigata_univ/act/110000476.html#bt3
+[health]: https://www.clg.niigata-u.ac.jp/ug/requirements.html
+[med-health]: https://public1.legalcrud.com/niigata_univ/act/110000476.html#bt4
+[dent]: https://public1.legalcrud.com/niigata_univ/act/110000514.html#at8
+[dent-g]: https://public1.legalcrud.com/niigata_univ/act/110000514.html#bt1
+[dent-p]: https://public1.legalcrud.com/niigata_univ/act/110000514.html#bt3
+[oral-g]: https://public1.legalcrud.com/niigata_univ/act/110000514.html#bt2
+[oral-p]: https://public1.legalcrud.com/niigata_univ/act/110000514.html#bt4
+[agr-rule]: https://public1.legalcrud.com/niigata_univ/act/110000544.html#at8
+[agr-thesis]: https://www.agr.niigata-u.ac.jp/wp/wp-content/uploads/R8_%E6%96%B0%E5%A4%A7%E8%BE%B2%E5%AD%A6%E9%83%A8%E5%B1%A5%E4%BF%AE%E3%81%AE%E6%89%8B%E5%BC%95.pdf#page=40
+[agr-grad]: https://www.agr.niigata-u.ac.jp/wp/wp-content/uploads/R8_%E6%96%B0%E5%A4%A7%E8%BE%B2%E5%AD%A6%E9%83%A8%E5%B1%A5%E4%BF%AE%E3%81%AE%E6%89%8B%E5%BC%95.pdf#page=75
+[create-4]: https://create.niigata-u.ac.jp/public/brochers/R8_ccshandbook.pdf#page=13
+[create-grad]: https://public1.legalcrud.com/niigata_univ/act/110000592.html#at14
+[eng-cap]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=67
+[agr-cap]: https://www.agr.niigata-u.ac.jp/wp/wp-content/uploads/R8_%E6%96%B0%E5%A4%A7%E8%BE%B2%E5%AD%A6%E9%83%A8%E5%B1%A5%E4%BF%AE%E3%81%AE%E6%89%8B%E5%BC%95.pdf#page=20
+[econ-manual]: https://www.econ.niigata-u.ac.jp/topics/files/elfinder/gakumu/%E3%80%90%E5%BF%85%E8%AA%AD%E3%80%91%E7%B5%8C%E6%B8%88%E7%A7%91%E5%AD%A6%E9%83%A8%E5%8D%92%E6%A5%AD%E8%A6%81%E4%BB%B6%E3%83%81%E3%82%A7%E3%83%83%E3%82%AF%E3%82%B7%E3%83%BC%E3%83%88%E4%BD%BF%E7%94%A8%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB%E3%80%802025.03%E6%9B%B4%E6%96%B0.pdf#page=3
+[eng-cohort]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=29
+[med-cohort]: https://public1.legalcrud.com/niigata_univ/act/110000476.html
+[econ-site]: https://www.econ.niigata-u.ac.jp/students/contact
+[sci-guide]: https://www.sc.niigata-u.ac.jp/sc/edu/rishu_guide.html
+[regindex]: https://www.niigata-u.ac.jp/university/about/organization/regulations/
