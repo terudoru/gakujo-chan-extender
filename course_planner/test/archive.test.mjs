@@ -52,15 +52,44 @@ test("require academic year, offering faculty and title agreement even for an ex
   assert.equal(resolveHistoricalGrade({ ...raw, code: "261G7011" }, past).match, null);
   const row = { ...raw, code: "250G7002" };
   const result = resolveHistoricalGrade(row, past);
-  assert.equal(result.status, "review"); // The annual index verifies the code and term, but does not publish units.
-  assert.equal(result.match, null);
+  assert.equal(result.status, "exact");
+  assert.equal(result.match.credits, 1);
   assert.equal(result.candidates[0].code, row.code);
   for (const change of [{ title: "英語基礎 R" }, { department: "09" }, { offeringFaculty: "工学部" }]) {
     assert.equal(resolveHistoricalGrade({ ...row, ...change }, past).status, "mismatch");
   }
-  assert.equal(resolveHistoricalGrade({ ...row, faculty: "工学部" }, past).status, "review");
+  assert.equal(resolveHistoricalGrade({ ...row, faculty: "工学部" }, past).status, "exact");
   assert.equal(resolveHistoricalGrade({ ...row, credits: undefined }, past).status, "exact");
   assert.throws(() => confirmHistoricalMatch({ ...row, year: "2024" }, result.candidates[0]));
+});
+
+test("2020 English units are corroborated by the exact public syllabus and course listing page", async () => {
+  const index = await pack("2020");
+  const grade = { year: "2020", code: "200G0105", title: "実践コミュニケーション英語I", offeringDepartment: "84",
+    term: "第1,2ターム", credits: 1, grade: "優" };
+  const { match, status } = resolveHistoricalGrade(grade, index);
+  assert.equal(status, "exact");
+  assert.equal(match.credits, 1);
+  assert.equal(match.creditSource, "https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf#page=10");
+  assert.equal(match.sourceUrl, "https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html");
+  assert.deepEqual(match.fields, ["70"]);
+  assert.deepEqual(resolveHistoricalGrade({ ...grade, credits: 3 }, index), { status: "conflict", candidates: [], match: null });
+  assert.equal(resolveHistoricalGrade({ ...grade, offeringDepartment: "01" }, index).match, null);
+  assert.equal(resolveHistoricalGrade({ ...grade, year: "2021" }, index).match, null);
+  const { credits, creditSource, ...legacy } = match;
+  assert.deepEqual(revalidateGradeMatch({ ...grade, matchedCourse: legacy }, null, index), match);
+  assert.equal(revalidateGradeMatch({ ...grade, credits: 3, matchedCourse: legacy }, null, index), null);
+  assert.deepEqual(retainedHistoricalMatch({ ...grade, matchedCourse: match }, null), match);
+});
+
+test("annual pack credits require a positive number and a cited official PDF page", () => {
+  const listing = "https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf";
+  const row = ["84", "200G0105", "実践コミュニケーション英語I", "第1,2ターム", "金1", "70", "0"];
+  for (const units of [[1], [1, 0], [1, 10.5], [null, 10], [0, 10], ["1", 10]]) {
+    assert.throws(() => unpackYear("2020", { year: "2020", listing, rows: [[...row, units]] }));
+  }
+  assert.throws(() => unpackYear("2020", { year: "2020", listing: "https://example.com/list.pdf", rows: [[...row, [1, 10]]] }));
+  assert.throws(() => unpackYear("2020", { year: "2020", listing: listing.replace("_2020/", "_2019/"), rows: [[...row, [1, 10]]] }));
 });
 
 test("current fields are corroborated by the exact detail page and the category retains its own evidence", () => {
@@ -163,9 +192,9 @@ test("a unique name or code cannot overrule contradictory, missing or partially 
   assert.equal(compareOfferingEvidence({ term: "第3ターム" }, { period: "集中", semester: "第1学期" }), "conflict");
   assert.equal(compareOfferingEvidence({ credits: "０.５単位" }, { credits: 0.5 }), "match");
   assert.equal(compareOfferingEvidence({ credits: 1, term: "通年" }, {}), "unknown");
-  const archived = past.byCode.get("250g7002")[0];
+  const archived = past.byCode.get("250k1811")[0];
   assert.equal(archived.credits, undefined);
-  const original = { ...raw, code: archived.code, term: archived.period };
+  const original = { ...raw, title: archived.title, code: archived.code, term: archived.period };
   assert.equal(resolveHistoricalGrade(original, past).status, "review");
   const manual = confirmHistoricalMatch(original, archived);
   assert.equal(manual.period, archived.period);

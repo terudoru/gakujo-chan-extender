@@ -15,7 +15,10 @@ export function offeringEvidence(course) {
     if (typeof course[key] === "string" && course[key].trim()) evidence[key] = course[key].trim();
   }
   const credits = creditValue(course.credits);
-  if (credits != null) evidence.credits = credits;
+  if (credits != null) {
+    evidence.credits = credits;
+    if (course.creditSource) evidence.creditSource = course.creditSource;
+  }
   return evidence;
 }
 

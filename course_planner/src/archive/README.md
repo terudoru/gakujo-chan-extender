@@ -4,21 +4,25 @@
 
 ## 公開情報の収録範囲
 
-2026年11月19日確認。件数は開講所属と開講番号の組の数。「分野あり」は公式情報に分野番号がある授業数。2016〜2025年度の49,291件は、照合する年度だけを端末に読み込む。1年度分はgzip圧縮で約48〜57 KiB。
+2026年11月19日確認。件数は開講所属と開講番号の組の数。「単位数を照合」は、当年度の開設一覧で単位数まで確認できた件数で、リンク先は使用した公式PDF。2016〜2025年度の49,291件は、照合する年度だけを端末に読み込む。1年度分はgzip圧縮で約48〜59 KiB。
 
-| 履修年度 | 開講件数 | 分野あり | 確認した公式情報の例 |
-| --- | ---: | ---: | --- |
-| 2016 | 4,965 | 4,965 | [全学検索](https://syllabus.niigata-u.ac.jp/campus-sy/)で年度「2016」・開講番号「160G0001」を指定。個別ページの標本は404で、保存には本人の選択が必要 |
-| 2017 | 5,659 | 5,659 | [共通英語・170G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2017/84/84_170G0233_ja_JP.html) |
-| 2018 | 5,367 | 5,367 | [共通英語・180G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2018/84/84_180G0233_ja_JP.html) |
-| 2019 | 5,124 | 5,119 | [共通英語・190G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2019/84/84_190G0233_ja_JP.html) |
-| 2020 | 4,809 | 4,809 | [実践コミュニケーション英語Ⅰ・200G0105](https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html) |
-| 2021 | 4,728 | 4,728 | [実践コミュニケーション英語Ⅰ・210G0002](https://syllabus.niigata-u.ac.jp/syllabusHtml/2021/84/84_210G0002_ja_JP.html) |
-| 2022 | 4,707 | 4,707 | [実践コミュニケーション英語Ⅰ・220G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2022/84/84_220G0001_ja_JP.html) |
-| 2023 | 4,674 | 4,673 | [実践コミュニケーション英語Ⅰ・230G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2023/84/84_230G0001_ja_JP.html) |
-| 2024 | 4,634 | 4,634 | [実践コミュニケーション英語Ⅰ・240G0002](https://syllabus.niigata-u.ac.jp/syllabusHtml/2024/84/84_240G0002_ja_JP.html) |
-| 2025 | 4,624 | 4,624 | [IELTS PreparationⅠ・250G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2025/84/84_250G0001_ja_JP.html) |
-| 2026 | 4,347 | 4,347 | [英語基礎 L・261G7011](https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/84/84_261G7011_ja_JP.html)／[エンジニアのためのデータサイエンス入門・261G3008](https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/84/84_261G3008_ja_JP.html) |
+| 履修年度 | 開講件数 | 分野あり | 単位数を照合 | 確認した公式情報の例 |
+| --- | ---: | ---: | ---: | --- |
+| 2016 | 4,965 | 4,965 | [0](https://www.iess.niigata-u.ac.jp/pdf/H28_subject_list/all.pdf) | [全学検索](https://syllabus.niigata-u.ac.jp/campus-sy/)で年度「2016」・開講番号「160G0001」を指定。個別ページの標本は404で、保存には本人の選択が必要 |
+| 2017 | 5,659 | 5,659 | [5,081](https://www.iess.niigata-u.ac.jp/pdf/H29_subject_list/all.pdf) | [共通英語・170G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2017/84/84_170G0233_ja_JP.html) |
+| 2018 | 5,367 | 5,367 | [4,783](https://www.iess.niigata-u.ac.jp/pdf/H30_subject_list/all.pdf) | [共通英語・180G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2018/84/84_180G0233_ja_JP.html) |
+| 2019 | 5,124 | 5,119 | [4,647](https://www.iess.niigata-u.ac.jp/pdf/subject_list_2019/all.pdf) | [共通英語・190G0233](https://syllabus.niigata-u.ac.jp/syllabusHtml/2019/84/84_190G0233_ja_JP.html) |
+| 2020 | 4,809 | 4,809 | [4,393](https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf) | [実践コミュニケーション英語Ⅰ・200G0105](https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html) |
+| 2021 | 4,728 | 4,728 | [4,316](https://www.iess.niigata-u.ac.jp/pdf/subject_list_2021/all.pdf) | [実践コミュニケーション英語Ⅰ・210G0002](https://syllabus.niigata-u.ac.jp/syllabusHtml/2021/84/84_210G0002_ja_JP.html) |
+| 2022 | 4,707 | 4,707 | [4,240](https://www.niigata-u.ac.jp/wp-content/uploads/2022/03/list2022.pdf) | [実践コミュニケーション英語Ⅰ・220G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2022/84/84_220G0001_ja_JP.html) |
+| 2023 | 4,674 | 4,673 | [4,152](https://www.niigata-u.ac.jp/wp-content/uploads/2023/03/17_kamoku_2023.pdf) | [実践コミュニケーション英語Ⅰ・230G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2023/84/84_230G0001_ja_JP.html) |
+| 2024 | 4,634 | 4,634 | [4,114](https://www.niigata-u.ac.jp/wp-content/uploads/2024/03/01_gakushuu_2024.pdf) | [実践コミュニケーション英語Ⅰ・240G0002](https://syllabus.niigata-u.ac.jp/syllabusHtml/2024/84/84_240G0002_ja_JP.html) |
+| 2025 | 4,624 | 4,624 | [4,146](https://www.iess.niigata-u.ac.jp/acpb/upload/20250327103752014129200.pdf) | [IELTS PreparationⅠ・250G0001](https://syllabus.niigata-u.ac.jp/syllabusHtml/2025/84/84_250G0001_ja_JP.html) |
+| 2026 | 4,347 | 4,347 | 現行カタログを使用 | [英語基礎 L・261G7011](https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/84/84_261G7011_ja_JP.html)／[エンジニアのためのデータサイエンス入門・261G3008](https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/84/84_261G3008_ja_JP.html) |
+
+2017〜2025年度は44,326件中39,872件で、年度・開講番号・科目名が検索結果と一致する開設一覧の「単位」欄を確認できた。開講所属は年度別の公開検索で確認する。同じ番号に複数の所属がある場合、番号・科目名・単位の記載が食い違う場合、表の行を特定できない場合は空欄にする。2016年度のPDFは科目表の文字をこの方法で取り出せなかった。
+
+2020年度の「実践コミュニケーション英語Ⅰ」開講番号200G0105は第1・2ターム、1単位。同じ番号で3単位の成績は分野要確認となり、元の成績の3単位は保持する。[開設一覧の該当行（PDFの10ページ）](https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf#page=10)／[当年度の個別シラバス](https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html)
 
 2016年度は443件で科目区分を取得できなかった。2019年度の5件と2023年度の1件は個別シラバスでも分野番号を確認できなかった。分野と科目区分は別々に保持し、記載のない項目は空欄にする。2019〜2025年度の「医歯学」の補完には、該当年度の授業科目開設一覧にある開講番号と表見出しを照合し、使用ページを各レコードに記録した。[2025年度授業科目開設一覧](https://www.iess.niigata-u.ac.jp/acpb/upload/20250327103752014129200.pdf)
 
@@ -30,7 +34,7 @@
 
 - `packs.mjs` の `await matchHistoricalGrades(incomingGrades, catalog, previousGrades)` が各行の `matchedCourse` を返す。元の成績の科目名、単位、年度、開講番号は保持する。取り込みを確定するときに保存し、集計には照合済みの分野・科目区分を使う。同名の未解決行は別の成績として維持する。
 - 各行の確認には `<HistoricalMatchPanel grade={originalGrade} catalog={catalog} onConfirm={saveMatch} />` を使う。`saveMatch(matchedCourse)` は対象の成績行だけを更新し、保存に失敗した場合は例外か `false` を返す。ユーザーが選んだ年度は `matchedCourse.year` に残る。
-- 同期・再取り込み時は `matchedCourse` の `year, code, department, title, fields, category, sourceUrl, confirmed`、出典の `sourceKind, fieldSource, categorySource, aliasSource`、資料に記載がある `term, period, semester, section, courseId, credits, schedule` を保持する。成績の修得単位は引き続き `grade.credits` から集計する。
+- 同期・再取り込み時は `matchedCourse` の `year, code, department, title, fields, category, sourceUrl, confirmed`、出典の `sourceKind, fieldSource, categorySource, creditSource, aliasSource`、資料に記載がある `term, period, semester, section, courseId, credits, schedule` を保持する。`creditSource` は授業の単位数を照合した大学公式PDFのページを指す。成績の修得単位は引き続き `grade.credits` から集計する。
 - 個別照合には `await loadHistoricalIndex(studyYear, catalog)` と `resolveHistoricalGrade(grade, index)` を使う。授業検索・予定の分野表示を成績と揃えるには、現行カタログの各行を `currentOffering(course, catalog)` に渡す。この関数の `sourceUrl` は参照可能な公式シラバスを指す。
 
 ### 学期・クラス・単位数の不一致
@@ -45,4 +49,4 @@
 
 `tools/archive_index.py CACHE YEAR ...` を `--dimension departments`、`fields`、`categories` で実行する。検索に使うのは公開の年度・開講所属・学問分野・科目細区分で、成績行を送信する処理はない。`tools/archive_pack.py CACHE YEAR ...` が各検索条件の結果を照合し、年度別JSONを生成する。
 
-再取得時は、`archive_pack.py` の `LISTINGS` にある公式PDFを `tools/pdf-layout.cjs` で `YEAR-layout.json` に変換して `--layouts DIR` に渡す。2026年度の開講所属・分野検索後に `--current-sources` を実行すると公開シラバスの差分を更新できる。読替表は同じPDF変換後に `--aliases-layout FILE`、歯学部目次は `--dental` で更新できる。
+再取得時は、`tools/archive_credits.py` の `LISTINGS` にある公式PDFを `tools/pdf-layout.cjs` で `YEAR-layout.json` に変換して `--layouts DIR` に渡す。単位数だけ更新する場合は `python tools/archive_pack.py . 2020 --credits-only --layouts DIR` のように対象年度を指定する。既存の検索索引と手元のPDFから生成した座標データを使用し、大学へのアクセスは発生しない。2026年度の開講所属・分野検索後に `--current-sources` を実行すると公開シラバスの差分を更新できる。読替表は同じPDF変換後に `--aliases-layout FILE`、歯学部目次は `--dental` で更新できる。

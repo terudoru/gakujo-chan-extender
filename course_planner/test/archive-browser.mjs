@@ -17,9 +17,18 @@ const bundle = await build({
       return `import React from "react";
         import {createRoot} from "react-dom/client";
         import Panel from "/src/archive/HistoricalMatchPanel.jsx";
+        import {matchHistoricalGrades} from "/src/archive/packs.mjs";
         const old = location.hash === "#old";
-        const grade = { id:"synthetic", title:old ? "年度資料の科目" : "英語基礎 L", credits:1, year:old ? "2011" : "2025" };
-        createRoot(document.getElementById("app")).render(React.createElement(Panel,{grade, onConfirm: match => window.result = match}));`;
+        const historical = location.hash.startsWith("#2020");
+        const grade = historical ? { id:"annual", year:"2020", code:"200G0105", title:"実践コミュニケーション英語I",
+          term:"第1,2ターム", credits:location.hash.endsWith("-3") ? 3 : 1, grade:"優" } :
+          { id:"synthetic", title:old ? "年度資料の科目" : "英語基礎 L", credits:1, year:old ? "2011" : "2025" };
+        async function show() {
+          const row = historical ? (await matchHistoricalGrades([grade]))[0] : grade;
+          window.imported = row;
+          createRoot(document.getElementById("app")).render(React.createElement(Panel,{grade:row, onConfirm: match => window.result = match}));
+        }
+        show();`;
     },
   }],
   build: { write: false, rollupOptions: { input: entry, output: { entryFileNames: "entry.js" } } },
@@ -61,6 +70,19 @@ try {
   assert.deepEqual(result.fields, ["70"]);
   assert.equal(result.confirmed, true);
   assert.equal(accessed.filter((p) => p.endsWith(".json")).length, 1);
+  await page.goto(base + "/#2020");
+  await page.reload();
+  await page.getByText("照合済み", { exact: true }).waitFor();
+  const printed = page.getByRole("link", { name: "単位数の出典（授業科目開設一覧）" });
+  assert.equal(await printed.getAttribute("href"), "https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf#page=10");
+  assert.equal(await official.getAttribute("href"), "https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html");
+  assert.deepEqual(await page.evaluate(() => window.imported.matchedCourse.fields), ["70"]);
+  await page.goto(base + "/#2020-3");
+  await page.reload();
+  await page.getByText(/授業の開講情報が一致しません/).waitFor();
+  assert.deepEqual(await page.evaluate(() => [window.imported.credits, window.imported.matchedCourse]), [3, null]);
+  assert.equal(await button.count(), 0);
+  assert.equal(await picker.count(), 0);
   await page.goto(base + "/#old");
   await page.reload();
   await page.getByText(/この年度の全学索引はありません/).waitFor();
@@ -92,7 +114,7 @@ try {
   assert.equal(await page.evaluate(() => window.executed), undefined);
   assert.ok(!accessed.includes("/should-never-load"));
   assert.deepEqual(errors, []);
-  console.log("Compiled panel: one lazy year pack, explicit namesake choice, missing year pack, local HTML validation and confirmation passed.");
+  console.log("Compiled panel: lazy year packs, 2020 exact and conflicting credits, namesake choice, missing year and local HTML confirmation passed.");
 } finally {
   await browser?.close();
   server.close();

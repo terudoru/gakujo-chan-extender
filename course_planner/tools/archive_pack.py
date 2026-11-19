@@ -1,6 +1,7 @@
 """Build lazy year packs after archive_index.py has collected each of its three dimensions.
 
-python archive_pack.py CACHE_DIR YEAR [YEAR ...]
+python archive_pack.py CACHE_DIR YEAR [YEAR ...] --layouts PDF_LAYOUT_DIR
+Use --credits-only to refresh the checked-in offerings offline from those layouts.
 Optional --aliases-layout takes pdf-layout.cjs output for the economics substitution table.
 Optional --dental collects only the undergraduate course names in the older faculty index.
 """
@@ -16,16 +17,10 @@ from bs4 import BeautifulSoup
 import requests
 
 from archive_index import UNITS
+from archive_credits import LISTINGS, attach_credits, printed_credits
 
 OUT = Path(__file__).resolve().parents[1] / "src/archive"
 DENTAL = "https://www.dent.niigata-u.ac.jp/student/syllabus/"
-LISTINGS = {
-    **{str(y): f"https://www.iess.niigata-u.ac.jp/pdf/subject_list_{y}/all.pdf" for y in (2019, 2020, 2021)},
-    "2022": "https://www.niigata-u.ac.jp/wp-content/uploads/2022/03/list2022.pdf",
-    "2023": "https://www.niigata-u.ac.jp/wp-content/uploads/2023/03/17_kamoku_2023.pdf",
-    "2024": "https://www.niigata-u.ac.jp/wp-content/uploads/2024/03/01_gakushuu_2024.pdf",
-    "2025": "https://www.iess.niigata-u.ac.jp/acpb/upload/20250327103752014129200.pdf",
-}
 GROUPS = ["英語", "初修外国語", "健康・スポーツ", "情報リテラシー", "新潟大学個性化科目",
           "留学生基本科目", "大学学習法", "自然系共通専門基礎", "自然科学", "人文社会・教育科学", "医歯学"]
 
@@ -64,7 +59,7 @@ def alternate_source(session, cache, year, dept, code):
 def printed_medical(layout, year):
     # The public A00/A10 filters omit offerings under 医歯学. Read the actual table heading and code column.
     rows = {}
-    if not layout or year not in LISTINGS:
+    if not layout or year not in LISTINGS or int(year) < 2019:
         return rows
     for number, page in enumerate(json.loads((layout / f"{year}-layout.json").read_text("utf-8")), 1):
         headings = ["".join(t.split()) for _, _, t in page if "細区分" in t]
@@ -157,13 +152,35 @@ def build(session, cache, year, layouts):
                 detail_fields = not fields[key] and bool(actual_fields)
                 fields[key].update(actual_fields)
         extra = [locale, page, True] if detail_fields else [locale, page] if page else [locale] if locale else []
-        rows.append(compact([dept, code, title, term, slot, "".join(sorted(fields[key])), next(iter(group), ""), *extra]))
+        rows.append([dept, code, title, term, slot, "".join(sorted(fields[key])), next(iter(group), ""), *extra])
     header = {"year": year}
     if printed:
         header["listing"] = LISTINGS[year]
-    data = compact(header)[:-1] + ',"rows":[\n' + ",\n".join(rows) + '\n]}'
-    write(OUT / "packs" / f"{year}.json", data)
+    save_year(header, rows, layouts)
     print(year, len(rows), sum(bool(f) for f in fields.values()), flush=True)
+
+
+def save_year(header, rows, layouts):
+    year = header["year"]
+    if year in LISTINGS:
+        if not layouts:
+            raise ValueError(f"Provide --layouts with the official {year} course listing")
+        pages = json.loads((layouts / f"{year}-layout.json").read_text("utf-8"))
+        if header.get("listing", LISTINGS[year]) != LISTINGS[year]:
+            raise ValueError(f"Unexpected annual listing for {year}")
+        count = attach_credits(year, rows, printed_credits(year, pages))
+        header["listing"] = LISTINGS[year]
+        print(f"{year}: {count}/{len(rows)} offerings with cited credits", flush=True)
+    data = compact(header)[:-1] + ',"rows":[\n' + ",\n".join(map(compact, rows)) + '\n]}'
+    write(OUT / "packs" / f"{year}.json", data)
+
+
+def refresh_credits(year, layouts):
+    pack = json.loads((OUT / "packs" / f"{year}.json").read_text("utf-8"))
+    if pack["year"] != year:
+        raise ValueError(f"Mismatched search pack for {year}")
+    rows = pack.pop("rows")
+    save_year(pack, rows, layouts)
 
 
 def aliases(layout):
@@ -244,12 +261,16 @@ if __name__ == "__main__":
     parser.add_argument("years", nargs="*")
     parser.add_argument("--aliases-layout", type=Path)
     parser.add_argument("--layouts", type=Path, help="Directory containing YEAR-layout.json from pdf-layout.cjs for LISTINGS")
+    parser.add_argument("--credits-only", action="store_true", help="Refresh credits offline, using the existing public search packs")
     parser.add_argument("--dental", action="store_true")
     parser.add_argument("--current-sources", action="store_true")
     args = parser.parse_args()
     with requests.Session() as session:
         for y in args.years:
-            build(session, args.cache, y, args.layouts)
+            if args.credits_only:
+                refresh_credits(y, args.layouts)
+            else:
+                build(session, args.cache, y, args.layouts)
         if args.current_sources:
             current_sources(session, args.cache)
     if args.aliases_layout:

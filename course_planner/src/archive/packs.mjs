@@ -15,12 +15,20 @@ const currentIndices = new WeakMap();
 
 export function unpackYear(requested, pack) {
   if (pack?.year !== String(requested) || !Array.isArray(pack.rows)) throw Error("指定した年度の索引を確認できません。");
-  return buildHistoricalIndex(pack.year, pack.rows.map(([department, code, title, period, schedule, fields, group, availability, page, detailFields]) => {
+  return buildHistoricalIndex(pack.year, pack.rows.map((row) => {
+    const units = Array.isArray(row.at(-1)) ? row.at(-1) : null;
+    const [department, code, title, period, schedule, fields, group, availability, page, detailFields] =
+      units ? row.slice(0, -1) : row;
+    if (units && (units.length !== 2 || !Number.isFinite(units[0]) || units[0] <= 0 ||
+        !Number.isInteger(units[1]) || units[1] <= 0 || !officialDocument(pack.listing + "#page=" + units[1]))) {
+      throw Error("単位数と授業科目開設一覧のページを確認できません。");
+    }
     if (!/^(?:\d{2})*$/.test(fields) || !/^[0-9A]?$/.test(group)) throw Error("索引の分野・科目区分を確認できません。");
     // The 2016 search still returns offerings and field filters, but its individual HTML links have expired.
     const indexOnly = pack.year === "2016" || availability === "index";
     const sourceUrl = indexOnly ? searchSource : courseSource(pack.year, department, code, availability === "en" ? "en_US" : "ja_JP");
     return { year: pack.year, department, code, title, period, schedule,
+      ...(units ? { credits: units[0], creditSource: pack.listing + "#page=" + units[1] } : {}),
       fields: fields.match(/\d{2}/g) ?? [], category: group ? categories[parseInt(group, 16)] : "",
       fieldSource: detailFields ? sourceUrl : searchSource, sourceKind: indexOnly ? "public-index" : "syllabus",
       ...(page ? { categorySource: pack.listing + "#page=" + page } : {}), sourceUrl };

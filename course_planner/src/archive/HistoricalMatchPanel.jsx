@@ -22,6 +22,7 @@ function Evidence({ course, catalog }) {
     {course.fieldSource && course.fieldSource !== course.sourceUrl &&
       <External href={course.fieldSource}>{course.fieldSource === searchSource ? "分野の出典（大学の年度別・分野別検索）" : "分野の出典"}</External>}
     {course.categorySource && <External href={course.categorySource}>科目区分の出典（授業科目開設一覧）</External>}
+    {course.creditSource && <External href={course.creditSource}>単位数の出典（授業科目開設一覧）</External>}
     {course.aliasSource && <External href={course.aliasSource}>経済学部生の科目読替表</External>}
   </div>;
 }

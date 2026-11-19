@@ -1,5 +1,6 @@
 import { normalize, validCode } from "../study.mjs";
 import pairs from "./economics-aliases.json" with { type: "json" };
+import creditListings from "./credit-listings.json" with { type: "json" };
 import { compareOfferingEvidence, offeringEvidence } from "./offering-evidence.mjs";
 
 export const searchSource = "https://syllabus.niigata-u.ac.jp/campus-sy/";
@@ -53,6 +54,8 @@ export function validOffering(course) {
   if (course.fieldSource && course.fieldSource !== course.sourceUrl && course.fieldSource !== searchSource &&
       !officialDocument(course.fieldSource)) return false;
   if (course.categorySource && !officialDocument(course.categorySource)) return false;
+  if (course.creditSource && (typeof course.creditSource !== "string" || !officialDocument(course.creditSource) ||
+      course.creditSource.split("#")[0] !== creditListings[course.year])) return false;
   const direct = courseSource(course.year, course.department, course.code);
   if (direct && (direct === course.sourceUrl || courseSource(course.year, course.department, course.code, "en_US") === course.sourceUrl)) return true;
   if (direct && course.sourceUrl === searchSource && sourceKind(course) === "public-index") return true;
