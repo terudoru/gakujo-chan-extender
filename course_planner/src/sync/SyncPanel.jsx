@@ -102,7 +102,7 @@ export function SyncPanel({ state, setState, catalog, visible = true }) {
         <label className="sync-check"><input type="checkbox" checked={checked("plan")}
           onChange={(e) => toggle("plan", e.target.checked)} />
           候補リストと時間割</label>
-        <p>リストの名前と授業、履修予定、登録状況、科目別のCAPの扱いを統合します。</p>
+        <p>リストの名前と授業、履修予定、登録状況、科目別のCAPの扱い、前期・後期に割り当てた単位数を統合します。</p>
         <label className="sync-check"><input type="checkbox" checked={checked("history")}
           onChange={(e) => toggle("history", e.target.checked)} />
           履修履歴と成績</label>

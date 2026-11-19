@@ -18,8 +18,11 @@ const syllabusLink = (v) => typeof v === "string" &&
   /^https:\/\/syllabus\.niigata-u\.ac\.jp\/syllabusHtml\/\d{4}\/[A-Z\d]{2}\/[\w-]+\.html$/.test(v);
 function offeringSource(v) {
   if (syllabusLink(v) || v === "https://syllabus.niigata-u.ac.jp/campus-sy/") return true;
-  if (typeof v !== "string" || v.length > 4096) return false;
   if (/^https:\/\/www\.dent\.niigata-u\.ac\.jp\/student\/syllabus\/#p1-syl\d{4}$/.test(v)) return true;
+  return officialDocument(v);
+}
+function officialDocument(v) {
+  if (typeof v !== "string" || v.length > 4096) return false;
   try {
     const u = new URL(v);
     return u.protocol === "https:" && !u.username && !u.password && !u.port && !u.search &&
@@ -36,19 +39,28 @@ const gradeFields = {
   matchStatus: text, equivalentTitle: text, equivalentTo: text, equivalenceKey: text, repeatGroup: text,
   duplicateOf: text, status: (s) => STATUS.includes(s),
   offeringDepartment: text, offeringFaculty: text,
+  source: (v) => ["成績確認表", "単位修得状況照会", "成績表"].includes(v),
+  possibleDuplicate: flag, repeatable: flag, identityUnresolved: flag,
 };
 const matchFields = {
   code: historicCode, year: scalar, department: text, title: text, fields, category: text,
   credits: number, confirmed: flag, section: text, term: text, courseId: text, sourceUrl: offeringSource,
   sourceKind: (s) => ["syllabus", "public-index", "faculty-index", "manual-record", "saved-syllabus"].includes(s),
   fieldSource: (s) => s === "" || offeringSource(s), aliasSource: offeringSource,
+  categorySource: officialDocument,
   schedule: text, period: text, semester: text, format: text,
 };
-const scopeFields = { faculty: text, program: text, field: text, handbook: scalar, entry: text, curriculum: text, goal: text, stage: text };
+const individual = (v) => flag(v) || text(v);
+const scopeFields = {
+  faculty: text, program: text, field: text, handbook: scalar, entry: text, curriculum: text, goal: text, stage: text,
+  admitted: scalar, department: text, individual, stageId: text,
+};
 const balanceFields = {
   ...scopeFields,
   key: text, label: text, kind: text, goal: text, required: number, current: number,
   day: number, night: number, sourceLabel: text, source: (s) => s === "履修科目確認表",
+  confirmed: flag, duplicateFree: flag,
+  unit: (v) => ["credits", "courses", "months", "condition"].includes(v),
 };
 const profileFields = {
   faculty: text, program: text, admitted: scalar, handbook: scalar, gpa: scalar,
@@ -56,6 +68,8 @@ const profileFields = {
   assessmentDate: (s) => s === "" || (text(s) && /^\d{4}-\d{2}-\d{2}$/.test(s)),
   enrolledMonths: scalar, attendanceMonths: scalar, yearMonths: monthCounts,
   yearAttendanceMonths: (v) => scalar(v) || monthCounts(v), earlyGraduation: flag, deanException: flag,
+  yearOfStudy: (v) => v === "" || ((text(v) || Number.isInteger(v)) && /^(?:[1-9]|1[0-2])$/.test(String(v))),
+  department: text, individual,
 };
 function pick(value, schema) {
   const result = {};
@@ -63,20 +77,58 @@ function pick(value, schema) {
     if (valid(value?.[key])) result[key] = value[key];
   return result;
 }
+function checkedScope(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.entries(scopeFields).some(([key, valid]) => value[key] != null && !valid(value[key])))
+    throw Error("履歴の適用範囲を確認してください。");
+  return pick(value, scopeFields);
+}
 function grade(value) {
   const result = pick(value, gradeFields);
   if (value?.matchedCourse?.confirmed === true) {
     const match = pick(value.matchedCourse, matchFields);
     if (match.code || (match.code === "" && match.sourceUrl)) result.matchedCourse = match;
   }
-  if (value?.allocationScope && result.allocationKey) result.allocationScope = pick(value.allocationScope, scopeFields);
+  if (value?.allocationScope != null && result.allocationKey) result.allocationScope = checkedScope(value.allocationScope);
   return result;
 }
 function gradeId(g) {
   return g.importId || g.recordId || g.id || JSON.stringify([g.year, g.code, g.title, g.section, g.term, g.courseId].map(normalize));
 }
-function balanceId(b) {
+function legacyBalanceId(b) {
   return JSON.stringify([b.faculty, b.program ?? "", b.field ?? "", b.handbook, b.entry ?? "", b.curriculum ?? "", b.goal, b.stage ?? "", b.key]);
+}
+function balance(row) {
+  checkedScope(row);
+  const result = pick(row, balanceFields);
+  if (row.scope != null) result.scope = checkedScope(row.scope);
+  return result;
+}
+function balanceId(row) {
+  const s = row.scope ?? row;
+  return JSON.stringify([s.faculty ?? null, s.program ?? "", s.field ?? "", s.handbook == null ? null : String(s.handbook),
+    s.entry ?? "1年次入学", s.curriculum ?? "", s.goal ?? null, s.stageId || s.stage || "", row.key,
+    String(s.admitted ?? ""), s.department ?? "", s.individual ?? "", row.unit ?? "credits"]);
+}
+const oldIdentity = (parts) => Array.isArray(parts) && parts.length === 9 &&
+  parts.every((v) => v === null || scalar(v)) && text(parts[8]);
+function currentIdentity(parts) {
+  return Array.isArray(parts) && parts.length === 13 && oldIdentity(parts.slice(0, 9)) &&
+    text(parts[9]) && text(parts[10]) && individual(parts[11]) && balanceFields.unit(parts[12]);
+}
+function legacyFamily(parts) {
+  // The old writer only saw the top level, ignored stageId, and retained the
+  // input type of handbook. Compare using the engine's effective scope.
+  const [faculty, program, field, handbook, entry, curriculum, goal, stage, key] = parts;
+  return JSON.stringify([faculty, program, field, handbook == null ? null : String(handbook),
+    entry || "1年次入学", curriculum, goal, stage, key]);
+}
+function fromOldBalance(value) {
+  return value && !value.scope && !["admitted", "department", "individual", "stageId", "unit", "duplicateFree"]
+    .some((field) => Object.hasOwn(value, field)) && value.confirmed !== true;
+}
+function scopedOrUnconfirmed(row) {
+  return fromOldBalance(row) ? { ...row, confirmed: false } : row;
 }
 const encode = (...parts) => JSON.stringify(parts);
 export function project(channel, state) {
@@ -97,13 +149,16 @@ export function project(channel, state) {
       if (validCode(code) && STATUS.includes(value)) map[encode("status", code)] = value;
     for (const [code, value] of Object.entries(state.capOverrides ?? {}))
       if (validCode(code) && ["除外", "算入"].includes(value)) map[encode("cap", code)] = value;
+    for (const [code, halves] of Object.entries(state.semesters ?? {}))
+      if (validCode(code) && number(halves?.first) && number(halves.second))
+        map[encode("semesters", code)] = { first: halves.first, second: halves.second };
   } else if (channel === "history") {
     for (const row of state.grades) {
       const value = grade(row);
       if (value.title && number(value.credits)) map[encode("grade", gradeId(value))] = value;
     }
     for (const row of state.balances ?? []) {
-      const value = pick(row, balanceFields);
+      const value = scopedOrUnconfirmed(balance(row));
       if (value.key && number(value.current) && number(value.required))
         map[encode("balance", balanceId(value))] = value;
     }
@@ -130,14 +185,21 @@ function validRecord(channel, key, value) {
     if (!validCode(a)) return false;
     if (type === "plan") return removed || value === true;
     if (type === "status") return removed || STATUS.includes(value);
+    if (type === "semesters") return removed || (number(value?.first) && number(value.second) &&
+      Object.keys(value).length === 2);
     return type === "cap" && (removed || ["除外", "算入"].includes(value));
   }
   if (parts.length !== 2 || typeof a !== "string" || a.length > 6500) return false;
   if (type === "profile") return Object.hasOwn(profileFields, a) && (removed || profileFields[a](value));
   if (type === "grade") return removed || (value?.title && number(value.credits) &&
     same(value, grade(value)) && a === gradeId(value));
-  return type === "balance" && (removed || (value?.key && number(value.current) &&
-    number(value.required) && same(value, pick(value, balanceFields)) && a === balanceId(value)));
+  if (type !== "balance") return false;
+  const identity = JSON.parse(a);
+  if (!oldIdentity(identity) && !currentIdentity(identity)) return false;
+  return removed || (value?.key && number(value.current) && number(value.required) &&
+    same(value, balance(value)) && (identity.length === 9
+      ? fromOldBalance(value) && value.confirmed === undefined && a === legacyBalanceId(value)
+      : a === balanceId(value)));
 }
 export function validateEntries(channel, entries) {
   if (!channels.includes(channel) || !entries || Array.isArray(entries) ||
@@ -149,9 +211,50 @@ export function validateEntries(channel, entries) {
   }
   return entries;
 }
-function materialized(cells) {
+function compareFallback(a, b) {
+  if (a.legacy !== b.legacy) return a.legacy ? -1 : 1;
+  if (a.clock !== b.clock) return a.clock - b.clock;
+  if (a.device !== b.device) return a.device > b.device ? 1 : -1;
+  return a.key > b.key ? 1 : -1;
+}
+function materialized(cells, knownFamilies = new Set()) {
   const values = {};
-  for (const [key, [, , value]] of Object.entries(cells)) if (value !== null) values[key] = value;
+  const modernFamilies = new Set(), fallback = new Map();
+  // Immutable old batches (including an unacknowledged publication) keep their
+  // own clocks. They cannot overwrite a later schema's more specific identity,
+  // even if an old offline writer returns after that identity was deleted.
+  for (const [key, cell] of Object.entries(cells)) {
+    const [clock, device, row] = cell;
+    const [type, id] = JSON.parse(key);
+    if (type !== "balance") {
+      if (row !== null) values[key] = row;
+      continue;
+    }
+    const parts = JSON.parse(id);
+    const family = legacyFamily(parts), legacy = oldIdentity(parts);
+    knownFamilies.add(family);
+    if (legacy || (row && fromOldBalance(row))) {
+      // Numeric and string handbook years used different old keys. Resolve
+      // those aliases in the same order on every device, including deletes.
+      const prev = fallback.get(family);
+      const candidate = { clock, device, key, row, legacy };
+      if (!prev || compareFallback(candidate, prev) > 0) fallback.set(family, candidate);
+      continue;
+    }
+    if (row !== null) values[key] = row;
+    modernFamilies.add(family);
+    if (row) modernFamilies.add(legacyFamily(JSON.parse(legacyBalanceId(row))));
+    modernFamilies.add(legacyFamily([...parts.slice(0, 7), "", parts[8]]));
+    modernFamilies.add(legacyFamily([null, "", "", null, "", "", null, "", parts[8]]));
+  }
+  for (const [family, { row }] of fallback) {
+    if (row && !modernFamilies.has(family)) {
+      // A v1 batch cannot prove admission, department, individual recognition
+      // or duplicate-free totals. Keep the figures available for rechecking.
+      values[encode("balance", balanceId(row))] = { ...row, confirmed: false };
+    }
+  }
+  for (const family of modernFamilies) knownFamilies.add(family);
   // Deleting a list also hides a member concurrently added to that list.
   const orderMembers = new Map();
   function includes(order, item) {
@@ -185,6 +288,13 @@ function merge(into, entries) {
 }
 function apply(channel, state, values, cells) {
   const lists = new Map(), members = [], plan = [], status = {}, cap = {};
+  const semesters = { ...state.semesters };
+  if (channel === "plan") for (const [code, halves] of Object.entries(semesters)) {
+    if (!validCode(code) || !number(halves?.first) || !number(halves.second)) continue;
+    const { first, second, ...other } = halves;
+    if (Object.keys(other).length) semesters[code] = other;
+    else delete semesters[code];
+  }
   const grades = [], balances = [], profile = { ...state.profile };
   const oldLists = new Map(state.lists.map((row) => [row.id, row]));
   const oldGrades = new Map(state.grades.map((row) => [gradeId(row), row]));
@@ -208,13 +318,14 @@ function apply(channel, state, values, cells) {
       case "plan": plan.push(a); break;
       case "status": status[a] = value; break;
       case "cap": cap[a] = value; break;
+      case "semesters": semesters[a] = { ...semesters[a], ...value }; break;
       case "grade": {
         const old = oldGrades.get(a);
         grades.push(old && same(grade(old), value) ? old :
           { ...preserveLocal(old, [...Object.keys(gradeFields), "matchedCourse", "allocationScope"]), ...value });
         break;
       }
-      case "balance": balances.push({ ...preserveLocal(oldBalances.get(a), Object.keys(balanceFields)), ...value }); break;
+      case "balance": balances.push({ ...preserveLocal(oldBalances.get(a), [...Object.keys(balanceFields), "scope"]), ...value }); break;
       case "profile": profile[a] = value; break;
     }
   }
@@ -239,7 +350,7 @@ function apply(channel, state, values, cells) {
       if (deletion) empty.id = "empty-" + deletion[1] + "-" + deletion[0];
       survivors.push(empty);
     }
-    Object.assign(state, { lists: survivors, plan, status, capOverrides: cap });
+    Object.assign(state, { lists: survivors, plan, status, capOverrides: cap, semesters });
   } else Object.assign(state, { grades, balances, profile });
 }
 export function checkpoint(state, owner, channel) {
@@ -250,7 +361,13 @@ export function checkpoint(state, owner, channel) {
 export function reconcile({ state, before, owner, device, channel, batches }) {
   const old = checkpoint(state, owner, channel);
   const joining = state.plannerSync?.joining?.[channel];
-  const initial = !old && joining?.owner === owner ? joining.values : before;
+  let initial = !old && joining?.owner === owner ? joining.values : before;
+  if (channel === "history" && initial !== before) {
+    // Older consent snapshots use the old balance key. Translate only the key
+    // when comparing offline edits; never infer scope from the current profile.
+    initial = Object.fromEntries(Object.entries(initial).map(([key, v]) =>
+      JSON.parse(key)[0] === "balance" ? [encode("balance", balanceId(v)), scopedOrUnconfirmed(v)] : [key, v]));
+  }
   const cells = { ...old?.cells };
   const baseline = materialized(cells);
   let clock = old?.clock ?? 0;
@@ -263,12 +380,18 @@ export function reconcile({ state, before, owner, device, channel, batches }) {
     seen.add(id);
   }
   const fresh = project(channel, state);
+  const remoteFamilies = new Set();
+  if (!old && channel === "history") materialized(cells, remoteFamilies);
   const edits = {};
   const keys = new Set([...Object.keys(baseline), ...Object.keys(initial), ...Object.keys(before), ...Object.keys(fresh)]);
   for (const key of keys) {
     const raced = !same(before[key], fresh[key]) || !same(initial[key], fresh[key]);
     // On first connection prefer the saved remote entry, including its deletion.
-    if (!raced && !old && cells[key]) continue;
+    if (!raced && !old) {
+      if (cells[key]) continue;
+      if (channel === "history" && JSON.parse(key)[0] === "balance" && fromOldBalance(fresh[key]) &&
+          remoteFamilies.has(legacyFamily(JSON.parse(legacyBalanceId(fresh[key]))))) continue;
+    }
     if (!raced && same(baseline[key], fresh[key])) continue;
     edits[key] = [(raced || !old ? clock : priorClock) + 1, device, fresh[key] ?? null];
   }
@@ -278,12 +401,14 @@ export function reconcile({ state, before, owner, device, channel, batches }) {
   const pendingEntries = { ...old?.pending?.entries, ...edits };
   const pending = Object.keys(edits).length
     ? { id: crypto.randomUUID(), entries: pendingEntries } : old?.pending ?? null;
-  if (old && !batches.length && !Object.keys(edits).length) return old;
+  if (old && !batches.length && !Object.keys(edits).length &&
+      (channel !== "history" || old.balanceKeysVersion === 2)) return old;
   apply(channel, state, materialized(cells), cells);
   if (state.plannerSync?.owner !== owner) state.plannerSync = { owner, joining: state.plannerSync?.joining };
   if (state.plannerSync.joining) {
     delete state.plannerSync.joining[channel];
     if (!Object.keys(state.plannerSync.joining).length) delete state.plannerSync.joining;
   }
-  return state.plannerSync[channel] = { cells, clock, seen: [...seen], pending };
+  return state.plannerSync[channel] = { cells, clock, seen: [...seen], pending,
+    ...(channel === "history" && { balanceKeysVersion: 2 }) };
 }

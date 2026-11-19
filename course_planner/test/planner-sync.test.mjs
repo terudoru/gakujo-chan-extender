@@ -161,6 +161,134 @@ test("grade identities, review decisions and official archive evidence survive a
   assert.deepEqual(receiver.balances.sort((x,y) => x.stage.localeCompare(y.stage)),
     source.balances.sort((x,y) => x.stage.localeCompare(y.stage)));
 });
+function history(state, device, batches = [], before = project("history", state)) {
+  return reconcile({ state, before, owner, device, channel: "history", batches });
+}
+test("plan sends only both explicit semester halves per offering, including updates and removals", () => {
+  const local = initialState(), remote = initialState();
+  local.semesters = { [c1]: { first: 1.5, second: 0, grade: "SENSITIVE" }, [c2]: { first: 1 }, raw: { first: 0, second: 0 } };
+  const batch = run(local, a).pending;
+  assert.deepEqual(batch.entries[JSON.stringify(["semesters", c1])][2], { first: 1.5, second: 0 });
+  assert.ok(!JSON.stringify(batch.entries).includes("SENSITIVE"));
+  assert.ok(!JSON.stringify(project("history", local)).includes("semesters"));
+  assert.throws(() => validateEntries("plan", { [JSON.stringify(["semesters", c1])]: [1, a, { first: 1, second: 1, grade: "SENSITIVE" }] }));
+  run(remote, b, [batch]);
+  assert.deepEqual(remote.semesters, { [c1]: { first: 1.5, second: 0 } });
+  delete remote.semesters[c1];
+  run(local, a, [run(remote, b).pending]);
+  assert.deepEqual(local.semesters[c1], { grade: "SENSITIVE" });
+});
+const scope = {
+  faculty: "法学部", department: "法学科", admitted: "2022", handbook: "2023", program: "法学",
+  entry: "編入・転部・再入学", field: "公法", curriculum: "A", individual: false, goal: "progress", stage: "third",
+};
+const total = { key: "total", label: "計", required: 60, current: 32, duplicateFree: true, confirmed: true, source: "履修科目確認表" };
+function v1(row) {
+  const old = Object.fromEntries(["faculty", "program", "field", "handbook", "entry", "curriculum", "goal", "stage",
+    "key", "label", "kind", "required", "current", "day", "night", "sourceLabel", "source"]
+    .filter((k) => row[k] !== undefined).map((k) => [k, row[k]]));
+  const id = JSON.stringify([old.faculty, old.program ?? "", old.field ?? "", old.handbook, old.entry ?? "",
+    old.curriculum ?? "", old.goal, old.stage ?? "", old.key]);
+  return { key: JSON.stringify(["balance", id]), old };
+}
+test("each academic scope, eligibility decision and typed source survives history only", () => {
+  const author = initialState(), receiver = initialState();
+  Object.assign(author.profile, scope, { yearOfStudy: "4", sessionKey: "PRIVATE" });
+  const variations = [{}, { department: "別学科" }, { admitted: "2021" }, { individual: true }, { field: "別" },
+    { handbook: "2020" }, { faculty: "別" }, { program: "別" }, { curriculum: "B" },
+    { entry: "1年次入学" }, { goal: "graduation" }, { stage: "fourth" }];
+  author.balances = variations.map((v, i) => ({ ...scope, ...v, ...total, current: i + 1 }));
+  author.balances.push({ ...total, scope: { ...scope, stageId: "fifth", stage: "", rawPDF: "PRIVATE" }, unit: "credits", confirmed: false });
+  author.grades = [{ title: "認定A", credits: 1, grade: "認定", recognized: true, allocationKey: "major",
+    allocationScope: { ...scope, cookie: "PRIVATE" }, possibleDuplicate: true, duplicateReviewed: true, counts: true, source: "単位修得状況照会",
+    matchedCourse: { code: c1, confirmed: true, categorySource: "https://www.eng.niigata-u.ac.jp/sample.pdf#page=4" } },
+    { title: "認定B", credits: 1, source: "PRIVATE", duplicate: true, counts: false }];
+  const batch = history(author, a).pending;
+  history(receiver, b, [batch]);
+  assert.equal(receiver.balances.length, variations.length + 1);
+  for (const [i, patch] of variations.entries()) {
+    const actual = receiver.balances.find((row) => row.current === i + 1);
+    assert.deepEqual(actual, { ...scope, ...patch, ...total, current: i + 1 });
+  }
+  assert.deepEqual(receiver.balances.find((r) => r.scope)?.scope, { ...scope, stageId: "fifth", stage: "" });
+  assert.equal(receiver.balances.find((r) => r.scope)?.confirmed, false);
+  assert.equal(receiver.profile.yearOfStudy, "4");
+  assert.equal(receiver.profile.individual, false);
+  assert.equal(receiver.profile.department, scope.department);
+  const g = receiver.grades.find((r) => r.title === "認定A");
+  assert.deepEqual(g.allocationScope, scope);
+  assert.ok(g.possibleDuplicate && g.duplicateReviewed && g.counts);
+  assert.equal(g.source, "単位修得状況照会");
+  assert.equal(g.matchedCourse.categorySource, "https://www.eng.niigata-u.ac.jp/sample.pdf#page=4");
+  assert.ok(!JSON.stringify(batch).includes("PRIVATE"));
+  assert.doesNotMatch(JSON.stringify(project("plan", author)), /total|法学|認定|duplicate|yearOfStudy|PRIVATE/);
+  author.grades[0].matchedCourse.categorySource += "?token=PRIVATE";
+  assert.ok(!JSON.stringify(project("history", author)).includes("categorySource"));
+  author.balances[0].department = { token: "PRIVATE" };
+  assert.throws(() => project("history", author), /適用範囲/);
+});
+test("a scoped local row supersedes a legacy checkpoint, pending write, remote edit and tombstone", () => {
+  const local = initialState(), replica = initialState();
+  const full = { ...scope, ...total };
+  const { old, key } = v1(full);
+  const batch = { id: crypto.randomUUID(), entries: { [key]: [3, a, old] } };
+  local.balances = [full];
+  local.plannerSync = { owner, history: { cells: structuredClone(batch.entries), pending: batch, clock: 3, seen: [] } };
+  const upgraded = history(local, a).pending;
+  assert.notEqual(upgraded.id, batch.id);
+  assert.deepEqual(local.balances, [full]);
+  history(replica, b, [batch]);
+  assert.equal(replica.balances[0].confirmed, false);
+  history(replica, b, [upgraded]);
+  assert.deepEqual(replica.balances, [full]);
+  const late = { id: crypto.randomUUID(), entries: { [key]: [80, a, { ...old, current: 50 }] } };
+  history(replica, b, [late]);
+  assert.deepEqual(replica.balances, [full]);
+  replica.balances = [];
+  const deletion = history(replica, b).pending;
+  history(local, a, [deletion, late, { id: crypto.randomUUID(), entries: { [key]: [90, a, null] } }]);
+  assert.deepEqual(local.balances, []);
+  const newcomer = initialState();
+  newcomer.balances = [old];
+  history(newcomer, b, [late, deletion, upgraded, batch]);
+  assert.deepEqual(newcomer.balances, []);
+});
+test("legacy-only figures remain available for rechecking without profile attribution or duplicate uploads", () => {
+  const s = initialState();
+  const { old, key } = v1({ ...scope, ...total });
+  const batch = { id: crypto.randomUUID(), entries: { [key]: [2, b, old] } };
+  s.balances = [old];
+  s.plannerSync = { owner, history: { cells: batch.entries, clock: 2, seen: [batch.id], pending: null } };
+  const next = history(s, a);
+  assert.deepEqual(s.balances, [{ ...old, confirmed: false }]);
+  // The first run may also enqueue initially present profile fields.
+  if (next.pending) assert.ok(!Object.keys(next.pending.entries).some((key) => JSON.parse(key)[0] === "balance"));
+  const before = JSON.stringify(s.balances);
+  history(s, a, [batch]);
+  assert.equal(JSON.stringify(s.balances), before);
+});
+test("legacy handbook aliases converge in any arrival order, even on a newly paired device", () => {
+  const numeric = v1({ ...scope, ...total, handbook: 2023 }), string = v1({ ...scope, ...total, current: 45 });
+  const older = { id: crypto.randomUUID(), entries: { [numeric.key]: [1, a, numeric.old] } };
+  const newer = { id: crypto.randomUUID(), entries: { [string.key]: [3, b, string.old] } };
+  const removed = { id: crypto.randomUUID(), entries: { [numeric.key]: [5, a, null] } };
+  for (const sequence of [[older, newer], [newer, older]]) {
+    const s = initialState();
+    history(s, b, sequence);
+    assert.deepEqual(s.balances, [{ ...string.old, confirmed: false }]);
+    history(s, b, [removed]);
+    assert.deepEqual(s.balances, []);
+  }
+  const fresh = initialState(), peer = initialState();
+  fresh.balances = [numeric.old];
+  const unconfirmed = history(fresh, a).pending;
+  history(peer, b, [unconfirmed]);
+  assert.equal(peer.balances[0].confirmed, false);
+  const scoped = initialState();
+  scoped.balances = [{ ...scope, ...total }];
+  history(peer, b, [history(scoped, a).pending, newer]);
+  assert.deepEqual(peer.balances, scoped.balances);
+});
 test("Drive uses account identity and paginates a single private channel; session expiry stops access", async (t) => {
   const group = "group", prefix = "mbg-planner-v1.group.plan.";
   const calls = [], guard = () => {};

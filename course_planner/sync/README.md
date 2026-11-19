@@ -30,6 +30,8 @@ node course_planner/sync/relay.mjs serve ../planner-private/relay-data https://p
 
 項目をオフにするとその端末での新しい送受信を止め、処理中の応答を破棄する。接続解除で端末の同期鍵を削除する。すでに送信したデータや各端末のプランナーの内容は残る。データは同期先に暗号化した変更履歴として蓄積する。持ち主が同期領域全体を廃棄する場合は、先にすべての端末で接続を解除する。
 
+旧版で送信した区分別単位には、入学年度・学科・個別認定の区別が記録されていない。対象を確定できる新版の記録を優先し、旧版の数値しか残っていない場合は未確認として保持する。帳票を持っている端末で取り込み直すと、対象の便覧・要件に対応付けられる。新しい項目を使う端末は同じ新版にそろえる。
+
 ## プランナーとの接続と検証
 
 `src/sync/SyncPanel.jsx` の名前付き export `SyncPanel` を App から常時マウントする。props は `state`、React の `setState`、`catalog`、設定画面のときだけ true にする `visible`。表示中のページに関わらず、同期は App と同じ `loadLocal/changeLocal` を使う。ローカル保存形式では `plannerSync` が更新の世代・削除・送信待ちを保持する。ストレージの正規化ではこのプロパティを保つ。共有リンクは既存の `snapshot()` の許可項目だけで作る。
@@ -40,4 +42,10 @@ node course_planner/sync/relay.mjs serve ../planner-private/relay-data https://p
 npm --prefix course_planner ci
 npm --prefix course_planner test
 node course_planner/tools/check-planner-sync.mjs
+```
+
+同期画面を組み込んだビルドを検証するときは、生成済みのディレクトリを指定する。下の例はその内容を一時的に配信し、画面からの成績CSV取り込み、候補追加、時間割選択、同意の変更を試す。
+
+```sh
+node course_planner/tools/check-planner-sync.mjs --dist site/planner
 ```
