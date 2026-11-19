@@ -1,7 +1,9 @@
 # Use Flutter's stock runner, a fresh WebView2 profile and synthetic localhost
 # data. The installed application's instance and protocol registration are separate.
 # With -PlannerDist <built site/planner>, verify capture, React review and durable save.
-param([string]$PlannerDist)
+# Add -SyncProject <course_planner> to test the same build in WebView2 and Chrome.
+# The corresponding public UI reference is node course_planner/tools/check-planner-sync.mjs --dist <built site/planner>.
+param([string]$PlannerDist, [string]$SyncProject)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $dist = if ($PlannerDist) {
@@ -10,6 +12,14 @@ $dist = if ($PlannerDist) {
         throw 'PlannerDist must contain the compiled planner index.html'
     }
     $resolved
+}
+$syncRoot = if ($SyncProject) {
+    if (!$dist) { throw 'SyncProject requires a compiled PlannerDist' }
+    $resolvedProject = (Resolve-Path -LiteralPath $SyncProject).Path
+    if (!(Test-Path -LiteralPath (Join-Path $resolvedProject 'sync/relay.mjs') -PathType Leaf)) {
+        throw 'SyncProject must contain the local planner relay'
+    }
+    $resolvedProject
 }
 $hostDir = Join-Path $root 'build/course_planner_smoke_host'
 if (!(Test-Path -LiteralPath $hostDir)) {
@@ -45,6 +55,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'course_planner_windows_react_sm
 Push-Location -LiteralPath $hostDir
 $previousFixture = $env:MBG_PLANNER_SMOKE_DIR
 $previousDist = $env:MBG_PLANNER_SMOKE_DIST
+$previousSync = $env:MBG_PLANNER_SMOKE_SYNC_PROJECT
+$previousDriver = $env:MBG_PLANNER_SMOKE_SYNC_DRIVER
 try {
     flutter pub get
     if ($LASTEXITCODE) { throw 'Could not prepare fixture dependencies' }
@@ -53,14 +65,17 @@ try {
     $runDir = New-Item -ItemType Directory -Path (Join-Path $hostDir ([Guid]::NewGuid().ToString('N')))
     $env:MBG_PLANNER_SMOKE_DIR = $runDir.FullName
     $env:MBG_PLANNER_SMOKE_DIST = $dist
+    $env:MBG_PLANNER_SMOKE_SYNC_PROJECT = $syncRoot
+    $env:MBG_PLANNER_SMOKE_SYNC_DRIVER = Join-Path $PSScriptRoot 'course_planner_windows_sync.mjs'
     $exe = (Resolve-Path 'build/windows/x64/runner/Debug/planner_smoke.exe').Path
     $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru
-    if (!$proc.WaitForExit(90000)) {
+    $timeout = if ($syncRoot) { 300000 } else { 90000 }
+    if (!$proc.WaitForExit($timeout)) {
         $proc.Kill()
         throw 'The fixture did not finish'
     }
     $proof = Get-Content -Raw -LiteralPath (Join-Path $runDir.FullName 'result.txt')
-    $expected = if ($dist) { 'Verified Windows WebView2 React planner capture, consent and persisted grade after reload' } else { 'Verified Windows WebView2 planner review' }
+    $expected = if ($syncRoot) { 'Verified WebView2 and Chrome relay edits, history consent and withdrawal' } elseif ($dist) { 'Verified Windows WebView2 React planner capture, consent and persisted grade after reload' } else { 'Verified Windows WebView2 planner review' }
     if ($proc.ExitCode -ne 0 -or $proof -ne $expected) {
         throw "The planner smoke test failed ($proof)"
     }
@@ -68,5 +83,7 @@ try {
 } finally {
     $env:MBG_PLANNER_SMOKE_DIR = $previousFixture
     $env:MBG_PLANNER_SMOKE_DIST = $previousDist
+    $env:MBG_PLANNER_SMOKE_SYNC_PROJECT = $previousSync
+    $env:MBG_PLANNER_SMOKE_SYNC_DRIVER = $previousDriver
     Pop-Location
 }

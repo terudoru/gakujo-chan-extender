@@ -1,6 +1,8 @@
 // Companion to course_planner_windows_smoke.ps1 -PlannerDist <directory>.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:morebettergakujo_flutter/src/course_planner_page.dart';
@@ -134,12 +136,17 @@ Future<void> runReactPlannerSmoke(
     exit(1);
   }
 
-  final timer = Timer(const Duration(seconds: 75), fail);
+  final syncProject = Platform.environment['MBG_PLANNER_SMOKE_SYNC_PROJECT'];
+  final sync = syncProject != null && syncProject.isNotEmpty;
+  final timer = Timer(Duration(seconds: sync ? 240 : 75), fail);
   try {
     await windows.WebviewController.initializeEnvironment(
       userDataPath: '${root.path}/profile',
-      additionalArguments:
-          '--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"',
+      additionalArguments: [
+        '--host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"',
+        if (sync)
+          '--remote-debugging-address=127.0.0.1 --remote-debugging-port=0',
+      ].join(' '),
     );
     runApp(const SizedBox.shrink());
     stage = 'binding the local synthetic portal table';
@@ -147,11 +154,12 @@ Future<void> runReactPlannerSmoke(
     stage = 'serving the supplied planner build';
     final server = await _serveBuild(dist);
     final view = _ObservedWindowsView();
+    final url = Uri.parse('http://127.0.0.1:${server.port}/planner/');
     runApp(
       MaterialApp(
         home: CoursePlannerPage(
           service: view,
-          url: Uri.parse('http://127.0.0.1:${server.port}/planner/'),
+          url: url,
           source: source,
           kind: CoursePlannerImportKind.grades,
           onExternalLink: (_) => fail(),
@@ -222,10 +230,42 @@ Future<void> runReactPlannerSmoke(
       .filter(li => li.getClientRects().length && ['$_course','$_code','2026','優','2単位']
         .every(value => li.innerText.includes(value))).length === 1''');
     await source.controller.dispose();
+    if (sync) {
+      stage = 'opening the isolated Windows and Chrome relay driver';
+      // Identify this Flutter-owned planner document before attaching to the
+      // ephemeral DevTools endpoint inside its fresh WebView2 profile.
+      final random = Random.secure();
+      final marker = base64Url.encode(
+        List<int>.generate(18, (_) => random.nextInt(256)),
+      );
+      await planner.runJavaScript(
+        'document.__mbgSmokeHost = ${jsonEncode(marker)}',
+      );
+      final driver = await Process.run(
+        'node',
+        [
+          Platform.environment['MBG_PLANNER_SMOKE_SYNC_DRIVER']!,
+          syncProject,
+          root.path,
+          url.toString(),
+          marker,
+        ],
+        environment: {'DEBUG': '', 'PWDEBUG': '0'},
+      );
+      final proof = driver.stdout.toString().trim();
+      if (driver.exitCode != 0 || proof != 'PASS') {
+        if (RegExp(r'^FAIL [a-z -]{1,100}$').hasMatch(proof)) {
+          stage = proof.substring(5);
+        }
+        fail();
+      }
+    }
     await server.close(force: true);
     timer.cancel();
     result.writeAsStringSync(
-      'Verified Windows WebView2 React planner capture, consent and persisted grade after reload',
+      sync
+          ? 'Verified WebView2 and Chrome relay edits, history consent and withdrawal'
+          : 'Verified Windows WebView2 React planner capture, consent and persisted grade after reload',
     );
     exit(0);
   } on Object {
