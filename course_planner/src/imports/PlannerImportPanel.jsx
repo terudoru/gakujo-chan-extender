@@ -152,7 +152,7 @@ function ReviewForm({
                 第{row.id.split("-")[0]}表 {row.id.split("-")[1]}行目　
                 {detail(review.kind, value)}
               </small>
-              {row.evaluationYear ? <small>配当単位を照合中…</small> : row.reason && <small>{row.reason}</small>}
+              {row.evaluationYear ? <small>開講情報を照合中…</small> : row.reason && <small>{row.reason}</small>}
               {value && isBalance && (
                 <Select
                   label={row.label + "の照合先"}
@@ -466,7 +466,7 @@ function ImportSource({
         />
       )}
       {busy && <p role="status">読み取り中…</p>}
-      {years && <p role="status">{years.split(",").join("・")}年度の開講情報で配当単位を確認しています…</p>}
+      {years && <p role="status">{years.split(",").join("・")}年度の開講情報で科目名と配当単位を確認しています…</p>}
       {(error || parsed?.error) && (
         <p role="alert" className="error">
           {error || parsed.error}

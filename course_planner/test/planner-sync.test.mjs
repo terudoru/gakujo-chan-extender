@@ -276,7 +276,7 @@ test("private history distinguishes absent, unresolved and confirmed matches, in
 test("a final failing evaluation survives encrypted history with no earned credit or public disclosure", async () => {
   const source = initialState(), remote = initialState();
   const assessment = { importId: "final-assessment", year: "2026", code: "260K0363",
-    title: "現代教育学概論", grade: "不可", credits: 2, counts: false, duplicate: false, finalEvaluation: true };
+    title: "現代教育学概論", titleFromOffering: true, grade: "不可", credits: 2, counts: false, duplicate: false, finalEvaluation: true };
   source.grades = [assessment];
   const batch = history(source, a).pending;
   const key = await channelKey(await pairingKey(newPairingCode()), owner, "history");

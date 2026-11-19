@@ -37,7 +37,7 @@ function officialDocument(v) {
 }
 const gradeFields = {
   id: text, recordId: text, importId: (s) => typeof s === "string" && s.length <= 6000,
-  code: historicCode, title: text, year: scalar, grade: text, credits: number,
+  code: historicCode, title: text, titleFromOffering: flag, year: scalar, grade: text, credits: number,
   fields, category: text, department: text, duplicate: flag, recognized: flag,
   courseId: text, term: text, section: text, alternativeTitle: text, counts: flag,
   duplicateReviewed: flag, finalEvaluation: flag, identityUncertain: flag, allocationLabel: text, allocationKey: text,

@@ -67,8 +67,9 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
     <tr><td>259K9002</td><td>合成矛盾評価</td><td>2</td><td>1</td><td>不可</td><td>2025</td>
     <td>教育学部</td><td></td><td></td></tr></table>
     <table><tr><th>開講番号</th><th>科目名</th><th>取得単位数</th><th>評価</th><th>年度</th><th>開講所属</th></tr>
-    <tr><td>260K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2026</td><td>教育学部</td></tr>
-    <tr><td>250K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2025</td><td>教育学部</td></tr></table>''',
+    <tr><td>260K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2026</td><td>教育学部</td></tr></table>
+    <table><tr><th>開講番号</th><th>取得単位数</th><th>評価</th><th>年度</th><th>開講所属</th></tr>
+    <tr><td>250K0363</td><td>0</td><td>不可</td><td>2025</td><td>教育学部</td></tr></table>''',
   );
   final inner = windows.WebviewController();
   final controller = WindowsGakujoWebViewController(inner);

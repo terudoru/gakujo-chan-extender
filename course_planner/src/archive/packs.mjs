@@ -94,10 +94,6 @@ export function resolveImportOffering(attempt, index, catalogYear) {
   return match;
 }
 
-export function finalEvaluationCredits(attempt, index, catalogYear) {
-  return resolveImportOffering(attempt, index, catalogYear)?.credits ?? null;
-}
-
 // Safe read projection before allocating a local or synced confirmed row. No storage write or network request.
 export function revalidateGradeMatch(grade, currentCatalog, historicalIndex) {
   if (grade?.matchedCourse?.confirmed !== true) return null;
