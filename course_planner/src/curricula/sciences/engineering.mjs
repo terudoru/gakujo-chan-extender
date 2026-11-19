@@ -13,7 +13,6 @@ import {
   type,
   night,
   capped,
-  intensive,
   transferRow,
   programFor,
 } from "./common.mjs";
@@ -22,6 +21,7 @@ import {
   engineeringCourses,
 } from "./engineering-tables.mjs";
 import { engineeringPackages } from "./engineering-packages.mjs";
+import { engineeringCap, teachingTableSources } from "./engineering-cap.mjs";
 import { legacyPackages } from "./engineering-legacy-packages.mjs";
 import { semester2026 } from "./science-tables.mjs";
 
@@ -565,23 +565,17 @@ export function engineering(book, p) {
   }
   return {
     title: book.title,
-    sources: [book, guide, exclusions],
+    sources: [book, guide, exclusions, ...teachingTableSources(book)],
     stages,
     cap: {
       limit: 28,
       source: capSource,
-      classify: (c) =>
-        intensive(c) ||
-        c.creditExchange ||
-        c.vacationCourse ||
-        c.teacherTraining ||
-        name(c) === "リメディアル演習" ||
-        (y <= 2023 && type(c) === "Q")
-          ? "exclude"
-          : type(c)
-            ? "include"
-            : "unknown",
-      note: "集中講義、単位互換、休業中の特別開講、指定の教職科目・リメディアル演習を除きます。",
+      classify: (c) => engineeringCap(c, y),
+      note:
+        `集中講義、単位互換、休業中の特別開講、教員免許状の別表${y < 2019 ? "2" : "1"}で指定された教職科目、リメディアル演習を除きます。` +
+        (y === 2018
+          ? "教職のハンドブックと別表2で科目名が異なる場合は、CAPへの算入を工学部学務係に確認してください。"
+          : ""),
     },
   };
 }

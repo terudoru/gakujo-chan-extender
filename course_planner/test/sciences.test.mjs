@@ -252,6 +252,85 @@ test("engineering management packages distinguish lectures from labs and combine
   assert.equal(evaluate(old, input).value, 2);
 });
 
+test("engineering CAP excludes the listed teaching classes and keeps other education electives", () => {
+  const info = resolve(
+    eng("機械システム工学プログラム", "2026", { yearOfStudy: 1 }),
+  );
+  const { classify, limit } = info.cap;
+  assert.equal(limit, 28);
+  assert.match(info.cap.source.url, /hikkei_2026\.pdf#page=67$/);
+  assert.ok(info.sources.some((s) => /hikkei_2026\.pdf#page=75$/.test(s.url)));
+  for (const code of [
+    "261K0034",
+    "260K0507",
+    "260K9304",
+    "260K9233",
+    "262K0475",
+  ]) {
+    assert.equal(classify(course(code)), "exclude", code);
+  }
+  for (const code of [
+    "260K0506",
+    "260K9303",
+    "260K0363",
+    "260K0310",
+    "261G3008",
+  ]) {
+    const c = course(code);
+    assert.equal(classify(c), "include", c.title);
+    assert.equal(classify({ ...c, teacherTraining: true }), "include", c.title);
+  }
+  const intro = course("261K0034");
+  for (const missing of [
+    { code: "" },
+    { ambiguous: true },
+    { title: "" },
+    { credits: null },
+    { credits: 1 },
+    { code: "261J0034" },
+  ]) {
+    assert.equal(classify({ ...intro, ...missing }), "unknown");
+  }
+});
+
+test("engineering CAP uses each admission year's teaching table and named subject groups", () => {
+  const classify = (year, c) =>
+    resolve(eng("機械システム工学", String(year))).cap.classify(c);
+  // Use a regular class meeting here to isolate these names from the independent intensive exemption.
+  const regular = (title, credits = 2) => ({
+    code: "200K9876",
+    title,
+    credits,
+    period: "第1ターム",
+  });
+  for (let year = 2017; year <= 2026; year++) {
+    assert.equal(classify(year, course("261K0034")), "exclude");
+    assert.equal(
+      classify(year, regular("工業科教育法Ⅰ")),
+      year === 2019 ? "include" : "exclude",
+    );
+    assert.equal(
+      classify(year, regular("情報科教育法Ⅱ")),
+      year >= 2025 ? "exclude" : "include",
+    );
+    assert.equal(
+      classify(year, course("262K0475")),
+      year >= 2022 ? "exclude" : "include",
+    );
+  }
+  assert.equal(classify(2017, regular("教育心理学")), "exclude");
+  assert.equal(classify(2018, course("260K0301")), "unknown");
+  assert.equal(classify(2019, course("260K0301")), "exclude");
+  assert.equal(classify(2025, course("260K0301")), "exclude");
+  assert.equal(classify(2025, course("260K0507")), "include");
+  assert.equal(classify(2026, course("260K0301")), "include");
+  assert.equal(classify(2026, course("260K0507")), "exclude");
+  assert.equal(
+    resolve(eng("機械システム工学科", "2016")).cap.classify(course("261K0034")),
+    "unknown",
+  );
+});
+
 test("a validated semester split resolves only the timing of a CAP-eligible course", () => {
   const confirmed = { semesterSplitConfirmed: true };
   for (const [student, lecture] of [
