@@ -1783,6 +1783,44 @@ Future<String> googleDriveTokenForAccount(
   return token;
 }
 
+class GoogleDriveSaveFolderPicker {
+  StarSyncGoogleAuthSession? _active;
+
+  Future<GoogleDriveFolder?> pick({
+    required StarSyncGoogleAuthSession session,
+    required GoogleDriveFileSaver saver,
+    required void Function() checkCurrent,
+  }) async {
+    checkCurrent();
+    final previous = _active;
+    if (previous != null) {
+      if (previous.generation == session.generation) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+      }
+      cancel(previous);
+    }
+    _active = session;
+    final String? id;
+    try {
+      id = await session.auth.pickDriveFolder();
+      if (!identical(_active, session)) return null;
+    } finally {
+      if (identical(_active, session)) _active = null;
+    }
+    checkCurrent();
+    if (id == null) return null;
+    final folder = await saver.getPrivateFolder(id);
+    checkCurrent();
+    return folder;
+  }
+
+  void cancel(StarSyncGoogleAuthSession session) {
+    if (!identical(_active, session)) return;
+    _active = null;
+    session.auth.cancelPendingDriveFolderPick();
+  }
+}
+
 class _PageRestoreReservation {
   String? url;
   Object? _owner;
@@ -1828,6 +1866,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
   late final StarSyncGoogleAuth _starSyncGoogleAuth;
+  final _driveSaveFolderPicker = GoogleDriveSaveFolderPicker();
   GoogleDriveFileSaver? _googleDriveFileSaver;
   String? _driveSaverEmail;
   String? _starSyncGoogleEmail;
@@ -6816,50 +6855,64 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _chooseDriveSaveFolder(BuildContext dialogContext) async {
     final email = _starSyncGoogleEmail;
-    if (email == null) return;
+    if (email == null || !_driveDownloadsEnabled ||
+        !sameGoogleAccount(email, _starSyncGoogleAuth.currentEmail)) {
+      return;
+    }
+    final currentId = _driveDownloadPreference.folderIdFor(email);
+    final generation = _driveUploads.generation;
+    var closed = false;
+    final session = StarSyncGoogleAuthSession(_starSyncGoogleAuth, email: email);
+    void checkCurrent() {
+      session.checkCurrent();
+      if (closed || !mounted || !_driveDownloadsEnabled ||
+          !_driveUploads.isCurrent(generation)) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
+      }
+    }
     final saver = GoogleDriveFileSaver(
       account: email,
-      accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
-        _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
-      ),
+      accessToken: ({bool forceRefresh = false}) async {
+        checkCurrent();
+        final token = await session.accessToken(forceRefresh: forceRefresh);
+        checkCurrent();
+        return token;
+      },
     );
     try {
-      final result = await showDialog<DriveSaveFolderResult>(
+      await showDialog<void>(
         context: dialogContext,
         builder: (_) => DriveSaveFolderDialog(
-          currentId: _driveDownloadPreference.folderIdFor(email),
+          currentId: currentId,
           load: () async {
-            try {
-              return await saver.listFolders();
-            } on Object {
-              if (mounted) _showSnackBar('Google ドライブのフォルダ一覧を取得できませんでした');
-              rethrow;
-            }
+            final folders = await saver.listFolders(currentId: currentId);
+            checkCurrent();
+            return folders;
           },
+          pick: () => _driveSaveFolderPicker.pick(
+            session: session,
+            saver: saver,
+            checkCurrent: checkCurrent,
+          ),
           create: (name) async {
-            try {
-              return await saver.createFolder(name);
-            } on Object {
-              if (mounted) _showSnackBar('Google ドライブのフォルダを作成できませんでした');
-              rethrow;
-            }
+            final folder = await saver.createFolder(name);
+            checkCurrent();
+            return folder;
           },
+          save: (id, commit) => _driveDownloadQueue.runExclusive(() async {
+            checkCurrent();
+            final folder = id == null ? null : await saver.getPrivateFolder(id);
+            checkCurrent();
+            await commit(() async {
+              await _driveDownloadPreference.saveFolder(folder?.id, folder?.name, email);
+              if (mounted) setState(() {});
+            });
+          }),
         ),
       );
-      if (result == null || !mounted) return;
-      await _driveDownloadQueue.runExclusive(() async {
-        if (!_driveDownloadsEnabled || _starSyncGoogleEmail != email ||
-            _starSyncGoogleAuth.currentEmail != email) {
-          throw const GoogleDriveAccountChanged();
-        }
-        await _driveDownloadPreference.saveFolder(
-          result.folder?.id, result.folder?.name, email,
-        );
-      });
-      if (mounted) setState(() {});
-    } on Object {
-      if (mounted) _showSnackBar('Google ドライブの保存先を変更できませんでした');
     } finally {
+      closed = true;
+      _driveSaveFolderPicker.cancel(session);
       saver.close();
     }
   }

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 
@@ -16,6 +18,12 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   final StarSyncGoogleAuthConfig config;
   final bool _isAndroid;
   final Future<bool> Function() _isGoogleReachable;
+  static const _folderPicker = MethodChannel(
+    'net.yoshida.morebettergakujo/drive_folder_picker',
+  );
+  // All mobile auth instances share the same native picker and FIFO channel.
+  static ({StarSyncGoogleMobileAuth owner, Completer<String?> cancel})?
+      _activePick;
   static Future<void>? _initialization;
   GoogleSignInAccount? _account;
   String? _restoredEmail;
@@ -265,6 +273,60 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
     _scopes.addAll(scopes);
     _token = authorization.accessToken;
   }, detectMissingAccount: true);
+
+  @override
+  Future<String?> pickDriveFolder() => _guard(() async {
+    final email = currentEmail;
+    if (email == null || email.trim().isEmpty) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.notSignedIn,
+      );
+    }
+    final session = StarSyncGoogleAuthSession(this, email: email);
+    if (_activePick != null) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+    }
+    final pick = (owner: this, cancel: Completer<String?>());
+    _activePick = pick;
+    try {
+      final id = await Future.any([
+        _folderPicker.invokeMethod<String>('pickFolder', {
+          'email': email,
+          if (!_isAndroid) 'iosClientId': config.iosClientId,
+        }),
+        pick.cancel.future,
+      ]);
+      if (pick.cancel.isCompleted) return null;
+      if (id != null &&
+          (id.isEmpty || id.contains(RegExp(r'[^A-Za-z0-9_-]')))) {
+        throw const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.failed,
+        );
+      }
+      return id;
+    } on PlatformException catch (error) {
+      if (pick.cancel.isCompleted || error.code == 'cancelled') return null;
+      final kind = switch (error.code) {
+        'browser_unavailable' => StarSyncGoogleAuthErrorKind.browserUnavailable,
+        'permission_denied' => StarSyncGoogleAuthErrorKind.permissionDenied,
+        'network' => StarSyncGoogleAuthErrorKind.network,
+        _ => StarSyncGoogleAuthErrorKind.failed,
+      };
+      throw StarSyncGoogleAuthException(kind);
+    } finally {
+      if (_activePick == pick) _activePick = null;
+      session.checkCurrent();
+    }
+  });
+
+  @override
+  void cancelPendingDriveFolderPick() {
+    final pick = _activePick;
+    if (pick == null || !identical(pick.owner, this)) return;
+    _activePick = null;
+    pick.cancel.complete(null);
+    _folderPicker.invokeMethod<void>('cancelPick').ignore();
+  }
 
   @override
   Future<void> signOut() async {

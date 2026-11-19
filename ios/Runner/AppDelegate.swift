@@ -12,6 +12,7 @@ import ObjectiveC.runtime
   private let downloadsBridge = IosDownloadsBridge()
   private let notificationsBridge = IosNotificationsBridge()
   private let calendarBridge = AppleCalendarBridge()
+  private let driveFolderPicker = DriveFolderPicker()
 
   override func application(
     _ application: UIApplication,
@@ -26,6 +27,7 @@ import ObjectiveC.runtime
     downloadsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     notificationsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     calendarBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+    driveFolderPicker.register(messenger: engineBridge.applicationRegistrar.messenger())
     FlutterMethodChannel(
       name: "net.yoshida.morebettergakujo/pdf_preview",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

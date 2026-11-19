@@ -191,27 +191,34 @@ class GoogleDriveFileSaver {
     return files;
   }
 
-  Future<String> _chosenFolder(String id) async {
+  Future<GoogleDriveFolder> getPrivateFolder(String id) async {
+    if (id.isEmpty || id == '.' || id == '..') {
+      throw const GoogleDriveSaveFolderMissing();
+    }
     final response = await _request(
       'GET',
       _uri('/drive/v3/files/${Uri.encodeComponent(id)}', {
-        'fields': 'id,mimeType,ownedByMe,shared,trashed',
+        'fields': 'id,name,mimeType,ownedByMe,shared,trashed',
       }),
     );
     if (response.statusCode == 404) throw const GoogleDriveSaveFolderMissing();
     final file = _json(response);
     if (file['id'] != id ||
-        file['trashed'] == true ||
+        file['trashed'] != false ||
         file['mimeType'] != _folderMime) {
       throw const GoogleDriveSaveFolderMissing();
     }
     if (file['ownedByMe'] != true || file['shared'] != false) {
       throw const GoogleDriveSaveFolderShared();
     }
-    return id;
+    final name = file['name'];
+    if (name is! String || name.isEmpty) {
+      throw const FormatException('Missing Drive folder name');
+    }
+    return GoogleDriveFolder(id: id, name: name, path: name);
   }
 
-  Future<List<GoogleDriveFolder>> listFolders() async {
+  Future<List<GoogleDriveFolder>> listFolders({String? currentId}) async {
     final entries = <String, Map<String, dynamic>>{};
     String? page;
     do {
@@ -263,6 +270,15 @@ class GoogleDriveFileSaver {
         ),
       );
     }
+    if (currentId != null && !entries.containsKey(currentId)) {
+      try {
+        folders.add(await getPrivateFolder(currentId));
+      } on GoogleDriveSaveFolderMissing {
+        // Keep the other choices available if the saved folder was removed.
+      } on GoogleDriveSaveFolderShared {
+        // A saved folder that is no longer private cannot be selected.
+      }
+    }
     folders.sort((a, b) => a.path.compareTo(b.path));
     return folders;
   }
@@ -284,12 +300,14 @@ class GoogleDriveFileSaver {
       final response = await _request(
         'GET',
         _uri('/drive/v3/files/${Uri.encodeComponent(cached)}', {
-          'fields': 'id,ownedByMe,shared,trashed',
+          'fields': 'id,parents,ownedByMe,shared,trashed',
         }),
       );
       if (response.statusCode != 404) {
         final file = _json(response);
+        final parents = file['parents'];
         if (file['id'] == cached &&
+            (parent == 'root' || (parents is List && parents.contains(parent))) &&
             file['ownedByMe'] == true &&
             file['shared'] == false &&
             file['trashed'] == false) {
@@ -605,7 +623,7 @@ class GoogleDriveFileSaver {
         .trim();
     final root = folderId == null
         ? await _folder('More Better Gakujo', 'root')
-        : await _chosenFolder(folderId);
+        : (await getPrivateFolder(folderId)).id;
     final parent = await _folder(course.isEmpty ? 'その他' : course, root);
     final createdParent = parent != root && _createdFolders.contains(parent);
     // Until the pending record exists nothing would revisit a course folder

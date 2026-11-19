@@ -596,6 +596,7 @@ private class NotificationActivationPlugin : FlutterPlugin {
 }
 
 class MainActivity : FlutterActivity() {
+    private lateinit var driveFolderPicker: DriveFolderPicker
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
     private var pendingPickFileArgs: Map<*, *>? = null
@@ -612,6 +613,7 @@ class MainActivity : FlutterActivity() {
     private val calendarOperationLock = Any()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        driveFolderPicker = DriveFolderPicker(this, savedInstanceState, ::isPickerActive)
         // A recreated activity keeps its launch Intent; do not reopen a tap
         // that was already handled before the process was killed.
         intentId = savedInstanceState?.getString(KEY_NOTIFICATION_INTENT_ID)
@@ -622,6 +624,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        driveFolderPicker.saveState(outState)
         outState.putString(KEY_NOTIFICATION_INTENT_ID, intentId)
         rememberCurrentIntentState()
         restoredConsumedUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
@@ -637,6 +640,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        driveFolderPicker.detach()
         detachNotificationActivity(flutterEngine.plugins.get(NotificationActivationPlugin::class.java))
         super.cleanUpFlutterEngine(flutterEngine)
     }
@@ -658,6 +662,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        driveFolderPicker.attach(flutterEngine.dartExecutor.binaryMessenger)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -781,6 +786,7 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Used for ACTION_OPEN_DOCUMENT_TREE result handling.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        driveFolderPicker.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             REQUEST_PICK_DOWNLOAD_ROOT -> handlePickDownloadRootResult(resultCode, data)
             REQUEST_CREATE_DOWNLOAD_FILE -> handleCreateDownloadFileResult(resultCode, data)
@@ -789,7 +795,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isPickerActive(): Boolean {
-        return pendingPickRootResult != null ||
+        return driveFolderPicker.isActive || pendingPickRootResult != null ||
             pendingPickFileResult != null ||
             pendingExportResult != null
     }

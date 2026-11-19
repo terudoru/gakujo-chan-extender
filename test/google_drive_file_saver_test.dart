@@ -5,10 +5,12 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/drive_download_preference.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_quota_meter.dart';
 import 'package:morebettergakujo_flutter/src/google_drive_file_saver.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
+import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_desktop_auth.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_transport.dart';
 
 import 'support/memory_secure_storage.dart';
@@ -32,6 +34,8 @@ void main() {
   late Uri base;
   late GoogleDriveFileSaver saver;
   late List<Map<String, dynamic>> files;
+  late Set<String> unauthorizedIds;
+  late Map<String, String?> metadataTokens;
   late List<String> queries;
   late List<String?> fields;
   var uploads = 0;
@@ -66,6 +70,8 @@ void main() {
     failDelete = false;
     emptyChildrenPage = false;
     files = [];
+    unauthorizedIds = {};
+    metadataTokens = {};
     queries = [];
     fields = [];
     uploads = 0;
@@ -106,7 +112,9 @@ void main() {
       onRequest?.call();
       final response = request.response;
       response.headers.contentType = ContentType.json;
-      if (unauthorized &&
+      if (request.uri.path == '/picker-token' && request.method == 'POST') {
+        response.write(jsonEncode({'access_token': 'picker-token', 'scope': googleDriveFileScope}));
+      } else if (unauthorized &&
           request.headers.value('authorization') != 'Bearer refreshed') {
         unauthorized = false;
         response.statusCode = 401;
@@ -114,7 +122,8 @@ void main() {
           request.uri.path != '/drive/v3/files') {
         expect(
           request.uri.queryParameters['fields'],
-          anyOf('id,ownedByMe,shared,trashed', 'id,mimeType,ownedByMe,shared,trashed'),
+          anyOf('id,ownedByMe,shared,trashed', 'id,parents,ownedByMe,shared,trashed',
+              'id,name,mimeType,ownedByMe,shared,trashed'),
         );
         if (quotaOnCheck && uploads > 0) {
           response.statusCode = 403;
@@ -130,10 +139,14 @@ void main() {
         final matches = files.where(
           (f) => f['id'] == request.uri.pathSegments.last,
         );
-        if (matches.isEmpty || deletedFolders.contains(request.uri.pathSegments.last)) {
+        final id = request.uri.pathSegments.last;
+        metadataTokens[id] = request.headers.value('authorization');
+        if (matches.isEmpty || deletedFolders.contains(id) || unauthorizedIds.contains(id)) {
           response.statusCode = 404;
         } else {
-          response.write(jsonEncode({'trashed': false, ...matches.single}));
+          response.write(jsonEncode({
+            'trashed': false, 'parents': [matches.single['parent']], ...matches.single,
+          }));
         }
       } else if (request.method == 'GET') {
         final query = request.uri.queryParameters['q']!;
@@ -142,6 +155,8 @@ void main() {
         if (query == "mimeType='application/vnd.google-apps.folder' and trashed=false") {
           final folders = files.where((f) =>
               f['mimeType'] == 'application/vnd.google-apps.folder' &&
+              !unauthorizedIds.contains(f['id']) &&
+              f['listed'] != false &&
               f['trashed'] != true).map((f) => {
                 ...f,
                 'parents': [f['parent']],
@@ -370,6 +385,206 @@ void main() {
     expect(course['parent'], 'chosen');
     expect(uploadParent, course['id']);
     expect(queries.any((q) => q.contains('More Better Gakujo')), isFalse);
+  });
+
+  test('picker grants an existing folder by ID and uploads under that exact root', () async {
+    files.addAll([
+      folder('other', 'School', 'root'),
+      {...folder('chosen', 'School', 'unlisted-parent'), 'listed': false},
+    ]);
+    unauthorizedIds.add('chosen');
+    expect((await saver.listFolders()).map((f) => f.id), ['other']);
+    await expectLater(saver.getPrivateFolder('chosen'), throwsA(isA<GoogleDriveSaveFolderMissing>()));
+    final auth = _FakeGoogleAuth()
+      ..picker = () async {
+        unauthorizedIds.remove('chosen');
+        return 'chosen';
+      };
+    final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    saver.close();
+    saver = GoogleDriveFileSaver(
+      account: auth.currentEmail!,
+      gakujoAccountHash: 'gakujo-hash',
+      accessToken: session.accessToken,
+      quotaMeter: meter,
+      secureStorage: storage,
+      apiBase: base,
+    );
+    final imported = await GoogleDriveSaveFolderPicker().pick(
+      session: session, saver: saver, checkCurrent: session.checkCurrent,
+    );
+    expect(imported!.id, 'chosen');
+    expect(imported.name, 'School');
+    expect(metadataTokens['chosen'], 'Bearer token');
+    expect((await saver.listFolders(currentId: imported.id)).map((f) => f.id),
+        unorderedEquals(['chosen', 'other']));
+
+    final email = auth.currentEmail!;
+    final preference = DriveDownloadPreference(storage: storage);
+    await preference.save(true, 'gakujo-hash', email);
+    final verified = await saver.getPrivateFolder(imported.id);
+    await preference.saveFolder(verified.id, verified.name, email);
+    final directory = await Directory.systemTemp.createTemp('picked_drive_folder_');
+    addTearDown(() => directory.delete());
+    final restored = DriveDownloadPreference(storage: storage);
+    await restored.load(File('${directory.path}/drive_downloads_enabled'));
+    expect(restored.matches('gakujo-hash', email), isTrue);
+    expect(restored.folderNameFor(email), 'School');
+    expect(restored.folderIdFor('other@example.test'), isNull);
+    final restoredId = restored.folderIdFor(email)!;
+    expect(await saveChosen(restoredId), 'uploaded');
+    final course = files.singleWhere((f) => f['id'] == uploadParent);
+    expect(course['name'], 'Course');
+    expect(course['parent'], imported.id);
+    expect(queries.any((q) => q.contains('More Better Gakujo')), isFalse);
+
+    // If the user moves the course folder, the next upload still belongs to the chosen root.
+    course['parent'] = 'other';
+    expect(await saveChosen(restoredId), 'uploaded');
+    expect(uploadParent, isNot(course['id']));
+    expect(files.singleWhere((f) => f['id'] == uploadParent)['parent'], imported.id);
+  });
+
+  test('picker cancellation and a replaced session never resolve the returned ID', () async {
+    final auth = _FakeGoogleAuth();
+    final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    Future<GoogleDriveFolder?> pick() => GoogleDriveSaveFolderPicker().pick(
+      session: session, saver: saver, checkCurrent: session.checkCurrent,
+    );
+    expect(await pick(), isNull);
+    auth.picker = () async {
+      auth.generation++;
+      return 'old-selection';
+    };
+    await expectLater(pick(), throwsA(isA<StarSyncGoogleAuthException>()));
+    expect(metadataTokens, isEmpty);
+  });
+
+  test('picker discards metadata when the account changes during validation', () async {
+    files.add(folder('chosen', 'Private', 'root'));
+    final auth = _FakeGoogleAuth()..picker = () async => 'chosen';
+    final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    onRequest = () => auth.email = 'another@example.test';
+    await expectLater(GoogleDriveSaveFolderPicker().pick(
+      session: session, saver: saver, checkCurrent: session.checkCurrent,
+    ), throwsA(isA<StarSyncGoogleAuthException>()));
+    expect(metadataTokens.keys, ['chosen']);
+  });
+
+  test('only the dialog owning the active picker can cancel it', () async {
+    final auth = _FakeGoogleAuth();
+    final first = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    final next = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    final picker = GoogleDriveSaveFolderPicker();
+    Future<GoogleDriveFolder?> pick(StarSyncGoogleAuthSession session) =>
+        picker.pick(session: session, saver: saver, checkCurrent: session.checkCurrent);
+    final oldResult = Completer<String?>();
+    final nextResult = Completer<String?>();
+    auth.picker = () => oldResult.future;
+    final old = pick(first);
+    await expectLater(pick(next), throwsA(isA<StarSyncGoogleAuthException>()));
+    picker.cancel(next);
+    expect(auth.pickerCancels, 0);
+    picker.cancel(first);
+    expect(auth.pickerCancels, 1);
+    auth.picker = () => nextResult.future;
+    final current = pick(next);
+    oldResult.complete('late-id');
+    expect(await old, isNull);
+    expect(metadataTokens, isEmpty);
+    picker.cancel(first);
+    expect(auth.pickerCancels, 1);
+    picker.cancel(next);
+    expect(auth.pickerCancels, 2);
+    nextResult.complete(null);
+    expect(await current, isNull);
+    expect(auth.signInCancels, 0);
+  });
+
+  for (final closeFirst in [true, false]) {
+    final scenario = closeFirst ? 'close then retry' : 'retry then close';
+    test('desktop picker after same-account restore: $scenario', () async {
+      const email = 'user@example.com';
+      storage.values[starSyncGoogleTokenKey] = jsonEncode({
+        'email': email, 'refreshToken': 'test-refresh', 'scopes': [googleDriveFileScope],
+      });
+      files.add(folder('chosen', 'School', 'root'));
+      final picker = GoogleDriveSaveFolderPicker();
+      late final StarSyncGoogleAuthSession oldSession;
+      final firstOpened = Completer<void>();
+      var launches = 0;
+      final auth = StarSyncGoogleDesktopAuth(
+        config: const StarSyncGoogleAuthConfig(desktopClientId: 'test-client'),
+        storage: storage,
+        authorizationEndpoint: base.resolve('/authorize'),
+        tokenEndpoint: base.resolve('/picker-token'),
+        launcher: (url) async {
+          if (++launches == 1) {
+            firstOpened.complete();
+            return true;
+          }
+          if (!closeFirst) picker.cancel(oldSession);
+          final client = HttpClient();
+          try {
+            final callback = Uri.parse(url.queryParameters['redirect_uri']!).replace(
+              queryParameters: {
+                'state': url.queryParameters['state']!,
+                'code': 'test-code',
+                'picked_file_ids': 'chosen',
+              },
+            );
+            final response = await (await client.getUrl(callback)).close();
+            await response.drain<void>();
+            expect(response.statusCode, HttpStatus.ok);
+          } finally {
+            client.close(force: true);
+          }
+          return true;
+        },
+      );
+      addTearDown(auth.cancelPendingDriveFolderPick);
+      Future<GoogleDriveFolder?> pick(StarSyncGoogleAuthSession session) =>
+          picker.pick(session: session, saver: saver, checkCurrent: session.checkCurrent);
+
+      expect(await auth.restore(expectedEmail: email), email);
+      oldSession = StarSyncGoogleAuthSession(auth, email: email);
+      final old = pick(oldSession);
+      old.ignore(); // Teardown also closes the pending picker if an assertion fails.
+      await firstOpened.future;
+      expect(await auth.restore(expectedEmail: email), email);
+      final nextSession = StarSyncGoogleAuthSession(auth, email: email);
+      expect(nextSession.generation, greaterThan(oldSession.generation));
+      if (closeFirst) picker.cancel(oldSession);
+      final next = pick(nextSession);
+      expect((await next)?.id, 'chosen');
+      expect(await old, isNull);
+      expect(launches, 2);
+      expect(metadataTokens.keys, ['chosen']);
+    });
+  }
+
+  test('picker verifies folder type, ownership, sharing and trash before returning a choice', () async {
+    files.addAll([
+      {...folder('file', 'File', 'root'), 'mimeType': 'text/plain'},
+      folder('unowned', 'Other', 'root', owned: false),
+      folder('shared', 'Shared', 'root', shared: true),
+      folder('trashed', 'Trashed', 'root', trashed: true),
+      {...folder('unknown', 'Unknown', 'root'), 'trashed': null},
+    ]);
+    final auth = _FakeGoogleAuth();
+    final session = StarSyncGoogleAuthSession(auth, email: auth.currentEmail);
+    for (final id in ['file', 'unowned', 'shared', 'trashed', 'unknown', 'missing']) {
+      auth.picker = () async => id;
+      await expectLater(
+        GoogleDriveSaveFolderPicker().pick(
+          session: session, saver: saver, checkCurrent: session.checkCurrent,
+        ),
+        throwsA(id == 'unowned' || id == 'shared'
+            ? isA<GoogleDriveSaveFolderShared>()
+            : isA<GoogleDriveSaveFolderMissing>()),
+      );
+    }
+    expect(uploads, 0);
   });
 
   test('missing selected folder does not upload', () async {
@@ -1045,9 +1260,16 @@ void main() {
 
 class _FakeGoogleAuth implements StarSyncGoogleAuth {
   @override
-  int get generation => 0;
+  int generation = 0;
+  Future<String?> Function() picker = () async => null;
+  int pickerCancels = 0;
+  int signInCancels = 0;
   @override
-  void cancelPendingSignIn() {}
+  Future<String?> pickDriveFolder() => picker();
+  @override
+  void cancelPendingDriveFolderPick() { pickerCancels++; }
+  @override
+  void cancelPendingSignIn() { signInCancels++; }
   String? email = 'first@example.test';
   Completer<String>? pendingToken;
 

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
@@ -105,6 +108,166 @@ void main() {
         return reachable;
       },
     );
+  });
+
+  group('Drive folder picker', () {
+    const channel = MethodChannel(
+      'net.yoshida.morebettergakujo/drive_folder_picker',
+    );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final notSignedIn = throwsA(
+      isA<StarSyncGoogleAuthException>().having(
+        (e) => e.kind, 'kind', StarSyncGoogleAuthErrorKind.notSignedIn,
+      ),
+    );
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('requires the active account before opening native UI', () async {
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        calls++;
+        return null;
+      });
+      await expectLater(auth.pickDriveFolder(), notSignedIn);
+      expect(calls, 0);
+    });
+
+    for (final android in [true, false]) {
+      test('passes only the active email and applicable config on '
+          '${android ? "Android" : "iOS"}', () async {
+        const clientId = 'sample.apps.googleusercontent.com';
+        final mobile = StarSyncGoogleMobileAuth(
+          config: const StarSyncGoogleAuthConfig(iosClientId: clientId),
+          isAndroidOverride: android,
+        );
+        final activeEmail = android
+            ? await mobile.restore(expectedEmail: email)
+            : await mobile.signIn();
+        final generation = mobile.generation;
+        platform.calls.clear();
+        final calls = <MethodCall>[];
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return 'Folder_1-2';
+        });
+        expect(await mobile.pickDriveFolder(), 'Folder_1-2');
+        expect(calls.single.method, 'pickFolder');
+        expect(calls.single.arguments, {
+          'email': activeEmail,
+          if (!android) 'iosClientId': clientId,
+        });
+        expect(mobile.currentEmail, activeEmail);
+        expect(mobile.generation, generation);
+        expect(platform.calls, isEmpty);
+        await mobile.accessToken(forceRefresh: true);
+        expect(platform.calls.first, 'clear:token');
+      });
+    }
+
+    test('cancellation and malformed native replies leave the session usable', () async {
+      await auth.restore(expectedEmail: email);
+      final generation = auth.generation;
+      messenger.setMockMethodCallHandler(channel, (_) async => null);
+      expect(await auth.pickDriveFolder(), isNull);
+      for (final value in ['', 'a,b', 'a/b', 'id\n', 12]) {
+        messenger.setMockMethodCallHandler(channel, (_) async => value);
+        await expectLater(auth.pickDriveFolder(), throwsA(
+          isA<StarSyncGoogleAuthException>().having(
+            (e) => e.kind, 'kind', StarSyncGoogleAuthErrorKind.failed,
+          ),
+        ));
+      }
+      expect(auth.generation, generation);
+      expect(auth.currentEmail, email);
+      expect(await auth.accessToken(), 'token');
+    });
+
+    for (final lateError in [false, true]) {
+      test('cancel releases only the owning pick and permits immediate retry '
+          '(late native error: $lateError)', () async {
+        await auth.restore(expectedEmail: email);
+        final other = StarSyncGoogleMobileAuth(
+          config: const StarSyncGoogleAuthConfig(),
+          isAndroidOverride: true,
+        );
+        await other.restore(expectedEmail: 'other@example.org');
+        final generation = auth.generation;
+        platform.calls.clear();
+        final calls = <String>[];
+        final replies = <Completer<String?>>[];
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call.method);
+          if (call.method == 'cancelPick') {
+            expect(call.arguments, isNull);
+            throw PlatformException(code: 'cannot_cancel');
+          }
+          final reply = Completer<String?>();
+          replies.add(reply);
+          return reply.future;
+        });
+
+        final first = auth.pickDriveFolder();
+        await expectLater(other.pickDriveFolder(), throwsA(isA<StarSyncGoogleAuthException>()));
+        other.cancelPendingDriveFolderPick();
+        auth.cancelPendingSignIn();
+        expect(calls, ['pickFolder']);
+        auth.cancelPendingDriveFolderPick();
+        auth.cancelPendingDriveFolderPick();
+        final retry = auth.pickDriveFolder();
+        expect(await first, isNull);
+        expect(calls, ['pickFolder', 'cancelPick', 'pickFolder']);
+        if (lateError) {
+          replies.first.completeError(PlatformException(code: 'old_failure'));
+        } else {
+          replies.first.complete('old_folder');
+        }
+        replies.last.complete('new_folder');
+        expect(await retry, 'new_folder');
+        auth.cancelPendingDriveFolderPick();
+        expect(calls, ['pickFolder', 'cancelPick', 'pickFolder']);
+        expect(auth.generation, generation);
+        expect(auth.currentEmail, email);
+        expect(platform.calls, isEmpty);
+      });
+    }
+
+    test('native failures omit platform diagnostics', () async {
+      await auth.restore(expectedEmail: email);
+      for (final entry in {
+        'browser_unavailable': StarSyncGoogleAuthErrorKind.browserUnavailable,
+        'permission_denied': StarSyncGoogleAuthErrorKind.permissionDenied,
+        'network': StarSyncGoogleAuthErrorKind.network,
+        'busy': StarSyncGoogleAuthErrorKind.failed,
+      }.entries) {
+        messenger.setMockMethodCallHandler(channel, (_) async {
+          throw PlatformException(code: entry.key, message: 'provider details');
+        });
+        await expectLater(auth.pickDriveFolder(), throwsA(
+          isA<StarSyncGoogleAuthException>()
+              .having((e) => e.kind, 'kind', entry.value)
+              .having((e) => e.message, 'message', isEmpty),
+        ));
+      }
+    });
+
+    for (final reply in ['folder', null]) {
+      test('rejects a stale native reply ($reply) after same-account restore', () async {
+        await auth.restore(expectedEmail: email);
+        final opened = Completer<void>();
+        final response = Completer<String?>();
+        messenger.setMockMethodCallHandler(channel, (_) {
+          opened.complete();
+          return response.future;
+        });
+        final checked = expectLater(auth.pickDriveFolder(), notSignedIn);
+        await opened.future;
+        await auth.restore(expectedEmail: email);
+        response.complete(reply);
+        await checked;
+        expect(auth.currentEmail, email);
+      });
+    }
   });
 
   test('restore without a saved email does not attempt authentication', () async {

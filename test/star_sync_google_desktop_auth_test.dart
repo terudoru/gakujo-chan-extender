@@ -84,6 +84,7 @@ void main() {
   Completer<void>? tokenContinue;
   Completer<void>? refreshStarted;
   Completer<void>? refreshContinue;
+  late Future<void> Function(HttpRequest, Map<String, String>) pickerRequest;
 
   setUp(() async {
     storage = _Storage();
@@ -109,7 +110,9 @@ void main() {
       final body = await utf8.decoder.bind(request).join();
       final fields = Uri.splitQueryString(body);
       request.response.headers.contentType = ContentType.json;
-      if (request.uri.path == '/revoke') {
+      if (fields['code'] == 'picker-code') {
+        await pickerRequest(request, fields);
+      } else if (request.uri.path == '/revoke') {
         revokedToken = fields['token'];
         if (revokeFails) {
           request.response.statusCode = 500;
@@ -178,7 +181,9 @@ void main() {
 
   tearDown(() async => server.close(force: true));
 
-  StarSyncGoogleDesktopAuth makeAuth() => StarSyncGoogleDesktopAuth(
+  StarSyncGoogleDesktopAuth makeAuth({
+    Future<bool> Function(Uri)? pickerLauncher,
+  }) => StarSyncGoogleDesktopAuth(
     config: const StarSyncGoogleAuthConfig(
       desktopClientId: 'client',
       desktopClientSecret: 'secret',
@@ -190,6 +195,7 @@ void main() {
     clock: () => now,
     launcher: (url) async {
       final p = url.queryParameters;
+      if (p.containsKey('trigger_onepick')) return pickerLauncher!(url);
       expect(p['client_id'], 'client');
       expect(p['response_type'], 'code');
       expect(
@@ -263,6 +269,420 @@ void main() {
     await makeAuth().signIn(loginHint: 'bound@example.test');
     expect(lastAuthParams!['prompt'], 'consent');
     expect(lastAuthParams!['login_hint'], 'bound@example.test');
+  });
+
+  group('desktop OnePick', () {
+    late Map<String, String> callback;
+    late Map<String, Object?> token;
+    late List<Uri> launches;
+    late int exchanges;
+    late int tokenStatus;
+
+    Matcher failsWith(StarSyncGoogleAuthErrorKind kind) => throwsA(
+      isA<StarSyncGoogleAuthException>().having((e) => e.kind, 'kind', kind),
+    );
+
+    Future<int> sendCallback(Uri target, {String method = 'GET'}) async {
+      final client = HttpClient();
+      try {
+        final response = await (await client.openUrl(method, target)).close();
+        await response.drain<void>();
+        return response.statusCode;
+      } finally {
+        client.close(force: true);
+      }
+    }
+
+    Uri callbackUri(Uri url) => Uri.parse(url.queryParameters['redirect_uri']!)
+        .replace(
+          queryParameters: {
+            'state': url.queryParameters['state']!,
+            ...callback,
+          },
+        );
+
+    StarSyncGoogleDesktopAuth pickerAuth({
+      Future<bool> Function(Uri)? launch,
+    }) => makeAuth(
+      pickerLauncher: (url) async {
+        launches.add(url);
+        if (launch != null) return launch(url);
+        await sendCallback(callbackUri(url));
+        return true;
+      },
+    );
+
+    setUp(() {
+      launches = [];
+      exchanges = 0;
+      callback = {
+        'code': 'picker-code',
+        'scope': googleDriveFileScope,
+        'picked_file_ids': 'folder_123-X',
+      };
+      token = {'access_token': 'onepick-only', 'scope': googleDriveFileScope};
+      tokenStatus = HttpStatus.ok;
+      pickerRequest = (request, fields) async {
+        exchanges++;
+        final p = launches.last.queryParameters;
+        tokenStarted?.complete();
+        await tokenContinue?.future;
+        expect(request.uri.path, '/token');
+        expect(request.method, 'POST');
+        expect(fields['client_id'], 'client');
+        expect(fields['client_secret'], 'secret');
+        expect(fields['redirect_uri'], p['redirect_uri']);
+        expect(fields['grant_type'], 'authorization_code');
+        expect(fields['code'], 'picker-code');
+        final digest = sha256.convert(ascii.encode(fields['code_verifier']!));
+        expect(
+          base64Url.encode(digest.bytes).replaceAll('=', ''),
+          p['code_challenge'],
+        );
+        request.response.statusCode = tokenStatus;
+        request.response.write(jsonEncode(token));
+      };
+    });
+
+    test('exchanges a folder-only grant and preserves the signed-in session', () async {
+      final auth = pickerAuth();
+      await auth.signIn();
+      final previous = storage.values[starSyncGoogleTokenKey];
+      final generation = auth.generation;
+      // Even if Google supplies a refresh token, the picker must not store it.
+      token['refresh_token'] = 'incidental-picker-refresh';
+      expect(await auth.pickDriveFolder(), 'folder_123-X');
+      final p = launches.single.queryParameters;
+      expect(p['scope'], googleDriveFileScope);
+      expect(p['prompt'], 'consent');
+      expect(p['access_type'], 'online');
+      expect(p['include_granted_scopes'], 'false');
+      expect(p['trigger_onepick'], 'true');
+      expect(p['mimetypes'], 'application/vnd.google-apps.folder');
+      expect(p['allow_folder_selection'], 'true');
+      expect(p['allow_multiple'], isNot('true'));
+      expect(p['login_hint'], 'user@example.com');
+      expect(p['client_id'], 'client');
+      expect(p['response_type'], 'code');
+      expect(p['code_challenge_method'], 'S256');
+      expect(p['state'], isNotEmpty);
+      expect(Uri.parse(p['redirect_uri']!).host, '127.0.0.1');
+      expect(exchanges, 1);
+      expect(storage.values[starSyncGoogleTokenKey], previous);
+      expect(auth.generation, generation);
+      expect(auth.currentEmail, 'user@example.com');
+      expect(await auth.hasScope(googleDriveFileScope), isFalse);
+      expect(await auth.accessToken(), 'initial');
+      expect(await auth.accessToken(forceRefresh: true), 'refresh1');
+    });
+
+    test('requires a current session before opening the browser', () async {
+      await expectLater(
+        pickerAuth().pickDriveFolder(),
+        failsWith(StarSyncGoogleAuthErrorKind.notSignedIn),
+      );
+      expect(launches, isEmpty);
+      expect(exchanges, 0);
+    });
+
+    test(
+      'ignores wrong state, path and method before the genuine callback',
+      () async {
+        final auth = pickerAuth(
+          launch: (url) async {
+            final target = callbackUri(url);
+            expect(await sendCallback(target.replace(path: '/other')), 404);
+            expect(
+              await sendCallback(
+                target.replace(
+                  queryParameters: {'state': 'wrong', 'error': 'access_denied'},
+                ),
+              ),
+              400,
+            );
+            expect(
+              await sendCallback(
+                target.replace(query: '${target.query}&state=wrong'),
+              ),
+              400,
+            );
+            expect(await sendCallback(target, method: 'POST'), 400);
+            expect(await sendCallback(target), 200);
+            return true;
+          },
+        );
+        await auth.signIn();
+        expect(await auth.pickDriveFolder(), 'folder_123-X');
+        expect(exchanges, 1);
+      },
+    );
+
+    test(
+      'consent cancellation closes the listener and permits a fresh retry',
+      () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        final success = callback;
+        callback = {'error': 'access_denied'};
+        expect(await auth.pickDriveFolder(), isNull);
+        expect(exchanges, 0);
+        await expectLater(
+          sendCallback(callbackUri(launches.single)),
+          throwsA(isA<SocketException>()),
+        );
+        callback = success;
+        expect(await auth.pickDriveFolder(), 'folder_123-X');
+        for (final key in ['state', 'code_challenge']) {
+          expect(
+            launches.last.queryParameters[key],
+            isNot(launches.first.queryParameters[key]),
+          );
+        }
+      },
+    );
+
+    test(
+      'browser launch failure releases the listener and allows retry',
+      () async {
+        final auth = pickerAuth(
+          launch: (url) async {
+            if (launches.length == 1) return false;
+            await sendCallback(callbackUri(url));
+            return true;
+          },
+        );
+        await auth.signIn();
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.browserUnavailable),
+        );
+        await expectLater(
+          sendCallback(callbackUri(launches.single)),
+          throwsA(isA<SocketException>()),
+        );
+        expect(await auth.pickDriveFolder(), 'folder_123-X');
+      },
+    );
+
+    test('OAuth server errors are distinct from cancellation', () async {
+      final auth = pickerAuth();
+      await auth.signIn();
+      callback['error'] = 'server_error';
+      await expectLater(
+        auth.pickDriveFolder(),
+        failsWith(StarSyncGoogleAuthErrorKind.failed),
+      );
+      expect(exchanges, 0);
+    });
+
+    test(
+      'discards a browser callback if its login session was replaced',
+      () async {
+        final launched = Completer<Uri>();
+        final auth = pickerAuth(
+          launch: (url) async {
+            launched.complete(url);
+            return true;
+          },
+        );
+        await auth.signIn();
+        final result = expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.notSignedIn),
+        );
+        final browser = await launched.future;
+        await auth.restore();
+        await sendCallback(callbackUri(browser));
+        await result;
+        expect(exchanges, 0);
+      },
+    );
+
+    for (final id in [null, '', 'one,two', '../other']) {
+      test('rejects missing or malformed single folder ID ($id)', () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        callback.remove('picked_file_ids');
+        if (id != null) callback['picked_file_ids'] = id;
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.failed),
+        );
+      });
+    }
+
+    test(
+      'exchange errors and missing access tokens leave login intact',
+      () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        final previous = storage.values[starSyncGoogleTokenKey];
+        token = {'error': 'invalid_grant'};
+        tokenStatus = 400;
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.failed),
+        );
+        tokenStatus = 200;
+        token = {};
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.failed),
+        );
+        expect(exchanges, 2);
+        expect(storage.values[starSyncGoogleTokenKey], previous);
+        expect(await auth.accessToken(), 'initial');
+      },
+    );
+
+    test(
+      'rejects unexpected scopes from the callback or the exchange',
+      () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        callback['scope'] = 'openid $googleDriveFileScope';
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.permissionDenied),
+        );
+        callback.remove('scope');
+        token['scope'] = 'openid';
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.permissionDenied),
+        );
+        token.remove('scope');
+        expect(await auth.pickDriveFolder(), 'folder_123-X');
+      },
+    );
+
+    test(
+      'session replacement during code exchange invalidates the picked ID',
+      () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        tokenStarted = Completer<void>();
+        tokenContinue = Completer<void>();
+        final result = expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.notSignedIn),
+        );
+        await tokenStarted!.future;
+        await auth.restore();
+        tokenContinue!.complete();
+        await result;
+        expect(exchanges, 1);
+      },
+    );
+
+    test(
+      'immediate repick completes while the old token reply is held',
+      () async {
+        final auth = pickerAuth();
+        await auth.signIn();
+        tokenStarted = Completer<void>();
+        final oldReply = tokenContinue = Completer<void>();
+        final selection = auth.pickDriveFolder();
+        await tokenStarted!.future;
+        await expectLater(
+          auth.pickDriveFolder(),
+          failsWith(StarSyncGoogleAuthErrorKind.failed),
+        );
+        auth.cancelPendingDriveFolderPick();
+        tokenStarted = tokenContinue = null;
+        callback['picked_file_ids'] = 'replacement';
+        final replacement = auth.pickDriveFolder();
+        try {
+          expect(await selection.timeout(const Duration(seconds: 3)), isNull);
+          expect(
+            await replacement.timeout(const Duration(seconds: 3)),
+            'replacement',
+          );
+        } finally {
+          oldReply.complete();
+        }
+        expect(exchanges, 2);
+        expect(await auth.accessToken(), 'initial');
+      },
+    );
+
+    for (final phase in [
+      'launch',
+      'callback',
+      'callback before launch returns',
+    ]) {
+      test(
+        'targeted cancellation allows an immediate repick during $phase',
+        () async {
+          final firstReady = Completer<void>();
+          final oldLaunch = Completer<bool>();
+          final nextReady = Completer<Uri>();
+          final auth = pickerAuth(
+            launch: (url) async {
+              if (launches.length == 1) {
+                if (phase == 'callback before launch returns') {
+                  await sendCallback(callbackUri(url));
+                }
+                firstReady.complete();
+                if (phase != 'callback') return oldLaunch.future;
+              } else {
+                nextReady.complete(url);
+              }
+              return true;
+            },
+          );
+          await auth.signIn();
+          final first = auth.pickDriveFolder();
+          await firstReady.future;
+          auth.cancelPendingSignIn();
+          await expectLater(
+            auth.pickDriveFolder(),
+            failsWith(StarSyncGoogleAuthErrorKind.failed),
+          );
+          auth.cancelPendingDriveFolderPick();
+          final retry = auth.pickDriveFolder();
+          final next = await nextReady.future.timeout(
+            const Duration(seconds: 3),
+          );
+          try {
+            expect(await first.timeout(const Duration(seconds: 3)), isNull);
+          } finally {
+            oldLaunch.complete(false);
+          }
+          // Late cleanup from the first operation must not unlock the second.
+          await expectLater(
+            auth.pickDriveFolder(),
+            failsWith(StarSyncGoogleAuthErrorKind.failed),
+          );
+          callback['picked_file_ids'] = 'replacement';
+          await sendCallback(callbackUri(next));
+          expect(await retry, 'replacement');
+          expect(exchanges, 1);
+        },
+      );
+    }
+
+    for (final requestingScopes in [false, true]) {
+      test(
+        'picker cancellation preserves pending ${requestingScopes ? 'scope request' : 'sign-in'}',
+        () async {
+          final auth = pickerAuth();
+          if (requestingScopes) await auth.signIn();
+          incremental = requestingScopes;
+          tokenStarted = Completer<void>();
+          tokenContinue = Completer<void>();
+          final pending = requestingScopes
+              ? auth.requestScopes([googleDriveFileScope])
+              : auth.signIn();
+          await tokenStarted!.future;
+          auth.cancelPendingDriveFolderPick();
+          tokenContinue!.complete();
+          await pending;
+          expect(auth.currentEmail, 'user@example.com');
+          expect(await auth.hasScope(googleDriveFileScope), requestingScopes);
+        },
+      );
+    }
   });
 
   test('unticked scope reports permission denied', () async {

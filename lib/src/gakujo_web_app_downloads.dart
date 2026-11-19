@@ -1136,7 +1136,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (defaultTargetPlatform != TargetPlatform.iOS) {
       return null;
     }
-    return 'iCloud Drive はフォルダの指定と授業ごとの仕分けに対応します。Google ドライブに保存する場合は「保存のたびに場所を選ぶ」を使います。';
+    return 'iCloud Drive はフォルダの指定と授業ごとの仕分けに対応します。「ファイル」アプリから手動で Google ドライブに保存するときは「保存のたびに場所を選ぶ」を使います。';
   }
 
   Future<String?> _cookieHeader(String url) async {
