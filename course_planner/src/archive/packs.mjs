@@ -1,7 +1,8 @@
 import dental from "./dental-index.json" with { type: "json" };
 import currentSources from "./current-sources.json" with { type: "json" };
+import checkedFields from "./content/field-evidence-2026.json" with { type: "json" };
 import { normalize } from "../study.mjs";
-import { buildHistoricalIndex, courseSource, dentalSource, resolveHistoricalGrade,
+import { buildHistoricalIndex, courseSource, dentalSource, officialDocument, resolveHistoricalGrade,
   retainedHistoricalMatch, searchSource, validYear } from "./identity.mjs";
 
 // Availability of the public search, independent of admission year or the selected handbook.
@@ -25,16 +26,31 @@ export function unpackYear(requested, pack) {
   }));
 }
 
+function verifiedFieldSet(year, { department, code }) {
+  if (year !== "2026") return null;
+  const parts = /^(\d{3}[A-Z]+)(\d+)$/.exec(code);
+  if (!parts) return null;
+  const ranges = checkedFields[[department, parts[1], parts[2].length].join("/")];
+  const number = Number(parts[2]);
+  return ranges?.find(([first, last]) => first <= number && number <= last)?.[2] ?? null;
+}
+
 export function currentOffering(course, catalog) {
   const year = String(catalog.year);
-  const extra = year === "2026" ? currentSources[course.code] : null;
-  const language = extra?.locale;
-  const sourceUrl = language === "index" ? searchSource :
-    courseSource(year, course.department, course.code, language === "en" ? "en_US" : "ja_JP");
-  const fieldSource = !extra?.fields && catalog.listing && Number.isInteger(course.page)
-    ? catalog.listing + "#page=" + course.page : sourceUrl;
-  return { ...course, fields: extra?.fields ?? course.fields, year, sourceUrl,
-    sourceKind: language === "index" ? "public-index" : "syllabus", fieldSource };
+  const evidence = verifiedFieldSet(year, course);
+  const extra = evidence !== null ? currentSources[course.code] : null;
+  const indexOnly = course.sourceKind === "public-index" || extra?.locale === "index";
+  const page = Number.isInteger(course.page) && catalog.listing + "#page=" + course.page;
+  const categorySource = officialDocument(page) ? page :
+    officialDocument(course.categorySource) ? course.categorySource : undefined;
+  const fields = extra?.fields ?? course.fields ?? [];
+  const specific = evidence !== null && !indexOnly && courseSource(year, course.department, course.code,
+    extra?.locale === "en" ? "en_US" : "ja_JP");
+  const corroborated = specific && [...new Set(fields)].sort().join("") === evidence;
+  const sourceUrl = specific || searchSource;
+  const fieldSource = corroborated ? specific : course.fieldSource || (indexOnly ? searchSource : categorySource) || "";
+  return { ...course, year, fields: fieldSource ? fields : [], fieldSource, categorySource, sourceUrl,
+    sourceKind: specific ? "syllabus" : "public-index" };
 }
 
 export async function loadHistoricalIndex(year, currentCatalog) {

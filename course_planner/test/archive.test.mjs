@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildHistoricalIndex, confirmHistoricalMatch, courseSource, dentalSource, economicsTable,
   resolveHistoricalGrade, retainedHistoricalMatch, searchSource } from "../src/archive/identity.mjs";
-import { archiveYears, loadHistoricalIndex, matchHistoricalGrades, unpackYear } from "../src/archive/packs.mjs";
+import { archiveYears, currentOffering, loadHistoricalIndex, matchHistoricalGrades, unpackYear } from "../src/archive/packs.mjs";
 import { reviewPublicRecord } from "../src/archive/manual.mjs";
 import current from "../src/catalog-2026.json" with { type: "json" };
 
@@ -56,6 +56,34 @@ test("require academic year, offering faculty and title agreement even for an ex
   }
   assert.equal(resolveHistoricalGrade({ ...row, faculty: "工学部" }, past).status, "exact");
   assert.throws(() => confirmHistoricalMatch({ ...row, year: "2024" }, resolveHistoricalGrade(row, past).match));
+});
+
+test("current fields are corroborated by the exact detail page and the category retains its own evidence", () => {
+  for (const c of current.courses) {
+    const row = currentOffering(c, current);
+    assert.equal(row.sourceKind, "syllabus", c.code);
+    assert.equal(row.fieldSource, row.sourceUrl, c.code);
+    assert.equal(row.categorySource, c.page ? current.listing + "#page=" + c.page : undefined, c.code);
+  }
+  const row = catalog.byCode.get("260ds217")[0];
+  assert.equal(row.category, "英語");
+  assert.equal(row.categorySource, current.listing + "#page=13");
+  const english = catalog.byCode.get("260h2049")[0];
+  assert.match(english.fieldSource, /_en_US\.html$/);
+  const normal = current.courses.find((c) => c.code === "260DS217");
+  const unchecked = currentOffering({ ...normal, code: "260DS999" }, current);
+  assert.equal(unchecked.fieldSource, row.categorySource);
+  assert.equal(unchecked.sourceUrl, searchSource);
+  assert.equal(unchecked.sourceKind, "public-index");
+  const wrongFields = currentOffering({ ...normal, fields: ["00"] }, current);
+  assert.equal(wrongFields.fieldSource, row.categorySource);
+  const indexOnly = currentOffering({ ...normal, sourceKind: "public-index" }, current);
+  assert.equal(indexOnly.sourceUrl, searchSource);
+  assert.equal(indexOnly.fieldSource, searchSource);
+  assert.equal(indexOnly.categorySource, row.categorySource);
+  const noPage = currentOffering({ ...normal, code: "260DS999", page: null }, current);
+  assert.equal(noPage.fieldSource, "");
+  assert.deepEqual(noPage.fields, []);
 });
 
 test("same-name sections await an explicit choice; re-import retains it even with the pack offline", async () => {
