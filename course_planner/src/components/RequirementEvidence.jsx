@@ -33,6 +33,23 @@ const sectionStyle = {
   minWidth: 0,
 };
 
+const balanceStyle = {
+  display: "grid",
+  gap: "2px",
+  padding: "6px 8px",
+  borderRadius: "var(--radius-inner, 6px)",
+  background: "var(--color-background-muted, var(--wash, #f6f6f3))",
+  border: "1px solid var(--color-border, var(--rule, #d7d8d2))",
+  minWidth: 0,
+};
+
+const balanceValueStyle = {
+  fontSize: "var(--font-size-sm, 13px)",
+  fontWeight: 600,
+  color: "var(--color-text-primary, var(--ink, #242420))",
+  fontVariantNumeric: "tabular-nums",
+};
+
 const headingStyle = {
   fontSize: "var(--text-supporting-size, 12px)",
   lineHeight: "var(--text-supporting-leading, 1.5)",
@@ -59,6 +76,14 @@ const titleStyle = {
 const metaStyle = {
   fontSize: "var(--text-supporting-size, 12px)",
   color: "var(--color-text-secondary, var(--soft, #5f605a))",
+  overflowWrap: "anywhere",
+};
+
+const noteStyle = {
+  margin: 0,
+  fontSize: "var(--text-supporting-size, 12px)",
+  lineHeight: "var(--text-supporting-leading, 1.6)",
+  color: "var(--color-text-primary, var(--ink, #242420))",
   overflowWrap: "anywhere",
 };
 
@@ -96,53 +121,154 @@ function safeHttpUrl(value) {
   }
 }
 
-function formatUnits(applied, credits) {
+function formatQuantity(value, unit) {
+  switch (unit) {
+    case "courses":
+      return `${value}科目`;
+    case "months":
+      return `${value}か月`;
+    case "condition":
+      return `条件 ${value}`;
+    case "credits":
+    default:
+      return `${value}単位`;
+  }
+}
+
+function formatUnits(applied, credits, unit) {
   const hasApplied = hasValue(applied);
   const hasCredits = hasValue(credits);
   if (hasApplied && hasCredits) {
-    if (String(applied) === String(credits)) {
-      return `算入 ${applied}単位`;
+    if (unit === "credits" && String(applied) === String(credits)) {
+      return `算入 ${formatQuantity(applied, unit)}`;
     }
-    return `算入 ${applied}単位（科目 ${credits}単位）`;
+    return `算入 ${formatQuantity(applied, unit)}（科目 ${credits}単位）`;
   }
-  if (hasApplied) return `算入 ${applied}単位`;
+  if (hasApplied) return `算入 ${formatQuantity(applied, unit)}`;
   if (hasCredits) return `${credits}単位`;
   return "";
 }
 
-function EvidenceGroup({ heading, rows }) {
+function formatTransition(before, after, unit) {
+  return `算入 ${formatQuantity(before, unit)} → ${formatQuantity(after, unit)}`;
+}
+
+function resolveCode(row) {
+  if (hasValue(row?.code)) return String(row.code);
+  if (hasValue(row?.matchedCode)) return String(row.matchedCode);
+  return "";
+}
+
+function courseIdentityKey(row, counts) {
+  let base;
+  if (hasValue(row.recordId)) {
+    base = `record:${row.sourceId ?? ""}/${row.recordId}`;
+  } else {
+    const code = resolveCode(row);
+    base = code
+      ? `offering:${row.year ?? ""}/${code}/${row.title ?? ""}`
+      : `title:${row.year ?? ""}/${row.title ?? ""}`;
+  }
+  const seen = counts.get(base) ?? 0;
+  counts.set(base, seen + 1);
+  return `${base}#${seen}`;
+}
+
+function diffProjectedEarned(earnedRows, projectedEarned) {
+  if (!Array.isArray(projectedEarned)) return [];
+  const projectedRows = projectedEarned.filter(
+    (row) => row && typeof row === "object",
+  );
+  const earnedCounts = new Map();
+  const projectedCounts = new Map();
+  const earnedMap = new Map();
+  const projectedMap = new Map();
+
+  for (const row of earnedRows) {
+    earnedMap.set(courseIdentityKey(row, earnedCounts), row);
+  }
+  for (const row of projectedRows) {
+    projectedMap.set(courseIdentityKey(row, projectedCounts), row);
+  }
+
+  const changes = [];
+  for (const [key, earnedRow] of earnedMap) {
+    const projectedRow = projectedMap.get(key);
+    const before = hasValue(earnedRow.applied) ? earnedRow.applied : 0;
+    const after =
+      projectedRow && hasValue(projectedRow.applied) ? projectedRow.applied : 0;
+    if (String(before) !== String(after)) {
+      const merged = projectedRow
+        ? {
+            ...earnedRow,
+            ...projectedRow,
+            sourceUrl: projectedRow.sourceUrl ?? earnedRow.sourceUrl,
+          }
+        : earnedRow;
+      changes.push({ key, row: merged, before, after });
+    }
+  }
+  for (const [key, projectedRow] of projectedMap) {
+    if (earnedMap.has(key)) continue;
+    const after = hasValue(projectedRow.applied) ? projectedRow.applied : 0;
+    if (String(after) !== "0") {
+      changes.push({ key, row: projectedRow, before: 0, after });
+    }
+  }
+  return changes;
+}
+
+function EvidenceItem({ row, unitText }) {
+  const code = resolveCode(row);
+  const hasTitle = hasValue(row.title);
+  const title = hasTitle ? String(row.title) : code || "名称未設定";
+  const meta = [
+    hasTitle && code ? code : "",
+    hasValue(row.year) ? String(row.year) : "",
+    unitText,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const rowReason = typeof row.reason === "string" ? row.reason.trim() : "";
+  const rowNote = typeof row.note === "string" ? row.note.trim() : "";
+  const syllabusHref = safeHttpUrl(row.sourceUrl);
+
+  return (
+    <li style={itemStyle}>
+      <span style={titleStyle}>{title}</span>
+      {meta && <small style={metaStyle}>{meta}</small>}
+      {rowReason && <small style={metaStyle}>{rowReason}</small>}
+      {rowNote && rowNote !== rowReason && (
+        <small style={metaStyle}>{rowNote}</small>
+      )}
+      {syllabusHref && (
+        <a
+          className="external"
+          href={syllabusHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          公式シラバス
+          <ArrowUpRight size={13} aria-hidden="true" />
+        </a>
+      )}
+    </li>
+  );
+}
+
+function EvidenceGroup({ heading, rows, unit }) {
   return (
     <div style={sectionStyle}>
       <strong style={headingStyle}>{heading}</strong>
       {rows.length > 0 ? (
         <ul className="rows" style={listStyle}>
-          {rows.map((row, index) => {
-            const hasTitle = hasValue(row.title);
-            const title = hasTitle
-              ? String(row.title)
-              : hasValue(row.code)
-                ? String(row.code)
-                : "名称未設定";
-            const meta = [
-              hasTitle && hasValue(row.code) ? String(row.code) : "",
-              hasValue(row.year) ? String(row.year) : "",
-              formatUnits(row.applied, row.credits),
-            ]
-              .filter(Boolean)
-              .join(" · ");
-            const reason =
-              typeof row.reason === "string" ? row.reason.trim() : "";
-            return (
-              <li
-                key={`${row.code ?? ""}-${row.year ?? ""}-${title}-${index}`}
-                style={itemStyle}
-              >
-                <span style={titleStyle}>{title}</span>
-                {meta && <small style={metaStyle}>{meta}</small>}
-                {reason && <small style={metaStyle}>{reason}</small>}
-              </li>
-            );
-          })}
+          {rows.map((row, index) => (
+            <EvidenceItem
+              key={`${resolveCode(row)}-${row.year ?? ""}-${row.title ?? ""}-${index}`}
+              row={row}
+              unitText={formatUnits(row.applied, row.credits, unit)}
+            />
+          ))}
         </ul>
       ) : (
         <p style={emptyStyle}>該当する授業はありません</p>
@@ -154,9 +280,13 @@ function EvidenceGroup({ heading, rows }) {
 export function RequirementEvidence({
   earned = [],
   planned = [],
+  projectedEarned,
   unknown = [],
   sources = [],
   balance,
+  unit,
+  reason,
+  note,
   onSearch,
 } = {}) {
   const toRows = (list) =>
@@ -166,6 +296,32 @@ export function RequirementEvidence({
   const earnedRows = toRows(earned);
   const plannedRows = toRows(planned);
   const unknownRows = toRows(unknown);
+  const effectiveUnit = hasValue(unit)
+    ? String(unit)
+    : hasValue(balance?.unit)
+      ? String(balance.unit)
+      : "credits";
+  const isCourseUnit =
+    effectiveUnit === "credits" || effectiveUnit === "courses";
+
+  const hasConfirmedBalance = Boolean(
+    balance &&
+      typeof balance === "object" &&
+      balance.confirmed !== false &&
+      hasValue(balance.current),
+  );
+  const balanceHeading = isCourseUnit ? "確認表の修得済み" : "確認表の記録";
+  const balanceNote =
+    typeof balance?.reason === "string" && balance.reason.trim()
+      ? balance.reason.trim()
+      : typeof balance?.note === "string" && balance.note.trim()
+        ? balance.note.trim()
+        : "";
+
+  const ruleReason = typeof reason === "string" ? reason.trim() : "";
+  const ruleNote = typeof note === "string" ? note.trim() : "";
+  const projectedChanges = diffProjectedEarned(earnedRows, projectedEarned);
+
   const validSources = (Array.isArray(sources) ? sources : [])
     .map((source) => {
       if (!source || typeof source !== "object") return null;
@@ -179,25 +335,94 @@ export function RequirementEvidence({
     })
     .filter(Boolean);
 
+  const hasCourseRows =
+    earnedRows.length > 0 ||
+    plannedRows.length > 0 ||
+    unknownRows.length > 0 ||
+    projectedChanges.length > 0;
+  const hasRuleContext =
+    hasConfirmedBalance ||
+    Boolean(ruleReason) ||
+    Boolean(ruleNote) ||
+    validSources.length > 0;
+
+  const showPlainEmptyGroups =
+    isCourseUnit && !hasConfirmedBalance && !hasCourseRows && !hasRuleContext;
+  const showEarnedGroup =
+    earnedRows.length > 0 ||
+    (isCourseUnit && !hasConfirmedBalance && plannedRows.length > 0) ||
+    showPlainEmptyGroups;
+  const showPlannedGroup =
+    plannedRows.length > 0 ||
+    (isCourseUnit && !hasConfirmedBalance && earnedRows.length > 0) ||
+    showPlainEmptyGroups;
+  const showNonCoursePlaceholder =
+    !isCourseUnit && !hasCourseRows && !hasRuleContext;
+
   return (
     <details style={detailsStyle}>
       <summary style={summaryStyle}>根拠・内訳</summary>
       <div style={bodyStyle}>
-        {balance && (
-          <div style={sectionStyle}>
-            <strong style={headingStyle}>確認表の修得済み</strong>
-            <span>{balance.current}単位</span>
+        {hasConfirmedBalance && (
+          <div style={balanceStyle}>
+            <strong style={headingStyle}>{balanceHeading}</strong>
+            <span style={balanceValueStyle}>
+              {formatQuantity(balance.current, effectiveUnit)}
+            </span>
+            {balanceNote && <small style={metaStyle}>{balanceNote}</small>}
           </div>
         )}
-        {(!balance || earnedRows.length > 0) && (
+        {ruleReason && (
+          <div style={sectionStyle}>
+            <strong style={headingStyle}>確認事項</strong>
+            <p style={noteStyle}>{ruleReason}</p>
+          </div>
+        )}
+        {ruleNote && ruleNote !== ruleReason && (
+          <div style={sectionStyle}>
+            <strong style={headingStyle}>注記</strong>
+            <p style={noteStyle}>{ruleNote}</p>
+          </div>
+        )}
+        {showEarnedGroup && (
           <EvidenceGroup
-            heading={balance ? "照合できた修得科目" : "修得済み"}
+            heading={hasConfirmedBalance ? "照合できた修得科目" : "修得済み"}
             rows={earnedRows}
+            unit={effectiveUnit}
           />
         )}
-        <EvidenceGroup heading="履修予定" rows={plannedRows} />
+        {showPlannedGroup && (
+          <EvidenceGroup
+            heading="履修予定"
+            rows={plannedRows}
+            unit={effectiveUnit}
+          />
+        )}
+        {projectedChanges.length > 0 && (
+          <div style={sectionStyle}>
+            <strong style={headingStyle}>
+              履修予定に伴う修得済みの算入変更
+            </strong>
+            <ul className="rows" style={listStyle}>
+              {projectedChanges.map(({ key, row, before, after }) => (
+                <EvidenceItem
+                  key={key}
+                  row={row}
+                  unitText={formatTransition(before, after, effectiveUnit)}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
         {unknownRows.length > 0 && (
-          <EvidenceGroup heading="要確認" rows={unknownRows} />
+          <EvidenceGroup
+            heading="要確認"
+            rows={unknownRows}
+            unit={effectiveUnit}
+          />
+        )}
+        {showNonCoursePlaceholder && (
+          <p style={emptyStyle}>科目以外の条件に基づく項目です</p>
         )}
         {validSources.length > 0 && (
           <div style={sectionStyle}>
