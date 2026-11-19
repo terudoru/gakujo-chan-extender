@@ -2,7 +2,8 @@ import courses from "./old-economics-courses.json" with {type:"json"};
 import replacements from "./old-economics-equivalencies.json" with {type:"json"};
 import publications from "./publications.json" with {type:"json"};
 import { source, page, statute, text, credited, mandatory, stage, attendance, uncertain,
-  named, any, gCategory, general, nonLanguage, transferRow, isTransfer, registrationClass, contribution, throughYear } from "./rules.mjs";
+  named, any, gCategory, general, nonLanguage, transferRow, isTransfer, registrationClass, contribution, throughYear,
+  assessmentPeriod } from "./rules.mjs";
 
 export const oldPrograms=["経済学科（昼間コース）","経営学科（昼間コース）","経済学科（夜間主コース）","経営学科（夜間主コース）"];
 const alias=new Map(replacements.map(([a,b])=>[text(a),text(b)]));
@@ -18,15 +19,21 @@ export default function oldEconomics(profile,book){
   const applies=(table,group)=> {
     const titles=new Set(Object.entries(table).filter(([k])=>group(k)).flatMap(([,v])=>v).map(text));
     return c=>{
-      const title=text(c.title).replace(/\([^()]*\)$/,"");
+      const full=text(c.title);
+      const title=(c.department==="0C"?alias.has(full):titles.has(full))?full:full.replace(/\([^()]*\)$/,"");
       if (c.department==="0C") return alias.has(title)?titles.has(alias.get(title)):null;
       if (!titles.has(title)) return false;
-      if (!c.department || !["05","84"].includes(c.department)) return null;
+      if (!c.department) return null;
+      if (!["05","84"].includes(c.department)) return false;
       return true;
     };
   };
   const dayTable=courses[ix%2],otherDayTable=courses[(ix%2)^1];
-  const whenDay=match=>c=>night && c.legacyOffering==="day"?match(c):false;
+  const whenDay=match=>c=>{
+    if(!night || c.legacyOffering==="night")return false;
+    const fits=match(c);
+    return c.legacyOffering==="day" || fits===false?fits:null;
+  };
   const base=any(applies(tables,k=>k.startsWith("専門基礎科目")),whenDay(applies(dayTable,k=>k.startsWith("専門基礎科目"))));
   const own=any(applies(tables,k=>k.startsWith("専門展開科目")),whenDay(applies(dayTable,k=>k.startsWith("専門展開科目"))));
   const external=any(applies(other,k=>!k.includes("学部共通")&&(k.startsWith("専門展開科目")||(!night&&k.startsWith("専門基礎科目")))),
@@ -38,8 +45,10 @@ export default function oldEconomics(profile,book){
   function capped({courses}) {
     const contributions=[],used=new Map(),teachers=new Set();
     const opposite=c=>c.legacyOffering===(night?"day":"night") && (night || general(c)!==true);
+    const unspecified=c=>!["day","night"].includes(c.legacyOffering) && (night || general(c)!==true);
+    const order=c=>unspecified(c)?2:Number(opposite(c));
     let abroad=0,unknown=false;
-    for(const c of [...courses].sort((a,b)=>Number(opposite(a))-Number(opposite(b)))) {
+    for(const c of [...courses].sort((a,b)=>order(a)-order(b))) {
       const fit=eligible(c);
       if(fit!==true){if(fit===null) unknown=true;continue;}
       const raw=text(c.title).replace(/\([^()]*\)$/,"");
@@ -53,25 +62,28 @@ export default function oldEconomics(profile,book){
         if(teachers.has(c.teacher) || teachers.size>=4) continue;
       }
       const ceiling=key?Math.max(0,8-(used.get(key)||0)):Infinity;
-      const cross=opposite(c);
-      const applied=Math.min(c.credits,ceiling,cross?(night?40:18)-abroad:Infinity);
+      const cross=opposite(c), unverified=unspecified(c);
+      const applicable=Math.min(c.credits,ceiling);
+      const applied=Math.min(applicable,cross || unverified?(night?40:18)-abroad:Infinity);
+      if(unverified && applied<applicable)unknown=true;
       if(applied<=0) continue;
       if(key==="異文化論") teachers.add(c.teacher);
       if(key) used.set(key,(used.get(key)||0)+applied);
-      if(cross) abroad+=applied;
+      if(cross || unverified) abroad+=applied;
       contributions.push(contribution(c,applied,key || (cross?"昼夜間の相互履修":"卒業算入")));
     }
     return {value:contributions.reduce((sum,c)=>sum+c.applied,0),contributions,
       ...(unknown?{unknown:"旧課程の開講区分・異文化論の異なる担当者・科目読替を学部の履修科目確認表で確認してください。"}:{})};
   }
-  const prog=credited("total","進級判定の対象単位",night?90:60,eligible,src);
+  const prog=credited("total","進級判定の対象単位",night?90:60,eligible,src,{evaluate:capped});
   const grade=credited("total","卒業単位の合計",124,eligible,src,{evaluate:capped});
   const g=credited("general","教養科目",32,oldGeneral,src);
   const unknownTrack=uncertain("old-track","昼間・夜間主コースと学科の指定区分","経済学科・経営学科と昼間・夜間主コースを選択してください。",src);
   const graduation=[attendance(48,src),attendance(12,src,4),grade,g,
     credited("fourth-year-earned","4年次に修得した単位",8,c=>{
-      if (!c.studyYear) return null;
-      if (+c.studyYear!==4) return false;
+      const year=c.studyYear ?? c.yearOfStudy;
+      if (!year) return null;
+      if (+year!==4) return false;
       if (c.recognized) return c.exchangeWithoutLeave===true?eligible(c):null;
       return eligible(c);
     },src,{note:"認定単位は原則対象外。休学せず協定校で修得した認定単位を含みます。"})];
@@ -88,7 +100,8 @@ export default function oldEconomics(profile,book){
   }else graduation.push(unknownTrack);
   const stages=[];
   for(const year of [2,3,4]){
-    const rows=[attendance(12,src,year-1)];
+    const rows=[attendance(12,src,year-1),{...assessmentPeriod(creditRules,[3],"原則の学年末進級判定月"),
+      note:"学年末以外の判定は旧経済学部の学務係に個別の適用を確認してください。"}];
     if (known && year===(night?4:3)){
       rows.push(prog,credited("base","進級に必要な自学科専門基礎",night?16:12,base,src));
       if(management && day) rows.push(mandatory("accounting","会計学概論Ⅰ・Ⅱ",["会計学概論I","会計学概論II"],["05","0C"],src,2));
@@ -104,7 +117,7 @@ export default function oldEconomics(profile,book){
   stages.push(stage("old-econ-graduation","卒業","graduation",src,graduation));
   return {title:book.title,sources:[book,src,regulation,creditRules,equivalents],stages,
     note:"昼間コースの経済学部向けスタディ・スキルズは原則1年次に履修。昼間開設の夜間主による履修は40単位、夜間主の専門科目の昼間コースによる履修は18単位まで。開講区分は旧課程時間表で照合してください。",
-    cap:{limit:isTransfer(profile)?null:22,source:creditRules,
+    cap:{period:"semester",unit:"credits",limit:/編入/.test(profile.entry || "")?null:22,source:creditRules,
       classify:c=>/^(演習(i|ii)[ab]|文献研究(i|ii)[ab]|異文化間コミュニケーション(基礎演習)?i{1,2}|卒業論文|インターンシップ)$/.test(text(c.title))?"exclude":registrationClass(c),
       note:"各学期22単位。指定の演習・文献研究・卒業論文・インターンシップ、不定期開設科目、教職専門科目は除外。編入生は別規定。"}};
 }

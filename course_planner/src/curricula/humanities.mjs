@@ -4,7 +4,7 @@ import education, { programs as educationPrograms } from "./humanities/education
 import law, { lawBooks } from "./humanities/law.mjs";
 import economics, { programs as econPrograms } from "./humanities/economics.mjs";
 import oldEconomics, { oldPrograms } from "./humanities/old-economics.mjs";
-import { source, uncertain, stage, isTransfer, transferRow } from "./humanities/rules.mjs";
+import { source, uncertain, stage, isTransfer, transferRow, numericEvidence } from "./humanities/rules.mjs";
 
 const directory={
   人文学部:source("人文学部 学生便覧・過年度授業科目一覧","https://www.human.niigata-u.ac.jp/education/handbook/"),
@@ -35,7 +35,11 @@ export default function resolve(profile={}) {
   const year=String(profile.handbook||profile.admitted||"");
   const book=handbooks.find(b=>b.faculty===faculty && b.year===year);
   const index=directory[faculty];
-  if(book && !(faculty==="人文学部" && +year<=2009)) return resolvers[faculty](profile,book);
+  if(book && !(faculty==="人文学部" && +year<=2009)) {
+    const descriptor=resolvers[faculty](profile,book);
+    for(const stage of descriptor.stages) stage.rows=stage.rows.map(numericEvidence);
+    return descriptor;
+  }
   const contact=faculty.replace("（旧課程）","")+"学務係";
   const why="適用年度（"+(year || "未選択")+"）の便覧・経過措置を"+contact+"で確認してください。";
   const graduation=["総単位と在学期間","教養教育の指定科目と必要数","専門・専修の必修・選択・振替"].map((label,i)=>

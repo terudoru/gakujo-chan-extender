@@ -20,11 +20,11 @@ function registrationEvidence(key,title,canBeTaking,src) {
   return credited(key,title+"（"+(canBeTaking?"履修済みまたは履修中":"履修済み")+"）",1,matches,src,{unit:"condition",
     evaluate:({courses})=>{
       const check=c=>c.evaluated===true || c.earned===true || c.passed===true ||
-        ["秀","優","良","可","不可","合格","不合格","修得","認定"].includes(c.grade || c.result) ||
-        (canBeTaking && (c.registered===true || c.status==="許可"));
+        /^(秀|優|良|可|不可|合格|不合格|修得(済み?)?|認定|S|[ABC][+-]?|P)$/i.test(c.grade || c.result || "") ||
+        (canBeTaking && (c.registered===true || c.status==="許可" || ["許可","履修中","受講中"].includes(c.grade)));
       const selected=courses.filter(c=>matches(c)===true); const hit=selected.find(check);
       return {value:hit?1:0,contributions:hit?[contribution(hit,1,canBeTaking?"履修状況":"評価済み")]:[],
-        ...(selected.length && !hit?{unknown:"学務の成績・正式登録で確認してください。履修済みには評価を受けた不合格科目も含みます。"}:{})};
+        ...(!hit?{unknown:"不合格でも評価済みなら履修済みです。成績・正式登録の記録または実習の履修資格確認表で照合してください。"}:{})};
     }});
 }
 
@@ -137,6 +137,7 @@ export default function education(profile,book) {
     });
     if(!spec || spec.checkSubgroups || (middle && (prog.includes("理科教育") || prog.includes("社会科教育")))) rows.push(uncertain("specialization-route","専修内の選択分野・選択必修","入学年度の別表第6で、選んだ分野と括弧で指定された科目群ごとの単位を照合してください。分野の適用は専修担当に確認してください。",specSrc));
   } else rows.push(uncertain("education-track","教職・教科・専修・自由科目の内訳","所属専修と主免（特別支援は基礎免）を選択してください。",src));
+  rows.find(r=>r.key==="total").allocationKeys=rows.filter(r=>r.exclusive==="education-graduation").map(r=>r.key);
   if(isTransfer(profile)) rows.push(transferRow(book));
   const gate=[uncertain("guidance","実習前の事前指導","事前指導の出席を実習担当の記録で確認してください。",pract),
     registrationEvidence("profession",y===2017?"教職入門":"教職概論",false,pract),
@@ -158,6 +159,6 @@ export default function education(profile,book) {
   stages.push(stage("education-graduation","卒業","graduation",src,rows));
   return {title:book.title,sources:[book,src,genSrc,specSrc,prereq,pract,...(yrNote?[yrNote]:[])],stages,
     note:"卒業研究・実習の履修登録と、卒業時の単位・主免等の判定は別々に表示します。",
-    cap:{limit:null,source:source("新潟大学 教務関係Q12・学部別の登録上限","https://www.niigata-u.ac.jp/campus/qa/education/"),
+    cap:{period:"semester",unit:"credits",limit:null,source:source("新潟大学 教務関係Q12・学部別の登録上限","https://www.niigata-u.ac.jp/campus/qa/education/"),
       note:"学生要覧で一律の学期上限を確認できません。登録年度・専修の履修指導と教育学部学務係の回答を確認してください。"}};
 }

@@ -134,7 +134,8 @@ test("旧経済の昼夜別進級と学科指定・卒業算入の上限",()=>{
   assert.equal(row(d,"total","old-econ-3").required,60);
   assert.equal(row(n,"total","old-econ-4").required,90);
   assert.equal(row(n,"base","old-econ-4").required,16);
-  assert.equal(evaluate(row(d,"accounting","old-econ-3"),[course("05","会計学概論I"),course("05","会計学概論I")]).value,2);
+  const accounting=course("05","会計学概論I",2,{studyYear:2});
+  assert.equal(evaluate(row(d,"accounting","old-econ-3"),[accounting,{...accounting}]).value,2);
   const readings=[1,2,3,4,5].map(i=>course("05","外書講読I",2,{code:String(i)}));
   assert.equal(evaluate(row(d,"total"),readings).value,8);
   assert.equal(row(n,"foreign").match(g("初級中国語",2,"初修外国語")),true);
@@ -173,7 +174,8 @@ test("学部認定の代替・旧課程読替・年度境界の判定",()=>{
   assert.equal(evaluate(row(p,"total"),swap).value,4);
   assert.equal(evaluate(row(p,"total","law-research"),[{...law("民法I"),studyYear:4}]).value,0);
   const o=descriptor(O,2017,"経済学科（昼間コース）");
-  assert.equal(row(o,"base","old-econ-3").match(econ("社会思想史")),true);
+  assert.equal(row(o,"base","old-econ-3").match({...econ("社会思想史"),studyYear:2}),true);
+  assert.equal(row(o,"base","old-econ-3").match(econ("社会思想史")),null);
   const n=descriptor(O,2019,"経済学科（夜間主コース）");
   assert.equal(evaluate(row(n,"total"),[course("05","入門ミクロ経済学",45,{legacyOffering:"day"})]).value,40);
   const older=descriptor(E,2022,"経済学"),recent=descriptor(E,2026,"学際日本学");

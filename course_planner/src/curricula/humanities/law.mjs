@@ -1,6 +1,7 @@
 import catalog from "./law-courses.json" with { type: "json" };
 import { page, statute, named, credited, uncertain, mandatory, alternative, any, text, attendance,
-  contribution, general, transferRow, isTransfer, stage, registrationClass, throughYear } from "./rules.mjs";
+  contribution, mergeContributions, general, transferRow, isTransfer, stage, registrationClass, throughYear,
+  previousGpa, gpaSource, minimumYear } from "./rules.mjs";
 
 const regs = statute("法学部規程第12条・附則", "110000435", "at10");
 const details = statute("法学部履修細則第3～7条・別表", "110000438");
@@ -11,7 +12,10 @@ export const lawBooks = Array.from({length:9},(_,i)=>{
     title:year+"年度 法学部"+(year<2022?"卒業要件チェックシート・使用マニュアル":"規程（第12条・当該年度適用附則）"),
     url:year<2022?editions:regs.url, programs:year===2018?["法学"]:["法学","法曹養成"]};
 });
-const law = names => named(["04"],names,{sections:true});
+const law = names => {
+  const match=named(["04"],names,{sections:true});
+  return c=>match(text(c.title)==="民法基礎演習/民事法基礎演習" ? {...c,title:"民法基礎演習"} : c);
+};
 const variants = (base,n) => ["I","II","III","IV","V","VI","VII","VIII","IX"].slice(0,n).map(x=>base+x);
 const fields = [["憲法",3],["民法",4],["刑法",3]];
 const sets = fields.map(([field,n])=>[
@@ -120,34 +124,39 @@ export default function lawRules(profile,book) {
         }
       }
     }
-    return {value:contributions.reduce((sum,c)=>sum+c.applied,0),contributions,...(choice.unknown?{unknown:choice.unknown}:{})};
+    return {value:contributions.reduce((sum,c)=>sum+c.applied,0),contributions:mergeContributions(contributions),...(choice.unknown?{unknown:choice.unknown}:{})};
   }
   const combined=any(electiveMatch,isMandatory);
   const requiredTotal=(threshold,label)=>credited("total",label,threshold,combined,src,{evaluate:total});
-  const early=profile.earlyGraduation===true && !isTransfer(profile);
+  const transferException=/編入|転部/.test(profile.entry||"");
+  const early=profile.earlyGraduation===true && !transferException;
   const graduation=[attendance(early?36:48,src),requiredTotal(124,"卒業単位の合計"),a,...mandatoryRows];
   if (selected) graduation.push(credited("law-electives","選択E・F類"+(professional?"":"（F類は60単位まで）"),
     124-a.required-4-8-(professional?64:4),any(electiveMatch,professional?mTest:allB,seminar.match),src,{evaluate:elective}));
   else graduation.push(uncertain("law-program","B類またはL・M・N類、E・F類の必要数","所属する法学・法曹養成プログラムを選択してください。",src));
-  const exceptional=isTransfer(profile)||profile.earlyGraduation===true||profile.deanException===true;
-  if (isTransfer(profile)) graduation.push({...transferRow(details),note:"3年次編入・転部は60単位以内、2年次転部は30単位以内で認定。早期卒業は適用外（履修細則第11条）。"});
+  const exceptional=transferException||profile.earlyGraduation===true||profile.deanException===true;
+  if (isTransfer(profile)) graduation.push({...transferRow(details),...(transferException?{note:"3年次編入・転部は60単位以内、2年次転部は30単位以内で認定。早期卒業は適用外（履修細則第11条）。"}:{})});
   if(early) {
     if(professional) {
       const lm=any(mTest,...lp.map(r=>r.match));
-      graduation.push(credited("early-law-grades","L・M類で秀または優",20,c=>lm(c)===true && ["秀","優"].includes(c.grade),details,{unit:"courses"}),
-        {...credited("early-gpa","3年次終了時の累積GPA",2.8,()=>false,details),unit:"condition",profileValue:p=>p.thirdYearCumulativeGpa??null});
+      graduation.push(credited("early-law-grades","L・M類で秀または優",20,c=>["秀","優"].includes(c.grade)?lm(c):false,details,{unit:"courses"}),
+        {key:"early-gpa",label:"3年次終了時の累積GPAが2.8以上",kind:"成績",required:1,unit:"condition",source:details,
+          profileValue:p=>{
+            const g=p.thirdYearCumulativeGpa;
+            return g!==undefined && g!==null && g!=="" && Number(g)>=0 && Number(g)<=5?Number(Number(g)>=2.8):null;
+          }});
     }
     graduation.push(uncertain("early-approval","早期卒業の申請と学部判定",professional?
       "2年次末に在学2年・累積GPA2.8以上の届出をしたことを学務係で確認してください。":
       "教養・専門それぞれ累積GPA3.0以上、可・不可なし、2年次末の書面申請と面接合格を学務係で確認してください。",details));
   }
   const gate=exceptional?[uncertain("law-d-exception","D類の履修許可・特例","編入・転部、早期卒業、学部長の特認について法学部学務係の履修登録通知を確認してください。",details)]
-    : [requiredTotal(60,"3年次終了時点の卒業要件算入単位"),a,...aParts,seminar];
-  const g=Number(profile.gpa);
-  return {title:book.title,sources:[book,src,details],stages:[
-    stage("law-research","4年次必修D類の履修登録","progress",details,gate.map(r=>throughYear(r,3))),
+    : [minimumYear(4,details),...[requiredTotal(60,"3年次終了時点の卒業要件算入単位"),a,...aParts].map(r=>throughYear(r,3)),seminar];
+  const g=previousGpa(profile);
+  return {title:book.title,sources:[book,src,details,gpaSource],stages:[
+    stage("law-research","4年次必修D類の履修登録","progress",details,gate),
     stage("law-graduation","卒業","graduation",src,graduation)],
     note:"学部長の特認によるジュニア・リサーチ・ペーパーの代替はE類8単位。早期卒業には申請・成績等に別要件があります（履修細則第10条）。",
-    cap:{limit:isTransfer(profile)?null:g>=3.5?30:g>=3?26:g>=2.5?24:22,source:details,classify:registrationClass,
+    cap:{period:"semester",unit:"credits",limit:transferException?null:g>=3.5?30:g>=3?26:g>=2.5?24:22,source:details,classify:registrationClass,
       note:"各学期の上限は前学期GPAによる。不定期開設・教員免許の教職科目は除外。編入・転部には通常上限を適用しません。"}};
 }

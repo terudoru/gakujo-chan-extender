@@ -38,14 +38,40 @@ export const credited = (key, label, required, match, source, extra = {}) =>
 export const uncertain = (key, label, why, source) =>
   ({ key, label, kind: "要確認", required: null, unknown: why, source });
 export const isTransfer = p => /編入|転部|転入|再入学/.test(p.entry || "");
+export const gpaSource = source("新潟大学 成績評価・GPAの算出式",
+  "https://www.niigata-u.ac.jp/university/about/announce/studysupport/");
+export function previousGpa(p) {
+  if(!["string","number"].includes(typeof p.gpa) || !/^\d+(\.\d+)?$/.test(String(p.gpa).trim()))return null;
+  const n = Number(p.gpa);
+  return n >= 0 && n <= 5 ? n : null;
+}
+function wholeNumber(v) {
+  if (!["number","string"].includes(typeof v) || !/^\d+$/.test(String(v))) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) ? n : null;
+}
 export const attendance = (required, src, year) => ({
   key: year ? "year-" + year + "-months" : "months", kind: "在学期間",
   label: year ? year + "年次の在学期間" : "学部での通算在学期間", required, unit: "months", source: src,
   profileValue: p => {
-    const value = year ? p.yearMonths?.[year] : (p.enrolledMonths ?? p.attendanceMonths);
-    return value !== "" && value != null && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
+    return wholeNumber(year ? p.yearAttendanceMonths?.[year] : p.attendanceMonths);
   },
   note: "休学期間を除き、編入等は学部が通算を認定した期間を用います。",
+});
+function assessmentDate(p) {
+  const s=p.assessmentDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s ?? "")) return null;
+  const d=new Date(s+"T00:00:00Z");
+  return Number.isFinite(+d) && d.toISOString().slice(0,10)===s ? d : null;
+}
+export const assessmentPeriod=(src,months,label)=>({
+  key:"assessment-period",kind:"判定時期",label,required:1,unit:"condition",source:src,
+  profileValue:p=>{const d=assessmentDate(p);return d?Number(months.includes(d.getUTCMonth()+1)):null;},
+  note:"学期末の判定月は9月・3月、学年末は3月です。正式な判定日は学部の通知で確認してください。",
+});
+export const minimumYear=(year,src)=>({
+  key:"study-year",kind:"在籍年次",label:year+"年次以降の在籍",required:1,unit:"condition",source:src,
+  profileValue:p=>{const n=wholeNumber(p.yearOfStudy);return n>=1 && n<=6?Number(n>=year):null;},
 });
 export function transferRow(book) {
   return uncertain("recognition", "適用便覧・既修得単位と在学期間の認定",
@@ -56,12 +82,68 @@ export function stage(id, label, goal, src, rows) {
 }
 export function throughYear(row,lastYear) {
   if(!row.match)return row;
-  const inTime=c=>!c.studyYear || (Number(c.studyYear)>0 && Number(c.studyYear)<=lastYear);
-  return {...row,match:(c,p)=>inTime(c) && row.match(c,p),
-    ...(row.evaluate?{evaluate:ctx=>row.evaluate({...ctx,courses:ctx.courses.filter(inTime)})}:{})};
+  function inTime(c,p={}) {
+    const actual=wholeNumber(c.studyYear ?? c.yearOfStudy);
+    if(actual!==null && actual>0) return actual<=lastYear;
+    const year=wholeNumber(c.year), admitted=wholeNumber(p.admitted);
+    if(!year)return null;
+    if(!isTransfer(p) && admitted && year>=admitted && year-admitted<lastYear) return true;
+    const date=assessmentDate(p),current=wholeNumber(p.yearOfStudy);
+    if(!date || !current || (admitted && year<admitted))return null;
+    const academicYear=date.getUTCFullYear() - Number(date.getUTCMonth()<3);
+    if(year<academicYear && current<=lastYear && !isTransfer(p))return true;
+    // September progression can change the year of study within one academic year.
+    if(year===academicYear && current<=lastYear && c.column==="earned" && !isTransfer(p))return true;
+    return null;
+  }
+  const match=(c,p)=>{
+    const fits=row.match(c,p),timely=inTime(c,p);
+    return fits===false || timely===false ? false : fits===true && timely===true ? true : null;
+  };
+  if(!row.evaluate)return {...row,match};
+  return {...row,match,evaluate:ctx=>{
+    const result=row.evaluate({...ctx,courses:ctx.courses.filter(c=>inTime(c,ctx.profile)===true)});
+    if(ctx.courses.some(c=>inTime(c,ctx.profile)===null && row.match(c,ctx.profile)!==false))
+      result.unknown ??= "休学・留年等を含む修得時の在籍年次を履修科目確認表で照合してください。";
+    return result;
+  }};
 }
 export function contribution(c, applied, reason) {
-  return { title: c.title, code: c.code || "", year: c.year ?? "", credits: c.credits, applied, reason };
+  return { course:c, title:c.title,code:c.code || "",year:c.year ?? "",credits:c.credits,applied,reason };
+}
+// The engine consumes one applied amount per ledger record, including split allocations.
+export function mergeContributions(entries) {
+  const result=new Map();
+  for(const ref of entries) {
+    const existing=result.get(ref.course);
+    if(existing)existing.applied+=ref.applied;
+    else result.set(ref.course,{...ref});
+  }
+  return [...result.values()];
+}
+// Imported credit quantities may be decimal strings. Preserve ledger identity when
+// passing their numeric form to a custom evaluator and when returning its evidence.
+export function numericEvidence(row) {
+  if(!row.evaluate)return row;
+  return {...row,evaluate:ctx=>{
+    if(ctx.courses.every(c=>typeof c.credits==="number" && Number.isFinite(c.credits) && c.credits>=0))
+      return row.evaluate(ctx);
+    const originals=new Map(),courses=[];
+    let missing=false;
+    for(const c of ctx.courses) {
+      if(typeof c.credits==="number" && Number.isFinite(c.credits) && c.credits>=0){courses.push(c);continue;}
+      const known=typeof c.credits==="string" && /^\d+(\.\d+)?$/.test(c.credits.trim());
+      if(!known && row.match?.(c,ctx.profile)!==false)missing=true;
+      if(!known && (row.unit??"credits")==="credits")continue;
+      const copy={...c,credits:known?Number(c.credits):0};
+      originals.set(copy,c);
+      courses.push(copy);
+    }
+    const result=row.evaluate({...ctx,courses});
+    if(missing)result.unknown??="該当科目の単位数を成績確認表で確認してください。";
+    for(const ref of result.contributions??[])if(originals.has(ref.course))ref.course=originals.get(ref.course);
+    return result;
+  }};
 }
 
 // Each alternative is a list of independent minima. Keep the complete best alternative,

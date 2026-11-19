@@ -1,14 +1,31 @@
 import offerings from "./economics-offerings.json" with { type: "json" };
 import currentOfferings from "./economics-courses.json" with { type: "json" };
+import openers2026 from "./economics-openers.json" with { type: "json" };
 import modules from "./economics-modules.json" with { type: "json" };
 import teacherCourses from "./economics-teaching.json" with { type: "json" };
 import publications from "./publications.json" with { type: "json" };
 import { text, page, source, statute, stage, named, any, credited, uncertain, mandatory, alternative, contribution,
-  attendance, transferRow, isTransfer, gCategory, nonLanguage, registrationClass, throughYear } from "./rules.mjs";
+  attendance, transferRow, isTransfer, gCategory, nonLanguage, registrationClass, throughYear,
+  gpaSource,previousGpa,assessmentPeriod,minimumYear,mergeContributions } from "./rules.mjs";
 
 export const programs = ["経済学","経営学","学際日本学","地域リーダー"];
-const units=["0C","84","01","04"];
-const names = values => named(units,values,{sections:true});
+// Faculty annexes list shared teaching by title. A general-field label alone does not
+// identify the opening department. The 2026 offering list disambiguates that year only.
+const verifiedOpeners=new Map(Object.entries(openers2026).map(([t,v])=>[text(t),v]));
+const names=values=>{
+  const titles=new Set(values.map(text));
+  return c=>{
+    const full=text(c.title),name=titles.has(full)?full:full.replace(/\([^()]*\)$/,"");
+    if(!titles.has(name))return false;
+    if(!c.department)return null;
+    if(Number(c.year ?? c.matchedCourse?.year)!==2026)
+      return c.department==="0C"?true:["84","01","04","03"].includes(c.department)?null:false;
+    const openers=verifiedOpeners.get(name) ?? ["0C"];
+    if(!openers.includes(c.department))return false;
+    if(openers.length===1 || c.department==="0C")return true;
+    return null;
+  };
+};
 const official=statute("経済科学部規程第14条・別表第1及び第2","110001598");
 const attendanceCriteria=source("経済科学部における進級及び卒業に関する基準（2024年2月15日教授会決定、在籍学生対象）",
   "https://www.econ.niigata-u.ac.jp/topics/files/elfinder/gakumu/進級及び卒業に関する基準.pdf");
@@ -40,7 +57,7 @@ function englishRequirement(letter,book,y) {
     const pair=letter==="L"?["iStep Listening and Speaking","iStep Presentations"]:["iStep Academic Reading","iStep Academic Writing"];
     alternatives.push(pair.map(title=>({label:title,max:0.5,match:(c,p)=>{
       const match=named(["84"],[title])(c);
-      return match===true && !p.iStepApproved ? null : match;
+      return match===true && p?.iStepApproved!==true ? null : match;
     }})));
   }
   return credited("english-"+letter,"アカデミック英語入門"+letter,1,any(...alternatives.flat().map(x=>x.match)),
@@ -49,15 +66,15 @@ function englishRequirement(letter,book,y) {
 }
 
 function moduleRow(key,label,min,entries,src) {
+  const titleSets=entries.map(([module,rule])=>[module,rule,rule.titles.map(title=>[text(title),names([title])])]);
   return credited(key,label,min,any(...entries.map(([,v])=>names(v.titles))),src,{unit:"condition",
     evaluate:({courses})=>{
-      const contributions=[];let unresolved=false;
-      for (const [module,rule] of entries) {
+      const contributions=[];let unresolved=false,completed=0;
+      for (const [module,rule,matches] of titleSets) {
         const titles=new Map();
-        for (const title of rule.titles) {
-          const match=names([title]);
+        for (const [title,match] of matches) {
           const course=courses.find(c=>match(c)===true && Number(c.credits)>0);
-          if (course) titles.set(text(title),course);
+          if (course) titles.set(title,course);
         }
         if (!titles.size) continue;
         let passed=false;
@@ -78,11 +95,12 @@ function moduleRow(key,label,min,entries,src) {
             (language("朝鮮語")>=8 && all(["中国語オプショナルA","アジア言語文化研究法A","アジア言語文化研究法B"])));
         } else unresolved=true;
         if (passed) {
-          let first=true;
-          for(const c of titles.values()){contributions.push(contribution(c,first?1:0,module));first=false;}
+          completed++;
+          const records=[...new Set(titles.values())];
+          for(const c of records) contributions.push(contribution(c,1/records.length,module));
         }
       }
-      return {value:contributions.reduce((n,c)=>n+c.applied,0),contributions,
+      return {value:completed,contributions:mergeContributions(contributions),
         ...(unresolved || !entries.length?{unknown:"当該年度のモジュール一覧で選択内訳・認定科目を確認してください。"}:{})};
     }});
 }
@@ -96,7 +114,7 @@ export default function economics(p,book) {
   const groups=catalog(y);
   const own=groups[Math.max(ix,0)];
   const common=mandatory("common","知識・理解の学部共通基礎4科目",["経済学入門","経営学入門","日本経済入門","人文社会科学入門"],["0C"],src,2);
-  const skills=mandatory("skills","スタディスキルズⅠ～Ⅲ・データサイエンス総論Ⅰ",["スタディスキルズI","スタディスキルズII","スタディスキルズIII","データサイエンス総論I"],units,src,1);
+  const skills=mandatory("skills","スタディスキルズⅠ～Ⅲ・データサイエンス総論Ⅰ",["スタディスキルズI","スタディスキルズII","スタディスキルズIII","データサイエンス総論I"],["84"],src,1);
   const knownTitle=names(groups.flat().map(v=>v.title));
   const hasGroup=(pred,records=own)=>{
     const listed=names(records.filter(v=>pred(v.group)).map(v=>v.title));
@@ -109,8 +127,9 @@ export default function economics(p,book) {
   const spec=(group)=>group.includes("/専門科目/");
   const allSpec=hasGroup(spec,groups.flat());
   const general=c=>{
-    if (common.match(c)===true || skills.match(c)===true || allSpec(c)===true || c.teacherTrainingOnly===true) return false;
-    return nonLanguage(c);
+    const major=any(common.match,skills.match,allSpec)(c), category=nonLanguage(c);
+    if (major===true || c.teacherTrainingOnly===true || category===false) return false;
+    return major===null?null:category;
   };
   const language=gCategory("英語","初修外国語"),practical=hasGroup(g=>g==="実践学修科目");
   const designatedFree=hasGroup(g=>g==="自由選択科目"),thesis=named(["0C"],["卒業論文"],{sections:true});
@@ -121,7 +140,8 @@ export default function economics(p,book) {
     return !c.department || c.department==="0C" || c.teacherTrainingOnly ? null : false;
   });
   const total=n=>credited("total",n===124?"卒業単位の合計":"学部の教育課程の修得単位",n,eligible,src);
-  const rows=[attendance(48,src),attendance(12,attendanceCriteria,4),total(124)];
+  const termEnd=()=>assessmentPeriod(attendanceCriteria,[3,9],"学期末の進級・卒業判定月");
+  const rows=[attendance(48,src),attendance(12,attendanceCriteria,4),termEnd(),total(124)];
   const add=(key,label,min,match,source=src,extra={})=>rows.push(credited(key,label,min,match,source,extra));
   const pool={exclusive:"economics-graduation"};
   rows.push({...common,...pool},{...skills,...pool});
@@ -148,10 +168,10 @@ export default function economics(p,book) {
       rows.push(moduleRow("foundation-modules","基礎モジュール",ix===2?2:1,allModules.filter(([k])=>k.includes("基礎モジュール")),mSrc),
         moduleRow("core-modules","中核モジュール",1,allModules.filter(([k])=>!k.includes("基礎モジュール")),mSrc));
       if(ix===2) rows.push(moduleRow("japan-module","日本学基礎モジュール",1,allModules.filter(([k])=>k==="日本学基礎モジュール"),mSrc));
-      else rows.push(mandatory("statistics","統計入門",["統計入門"],units,annex,2));
+      else rows.push(mandatory("statistics","統計入門",["統計入門"],["0C"],annex,2));
       const writing=hasGroup(g=>g.includes("ライティング"));
       add("writing","アカデミックライティング区分",ix===2?2:3,writing,src,pool);
-      if(ix===3) rows.push(mandatory("writing-skill","ライティングスキル",["ライティングスキル"],units,annex,1));
+      if(ix===3) rows.push(mandatory("writing-skill","ライティングスキル",["ライティングスキル"],["0C"],annex,1));
       const base=ix===2?"学修デザイン演習":"課題解決スキル";
       rows.push(mandatory("practical-i",base+"Ⅰ",[base+"I"],["0C"],annex,2,{sections:true}),
         mandatory("practical-ii",base+"Ⅱ",[base+"II"],["0C"],annex,1,{sections:true}));
@@ -185,17 +205,20 @@ export default function economics(p,book) {
     if(ix<=1 && y<2024) add("flex","実践・自由選択に配分する残り",8,any(practical,designatedFree,eligible),src,pool);
   }
   if(isTransfer(p)) rows.push(transferRow(book));
+  rows.find(r=>r.key==="total").allocationKeys=rows.filter(r=>r.exclusive==="economics-graduation").map(r=>r.key);
   const stages=[2,3,4].map(n=>stage("econ-year-"+n,n+"年次進級","progress",progress,[
-    attendance(12,attendanceCriteria,n-1),...(n===4?[attendance(36,progress),throughYear({...total(90),source:progress},3)]:[]),
+    attendance(12,attendanceCriteria,n-1),termEnd(),...(n===4?[attendance(36,progress),throughYear({...total(90),source:progress},3)]:[]),
     ...(isTransfer(p)?[transferRow(book)]:[])]));
-  stages.push(stage("econ-thesis","4年次の卒業論文履修","progress",progress,[uncertain("supervisor","指導教員の決定と4年次での履修","所属プログラム担当教員との協議・指導教員決定は学部の通知を確認してください。",progress)]),
+  stages.push(stage("econ-thesis","4年次の卒業論文履修","progress",progress,[minimumYear(4,progress),uncertain("supervisor","指導教員の決定","所属プログラム担当教員との協議・指導教員決定は学部の通知を確認してください。",progress)]),
     stage("econ-graduation","卒業","graduation",src,rows));
-  const g=Number(p.gpa);
+  const g=previousGpa(p);
   const errata=({2022:"ecx29",2023:"ecx31",2024:"ecx33"})[y];
-  return {title:book.title,sources:[book,src,annex,official,progress,attendanceCriteria,capSrc,page(book,25,"CAPの算入対象外"),
+  return {title:book.title,sources:[book,src,annex,official,progress,attendanceCriteria,capSrc,gpaSource,
+    source("2026年度 新潟大学授業科目開設一覧（開設部局・開講番号の照合）","https://www.iess.niigata-u.ac.jp/acpb/upload/20260327161315092692700.pdf"),page(book,25,"CAPの算入対象外"),
     page(book,y<=2022?60:58,"教員免許の指定科目"),...(errata?[source(...publications[errata])]:[])],stages,
     note:"編入・転部では学部が指定した年度の便覧を使います。別表第1との対応が定まらない授業と個別の振替は、履修科目確認表の算入区分を照合してください。",
-    cap:{limit:isTransfer(p)?null:g>=4.5?30:g>=4?28:g>=3.5?26:24,source:capSrc,
-      classify:c=>thesis(c)===true || teaching(c)===true || (y<=2023 && c.minorIntro===true)?"exclude":registrationClass(c),
+    cap:{period:"semester",unit:"credits",limit:/編入/.test(p.entry || "")?null:g>=4.5?30:g>=4?28:g>=3.5?26:24,source:capSrc,
+      classify:c=>thesis(c)===true || teaching(c)===true || (y<=2023 && c.minorIntro===true)?"exclude":
+        c.teacherTrainingOnly===true && !["集中","不定期"].includes(c.period) && !c.irregular?"unknown":registrationClass(c),
       note:"不定期開設・学部指定の教職科目"+(y<=2023?"・副専攻プログラムの入門科目":"")+"を除外。編入学の上限は別定。前学期GPAで24～30単位。"}};
 }

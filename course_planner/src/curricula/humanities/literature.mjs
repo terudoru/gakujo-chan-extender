@@ -79,7 +79,7 @@ export default function literature(profile, book) {
   const sumEligible=({courses})=>{
     const contributions=[];let unknown=false;
     for(const c of languageLedger(courses,y)){
-      const fits=eligible(c);
+      const fits=c.recognized && ["total","general","major","surplus"].includes(c.allocationKey)?true:eligible(c);
       if(fits===true) contributions.push(contribution(c,c.credits,"卒業算入"));
       if(fits===null) unknown=true;
     }
@@ -87,6 +87,7 @@ export default function literature(profile, book) {
       ...(unknown?{unknown:"当該年度の科目区分・学部の算入指定を確認してください。"}:{})};
   };
   rows.find(r=>r.key==="total").evaluate=sumEligible;
+  rows.find(r=>r.key==="total").allocationKeys=["general","major","surplus"];
   rows.push(singleLanguage(8,grad));
   genRow("sport","体育実技",1,c=>gCategory("健康・スポーツ")(c) && /^健康スポーツ科学実習/.test(text(c.title)));
   const career = historical ? ["キャリアデザイン","キャリア形成","インターンシップ実習"] : ["キャリアデザイン"];
@@ -135,6 +136,20 @@ export default function literature(profile, book) {
     }});
   append("thesis","卒業論文",10,subset(/^卒業論文/),list);
   if (isTransfer(profile)) rows.push(transferRow(book));
+  // The exclusion follows the credit into every nested or surplus bucket.
+  for(const row of rows.filter(r=>["general","surplus","languages","human","gen-free","gen-adjustable"].includes(r.key))) {
+    const peers=new Set(rows.filter(r=>r.exclusive===row.exclusive).map(r=>r.key));
+    row.evaluate=({courses,profile})=>{
+      const refs=[],pending=[];
+      for(const c of languageLedger(courses,y)){
+        const fits=c.recognized && peers.has(c.allocationKey)?row.key===c.allocationKey:row.match(c,profile);
+        if(fits===true) refs.push(contribution(c,c.credits,row.label));
+        if(fits===null) pending.push(c);
+      }
+      return {value:refs.reduce((n,r)=>n+r.applied,0),contributions:refs,
+        ...(pending.length?{unknown:"履修年度の科目区分・教養への算入先を確認してください。"}:{})};
+    };
+  }
   const steps = [stage("human-third","3年次進級（第5セメスター）","progress",promotion,[
     attendance(24,promotion),credited("total","進級に算入する単位",historical?58:54,eligible,promotion,{evaluate:sumEligible}),
     {...fresh,source:promotion},singleLanguage(4,promotion),credited("intro","入門講義",4,intro,promotion),
@@ -142,7 +157,7 @@ export default function literature(profile, book) {
   return {title:book.title, sources:[book,grad,list,promotion,capSrc,languageSource,
     page(book,y===2014 || y>=2025?29:28,"履修細則・卒業論文のCAP除外と3年次編入の扱い")], stages:steps,
     note:"公的語学検定・留学生科目の振替、体育実技の代替、外国語の併修制限は、学部学務係の認定結果を確認してください。",
-    cap:{limit:isTransfer(profile)?null:22, source:capSrc,
+    cap:{period:"semester",unit:"credits",limit:/編入/.test(profile.entry || "")?null:22, source:capSrc,
       note:"卒業論文、非常勤講師の集中講義、他学部の教職・学芸員資格科目、休暇中の実習等を除外。3年次編入生はガイダンスの別扱いです。",
       classify:c=>{
         if (named(["01"],["卒業論文"],{sections:true})(c)===true || (c.department!=="01" && (c.teacherTrainingOnly===true || c.museumQualificationOnly===true)) || c.holidayPracticum===true) return "exclude";
