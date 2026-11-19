@@ -1,7 +1,8 @@
 const vm: any = require('node:vm');
 const spec: any = JSON.parse(process.argv[2]);
 const clicked: any = [];
-function windowFor(specs?: any) {
+function windowFor(specs: any) {
+  const frame = Array.isArray(specs) ? {nodes: specs} : specs;
   const element = spec => ({
     ...spec, innerText: spec.text || '', textContent: spec.text || '',
     attributes: Object.keys(spec).map(name => ({name})),
@@ -16,7 +17,7 @@ function windowFor(specs?: any) {
       if (spec.clickThrows) throw new Error('synthetic click failure');
     },
   });
-  const nodes: any = specs.map(element);
+  const nodes: any = (frame.nodes || []).map(element);
   const nodesById = new Map(nodes.map(node => [node.id, node]));
   nodes.forEach(node => {
     if (node.parentId) node.parentElement = nodesById.get(node.parentId) || null;
@@ -35,10 +36,14 @@ function windowFor(specs?: any) {
     node.tag === 'input' && ['button','submit','image'].includes(node.type) ||
     ['tab','button','menuitem'].includes(node.role) || !!node.onclick
   )};
+  win.frames = (frame.frames || []).map(child => {
+    const childWindow = windowFor(child);
+    childWindow.frameElement = {...element(child.host || {}), ownerDocument: win.document};
+    return childWindow;
+  });
   return win;
 }
-const window: any = windowFor(spec.nodes);
-window.frames = spec.frames.map(windowFor);
+const window: any = windowFor(spec);
 const result: any = vm.runInNewContext(process.argv[3], {window});
 process.stdout.write(JSON.stringify({result, clicked}));
 

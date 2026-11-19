@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -283,6 +284,143 @@ List<GakujoReminder> planReminders({
   return reminders;
 }
 
+/// One mounted receiver on the notification channel. Platform messages are FIFO
+/// on a messenger. Send take/end synchronously with local ownership changes.
+class NotificationTapConsumer {
+  NotificationTapConsumer._(this._channel, this._handler);
+
+  static final _run = List.generate(
+    4,
+    (_) => Random.secure().nextInt(1 << 30).toRadixString(16).padLeft(8, '0'),
+  ).join();
+  static int _generation = 0;
+  static NotificationTapConsumer? _current;
+  final String _token = '$_run:${++_generation}';
+  final MethodChannel _channel;
+  final FutureOr<bool> Function(String) _handler;
+  final _detached = Completer<void>();
+  Future<void> get detached => _detached.future;
+  bool get isCurrent => identical(this, _current);
+  bool _takeStarted = false;
+  bool _mayHaveReceipt = false;
+  bool _legacy = false;
+  bool _dispatching = false;
+
+  Map<String, Object> get _arguments => {'version': 1, 'consumer': _token};
+
+  void _install() {
+    _current?.dispose();
+    _current = this;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method != 'deadlineNotificationTapped') {
+        throw MissingPluginException(
+          'Unknown notification method ${call.method}',
+        );
+      }
+      final args = call.arguments;
+      if (!isCurrent ||
+          (args is Map &&
+              args.containsKey('consumer') &&
+              args['consumer'] != _token)) {
+        return false;
+      }
+      final url = args is Map ? args['url'] : args;
+      if (url is! String || url.trim().isEmpty) return false;
+      return _handler(url.trim());
+    });
+  }
+
+  Future<void> dispatchStartup(
+    Future<void> Function(String?) navigate, {
+    required bool debugAllowed,
+  }) async {
+    if (!isCurrent || _takeStarted) return;
+    _takeStarted = true;
+    _mayHaveReceipt = true;
+    var accepted = false;
+    try {
+      final url = await _take();
+      if (!isCurrent) return;
+      if (url == null) _finish(false); // Release an uncertain receipt.
+      _dispatching = true;
+      final target = deadlineNotificationTargetUrl(
+        url?.trim(),
+        debugAllowed: debugAllowed,
+      );
+      if (url != null && target == null) {
+        _finish(true); // Terminal policy rejection.
+      }
+      await navigate(target);
+      accepted = true;
+    } finally {
+      _finish(accepted);
+    }
+  }
+
+  Future<String?> _take() async {
+    for (var attempt = 0; attempt < 2 && isCurrent; attempt++) {
+      try {
+        final reply = await _channel.invokeMethod<Object?>(
+          'takePendingNotificationUrl',
+          _arguments,
+        );
+        if (!isCurrent) return null; // Disposal already released the receipt.
+        if (reply is String || reply == null) {
+          _legacy = true;
+          _mayHaveReceipt = false;
+          return reply as String?;
+        }
+        if (reply
+            case {
+              'version': 1,
+              'consumer': final String owner,
+              'url': final String? url,
+            }
+            when owner == _token) {
+          _mayHaveReceipt = url != null;
+          return url;
+        }
+      } on MissingPluginException {
+        return null;
+      } on PlatformException {
+        // A reply can be lost after native has claimed the tap. Only this
+        // token can retrieve the same receipt without claiming another event.
+      }
+    }
+    return null;
+  }
+
+  void _finish(bool accepted) {
+    if (!_mayHaveReceipt) return;
+    _mayHaveReceipt = false;
+    unawaited(_control('finishPendingNotification', {'accepted': accepted}));
+  }
+
+  Future<void> _control(String method, [Map<String, Object>? extra]) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await _channel.invokeMethod<void>(method, {..._arguments, ...?extra});
+        return;
+      } on MissingPluginException {
+        return;
+      } on PlatformException {
+        // Both controls are idempotent and scoped to this registration.
+      }
+    }
+  }
+
+  void dispose() {
+    if (!isCurrent) return;
+    _current = null;
+    _detached.complete();
+    _channel.setMethodCallHandler(null);
+    if (!_dispatching) _finish(false);
+    if (_takeStarted && !_legacy) {
+      unawaited(_control('endNotificationConsumer'));
+    }
+  }
+}
+
 class GakujoNotificationService {
   GakujoNotificationService({DateTime Function()? now})
       : _now = now ?? DateTime.now;
@@ -293,7 +431,7 @@ class GakujoNotificationService {
     'net.yoshida.morebettergakujo/notifications',
   );
 
-  DeadlineNotificationTappedCallback? _deadlineNotificationTapped;
+  NotificationTapConsumer? _legacyConsumer;
 
   String? targetUrl(String? url, {required bool debugAllowed}) {
     return deadlineNotificationTargetUrl(
@@ -305,24 +443,25 @@ class GakujoNotificationService {
   void setDeadlineNotificationTappedHandler(
     DeadlineNotificationTappedCallback? handler,
   ) {
-    _deadlineNotificationTapped = handler;
-    _channel.setMethodCallHandler(handler == null ? null : _handleMethodCall);
+    _legacyConsumer?.dispose();
+    _legacyConsumer = handler == null
+        ? null
+        : bindNotificationTaps((url) async {
+            await handler(url);
+            return true;
+          });
   }
 
-  Future<Object?> _handleMethodCall(MethodCall call) async {
-    if (call.method != 'deadlineNotificationTapped') {
-      throw MissingPluginException(
-          'Unknown notification method ${call.method}');
-    }
-    final arguments = call.arguments;
-    final url = arguments is Map ? arguments['url'] : arguments;
-    final normalized = url is String ? url.trim() : '';
-    final handler = _deadlineNotificationTapped;
-    if (normalized.isEmpty || handler == null) {
-      return false;
-    }
-    await handler(normalized);
-    return true;
+  NotificationTapConsumer bindNotificationTaps(
+    FutureOr<bool> Function(String) handler, {
+    BinaryMessenger? messenger,
+  }) {
+    final channel = MethodChannel(
+      _channel.name,
+      _channel.codec,
+      messenger ?? _channel.binaryMessenger,
+    );
+    return NotificationTapConsumer._(channel, handler).._install();
   }
 
   Future<String?> takePendingNotificationUrl() async {

@@ -134,6 +134,21 @@ const String _gakujoTwoFactorAutofillJsPrefix = r'''(function(__mbgConfig) {
         return true;
       }
     }
+    function hasVisibleFrameChain(doc) {
+      var _a, _b;
+      try {
+        while (doc !== document) {
+          var frame = (_a = doc.defaultView) == null ? void 0 : _a.frameElement;
+          if (!frame || !frame.getClientRects().length) return false;
+          doc = frame.ownerDocument;
+          var style = doc.defaultView.getComputedStyle(frame);
+          if (style.visibility !== "visible" || style.opacity === "0" || ((_b = frame.checkVisibility) == null ? void 0 : _b.call(frame, { checkOpacity: true })) === false) return false;
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     function controlText(element) {
       return [
         element.innerText,
@@ -257,6 +272,7 @@ const String _gakujoTwoFactorAutofillJsPrefix = r'''(function(__mbgConfig) {
         var inputs = Array.prototype.slice.call(
           documents[i].querySelectorAll('input[name="' + __mbgConfig.inputName + '"]')
         );
+        if (!inputs.length || !hasVisibleFrameChain(documents[i])) continue;
         for (var j = 0; j < inputs.length; j += 1) {
           if (isVisible(inputs[j])) {
             input = inputs[j];

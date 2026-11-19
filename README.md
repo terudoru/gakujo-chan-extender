@@ -166,7 +166,7 @@ https://raw.githubusercontent.com/terudoru/gakujo-chan-extender/main/distributio
 - 共用の端末では同期を設定しない。同期で受け取った内容は、その端末を使うほかの人からも見える
 - Google ドライブでは暗号化の鍵も同じアカウントのアプリ専用領域に保存するため、Google やアカウントとアプリの Drive 権限にアクセスできる人は同期データを読める
 
-任意で、ダウンロードした資料を Google ドライブの `More Better Gakujo/科目名/` にも保存できます。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://gakujo.terudoru.com/privacy.html) をご覧ください。
+Google ドライブ保存をオンにすると、ダウンロードした資料を `More Better Gakujo/科目名/` にも保存できます。「保存先フォルダ」で自分が所有する非共有フォルダを選ぶと、その中に科目別に保存します。仕組みの詳細は [docs/star-sync.md](docs/star-sync.md)、データの取り扱いは [プライバシーポリシー](https://gakujo.terudoru.com/privacy.html) をご覧ください。
 
 ## バックアップ
 

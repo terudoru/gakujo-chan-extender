@@ -27,7 +27,7 @@ const String gakujoDownloadCaptureJs = r'''
 
   // web_scripts/src/download_capture/main.ts
   function downloadCapture() {
-    var captureVersion = 21;
+    var captureVersion = 22;
     if (window.__MBG_DOWNLOAD_CAPTURE_VERSION === captureVersion) {
       if (window.__MBG_DOWNLOAD_CAPTURE_ATTACH) {
         window.__MBG_DOWNLOAD_CAPTURE_ATTACH();
@@ -260,6 +260,14 @@ const String gakujoDownloadCaptureJs = r'''
       collect(window);
       return documents;
     }
+    function courseFromNames(names) {
+      if (!names.size) return null;
+      const courseNameAmbiguous = names.size > 1;
+      return {
+        courseName: courseNameAmbiguous ? "未分類" : normalizeCourseName(Array.from(names)[0]),
+        courseNameAmbiguous
+      };
+    }
     function firstUsefulText(selectors, documents = collectDocuments()) {
       for (var i = 0; i < selectors.length; i += 1) {
         var names = /* @__PURE__ */ new Set();
@@ -272,21 +280,16 @@ const String gakujoDownloadCaptureJs = r'''
             }
           }
         }
-        if (names.size) return names.size > 1 ? "未分類" : Array.from(names)[0];
+        if (names.size) return courseFromNames(names);
       }
-      return "";
+      return null;
     }
-    var courseNameAmbiguous = false;
     function estimateCourseName(source) {
-      courseNameAmbiguous = false;
       var documents = source && source.ownerDocument ? [source.ownerDocument] : collectDocuments();
       var row = source && source.closest ? source.closest("tr") : null;
-      var tableCourse = row ? firstCourseNameFromTables(documents, row) : "";
+      var tableCourse = row ? firstCourseNameFromTables(documents, row) : null;
       if (!tableCourse) tableCourse = firstCourseNameFromTables(documents);
-      if (tableCourse) {
-        courseNameAmbiguous = tableCourse === "未分類";
-        return normalizeCourseName(tableCourse);
-      }
+      if (tableCourse) return tableCourse;
       var explicitCourse = firstMatchingCourseNameText([
         "tr",
         "dl",
@@ -294,10 +297,7 @@ const String gakujoDownloadCaptureJs = r'''
         "p",
         "span"
       ], documents);
-      if (explicitCourse) {
-        courseNameAmbiguous = explicitCourse === "未分類";
-        return normalizeCourseName(explicitCourse);
-      }
+      if (explicitCourse) return explicitCourse;
       var candidate = firstUsefulText([
         "h1",
         "h2",
@@ -310,16 +310,17 @@ const String gakujoDownloadCaptureJs = r'''
         ".selected",
         ".active"
       ], documents);
-      if (candidate) {
-        courseNameAmbiguous = candidate === "未分類";
-        return normalizeCourseName(candidate);
-      }
+      if (candidate) return candidate;
       if (source) return estimateCourseName();
-      return normalizeCourseName(document.title || "未分類");
+      return { courseName: normalizeCourseName(document.title || "未分類"), courseNameAmbiguous: false };
     }
-    window.__MBG_ESTIMATE_COURSE_NAME = estimateCourseName;
+    function pageCourseName(detailed) {
+      const estimate = estimateCourseName();
+      return detailed ? estimate : estimate.courseName;
+    }
+    window.__MBG_ESTIMATE_COURSE_NAME = pageCourseName;
     function coursePayload(source) {
-      var courseName = estimateCourseName(source);
+      const { courseName, courseNameAmbiguous } = estimateCourseName(source);
       return __spreadValues({
         courseName
       }, courseNameAmbiguous ? { courseNameAmbiguous: true } : {});
@@ -364,7 +365,7 @@ const String gakujoDownloadCaptureJs = r'''
           }
         }
       }
-      return names.size > 1 ? "未分類" : Array.from(names)[0] || "";
+      return courseFromNames(names);
     }
     function firstMatchingCourseNameText(selectors, documents = collectDocuments()) {
       for (var i = 0; i < selectors.length; i += 1) {
@@ -379,9 +380,9 @@ const String gakujoDownloadCaptureJs = r'''
             }
           }
         }
-        if (names.size) return names.size > 1 ? "未分類" : Array.from(names)[0];
+        if (names.size) return courseFromNames(names);
       }
-      return "";
+      return null;
     }
     function normalizeCourseName(text) {
       var normalized = (text || "").replace(/\s+/g, " ").trim();

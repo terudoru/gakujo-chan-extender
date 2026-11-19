@@ -15,17 +15,16 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter_linux/webview_flutter_linux.dart'
     show LinuxDownloadProgress, LinuxKeyZoomAction;
 
-import 'generated/course_name_estimate.g.dart';
 import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
+import 'generated/document_title.g.dart';
+import 'generated/favorite_page_identity.g.dart';
 import 'generated/navigator_user_agent.g.dart';
 import 'generated/page_text_activity.g.dart';
 import 'generated/pdf_preview_ready.g.dart';
 import 'generated/preview_navigate.g.dart';
 import 'generated/portal_auth_state_probe.g.dart';
 import 'generated/authenticated_session_reset.g.dart';
-import 'generated/course_name_body_text.g.dart';
-import 'generated/course_name_tables.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
@@ -687,6 +686,12 @@ String secureStorageRecoveryGuidance(
       'その場合はログイン情報と2FA設定の再入力が必要です。';
 }
 
+const _offlineRetryStatus = 'オフラインのようです。接続が戻ると自動で再読み込みします';
+const _manualReloadStatus = '読み込めませんでした。接続を確認して再読み込みを押してください';
+
+bool _isHiddenOrPaused(AppLifecycleState? state) =>
+    state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+
 @visibleForTesting
 void handleGakujoWebResourceError(
   GakujoWebResourceError error, {
@@ -696,10 +701,10 @@ void handleGakujoWebResourceError(
 }) {
   if (error.isForMainFrame && error.isConnectivityError) {
     if (offlineAutoReloads >= 3) {
-      setStatus('読み込めませんでした。接続を確認して再読み込みを押してください');
+      setStatus(_manualReloadStatus);
       return;
     }
-    setStatus('オフラインのようです。接続が戻ると自動で再読み込みします');
+    setStatus(_offlineRetryStatus);
     startOfflineRetry();
     return;
   }
@@ -742,6 +747,7 @@ class GakujoWebApp extends StatefulWidget {
     this._debugAllowed,
     this._gakujoReachable,
     this._updateService,
+    this.updateNow = DateTime.now,
     this._webViewService,
     this.linuxOverlayObscured,
   });
@@ -756,6 +762,7 @@ class GakujoWebApp extends StatefulWidget {
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
   final AppUpdateService? _updateService;
+  final DateTime Function() updateNow;
   final GakujoWebViewService? _webViewService;
   final ValueListenable<bool>? linuxOverlayObscured;
 
@@ -1131,6 +1138,7 @@ Future<void> pruneJsonFilesForRetention(
   Directory directory, {
   required int keep,
   String? fileNamePrefix,
+  File? protectedFile,
 }) async {
   final files = await directory
       .list()
@@ -1147,6 +1155,17 @@ Future<void> pruneJsonFilesForRetention(
       .cast<File>()
       .toList();
   files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+  if (keep > 0 && protectedFile != null) {
+    // A clock correction can put the just-written file below the mtime cutoff.
+    final protectedUri = protectedFile.absolute.uri;
+    final index = files.indexWhere(
+      (file) => file.absolute.uri == protectedUri,
+      keep,
+    );
+    if (index != -1) {
+      files.insert(0, files.removeAt(index));
+    }
+  }
   for (final file in files.skip(keep)) {
     try {
       await file.delete();
@@ -1771,18 +1790,81 @@ Future<String> googleDriveTokenForAccount(
   return token;
 }
 
+class GoogleDriveSaveFolderPicker {
+  StarSyncGoogleAuthSession? _active;
+
+  Future<GoogleDriveFolder?> pick({
+    required StarSyncGoogleAuthSession session,
+    required GoogleDriveFileSaver saver,
+    required void Function() checkCurrent,
+  }) async {
+    checkCurrent();
+    final previous = _active;
+    if (previous != null) {
+      if (previous.generation == session.generation) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+      }
+      cancel(previous);
+    }
+    _active = session;
+    final String? id;
+    try {
+      id = await session.auth.pickDriveFolder();
+      if (!identical(_active, session)) return null;
+    } finally {
+      if (identical(_active, session)) _active = null;
+    }
+    checkCurrent();
+    if (id == null) return null;
+    final folder = await saver.getPrivateFolder(id);
+    checkCurrent();
+    return folder;
+  }
+
+  void cancel(StarSyncGoogleAuthSession session) {
+    if (!identical(_active, session)) return;
+    _active = null;
+    session.auth.cancelPendingDriveFolderPick();
+  }
+}
+
+class _PageRestoreReservation {
+  String? url;
+  Object? _owner;
+
+  void reserve(String? target, {Object? owner}) {
+    url = target;
+    _owner = owner;
+  }
+
+  // Redirect and authentication callbacks can reselect the existing target.
+  // A new notification uses reserve even when it has exactly the same URL.
+  void update(String? target) {
+    if (url != target) reserve(target);
+  }
+
+  bool release(Object owner) {
+    if (!identical(_owner, owner)) return false;
+    reserve(null);
+    return true;
+  }
+}
+
 class _GakujoWebAppState extends State<GakujoWebApp>
     with WidgetsBindingObserver {
   late final GakujoWebViewController _controller;
   Future<void> Function()? _refreshOpenFavorites;
   Future<void> Function()? _refreshOpenStarredMessages;
   late final GakujoOfflineRetry _offlineRetry;
-  bool _offlineRetryPausedInBackground = false;
+  late bool _appInBackground;
+  int? _offlineRetryNavigationRevision;
   // Reloads since the last successful Gakujo page. The probe can reach the
   // host while the WebView still fails (proxy, captive portal), so cap it.
   int _offlineAutoReloads = 0;
   late final Future<void> _webViewReady;
   late final Future<void> _initialPageLoaded;
+  late final NotificationTapConsumer _notificationConsumer;
+  late final Future<bool> _notificationNavigationReady;
   late final TwoFactorSecretStore _secretStore;
   late final TotpGenerator _totpGenerator;
   late final GakujoWebViewService _webViewService;
@@ -1791,6 +1873,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoDownloadHistoryStore _downloadHistoryStore;
   late final GakujoActivityStore _activityStore;
   late final StarSyncGoogleAuth _starSyncGoogleAuth;
+  final _driveSaveFolderPicker = GoogleDriveSaveFolderPicker();
   GoogleDriveFileSaver? _googleDriveFileSaver;
   String? _driveSaverEmail;
   String? _starSyncGoogleEmail;
@@ -1815,7 +1898,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _deadlineNotificationCoordinator;
   late final AppUpdateService _updateService;
   AppUpdateInfo? _availableUpdate;
-  DateTime? _nextUpdateCheckAt;
+  DateTime? _lastDailyUpdateCheckAt;
+  DateTime? _updateRetryNotBefore;
   bool _isCheckingUpdateInBackground = false;
   late final GakujoAcademicCalendarResolver _academicCalendarResolver;
   late final GakujoLastPageStore _lastPageStore;
@@ -1843,17 +1927,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _pendingReturnDialog;
   Timer? _pendingReturnDialogTimer;
   BuildContext? _returnedDialogContext;
-  bool _returnedDialogOpening = false;
+  int? _returnedDialogRevision;
+  bool get _returnedDialogOpening =>
+      _returnedDialogRevision == _navigationRevision;
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
   double? _reportedGpa;
   bool _externalServiceNoticeDismissed = false;
   String? _currentCourseName;
-  String? _pendingLoginRestoreUrl;
+  int _courseDocument = 0;
+  final _loginRestore = _PageRestoreReservation();
+  String? get _pendingLoginRestoreUrl => _loginRestore.url;
+  set _pendingLoginRestoreUrl(String? url) => _loginRestore.update(url);
   String? _sessionRecoveryUrl;
   String? _authenticatedPageUrl;
-  String? _navigationRecoveryCandidateUrl;
+  final _navigationRecovery = _PageRestoreReservation();
+  String? get _navigationRecoveryCandidateUrl => _navigationRecovery.url;
+  set _navigationRecoveryCandidateUrl(String? url) =>
+      _navigationRecovery.update(url);
   bool _navigationRecoveryCandidateFailed = false;
   String? _mainFrameNavigationUrl;
   String? _deferredNavigationAfterPageOperationUrl;
@@ -1904,6 +1996,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _autoBackupWrittenThisLaunch = false;
   DateTime? _lastAutomaticBackupAt;
   Completer<String>? _nextPageFinishedCompleter;
+  ({String url, int revision, Completer<void> disposed})? _deferredPageNavigation;
   ({String url, Completer<void> completer})? _pageFinishedProcessing;
   Future<void> _desktopZoomApplyQueue = Future<void>.value();
   final GakujoCalendarOperationGate _calendarOperationGate =
@@ -1929,6 +2022,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void initState() {
     super.initState();
+    _appInBackground = _isHiddenOrPaused(WidgetsBinding.instance.lifecycleState);
     WidgetsBinding.instance.addObserver(this);
     _appSettingsStore = widget._appSettingsStore ?? GakujoAppSettingsStore();
     _secretStore = widget._secretStore ?? TwoFactorSecretStore(
@@ -2088,6 +2182,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _offlineRetry = GakujoOfflineRetry(
       probe: widget._gakujoReachable ?? probeGakujoReachability,
       onReachable: () => unawaited(_reloadAfterConnectivityRestored()),
+      onExpired: _onOfflineRetryExpired,
     );
     _downloadService = Platform.isWindows
         ? FileSystemGakujoDownloadService(
@@ -2099,10 +2194,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_secureStorageAccessAllowed) {
       unawaited(_loadDownloadRoot());
     }
-    _initialPageLoaded = _loadInitialPage();
-    _notificationService.setDeadlineNotificationTappedHandler(
-      _handleDeadlineNotificationTapped,
+    _notificationConsumer = _notificationService.bindNotificationTaps(
+      _acceptDeadlineNotification,
     );
+    _initialPageLoaded = _loadInitialPage();
+    _notificationNavigationReady = Future.any([
+      _initialPageLoaded.then((_) => true, onError: (Object _) => false),
+      _notificationConsumer.detached.then((_) => false),
+    ]);
     unawaited(_initialPageLoaded);
     // A desktop window can stay on one page all day; keep assignments and
     // 連絡通知 current anyway. The refresh itself runs at most half-hourly;
@@ -2120,10 +2219,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    _notificationConsumer.dispose();
     _cancelDriveUploads();
+    _deferredPageNavigation?.disposed.complete();
     _status.dispose();
     unawaited(_pdfPreviewServer.close());
-    _offlineRetry.cancel();
+    _cancelOfflineRetry();
     _backgroundRefreshTimer?.cancel();
     _collectionSyncScheduler.dispose();
     _starSyncEngine.dispose();
@@ -2147,7 +2248,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _linuxFindController.dispose();
     _linuxFindFocusNode.dispose();
     unawaited(_controller.dispose());
-    _notificationService.setDeadlineNotificationTappedHandler(null);
     _desktopHistorySwipe.dispose();
     _previewGestureTimer?.cancel();
     _autoBackupTimer?.cancel();
@@ -2166,15 +2266,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _injectTwoFactorAutofillIfAllowed();
       }());
     }
-    // Do not probe the network every few seconds while the app is in the
-    // background; check again once it is back.
-    if (state == AppLifecycleState.paused && _offlineRetry.isActive) {
+    if (_isHiddenOrPaused(state)) {
+      _appInBackground = true;
+      // Keep the failed navigation until the app is visible again.
       _offlineRetry.cancel();
-      _offlineRetryPausedInBackground = true;
-    } else if (state == AppLifecycleState.resumed &&
-        _offlineRetryPausedInBackground) {
-      _offlineRetryPausedInBackground = false;
-      _offlineRetry.start();
+    } else if (state == AppLifecycleState.resumed ||
+        (_appInBackground &&
+            defaultTargetPlatform == TargetPlatform.windows &&
+            state == AppLifecycleState.inactive)) {
+      // Windows can restore a minimized window without giving it focus.
+      _appInBackground = false;
+      if (_offlineRetryNavigationRevision == _navigationRevision) {
+        _offlineRetry.start();
+      }
     }
     if (state == AppLifecycleState.resumed && _appSettingsLoaded) {
       unawaited(_checkForUpdatesInBackground());
@@ -2557,12 +2661,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (_availableUpdate != null &&
                 _appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) &&
                 !compactPreviewForKeyboard)
-              AppUpdateBanner(
-                latestVersion: _availableUpdate!.latestVersion,
-                currentVersion: _availableUpdate!.currentVersion,
-                onOpen: () => unawaited(_openUpdateReleasePage()),
-                onDismiss: () => unawaited(_dismissUpdateNotice()),
-              ),
+              _buildUpdateBanner(_availableUpdate!),
             if (defaultTargetPlatform == TargetPlatform.linux &&
                 _linuxFindOpen &&
                 !_isSettingsDialogOpen)
@@ -3151,26 +3250,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ) &&
         _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture) &&
         GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
-      final revision = _navigationRevision;
-      final title = await _controller.getTitle();
-      final pageCourseName = await _estimateCourseNameFromPage(title);
-      final courseName =
-          resolveGakujoDownloadCourseName(
-            pageCourseName: pageCourseName,
-            initialCourseName: null,
-            navigationRevision: revision,
-            currentNavigationRevision: _navigationRevision,
-          ) ??
-          '';
+      final origin = _captureDownloadCourseOrigin();
+      final course = await _estimateDownloadCourse(origin);
       await _handleDownloadRequest(
         GakujoDownloadRequest(
           url: request.url,
           method: 'GET',
-          courseName: courseName,
+          courseName: course.courseName ?? '',
+          courseNameAmbiguous: course.isAmbiguous,
           fileName: '',
           formFields: const {},
         ),
-        navigationRevision: revision,
+        courseOrigin: origin,
       );
       return GakujoNavigationDecision.prevent;
     }
@@ -3183,56 +3274,41 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return GakujoNavigationDecision.navigate;
   }
 
-  Future<String> _estimateCourseNameFromPage(String? fallbackTitle) async {
+  Future<GakujoCourseEstimate> _estimateCourseNameFromPage() async {
+    String? fallbackTitle;
     try {
+      // Native title notifications can still describe the previous document.
       final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameEstimateJs,
+        gakujoDocumentTitleJs,
       );
-      final estimated = _stringFromJavaScriptResult(result).trim();
-      if (kDebugMode) {
-        debugPrint('MoreBetterGakujo course estimate script="$estimated"');
-      }
-      if (_isUsefulCourseName(estimated)) {
-        return estimated;
-      }
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to estimate course name from page',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      if (result is String) fallbackTitle = _stringFromJavaScriptResult(result);
+    } on Object {
+      // The remaining course evidence can still identify the page.
     }
-
-    final tableEstimate = await _estimateCourseNameFromTables();
-    if (_isUsefulCourseName(tableEstimate)) {
-      return tableEstimate;
-    }
-
-    final bodyEstimate = await _estimateCourseNameFromBodyText();
-    if (_isUsefulCourseName(bodyEstimate)) {
-      return bodyEstimate;
-    }
-
-    final fallback = fallbackTitle?.trim() ?? '';
-    if (_isUsefulCourseName(fallback)) {
-      return fallback;
-    }
-    return '未分類';
+    return estimateGakujoPageCourseName(
+      evaluate: _controller.runJavaScriptReturningResult,
+      isUseful: isUsefulGakujoCourseName,
+      fallbackTitle: fallbackTitle,
+    );
   }
 
-  Future<void> _refreshEstimatedCourseName() async {
+  void _beginCourseDocument() {
+    _currentCourseName = null;
+    _courseDocument += 1;
+  }
+
+  Future<void> _refreshEstimatedCourseName(int document) async {
     final revision = _navigationRevision;
-    final estimated = await _estimateCourseNameFromPage(
-      await _controller.getTitle(),
-    );
-    if (!mounted || revision != _navigationRevision ||
-        !_isUsefulCourseName(estimated)) {
+    final estimated = await _estimateCourseNameFromPage();
+    if (!mounted ||
+        revision != _navigationRevision ||
+        document != _courseDocument ||
+        estimated.courseName == null) {
       return;
     }
-    _currentCourseName = estimated;
+    _currentCourseName = estimated.isAmbiguous ? null : estimated.courseName;
     if (kDebugMode) {
-      debugPrint('MoreBetterGakujo current course="$estimated"');
+      debugPrint('MoreBetterGakujo current course="$_currentCourseName"');
     }
   }
 
@@ -3456,7 +3532,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         context: context,
         requestFocus: true,
         builder: (dialogContext) {
-          dialogRoute = ModalRoute.of<void>(dialogContext);
+          final settingsRoute = ModalRoute.of<void>(dialogContext)!;
+          dialogRoute = settingsRoute;
           return StatefulBuilder(
             builder: (context, setDialogState) {
               final canSaveSecret = secretInput.trim().isNotEmpty;
@@ -4253,13 +4330,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       AppDataShortcutsSection(
-                        onShowDownloadHistory: _showDownloadHistoryDialog,
-                        onShowFailedDownloads: _showFailedDownloadsDialog,
-                        onShowCourseMaterials: _showCourseMaterialsDialog,
-                        onShowCachedReports: _showCachedReportsDialog,
-                        onShowDrafts: _showReportDraftsDialog,
-                        onShowFavorites: _showFavoritesDialog,
-                        onShowDataManagement: _showDataManagementDialog,
+                        onShowDownloadHistory: () =>
+                            _showDownloadHistoryDialog(settingsRoute),
+                        onShowFailedDownloads: () =>
+                            _showFailedDownloadsDialog(settingsRoute),
+                        onShowCourseMaterials: () =>
+                            _showCourseMaterialsDialog(settingsRoute),
+                        onShowCachedReports: () =>
+                            _showCachedReportsDialog(settingsRoute: settingsRoute),
+                        onShowDrafts: () => _showReportDraftsDialog(settingsRoute),
+                        onShowFavorites: () =>
+                            _showFavoritesDialog(settingsRoute: settingsRoute),
+                        onShowDataManagement: () =>
+                            _showDataManagementDialog(settingsRoute),
                       ),
                     ],
                   ),
@@ -4719,14 +4802,21 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showCachedReportsDialog({bool returned = false}) async {
+  Future<void> _showCachedReportsDialog({
+    ModalRoute<void>? settingsRoute,
+    int? returnRevision,
+  }) async {
     final reportLists = await _activityStore.loadReportLists();
-    if (!mounted) {
+    if (!mounted ||
+        settingsRoute?.isActive == false ||
+        _isStaleDialogReturn(returnRevision)) {
       return;
     }
 
+    final returned = returnRevision != null;
     final sorted = [...reportLists]
       ..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
+    var isDeleting = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -4779,6 +4869,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               onPressed: sorted.isEmpty
                   ? null
                   : () async {
+                      if (isDeleting) return;
+                      isDeleting = true;
                       try {
                         await _activityStore.clearReportLists();
                       } on Object catch (error, stackTrace) {
@@ -4790,6 +4882,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         );
                         _showSnackBar('削除できませんでした');
                         return;
+                      } finally {
+                        isDeleting = false;
                       }
                       // The assignments go with the lists, and so do their
                       // booked reminders; fetch the list again soon.
@@ -4798,7 +4892,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (!dialogContext.mounted) {
                         return;
                       }
-                      Navigator.of(dialogContext).pop();
+                      if (ModalRoute.of(dialogContext)?.isCurrent == true) {
+                        Navigator.of(dialogContext).pop();
+                      }
                       _showSnackBar('保存済み課題一覧を削除しました');
                     },
               child: const Text('削除'),
@@ -4812,10 +4908,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
   }
 
-  Future<void> _showDataManagementDialog() async {
+  Future<void> _showDataManagementDialog(ModalRoute<void> settingsRoute) async {
     final data = await readGakujoSavedData(
       () async => (
         history: await _downloadHistoryStore.load(),
@@ -4827,7 +4922,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
       showSnackBar: _showSnackBar,
     );
-    if (data == null || !mounted) {
+    if (data == null || !mounted || !settingsRoute.isActive) {
       return;
     }
 
@@ -4959,12 +5054,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _checkForUpdatesInBackground() async {
-    final now = DateTime.now();
     if (!mounted ||
         !_appSettingsLoaded ||
         !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
-        _isCheckingUpdateInBackground ||
-        (_nextUpdateCheckAt?.isAfter(now) ?? false)) {
+        _isCheckingUpdateInBackground) {
+      return;
+    }
+    final now = widget.updateNow();
+    if ((_updateRetryNotBefore?.isAfter(now) ?? false) ||
+        !isUpdateCheckDue(_lastDailyUpdateCheckAt, now)) {
       return;
     }
     _isCheckingUpdateInBackground = true;
@@ -4973,8 +5071,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final prefs = await _localPrefsStore.load();
       if (!mounted) return;
       if (!isUpdateCheckDue(prefs?.lastUpdateCheckAt, now)) {
-        _nextUpdateCheckAt =
-            prefs!.lastUpdateCheckAt!.add(appUpdateCheckInterval);
+        _lastDailyUpdateCheckAt = prefs!.lastUpdateCheckAt;
+        _updateRetryNotBefore = null;
         return;
       }
       final packageInfo = await PackageInfo.fromPlatform();
@@ -4982,26 +5080,31 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final info = await _updateService.checkLatestRelease(
         currentVersion: packageInfo.version,
       );
-      if (!mounted) return;
-      if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice) ||
-          (previouslyAvailable != null &&
-              _availableUpdate != previouslyAvailable)) {
+      if (!mounted ||
+          !_appSettings.isFeatureEnabled(GakujoFeatureFlag.updateNotice)) {
         return;
       }
-      if (shouldNotifyAboutUpdate(
-        info,
-        platform: defaultTargetPlatform,
-        dismissedVersion: prefs?.dismissedUpdateVersion,
-      )) {
+      final current = _availableUpdate;
+      if (current != null && !identical(current, previouslyAvailable)) return;
+      // Only dismissal can clear the banner while this single check is running.
+      // Its queued save owns the dismissal timestamp.
+      final dismissedDuringCheck = current == null ? previouslyAvailable : null;
+      if (info.latestVersion != dismissedDuringCheck?.latestVersion &&
+          shouldNotifyAboutUpdate(
+            info,
+            platform: defaultTargetPlatform,
+            dismissedVersion: prefs?.dismissedUpdateVersion,
+          )) {
         setState(() => _availableUpdate = info);
-      } else {
-        if (_availableUpdate != null) {
+      } else if (dismissedDuringCheck == null) {
+        if (current != null) {
           setState(() => _availableUpdate = null);
         }
         await _localPrefsStore.saveUpdateCheck(checkedAt: now);
         if (!mounted) return;
       }
-      _nextUpdateCheckAt = now.add(appUpdateCheckInterval);
+      _lastDailyUpdateCheckAt = now;
+      _updateRetryNotBefore = null;
     } on Object catch (error, stackTrace) {
       developer.log(
         'Failed to check for application updates in background',
@@ -5009,20 +5112,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         error: error,
         stackTrace: stackTrace,
       );
-      _nextUpdateCheckAt = now.add(const Duration(hours: 1));
+      _lastDailyUpdateCheckAt = null;
+      _updateRetryNotBefore = now.add(const Duration(hours: 1));
     } finally {
       _isCheckingUpdateInBackground = false;
     }
   }
 
-  Future<void> _dismissUpdateNotice() async {
-    final info = _availableUpdate;
-    if (info == null) return;
-    setState(() => _availableUpdate = null);
+  AppUpdateBanner _buildUpdateBanner(AppUpdateInfo displayed) {
+    var dismissed = false;
+    return AppUpdateBanner(
+      latestVersion: displayed.latestVersion,
+      currentVersion: displayed.currentVersion,
+      onOpen: () => unawaited(_openUpdateReleasePage()),
+      onDismiss: () {
+        // The same button can still receive taps before the next frame.
+        if (dismissed) return;
+        dismissed = true;
+        unawaited(_dismissUpdateNotice(displayed.latestVersion));
+      },
+    );
+  }
+
+  Future<void> _dismissUpdateNotice(String displayedVersion) async {
+    if (!mounted) return;
+    if (_availableUpdate?.latestVersion == displayedVersion) {
+      setState(() => _availableUpdate = null);
+    }
     try {
       await _localPrefsStore.saveUpdateCheck(
-        checkedAt: DateTime.now(),
-        dismissedVersion: info.latestVersion,
+        checkedAt: widget.updateNow(),
+        dismissedVersion: displayedVersion,
       );
     } on Object catch (error, stackTrace) {
       developer.log(
@@ -5279,6 +5399,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         directory,
         keep: 10,
         fileNamePrefix: pruneFileNamePrefix,
+        protectedFile: file,
       );
     }
     return file;
@@ -5291,12 +5412,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return '$parent${Platform.pathSeparator}$child';
   }
 
-  Future<void> _showFavoritesDialog({bool returned = false}) async {
+  Future<void> _showFavoritesDialog({
+    ModalRoute<void>? settingsRoute,
+    int? returnRevision,
+  }) async {
     var favorites = await _activityStore.loadFavorites();
-    if (!mounted) {
+    if (!mounted ||
+        settingsRoute?.isActive == false ||
+        _isStaleDialogReturn(returnRevision)) {
       return;
     }
 
+    final returned = returnRevision != null;
     Future<void> Function()? refreshFavorites;
     await showDialog<void>(
       context: context,
@@ -5377,7 +5504,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
     if (identical(_refreshOpenFavorites, refreshFavorites)) {
       _refreshOpenFavorites = null;
     }
@@ -5438,7 +5564,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     switch (action) {
       case _ToolbarAction.addFavorite:
-        final title = await _controller.getTitle();
+        final title = await _titleForFavoriteUrl(url);
         try {
           await _activityStore.addFavorite(
             GakujoFavoritePage(
@@ -5744,8 +5870,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!preservesPendingMessageOpen) {
       _setPendingMessageUrl(null);
     }
-    _offlineRetry.cancel();
-    _offlineRetryPausedInBackground = false;
+    _cancelOfflineRetry();
     _navigationRevision += 1;
     _linuxOverlayNavigation.value = _navigationRevision;
     _pendingPageFinishedNavigationRevision = null;
@@ -5756,8 +5881,28 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     _pendingMessageOpen?.navigation.record(url, _navigationRevision);
   }
 
+  void _requestOfflineRetry() {
+    _offlineRetryNavigationRevision = _navigationRevision;
+    if (!_appInBackground) _offlineRetry.start();
+  }
+
+  void _cancelOfflineRetry() {
+    _offlineRetryNavigationRevision = null;
+    _offlineRetry.cancel();
+  }
+
+  void _onOfflineRetryExpired() {
+    if (!mounted || _offlineRetryNavigationRevision != _navigationRevision) {
+      return;
+    }
+    _offlineRetryNavigationRevision = null;
+    if (_status.value == _offlineRetryStatus) _setStatus(_manualReloadStatus);
+  }
+
   Future<void> _reloadAfterConnectivityRestored() async {
-    if (!mounted) {
+    if (!mounted ||
+        _appInBackground ||
+        _offlineRetryNavigationRevision != _navigationRevision) {
       return;
     }
     _beginNavigation();
@@ -5770,6 +5915,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final failedUrl = _currentPageUrl;
       if (failedUrl != null &&
           AllowedWebOrigins.canLoad(failedUrl, debugAllowed: _debugAllowed)) {
+        final deferred = _deferredPageNavigation;
+        if (deferred != null && deferred.url == failedUrl) {
+          // This retry can finish without another SourceChanged. Keep the
+          // existing wait and deadline, but recognize the reissued navigation.
+          _deferredPageNavigation = (
+            url: failedUrl,
+            revision: navigationRevision,
+            disposed: deferred.disposed,
+          );
+        }
         await _controller.loadUrl(failedUrl);
       } else {
         await _controller.reload();
@@ -5818,17 +5973,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _controller.loadUrl(url);
   }
 
-  void _setPendingMessageUrl(String? url) {
-    final previous = _pendingMessageOpen;
-    if (previous != null) {
-      if (_pendingLoginRestoreUrl == previous.url) {
-        _pendingLoginRestoreUrl = null;
-      }
-      if (_navigationRecoveryCandidateUrl == previous.url) {
-        _navigationRecoveryCandidateUrl = null;
-        _navigationRecoveryCandidateFailed = false;
-      }
+  void _clearNavigationRestoreFor(String url) {
+    if (_pendingLoginRestoreUrl == url) {
+      _pendingLoginRestoreUrl = null;
     }
+    if (_navigationRecoveryCandidateUrl == url) {
+      _navigationRecoveryCandidateUrl = null;
+      _navigationRecoveryCandidateFailed = false;
+    }
+  }
+
+  void _setPendingMessageUrl(String? url, {Object? owner}) {
+    final previous = _pendingMessageOpen;
+    if (previous != null) _clearNavigationRestoreFor(previous.url);
     _pendingMessageOpenTimer?.cancel();
     _pendingMessageOpen = null;
     final message = url == null ? null : gakujoMessageTargetFromUrl(url);
@@ -5837,9 +5994,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     final pending = _PendingMessageOpen(url: url, message: message);
     _pendingMessageOpen = pending;
-    _pendingLoginRestoreUrl = url;
+    _loginRestore.reserve(url, owner: owner);
     _loginRestoreAttempted = false;
-    _navigationRecoveryCandidateUrl = url;
+    _navigationRecovery.reserve(url, owner: owner);
     _navigationRecoveryCandidateFailed = false;
     _pendingMessageOpenTimer = Timer(const Duration(minutes: 3), () {
       if (identical(_pendingMessageOpen, pending)) {
@@ -5948,8 +6105,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<String?> _waitForNextPageFinished({
     Duration timeout = const Duration(seconds: 4),
+    Completer<String>? waiter,
   }) {
-    final completer = Completer<String>();
+    final completer = waiter ?? Completer<String>();
     _nextPageFinishedCompleter = completer;
     return completer.future.timeout(timeout, onTimeout: () => '').then(
       (url) async {
@@ -5975,6 +6133,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     completer.complete(url);
     _nextPageFinishedCompleter = null;
+  }
+
+  Future<String?> _titleForFavoriteUrl(String url) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoFavoritePageIdentityJs,
+      );
+      if (result is String) {
+        final page = jsonDecode(_stringFromJavaScriptResult(result));
+        if (page case {'url': final String pageUrl, 'title': final String title}
+            when pageUrl == url) {
+          return title;
+        }
+      }
+    } on Object {
+      // The selected URL still provides a title if the renderer is unavailable.
+    }
+    return null;
   }
 
   String _favoriteTitle(String? title, String url) {
@@ -6749,50 +6925,64 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _chooseDriveSaveFolder(BuildContext dialogContext) async {
     final email = _starSyncGoogleEmail;
-    if (email == null) return;
+    if (email == null || !_driveDownloadsEnabled ||
+        !sameGoogleAccount(email, _starSyncGoogleAuth.currentEmail)) {
+      return;
+    }
+    final currentId = _driveDownloadPreference.folderIdFor(email);
+    final generation = _driveUploads.generation;
+    var closed = false;
+    final session = StarSyncGoogleAuthSession(_starSyncGoogleAuth, email: email);
+    void checkCurrent() {
+      session.checkCurrent();
+      if (closed || !mounted || !_driveDownloadsEnabled ||
+          !_driveUploads.isCurrent(generation)) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.notSignedIn);
+      }
+    }
     final saver = GoogleDriveFileSaver(
       account: email,
-      accessToken: ({bool forceRefresh = false}) => googleDriveTokenForAccount(
-        _starSyncGoogleAuth, email, forceRefresh: forceRefresh,
-      ),
+      accessToken: ({bool forceRefresh = false}) async {
+        checkCurrent();
+        final token = await session.accessToken(forceRefresh: forceRefresh);
+        checkCurrent();
+        return token;
+      },
     );
     try {
-      final result = await showDialog<DriveSaveFolderResult>(
+      await showDialog<void>(
         context: dialogContext,
         builder: (_) => DriveSaveFolderDialog(
-          currentId: _driveDownloadPreference.folderIdFor(email),
+          currentId: currentId,
           load: () async {
-            try {
-              return await saver.listFolders();
-            } on Object {
-              if (mounted) _showSnackBar('Google ドライブのフォルダ一覧を取得できませんでした');
-              rethrow;
-            }
+            final folders = await saver.listFolders(currentId: currentId);
+            checkCurrent();
+            return folders;
           },
+          pick: () => _driveSaveFolderPicker.pick(
+            session: session,
+            saver: saver,
+            checkCurrent: checkCurrent,
+          ),
           create: (name) async {
-            try {
-              return await saver.createFolder(name);
-            } on Object {
-              if (mounted) _showSnackBar('Google ドライブのフォルダを作成できませんでした');
-              rethrow;
-            }
+            final folder = await saver.createFolder(name);
+            checkCurrent();
+            return folder;
           },
+          save: (id, commit) => _driveDownloadQueue.runExclusive(() async {
+            checkCurrent();
+            final folder = id == null ? null : await saver.getPrivateFolder(id);
+            checkCurrent();
+            await commit(() async {
+              await _driveDownloadPreference.saveFolder(folder?.id, folder?.name, email);
+              if (mounted) setState(() {});
+            });
+          }),
         ),
       );
-      if (result == null || !mounted) return;
-      await _driveDownloadQueue.runExclusive(() async {
-        if (!_driveDownloadsEnabled || _starSyncGoogleEmail != email ||
-            _starSyncGoogleAuth.currentEmail != email) {
-          throw const GoogleDriveAccountChanged();
-        }
-        await _driveDownloadPreference.saveFolder(
-          result.folder?.id, result.folder?.name, email,
-        );
-      });
-      if (mounted) setState(() {});
-    } on Object {
-      if (mounted) _showSnackBar('Google ドライブの保存先を変更できませんでした');
     } finally {
+      closed = true;
+      _driveSaveFolderPicker.cancel(session);
       saver.close();
     }
   }
@@ -7972,8 +8162,22 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
+  Future<bool> _acceptDeadlineNotification(String url) async {
+    final targetUrl = _notificationService.targetUrl(
+      url,
+      debugAllowed: _debugAllowed,
+    );
+    if (targetUrl == null) return true; // A policy rejection is terminal.
+    if (!await _notificationNavigationReady || !_notificationConsumer.isCurrent) {
+      return false;
+    }
+    await _handleDeadlineNotificationTapped(targetUrl);
+    return true;
+  }
+
   Future<void> _loadInitialPage() async {
     await _webViewReady;
+    if (!_notificationConsumer.isCurrent) return;
     await _webViewService.configureController(
       _controller,
       debugAllowed: _debugAllowed,
@@ -7994,38 +8198,52 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       });
     }
     final savedUrl = appSettingsLoaded ? await _loadInitialLastPageUrl() : null;
-    final pendingNotificationUrl = _notificationService.targetUrl(
-      await _notificationService.takePendingNotificationUrl(),
-      debugAllowed: _debugAllowed,
-    );
-    // Preserve the requested page even when login will be completed manually.
-    // In particular, macOS can intentionally start from its non-secret mirror
-    // without loading credentials from Keychain.
-    _pendingLoginRestoreUrl = gakujoInitialPendingRestoreUrl(
-      pendingNotificationUrl: pendingNotificationUrl,
-      savedUrl: savedUrl,
-    );
-    _setPendingMessageUrl(pendingNotificationUrl);
-    final startUrl = pendingNotificationUrl != null &&
-            !_appSettings.hasLoginCredentials
-        ? pendingNotificationUrl
-        : _resolveStartUrl(_appSettings.hasLoginCredentials ? null : savedUrl);
-    _beginPendingMessageNavigation(startUrl);
-    await _controller.loadUrl(startUrl);
+    await _notificationConsumer.dispatchStartup((pendingNotificationUrl) async {
+      // Preserve the requested page even when login will be completed manually.
+      // In particular, macOS can intentionally start from its non-secret mirror
+      // without loading credentials from Keychain.
+      final owner = pendingNotificationUrl == null ? null : Object();
+      _loginRestore.reserve(
+        gakujoInitialPendingRestoreUrl(
+          pendingNotificationUrl: pendingNotificationUrl,
+          savedUrl: savedUrl,
+        ),
+        owner: owner,
+      );
+      _setPendingMessageUrl(pendingNotificationUrl, owner: owner);
+      final startUrl =
+          pendingNotificationUrl != null && !_appSettings.hasLoginCredentials
+          ? pendingNotificationUrl
+          : _resolveStartUrl(
+              _appSettings.hasLoginCredentials ? null : savedUrl,
+            );
+      await _loadReservedPage(startUrl, owner);
+    }, debugAllowed: _debugAllowed);
   }
 
-  Future<void> _handleDeadlineNotificationTapped(String url) async {
-    final targetUrl = _notificationService.targetUrl(
-      url,
-      debugAllowed: _debugAllowed,
-    );
-    if (targetUrl == null) {
-      return;
+  Future<void> _loadReservedPage(String url, Object? owner) async {
+    final message = _pendingMessageOpen;
+    try {
+      _beginPendingMessageNavigation(url);
+      await _controller.loadUrl(url);
+    } catch (_) {
+      // Native retains a rejected notification for the next consumer. Its
+      // former widget must release only reservations still held by this load.
+      if (owner != null) {
+        _loginRestore.release(owner);
+        if (_navigationRecovery.release(owner)) {
+          _navigationRecoveryCandidateFailed = false;
+        }
+        if (message != null && identical(message, _pendingMessageOpen)) {
+          _pendingMessageOpenTimer?.cancel();
+          _pendingMessageOpen = null;
+        }
+      }
+      rethrow;
     }
-    await _initialPageLoaded;
-    if (!mounted) {
-      return;
-    }
+  }
+
+  Future<void> _handleDeadlineNotificationTapped(String targetUrl) async {
     if (_calendarOperationGate.isRunning) {
       // Do not publish this as the auth restore target yet. An authenticated
       // callback from the in-flight calendar navigation would consume it and
@@ -8036,7 +8254,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _showSnackBar('処理完了後に通知のページを開きます');
       return;
     }
-    _setPendingMessageUrl(targetUrl);
+    final owner = Object();
+    _setPendingMessageUrl(targetUrl, owner: owner);
+    _reserveNotificationRestore(targetUrl, owner: owner);
+    await _loadReservedPage(targetUrl, owner);
+  }
+
+  String? _reserveNotificationRestore(String targetUrl, {Object? owner}) {
     final restoreTarget = gakujoNotificationRestoreTarget(
       targetUrl,
       debugAllowed: _debugAllowed,
@@ -8045,13 +8269,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // A notification can be tapped while a login shell is already visible.
       // Preserve its destination explicitly because onPageStarted cannot infer
       // the protected request from an unauthenticated current page.
-      _pendingLoginRestoreUrl = restoreTarget;
+      _loginRestore.reserve(restoreTarget, owner: owner);
       _loginRestoreAttempted = false;
-      _navigationRecoveryCandidateUrl = restoreTarget;
+      _navigationRecovery.reserve(restoreTarget, owner: owner);
       _navigationRecoveryCandidateFailed = false;
     }
-    _beginPendingMessageNavigation(targetUrl);
-    await _controller.loadUrl(targetUrl);
+    return restoreTarget;
   }
 
   Future<String?> _loadInitialLastPageUrl() async {
@@ -8115,11 +8338,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onNavigationRequest: _handleNavigationRequest,
         // Windows SourceChanged only sees the final URL of an HTTP redirect.
         onNavigationStarting: (url) {
+          _cancelOfflineRetry();
           _plannerNavigationStarts++;
           _invalidateLoginUrl(url);
           _captureNavigationRecoveryCandidate(url);
         },
         onDownloadStarting: _handleNativeDownload,
+        onDocumentStarted: _beginCourseDocument,
         onPageStarted: (url) {
           _closeLinuxFind();
           // Only a page that starts loading counts: blocked requests do not.
@@ -8148,10 +8373,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
         onPageFinished: (url) async {
           final navigationRevision = _navigationRevision;
+          final courseDocument = _courseDocument;
           bool stillCurrent() =>
               _isCurrentPageCallback(url, navigationRevision);
-          if (!mounted) {
-            return;
+          if (!mounted) return;
+          final deferred = _deferredPageNavigation;
+          if (deferred != null &&
+              _pendingPageFinishedNavigationRevision != navigationRevision) {
+            // A previous page can finish before the next deferred page starts.
+            // WebView2 can also finish the issued URL without a SourceChanged
+            // event when it is already displayed.
+            final finishedIssuedPage = deferred.revision == navigationRevision &&
+                deferred.url == url && stillCurrent();
+            if (!finishedIssuedPage) return;
           }
           if (_currentPageUrl != url &&
               _pendingPageFinishedNavigationRevision == navigationRevision) {
@@ -8214,9 +8448,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               return;
             }
             if (AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
-              _offlineRetry.cancel();
-              // A page that loaded must not be reloaded again on resume.
-              _offlineRetryPausedInBackground = false;
+              _cancelOfflineRetry();
               _offlineAutoReloads = 0;
               _lastAllowedPageUrl = url;
             }
@@ -8292,7 +8524,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (!stillCurrent()) {
               return;
             }
-            await _refreshEstimatedCourseName();
+            await _refreshEstimatedCourseName(courseDocument);
             if (!stillCurrent()) {
               return;
             }
@@ -8357,7 +8589,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             error,
             offlineAutoReloads: _offlineAutoReloads,
             setStatus: _setStatus,
-            startOfflineRetry: _offlineRetry.start,
+            startOfflineRetry: _requestOfflineRetry,
           );
         },
       ),
@@ -8931,7 +9163,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!_canRunPageScripts) return {};
     try {
       final result = await _controller.runJavaScriptReturningResult(
-        gakujoHistoryMarkerJs({'action': 'read'}),
+        gakujoHistoryMarkerJs({
+          'action': 'read',
+          if (_detachedPreviewToken != null) 'token': _detachedPreviewToken,
+        }),
       );
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
       return decoded is Map<String, dynamic> ? decoded : {};
@@ -9082,15 +9317,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showReturnedDialog(String kind) async {
+  bool _isStaleDialogReturn(int? revision) =>
+      revision != null && revision != _navigationRevision;
+
+  Future<void> _showReturnedDialog(String kind, int revision) async {
+    _returnedDialogRevision = revision;
     try {
       switch (kind) {
-        case 'starred': await _showStarredMessagesDialog(returned: true);
-        case 'favorites': await _showFavoritesDialog(returned: true);
-        case 'cachedReports': await _showCachedReportsDialog(returned: true);
+        case 'starred':
+          await _showStarredMessagesDialog(returnRevision: revision);
+        case 'favorites':
+          await _showFavoritesDialog(returnRevision: revision);
+        case 'cachedReports':
+          await _showCachedReportsDialog(returnRevision: revision);
       }
     } finally {
-      _returnedDialogOpening = false;
+      if (_returnedDialogRevision == revision) {
+        _returnedDialogRevision = null;
+        _returnedDialogContext = null;
+      }
     }
   }
 
@@ -9129,8 +9374,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (action == GakujoHistoryAction.dialog) {
       if (_returnedDialogOpening || _returnedDialogContext != null) return true;
-      _returnedDialogOpening = true;
-      unawaited(_showReturnedDialog(dialog as String));
+      unawaited(_showReturnedDialog(dialog as String, revision));
       return true;
     }
     _setPendingMessageUrl(null);
@@ -9365,48 +9609,53 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _finishPageNavigationOperation() async {
-    final deferredNotificationUrl = _deferredNotificationAfterPageOperationUrl;
-    final deferredUrl =
-        deferredNotificationUrl ?? _deferredNavigationAfterPageOperationUrl;
-    _deferredNotificationAfterPageOperationUrl = null;
-    _deferredNavigationAfterPageOperationUrl = null;
+    String? previousRestoreTarget;
     try {
-      if (!mounted ||
-          deferredUrl == null ||
-          !AllowedWebOrigins.canLoad(
-            deferredUrl,
-            debugAllowed: _debugAllowed,
-          )) {
-        return;
-      }
-      _setPendingMessageUrl(deferredUrl);
-      if (deferredNotificationUrl != null) {
-        final restoreTarget = gakujoNotificationRestoreTarget(
-          deferredNotificationUrl,
-          debugAllowed: _debugAllowed,
-        );
-        if (restoreTarget != null) {
-          _pendingLoginRestoreUrl = restoreTarget;
-          _loginRestoreAttempted = false;
-          _navigationRecoveryCandidateUrl = restoreTarget;
-          _navigationRecoveryCandidateFailed = false;
+      while (true) {
+        final notification = _deferredNotificationAfterPageOperationUrl;
+        final url = notification ?? _deferredNavigationAfterPageOperationUrl;
+        _deferredNotificationAfterPageOperationUrl = null;
+        _deferredNavigationAfterPageOperationUrl = null;
+        if (!mounted || url == null ||
+            !AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
+          break;
         }
-      }
-      final pageFinished = _waitForNextPageFinished(
-        timeout: const Duration(seconds: 8),
-      );
-      _beginPendingMessageNavigation(deferredUrl);
-      await _controller.loadUrl(deferredUrl);
-      await pageFinished;
-    } on Object catch (error, stackTrace) {
-      developer.log(
-        'Failed to open navigation deferred by a page operation',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      if (mounted) {
-        _showSnackBar('保留したページを開けませんでした');
+        // A failed or timed-out notification may still own the login restore.
+        // Its replacement must also win when the next page authenticates.
+        if (previousRestoreTarget != null) {
+          _clearNavigationRestoreFor(previousRestoreTarget);
+        }
+        _setPendingMessageUrl(url);
+        previousRestoreTarget = notification == null
+            ? null
+            : _reserveNotificationRestore(notification);
+        final waiter = Completer<String>();
+        final disposed = Completer<void>();
+        final pageFinished = _waitForNextPageFinished(
+          waiter: waiter,
+          timeout: const Duration(seconds: 8),
+        );
+        try {
+          _beginPendingMessageNavigation(url);
+          _deferredPageNavigation =
+              (url: url, revision: _navigationRevision, disposed: disposed);
+          // Disposal can interrupt either the load reply or the scripts that
+          // process a page-finished event after its timeout has been cancelled.
+          final settled = Future.any<void>([pageFinished, disposed.future]);
+          await Future.any<void>([_controller.loadUrl(url), settled]);
+          await settled;
+        } on Object catch (error, stackTrace) {
+          developer.log(
+            'Failed to open navigation deferred by a page operation',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          if (mounted) _showSnackBar('保留したページを開けませんでした');
+        } finally {
+          _deferredPageNavigation = null;
+          if (!waiter.isCompleted) waiter.complete('');
+        }
       }
     } finally {
       _calendarOperationGate.finish();
@@ -9476,80 +9725,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _boolFromJavaScriptResult(Object? result) {
     return javaScriptResultAsBool(result);
   }
-
-  Future<String> _estimateCourseNameFromBodyText() async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameBodyTextJs,
-      );
-      final bodyText = _stringFromJavaScriptResult(result);
-      final candidates = _courseNameCandidatesFromBodyText(bodyText);
-      final estimated = GakujoCourseNameEstimator.estimateFromCandidates(
-        candidates,
-      );
-      if (kDebugMode) {
-        debugPrint(
-          'MoreBetterGakujo course estimate body="$estimated" '
-          'candidates="${candidates.take(3).join(' / ')}"',
-        );
-      }
-      return estimated;
-    } catch (error, stackTrace) {
-      developer.log(
-        'Failed to estimate course name from body text',
-        name: 'MoreBetterGakujo',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      return '未分類';
-    }
-  }
-
-  Future<String> _estimateCourseNameFromTables() async {
-    try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoCourseNameTablesJs,
-      );
-      final rawEstimate = _stringFromJavaScriptResult(result).trim();
-      final estimated = GakujoCourseNameEstimator.estimateFromCandidates([
-        rawEstimate,
-      ]);
-      if (kDebugMode) {
-        debugPrint(
-          'MoreBetterGakujo course estimate table="$estimated" '
-          'raw="$rawEstimate"',
-        );
-      }
-      return estimated;
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint('MoreBetterGakujo course estimate table failed: $error');
-      }
-      return '未分類';
-    }
-  }
-
-  List<String> _courseNameCandidatesFromBodyText(String bodyText) {
-    final lines = bodyText
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    final labeledLines = lines
-        .where(
-          (line) => RegExp(
-            r'(?:^|[\s・:：|｜/／\[［(（【])(?:(?:授業科目名|授業科目|科目名|授業名|講義名)(?:[:：]|\s)|科目\s*[:：])',
-          ).hasMatch(line),
-        )
-        .toList();
-    final compactBody = bodyText.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return [
-      ...labeledLines,
-      compactBody,
-    ];
-  }
-
-  bool _isUsefulCourseName(String value) => isUsefulGakujoCourseName(value);
 }
 
 /// Whether [url] is Gakujo's shared downloads tab.

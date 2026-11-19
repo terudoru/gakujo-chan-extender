@@ -12,17 +12,39 @@ function portalAuthStateProbe(): string {
       }
     } catch (_) {}
   }
+  function hostsDocument(frame: Element, doc: Document, view: Window) {
+    if (frame.localName !== 'embed') {
+      return 'contentDocument' in frame && frame.contentDocument === doc &&
+        'contentWindow' in frame && frame.contentWindow === view;
+    }
+    // An HTML embed can have a child window without exposing either content accessor.
+    var parentView = frame.ownerDocument.defaultView;
+    return frame.isConnected && parentView !== null && parentView === view.parent &&
+      Array.prototype.indexOf.call(parentView.frames, view) !== -1 &&
+      (!('contentDocument' in frame) || frame.contentDocument === doc) &&
+      (!('contentWindow' in frame) || frame.contentWindow === view);
+  }
   function visible(element: HTMLElement) {
     if (!element) {
       return false;
     }
     try {
-      var pageWindow = element.ownerDocument.defaultView || window;
-      var style = pageWindow.getComputedStyle(element);
-      return style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
-        style.opacity !== '0' &&
-        element.getClientRects().length > 0;
+      var current: Element = element;
+      while (true) {
+        var doc = current.ownerDocument;
+        var view = doc.defaultView;
+        if (!view || view.document !== doc) return false;
+        var style = view.getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' ||
+            style.opacity === '0' || !current.getClientRects().length) return false;
+        // Child controls can have layout even when their embedding frame is hidden.
+        if (current !== element && (style.visibility === 'collapse' ||
+            current.checkVisibility?.({checkOpacity: true}) === false)) return false;
+        if (doc === document) return view === window;
+        var frame = view.frameElement;
+        if (!frame || !hostsDocument(frame, doc, view)) return false;
+        current = frame;
+      }
     } catch (_) {
       return false;
     }

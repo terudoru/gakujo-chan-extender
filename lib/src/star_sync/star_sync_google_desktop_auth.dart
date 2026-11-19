@@ -21,6 +21,35 @@ const _googleScopeAliases = {
   'https://www.googleapis.com/auth/userinfo.profile': 'profile',
 };
 
+class _DesktopAuthorization {
+  _DesktopAuthorization({this.isFolderPicker = false});
+
+  final bool isFolderPicker;
+  final _cancelled = Completer<void>();
+  HttpClient? client;
+
+  static const _cancellation = StarSyncGoogleAuthException(
+    StarSyncGoogleAuthErrorKind.cancelled,
+  );
+
+  bool get isCancelled => _cancelled.isCompleted;
+
+  void cancel() {
+    if (isCancelled) return;
+    _cancelled.complete();
+    client?.close(force: true);
+  }
+
+  void checkCurrent() {
+    if (isCancelled) throw _cancellation;
+  }
+
+  Future<T> waitForBrowser<T>(Future<T> result) => Future.any([
+    result,
+    _cancelled.future.then<T>((_) => throw _cancellation),
+  ]).timeout(const Duration(minutes: 5));
+}
+
 class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   StarSyncGoogleDesktopAuth({
     required this.config,
@@ -56,9 +85,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   String? _accessToken;
   DateTime? _expiresAt;
   Set<String> _scopes = {};
-  Completer<String>? _pendingAuthorization;
-  bool _authorizationInProgress = false;
-  bool _authorizationCancelled = false;
+  _DesktopAuthorization? _authorization;
   final _credentials = StorageOperationQueue();
   int _generation = 0;
 
@@ -73,16 +100,21 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     }
   }
 
-  void _throwIfAuthorizationCancelled() {
-    if (_authorizationCancelled) {
-      throw const StarSyncGoogleAuthException(
-        StarSyncGoogleAuthErrorKind.cancelled,
-      );
-    }
-  }
-
   static Future<bool> _launch(Uri uri) =>
       launchUrl(uri, mode: LaunchMode.externalApplication);
+
+  Future<bool> _openBrowser(Uri uri) async {
+    try {
+      if (await _launcher(uri)) return true;
+    } on PlatformException {
+      // The launcher can also report an unavailable browser via the platform.
+    }
+    throw const StarSyncGoogleAuthException(
+      StarSyncGoogleAuthErrorKind.browserUnavailable,
+      'Could not open browser',
+    );
+  }
+
   String _random() {
     final random = Random.secure();
     return base64Url
@@ -94,11 +126,12 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     Uri uri,
     Map<String, String> fields, {
     int? refreshGeneration,
+    HttpClient? client,
   }) async {
-    final client = HttpClient();
+    final requestClient = client ?? HttpClient();
     try {
       final response = await starSyncRequest(
-        client,
+        requestClient,
         'POST',
         uri,
         headers: {'content-type': 'application/x-www-form-urlencoded'},
@@ -138,7 +171,7 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         StarSyncGoogleAuthErrorKind.failed,
       );
     } finally {
-      client.close(force: true);
+      if (client == null) requestClient.close(force: true);
     }
   }
 
@@ -216,16 +249,18 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
 
   @override
   void cancelPendingSignIn() {
-    if (!_authorizationInProgress) return;
-    _authorizationCancelled = true;
-    final pending = _pendingAuthorization;
-    if (pending != null && !pending.isCompleted) {
-      pending.completeError(
-        const StarSyncGoogleAuthException(
-          StarSyncGoogleAuthErrorKind.cancelled,
-        ),
-      );
-    }
+    final active = _authorization;
+    if (active != null && !active.isFolderPicker) active.cancel();
+  }
+
+  @override
+  void cancelPendingDriveFolderPick() {
+    final active = _authorization;
+    if (active == null || !active.isFolderPicker) return;
+    // Picker grants never write login credentials. Allow a new selection
+    // immediately while the cancelled attempt closes its own resources.
+    _authorization = null;
+    active.cancel();
   }
 
   @override
@@ -255,14 +290,91 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
     );
   }
 
+  @override
+  Future<String?> pickDriveFolder() async {
+    final session = StarSyncGoogleAuthSession(this, email: currentEmail);
+    try {
+      final id = await _authorizeInBrowser(
+        _DesktopAuthorization(isFolderPicker: true),
+        parameters: {
+          'scope': googleDriveFileScope,
+          'prompt': 'consent',
+          'access_type': 'online',
+          'include_granted_scopes': 'false',
+          'trigger_onepick': 'true',
+          'allow_folder_selection': 'true',
+          'mimetypes': 'application/vnd.google-apps.folder',
+          'login_hint': ?session.email,
+        },
+        checkSession: session.checkCurrent,
+        onGrant: _pickedFolderId,
+      );
+      session.checkCurrent();
+      return id;
+    } on StarSyncGoogleAuthException catch (error) {
+      if (error.kind == StarSyncGoogleAuthErrorKind.cancelled) return null;
+      rethrow;
+    }
+  }
+
+  // Exchanging the code finalizes the grant. The caller checks the folder
+  // with the signed-in session, so only the selected ID leaves this flow.
+  String _pickedFolderId(
+    Map<String, String> params,
+    Map<String, dynamic> data,
+  ) {
+    final id = params['picked_file_ids'];
+    final token = data['access_token'];
+    if (id == null ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(id) ||
+        token is! String ||
+        token.trim().isEmpty) {
+      throw const FormatException();
+    }
+    // OAuth permits omitting scope when it is identical to the request.
+    for (final scope in [params['scope'], data['scope']]) {
+      if (scope != null && scope != googleDriveFileScope) {
+        throw const StarSyncGoogleAuthException(
+          StarSyncGoogleAuthErrorKind.permissionDenied,
+        );
+      }
+    }
+    return id;
+  }
+
   Future<String> _authorize(
     List<String> scopes, {
     String? expectedEmail,
     List<String> optionalScopes = const [],
     String? loginHint,
-  }) async {
+  }) {
     final hint = expectedEmail ?? loginHint;
-    if (_authorizationInProgress) {
+    final attempt = _DesktopAuthorization();
+    return _authorizeInBrowser(
+      attempt,
+      parameters: {
+        'scope': [...scopes, ...optionalScopes].join(' '),
+        'access_type': 'offline',
+        // Unbound sign-in must let the student correct the browser account.
+        'prompt': hint == null ? 'select_account consent' : 'consent',
+        'login_hint': ?hint,
+      },
+      onGrant: (_, data) =>
+          _storeLoginGrant(data, scopes, expectedEmail, attempt),
+    );
+  }
+
+  Future<String> _authorizeInBrowser(
+    _DesktopAuthorization attempt, {
+    required Map<String, String> parameters,
+    void Function()? checkSession,
+    required FutureOr<String> Function(
+      Map<String, String> callback,
+      Map<String, dynamic> data,
+    )
+    onGrant,
+  }) async {
+    if (_authorization != null) {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.failed,
         'Authorization already in progress',
@@ -274,35 +386,39 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         .encode(sha256.convert(ascii.encode(verifier)).bytes)
         .replaceAll('=', '');
     HttpServer? server;
-    Completer<String>? result;
-    _authorizationInProgress = true;
-    _authorizationCancelled = false;
+    _authorization = attempt;
     try {
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      _throwIfAuthorizationCancelled();
+      attempt.checkCurrent();
+      checkSession?.call();
       final redirect = 'http://127.0.0.1:${server.port}';
-      final pending = Completer<String>();
-      result = pending;
-      _pendingAuthorization = pending;
+      final pending = Completer<Map<String, String>>();
       server.listen((request) async {
         try {
           var params = const <String, String>{};
-          var malformedQuery = false;
+          var duplicateParams = false;
           try {
-            params = request.uri.queryParameters;
+            final all = request.uri.queryParametersAll;
+            duplicateParams = all.values.any((values) => values.length != 1);
+            if (all['state']?.length == 1) params = request.uri.queryParameters;
           } on FormatException {
-            malformedQuery = true;
+            // An unidentifiable request cannot settle this authorization.
           }
-          final matching = request.uri.path == '/' && params['state'] == state;
-          final valid = matching && params['code']?.isNotEmpty == true;
+          final matching =
+              request.method == 'GET' &&
+              request.uri.path == '/' &&
+              params['state'] == state;
+          final valid =
+              matching &&
+              !duplicateParams &&
+              !params.containsKey('error') &&
+              params['code']?.isNotEmpty == true;
           request.response.headers.contentType = ContentType(
             'text',
             'html',
             charset: 'utf-8',
           );
-          request.response.statusCode = malformedQuery
-              ? 400
-              : request.uri.path != '/'
+          request.response.statusCode = request.uri.path != '/'
               ? 404
               : valid
               ? 200
@@ -312,18 +428,21 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
                 ? '<!doctype html><meta charset="utf-8">接続しました。このタブを閉じてアプリに戻ってください。'
                 : '<!doctype html><meta charset="utf-8">接続できませんでした。アプリに戻ってください。',
           );
-          await request.response.close();
-          if (matching && !pending.isCompleted) {
-            if (valid) {
-              pending.complete(params['code']!);
-            } else {
-              pending.completeError(
-                StarSyncGoogleAuthException(
-                  params['error'] == 'access_denied' && params['state'] == state
-                      ? StarSyncGoogleAuthErrorKind.cancelled
-                      : StarSyncGoogleAuthErrorKind.failed,
-                ),
-              );
+          try {
+            await request.response.close();
+          } finally {
+            if (matching && !pending.isCompleted) {
+              if (valid) {
+                pending.complete(params);
+              } else {
+                pending.completeError(
+                  StarSyncGoogleAuthException(
+                    !duplicateParams && params['error'] == 'access_denied'
+                        ? StarSyncGoogleAuthErrorKind.cancelled
+                        : StarSyncGoogleAuthErrorKind.failed,
+                  ),
+                );
+              }
             }
           }
         } on HttpException {
@@ -337,128 +456,41 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'client_id': config.desktopClientId,
           'redirect_uri': redirect,
           'response_type': 'code',
-          'scope': [...scopes, ...optionalScopes].join(' '),
           'code_challenge': challenge,
           'code_challenge_method': 'S256',
           'state': state,
-          'access_type': 'offline',
-          // Without select_account the browser keeps its current account, and
-          // a student who chose the wrong one could never pick another.
-          'prompt': hint == null ? 'select_account consent' : 'consent',
-          'login_hint': ?hint,
+          ...parameters,
         },
       );
-      final results = await Future.wait<Object>([
-        _launcher(uri).then((opened) {
-          if (!opened) {
-            throw const StarSyncGoogleAuthException(
-              StarSyncGoogleAuthErrorKind.browserUnavailable,
-              'Could not open browser',
-            );
-          }
-          return opened;
-        }),
-        pending.future,
-      ], eagerError: true).timeout(const Duration(minutes: 5));
-      final code = results[1] as String;
+      final results = await attempt.waitForBrowser(
+        Future.wait<Object>([
+          _openBrowser(uri),
+          pending.future,
+        ], eagerError: true),
+      );
+      final params = results[1] as Map<String, String>;
+      await server.close(force: true);
+      server = null;
+      attempt.checkCurrent();
+      checkSession?.call();
+      final client = attempt.client = HttpClient();
       late final Map<String, dynamic> data;
       try {
         data = await _post(tokenEndpoint, {
-          'code': code,
+          'code': params['code']!,
           'client_id': config.desktopClientId,
           'client_secret': config.desktopClientSecret,
           'redirect_uri': redirect,
           'code_verifier': verifier,
           'grant_type': 'authorization_code',
-        });
+        }, client: client);
       } finally {
-        _throwIfAuthorizationCancelled();
+        attempt.checkCurrent();
       }
-      final refresh = data['refresh_token'];
-      final idToken = data['id_token'];
-      if (refresh is! String || refresh.isEmpty || idToken is! String) {
-        throw const FormatException();
-      }
-      final parts = idToken.split('.');
-      if (parts.length != 3) throw const FormatException();
-      final payload = jsonDecode(
-        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-      );
-      if (payload is! Map ||
-          payload['email'] is! String ||
-          (payload['email'] as String).isEmpty) {
-        throw const FormatException();
-      }
-      if (expectedEmail != null &&
-          !sameGoogleAccount(payload['email'] as String, expectedEmail)) {
-        throw const StarSyncGoogleAuthException(
-          StarSyncGoogleAuthErrorKind.failed,
-          'account changed',
-        );
-      }
-      final scopeField = data['scope'];
-      if (expectedEmail != null && scopeField == null) {
-        throw const FormatException();
-      }
-      if (scopeField != null && scopeField is! String) {
-        throw const FormatException();
-      }
-      final granted = scopeField is String
-          ? scopeField
-                .split(' ')
-                .where((s) => s.isNotEmpty)
-                .map((s) => _googleScopeAliases[s] ?? s)
-                .toSet()
-          : scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
-      final requested = scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
-      if (!granted.containsAll(requested)) {
-        throw const StarSyncGoogleAuthException(
-          StarSyncGoogleAuthErrorKind.permissionDenied,
-        );
-      }
-      final token = data['access_token'];
-      final expires = data['expires_in'];
-      if (token is! String ||
-          token.isEmpty ||
-          expires is! num ||
-          expires <= 0) {
-        throw const FormatException();
-      }
-      await server.close(force: true);
-      server = null;
-      _throwIfAuthorizationCancelled();
-      try {
-        await _credentials.run(() async {
-          final previous = await storage.read(key: starSyncGoogleTokenKey);
-          _throwIfAuthorizationCancelled();
-          await storage.write(
-            key: starSyncGoogleTokenKey,
-            value: jsonEncode({
-              'refreshToken': refresh,
-              'email': payload['email'],
-              'scopes': granted.toList(),
-            }),
-          );
-          if (_authorizationCancelled) {
-            if (previous == null) {
-              await storage.delete(key: starSyncGoogleTokenKey);
-            } else {
-              await storage.write(key: starSyncGoogleTokenKey, value: previous);
-            }
-            _throwIfAuthorizationCancelled();
-          }
-          _generation++;
-          _setAccess(data);
-          _refreshToken = refresh;
-          _email = payload['email'] as String;
-          _scopes = granted;
-        });
-      } on PlatformException {
-        throw const StarSyncGoogleAuthException(
-          StarSyncGoogleAuthErrorKind.storageUnavailable,
-        );
-      }
-      return _email!;
+      checkSession?.call();
+      final result = await onGrant(params, data);
+      if (attempt.isFolderPicker) attempt.checkCurrent();
+      return result;
     } on TimeoutException {
       throw const StarSyncGoogleAuthException(
         StarSyncGoogleAuthErrorKind.cancelled,
@@ -474,15 +506,101 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         'Invalid identity response',
       );
     } finally {
-      if (identical(_pendingAuthorization, result)) {
-        _pendingAuthorization = null;
-      }
+      attempt.client?.close(force: true);
       try {
         if (server != null) await server.close(force: true);
       } finally {
-        _authorizationInProgress = false;
+        if (identical(_authorization, attempt)) _authorization = null;
       }
     }
+  }
+
+  Future<String> _storeLoginGrant(
+    Map<String, dynamic> data,
+    List<String> scopes,
+    String? expectedEmail,
+    _DesktopAuthorization attempt,
+  ) async {
+    final refresh = data['refresh_token'];
+    final idToken = data['id_token'];
+    if (refresh is! String || refresh.isEmpty || idToken is! String) {
+      throw const FormatException();
+    }
+    final parts = idToken.split('.');
+    if (parts.length != 3) throw const FormatException();
+    final payload = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+    );
+    if (payload is! Map ||
+        payload['email'] is! String ||
+        (payload['email'] as String).isEmpty) {
+      throw const FormatException();
+    }
+    if (expectedEmail != null &&
+        !sameGoogleAccount(payload['email'] as String, expectedEmail)) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.failed,
+        'account changed',
+      );
+    }
+    final scopeField = data['scope'];
+    if (expectedEmail != null && scopeField == null) {
+      throw const FormatException();
+    }
+    if (scopeField != null && scopeField is! String) {
+      throw const FormatException();
+    }
+    final granted = scopeField is String
+        ? scopeField
+              .split(' ')
+              .where((s) => s.isNotEmpty)
+              .map((s) => _googleScopeAliases[s] ?? s)
+              .toSet()
+        : scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
+    final requested = scopes.map((s) => _googleScopeAliases[s] ?? s).toSet();
+    if (!granted.containsAll(requested)) {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.permissionDenied,
+      );
+    }
+    final token = data['access_token'];
+    final expires = data['expires_in'];
+    if (token is! String || token.isEmpty || expires is! num || expires <= 0) {
+      throw const FormatException();
+    }
+    attempt.checkCurrent();
+    try {
+      await _credentials.run(() async {
+        final previous = await storage.read(key: starSyncGoogleTokenKey);
+        attempt.checkCurrent();
+        await storage.write(
+          key: starSyncGoogleTokenKey,
+          value: jsonEncode({
+            'refreshToken': refresh,
+            'email': payload['email'],
+            'scopes': granted.toList(),
+          }),
+        );
+        if (attempt.isCancelled) {
+          if (previous == null) {
+            await storage.delete(key: starSyncGoogleTokenKey);
+          } else {
+            await storage.write(key: starSyncGoogleTokenKey, value: previous);
+          }
+          attempt.checkCurrent();
+        }
+        _generation++;
+        _setAccess(data);
+        _refreshToken = refresh;
+        _email = payload['email'] as String;
+        _scopes = granted;
+      });
+    } on PlatformException {
+      throw const StarSyncGoogleAuthException(
+        StarSyncGoogleAuthErrorKind.storageUnavailable,
+      );
+    }
+    return _email!;
   }
 
   @override

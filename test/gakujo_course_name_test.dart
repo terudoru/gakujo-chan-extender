@@ -1,5 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_course_name_estimator.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/generated/course_name_body_text.g.dart';
+import 'package:morebettergakujo_flutter/src/generated/course_name_estimate.g.dart';
+import 'package:morebettergakujo_flutter/src/generated/course_name_tables.g.dart';
 
 void main() {
   test('only the exact download page label is ignored', () {
@@ -90,5 +96,110 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  group('page course evidence', () {
+    final calls = <String>[];
+    const primary = gakujoCourseNameEstimateJs;
+    const tables = gakujoCourseNameTablesJs;
+    const body = gakujoCourseNameBodyTextJs;
+    Future<GakujoCourseEstimate> estimate(
+      Map<String, Object?> responses, {
+      String? title,
+    }) {
+      calls.clear();
+      return estimateGakujoPageCourseName(
+        evaluate: (script) async {
+          calls.add(script);
+          if (!responses.containsKey(script)) throw StateError('unavailable');
+          return responses[script];
+        },
+        isUseful: isUsefulGakujoCourseName,
+        fallbackTitle: title,
+      );
+    }
+
+    test('confirmed ambiguity or a useful primary ends estimation', () async {
+      for (final ambiguous in [true, false]) {
+        final name = ambiguous ? '未分類' : 'Physics';
+        final wire = jsonEncode({
+          'courseName': name,
+          'courseNameAmbiguous': ambiguous,
+        });
+        for (final response in [wire, jsonEncode(wire)]) {
+          final result = await estimate({
+            primary: response,
+          }, title: 'Chemistry');
+          expect(result.courseName, name);
+          expect(result.isAmbiguous, ambiguous);
+          expect(calls, [primary]);
+        }
+      }
+    });
+
+    test('legacy unknown and invalid responses still consult every labelled course', () async {
+      for (final response in [
+        null,
+        '{broken',
+        'null',
+        jsonEncode({'courseName': '未分類', 'courseNameAmbiguous': false}),
+        jsonEncode({'courseNameAmbiguous': true}),
+        jsonEncode({'courseName': 'Physics', 'courseNameAmbiguous': true}),
+      ]) {
+        for (final distinct in [false, true]) {
+          final evidence = jsonEncode({
+            'courseNameCandidates': [
+              'ABC123 Physics',
+              'Physics',
+              'エラー',
+              'notes.pdf',
+              if (distinct) 'Chemistry',
+            ],
+          });
+          final result = await estimate({
+            primary: response,
+            tables: jsonEncode(evidence),
+          });
+          expect(result.courseName, distinct ? '未分類' : 'Physics');
+          expect(result.isAmbiguous, distinct);
+          expect(calls, [primary, tables]);
+        }
+      }
+    });
+
+    test(
+      'missing evidence falls back through body and title in order',
+      () async {
+        final fromBody = await estimate({
+          body: jsonEncode('科目名：Physics'),
+        }, title: 'Chemistry');
+        expect(fromBody.courseName, 'Physics');
+        expect(calls, [primary, tables, body]);
+        for (final title in ['Chemistry', 'CampusSquare']) {
+          final result = await estimate({
+            tables: jsonEncode({
+              'courseNameCandidates': ['資料.pdf'],
+            }),
+            body: 'CampusSquare',
+          }, title: title);
+          expect(result.courseName, title == 'Chemistry' ? title : isNull);
+          expect(result.isAmbiguous, isFalse);
+          expect(calls, [primary, tables, body]);
+        }
+      },
+    );
+
+    test('only a current ambiguous result overrides the starting course', () {
+      for (final current in [true, false]) {
+        final result = resolveGakujoDownloadCourseEstimate(
+          pageEstimate: const GakujoCourseEstimate.ambiguous(),
+          initialCourseName: 'Physics',
+          navigationRevision: 3,
+          currentNavigationRevision: current ? 3 : 4,
+        );
+        expect(result.isAmbiguous, current);
+        expect(result.courseName, current ? '未分類' : 'Physics');
+      }
+    });
   });
 }

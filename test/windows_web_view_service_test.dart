@@ -119,6 +119,60 @@ void main() {
   const pageA = 'https://gakujo.iess.niigata-u.ac.jp/a';
   const pageB = 'https://gakujo.iess.niigata-u.ac.jp/b';
 
+  testWidgets('only ContentLoading starts a Windows document', (tester) async {
+    await tester.runAsync(() async {
+      const fragment = '$pageA#materials';
+      final native = windows.WebviewController();
+      await native.initialize();
+      final controller = WindowsGakujoWebViewController(native);
+      final observed = <String>[];
+      await controller.setNavigationDelegate(GakujoNavigationDelegate(
+        onNavigationStarting: (url) => observed.add('request $url'),
+        onPageStarted: (url) => observed.add('source $url'),
+        onDocumentStarted: () => observed.add('document'),
+        onPageFinished: (url) => observed.add('finished $url'),
+        onWebResourceError: (_) => observed.add('error'),
+      ));
+      final loading = windows.LoadingState.loading.index;
+      final completed = windows.LoadingState.navigationCompleted.index;
+      try {
+        await emit('urlChanged', pageA);
+        await emit('loadingStateChanged', loading);
+        await emit('loadingStateChanged', completed);
+        expect(observed, ['source $pageA', 'document', 'finished $pageA']);
+        observed.clear();
+
+        await emit('urlChanged', fragment);
+        await emit('loadingStateChanged', completed);
+        expect(observed, ['source $fragment', 'finished $fragment']);
+        observed.clear();
+
+        await controller.reload();
+        await emit('navigationStarting', fragment);
+        await emit('onLoadError', windows.WebErrorStatus.operationCanceled.index);
+        await emit('loadingStateChanged', completed);
+        expect(observed, ['request $fragment', 'error']);
+        observed.clear();
+
+        await controller.reload();
+        await emit('navigationStarting', fragment);
+        expect(observed, ['request $fragment']);
+        await emit('loadingStateChanged', loading);
+        expect(observed, ['request $fragment', 'document']);
+        await emit('loadingStateChanged', completed);
+        expect(observed, ['request $fragment', 'document', 'finished $fragment']);
+        observed.clear();
+
+        final disposing = controller.dispose();
+        await emit('loadingStateChanged', loading);
+        await disposing;
+        expect(observed, isEmpty);
+      } finally {
+        await controller.dispose();
+      }
+    });
+  });
+
   testWidgets('observes a request before its redirect commits the login shell',
       (tester) async {
     await tester.runAsync(() async {
@@ -455,6 +509,42 @@ void main() {
     expect(calls.where((call) => call.method == 'reload'), hasLength(1));
     await tester.runAsync(controller.dispose);
   });
+
+  for (final status in [
+    windows.WebErrorStatus.errorHttpInvalidServerResponse,
+    windows.WebErrorStatus.disconnected,
+  ]) {
+    testWidgets('${status.name} suppresses only its paired completion',
+        (tester) async {
+      await tester.runAsync(() async {
+        final native = windows.WebviewController();
+        await native.initialize();
+        final controller = WindowsGakujoWebViewController(native);
+        final errors = <GakujoWebResourceError>[];
+        final finished = <String>[];
+        await controller.setNavigationDelegate(GakujoNavigationDelegate(
+          onWebResourceError: errors.add,
+          onPageFinished: finished.add,
+        ));
+        try {
+          await emit('urlChanged', pageA);
+          final completed = windows.LoadingState.navigationCompleted.index;
+          eventSink!.success({'type': 'onLoadError', 'value': status.index});
+          eventSink!.success({'type': 'loadingStateChanged', 'value': completed});
+          await flushEvents();
+          expect(errors.single.description, status.name);
+          expect(finished, isEmpty);
+
+          // WebView2 can complete a same-URL reload without ContentLoading.
+          await controller.reload();
+          await emit('loadingStateChanged', completed);
+          expect(finished, [pageA]);
+        } finally {
+          await controller.dispose();
+        }
+      });
+    });
+  }
 
   testWidgets('Windows service anchors page popups below app controls', (
     tester,

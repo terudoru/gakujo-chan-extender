@@ -5,9 +5,16 @@ declare const __mbgConfig: { label: string };
 function quickJump() {
   var label = __mbgConfig.label;
   var documents: Document[] = [];
+  function isVisible(node: Element, doc: Document) {
+    if (!node.getClientRects().length) return false;
+    var visibility = doc.defaultView!.getComputedStyle(node).visibility;
+    return visibility !== 'hidden' && visibility !== 'collapse';
+  }
   function collect(win: Window) {
     try {
       if (!win || !win.document || documents.indexOf(win.document) !== -1) return;
+      var frame = win.frameElement;
+      if (frame && !isVisible(frame, frame.ownerDocument)) return;
       documents.push(win.document);
       for (var i = 0; i < win.frames.length; i += 1) collect(win.frames[i]);
     } catch (e) {}
@@ -53,9 +60,7 @@ function quickJump() {
       var node = candidates[i];
       if (isExcluded(node) || node.disabled || node.matches(':disabled') ||
           node.closest('[aria-disabled="true"], [inert]') ||
-          !node.getClientRects().length) continue;
-      var style = doc.defaultView!.getComputedStyle(node);
-      if (style.visibility === 'hidden' || style.visibility === 'collapse') continue;
+          !isVisible(node, doc)) continue;
       var texts = [node.innerText || node.textContent || ''];
       ['alt', 'title', 'value', 'aria-label'].forEach(function(name) {
         texts.push(node.getAttribute(name) || '');

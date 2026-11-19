@@ -36,6 +36,10 @@ interface MbgSubmitHookOwner {
   submit: MbgSubmitHookFunction;
   original?: MbgSubmitHookFunction;
 }
+interface MbgCourseEstimate {
+  courseName: string;
+  courseNameAmbiguous: boolean;
+}
 interface Window {
   __MBG_HISTORY_TRACKER_INSTALLED?: boolean;
   __MBG_MESSAGE_READER_WATCH_DISPOSE?: () => void;
@@ -57,7 +61,10 @@ interface Window {
   __MBG_DOWNLOAD_CAPTURE_DOCUMENTS?: Document[];
   __MBG_DOWNLOAD_CAPTURE_LOAD_DOCUMENTS?: Document[];
   __MBG_DOWNLOAD_CAPTURE_SUBMIT_PROTOTYPES?: MbgSubmitHookEntry[];
-  __MBG_ESTIMATE_COURSE_NAME?: (() => string) | null;
+  __MBG_ESTIMATE_COURSE_NAME?: {
+    (): string;
+    (detailed: true): MbgCourseEstimate;
+  } | null;
   MoreBetterGakujoDownloads: { postMessage: (message: string) => void };
 
   __MBG_GPA_DISPLAY_VERSION?: number;

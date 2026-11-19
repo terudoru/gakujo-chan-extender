@@ -84,6 +84,14 @@ abstract interface class StarSyncGoogleAuth {
   Future<String> accessToken({bool forceRefresh = false});
   Future<bool> hasScope(String scope);
   Future<void> requestScopes(List<String> scopes);
+
+  /// Grants drive.file access to one user-selected folder without changing the
+  /// signed-in session. Returns its ID, or null if the user cancelled.
+  Future<String?> pickDriveFolder();
+
+  /// Cancels only an outstanding folder picker. Safe to call when none is open.
+  void cancelPendingDriveFolderPick();
+
   Future<void> signOut();
 }
 

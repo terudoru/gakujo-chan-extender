@@ -262,6 +262,27 @@ function behavior() {
     }
     return {captured};
   }
+  if (scenario === 'pageCourseEstimates') {
+    const primaryScript = process.argv[4];
+    const readEstimate = () => JSON.parse(vm.runInContext(primaryScript, context));
+    const details: any[] = [], names: string[] = [], primary: any[] = [];
+    for (const headings of [['Physics', 'Chemistry'], ['Physics'], []]) {
+      topDocument.querySelectorAll = selector =>
+        selector === 'h1' ? headings.map(innerText => ({innerText})) : [];
+      vm.runInContext(buildScript, context);
+      details.push(window.__MBG_ESTIMATE_COURSE_NAME(true));
+      names.push(window.__MBG_ESTIMATE_COURSE_NAME());
+      primary.push(readEstimate());
+    }
+    vm.runInContext(teardownScript, context);
+    const tornDown = readEstimate();
+    window.__MBG_ESTIMATE_COURSE_NAME = () => '未分類';
+    const legacyUnknown = readEstimate();
+    window.__MBG_ESTIMATE_COURSE_NAME = () => 'Physics';
+    const legacyCourse = readEstimate();
+    vm.runInContext(buildScript, context);
+    return {details, names, primary, tornDown, legacyUnknown, legacyCourse, reinstalled: readEstimate()};
+  }
   if (scenario === 'courseNameCodes') {
     const names: any = [];
     for (const text of [

@@ -142,6 +142,24 @@ function twoFactorAutofill() {
     }
   }
 
+  // An input can have layout inside a hidden frame. Error text in those
+  // documents still matters, so use this check only when choosing an input.
+  function hasVisibleFrameChain(doc: Document) {
+    try {
+      while (doc !== document) {
+        var frame = doc.defaultView?.frameElement;
+        if (!frame || !frame.getClientRects().length) return false;
+        doc = frame.ownerDocument;
+        var style = doc.defaultView!.getComputedStyle(frame);
+        if (style.visibility !== 'visible' || style.opacity === '0' ||
+            frame.checkVisibility?.({checkOpacity: true}) === false) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function controlText(element: HTMLElement & { value?: string }) {
     return [
       element.innerText,
@@ -284,6 +302,7 @@ function twoFactorAutofill() {
       var inputs = Array.prototype.slice.call(
         documents[i].querySelectorAll('input[name="' + __mbgConfig.inputName + '"]')
       );
+      if (!inputs.length || !hasVisibleFrameChain(documents[i])) continue;
       for (var j = 0; j < inputs.length; j += 1) {
         if (isVisible(inputs[j])) {
           input = inputs[j];

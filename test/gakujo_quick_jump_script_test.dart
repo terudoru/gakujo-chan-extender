@@ -316,6 +316,55 @@ void main() {
         ['syllabus']);
   });
 
+  Map<String, dynamic> courseFrame(String id, {String visibility = 'visible'}) {
+    return {
+      'host': {'visibility': visibility},
+      'nodes': [
+        {
+          'id': id,
+          'tag': 'button',
+          'text': '履修',
+          'parent': {'id': 'tabmenutable'},
+        },
+      ],
+    };
+  }
+
+  test('selects the first course tab in a visible frame', () async {
+    for (final visibility in ['visible', 'hidden', 'collapse']) {
+      expect(
+        await evaluate([], label: '履修', frames: [
+          courseFrame('earlier', visibility: visibility),
+          courseFrame('later'),
+        ]),
+        {
+          'result': true,
+          'clicked': [visibility == 'visible' ? 'earlier' : 'later'],
+        },
+        reason: 'earlier frame visibility is $visibility',
+      );
+    }
+  });
+
+  test('a visible inner frame respects its outer frame visibility', () async {
+    for (final visibility in ['visible', 'hidden']) {
+      expect(
+        await evaluate([], label: '履修', frames: [
+          {
+            'host': {'visibility': visibility},
+            'frames': [courseFrame('nested')],
+          },
+          courseFrame('later'),
+        ]),
+        {
+          'result': true,
+          'clicked': [visibility == 'visible' ? 'nested' : 'later'],
+        },
+        reason: 'outer frame visibility is $visibility',
+      );
+    }
+  });
+
   test('supports script tabs without treating static labels as actions',
       () async {
     expect(
@@ -339,7 +388,7 @@ void main() {
 
 Future<Map<String, dynamic>> evaluate(List<Map<String, dynamic>> nodes,
     {String label = 'シラバス',
-    List<List<Map<String, dynamic>>> frames = const []}) async {
+    List<Object> frames = const []}) async {
   final result = await Process.run(
       'node',
       [

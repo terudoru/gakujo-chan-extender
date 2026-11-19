@@ -639,6 +639,240 @@ window.setTimeout = function(callback) {
     expect(_valueOf(result, 'password'), 'saved-password');
     expect(result['clickCount'], 0, reason: jsonEncode(result));
   });
+
+  group('delayed login submission', () {
+    const noAttempt = {'attempts': 0, 'submittedKey': null, 'submitReports': 0};
+
+    Future<Map<String, dynamic>> run(
+      List<Object> steps, {
+      bool inFrame = false,
+      bool teardown = false,
+      List<String>? frameVisibilities,
+    }) {
+      return _evaluateGeneratedLoginAssist(
+        LoginAutofillAssistScript.build(
+          credentials: const GakujoLoginAutofillCredentials(
+            loginId: 'saved-user',
+            password: 'saved-password',
+          ),
+        ),
+        [
+          {'tag': 'input', 'name': 'userId'},
+          {'tag': 'input', 'type': 'password', 'name': 'password'},
+          {'tag': 'button', 'type': 'submit'},
+        ],
+        steps: steps,
+        frameBodyText: inFrame ? '' : null,
+        frameVisibilities: frameVisibilities,
+        teardownScript: teardown
+            ? LoginAutofillAssistScript.buildTeardown()
+            : null,
+      );
+    }
+
+    void expectSingleSubmit(Map<String, dynamic> result, String id, int at) {
+      expect(result['submissions'], [
+        {
+          'id': id,
+          'at': at,
+          'values': ['saved-user', 'saved-password'],
+        },
+      ]);
+      final session = result['sessionValues'] as Map<String, dynamic>;
+      expect(
+        session.entries
+            .where((e) => e.key.contains('SUBMIT_COUNT'))
+            .map((e) => e.value),
+        ['1'],
+      );
+      final reports = (result['reports'] as List).cast<Map<String, dynamic>>();
+      expect(reports.where((r) => r['event'] == 'submit'), hasLength(1));
+    }
+
+    const untouchedFields = [
+      ['', null],
+      ['', null],
+    ];
+
+    test('selects the sibling of a hidden frame containing a visible frame',
+        () async {
+      final result = await run([
+        'add-sibling-form',
+        'notify',
+        350,
+        'inspect-fields',
+      ], frameVisibilities: ['hidden', 'visible']);
+      expect(result['fieldSnapshots'], [untouchedFields]);
+      expectSingleSubmit(result, 'sibling', 350);
+    });
+
+    test('waits to hint, fill and submit until the only frame is revealed',
+        () async {
+      final result = await run([
+        300,
+        'inspect-fields',
+        'checkpoint',
+        {'visibility': 'visible'},
+        'notify',
+        350,
+      ], frameVisibilities: ['hidden']);
+      expect(result['fieldSnapshots'], [untouchedFields]);
+      expect(result['checkpoints'], [noAttempt]);
+      expectSingleSubmit(result, 'login-form', 650);
+    });
+
+    test('a frame hidden at 225 ms loses its pending submit at 250 ms',
+        () async {
+      final result = await run([
+        'add-sibling-form',
+        225,
+        {'visibility': 'hidden'},
+        'notify',
+        25,
+        'checkpoint',
+        325,
+      ], inFrame: true);
+      expect(result['checkpoints'], [noAttempt]);
+      expectSingleSubmit(result, 'sibling', 575);
+    });
+
+    for (final visibility in ['hidden', 'collapse', 'visible']) {
+      test('logout in a $visibility frame after a genuine attempt', () async {
+        final result = await run([
+          250,
+          'checkpoint',
+          'show-logout',
+          {'visibility': visibility},
+          'notify',
+          100,
+          'checkpoint',
+          'replace-form',
+          {'visibility': 'visible'},
+          'notify',
+          350,
+        ], inFrame: true);
+        final phases = result['checkpoints'] as List;
+        expect(phases.first['attempts'], 1);
+        expect(phases.first['submittedKey'], isNotNull);
+        expect(phases.first['submitReports'], 1);
+        final reset = visibility == 'visible';
+        expect(phases.last['attempts'], reset ? 0 : 1);
+        expect(phases.last['submittedKey'],
+            reset ? null : phases.first['submittedKey']);
+        expect(_hasReport(result, 'authenticated', 'attempt-reset'), reset);
+        expect((result['submissions'] as List).map((s) => s['id']),
+            ['login-form', if (reset) 'current']);
+      });
+    }
+
+    for (final change in ['replace-form', 'replace-fields']) {
+      test('retargets $change before the original deadline', () async {
+        final result = await run([change, 'notify', 250, 'checkpoint', 100]);
+        expect(result['checkpoints'], [noAttempt]);
+        expectSingleSubmit(
+          result,
+          change == 'replace-fields' ? 'login-form' : 'current',
+          350,
+        );
+      });
+    }
+
+    for (final change in ['replace-username', 'replace-password']) {
+      test('discards $change before the watcher fills the new input', () async {
+        final result = await run([225, change, 'notify', 25, 'checkpoint', 325]);
+        expect(result['checkpoints'], [noAttempt]);
+        expectSingleSubmit(result, 'login-form', 575);
+      });
+    }
+
+    for (final change in ['remove-form', 'remove-frame', 'navigate-frame']) {
+      test('discards $change even before the watcher runs', () async {
+        final result = await run([
+          change,
+          250,
+          'checkpoint',
+          'replace-form',
+          'notify',
+          350,
+        ], inFrame: change != 'remove-form');
+        expect(result['checkpoints'], [noAttempt]);
+        expectSingleSubmit(result, 'current', 600);
+      });
+    }
+
+    for (final change in ['disown-username', 'disown-password']) {
+      test('rejects a connected input after $change', () async {
+        final result = await run([
+          change,
+          250,
+          'checkpoint',
+          'notify',
+          350,
+          'checkpoint',
+        ]);
+        expect(result['checkpoints'], [noAttempt, noAttempt]);
+        expect(result['submissions'], isEmpty);
+      });
+    }
+
+    test(
+      'observer notifications preserve the first deadline and one timer',
+      () async {
+        final result = await run([
+          'notify',
+          100,
+          'notify',
+          100,
+          49,
+          'checkpoint',
+          1,
+        ]);
+        expect(result['checkpoints'], [noAttempt]);
+        expectSingleSubmit(result, 'login-form', 250);
+        expect(result['pendingTimers'], 0);
+      },
+    );
+
+    test('a genuine attempt still blocks a replacement form', () async {
+      final result = await run([250, 'replace-form', 'notify', 350]);
+      expectSingleSubmit(result, 'login-form', 250);
+    });
+
+    test('a login error still blocks submission after replacement', () async {
+      final result = await run([
+        'replace-form',
+        'show-error',
+        'notify',
+        350,
+        'clear-error',
+        'notify',
+        350,
+        'checkpoint',
+      ]);
+      expect(result['checkpoints'], [noAttempt]);
+      expect(result['submissions'], isEmpty);
+      expect(
+        (result['sessionValues'] as Map).keys.any(
+          (k) => k.startsWith('MBG_LOGIN_AUTOFILL_ERROR:'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('teardown cancels every submit after a replacement', () async {
+      final result = await run([
+        'replace-form',
+        'notify',
+        100,
+        'notify',
+        100,
+      ], teardown: true);
+      expect(result['pendingTimers'], 0);
+      expect(result['submissions'], isEmpty);
+      expect(result['sessionValues'], isEmpty);
+      expect(_hasReport(result, 'submit', ''), isFalse);
+    });
+  });
 }
 
 Future<Map<String, dynamic>> _evaluateLoginAssist(
@@ -669,8 +903,10 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
   String? url,
   String? teardownScript,
   String? frameBodyText,
+  List<String>? frameVisibilities,
   bool deferTimers = false,
   bool simulateAuthenticatedTimeout = false,
+  List<Object>? steps,
   int monitorTicks = 0,
 }) async {
   final process = await Process.start('node', [
@@ -680,8 +916,10 @@ Future<Map<String, dynamic>> _evaluateGeneratedLoginAssist(
       'url': url,
       'teardownScript': teardownScript,
       'frameBodyText': frameBodyText,
+      'frameVisibilities': frameVisibilities,
       'deferTimers': deferTimers,
       'simulateAuthenticatedTimeout': simulateAuthenticatedTimeout,
+      'steps': steps,
       'monitorTicks': monitorTicks,
     }),
   ]);

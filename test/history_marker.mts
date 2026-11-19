@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import test from 'node:test';
 // Node strips the TypeScript types; no compiler package is needed in CI.
 // A computed specifier keeps the tests' type check out of the page source,
 // which relies on the page script globals.
@@ -143,3 +144,81 @@ const buttonMarker = frame.history.state.__mbgPreview;
 assert.equal(buttonMarker.name, 'button.pdf');
 assert.equal(historyMarker(win, { action: 'reopen-preview', token: buttonMarker.token }), true);
 assert.equal(sourceButton.clicked, 2);
+
+function previewPair(nested: boolean) {
+  const top = documentWithWindow();
+  const earlier = documentWithWindow();
+  const later = documentWithWindow();
+  const laterWindow = { document: later.doc, frames: [] };
+  const earlierWindow = { document: earlier.doc, frames: nested ? [laterWindow] : [] };
+  const timers: (() => void)[] = [];
+  const page: any = {
+    document: top.doc, history: top.history, crypto: win.crypto,
+    frames: nested ? [earlierWindow] : [earlierWindow, laterWindow],
+    setInterval() {}, setTimeout(callback: () => void) { timers.push(callback); },
+  };
+  historyMarker(page, { action: 'install-preview-tracker' });
+  function open(source: typeof earlier) {
+    const button = source.button('report.pdf');
+    button.click();
+    page.__MBG_ACTIVE_UPLOAD_PREVIEW = { visible: true };
+    timers.shift()!();
+    return { token: source.history.state.__mbgPreview.token, button };
+  }
+  const first = open(earlier);
+  page.__MBG_ACTIVE_UPLOAD_PREVIEW.visible = false;
+  const current = open(later);
+  const read = (token?: string | null) => JSON.parse(historyMarker(page, { action: 'read', token }));
+  return { page, laterWindow, first, current, read };
+}
+
+for (const layout of ['sibling', 'nested']) {
+  test(`hidden preview in a later ${layout} frame owns Forward`, () => {
+    const { page, first, current, read } = previewPair(layout === 'nested');
+    page.__MBG_ACTIVE_UPLOAD_PREVIEW.visible = false;
+    assert.deepEqual(read(first.token),
+      { dialog: null, preview: current.token, active: 'hidden', activeToken: current.token });
+  });
+
+  test(`detached preview in a later ${layout} frame reopens its own button`, () => {
+    const { page, first, current, read } = previewPair(layout === 'nested');
+    delete page.__MBG_ACTIVE_UPLOAD_PREVIEW;
+    const result = read(current.token);
+    assert.deepEqual(result, { dialog: null, preview: current.token, active: 'none', activeToken: null });
+    assert.equal(historyMarker(page, { action: 'reopen-preview', token: result.preview }), true);
+    assert.equal(current.button.clicked, 2);
+    assert.equal(first.button.clicked, 1);
+  });
+}
+
+test('only current, reachable history entries can supply the preferred marker', () => {
+  const { page, laterWindow, first, current, read } = previewPair(false);
+  const active = page.__MBG_ACTIVE_UPLOAD_PREVIEW;
+  for (const token of [undefined, null, 'bad!']) {
+    active.__mbgToken = token;
+    assert.deepEqual(read(current.token),
+      { dialog: null, preview: first.token, active: 'visible', activeToken: null });
+  }
+  active.__mbgToken = 'unmatched';
+  assert.equal(read(current.token).preview, first.token);
+  delete page.__MBG_ACTIVE_UPLOAD_PREVIEW;
+  for (const token of [undefined, null, 'bad!', 'unmatched', first.token]) {
+    assert.equal(read(token).preview, first.token);
+  }
+
+  // The frame can navigate to a new entry, become inaccessible, or leave the traversal limit.
+  const original = laterWindow.document;
+  laterWindow.document = documentWithWindow().doc;
+  page.__MBG_ACTIVE_UPLOAD_PREVIEW = { visible: false, __mbgToken: current.token };
+  assert.deepEqual(read(), { dialog: null, preview: first.token, active: 'hidden', activeToken: current.token });
+  delete page.__MBG_ACTIVE_UPLOAD_PREVIEW;
+  assert.equal(read(current.token).preview, first.token);
+  laterWindow.document.defaultView.history.state.__mbgPreview = { token: current.token };
+  assert.equal(read(current.token).preview, first.token);
+  assert.equal(historyMarker(page, { action: 'reopen-preview', token: current.token }), false);
+  laterWindow.document = original;
+  page.frames.splice(1, 0, ...Array(63).fill(crossOrigin));
+  assert.equal(read(current.token).preview, first.token);
+  page.frames = [crossOrigin];
+  assert.equal(read(current.token).preview, null);
+});

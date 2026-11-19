@@ -588,6 +588,134 @@ Future<void> _deleteSyncedFavorite(_FavoriteSyncDevice device) async {
   expect(await device.activity.loadFavoritesForBackup(), isEmpty);
 }
 
+const _starredMessagesKey = 'more_better_gakujo_starred_messages';
+
+Map<String, dynamic> _readSyncState(_Storage storage) =>
+    jsonDecode(storage.values[starSyncStateKey]!) as Map<String, dynamic>;
+
+Map<String, Object?> _starBaseline(_Storage storage) {
+  final state = _readSyncState(storage);
+  return {
+    for (final key in const [
+      'records',
+      'clock',
+      'remoteCache',
+      'pendingBulkReplace',
+      'pendingBulkReplaceStarIds',
+    ])
+      key: state[key],
+  };
+}
+
+void _expectStarRollback(
+  _Storage storage,
+  String? previousStars,
+  Map<String, Object?> previousBaseline,
+) {
+  expect(storage.values[_starredMessagesKey], previousStars);
+  expect(_starBaseline(storage), previousBaseline);
+  expect(_readSyncState(storage)['pendingStarCommit'], isNull);
+}
+
+GakujoStarredMessage _syncStar(String seqNo, int minute) =>
+    GakujoStarredMessage(
+      keijitype: '1',
+      genrecd: '2',
+      seqNo: seqNo,
+      title: 'Star $seqNo',
+      starredAt: DateTime.utc(2026, 11, 18, 0, minute),
+    );
+
+class _StarSyncDevice {
+  _StarSyncDevice(
+    this.remote, {
+    _Storage? persisted,
+    this.loginId,
+    this.now,
+    this.collections = const [],
+    void Function()? onChanged,
+  }) : storage = persisted ?? _Storage() {
+    activity = GakujoActivityStore(secureStorage: storage);
+    engine = StarSyncEngine(
+      loginId: loginId ?? () => 'student',
+      now: now,
+      activityStore: activity,
+      secureStorage: storage,
+      transportFactory: (_) => remote,
+      collections: collections,
+      onLocalStarsChanged: onChanged,
+    );
+    addTearDown(engine.dispose);
+  }
+
+  final _Transport remote;
+  final _Storage storage;
+  final String? Function()? loginId;
+  final DateTime Function()? now;
+  final List<StarSyncCollection> collections;
+  late final GakujoActivityStore activity;
+  late final StarSyncEngine engine;
+
+  Map<String, dynamic> get state => _readSyncState(storage);
+  String get devicePath => 'stars/devices/${state['deviceId']}';
+
+  Future<void> starAndSync(GakujoStarredMessage star) async {
+    await activity.upsertStarredMessage(star);
+    await engine.syncNow();
+  }
+
+  Future<_StarSyncDevice> restart() async {
+    engine.dispose();
+    final reopened = _StarSyncDevice(
+      remote,
+      persisted: storage,
+      loginId: loginId,
+      now: now,
+      collections: collections,
+    );
+    await reopened.engine.load();
+    return reopened;
+  }
+}
+
+Future<({_StarSyncDevice source, _StarSyncDevice receiver})> _starDeletionPair({
+  String? Function()? receiverLogin,
+  List<StarSyncCollection> receiverCollections = const [],
+  void Function()? onChanged,
+}) async {
+  final remote = _Transport();
+  final source = _StarSyncDevice(remote);
+  final receiver = _StarSyncDevice(
+    remote,
+    loginId: receiverLogin,
+    collections: receiverCollections,
+    onChanged: onChanged,
+  );
+  await source.engine.setUpWithDrive(const StarSyncConfig());
+  await receiver.engine.setUpWithDrive(const StarSyncConfig());
+  final star = _syncStar('3', 0);
+  await source.starAndSync(star);
+  await receiver.engine.syncNow();
+  expect((await receiver.activity.loadStarredMessages()).single.id, star.id);
+  await source.activity.removeStarredMessage(star.id);
+  await source.engine.syncNow();
+  return (source: source, receiver: receiver);
+}
+
+enum _StarCommitWrite { marker, stars, baseline, completion }
+
+void _failNextWrite(
+  _Storage storage,
+  String key, {
+  required bool afterMutation,
+}) {
+  if (afterMutation) {
+    storage.failWriteKeyAfterCommitOnce = key;
+  } else {
+    storage.failWriteKeyOnce = key;
+  }
+}
+
 void main() {
   const config = StarSyncConfig();
 
@@ -3798,9 +3926,11 @@ void main() {
     await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
+    final previousStars = storageB.values[_starredMessagesKey];
+    final previousBaseline = _starBaseline(storageB);
     storageB.failStateAfterStarWrite = true;
     await expectLater(b.syncNow(), throwsStateError);
-    expect((await activityB.loadStarredMessages()).single.id, star.id);
+    _expectStarRollback(storageB, previousStars, previousBaseline);
     final state = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
     expect((state['records'] as Map).containsKey(star.id), isFalse);
     await activityA.removeStarredMessage(star.id);
@@ -3851,9 +3981,11 @@ void main() {
       ),
     );
     await a.syncNow();
+    final previousStars = storageB.values[_starredMessagesKey];
+    final previousBaseline = _starBaseline(storageB);
     storageB.failStateAfterStarWrite = true;
     await expectLater(b.syncNow(), throwsStateError);
-    expect((await activityB.loadStarredMessages()).length, 2);
+    _expectStarRollback(storageB, previousStars, previousBaseline);
     await activityB.removeStarredMessage('1|2|3');
     await activityB.upsertStarredMessage(
       GakujoStarredMessage(
@@ -3903,9 +4035,11 @@ void main() {
     await b.setUpWithDrive(config);
     await activityA.upsertStarredMessage(star);
     await a.syncNow();
+    final previousStars = storageB.values[_starredMessagesKey];
+    final previousBaseline = _starBaseline(storageB);
     storageB.failStateAfterStarWrite = true;
     await expectLater(b.syncNow(), throwsStateError);
-    expect((await activityB.loadStarredMessages()).single.id, star.id);
+    _expectStarRollback(storageB, previousStars, previousBaseline);
     final state = jsonDecode(storageB.values[starSyncStateKey]!) as Map;
     expect((state['records'] as Map).containsKey(star.id), isFalse);
     await activityA.removeStarredMessage(star.id);
@@ -3927,6 +4061,655 @@ void main() {
     final restored = (await activityA.loadStarredMessages()).single;
     expect(restored.starredAt, later);
     expect(restored.id, star.id);
+  });
+
+  group('remote re-star after an imported deletion', () {
+    for (final failBaseline in [false, true]) {
+      for (final restart in [false, true]) {
+        final recovery = restart ? 'after restart' : 'on retry';
+        final baseline = failBaseline ? 'failed' : 'successful';
+        test('survives $recovery with a $baseline baseline save', () async {
+          final remote = _Transport();
+          final storageA = _Storage();
+          final storageB = _Storage();
+          final activityA = GakujoActivityStore(secureStorage: storageA);
+          var activityB = GakujoActivityStore(secureStorage: storageB);
+          StarSyncEngine make(_Storage storage, GakujoActivityStore activity) =>
+              StarSyncEngine(
+                loginId: () => 'student',
+                activityStore: activity,
+                secureStorage: storage,
+                transportFactory: (_) => remote,
+              );
+          final a = make(storageA, activityA);
+          var b = make(storageB, activityB);
+          addTearDown(a.dispose);
+          addTearDown(() => b.dispose());
+          await a.setUpWithDrive(config);
+          await b.setUpWithDrive(config);
+
+          final original = GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '3',
+            title: 'Original',
+            starredAt: DateTime.utc(2026, 11, 18),
+          );
+          await activityA.upsertStarredMessage(original);
+          await a.syncNow();
+          await b.syncNow();
+          expect(
+            (await activityB.loadStarredMessages()).single.id,
+            original.id,
+          );
+
+          await activityA.removeStarredMessage(original.id);
+          await a.syncNow();
+          if (failBaseline) {
+            final previousStars = storageB.values[_starredMessagesKey];
+            final previousBaseline = _starBaseline(storageB);
+            storageB.failStateAfterStarWrite = true;
+            await expectLater(b.syncNow(), throwsStateError);
+            expect(storageB.failStateAfterStarWrite, isFalse);
+            expect(storageB.failWriteKeyOnce, isNull);
+            _expectStarRollback(storageB, previousStars, previousBaseline);
+          } else {
+            await b.syncNow();
+            expect(await activityB.loadStarredMessages(), isEmpty);
+          }
+
+          final starredAt = DateTime.utc(2026, 11, 18, 0, 1);
+          final reStarred = GakujoStarredMessage(
+            keijitype: original.keijitype,
+            genrecd: original.genrecd,
+            seqNo: original.seqNo,
+            title: 'Remote re-star',
+            starredAt: starredAt,
+          );
+          await activityA.upsertStarredMessage(reStarred);
+          await a.syncNow();
+          expect(
+            (await activityA.loadStarredMessages()).single.starredAt,
+            starredAt,
+          );
+
+          if (restart) {
+            b.dispose();
+            activityB = GakujoActivityStore(secureStorage: storageB);
+            b = make(storageB, activityB);
+            await b.load();
+          }
+          await b.syncNow();
+          await a.syncNow();
+
+          final sourceStars = await activityA.loadStarredMessages();
+          final receiverStars = await activityB.loadStarredMessages();
+          expect(
+            {
+              'source': sourceStars.map((star) => (star.id, star.starredAt)),
+              'receiver': receiverStars.map(
+                (star) => (star.id, star.starredAt),
+              ),
+            },
+            {
+              'source': [(original.id, starredAt)],
+              'receiver': [(original.id, starredAt)],
+            },
+          );
+        });
+      }
+    }
+  });
+
+  group('core star pair commit', () {
+    for (final phase in _StarCommitWrite.values) {
+      for (final afterMutation in [false, true]) {
+        final timing = afterMutation ? 'after' : 'before';
+        test('${phase.name} write failure $timing mutation', () async {
+          final (:source, :receiver) = await _starDeletionPair();
+          final storage = receiver.storage;
+          final previousStars = storage.values[_starredMessagesKey];
+          final previousBaseline = _starBaseline(storage);
+          final uploaded = List<int>.of(
+            receiver.remote.files[receiver.devicePath]!,
+          );
+          var starWrites = 0;
+          var failed = false;
+          storage.onWriteValue = (key, value) {
+            if (key == _starredMessagesKey) starWrites++;
+            final stateWrite = key == starSyncStateKey;
+            final marked =
+                stateWrite && jsonDecode(value!)['pendingStarCommit'] == true;
+            final reached = switch (phase) {
+              _StarCommitWrite.marker => marked && starWrites == 0,
+              _StarCommitWrite.stars => key == _starredMessagesKey,
+              _StarCommitWrite.baseline => marked && starWrites == 1,
+              _StarCommitWrite.completion =>
+                stateWrite && !marked && starWrites == 1,
+            };
+            if (!failed && reached) {
+              failed = true;
+              _failNextWrite(storage, key, afterMutation: afterMutation);
+            }
+          };
+
+          await expectLater(receiver.engine.syncNow(), throwsStateError);
+          storage.onWriteValue = null;
+          expect(failed, isTrue);
+          expect(receiver.remote.files[receiver.devicePath], uploaded);
+          if (phase == _StarCommitWrite.completion) {
+            expect(starWrites, 1);
+            expect(await receiver.activity.loadStarredMessages(), isEmpty);
+            expect(receiver.state['records'], source.state['records']);
+            expect(receiver.state['clock'], source.state['clock']);
+            expect(
+              receiver.state['pendingStarCommit'],
+              afterMutation ? isNull : isTrue,
+            );
+            expect(receiver.engine.status.value.status, StarSyncStatus.error);
+            await receiver.engine.syncNow();
+            expect(receiver.remote.files[receiver.devicePath], uploaded);
+          } else {
+            if (phase == _StarCommitWrite.marker) expect(starWrites, 0);
+            _expectStarRollback(storage, previousStars, previousBaseline);
+          }
+
+          final reStar = _syncStar('3', 1);
+          await source.starAndSync(reStar);
+          final retry = afterMutation || phase == _StarCommitWrite.completion
+              ? await receiver.restart()
+              : receiver;
+          await retry.engine.syncNow();
+          await source.engine.syncNow();
+          final sourceStar =
+              (await source.activity.loadStarredMessages()).single;
+          expect(sourceStar.id, reStar.id);
+          expect(sourceStar.starredAt, reStar.starredAt);
+          final receiverStars = await retry.activity.loadStarredMessages();
+          if (phase == _StarCommitWrite.completion && !afterMutation) {
+            expect(receiverStars, isEmpty);
+            expect(retry.engine.status.value.lastError, contains('設定し直して'));
+            expect(retry.remote.files[retry.devicePath], uploaded);
+          } else {
+            expect(receiverStars.single.id, reStar.id);
+            expect(receiverStars.single.starredAt, reStar.starredAt);
+          }
+        });
+      }
+    }
+
+    for (final failedRollbackKey in [starSyncStateKey, _starredMessagesKey]) {
+      final store = failedRollbackKey == starSyncStateKey
+          ? 'baseline'
+          : 'stars';
+      for (final afterMutation in [false, true]) {
+        final timing = afterMutation ? 'after' : 'before';
+        test(
+          '$store rollback outage after baseline failure $timing mutation',
+          () async {
+            final (:source, :receiver) = await _starDeletionPair();
+            final storage = receiver.storage;
+            final stateBefore = _starBaseline(storage);
+            final rawBefore = storage.values[_starredMessagesKey];
+            var starWrites = 0;
+            var stateWritesAfterApply = 0;
+            storage.onWriteValue = (key, value) {
+              if (key == _starredMessagesKey &&
+                  ++starWrites > 1 &&
+                  key == failedRollbackKey) {
+                storage.failWriteKey = key;
+              }
+              if (key != starSyncStateKey || starWrites == 0) return;
+              if (++stateWritesAfterApply == 1) {
+                expect(jsonDecode(value!)['pendingStarCommit'], isTrue);
+                _failNextWrite(storage, key, afterMutation: afterMutation);
+              } else if (key == failedRollbackKey) {
+                storage.failWriteKey = key;
+              }
+            };
+            final uploaded = List<int>.of(
+              receiver.remote.files[receiver.devicePath]!,
+            );
+
+            await expectLater(
+              receiver.engine.syncNow(),
+              throwsA(isA<BackupRollbackException>()),
+            );
+            expect(storage.failWriteKey, failedRollbackKey);
+            expect(receiver.state['pendingStarCommit'], isTrue);
+            expect(receiver.engine.status.value.status, StarSyncStatus.error);
+            if (failedRollbackKey == _starredMessagesKey) {
+              expect(await receiver.activity.loadStarredMessages(), isEmpty);
+              expect(_starBaseline(storage), stateBefore);
+            } else {
+              expect(storage.values[_starredMessagesKey], rawBefore);
+              expect(
+                receiver.state['records'][_syncStar('3', 0).id]['starred'],
+                !afterMutation,
+              );
+            }
+
+            storage.onWriteValue = null;
+            final restarted = await receiver.restart();
+            expect(restarted.engine.status.value.status, StarSyncStatus.error);
+            expect(restarted.engine.status.value.lastError, contains('設定し直して'));
+            final reStar = _syncStar('3', 1);
+            await source.starAndSync(reStar);
+            await restarted.engine.syncNow(trigger: StarSyncTrigger.startup);
+            storage.failWriteKey = null;
+            await restarted.engine.syncNow();
+            await source.engine.syncNow();
+            expect(restarted.remote.files[restarted.devicePath], uploaded);
+            expect(restarted.state['pendingStarCommit'], isTrue);
+            expect(
+              (await source.activity.loadStarredMessages()).single.starredAt,
+              reStar.starredAt,
+            );
+          },
+        );
+      }
+    }
+
+    test('failed marker cleanup quarantines the rolled back pair', () async {
+      final (:source, :receiver) = await _starDeletionPair();
+      final storage = receiver.storage;
+      final rawBefore = storage.values[_starredMessagesKey];
+      final baselineBefore = _starBaseline(storage);
+      storage.failStateAfterStarWrite = true;
+      var stateWritesAfterApply = 0;
+      storage.onWriteValue = (key, value) {
+        if (key == starSyncStateKey && !storage.failStateAfterStarWrite) {
+          if (++stateWritesAfterApply == 3) {
+            expect(jsonDecode(value!)['pendingStarCommit'], isNull);
+            storage.failWriteKeyOnce = key;
+          }
+        }
+      };
+
+      await expectLater(receiver.engine.syncNow(), throwsStateError);
+      storage.onWriteValue = null;
+      expect(stateWritesAfterApply, 3);
+      expect(storage.values[_starredMessagesKey], rawBefore);
+      expect(_starBaseline(storage), baselineBefore);
+      expect(receiver.state['pendingStarCommit'], isTrue);
+      final restarted = await receiver.restart();
+      final previousUpload = List<int>.of(
+        receiver.remote.files[receiver.devicePath]!,
+      );
+      await source.starAndSync(_syncStar('3', 1));
+      await restarted.engine.syncNow();
+      expect(restarted.remote.files[restarted.devicePath], previousUpload);
+      expect(restarted.engine.status.value.status, StarSyncStatus.error);
+    });
+
+    test('queued unstar remains a genuine deletion after rollback', () async {
+      final (:source, :receiver) = await _starDeletionPair();
+      final storage = receiver.storage;
+      final started = Completer<void>();
+      final release = Completer<void>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
+      storage.failStateAfterStarWrite = true;
+      storage.beforeWrite = (key) async {
+        if (key == starSyncStateKey && storage.failWriteKeyOnce == key) {
+          storage.beforeWrite = null;
+          started.complete();
+          await release.future;
+        }
+      };
+
+      final syncing = expectLater(receiver.engine.syncNow(), throwsStateError);
+      await started.future.timeout(const Duration(seconds: 5));
+      expect(storage.values[_starredMessagesKey], '[]');
+      var edited = false;
+      final id = _syncStar('3', 0).id;
+      final edit = receiver.activity.removeStarredMessage(id).then((_) {
+        edited = true;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(edited, isFalse);
+      release.complete();
+      await syncing;
+      await edit;
+      expect(receiver.state['records'][id]['starred'], isTrue);
+      expect(await receiver.activity.loadStarredMessages(), isEmpty);
+
+      await source.starAndSync(_syncStar('3', 1));
+      final restarted = await receiver.restart();
+      await restarted.engine.syncNow();
+      await source.engine.syncNow();
+      expect(await restarted.activity.loadStarredMessages(), isEmpty);
+      expect(await source.activity.loadStarredMessages(), isEmpty);
+      expect(restarted.state['records'][id]['starred'], isFalse);
+    });
+
+    for (final changeGeneration in [false, true]) {
+      final change = changeGeneration ? 'same-account generation' : 'account';
+      test(
+        '$change change during baseline write rolls back before upload',
+        () async {
+          var login = 'student';
+          final (:source, :receiver) = await _starDeletionPair(
+            receiverLogin: () => login,
+          );
+          final storage = receiver.storage;
+          final rawBefore = storage.values[_starredMessagesKey];
+          final baselineBefore = _starBaseline(storage);
+          final uploaded = List<int>.of(
+            source.remote.files[receiver.devicePath]!,
+          );
+          final generation = receiver.engine.accountGeneration;
+          var changed = false;
+          storage.beforeWrite = (key) async {
+            if (key != starSyncStateKey ||
+                storage.values[_starredMessagesKey] != '[]') {
+              return;
+            }
+            storage.beforeWrite = null;
+            expect(receiver.state['pendingStarCommit'], isTrue);
+            changed = true;
+            if (changeGeneration) {
+              await receiver.engine.runAccountChange(() async {});
+            } else {
+              login = 'other-student';
+            }
+          };
+
+          if (changeGeneration) {
+            await receiver.engine.runBoundToAccount(
+              expectedAccount: receiver.engine.requireAccount(),
+              expectedGeneration: generation,
+              action: receiver.engine.syncNow,
+            );
+            expect(receiver.engine.accountGeneration, generation + 1);
+          } else {
+            await receiver.engine.syncNow();
+            expect(
+              receiver.engine.status.value.status,
+              StarSyncStatus.accountMismatch,
+            );
+            expect(receiver.state['localReviewRequired'], isTrue);
+          }
+          expect(changed, isTrue);
+          _expectStarRollback(storage, rawBefore, baselineBefore);
+          expect(source.remote.files[receiver.devicePath], uploaded);
+        },
+      );
+    }
+
+    test('a refresh error leaves the committed pair syncable', () async {
+      var throwOnRefresh = false;
+      var refreshes = 0;
+      final (:source, :receiver) = await _starDeletionPair(
+        onChanged: () {
+          if (throwOnRefresh) {
+            refreshes++;
+            throw StateError('refresh failed');
+          }
+        },
+      );
+      throwOnRefresh = true;
+
+      expect((await receiver.engine.syncNow()).localChanged, isTrue);
+      expect(refreshes, 1);
+      expect(receiver.state['pendingStarCommit'], isNull);
+      expect(receiver.state['records'], source.state['records']);
+      expect(await receiver.activity.loadStarredMessages(), isEmpty);
+      expect(receiver.engine.status.value.status, StarSyncStatus.ok);
+      final reStar = _syncStar('3', 1);
+      await source.starAndSync(reStar);
+      await receiver.engine.syncNow();
+      expect(
+        (await receiver.activity.loadStarredMessages()).single.starredAt,
+        reStar.starredAt,
+      );
+    });
+
+    for (final clear in [false, true]) {
+      final choice = clear ? 'clear' : 'include';
+      test(
+        'quarantine survives account and restore actions until setup with $choice',
+        () async {
+          String? login = 'student';
+          final collection = _Collection('extras')..entries = {'item': 'value'};
+          final (:source, :receiver) = await _starDeletionPair(
+            receiverLogin: () => login,
+            receiverCollections: [collection],
+          );
+          final storage = receiver.storage;
+          final deviceId = receiver.state['deviceId'];
+          final collectionState = receiver.state['collectionStates'];
+          const localKey = 'unrelated-local-key';
+          storage.values[localKey] = 'original bytes';
+          expect(receiver.activity.starredMessagesStorage.keys, [
+            _starredMessagesKey,
+          ]);
+          var starWrites = 0;
+          storage.failStateAfterStarWrite = true;
+          storage.onWrite = (key) {
+            if (key == _starredMessagesKey && ++starWrites == 2) {
+              storage.failWriteKey = key;
+            }
+          };
+          await expectLater(
+            receiver.engine.syncNow(),
+            throwsA(isA<BackupRollbackException>()),
+          );
+          storage.onWrite = null;
+          storage.failWriteKey = null;
+
+          final local = _syncStar('4', 2);
+          await receiver.activity.upsertStarredMessage(local);
+          final rawLocal = storage.values[_starredMessagesKey];
+          // Simulate a previously saved clear request so restart exercises both guards.
+          final clearRequest = {local.id: local.starredAt.toIso8601String()};
+          storage.values[starSyncStateKey] = jsonEncode(
+            receiver.state..['pendingLocalClear'] = clearRequest,
+          );
+          final restarted = await receiver.restart();
+          expect(storage.values[_starredMessagesKey], rawLocal);
+          expect(restarted.engine.status.value.enabled, isTrue);
+          expect(restarted.engine.status.value.status, StarSyncStatus.error);
+          expect(
+            restarted.engine.status.value.lastError,
+            contains('同期を無効にしてから設定し直して'),
+          );
+          expect(restarted.state['pendingLocalClear'], clearRequest);
+
+          final remote = source.remote;
+          final priorUploads = remote.puts;
+          final priorDeletes = remote.deletes;
+          final priorLists = remote.lists;
+          await restarted.engine.runAccountChange(() async => login = null);
+          await restarted.engine.runAccountChange(
+            () async => login = 'student',
+          );
+          await expectLater(
+            restarted.engine.resumeKeepingLocal(),
+            throwsStateError,
+          );
+          await expectLater(
+            restarted.engine.resumeDiscardingLocal(),
+            throwsStateError,
+          );
+          await expectLater(
+            restarted.engine.resetRemoteWithDrive(),
+            throwsStateError,
+          );
+          await expectLater(
+            restarted.engine.setUpWithDrive(config),
+            throwsStateError,
+          );
+          await restarted.engine.withBulkReplace(
+            () => restarted.activity.replaceStarredMessages([local]),
+            collections: const {},
+            starIdsAfterRestore: {local.id},
+          );
+          for (final trigger in StarSyncTrigger.values) {
+            await restarted.engine.syncNow(trigger: trigger);
+          }
+          expect(remote.puts, priorUploads);
+          expect(remote.deletes, priorDeletes);
+          expect(remote.lists, priorLists);
+          expect(restarted.state['pendingStarCommit'], isTrue);
+          expect(restarted.state['pendingLocalClear'], clearRequest);
+          expect(restarted.state['pendingBulkReplaceStarIds'], [local.id]);
+          expect(restarted.state['collectionStates'], collectionState);
+          expect(storage.values[localKey], 'original bytes');
+          expect(storage.values[_starredMessagesKey], rawLocal);
+
+          await restarted.engine.disable();
+          expect(storage.values[starSyncConfigKey], isNull);
+          expect(storage.values[starSyncStateKey], isNull);
+          expect(storage.values[_starredMessagesKey], rawLocal);
+          final clearLocal = clear
+              ? await restarted.engine.snapshotLocalStars()
+              : <String, String>{};
+          expect(
+            await restarted.engine.setUpWithDrive(
+              config,
+              clearLocalStars: clearLocal,
+            ),
+            StarSyncDriveSetup.created,
+          );
+          expect(restarted.state['deviceId'], isNot(deviceId));
+          expect(restarted.state['pendingStarCommit'], isNull);
+          expect(restarted.engine.status.value.status, StarSyncStatus.ok);
+          final localStars = await restarted.activity.loadStarredMessages();
+          expect(
+            localStars.map((star) => star.id),
+            clear ? isEmpty : [local.id],
+          );
+          await source.engine.syncNow();
+          expect(
+            (await source.activity.loadStarredMessages()).map(
+              (star) => star.id,
+            ),
+            clear ? isEmpty : [local.id],
+          );
+        },
+      );
+    }
+
+    test(
+      'quarantine keeps the existing backup and permits manual backup',
+      () async {
+        var now = DateTime.utc(2026, 11, 18);
+        final device = _StarSyncDevice(_Transport(), now: () => now);
+        await device.engine.setUpWithDrive(config);
+        await device.engine.uploadBackup([1]);
+        final deviceId = device.state['deviceId'] as String;
+        final path = 'backups/$deviceId';
+        final restoreBytes = List<int>.of(device.remote.files[path]!);
+        now = now.add(const Duration(hours: 25));
+        expect(device.engine.shouldUploadAutomaticBackup(now), isTrue);
+        device.storage.values[starSyncStateKey] = jsonEncode(
+          device.state..['pendingStarCommit'] = true,
+        );
+        final restarted = await device.restart();
+        final uploadsBefore = restarted.remote.puts;
+        var builds = 0;
+
+        expect(restarted.engine.shouldUploadAutomaticBackup(now), isFalse);
+        expect(
+          await restarted.engine.uploadAutomaticBackupIfDue(() async {
+            builds++;
+            return [2];
+          }),
+          isFalse,
+        );
+        await expectLater(
+          restarted.engine.uploadBackup([3], automatic: true),
+          throwsA(isA<Exception>()),
+        );
+        expect(builds, 0);
+        expect(restarted.remote.puts, uploadsBefore);
+        expect(restarted.remote.files[path], restoreBytes);
+        expect(
+          (await restarted.engine.listBackups()).single.deviceId,
+          deviceId,
+        );
+        expect(await restarted.engine.downloadBackup(deviceId), [1]);
+        await restarted.engine.uploadBackup([4]);
+        expect(await restarted.engine.downloadBackup(deviceId), [4]);
+        expect(restarted.state['pendingStarCommit'], isTrue);
+      },
+    );
+
+    test('automatic backup rechecks quarantine after building', () async {
+      final remote = _Transport();
+      final device = _StarSyncDevice(remote);
+      await device.engine.setUpWithDrive(config);
+      final uploadedBefore = remote.puts;
+      var started = false;
+      expect(
+        await device.engine.uploadAutomaticBackupIfDue(() async {
+          started = true;
+          device.storage.values[starSyncStateKey] = jsonEncode(
+            device.state..['pendingStarCommit'] = true,
+          );
+          await device.engine.load();
+          return [1];
+        }),
+        isFalse,
+      );
+      expect(started, isTrue);
+      expect(remote.puts, uploadedBefore);
+      expect(await device.engine.listBackups(), isEmpty);
+    });
+
+    test(
+      'deferred automatic backup respects quarantine after quota clears',
+      () async {
+        final remote = _Transport();
+        final storage = _Storage();
+        var now = DateTime.utc(2026, 11, 18);
+        final meter = StarSyncQuotaMeter(
+          storage: MemorySecureStorage(),
+          now: () => now,
+        );
+        _TestTimer? timer;
+        final engine = StarSyncEngine(
+          loginId: () => 'student',
+          activityStore: GakujoActivityStore(secureStorage: storage),
+          secureStorage: storage,
+          transportFactory: (_) => remote,
+          now: () => now,
+          quotaMeter: meter,
+          timerFactory: (_, callback) => timer = _TestTimer(callback),
+        );
+        addTearDown(engine.dispose);
+        await engine.setUpWithDrive(config);
+        await engine.uploadBackup([1]);
+        final path = 'backups/${_readSyncState(storage)['deviceId']}';
+        final restoreBytes = List<int>.of(remote.files[path]!);
+        final uploadedBefore = remote.puts;
+        now = now.add(const Duration(hours: 25));
+        await meter.charge(starSyncGoogleSoftLimit - 50);
+        var builds = 0;
+        expect(
+          await engine.uploadAutomaticBackupIfDue(() async {
+            builds++;
+            return [2];
+          }),
+          isFalse,
+        );
+        await pumpEventQueue();
+        expect(timer, isNotNull);
+        storage.values[starSyncStateKey] = jsonEncode(
+          _readSyncState(storage)..['pendingStarCommit'] = true,
+        );
+        await engine.load();
+        now = now.add(const Duration(hours: 25));
+        timer!.fire();
+        await pumpEventQueue();
+
+        expect(builds, 0);
+        expect(remote.puts, uploadedBefore);
+        expect(remote.files[path], restoreBytes);
+      },
+    );
   });
 
   test('legacy sync status loads and is saved under the new name', () {

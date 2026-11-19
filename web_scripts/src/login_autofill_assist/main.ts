@@ -23,6 +23,7 @@ function loginAutofillAssist() {
   window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
   if (window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE) window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE();
   window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
+  var pendingTarget: LoginTarget | null = null;
 
   function report(event: string, detail: string) {
     var payload = {
@@ -162,8 +163,28 @@ function loginAutofillAssist() {
     setSessionValue(key, String(attempts + 1));
   }
 
+  // A field or logout control can have layout inside a hidden frame. Keep
+  // frame visibility out of allDocuments so hidden error text is still read.
+  function hasVisibleFrameChain(doc: Document) {
+    try {
+      while (doc !== document) {
+        var view = doc.defaultView;
+        if (!view || view.document !== doc) return false;
+        var frame = view.frameElement;
+        if (!frame || !frame.getClientRects().length) return false;
+        doc = frame.ownerDocument;
+        var style = doc.defaultView?.getComputedStyle(frame);
+        if (style?.visibility !== 'visible' || style.opacity === '0' ||
+            frame.checkVisibility?.({checkOpacity: true}) === false) return false;
+      }
+      return doc.defaultView?.document === doc;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function visible(element: Element | null) {
-    if (!element) {
+    if (!element || !hasVisibleFrameChain(element.ownerDocument)) {
       return false;
     }
     var pageWindow = element.ownerDocument.defaultView || window;
@@ -324,7 +345,7 @@ function loginAutofillAssist() {
       return null;
     }
 
-    var form = password.form || password.closest('form');
+    var form = password.form;
     var formInputs: HTMLInputElement[] = form ?
       Array.prototype.slice.call(form.querySelectorAll('input')) :
       inputs;
@@ -336,7 +357,9 @@ function loginAutofillAssist() {
       return null;
     }
 
-    var username = firstVisible(formInputs, isKnownUsernameField);
+    var username = firstVisible(formInputs, function(input) {
+      return input.form === form && isKnownUsernameField(input);
+    });
 
     if (!username) {
       return null;
@@ -359,6 +382,11 @@ function loginAutofillAssist() {
       }
     }
     return null;
+  }
+
+  function sameLoginTarget(a: LoginTarget, b: LoginTarget | null) {
+    return b !== null && a.doc === b.doc && a.form === b.form &&
+      a.username === b.username && a.password === b.password;
   }
 
   function setInputValue(input: HTMLInputElement, value: string) {
@@ -474,7 +502,7 @@ function loginAutofillAssist() {
   }
 
   function submitForm(target: LoginTarget) {
-    if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+    if (window.__MBG_LOGIN_AUTOFILL_DISABLED || !sameLoginTarget(target, findLoginTarget())) {
       return;
     }
     var submitter = findSubmitControl(target);
@@ -532,6 +560,10 @@ function loginAutofillAssist() {
       return;
     }
     var target = findLoginTarget();
+    if (pendingTarget && !sameLoginTarget(pendingTarget, target)) {
+      window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+      pendingTarget = null;
+    }
     if (!target) {
       window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
       if (hasAttemptToReset() && hasAuthenticatedMarker()) {
@@ -562,7 +594,11 @@ function loginAutofillAssist() {
     report('fill', 'target-found form=' + (target.form ? target.form.id : 'none'));
     setInputValue(target.username, savedUsername);
     setInputValue(target.password, savedPassword);
+    if (pendingTarget) return;
+    pendingTarget = target;
     window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
+      if (pendingTarget !== target) return;
+      pendingTarget = null;
       submitForm(target!);
     }, 250);
   }

@@ -73,14 +73,31 @@ String? resolveGakujoDownloadCourseName({
   required String? initialCourseName,
   required int navigationRevision,
   required int currentNavigationRevision,
+}) => resolveGakujoDownloadCourseEstimate(
+  pageEstimate: GakujoCourseEstimate.fromName(
+    pageCourseName,
+    isUsefulGakujoCourseName,
+  ),
+  initialCourseName: initialCourseName,
+  navigationRevision: navigationRevision,
+  currentNavigationRevision: currentNavigationRevision,
+).courseName;
+
+@visibleForTesting
+GakujoCourseEstimate resolveGakujoDownloadCourseEstimate({
+  required GakujoCourseEstimate pageEstimate,
+  required String? initialCourseName,
+  required int navigationRevision,
+  required int currentNavigationRevision,
 }) {
   if (navigationRevision == currentNavigationRevision &&
-      isUsefulGakujoCourseName(pageCourseName ?? '')) {
-    return pageCourseName;
+      pageEstimate.courseName != null) {
+    return pageEstimate;
   }
-  return isUsefulGakujoCourseName(initialCourseName ?? '')
-      ? initialCourseName
-      : null;
+  return GakujoCourseEstimate.fromName(
+    initialCourseName,
+    isUsefulGakujoCourseName,
+  );
 }
 
 @visibleForTesting
@@ -441,6 +458,12 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
   }
 }
 
+typedef _DownloadCourseOrigin = ({
+  int revision,
+  int document,
+  String? courseName,
+});
+
 extension _GakujoWebAppDownloads on _GakujoWebAppState {
   Future<void> _loadDownloadRoot() async {
     try {
@@ -485,12 +508,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showDownloadHistoryDialog() async {
+  Future<void> _showDownloadHistoryDialog(ModalRoute<void> settingsRoute) async {
     final loaded = await readGakujoSavedData(
       _downloadHistoryStore.load,
       showSnackBar: _showSnackBar,
     );
-    if (loaded == null || !mounted) {
+    if (loaded == null || !mounted || !settingsRoute.isActive) {
       return;
     }
     var entries = loaded;
@@ -532,17 +555,20 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                                       IconButton(
                                         tooltip: '保存場所をコピー',
                                         icon: const Icon(Icons.copy),
-                                        onPressed: () {
-                                          unawaited(
-                                            Clipboard.setData(
-                                              ClipboardData(
-                                                text:
-                                                    gakujoDownloadLocationLabel(
-                                                        entry.location!),
-                                              ),
+                                        onPressed: () async {
+                                          final write = Clipboard.setData(
+                                            ClipboardData(
+                                              text: gakujoDownloadLocationLabel(
+                                                  entry.location!),
                                             ),
                                           );
                                           Navigator.of(dialogContext).pop();
+                                          try {
+                                            await write;
+                                          } on Object {
+                                            _showSnackBar('保存場所をコピーできませんでした');
+                                            return;
+                                          }
                                           _showSnackBar('保存場所をコピーしました');
                                         },
                                       ),
@@ -599,12 +625,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
-  Future<void> _showFailedDownloadsDialog() async {
+  Future<void> _showFailedDownloadsDialog(ModalRoute<void> settingsRoute) async {
     final loaded = await readGakujoSavedData(
       _downloadHistoryStore.loadFailedDownloads,
       showSnackBar: _showSnackBar,
     );
-    if (loaded == null || !mounted) {
+    if (loaded == null || !mounted || !settingsRoute.isActive) {
       return;
     }
     var entries = loaded;
@@ -695,12 +721,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
-  Future<void> _showCourseMaterialsDialog() async {
+  Future<void> _showCourseMaterialsDialog(ModalRoute<void> settingsRoute) async {
     final entries = await readGakujoSavedData(
       _downloadHistoryStore.load,
       showSnackBar: _showSnackBar,
     );
-    if (entries == null || !mounted) {
+    if (entries == null || !mounted || !settingsRoute.isActive) {
       return;
     }
 
@@ -748,17 +774,20 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                                         IconButton(
                                           tooltip: '保存場所をコピー',
                                           icon: const Icon(Icons.copy),
-                                          onPressed: () {
-                                            unawaited(
-                                              Clipboard.setData(
-                                                ClipboardData(
-                                                  text:
-                                                      gakujoDownloadLocationLabel(
-                                                          file.location!),
-                                                ),
+                                          onPressed: () async {
+                                            final write = Clipboard.setData(
+                                              ClipboardData(
+                                                text: gakujoDownloadLocationLabel(
+                                                    file.location!),
                                               ),
                                             );
                                             Navigator.of(dialogContext).pop();
+                                            try {
+                                              await write;
+                                            } on Object {
+                                              _showSnackBar('保存場所をコピーできませんでした');
+                                              return;
+                                            }
                                             _showSnackBar('保存場所をコピーしました');
                                           },
                                         ),
@@ -887,10 +916,39 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     await _handleDownloadRequest(request);
   }
 
+  _DownloadCourseOrigin _captureDownloadCourseOrigin() => (
+    revision: _navigationRevision,
+    document: _courseDocument,
+    courseName: isGakujoSharedDownloadsUrl(_currentPageUrl)
+        ? null
+        : _currentCourseName,
+  );
+
+  Future<GakujoCourseEstimate> _estimateDownloadCourse(
+    _DownloadCourseOrigin origin, {
+    String? fallback,
+  }) async {
+    const absent = GakujoCourseEstimate.absent();
+    final estimate = mounted &&
+            origin.revision == _navigationRevision &&
+            origin.document == _courseDocument
+        ? await _estimateCourseNameFromPage()
+        : absent;
+    // A same-URL reload can replace the document between course script reads.
+    return resolveGakujoDownloadCourseEstimate(
+      pageEstimate: mounted && origin.document == _courseDocument
+          ? estimate
+          : absent,
+      initialCourseName: fallback,
+      navigationRevision: origin.revision,
+      currentNavigationRevision: _navigationRevision,
+    );
+  }
+
   Future<void> _handleDownloadRequest(
     GakujoDownloadRequest request, {
     String? retryEntryId,
-    int? navigationRevision,
+    _DownloadCourseOrigin? courseOrigin,
   }) async {
     if (!AllowedWebOrigins.canLoad(
       request.url,
@@ -916,13 +974,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
-    final revision = navigationRevision ?? _navigationRevision;
-    // A later page or the shared downloads tab must not supply a cached course.
-    final initialCourseName =
-        revision != _navigationRevision ||
-            isGakujoSharedDownloadsUrl(_currentPageUrl)
-        ? null
-        : _currentCourseName;
+    final origin = courseOrigin ?? _captureDownloadCourseOrigin();
     try {
       await _driveDownloadsLoad.timeout(const Duration(seconds: 5));
     } on TimeoutException {
@@ -936,17 +988,15 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     var effectiveRequest = request;
     GakujoDownloadSnapshot? uploadSnapshot;
     try {
-      if (!request.courseNameAmbiguous &&
-          !_isUsefulCourseName(request.courseName)) {
-        final pageCourseName = mounted && revision == _navigationRevision
-            ? await _estimateCourseNameFromPage(await _controller.getTitle())
-            : null;
-        final courseName = resolveGakujoDownloadCourseName(
-          pageCourseName: pageCourseName,
-          initialCourseName: initialCourseName,
-          navigationRevision: revision,
-          currentNavigationRevision: _navigationRevision,
+      // A failed entry belongs to its original page, even when its course is unknown.
+      if (retryEntryId == null &&
+          !request.courseNameAmbiguous &&
+          !isUsefulGakujoCourseName(request.courseName)) {
+        final course = await _estimateDownloadCourse(
+          origin,
+          fallback: origin.courseName,
         );
+        final courseName = course.courseName;
         if (courseName != null) {
           effectiveRequest = GakujoDownloadRequest(
             url: request.url,
@@ -955,7 +1005,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
             fileName: request.fileName,
             formFields: request.formFields,
             formFieldPairs: request.formFieldPairs,
-            courseNameAmbiguous: request.courseNameAmbiguous,
+            courseNameAmbiguous: course.isAmbiguous,
           );
         }
       }
@@ -1110,7 +1160,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (defaultTargetPlatform != TargetPlatform.iOS) {
       return null;
     }
-    return 'iCloud Drive はフォルダの指定と授業ごとの仕分けに対応します。Google ドライブに保存する場合は「保存のたびに場所を選ぶ」を使います。';
+    return 'iCloud Drive はフォルダの指定と授業ごとの仕分けに対応します。「ファイル」アプリから手動で Google ドライブに保存するときは「保存のたびに場所を選ぶ」を使います。';
   }
 
   Future<String?> _cookieHeader(String url) async {

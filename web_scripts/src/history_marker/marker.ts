@@ -71,9 +71,11 @@ export function historyMarker(win: Window, config: Config): string | boolean {
           (frame.token === undefined || doc.defaultView?.history.state?.__mbgReturnDialogFrame === frame.token);
       } catch (_) { return false; }
     });
-    const preview = documents().map(marker).find(value => value !== null);
     const active = win.__MBG_ACTIVE_UPLOAD_PREVIEW;
     const activeToken = active?.__mbgToken;
+    const preferredToken = active ? activeToken : config.token;
+    const previews = documents().map(marker).filter(value => value !== null);
+    const preview = previews.find(value => value.token === preferredToken) ?? previews[0];
     return JSON.stringify({
       dialog: unchanged && kinds.indexOf(kind) >= 0 ? kind : null,
       preview: preview?.token || null,

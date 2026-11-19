@@ -150,6 +150,7 @@ flutter build windows --release
 4. 同じプロジェクトに Web クライアントを作り、その ID を Android のビルドで `--dart-define=GOOGLE_OAUTH_ANDROID_SERVER_CLIENT_ID=...` として渡す
 5. iOS クライアントを Bundle ID `net.yoshida.morebettergakujo` で作り、ID を `--dart-define=GOOGLE_OAUTH_IOS_CLIENT_ID=...` で渡す
 6. iOS の逆順のクライアント ID を、git で追跡しない `ios/Flutter/GoogleOAuth.xcconfig` に `GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.<id>` と書く。追跡しているほうの xcconfig は編集しない。このファイルがなければ、ダミーの `com.googleusercontent.apps.unset` が使われる
+7. 同じ Cloud プロジェクトで Google Drive API と Google Picker API を有効にする。「Google ドライブから選ぶ」では、既存フォルダへのアクセスを許可するために `drive.file` だけを要求する。[Google Picker のデスクトップ・モバイル向け手順](https://developers.google.com/workspace/drive/picker/guides/desktop-mobile-picker)
 
 クライアント ID は配布するアプリに入るので、誰でも取り出せます。そのため、Drive API を意図して使い込まれるのを端末側では防げません。Google Cloud のプロジェクトには課金アカウントを付けず、コンソールで設定できるなら、無料枠より低い割り当ての上限を設定してください。端末ごとの利用量の上限は [star-sync.md](star-sync.md) の「Drive API の上限への対策」にあります。
 

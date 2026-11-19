@@ -14,9 +14,16 @@ const String _gakujoQuickJumpJsPrefix = r'''(function(__mbgConfig) {
   function quickJump() {
     var label = __mbgConfig.label;
     var documents = [];
+    function isVisible(node2, doc2) {
+      if (!node2.getClientRects().length) return false;
+      var visibility = doc2.defaultView.getComputedStyle(node2).visibility;
+      return visibility !== "hidden" && visibility !== "collapse";
+    }
     function collect(win) {
       try {
         if (!win || !win.document || documents.indexOf(win.document) !== -1) return;
+        var frame = win.frameElement;
+        if (frame && !isVisible(frame, frame.ownerDocument)) return;
         documents.push(win.document);
         for (var i2 = 0; i2 < win.frames.length; i2 += 1) collect(win.frames[i2]);
       } catch (e) {
@@ -55,9 +62,7 @@ const String _gakujoQuickJumpJsPrefix = r'''(function(__mbgConfig) {
       );
       for (var i = 0; i < candidates.length; i += 1) {
         var node = candidates[i];
-        if (isExcluded(node) || node.disabled || node.matches(":disabled") || node.closest('[aria-disabled="true"], [inert]') || !node.getClientRects().length) continue;
-        var style = doc.defaultView.getComputedStyle(node);
-        if (style.visibility === "hidden" || style.visibility === "collapse") continue;
+        if (isExcluded(node) || node.disabled || node.matches(":disabled") || node.closest('[aria-disabled="true"], [inert]') || !isVisible(node, doc)) continue;
         var texts = [node.innerText || node.textContent || ""];
         ["alt", "title", "value", "aria-label"].forEach(function(name) {
           texts.push(node.getAttribute(name) || "");

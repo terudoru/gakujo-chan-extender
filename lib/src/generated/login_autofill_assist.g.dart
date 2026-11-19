@@ -157,6 +157,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
     window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
     if (window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE) window.__MBG_LOGIN_AUTOFILL_WATCH_DISPOSE();
     window.clearInterval(window.__MBG_LOGIN_AUTOFILL_MONITOR);
+    var pendingTarget = null;
     function report(event, detail) {
       var payload = {
         event,
@@ -273,8 +274,25 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       }
       setSessionValue(key, String(attempts + 1));
     }
+    function hasVisibleFrameChain(doc) {
+      var _a, _b, _c;
+      try {
+        while (doc !== document) {
+          var view = doc.defaultView;
+          if (!view || view.document !== doc) return false;
+          var frame = view.frameElement;
+          if (!frame || !frame.getClientRects().length) return false;
+          doc = frame.ownerDocument;
+          var style = (_a = doc.defaultView) == null ? void 0 : _a.getComputedStyle(frame);
+          if ((style == null ? void 0 : style.visibility) !== "visible" || style.opacity === "0" || ((_b = frame.checkVisibility) == null ? void 0 : _b.call(frame, { checkOpacity: true })) === false) return false;
+        }
+        return ((_c = doc.defaultView) == null ? void 0 : _c.document) === doc;
+      } catch (_) {
+        return false;
+      }
+    }
     function visible(element) {
-      if (!element) {
+      if (!element || !hasVisibleFrameChain(element.ownerDocument)) {
         return false;
       }
       var pageWindow = element.ownerDocument.defaultView || window;
@@ -413,7 +431,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       if (!password) {
         return null;
       }
-      var form = password.form || password.closest("form");
+      var form = password.form;
       var formInputs = form ? Array.prototype.slice.call(form.querySelectorAll("input")) : inputs;
       var visiblePasswordInputs = formInputs.filter(function(input) {
         return visible(input) && isPasswordInput(input);
@@ -421,7 +439,9 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       if (visiblePasswordInputs.length >= 2 || visiblePasswordInputs.some(isPasswordChangeField)) {
         return null;
       }
-      var username = firstVisible(formInputs, isKnownUsernameField);
+      var username = firstVisible(formInputs, function(input) {
+        return input.form === form && isKnownUsernameField(input);
+      });
       if (!username) {
         return null;
       }
@@ -441,6 +461,9 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
         }
       }
       return null;
+    }
+    function sameLoginTarget(a, b) {
+      return b !== null && a.doc === b.doc && a.form === b.form && a.username === b.username && a.password === b.password;
     }
     function setInputValue(input, value) {
       var pageWindow = input.ownerDocument.defaultView || window;
@@ -541,7 +564,7 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       }
     }
     function submitForm(target) {
-      if (window.__MBG_LOGIN_AUTOFILL_DISABLED) {
+      if (window.__MBG_LOGIN_AUTOFILL_DISABLED || !sameLoginTarget(target, findLoginTarget())) {
         return;
       }
       var submitter = findSubmitControl(target);
@@ -593,6 +616,10 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
         return;
       }
       var target = findLoginTarget();
+      if (pendingTarget && !sameLoginTarget(pendingTarget, target)) {
+        window.clearTimeout(window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER);
+        pendingTarget = null;
+      }
       if (!target) {
         window.__MBG_LOGIN_AUTOFILL_CHALLENGE_VISIBLE = false;
         if (hasAttemptToReset() && hasAuthenticatedMarker()) {
@@ -620,7 +647,11 @@ const String _gakujoLoginAutofillAssistJsPrefix = r'''(function(__mbgConfig) {
       report("fill", "target-found form=" + (target.form ? target.form.id : "none"));
       setInputValue(target.username, savedUsername);
       setInputValue(target.password, savedPassword);
+      if (pendingTarget) return;
+      pendingTarget = target;
       window.__MBG_LOGIN_AUTOFILL_SUBMIT_TIMER = window.setTimeout(function() {
+        if (pendingTarget !== target) return;
+        pendingTarget = null;
         submitForm(target);
       }, 250);
     }

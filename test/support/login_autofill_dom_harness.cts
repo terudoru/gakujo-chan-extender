@@ -13,6 +13,10 @@ let nextTimerId: any = 1;
 const activeTimers: any = new Map();
 const activeIntervals: any = new Map();
 let authenticatedControlScanCount: any = 0;
+let now = 0;
+const submissions: any[] = [];
+const checkpoints: any[] = [];
+const fieldSnapshots: any[] = [];
 
 class FakeEvent {
   [key: string]: any;
@@ -37,7 +41,7 @@ class FakeElement {
     this.innerText = attributes.text || '';
     this.textContent = this.innerText;
     this.ownerDocument = null;
-    this.form = null;
+    this.parentForm = null;
     this.children = [];
   }
 
@@ -55,11 +59,25 @@ class FakeElement {
   }
 
   getClientRects() {
-    return [{}];
+    return this.isConnected && this.ownerDocument.defaultView?.document === this.ownerDocument
+      ? [{}] : [];
+  }
+
+  get isConnected(): boolean {
+    if (this.tagName === 'IFRAME') return this.ownerDocument.frames.includes(this);
+    if (this.tagName === 'FORM') return this.ownerDocument?.currentForm === this;
+    return !!this.parentForm?.isConnected && this.parentForm.children.includes(this);
+  }
+
+  get form() {
+    const id = this.getAttribute('form');
+    if (id === null) return this.parentForm;
+    const candidate = this.ownerDocument?.currentForm;
+    return candidate && candidate.id === id ? candidate : null;
   }
 
   closest(selector: any) {
-    if (selector === 'form') return this.form;
+    if (selector === 'form') return this.parentForm;
     if (selector === 'tr, p, div, li, label' && this.attributes.rowText) {
       return {
         innerText: this.attributes.rowText,
@@ -81,6 +99,7 @@ class FakeElement {
   click() {
     clickCount += 1;
     clickedNames.push(this.getAttribute('name') || this.getAttribute('id') || '');
+    if (this.getAttribute('type') === 'submit') this.form?.dispatchSubmit();
   }
 
   querySelectorAll(selector: any) {
@@ -100,27 +119,57 @@ class FakeElement {
   }
 }
 
-const form: any = new FakeElement('form', {id: 'login-form'});
-const elements: any = spec.elements.map((attributes: any) =>
-  new FakeElement(attributes.tag, attributes)
-);
-form.children = elements;
+function makeDocument(bodyText = ''): any {
+  return {
+    URL: spec.url || 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
+    body: {innerText: bodyText, textContent: bodyText},
+    documentElement: {},
+    currentForm: null,
+    frames: [],
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll(selector: string) {
+      if (selector.startsWith('a, button, input, [role="button"], img')) {
+        authenticatedControlScanCount += 1;
+      }
+      if (selector === 'iframe, frame') return this.frames;
+      return this.currentForm?.querySelectorAll(selector) || [];
+    }
+  };
+}
 
-const document: any = {
-  URL: spec.url || 'https://gakujo.iess.niigata-u.ac.jp/campussmart.do',
-  body: {innerText: '', textContent: ''},
-  defaultView: null,
-  querySelector() { return null; },
-  querySelectorAll(selector: any) {
-    if (selector.startsWith('a, button, input, [role="button"], img')) {
-      authenticatedControlScanCount += 1;
-    }
-    if (selector === 'iframe, frame') {
-      return [];
-    }
-    return form.querySelectorAll(selector);
-  }
-};
+function replaceFields(form: any, only?: number) {
+  form.children = spec.elements.map((attrs: any, index: number) => {
+    const previous = form.children[index];
+    if (only !== undefined && index !== only) return previous;
+    if (previous) previous.parentForm = null;
+    const child = new FakeElement(attrs.tag, attrs);
+    child.ownerDocument = form.ownerDocument;
+    child.parentForm = form;
+    return child;
+  });
+}
+
+function installForm(doc: any, id: string) {
+  const form = new FakeElement('form', {id});
+  form.ownerDocument = doc;
+  doc.currentForm = form;
+  replaceFields(form);
+  const events = new EventTarget();
+  events.addEventListener('submit', event => {
+    event.preventDefault();
+    submissions.push({id, at: now, values: form.querySelectorAll('input').map(input => input.value)});
+  });
+  form.dispatchSubmit = () => {
+    if (form.getClientRects().length) events.dispatchEvent(new Event('submit', {cancelable: true}));
+  };
+  form.requestSubmit = () => { requestSubmitCount += 1; form.dispatchSubmit(); };
+  form.submit = () => { formSubmitCount += 1; };
+  return form;
+}
+
+const document = makeDocument();
 
 const window: any = {
   document,
@@ -135,6 +184,7 @@ const window: any = {
     removeItem(key: any) { sessionValues.delete(key); }
   },
   getComputedStyle(element: any) {
+    if (element.ownerDocument !== this.document) throw new Error('Wrong style owner');
     return {
       display: element.getAttribute('display') || 'block',
       visibility: element.getAttribute('visibility') || 'visible',
@@ -142,10 +192,10 @@ const window: any = {
     };
   },
   clearTimeout(id: any) { activeTimers.delete(id); },
-  setTimeout(callback: any) {
+  setTimeout(callback: any, delay: number) {
     const id: any = nextTimerId++;
-    if (spec.deferTimers) {
-      activeTimers.set(id, callback);
+    if (spec.deferTimers || spec.steps) {
+      activeTimers.set(id, {callback, due: now + delay});
     } else {
       callback();
     }
@@ -163,28 +213,54 @@ const window: any = {
 };
 window.window = window;
 document.defaultView = window;
-form.ownerDocument = document;
-form.requestSubmit = () => { requestSubmitCount += 1; };
-form.submit = () => { formSubmitCount += 1; };
-for (const element of elements) {
-  element.ownerDocument = document;
-  element.form = form;
-}
-if (spec.frameBodyText != null) {
-  const frameDocument: any = {
-    ...document,
-    body: {innerText: spec.frameBodyText, textContent: spec.frameBodyText},
-    querySelectorAll(selector: any) {
-      return selector === 'iframe, frame' ? [] : form.querySelectorAll(selector);
-    }
+Object.defineProperty(window, 'frames', {get: () => document.frames.map(frame => frame.contentWindow)});
+
+function appendFrame(parent: any, visibility = 'visible') {
+  const frame = new FakeElement('iframe', {visibility});
+  frame.ownerDocument = parent;
+  const doc = makeDocument();
+  const view = {
+    ...window,
+    document: doc,
+    frameElement: frame,
+    parent: parent.defaultView,
+    get frames() { return this.document.frames.map(host => host.contentWindow); }
   };
-  const frameWindow: any = {...window, document: frameDocument};
-  frameDocument.defaultView = frameWindow;
-  document.querySelectorAll = (selector: any) => selector === 'iframe, frame'
-    ? [{contentWindow: frameWindow}]
-    : [];
-  form.ownerDocument = frameDocument;
-  for (const element of elements) element.ownerDocument = frameDocument;
+  view.window = view;
+  doc.defaultView = view;
+  frame.contentWindow = view;
+  parent.frames.push(frame);
+  return doc;
+}
+
+let loginDocument = document;
+for (const visibility of spec.frameVisibilities ?? (spec.frameBodyText != null ? ['visible'] : [])) {
+  loginDocument = appendFrame(loginDocument, visibility);
+}
+if (spec.frameBodyText != null) loginDocument.body = {innerText: spec.frameBodyText, textContent: spec.frameBodyText};
+const form = installForm(loginDocument, 'login-form');
+const elements = form.children;
+if (spec.steps) {
+  window.MutationObserver = class {
+    root: any;
+    notify: () => void;
+    constructor(notify: () => void) { this.notify = notify; }
+    observe(root: any) { this.root = root; root.notify = this.notify; }
+    disconnect() { delete this.root.notify; }
+    takeRecords() { return []; }
+  };
+}
+
+function advance(milliseconds: number) {
+  const end = now + milliseconds;
+  for (;;) {
+    const next = [...activeTimers].sort((a, b) => a[1].due - b[1].due)[0];
+    if (!next || next[1].due > end) break;
+    now = next[1].due;
+    activeTimers.delete(next[0]);
+    next[1].callback();
+  }
+  now = end;
 }
 
 const context: any = {
@@ -203,6 +279,7 @@ if (spec.simulateAuthenticatedTimeout) {
   delete window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY;
   const logout: any = new FakeElement('button', {text: 'ログアウト'});
   logout.ownerDocument = document;
+  logout.parentForm = form;
   form.children = [logout];
   for (const callback of [...activeIntervals.values()]) callback();
 
@@ -212,14 +289,62 @@ if (spec.simulateAuthenticatedTimeout) {
   form.children = elements;
   for (const callback of [...activeIntervals.values()]) callback();
 }
+for (const step of spec.steps || []) {
+  if (typeof step === 'number') { advance(step); continue; }
+  if (typeof step === 'object' && 'visibility' in step) {
+    document.frames[0].setAttribute('visibility', step.visibility);
+    continue;
+  }
+  switch (step) {
+    case 'notify': document.documentElement.notify(); break;
+    case 'replace-form': installForm(loginDocument, 'current'); break;
+    case 'remove-form': loginDocument.currentForm = null; break;
+    case 'replace-fields': replaceFields(loginDocument.currentForm); break;
+    case 'replace-username': replaceFields(loginDocument.currentForm, 0); break;
+    case 'replace-password': replaceFields(loginDocument.currentForm, 1); break;
+    case 'disown-username': elements[0].setAttribute('form', 'missing'); break;
+    case 'disown-password': elements[1].setAttribute('form', 'missing'); break;
+    case 'remove-frame':
+      document.frames = [];
+      loginDocument.defaultView = null;
+      loginDocument = document;
+      break;
+    case 'navigate-frame': {
+      const frameWindow = loginDocument.defaultView;
+      loginDocument.defaultView = null;
+      loginDocument = makeDocument();
+      frameWindow.document = loginDocument;
+      loginDocument.defaultView = frameWindow;
+      break;
+    }
+    case 'add-sibling-form': installForm(appendFrame(document), 'sibling'); break;
+    case 'show-logout': {
+      const logout = new FakeElement('a', {text: 'Log out'});
+      logout.ownerDocument = loginDocument;
+      logout.parentForm = loginDocument.currentForm;
+      loginDocument.currentForm.children = [logout];
+      break;
+    }
+    case 'inspect-fields':
+      fieldSnapshots.push(elements.slice(0, 2).map(input => [input.value, input.getAttribute('autocomplete')]));
+      break;
+    case 'show-error': loginDocument.body.innerText = 'Login failed'; break;
+    case 'clear-error': loginDocument.body.innerText = ''; break;
+    case 'checkpoint':
+      checkpoints.push({
+        attempts: [...sessionValues.keys()].filter(key => key.startsWith('MBG_LOGIN_AUTOFILL_SUBMIT_COUNT:')).length,
+        submittedKey: window.__MBG_LOGIN_AUTOFILL_SUBMITTED_KEY || null,
+        submitReports: reports.filter(report => report.event === 'submit').length
+      });
+      break;
+    default: throw new Error('Unknown lifecycle step: ' + step);
+  }
+}
 if (spec.teardownScript) {
   vm.runInNewContext(spec.teardownScript, context);
 }
-for (let round: any = 0; round < 50 && activeTimers.size > 0; round += 1) {
-  const callbacks: any = [...activeTimers.values()];
-  activeTimers.clear();
-  for (const callback of callbacks) callback();
-}
+const pendingTimers = activeTimers.size;
+advance(10000);
 
 process.stdout.write(JSON.stringify({
   elements: elements.map((element: any) => ({
@@ -228,6 +353,10 @@ process.stdout.write(JSON.stringify({
   })),
   clickCount,
   clickedNames,
+  submissions,
+  checkpoints,
+  fieldSnapshots,
+  pendingTimers,
   requestSubmitCount,
   formSubmitCount,
   authenticatedControlScanCount,

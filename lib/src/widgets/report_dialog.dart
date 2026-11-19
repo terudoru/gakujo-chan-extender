@@ -191,8 +191,11 @@ class _ReportDialogState extends State<ReportDialog> {
         _diagnostic == null &&
         _diagnosticError == null) {
       final revision = _formRevision;
+      final route = ModalRoute.of(context);
       await _collectDiagnostics();
       if (!mounted || _receipt != null || _sending) return;
+      // A popped dialog stays mounted during its exit animation.
+      if (route?.isActive == false) return;
       if (revision != _formRevision) {
         setState(() => _message = '入力内容が変わりました。確認して、もう一度送ってください。');
         _focusMessage();

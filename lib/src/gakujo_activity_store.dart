@@ -406,6 +406,10 @@ class GakujoActivityStore {
         _operations, _secureStorage, const [_favoritesKey],
       );
 
+  BackupStorageParticipant get starredMessagesStorage => BackupStorageParticipant(
+        _operations, _secureStorage, const [_starredMessagesKey],
+      );
+
   BackupStorageParticipant get backupStorage => BackupStorageParticipant(
         _operations,
         _secureStorage,

@@ -91,11 +91,13 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showStarredMessagesDialog({bool returned = false}) async {
+  Future<void> _showStarredMessagesDialog({int? returnRevision}) async {
     var entries = await _activityStore.loadStarredMessages();
+    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
+
+    final returned = returnRevision != null;
     var query = '';
     var sort = GakujoStarredMessageSort.starredNewest;
-    if (!mounted) return;
     Future<void> Function()? refreshStarredMessages;
     await showDialog<void>(
       context: context,
@@ -207,7 +209,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                                 ),
                                 onTap: () {
                                   Navigator.of(dialogContext).pop();
-                                  _setPendingReturnDialog('starred');
                                   unawaited(_openStarredMessage(entry));
                                 },
                                 trailing: PopupMenuButton<String>(
@@ -249,7 +250,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
                                     if (action == 'saved') {
                                       await _showSavedMessage(entry);
                                     } else {
-                                      _setPendingReturnDialog('starred');
                                       await _openStarredMessage(entry);
                                     }
                                   },
@@ -273,7 +273,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
     if (identical(_refreshOpenStarredMessages, refreshStarredMessages)) {
       _refreshOpenStarredMessages = null;
     }
@@ -315,13 +314,22 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
   }
 
   Future<void> _openStarredMessage(GakujoStarredMessage entry) async {
+    _setPendingReturnDialog('starred');
+    // Each selection starts its own expiry timer, even for the same message.
+    final returnTimer = _pendingReturnDialogTimer;
+    void clearReturnIfOwned() {
+      if (identical(_pendingReturnDialogTimer, returnTimer)) {
+        _setPendingReturnDialog(null);
+      }
+    }
+
     if (_calendarOperationGate.isRunning) {
-      _setPendingReturnDialog(null);
+      clearReturnIfOwned();
       _showSnackBar('カレンダー連携または再検出の完了後に移動してください');
       return;
     }
     if (!_canRunPageScripts) {
-      _setPendingReturnDialog(null);
+      clearReturnIfOwned();
       _showSnackBar('学務へのログインが必要です');
       return;
     }
@@ -336,7 +344,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         !_isCurrentPageCallback(url, navigationRevision) ||
         _calendarOperationGate.isRunning ||
         _messageOpenProcessing != null) {
-      _setPendingReturnDialog(null);
+      clearReturnIfOwned();
       return;
     }
     final processing = Completer<void>();
@@ -379,7 +387,7 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         _showSnackBar('学務で連絡通知を開けませんでした');
       }
     } finally {
-      if (!opened) _setPendingReturnDialog(null);
+      if (!opened) clearReturnIfOwned();
       _messageOpenProcessing = null;
       processing.complete();
     }

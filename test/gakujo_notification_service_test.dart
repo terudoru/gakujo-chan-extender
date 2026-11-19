@@ -302,6 +302,197 @@ void main() {
     service.setDeadlineNotificationTappedHandler(null);
   });
 
+  group('mounted notification consumer', () {
+    const target = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/report';
+    final service = GakujoNotificationService();
+    late List<MethodCall> calls;
+
+    Future<Object?> tap(Object args, [TestDefaultBinaryMessenger? on]) async {
+      const codec = StandardMethodCodec();
+      final response = await (on ?? messenger).handlePlatformMessage(
+        channel.name,
+        codec.encodeMethodCall(MethodCall('deadlineNotificationTapped', args)),
+        null,
+      );
+      return response == null ? null : codec.decodeEnvelope(response);
+    }
+
+    setUp(() => calls = []);
+    void receipt({String? url = target, bool loseFirst = false}) {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method != 'takePendingNotificationUrl') return null;
+        if (loseFirst && calls.length == 1) {
+          throw PlatformException(code: 'lost');
+        }
+        return {...call.arguments as Map, 'url': url};
+      });
+    }
+
+    test('a malformed receipt is retried and an unavailable live handler reports its error', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method != 'takePendingNotificationUrl') return null;
+        return {...call.arguments as Map, if (calls.length == 2) 'url': target};
+      });
+      final consumer = service.bindNotificationTaps((_) {
+        throw PlatformException(code: 'unhandled');
+      });
+      await consumer.dispatchStartup(
+        (url) async => expect(url, target),
+        debugAllowed: false,
+      );
+      expect(calls[1].arguments, calls.first.arguments);
+      await expectLater(tap(target), throwsA(isA<PlatformException>()));
+      consumer.dispose();
+    });
+
+    test(
+      'lost take retries the same token and dispatches one startup action',
+      () async {
+        receipt(loseFirst: true);
+        final consumer = service.bindNotificationTaps((_) => false);
+        final loads = <String?>[];
+        await consumer.dispatchStartup(
+          (url) async => loads.add(url),
+          debugAllowed: false,
+        );
+        await consumer.dispatchStartup(
+          (url) async => loads.add(url),
+          debugAllowed: false,
+        );
+        consumer.dispose();
+        expect(loads, [target]);
+        expect(calls.map((c) => c.method), [
+          'takePendingNotificationUrl',
+          'takePendingNotificationUrl',
+          'finishPendingNotification',
+          'endNotificationConsumer',
+        ]);
+        expect(calls[0].arguments, calls[1].arguments);
+        expect(calls[2].arguments['accepted'], isTrue);
+      },
+    );
+
+    test('persistent channel errors release the uncertain receipt before default startup', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method == 'takePendingNotificationUrl') {
+          throw PlatformException(code: 'lost');
+        }
+        return null;
+      });
+      final consumer = service.bindNotificationTaps((_) => false);
+      await consumer.dispatchStartup((url) async {
+        expect(url, isNull);
+        expect(calls.last.arguments['accepted'], isFalse);
+      }, debugAllowed: false);
+      consumer.dispose();
+      expect(
+        calls.where((c) => c.method == 'takePendingNotificationUrl'),
+        hasLength(2),
+      );
+      expect(calls.map((c) => c.arguments['consumer']).toSet(), hasLength(1));
+    });
+
+    test(
+      'navigation failure releases claim and rejected URL is terminal',
+      () async {
+        for (final url in [target, 'https://outside.invalid/']) {
+          calls.clear();
+          receipt(url: url);
+          final consumer = service.bindNotificationTaps((_) => true);
+          await expectLater(
+            consumer.dispatchStartup((value) async {
+              expect(value, url == target ? target : null);
+              throw StateError('load failed');
+            }, debugAllowed: false),
+            throwsStateError,
+          );
+          consumer.dispose();
+          expect(
+            calls
+                .singleWhere((c) => c.method == 'finishPendingNotification')
+                .arguments['accepted'],
+            url != target,
+          );
+        }
+      },
+    );
+
+    test(
+      'late disposal cannot remove replacement or settle its accepted work',
+      () async {
+        receipt();
+        final old = service.bindNotificationTaps((_) => true);
+        final oldLoad = Completer<void>();
+        final started = Completer<void>();
+        final loading = old.dispatchStartup((_) {
+          started.complete();
+          return oldLoad.future;
+        }, debugAllowed: false);
+        await started.future;
+        final oldToken = calls.first.arguments['consumer'];
+        final current = service.bindNotificationTaps((url) => url == target);
+        old.dispose();
+        await current.dispatchStartup((_) async {}, debugAllowed: false);
+        final token = calls.last.arguments['consumer'];
+        expect(token, isNot(oldToken));
+        expect(await tap({'consumer': oldToken, 'url': target}), isFalse);
+        expect(await tap({'consumer': token, 'url': ' $target '}), isTrue);
+        expect(await tap('  '), isFalse);
+        expect(await tap('unhandled'), isFalse);
+        oldLoad.complete();
+        await loading;
+        expect(calls.last.arguments, {
+          'version': 1,
+          'consumer': oldToken,
+          'accepted': true,
+        });
+        current.dispose();
+        expect(await tap(target), isNull);
+      },
+    );
+
+    test(
+      'messenger replacement fences an old binding with a delayed take',
+      () async {
+        final delayed = Completer<Object?>();
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return call.method == 'takePendingNotificationUrl'
+              ? delayed.future
+              : null;
+        });
+        final old = service.bindNotificationTaps((_) => fail('old handler'));
+        final startup = old.dispatchStartup(
+          (_) async => fail('late old startup'),
+          debugAllowed: false,
+        );
+        final other = TestDefaultBinaryMessenger(messenger.delegate);
+        other.setMockMethodCallHandler(
+          channel,
+          (_) async => target,
+        ); // Legacy bridge.
+        final newConsumer = service.bindNotificationTaps(
+          (_) => true,
+          messenger: other,
+        );
+        await newConsumer.dispatchStartup(
+          (url) async => expect(url, target),
+          debugAllowed: false,
+        );
+        old.dispose();
+        delayed.complete({...calls.first.arguments as Map, 'url': target});
+        await startup;
+        expect(await tap(target), isNull);
+        expect(await tap(target, other), isTrue);
+        newConsumer.dispose();
+        other.setMockMethodCallHandler(channel, null);
+      },
+    );
+  });
+
   group('deadlineNotificationTargetUrl', () {
     const baseUrl = 'https://gakujo.iess.niigata-u.ac.jp/campusweb/';
 
