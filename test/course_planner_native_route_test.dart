@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -67,6 +68,28 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  test('the registration encoder matches the shared MBGPLAN1 vector', () {
+    const packet = {
+      'v': 1,
+      'kind': 'registration',
+      'year': '2026',
+      'tables': [
+        {
+          'heading': '履修登録・登録状況照会',
+          'rows': [
+            ['開講番号', '登録状況'],
+            ['269G9001', '申請中'],
+            ['269G9002', '許可'],
+          ],
+        },
+      ],
+    };
+    expect(
+      encodeCoursePlannerHandoff(packet, CoursePlannerImportKind.registration),
+      File('test/support/planner_handoff.txt').readAsStringSync().trim(),
+    );
+  });
+
   test('MBGPLAN1 encodes the existing packets and the exact profile shape', () {
     for (final (kind, heading, headers, values) in [
       (CoursePlannerImportKind.grades, '単位修得状況照会', ['評価'], ['良']),

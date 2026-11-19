@@ -33,3 +33,7 @@ flutter test
 ```
 
 ブラウザーテストは Chrome の一時プロファイルを使い、全リクエストを捕捉して合成の画面に差し替えます。固定トークンの2学期分の遷移、開講番号の完全一致、登録期間外、選択・削除・優先度の操作制限を確認します。
+
+Windows では `powershell -File test/support/registration_assist_windows_smoke.ps1` で、本番の Flutter 画面と WebView2 を通してプレビューから完了まで確認できます。先に Windows 版をビルドし、`build/windows/x64` に WebView2 SDK と WIL のビルド用キャッシュを用意してください。
+
+スモークは `build/reg_smoke_host/` の独立したアプリと、実行ごとに新しい WebView2 プロファイルを使います。公式サーブレット宛ての合成画面を DevTools Protocol で応答し、想定外のリクエストはその場で拒否します。インターセプターを通らないブラウザー通信には、転送しないループバックのプロキシを指定します。「選択」は DevTools Protocol のマウス入力で押し、`isTrusted` と Dart 側の通知受信を確認します。結果は実行ディレクトリの `result.txt` に残ります。
