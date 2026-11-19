@@ -5586,7 +5586,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _showSnackBar('このページのURLはコピーできません');
           return;
         }
-        await Clipboard.setData(ClipboardData(text: sanitizedUrl));
+        try {
+          await Clipboard.setData(ClipboardData(text: sanitizedUrl));
+        } on Object {
+          _showSnackBar('URLをコピーできませんでした');
+          return;
+        }
         _showSnackBar('URLをコピーしました');
         return;
       case _ToolbarAction.openExternal:
