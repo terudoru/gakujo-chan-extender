@@ -164,7 +164,9 @@ try {
   await dialog.waitFor({ timeout: 30000 });
 
   // Open the compact disclosure for per-year attendance months & assessment date
-  const disclosureSummary = dialog.locator("details.pf-disclosure > summary");
+  const disclosureSummary = dialog.locator("details.pf-disclosure > summary", {
+    hasText: "年次別の在学月数・判定基準日",
+  });
   await disclosureSummary.click();
   await dialog.getByLabel("判定基準日（YYYY-MM-DD）").waitFor();
 

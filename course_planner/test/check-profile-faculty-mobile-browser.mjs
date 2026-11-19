@@ -395,9 +395,128 @@ try {
   );
   assert.equal(Object.hasOwn(saved, "graduationMonth"), false);
 
+  // --- 6. 理学部 / 工学部 / 農学部: 編入 entryGrade, internationalStudent, and 農学部 2021 enrolledApril2022 ---
+  await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
+  await dialog.waitFor();
+  await dialog.getByRole("combobox", { name: "学部・学科" }).click();
+  await page.getByRole("option", { name: "理学部", exact: true }).click();
+  // Still 編入 from step 4 -> 理学部 shows 編入した年次; switching to 1年次入学 hides it
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "理学部の個別確認項目",
+    })
+    .click();
+  assert.equal(await dialog.getByLabel("編入した年次").inputValue(), "3");
+  await dialog.getByRole("combobox", { name: "入学区分" }).click();
+  await page.getByRole("option", { name: "1年次入学", exact: true }).click();
+  assert.equal(
+    await dialog
+      .locator("details.pf-disclosure > summary", {
+        hasText: "理学部の個別確認項目",
+      })
+      .count(),
+    0,
+  );
+
+  // 工学部 with 編入 shows both 編入した年次 and internationalStudent
+  await dialog.getByRole("combobox", { name: "学部・学科" }).click();
+  await page.getByRole("option", { name: "工学部", exact: true }).click();
+  await dialog.getByRole("combobox", { name: "入学区分" }).click();
+  await page.getByRole("option", { name: "編入", exact: true }).click();
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "工学部の個別確認項目",
+    })
+    .click();
+  await dialog.getByLabel("編入した年次").waitFor();
+  await dialog
+    .getByRole("group", { name: /外国人留学生向け規定/ })
+    .getByRole("button", { name: "あり", exact: true })
+    .click();
+  await assertNoOverflow("工学部 編入 + internationalStudent");
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  saved = await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.getProfile(),
+  );
+  assert.equal(saved.faculty, "工学部");
+  assert.strictEqual(saved.internationalStudent, true);
+  assert.strictEqual(saved.entryGrade, 3);
+
+  // 農学部: 2026 hides enrolledApril2022; 2021 reveals it with exact agriculture-legacy applicability
+  await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
+  await dialog.waitFor();
+  await dialog.getByRole("combobox", { name: "学部・学科" }).click();
+  await page.getByRole("option", { name: "農学部", exact: true }).click();
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "農学部の個別確認項目",
+    })
+    .click();
+  assert.equal(
+    await dialog.getByRole("group", { name: /令和4年（2022年）4月1日/ }).count(),
+    0,
+  );
+
+  await dialog.getByLabel("適用便覧の年度").fill("2021");
+  const aprilGroup = dialog.getByRole("group", {
+    name: /令和4年（2022年）4月1日/,
+  });
+  await aprilGroup.waitFor();
+  assert.match(
+    await dialog.innerText(),
+    /公開森林実習とフィールド惑星科学概論/,
+  );
+  await aprilGroup.getByRole("button", { name: "あり", exact: true }).click();
+  await dialog
+    .getByRole("group", { name: /外国人留学生向け規定/ })
+    .getByRole("button", { name: "なし", exact: true })
+    .click();
+  // Competing sync updates gpa while dialog is open
+  await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.injectSync({ gpa: "4.8" }),
+  );
+  await assertNoOverflow("農学部 2021 enrolledApril2022");
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  saved = await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.getProfile(),
+  );
+  assert.equal(saved.faculty, "農学部");
+  assert.equal(saved.handbook, "2021");
+  assert.strictEqual(saved.enrolledApril2022, true);
+  assert.strictEqual(saved.internationalStudent, false);
+  assert.equal(saved.gpa, "4.8"); // competing sync survived
+  assert.strictEqual(saved.entryGrade, 3); // untouched survived
+
+  // Switch handbook back to 2026 (hides enrolledApril2022) and clear internationalStudent -> hidden enrolledApril2022 preserved
+  await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
+  await dialog.waitFor();
+  await dialog.getByLabel("適用便覧の年度").fill("2026");
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "農学部の個別確認項目",
+    })
+    .click();
+  await dialog
+    .getByRole("group", { name: /外国人留学生向け規定/ })
+    .getByRole("button", { name: "未設定", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  saved = await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.getProfile(),
+  );
+  assert.equal(saved.handbook, "2026");
+  assert.equal(Object.hasOwn(saved, "internationalStudent"), false);
+  assert.strictEqual(saved.enrolledApril2022, true); // hidden field preserved!
+
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   console.log(
-    "Mobile ProfileSettings clinical verification passed on 390x844: GPA >5 guard, 3月/9月/未設定 graduationMonth with historical retention, 1..4 entryGrade rejecting 5 with uncapped yearOfStudy, and post-switch confirmation.",
+    "Mobile ProfileSettings clinical + STEM verification passed on 390x844: GPA >5 guard, 3月/9月/未設定 graduationMonth, 1..4 entryGrade across 保健/理/工/農, internationalStudent, 農学部 2021 enrolledApril2022, and hidden/concurrent diff preservation.",
   );
 } finally {
   await browser?.close();

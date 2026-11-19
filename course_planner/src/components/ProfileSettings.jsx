@@ -19,6 +19,13 @@ const TRI_STATE_CHOICES = [
   ["false", "なし"],
 ];
 
+const ENTRY_GRADE_FACULTIES = Object.freeze([
+  "医学部保健学科",
+  "理学部",
+  "工学部",
+  "農学部",
+]);
+
 function TriStateField({ label, value, onChange }) {
   return (
     <div className="pf-tristate">
@@ -105,33 +112,40 @@ export function ProfileSettings({
 
   const isLaw = draft.faculty === "法学部";
   const isEconomics = draft.faculty === "経済科学部";
-  const isHealthTransfer =
-    draft.faculty === "医学部保健学科" && draft.entry === "編入";
   const isCreation = draft.faculty === "創生学部";
+  const showEntryGrade =
+    draft.entry === "編入" && ENTRY_GRADE_FACULTIES.includes(draft.faculty);
+  const showInternational =
+    draft.faculty === "工学部" || draft.faculty === "農学部";
+  const showEnrolledApril2022 =
+    draft.faculty === "農学部" && normalizedHandbook === "2021";
   const showFacultySection =
-    isLaw || isEconomics || isHealthTransfer || isCreation;
+    isLaw ||
+    isEconomics ||
+    isCreation ||
+    showEntryGrade ||
+    showInternational ||
+    showEnrolledApril2022;
 
-  const facultyOptionCount = isLaw
-    ? [
-        draft.earlyGraduation,
-        draft.deanException,
-        draft.lawPaperSubstitutionApproved,
-        cleanNumericText(draft.thirdYearCumulativeGpa),
-      ].filter((v) => v !== "").length
-    : isEconomics
-      ? draft.iStepApproved !== ""
-        ? 1
-        : 0
-      : isHealthTransfer
-        ? cleanNumericText(draft.entryGrade) !== ""
-          ? 1
-          : 0
-        : isCreation
-          ? [
-              cleanNumericText(draft.graduationYear),
-              cleanNumericText(draft.graduationMonth),
-            ].filter((v) => v !== "").length
-          : 0;
+  const facultyOptionCount =
+    (isLaw
+      ? [
+          draft.earlyGraduation,
+          draft.deanException,
+          draft.lawPaperSubstitutionApproved,
+          cleanNumericText(draft.thirdYearCumulativeGpa),
+        ].filter((v) => v !== "").length
+      : 0) +
+    (isEconomics && draft.iStepApproved !== "" ? 1 : 0) +
+    (showEntryGrade && cleanNumericText(draft.entryGrade) !== "" ? 1 : 0) +
+    (showInternational && draft.internationalStudent !== "" ? 1 : 0) +
+    (showEnrolledApril2022 && draft.enrolledApril2022 !== "" ? 1 : 0) +
+    (isCreation
+      ? [
+          cleanNumericText(draft.graduationYear),
+          cleanNumericText(draft.graduationMonth),
+        ].filter((v) => v !== "").length
+      : 0);
 
   async function save() {
     setLocalError("");
@@ -370,7 +384,7 @@ export function ProfileSettings({
                 />
               </>
             )}
-            {isHealthTransfer && (
+            {showEntryGrade && (
               <>
                 <p className="pf-note">
                   編入時の年次（1〜4の整数、例：3年次編入なら3）を入力してください。
@@ -381,6 +395,30 @@ export function ProfileSettings({
                   inputMode="numeric"
                   value={draft.entryGrade}
                   onChange={(v) => update("entryGrade", v)}
+                />
+              </>
+            )}
+            {showInternational && (
+              <>
+                <p className="pf-note">
+                  適用便覧で外国人留学生向けの規定（留学生基本科目等）が適用される場合のみ「あり」を選択してください。未設定の項目は自動判定しません。
+                </p>
+                <TriStateField
+                  label="外国人留学生向け規定の適用（便覧で確認）"
+                  value={draft.internationalStudent}
+                  onChange={(v) => update("internationalStudent", v)}
+                />
+              </>
+            )}
+            {showEnrolledApril2022 && (
+              <>
+                <p className="pf-note">
+                  令和4年（2022年）4月1日に在学していた場合、公開森林実習とフィールド惑星科学概論を選択科目に加えられます。農学部学務係で当時の在籍と履修を確認してください。
+                </p>
+                <TriStateField
+                  label="令和4年（2022年）4月1日時点の在学（施行時在学生）"
+                  value={draft.enrolledApril2022}
+                  onChange={(v) => update("enrolledApril2022", v)}
                 />
               </>
             )}

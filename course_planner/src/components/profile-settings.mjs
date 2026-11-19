@@ -27,6 +27,8 @@ export const TRI_STATE_PROFILE_KEYS = Object.freeze([
   "deanException",
   "lawPaperSubstitutionApproved",
   "iStepApproved",
+  "internationalStudent",
+  "enrolledApril2022",
 ]);
 
 export const OPTIONAL_NUMERIC_PROFILE_KEYS = Object.freeze([
@@ -124,6 +126,8 @@ export function initialProfileDraft(profile = {}) {
     ),
     thirdYearCumulativeGpa: toInputText(profile.thirdYearCumulativeGpa),
     iStepApproved: toTriStateText(profile.iStepApproved),
+    internationalStudent: toTriStateText(profile.internationalStudent),
+    enrolledApril2022: toTriStateText(profile.enrolledApril2022),
     entryGrade: toInputText(profile.entryGrade),
     graduationYear: toInputText(profile.graduationYear),
     graduationMonth: toInputText(profile.graduationMonth),

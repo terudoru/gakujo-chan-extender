@@ -56,6 +56,8 @@ test("tri-state conditional booleans keep true, false, and absent distinct with 
     "deanException",
     "lawPaperSubstitutionApproved",
     "iStepApproved",
+    "internationalStudent",
+    "enrolledApril2022",
   ]) {
     assert.equal(Object.hasOwn(unset, key), false);
   }
@@ -66,11 +68,15 @@ test("tri-state conditional booleans keep true, false, and absent distinct with 
     deanException: "false",
     lawPaperSubstitutionApproved: "",
     iStepApproved: "true",
+    internationalStudent: "false",
+    enrolledApril2022: "true",
   });
   assert.strictEqual(mixed.earlyGraduation, true);
   assert.strictEqual(mixed.deanException, false);
   assert.equal(Object.hasOwn(mixed, "lawPaperSubstitutionApproved"), false);
   assert.strictEqual(mixed.iStepApproved, true);
+  assert.strictEqual(mixed.internationalStudent, false);
+  assert.strictEqual(mixed.enrolledApril2022, true);
 
   // Initializing draft from booleans & absent
   const draft = initialProfileDraft(mixed);
@@ -78,6 +84,8 @@ test("tri-state conditional booleans keep true, false, and absent distinct with 
   assert.equal(draft.deanException, "false");
   assert.equal(draft.lawPaperSubstitutionApproved, "");
   assert.equal(draft.iStepApproved, "true");
+  assert.equal(draft.internationalStudent, "false");
+  assert.equal(draft.enrolledApril2022, "true");
 });
 
 test("entryGrade (1..4 or blank), graduationYear, and graduationMonth (3, 9, or blank) validate bounds while yearOfStudy stays uncapped", () => {
