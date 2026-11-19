@@ -46,6 +46,12 @@ const gradeFields = {
   offeringDepartment: text, offeringFaculty: text,
   source: (v) => ["成績確認表", "単位修得状況照会", "成績表", "本人入力"].includes(v),
   possibleDuplicate: flag, repeatable: flag, identityUnresolved: flag,
+  studyYear: (v) => Number.isSafeInteger(v) && v > 0,
+  legacyOffering: (v) => v === "day" || v === "night",
+  exchangeWithoutLeave: flag, facultyApprovedFree: flag, economicsOtherProgramSeminar: flag,
+  lawTrainingSection: flag, languageOverlapApproved: flag, openToAll: flag,
+  teacherTrainingOnly: flag, museumQualificationOnly: flag, holidayPracticum: flag,
+  partTimeInstructor: flag, minorIntro: flag, irregular: flag,
 };
 const matchFields = {
   code: historicCode, year: scalar, department: text, title: text, fields, category: text,

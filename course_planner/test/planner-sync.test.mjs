@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { initialState, snapshot } from "../src/study.mjs";
+import { initialState, shareLink, snapshot } from "../src/study.mjs";
+import { parseSaved } from "../src/storage.mjs";
 import { checkpoint, project, reconcile, validateEntries } from "../src/sync/model.mjs";
 import { channelKey, newPairingCode, pairingKey, seal, unseal } from "../src/sync/crypto.mjs";
 import { googleTransport, relayURL } from "../src/sync/transports.mjs";
@@ -164,6 +165,76 @@ test("grade identities, review decisions and official archive evidence survive a
 function history(state, device, batches = [], before = project("history", state)) {
   return reconcile({ state, before, owner, device, channel: "history", batches });
 }
+const facultyFlagNames = [
+  "exchangeWithoutLeave", "facultyApprovedFree", "economicsOtherProgramSeminar", "lawTrainingSection",
+  "languageOverlapApproved", "openToAll", "teacherTrainingOnly", "museumQualificationOnly",
+  "holidayPracticum", "partTimeInstructor", "minorIntro", "irregular",
+];
+test("confirmed faculty facts survive encrypted history, rehydration and removal on the same imported grade", async () => {
+  const source = initialState(), peer = initialState();
+  const base = { importId: "synthetic-import", code: c1, title: "合成科目", credits: 2 };
+  source.grades = [{ ...base }];
+  const wireId = JSON.stringify(["grade", base.importId]);
+  const baseline = history(source, a).pending;
+  history(peer, b, [baseline]);
+  assert.deepEqual(peer.grades, [base]);
+
+  const yes = Object.fromEntries(facultyFlagNames.map((name) => [name, true]));
+  const reviewed = { ...base, studyYear: 4, legacyOffering: "day", ...yes };
+  source.grades[0] = { ...reviewed };
+  const saved = history(source, a).pending;
+  assert.deepEqual(saved.entries[wireId][2], reviewed);
+  const key = await channelKey(await pairingKey(newPairingCode()), owner, "history");
+  const packet = await seal(key, owner, "history", saved);
+  const entries = await unseal(key, owner, "history", saved.id, JSON.parse(JSON.stringify(packet)));
+  history(peer, b, [{ id: saved.id, entries }]);
+  const restored = parseSaved(JSON.stringify(peer));
+  assert.deepEqual(restored.grades, [reviewed]);
+
+  const no = Object.fromEntries(facultyFlagNames.map((name) => [name, false]));
+  const changed = { ...base, studyYear: Number.MAX_SAFE_INTEGER, legacyOffering: "night", ...no };
+  restored.grades[0] = { ...changed };
+  const revision = history(restored, b).pending;
+  history(source, a, [revision]);
+  assert.deepEqual(source.grades, [changed]);
+  source.grades[0] = { ...base };
+  const cleared = history(source, a).pending;
+  assert.deepEqual(cleared.entries[wireId][2], base);
+  history(restored, b, [cleared]);
+  assert.deepEqual(parseSaved(JSON.stringify(restored)).grades, [base]);
+  const newDevice = initialState();
+  history(newDevice, b, [cleared, saved, revision, baseline]);
+  assert.deepEqual(newDevice.grades, [base]);
+});
+test("faculty facts accept bounded grade values and stay out of plans and public links", () => {
+  const s = initialState(), list = s.lists[0];
+  list.codes.push(c1);
+  s.plan.push(c1);
+  const plan = project("plan", s);
+  const publicLink = () => shareLink(list, 2026, "https://planner.example.invalid/");
+  const publicBefore = publicLink();
+  const row = { title: "合成科目", credits: 1, code: c1 };
+  s.grades.push(row);
+  const historyBefore = project("history", s);
+  const gradeKey = Object.keys(historyBefore).find((key) => JSON.parse(key)[0] === "grade");
+  const facts = Object.fromEntries(facultyFlagNames.map((name) => [name, false]));
+  Object.assign(row, facts, { studyYear: 1, legacyOffering: "night" });
+  const grade = project("history", s)[gradeKey];
+  assert.deepEqual(grade, row);
+  Object.assign(list, { ...row, grades: [row] });
+  assert.deepEqual(project("plan", s), plan);
+  assert.equal(publicLink(), publicBefore);
+  assert.throws(() => validateEntries("plan", { [gradeKey]: [1, a, grade] }));
+
+  const invalid = [...facultyFlagNames.map((name) => [name, "false"]), ["openToAll", null],
+    ["studyYear", 0], ["studyYear", 1.5], ["studyYear", "4"], ["studyYear", Number.MAX_SAFE_INTEGER + 1],
+    ["legacyOffering", "unknown"]];
+  for (const [name, value] of invalid) {
+    s.grades = [{ ...row, [name]: value }];
+    assert.equal(Object.hasOwn(project("history", s)[gradeKey], name), false);
+    assert.throws(() => validateEntries("history", { [gradeKey]: [1, a, { ...grade, [name]: value }] }));
+  }
+});
 test("private history distinguishes absent, unresolved and confirmed matches, including a later withdrawal", () => {
   const source = initialState(), replica = initialState();
   const row = { title: "合成科目", credits: 2, source: "本人入力", code: c1 };
