@@ -1,7 +1,8 @@
 import * as humanities from "./humanities.mjs";
 import * as clinical from "./clinical.mjs";
+import * as sciences from "./sciences.mjs";
 
-export const installedPacks = [humanities, clinical];
+export const installedPacks = [humanities, sciences, clinical];
 
 export function createRegistry(packs = installedPacks) {
   const books = packs.flatMap((pack) => pack.handbooks ?? []);

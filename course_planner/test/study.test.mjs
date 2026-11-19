@@ -114,10 +114,10 @@ test("one semester counts all its terms once and flags annual or mixed credits",
       .length,
     1,
   );
-  assert.equal(
-    semesterCredits([data], 1, { ...s.profile, handbook: "2017" }).limit,
-    null,
-  );
+  const earlier = semesterCredits([data], 1, { ...s.profile, admitted: "2017", handbook: "2017" });
+  assert.equal(earlier.limit, 28);
+  assert.match(earlier.source.url, /hikkei_2017\.pdf/);
+  assert.equal(semesterCredits([data], 1, { ...s.profile, admitted: "2016", handbook: "2016" }).limit, null);
 });
 test("annual CAP uses the recorded shares, validates both halves and preserves zero", () => {
   const profile = engineering().profile;
@@ -165,7 +165,9 @@ test("academic field and curriculum allocation remain distinct across cutoff and
   s.grades = [{ ...english, year: "2026" }];
   assert.equal(total(requirementRows(s, byCode, [english]), "total").future, 1);
   s.profile.handbook = "2016";
-  assert.deepEqual(requirementRows(s, byCode, [data]), []);
+  const oldCurriculum = requirementRows(s, byCode, [data]);
+  assert.ok(oldCurriculum.length);
+  assert.ok(oldCurriculum.every((r) => r.status === "unknown" && r.required === null && r.evidence.sources.length));
   s.profile.handbook = "2026";
   s.profile.entry = "編入・転部・再入学";
   assert.equal(facultyInfo(s.profile).verified, false);

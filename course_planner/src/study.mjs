@@ -14,7 +14,11 @@ export function activeCourses(state, byCode) {
   ]);
   return [...codes]
     .filter((code) => state.status[code] !== "不許可")
-    .map((code) => byCode.get(code))
+    .map((code) => {
+      const course = byCode.get(code);
+      const status = state.status[code];
+      return course && status ? { ...course, status, registered: status === "許可" } : course;
+    })
     .filter(Boolean);
 }
 export function overlaps(a, b) {
@@ -81,7 +85,7 @@ export function semesterCredits(courses, term, profile, overrides = {}, splits =
         ? (firstSemester ? split.first : split.second)
         : null;
     }
-    const classification = policy.classify(course);
+    const classification = policy.classify(course, { semesterSplitConfirmed: crossesSemesters && credits !== null });
     if (!Number.isFinite(credits) || credits < 0) {
       if (classification !== "exclude") unconfirmed.push(course);
       continue;

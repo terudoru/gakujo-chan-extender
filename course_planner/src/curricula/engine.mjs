@@ -73,9 +73,8 @@ export function selectStage(descriptor, selector = "graduation") {
       : (selector.stageId ?? selector.stage ?? selector.goal);
   return (
     stages.find((s) => s.id === id) ??
-    stages.find(
-      (s) => s.goal === id && (s.default || s.id === descriptor?.defaultStage),
-    ) ??
+    stages.find((s) => s.goal === id && s.id === descriptor?.defaultStage) ??
+    stages.find((s) => s.goal === id && s.default) ??
     stages.find((s) => s.goal === id)
   );
 }

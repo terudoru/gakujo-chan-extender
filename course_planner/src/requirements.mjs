@@ -312,11 +312,11 @@ export function createRequirementAPI(packs = installedPacks) {
         (limit === null
           ? "適用便覧のCAP規定を所属学部で確認してください。"
           : undefined),
-      classify(course) {
+      classify(course, options) {
         const override = overrides[course.code];
         if (override === "算入" || override === "include") return "include";
         if (override === "除外" || override === "exclude") return "exclude";
-        const result = cap?.classify?.(course, profile);
+        const result = cap?.classify?.(course, profile, options);
         return result === "include" || result === "exclude"
           ? result
           : "unknown";
@@ -441,6 +441,7 @@ export function createRequirementAPI(packs = installedPacks) {
   }
   return {
     ...registry,
+    selectedStage: (profile, selector) => selectStage(descriptor(profile), selector),
     facultyInfo,
     requirementRows,
     availableStages,
@@ -454,6 +455,7 @@ export function createRequirementAPI(packs = installedPacks) {
 }
 
 export const {
+  selectedStage,
   facultyInfo,
   requirementRows,
   availableHandbooks,
