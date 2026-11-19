@@ -1,6 +1,6 @@
 import {
   DAYS,
-  conflicts,
+  activeCourses,
   hasUnscheduled,
   normalize,
   slotsFor,
@@ -239,6 +239,123 @@ export function initialFiltersFromContext(context = {}) {
   };
 }
 
+function safeTermsFor(course) {
+  if (!course?.period && !course?.semester) return [];
+  return termsFor(course);
+}
+
+function safeSlotsFor(course) {
+  if (typeof course?.schedule !== "string" || !course.schedule.trim()) {
+    return [];
+  }
+  return slotsFor(course);
+}
+
+function isUndeterminedSchedule(course, courseTerms, courseSlots) {
+  if (typeof course?.schedule !== "string" || !course.schedule.trim()) {
+    return true;
+  }
+  if (hasUnscheduled(course)) return true;
+  if (!courseSlots.length) return true;
+  if (!courseTerms.length) return true;
+  return false;
+}
+
+function sharesTerm(termsA, termsB) {
+  if (!termsA.length || !termsB.length) return true;
+  return termsA.some((t) => termsB.includes(t));
+}
+
+function prepareActiveIndex(state, byCode) {
+  if (!state || !byCode) return [];
+  return activeCourses(state, byCode).map((course) => {
+    const terms = safeTermsFor(course);
+    const slots = safeSlotsFor(course);
+    return {
+      course,
+      terms,
+      slots,
+      undetermined: isUndeterminedSchedule(course, terms, slots),
+    };
+  });
+}
+
+/**
+ * Classifies timetable overlap for `course` against active courses in `state`:
+ * - "conflict": definite slot collision(s) exist (explicit collisions always first)
+ * - "uncertain": no definite collision, but overlap with at least one active same-term
+ *   course cannot be ruled out because either the candidate or that active course has
+ *   undetermined/empty/mixed-他 scheduling
+ * - "clear": proven non-overlap with all active courses (ignoring unrelated terms and self)
+ */
+export function assessCourseConflicts(course, state, byCode, preparedActive) {
+  const active = preparedActive ?? prepareActiveIndex(state, byCode);
+  const courseTerms = safeTermsFor(course);
+  const courseSlots = safeSlotsFor(course);
+  const candidateUndetermined = isUndeterminedSchedule(
+    course,
+    courseTerms,
+    courseSlots,
+  );
+
+  const sameTermOthers = active.filter(
+    (entry) =>
+      entry.course.code !== course?.code &&
+      sharesTerm(courseTerms, entry.terms),
+  );
+
+  const definite = [];
+  const definiteCodes = new Set();
+  const undeterminedOthers = [];
+
+  for (const entry of sameTermOthers) {
+    if (courseTerms.length && entry.terms.length) {
+      const hitSlots = courseSlots.filter((slot) => entry.slots.includes(slot));
+      if (hitSlots.length) {
+        definite.push({ course: entry.course, slots: hitSlots });
+        definiteCodes.add(entry.course.code);
+      }
+    }
+    if (entry.undetermined) {
+      undeterminedOthers.push(entry.course);
+    }
+  }
+
+  if (definite.length > 0) {
+    const hasUndetermined =
+      candidateUndetermined ||
+      undeterminedOthers.some((c) => !definiteCodes.has(c.code));
+    return {
+      status: "conflict",
+      definite,
+      candidateUndetermined,
+      undeterminedOthers,
+      hasUndetermined,
+    };
+  }
+
+  if (
+    sameTermOthers.length > 0 &&
+    (candidateUndetermined || undeterminedOthers.length > 0)
+  ) {
+    return {
+      status: "uncertain",
+      definite: [],
+      candidateUndetermined,
+      undeterminedOthers,
+      hasUndetermined: true,
+    };
+  }
+
+  return {
+    status: "clear",
+    definite: [],
+    candidateUndetermined,
+    undeterminedOthers: [],
+    hasUndetermined: false,
+  };
+}
+
 export function filterAndRankCourses({
   catalog,
   state,
@@ -295,6 +412,7 @@ export function filterAndRankCourses({
   const deptMap = departmentNames ?? catalog?.departments;
   const catalogFields = catalog?.fields ?? {};
   const catalogYear = catalog?.year ?? 2026;
+  const preparedActive = prepareActiveIndex(state, byCode);
 
   const filtered = (catalog?.courses ?? []).filter((course) => {
     if (urlQuery?.valid) {
@@ -315,7 +433,11 @@ export function filterAndRankCourses({
     if (field !== "all" && !(course.fields ?? []).includes(field)) {
       return false;
     }
-    if (free && conflicts(course, state, byCode).length > 0) {
+    if (
+      free &&
+      assessCourseConflicts(course, state, byCode, preparedActive).status !==
+        "clear"
+    ) {
       return false;
     }
     if (teacherWords.length) {
@@ -355,15 +477,22 @@ export function filterAndRankCourses({
       urlNotice: "",
     };
   }
-  const available = [];
+  const clear = [];
+  const uncertain = [];
   const overlapping = [];
   for (const course of filtered) {
-    (conflicts(course, state, byCode).length ? overlapping : available).push(
+    const status = assessCourseConflicts(
       course,
-    );
+      state,
+      byCode,
+      preparedActive,
+    ).status;
+    if (status === "clear") clear.push(course);
+    else if (status === "uncertain") uncertain.push(course);
+    else overlapping.push(course);
   }
   return {
-    courses: [...available, ...overlapping],
+    courses: [...clear, ...uncertain, ...overlapping],
     hasRequirementContext: req.active,
     urlNotice: "",
   };

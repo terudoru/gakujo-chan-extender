@@ -8,7 +8,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { DAYS, conflicts } from "./study.mjs";
+import { DAYS } from "./study.mjs";
 import {
   ActionLink,
   AddCourse,
@@ -20,6 +20,7 @@ import {
 import { SyllabusFacts } from "./components/SyllabusFacts.jsx";
 import {
   PERIOD_NUMBERS,
+  assessCourseConflicts,
   departmentOptions,
   filterAndRankCourses,
   formatAcademicFields,
@@ -202,19 +203,31 @@ export function Discovery({
         ? `${context.field} ${catalog.fields[context.field]}`
         : "");
 
+  const formatDefiniteConflicts = (definite) =>
+    definite
+      .map(
+        ({ course: other, slots }) =>
+          `${slots.map(slotTitle).join("・")}で「${other.title}」と重複`,
+      )
+      .join(" / ");
+
   const renderConflictSummary = (course) => {
-    const items = conflicts(course, state, byCode);
-    if (!items.length) {
+    const assessment = assessCourseConflicts(course, state, byCode);
+    if (assessment.status === "clear") {
       return <p className="disc-status-note">現在の時間割と重複なし</p>;
     }
+    if (assessment.status === "uncertain") {
+      const detail = assessment.candidateUndetermined
+        ? "時限未定・重複要確認（同一タームの履修予定と重なる可能性があります）"
+        : `時限未定・重複要確認（同一タームの時限未定科目「${assessment.undeterminedOthers.map((o) => o.title).join("・")}」と重なる可能性があります）`;
+      return <p className="disc-status-note disc-conflict">{detail}</p>;
+    }
+    const base = formatDefiniteConflicts(assessment.definite);
     return (
       <p className="disc-status-note disc-conflict">
-        {items
-          .map(
-            ({ course: other, slots }) =>
-              `${slots.map(slotTitle).join("・")}で「${other.title}」と重複`,
-          )
-          .join(" / ")}
+        {assessment.hasUndetermined
+          ? `${base}（時限未定・重複要確認も含む）`
+          : base}
       </p>
     );
   };
@@ -420,7 +433,7 @@ export function Discovery({
             {matches.slice(0, limit).map((c) => {
               const isSelected = selectedCode === c.code;
               const isCompared = compareCodes.includes(c.code);
-              const courseConflicts = conflicts(c, state, byCode);
+              const assessment = assessCourseConflicts(c, state, byCode);
               return (
                 <li
                   key={c.code}
@@ -446,14 +459,17 @@ export function Discovery({
                       <span>{c.credits ?? "要確認"}単位</span>
                       <span>{formatAcademicFields(c, catalog.fields)}</span>
                     </span>
-                    {courseConflicts.length > 0 && (
+                    {assessment.status === "conflict" && (
                       <small className="disc-status-note disc-conflict">
-                        {courseConflicts
-                          .map(
-                            ({ course: other, slots }) =>
-                              `${slots.map(slotTitle).join("・")}で「${other.title}」と重複`,
-                          )
-                          .join(" / ")}
+                        {formatDefiniteConflicts(assessment.definite)}
+                        {assessment.hasUndetermined
+                          ? "（時限未定・重複要確認も含む）"
+                          : ""}
+                      </small>
+                    )}
+                    {assessment.status === "uncertain" && (
+                      <small className="disc-status-note disc-conflict">
+                        時限未定・重複要確認
                       </small>
                     )}
                   </div>
