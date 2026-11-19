@@ -80,7 +80,7 @@ void main() {
           r'const absent = GakujoCourseEstimate\.absent\(\);\s*'
           r'final estimate = mounted &&\s*origin\.revision == _navigationRevision &&\s*'
           r'origin\.document == _courseDocument\s*'
-          r'\? await _estimateCourseNameFromPage\(await _controller.getTitle\(\)\)\s*'
+          r'\? await _estimateCourseNameFromPage\(\)\s*'
           r': absent;[\s\S]*?return resolveGakujoDownloadCourseEstimate\(\s*'
           r'pageEstimate: mounted && origin\.document == _courseDocument\s*'
           r'\? estimate\s*: absent,\s*initialCourseName: fallback,\s*'

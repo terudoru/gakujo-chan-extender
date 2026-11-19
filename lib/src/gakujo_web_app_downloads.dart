@@ -932,7 +932,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     final estimate = mounted &&
             origin.revision == _navigationRevision &&
             origin.document == _courseDocument
-        ? await _estimateCourseNameFromPage(await _controller.getTitle())
+        ? await _estimateCourseNameFromPage()
         : absent;
     // A same-URL reload can replace the document between course script reads.
     return resolveGakujoDownloadCourseEstimate(

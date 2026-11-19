@@ -17,6 +17,7 @@ import 'package:webview_flutter_linux/webview_flutter_linux.dart'
 
 import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
+import 'generated/document_title.g.dart';
 import 'generated/favorite_page_identity.g.dart';
 import 'generated/navigator_user_agent.g.dart';
 import 'generated/page_text_activity.g.dart';
@@ -3258,13 +3259,23 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return GakujoNavigationDecision.navigate;
   }
 
-  Future<GakujoCourseEstimate> _estimateCourseNameFromPage(
-    String? fallbackTitle,
-  ) => estimateGakujoPageCourseName(
-    evaluate: _controller.runJavaScriptReturningResult,
-    isUseful: isUsefulGakujoCourseName,
-    fallbackTitle: fallbackTitle,
-  );
+  Future<GakujoCourseEstimate> _estimateCourseNameFromPage() async {
+    String? fallbackTitle;
+    try {
+      // Native title notifications can still describe the previous document.
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoDocumentTitleJs,
+      );
+      if (result is String) fallbackTitle = _stringFromJavaScriptResult(result);
+    } on Object {
+      // The remaining course evidence can still identify the page.
+    }
+    return estimateGakujoPageCourseName(
+      evaluate: _controller.runJavaScriptReturningResult,
+      isUseful: isUsefulGakujoCourseName,
+      fallbackTitle: fallbackTitle,
+    );
+  }
 
   void _beginCourseDocument() {
     _currentCourseName = null;
@@ -3273,9 +3284,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _refreshEstimatedCourseName(int document) async {
     final revision = _navigationRevision;
-    final estimated = await _estimateCourseNameFromPage(
-      await _controller.getTitle(),
-    );
+    final estimated = await _estimateCourseNameFromPage();
     if (!mounted ||
         revision != _navigationRevision ||
         document != _courseDocument ||
