@@ -93,6 +93,15 @@ object DeadlineReminders {
         book(context, reminders)
     }
 
+    fun cancelOtherAccounts(context: Context, account: String) {
+        val (kept, removed) = load(context).partition {
+            it.historyAccount == null || it.historyAccount == account
+        }
+        if (removed.isEmpty()) return
+        save(context, kept)
+        for (reminder in removed) cancel(context, reminder)
+    }
+
     /** Books the saved reminders again, as after a reboot. */
     fun restore(context: Context) {
         replace(context, load(context))
@@ -133,9 +142,12 @@ object DeadlineReminders {
         val current = load(context)
         // An alarm already queued for delivery can outlive cancellation or
         // replacement. Match the current booking before posting or canceling.
-        if (reminder !in current ||
-            reminder.atMillis - System.currentTimeMillis() > EARLY_WINDOW_MILLIS
-        ) return
+        if (reminder !in current) return
+        if (reminder.atMillis - System.currentTimeMillis() > EARLY_WINDOW_MILLIS) {
+            // The clock may have moved back after the one-shot alarm fired.
+            book(context, current)
+            return
+        }
         // The other alarm booked for this reminder must not show it again.
         cancel(context, reminder)
         val delivered = loadDelivered(context)

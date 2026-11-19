@@ -81,6 +81,27 @@ class AllowedWebOrigins {
     return _isTransientPage(url, includeSessionFlow: false);
   }
 
+  static bool isLogoutPage(String url) {
+    if (!_isGakujoUrl(url)) return false;
+    final uri = Uri.parse(url);
+    if (uri.path.toLowerCase().contains('logout')) return true;
+    try {
+      return uri.queryParametersAll.entries.any(
+        (entry) => _transitionQueryKeys.contains(entry.key.toLowerCase()) &&
+            entry.value.any((value) => value.toLowerCase().contains('logout')),
+      );
+    } on FormatException {
+      return false;
+    }
+  }
+
+  static const _transitionQueryKeys = {
+    'action',
+    'command',
+    'eventid',
+    '_eventid',
+  };
+
   static bool _isTransientPage(String? url,
       {required bool includeSessionFlow}) {
     final uri = Uri.tryParse(url ?? '');
@@ -94,12 +115,6 @@ class AllowedWebOrigins {
         path.contains('timeout')) {
       return true;
     }
-    const transitionQueryKeys = {
-      'action',
-      'command',
-      'eventid',
-      '_eventid',
-    };
     final Map<String, List<String>> query;
     try {
       query = uri.queryParametersAll;
@@ -113,7 +128,7 @@ class AllowedWebOrigins {
       if (includeSessionFlow && key == '_flowexecutionkey') {
         return true;
       }
-      if (!transitionQueryKeys.contains(key)) {
+      if (!_transitionQueryKeys.contains(key)) {
         return false;
       }
       return entry.value.any((value) {

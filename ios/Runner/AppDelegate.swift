@@ -1045,6 +1045,11 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
             result(true)
           }
         }
+      case "cancelOtherAccountsReminders":
+        let args = call.arguments as? [String: Any]
+        self.history.cancelOtherAccountsReminders(account: args?["account"] as? String) {
+          result(nil)
+        }
       case "takePendingNotificationUrl":
         if let args = call.arguments as? [String: Any], args["version"] as? Int == 1,
            let token = args["consumer"] as? String {

@@ -56,8 +56,11 @@ class GakujoNotificationHistoryStore {
     : _storage = storage ?? SecureStorageFactory.create();
 
   static final _operations = StorageOperationQueue();
+  static int _generation = 0;
   static const _key = 'more_better_gakujo_notification_history';
   final FlutterSecureStorage _storage;
+
+  int get generation => _generation;
 
   Future<List> _read() async {
     final raw = await _storage.read(key: _key);
@@ -73,8 +76,13 @@ class GakujoNotificationHistoryStore {
         ),
       );
 
-  Future<void> record(String account, GakujoNotificationHistoryEntry entry) =>
+  Future<void> record(
+    String account,
+    GakujoNotificationHistoryEntry entry, {
+    required int generation,
+  }) =>
       _operations.run(() async {
+        if (generation != _generation) return;
         final rows = await _read();
         await _storage.write(
           key: _key,
@@ -85,5 +93,8 @@ class GakujoNotificationHistoryStore {
         );
       });
 
-  Future<void> clear() => _operations.run(() => _storage.delete(key: _key));
+  Future<void> clear() {
+    _generation++;
+    return _operations.run(() => _storage.delete(key: _key));
+  }
 }

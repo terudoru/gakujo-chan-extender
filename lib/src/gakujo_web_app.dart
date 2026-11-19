@@ -1845,8 +1845,10 @@ class _PageRestoreReservation {
     if (url != target) reserve(target);
   }
 
+  bool owns(Object owner) => identical(_owner, owner);
+
   bool release(Object owner) {
-    if (!identical(_owner, owner)) return false;
+    if (!owns(owner)) return false;
     reserve(null);
     return true;
   }
@@ -1889,22 +1891,36 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final _loginIdentity = GakujoLoginIdentity();
   String? get _activeLoginAccount => _loginIdentity.active;
   final _notificationHistoryAccount = ValueNotifier<String?>(null);
-  ({Object owner, _PendingMessageOpen? message})? _historyNavigation;
+  ({String account, Object owner, _PendingMessageOpen? message})? _historyNavigation;
   set _activeLoginAccount(String? value) {
     _loginIdentity.active = value;
-    if (_historyNavigation case (:final owner, :final message)
-        when _notificationHistoryAccount.value != value) {
-      _historyNavigation = null;
-      _loginRestore.release(owner);
-      if (_navigationRecovery.release(owner)) {
-        _navigationRecoveryCandidateFailed = false;
-      }
-      if (message != null && identical(message, _pendingMessageOpen)) {
-        _pendingMessageOpenTimer?.cancel();
-        _pendingMessageOpen = null;
-      }
+    if (value != null && _historyNavigation?.account != value) {
+      _discardHistoryNavigation();
     }
     _notificationHistoryAccount.value = value;
+  }
+
+  void _discardHistoryNavigation() {
+    final history = _historyNavigation;
+    if (history == null) return;
+    _historyNavigation = null;
+    _loginRestore.release(history.owner);
+    if (_navigationRecovery.release(history.owner)) {
+      _navigationRecoveryCandidateFailed = false;
+    }
+    if (history.message != null && identical(history.message, _pendingMessageOpen)) {
+      _pendingMessageOpenTimer?.cancel();
+      _pendingMessageOpen = null;
+    }
+  }
+
+  bool _keepsHistoryMessageDuringLogin(String url) {
+    final history = _historyNavigation;
+    return history != null &&
+        history.message != null &&
+        identical(history.message, _pendingMessageOpen) &&
+        (_activeLoginAccount == null || _looksLikeLoginOrTimeoutUrl(url)) &&
+        AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed);
   }
   String? get _driveAccountHash => _activeLoginAccount;
   late Future<void> _driveDownloadsLoad;
@@ -2419,6 +2435,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _writeStoredLoginAccount(account);
         if (mounted && revision == _loginIdentity.revision && (stillValid?.call() ?? true)) {
           _activeLoginAccount = account;
+          _lastAssignmentRefresh = null;
+          unawaited(_syncReminders(allowPermissionRequest: false));
         } else {
           await _writeStoredLoginAccount(null);
           if (revision == _loginIdentity.revision) _loginIdentity.pending = account;
@@ -3265,8 +3283,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return GakujoNavigationDecision.prevent;
     }
 
+    if (request.isMainFrame && AllowedWebOrigins.isLogoutPage(request.url)) {
+      _discardHistoryNavigation();
+    }
     final pending = _pendingMessageOpen;
     if (pending != null &&
+        !_keepsHistoryMessageDuringLogin(request.url) &&
         pending.navigation.shouldCancelFor(request, _navigationRevision)) {
       _setPendingMessageUrl(null);
     }
@@ -4955,6 +4977,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     var revocationUnconfirmed = false;
     Future<void> clearAll() async {
+      _discardHistoryNavigation();
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
@@ -5584,7 +5607,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     try {
-      await _handleDeadlineNotificationTapped(target, fromHistory: true);
+      await _handleDeadlineNotificationTapped(target, historyAccount: account);
     } on Object {
       if (mounted) _showSnackBar('通知のページを開けませんでした');
     }
@@ -6079,6 +6102,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final pending = _pendingMessageOpen;
     bool stillCurrent() =>
         identical(_pendingMessageOpen, pending) &&
+        (!identical(_historyNavigation?.message, pending) ||
+            _historyNavigation?.account == _activeLoginAccount) &&
         _isCurrentPageCallback(url, navigationRevision);
     if (pending == null ||
         !stillCurrent() ||
@@ -6991,6 +7016,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   void _invalidateLoginUrl(String url) {
+    if (AllowedWebOrigins.isLogoutPage(url)) _discardHistoryNavigation();
     _loginIdentity.invalidateLoginNavigation(url, () {
       unawaited(_setActiveLoginAccount(null, resync: false).catchError(
         (Object error, StackTrace stackTrace) {
@@ -8337,7 +8363,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleDeadlineNotificationTapped(
     String targetUrl, {
-    bool fromHistory = false,
+    String? historyAccount,
   }) async {
     if (_calendarOperationGate.isRunning) {
       // Do not publish this as the auth restore target yet. An authenticated
@@ -8352,8 +8378,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final owner = Object();
     _setPendingMessageUrl(targetUrl, owner: owner);
     _reserveNotificationRestore(targetUrl, owner: owner);
-    if (fromHistory) {
-      _historyNavigation = (owner: owner, message: _pendingMessageOpen);
+    if (historyAccount != null) {
+      _historyNavigation = (account: historyAccount, owner: owner, message: _pendingMessageOpen);
     }
     await _loadReservedPage(targetUrl, owner);
   }
@@ -8459,7 +8485,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   .consume(url, _navigationRevision) ??
               false;
           _beginNavigation(
-            preservesPendingMessageOpen: preservesPendingMessageOpen,
+            preservesPendingMessageOpen: preservesPendingMessageOpen ||
+                _keepsHistoryMessageDuringLogin(url),
           );
           _pendingPageFinishedNavigationRevision = _navigationRevision;
           _currentPageUrl = url;
@@ -9033,6 +9060,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var revocationUnconfirmed = false;
     SecureStorageFactory.reopenLinuxKeyringGate();
     try {
+      _discardHistoryNavigation();
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
@@ -9189,6 +9217,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required GakujoPortalAuthState authState,
     required int navigationRevision,
   }) async {
+    final history = _historyNavigation;
+    if (history != null && _loginRestore.owns(history.owner) &&
+        _activeLoginAccount != history.account) {
+      return;
+    }
     final restoreUrl = _pendingLoginRestoreUrl;
     if (_isCurrentPageCallback(currentUrl, navigationRevision) &&
         shouldConsumePendingGakujoPage(

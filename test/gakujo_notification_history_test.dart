@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_history.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_notification_service.dart';
 import 'package:morebettergakujo_flutter/src/widgets/notification_history_dialog.dart';
@@ -124,6 +128,150 @@ void main() {
     expect(await service.loadHistory('a'), isEmpty);
   });
 
+  group('native booking account transitions', () {
+    late String? account;
+    late List<List<dynamic>> bookings;
+    late List<dynamic> nativeBookings;
+    late _AssignmentStore store;
+    late GakujoDeadlineNotificationCoordinator coordinator;
+    late bool granted;
+
+    setUp(() async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      account = null;
+      granted = true;
+      bookings = [];
+      nativeBookings = [];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'requestPermission' ||
+            call.method == 'checkPermission') {
+          return granted;
+        }
+        if (call.method == 'cancelOtherAccountsReminders') {
+          final owner = (call.arguments as Map)['account'];
+          nativeBookings.removeWhere(
+            (row) =>
+                row['historyAccount'] != null && row['historyAccount'] != owner,
+          );
+          return null;
+        }
+        expect(call.method, 'scheduleReminders');
+        nativeBookings = List.of((call.arguments as Map)['reminders'] as List);
+        bookings.add(List.of(nativeBookings));
+        return true;
+      });
+      store = _AssignmentStore();
+      await store.mergeAssignments([
+        for (final owner in ['a', 'b'])
+          GakujoAssignment(
+            kind: 'レポート',
+            title: '架空の課題 $owner',
+            course: 'テスト科目',
+            status: '未提出',
+            dueAt: now.add(const Duration(days: 1)),
+            capturedAt: now,
+            notificationAccount: owner,
+          ),
+      ]);
+      coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: GakujoNotificationService(
+          activeAccount: () => account,
+          now: () => now,
+        ),
+        now: () => now,
+      );
+    });
+
+    Future<void> sync({bool enabled = true}) => coordinator.syncReminders(
+      notificationsEnabled: enabled,
+      topics: {GakujoNotificationTopic.coursework},
+      preferences: const GakujoNotificationPreferences(
+        reminderOffsets: {GakujoReminderOffset.oneHour},
+      ),
+      allowPermissionRequest: false,
+    );
+
+    test(
+      'enabled startup and authentication challenges retain native bookings',
+      () async {
+        await sync();
+        expect(bookings, isEmpty);
+        account = 'a';
+        await sync();
+        account = null;
+        await sync();
+        expect(bookings, hasLength(1));
+        expect(bookings.single.single['historyAccount'], 'a');
+      },
+    );
+
+    test(
+      'explicit disable cancels native bookings without an established account',
+      () async {
+        await sync(enabled: false);
+        expect(bookings, [isEmpty]);
+      },
+    );
+
+    test('switching to a confirmed account replaces the previous account’s bookings', () async {
+      account = 'a';
+      await sync();
+      account = null;
+      await sync();
+      account = 'b';
+      await sync();
+      expect(bookings.map((items) => items.single['historyAccount']), [
+        'a',
+        'b',
+      ]);
+    });
+
+    test('permission denial on a confirmed switch clears the old account’s bookings', () async {
+      account = 'a';
+      await sync();
+      account = 'b';
+      granted = false;
+      await sync();
+      expect(bookings, hasLength(1));
+      expect(nativeBookings, isEmpty);
+    });
+
+    test('a cold confirmation retains matching alarms when the cache cannot be read', () async {
+      nativeBookings = [
+        {'historyAccount': 'a', 'id': 1},
+        {'historyAccount': 'b', 'id': 2},
+        {'id': 3},
+      ];
+      store.unavailable = true;
+      account = 'a';
+      await sync();
+      expect(bookings, isEmpty);
+      expect(nativeBookings.map((row) => row['id']), [1, 3]);
+    });
+  });
+
+  test(
+    'desktop acceptance after clear cannot restore the erased history',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final reachedBridge = Completer<void>();
+      final accepted = Completer<bool>();
+      messenger.setMockMethodCallHandler(channel, (call) {
+        expect(call.method, 'notifyDeadline');
+        reachedBridge.complete();
+        return accepted.future;
+      });
+      final service = GakujoNotificationService(activeAccount: () => 'a');
+      final posting = service.notifyDeadline(notice('消去前の通知', target));
+      await reachedBridge.future;
+      await GakujoNotificationService().clearHistory();
+      accepted.complete(true);
+      expect(await posting, isTrue);
+      expect(await service.loadHistory('a'), isEmpty);
+    },
+  );
+
   testWidgets('history shows full text and hides it on account change', (
     tester,
   ) async {
@@ -165,4 +313,12 @@ void main() {
     expect(find.text('以前届いた通知の本文'), findsNothing);
     expect(find.text('学務にログインすると、通知履歴を確認できます。'), findsOneWidget);
   });
+}
+
+class _AssignmentStore extends GakujoActivityStore {
+  bool unavailable = false;
+
+  @override
+  Future<List<GakujoAssignment>?> loadAssignmentsIfAvailable() async =>
+      unavailable ? null : super.loadAssignmentsIfAvailable();
 }

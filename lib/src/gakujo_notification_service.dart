@@ -458,6 +458,29 @@ class GakujoNotificationService {
   bool isForActiveAccount(String? account) =>
       account == null || account == activeAccount?.call();
 
+  String? _nativeReminderAccount;
+
+  bool get waitingForNativeReminderAccount =>
+      _nativeHistory && activeAccount != null && activeAccount!() == null;
+
+  Future<void> cancelOtherAccountsReminders() async {
+    if (!_nativeHistory) return;
+    final account = activeAccount?.call();
+    if (account == null || account == _nativeReminderAccount) return;
+    // Only the native booking store knows which owner survived a cold start.
+    // Keep matching reservations intact when the assignment cache is unreadable.
+    try {
+      await _channel.invokeMethod<void>('cancelOtherAccountsReminders', {
+        'account': account,
+      });
+      _nativeReminderAccount = account;
+    } on MissingPluginException {
+      // An unavailable bridge will fall back to in-app timers.
+    } on PlatformException catch (error) {
+      developer.log('Failed to reconcile reminder account: ${error.code}');
+    }
+  }
+
   void setDeadlineNotificationTappedHandler(
     DeadlineNotificationTappedCallback? handler,
   ) {
@@ -584,6 +607,7 @@ class GakujoNotificationService {
     if (!isForActiveAccount(account)) return false;
     final historyUrl = targetUrl(url, debugAllowed: kDebugMode);
     final nativeHistory = _nativeHistory;
+    final historyGeneration = _historyStore.generation;
     bool posted;
     try {
       posted = await _channel.invokeMethod<bool>(
@@ -610,7 +634,7 @@ class GakujoNotificationService {
           body: body.isEmpty ? '提出期限を検出しました' : body,
           postedAt: _now(),
           url: historyUrl,
-        ));
+        ), generation: historyGeneration);
       } on Object catch (error) {
         developer.log('Failed to save notification history: ${error.runtimeType}');
       }
@@ -669,6 +693,7 @@ class GakujoNotificationService {
     List<GakujoReminder> reminders, {
     Future<void> Function(GakujoReminder)? onInAppReminder,
   }) async {
+    final account = activeAccount?.call();
     final eligible = reminders.where((reminder) =>
         isForActiveAccount(reminder.notificationAccount)).toList();
     for (final booked in _inAppReminders.values) {
@@ -695,6 +720,7 @@ class GakujoNotificationService {
         },
       );
       if (booked == true) {
+        _nativeReminderAccount = account;
         return true;
       }
     } on PlatformException {
@@ -980,6 +1006,16 @@ class GakujoDeadlineNotificationCoordinator {
             _reminderPreferences.reminderOffsets.isNotEmpty &&
             (_reminderTopics.contains(GakujoNotificationTopic.coursework) ||
                 _reminderTopics.contains(GakujoNotificationTopic.survey));
+        bool deferNativeReplacement() =>
+            needsAssignments() && _notificationService.waitingForNativeReminderAccount;
+
+        // Startup and authentication challenges say nothing about who owns
+        // existing OS bookings. Explicit cancellation still goes through.
+        if (deferNativeReplacement()) return;
+        if (needsAssignments()) {
+          await _notificationService.cancelOtherAccountsReminders();
+          if (deferNativeReplacement()) return;
+        }
         // With no eligible reminder topic or offset, no assignment data is
         // needed to cancel existing bookings.
         final shouldLoadAssignments = needsAssignments();
@@ -1026,6 +1062,7 @@ class GakujoDeadlineNotificationCoordinator {
             return;
           }
         }
+        if (deferNativeReplacement()) return;
         // Only replacing bookings permanently invalidates their callbacks.
         _bookedReminderGeneration = generation;
         _deferredReminders.clear();

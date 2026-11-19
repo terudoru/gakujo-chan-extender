@@ -754,6 +754,10 @@ class MainActivity : FlutterActivity() {
                 )
                 result.success(true)
             }
+            "cancelOtherAccountsReminders" -> {
+                call.argument<String>("account")?.let { DeadlineReminders.cancelOtherAccounts(this, it) }
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }

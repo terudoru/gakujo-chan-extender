@@ -74,6 +74,23 @@ final class NotificationHistory {
     }
   }
 
+  func cancelOtherAccountsReminders(account: String?, completion: @escaping () -> Void) {
+    guard let account else { completion(); return }
+    let center = UNUserNotificationCenter.current()
+    center.getPendingNotificationRequests { requests in
+      let foreign = requests.compactMap { request -> String? in
+        guard request.identifier.hasPrefix("reminder-"),
+              let owner = request.content.userInfo["historyAccount"] as? String,
+              owner != account else { return nil }
+        return request.identifier
+      }
+      if !foreign.isEmpty {
+        center.removePendingNotificationRequests(withIdentifiers: foreign)
+      }
+      DispatchQueue.main.async { completion() }
+    }
+  }
+
   private func fileURL() throws -> URL {
     let support = try FileManager.default.url(
       for: .applicationSupportDirectory, in: .userDomainMask,

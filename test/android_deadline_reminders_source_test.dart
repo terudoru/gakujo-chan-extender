@@ -70,7 +70,7 @@ void main() {
     expect(show, contains('stableKey = reminder.stableKey'));
     final record = show.indexOf('DeadlineReminderDelivery.record(');
     final persist = show.indexOf('.putString(KEY_DELIVERED,');
-    final refill = show.indexOf('book(context, current)');
+    final refill = show.lastIndexOf('book(context, current)');
     expect(record, greaterThan(0));
     expect(persist, greaterThan(record));
     expect(refill, greaterThan(persist));
@@ -84,6 +84,18 @@ void main() {
         source.substring(source.indexOf('private fun loadDelivered('));
     expect(loader, contains('DeadlineReminderDelivery.readHistory('));
     expect(loader, contains('array.opt(it)'));
+  });
+
+  test('an early alarm rebooks the current list only for a valid reservation', () {
+    final receiver = source.substring(
+      source.indexOf('fun show(context: Context, intent: Intent)'),
+      source.indexOf('fun post('),
+    );
+    expect(receiver, matches(RegExp(
+      r'if \(reminder !in current\) return\s+'
+      r'if \(reminder\.atMillis - System\.currentTimeMillis\(\) > EARLY_WINDOW_MILLIS\) \{'
+      r'\s*//[^\r\n]*\s+book\(context, current\)\s+return\s+\}',
+    )));
   });
 
   test('successful per-file downloads retain offered document permissions', () {
