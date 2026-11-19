@@ -2,9 +2,9 @@ import {
   act,
   category,
   combined,
-  condition,
   contribution,
   credits,
+  decision,
   generalCategories,
   named,
   norm,
@@ -128,7 +128,7 @@ export function dental(p) {
       year: 4,
     });
   }
-  const attendance = condition(
+  const attendance = decision(
     "attendance",
     "専門科目試験の受験資格",
     "講義は授業時間の3分の2、実習は4分の3以上の出席が必要です。担当教員・歯学部学務係で出席を確認してください。",
@@ -155,14 +155,14 @@ export function dental(p) {
   if (!oral) {
     stages.push(stage("clinical-practice", "5年次・診療参加型臨床実習の開始", "progress", [
       ...major.filter((r) => r.year === 5 && r.label !== "臨床実習I"),
-      condition(
+      decision(
         "prior-terms",
         "5年次前期までの全指定科目の修了",
         "第1～4年次と第5年次前期の必修科目の修得を歯学部学務係の記録で確認してください。",
         clinical,
       ),
       ...["CBT", "OSCE"].map((n) =>
-        condition(
+        decision(
           "pre-clinical-" + n,
           "臨床実習前共用試験 " + n,
           "歯学部学務係で" + n + "の合格結果を確認してください。",
@@ -175,7 +175,7 @@ export function dental(p) {
   const genTotal = subtotal("general", "教養教育科目", oral ? 30 : 40, gen, src);
   const majorTotal = subtotal("major", "専門教育科目", oral ? 120 : 152, major, prof);
   stages.push(stage("graduation", "卒業", "graduation", [
-    subtotal("total", "卒業単位の合計", oral ? 150 : 192, [...gen, ...major], src, { kind: "合計" }),
+    subtotal("total", "卒業単位の合計", oral ? 150 : 192, [genTotal, majorTotal], src, { kind: "合計" }),
     genTotal,
     ...gen,
     ...(oral ? [scienceBreadth(src)] : []),

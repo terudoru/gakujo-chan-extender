@@ -1,4 +1,4 @@
-import { combined, condition, credits, norm, source, stage } from "./rules.mjs";
+import { combined, credits, decision, norm, source, stage } from "./rules.mjs";
 
 // 学科の令和4年度時間割には、改正前の2～4年次配当と旧 M5 系列の開講番号が載る。
 const schedule = "https://www.clg.niigata-u.ac.jp/editor/upload/admina51df0c3efee039d38623cac6b08d216/files/" +
@@ -73,7 +73,7 @@ export function healthArchive(year, index) {
   const studyStage = stage("legacy-year-" + grade, "旧課程・" + grade + "年次の履修科目", "progress", [
     ...named,
     ...designated,
-    condition(
+    decision(
       "old-timetable",
       "当時の時間割と進級判定",
       "令和4年度時間割の当該学年・専攻に配当された科目を表示します。休学・留年による履修時期のずれ、読替、全必修の修得は保健学科学務係で確認してください。",

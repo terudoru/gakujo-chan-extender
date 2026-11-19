@@ -1,4 +1,15 @@
-import { condition, credits, named, recognition, source, stage } from "./clinical/rules.mjs";
+import {
+  condition,
+  credits,
+  decision,
+  named,
+  recognition,
+  source,
+  stage,
+  subtotal,
+  unknownCredits,
+  wholeNumber,
+} from "./clinical/rules.mjs";
 import { medicalAct, medicine, medicineSources } from "./clinical/medicine.mjs";
 import { health, healthGuide, healthPrograms } from "./clinical/health.mjs";
 import { healthArchive } from "./clinical/health-history.mjs";
@@ -84,9 +95,17 @@ function archiveProfile(p, src, office) {
     : null;
   const numbers = historicSplit ? assessment2014 : priorTotals[year];
   const evidence = [src, ...(oldPbl ? [historicalDental] : []), ...(totals ? [numbers] : [])];
-  const stages = [stage("advancement", "進級", "progress", [
-    condition("year-table", "当時の進級条件と指定科目の年次配当", status("年次別の必修配当と進級判定"), src),
-  ], evidence)];
+  const knownDental = (dentistry || oral) && handbooks.some((b) => b.year === String(year) && b.faculty === p.faculty);
+  const stages = knownDental
+    ? Array.from({ length: dentistry ? 5 : 3 }, (_, i) => {
+      const label = (i + 2) + "年次への進級";
+      return stage("year-" + (i + 2), label, "progress", [
+        decision("year-table", label + "の認定", status(label + "に必要な必修配当と本人の進級判定"), src),
+      ], evidence);
+    })
+    : [stage("advancement", "進級", "progress", [
+      condition("year-table", "当時の進級条件と指定科目の年次配当", status("年次別の必修配当と進級判定"), src),
+    ], evidence)];
   if (oldPbl) {
     for (
       const [year, courses] of [[3, ["PBL入門", "人体のしくみ"]], [4, ["生涯にわたる歯と咬合"]], [5, [
@@ -112,18 +131,20 @@ function archiveProfile(p, src, office) {
       );
     }
   }
-  stages.push(stage("graduation", "卒業", "graduation", [
+  const categories = [
     historicSplit
       ? credits("general", "教養教育科目", 45, () => null, numbers, { unknown: status("教養科目の別表") })
-      : condition("general", "当時の教養科目の区分と必要単位", status("教養科目の別表"), src),
+      : unknownCredits("general", "当時の教養科目の区分と必要単位", status("教養科目の別表"), src),
     historicSplit
       ? credits("major", "専門教育科目", 157, () => null, numbers, { unknown: status("専門科目の別表と読替") })
-      : condition("major", "当時の専門必修・選択と必要単位", status("専門科目の別表と読替"), src),
+      : unknownCredits("major", "当時の専門必修・選択と必要単位", status("専門科目の別表と読替"), src),
+  ];
+  stages.push(stage("graduation", "卒業", "graduation", [
     totals
-      ? credits("total", "当時の公表表による卒業単位数", totals, () => null, numbers, {
-        unknown: status("科目区分と個別認定"),
-      })
-      : condition("total", "卒業に必要な単位", status("経過措置を含む卒業要件"), src),
+      ? subtotal("total", "当時の公表表による卒業単位数", totals, categories, numbers, { kind: "合計" })
+      : unknownCredits("total", "卒業に必要な単位", status("経過措置を含む卒業要件"), src),
+    ...categories,
+    decision("graduation-review", "当時の在学期間と卒業認定", status("在学期間の通算と本人の卒業認定結果"), src),
     ...recognition(p, office, src),
   ], evidence));
   return { title: p.handbook + "年度 " + p.faculty, stages, sources: evidence };
@@ -132,7 +153,31 @@ export default function resolve(profile) {
   if (!Object.hasOwn(faculties, profile?.faculty)) return null;
   const [resolveFaculty, src, office] = faculties[profile.faculty];
   const selected = resolveFaculty(profile) ?? archiveProfile(profile, src, office);
-  const descriptor = { ...selected, sources: [...selected.sources, listing2026] };
+  // The current year only selects a convenient annual gate. It is never evidence
+  // of attendance, a past promotion, a clinical exam or the original entry year.
+  const studyYear = wholeNumber(profile.yearOfStudy);
+  const stages = selected.stages.map((s) => ({
+    ...s,
+    rows: s.rows.map((r) => {
+      if (r.profileValue && !r.unknown && r.note && r.profileValue(profile) == null) return { ...r, unknown: r.note };
+      return r;
+    }),
+  }));
+  const progress = stages.filter((s) => s.goal === "progress");
+  const annualStage = progress.find((s) => studyYear && s.id === "year-" + (studyYear + 1));
+  const clinicalYear = profile.faculty === "医学部医学科" ? 4 : profile.faculty === "歯学部歯学科" ? 5 : null;
+  const twoGates = studyYear === clinicalYear && progress.some((s) => s.id === "clinical-practice");
+  let defaultStage = annualStage?.id;
+  if (progress.length > 1 && (!annualStage || twoGates)) {
+    const prompt = twoGates
+      ? "同じ年次に進級と臨床実習の判定があります。確認したい判定を選んでください。"
+      : "確認したい進級・実習の判定を選んでください。通常の年次進級は現在の学年からも選択できます。";
+    defaultStage = "progress-selection";
+    stages.unshift(stage(defaultStage, "進級・実習の判定を選択", "progress", [
+      condition("progress-selection", "判定対象", prompt, src),
+    ], [src]));
+  }
+  const descriptor = { ...selected, stages, defaultStage, sources: [...selected.sources, listing2026] };
   if (descriptor.cap || profile.faculty === "創生学部") return descriptor;
   return {
     ...descriptor,

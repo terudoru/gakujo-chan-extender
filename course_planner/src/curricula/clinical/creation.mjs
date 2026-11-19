@@ -5,6 +5,7 @@ import {
   condition,
   contribution,
   credits,
+  decision,
   generalCategories,
   named,
   norm,
@@ -14,9 +15,9 @@ import {
   stage,
   stageApproval,
   subtotal,
+  wholeNumber,
 } from "./rules.mjs";
 import { packageCodes } from "./package-codes.mjs";
-import { creationAllocation } from "./creation-allocation.mjs";
 import { syllabusSection } from "./catalog-sections.mjs";
 
 const site = "https://create.niigata-u.ac.jp/";
@@ -97,8 +98,8 @@ function skillRow(dx, src, year) {
       evaluate: ({ courses }) => {
         const selected = (checks) =>
           checks.flatMap((test) => {
-            const c = courses.find((c) => test(c) === true);
-            return c ? [contribution(c, c.credits)] : [];
+            const c = courses.find((c) => test(c) === true && Number(c.credits) > 0);
+            return c ? [contribution(c, Number(c.credits))] : [];
           });
         const data = selected(["A", "B", "C"].map((v) => own("データサイエンス実践" + v, 2)));
         const basics = selected(half), advanced = selected(full);
@@ -153,10 +154,10 @@ function packageMatcher(selected, type, admission) {
 function graduationTiming(c, p) {
   const term = String(c.period ?? "") + " " + String(c.semester ?? "");
   if (!/[春夏](期|季)?休[業暇]/.test(term)) return true;
-  if (!p.graduationMonth || !p.graduationYear || !c.year) return null;
-  const month = Number(p.graduationMonth), yr = Number(p.graduationYear);
-  return !((month === 3 && yr === Number(c.year) + 1 && /春/.test(term)) ||
-    (month === 9 && yr === Number(c.year) && /夏/.test(term)));
+  const month = wholeNumber(p.graduationMonth), yr = wholeNumber(p.graduationYear);
+  if (![3, 9].includes(month) || !/^\d{4}$/.test(String(yr)) || !/^\d{4}$/.test(String(c.year))) return null;
+  return !((month === 3 && yr === Number(c.year) + 1 && /春[期季]?休[業暇]/.test(term)) ||
+    (month === 9 && yr === Number(c.year) && /夏[期季]?休[業暇]/.test(term)));
 }
 export function creation(p) {
   const year = Number(p.handbook), record = books[year];
@@ -168,7 +169,8 @@ export function creation(p) {
   const names = packageNames(year);
   const selected = dx
     ? "情報社会デザイン科学"
-    : names.find((n) => p.package === n || program.endsWith("(" + norm(n) + ")") || program === norm(n));
+    : names.find((n) => program.endsWith("(" + norm(n) + ")") || program === norm(n)) ??
+      names.find((n) => n === p.field || (!p.field && n === p.package));
   const url = site + record[0], page = (title, num) => source(title, url + "#page=" + num);
   const progress = page("4年次進級基準", record[1]), grad = page("卒業要件", record[2]);
   const subjects = year === 2018
@@ -212,10 +214,10 @@ export function creation(p) {
     ...group("basic", "基礎", basicNames.map((n) => [n, 2])),
   ];
   const foreign = credits("foreign", "初修外国語", 2, category("初修外国語"), subjects);
-  const foundation = credits("field-foundation", "領域基礎科目", determined ? (dx ? 26 : 20) : null, base, pkg, {
+  const foundation = credits("domain-foundation", "領域基礎科目", determined ? (dx ? 26 : 20) : null, base, pkg, {
     kind: "領域学修",
   });
-  const expanded = credits("field-advanced", "領域科目（領域基礎の超過分を含む）", 20, domain, pkg, {
+  const expanded = credits("domain-advanced", "領域科目（領域基礎の超過分を含む）", 20, domain, pkg, {
     kind: "領域学修",
   });
   const fieldIntro = modern ? "領域学修入門" : "リフレクションデザインⅡ";
@@ -318,7 +320,7 @@ export function creation(p) {
       );
     } else {
       parts.push(
-        credits("field-pool", "領域基礎・領域科目", determined ? (dx ? 26 : 20) : null, domain, pkg),
+        credits("domain-pool", "領域基礎・領域科目", determined ? (dx ? 26 : 20) : null, domain, pkg),
         credits(
           "remaining-pool",
           "基礎②・リテラシーコア・自由科目等",
@@ -331,34 +333,53 @@ export function creation(p) {
     }
     const guard = (m) => (c, profile) => {
       if (norm(c.title) === "ベーシック数学ゼミ") return false;
+      const match = m(c, profile);
+      if (match === false) return false;
       if (isGrad && year >= 2023) {
         const allowed = graduationTiming(c, profile ?? p);
         if (allowed !== true) return allowed;
       }
-      return m(c, profile);
+      return match;
     };
-    const guarded = parts.map((r) => ({ ...r, match: guard(r.match) }));
-    const allocate = creationAllocation(guarded);
-    const rows = guarded.map((r) => ({
-      ...r,
-      evaluate: ({ courses, profile }) => allocate(courses, profile ?? p).get(r.key),
-    }));
+    // Select the prescribed P.A.C.E./data route before allocating English or free credits.
+    const ordered = isGrad ? [skill, ...parts.filter((r) => r !== skill)] : parts;
+    const rows = ordered.map((r) => {
+      const match = guard(r.match);
+      const row = { ...r, match, exclusive: "creation-" + clinicalGoal };
+      if (r.evaluate) {
+        row.evaluate = ({ courses, profile, baseline }) => {
+          const eligible = courses.filter((c) => match(c, profile) === true);
+          const result = r.evaluate({ courses: eligible, profile, baseline });
+          if (
+            result.value < r.required &&
+            courses.some((c) => match(c, profile) == null || (match(c, profile) === true && !(Number(c.credits) > 0)))
+          ) {
+            return { ...result, unknown: "科目の開講元・履修時期と卒業判定年月を創生学部学務係で照合してください。" };
+          }
+          return result;
+        };
+      }
+      return row;
+    });
     const introSum = subtotal(
       "intro",
       "導入・転換教育科目",
       introTarget,
-      guarded.filter((r) => r.key.startsWith("intro-")),
+      rows.filter((r) => r.key.startsWith("intro-")),
       src,
     );
-    const total = credits(
+    const breakNote = isGrad && year >= 2023
+      ? "卒業年度の春期休業（3月卒業）・夏季休業（9月卒業）の授業は算入できません。該当する授業がある場合は卒業予定の西暦年と月を入力してください。"
+      : undefined;
+    const total = subtotal(
       "total",
       prefix + "単位の合計",
       isGrad ? 126 : 90,
-      combined(...rows.map((r) => r.match)),
+      rows,
       src,
       {
         kind: "合計",
-        evaluate: ({ courses, profile }) => allocate(courses, profile ?? p).get("total"),
+        note: breakNote,
       },
     );
     const result = [total, introSum, ...rows, residency("residency", "創生学部の在学期間", isGrad ? 48 : 36, src)];
@@ -384,7 +405,7 @@ export function creation(p) {
     }
     if (selected === "社会・地域文化学") {
       result.push(
-        condition(
+        decision(
           "old-package",
           "社会・地域文化学の旧科目表",
           "令和8年度案内では令和4年度に選択者が全員卒業したため旧表を掲載していません。所属当時の領域科目と読替を創生学部学務係で照合してください。",

@@ -1,8 +1,8 @@
 import {
   category,
   combined,
-  condition,
   credits,
+  decision,
   named,
   recognition,
   residency,
@@ -89,9 +89,34 @@ const old08 = [
     ["歯科臨床概論", 2],
     ["歯科診療補助Ⅰ", 2],
     ["早期臨床実習ⅡB", 1],
+    ["咀嚼嚥下の科学", 4],
+    ["栄養指導・栄養学", 4],
+    ["保健指導Ⅰ", 3],
+    ["口腔衛生学・歯科統計学Ⅰ", 2],
+    ["臨床歯科学Ⅰ", 1],
   ],
-  [["歯科診療補助Ⅱ", 4], ["歯科予防処置Ⅱ", 4], ["高齢者・障害者歯科学", 2], ["歯科衛生士臨床実習Ⅰ", 4]],
-  [["訪問歯科診療", 1], ["歯科衛生士臨床実習Ⅱ", 14]],
+  [
+    ["歯科診療補助Ⅱ", 4],
+    ["歯科予防処置Ⅱ", 4],
+    ["高齢者・障害者歯科学", 2],
+    ["歯科衛生士臨床実習Ⅰ", 4],
+    ["介護概論", 2],
+    ["保健指導Ⅱ", 1],
+    ["社会福祉原論Ⅰ", 2],
+    ["老人福祉論Ⅰ", 2],
+    ["障害者福祉論Ⅰ", 2],
+    ["児童福祉論Ⅰ", 2],
+    ["社会保障論", 2],
+    ["公的扶助論", 2],
+    ["臨床歯科学Ⅱ", 2],
+    ["社会福祉援助技術論", 4],
+    ["社会福祉援助技術演習", 4],
+    ["社会福祉援助技術現場実習指導", 2],
+  ],
+  [["訪問歯科診療", 1], ["歯科衛生士臨床実習Ⅱ", 14], ["口腔衛生学・歯科統計学Ⅱ", 2], ["社会保険と医療制度", 2], [
+    "臨床歯科学Ⅲ",
+    1,
+  ], ["社会福祉援助技術現場実習", 4]],
 ];
 export function historicalOral(p) {
   const y = Number(p.handbook);
@@ -130,24 +155,17 @@ export function historicalOral(p) {
       year: index + 1,
     }))
   );
-  if (!old) {
-    prof.push(
-      credits(
-        "oral-choice",
-        "4年次選択科目",
-        2,
-        named(["社会福祉原論Ⅱ", "高齢者福祉論Ⅱ", "障害者福祉論Ⅱ", "児童福祉論Ⅱ", "歯科衛生学Ⅱ"], "08", 2, /^\d{3}DA/i),
-        table,
-      ),
-    );
-  }
+  const choices = old
+    ? ["社会福祉原論Ⅱ", "老人福祉論Ⅱ", "障害者福祉論Ⅱ", "児童福祉論Ⅱ", "保健指導Ⅲ", "歯科予防処置Ⅲ"]
+    : ["社会福祉原論Ⅱ", "高齢者福祉論Ⅱ", "障害者福祉論Ⅱ", "児童福祉論Ⅱ", "歯科衛生学Ⅱ"];
+  prof.push(credits("oral-choice", "4年次選択科目", 2, named(choices, "08", 2, /^\d{3}DA/i), table));
   const majorUnits = old ? 109 : 116;
   const major = subtotal("major", "専門教育科目", majorUnits, prof, table);
   const gen = subtotal("general", "教養教育科目", 31, general, src);
   const stages = [1, 2, 3].map((n) =>
     stage("year-" + (n + 1), (n + 1) + "年次進級", "progress", [
       ...prof.filter((r) => r.year === n),
-      condition(
+      decision(
         "promotion",
         "当時の進級判定",
         "年次配当の修了記録と当時の進級条件を歯学部学務係で照合してください。",
@@ -156,22 +174,12 @@ export function historicalOral(p) {
     ], [table, dentalAct])
   );
   stages.push(stage("graduation", "卒業", "graduation", [
-    subtotal("total", "卒業単位の合計", 31 + majorUnits, [...general, ...prof], src),
+    subtotal("total", "卒業単位の合計", 31 + majorUnits, [gen, major], src),
     gen,
     ...general,
     scienceBreadth(src),
     major,
     ...prof,
-    ...(old
-      ? [
-        condition(
-          "old-subjects",
-          "平成20年度の専門科目の読替と選択",
-          "専門必修107単位と選択2単位について、旧科目名に対応しない科目・認定区分を歯学部学務係で確認してください。",
-          table,
-        ),
-      ]
-      : []),
     residency("residency", "在学期間", 48, dentalAct),
     stageApproval("歯学部学務係", dentalAct),
     ...recognition(p, "歯学部学務係", dentalAct),

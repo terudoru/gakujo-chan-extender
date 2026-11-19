@@ -21,6 +21,17 @@ export const condition = (key, label, unknown, source) => ({
   unknown,
   source,
 });
+// A scoped official decision supplies current=1 (confirmed) or 0 (not met).
+// Its result is independent of earned courses and of the student's other stages.
+export const decision = (key, label, unknown, source) => ({
+  ...condition(key, label, unknown, source),
+  required: 1,
+  profileValue: () => null,
+});
+export const unknownCredits = (key, label, unknown, source) => ({
+  ...condition(key, label, unknown, source),
+  unit: "credits",
+});
 export const stage = (id, label, goal, rows, sources) => ({ id, label, goal, rows, sources });
 export const combined = (...matches) => (course, profile) => {
   let unknown = false;
@@ -79,7 +90,12 @@ export function subcategory(main, sub, knownTitle) {
     return official && !["心理学", "社会学"].includes(sub) ? official === sub : null;
   };
 }
-export function residency(key, label, required, source, field = "enrolledMonths") {
+export function wholeNumber(value) {
+  if (typeof value !== "number" && (typeof value !== "string" || !/^\d+$/.test(value.trim()))) return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+export function residency(key, label, required, source, year) {
   return {
     key,
     label,
@@ -87,11 +103,23 @@ export function residency(key, label, required, source, field = "enrolledMonths"
     source,
     kind: "在学期間",
     unit: "months",
+    note: year
+      ? "休学を除く当該年次の認定月数を使用します。"
+      : "休学を除く、当該課程で通算を認められた在学月数を使用します。",
     profileValue: (p) => {
-      const raw = p[field];
-      return raw != null && raw !== "" && Number.isInteger(Number(raw)) && Number(raw) >= 0 ? Number(raw) : null;
+      if (year == null) {
+        return wholeNumber(Object.hasOwn(p, "attendanceMonths") ? p.attendanceMonths : p.enrolledMonths);
+      }
+      const raw = Object.hasOwn(p, "yearAttendanceMonths") ? p.yearAttendanceMonths?.[year] : p["monthsInYear" + year];
+      return wholeNumber(raw);
     },
   };
+}
+export function assessmentInApril(p) {
+  if (typeof p.assessmentDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p.assessmentDate)) return null;
+  const d = new Date(p.assessmentDate + "T00:00:00Z");
+  if (!Number.isFinite(d.getTime()) || d.toISOString().slice(0, 10) !== p.assessmentDate) return null;
+  return Number(d.getUTCMonth() === 3);
 }
 export function isSpecial(p) {
   return /編入|転部|再入学|転入/.test(p.entry ?? "");
@@ -99,13 +127,13 @@ export function isSpecial(p) {
 export function recognition(p, office, src) {
   return isSpecial(p)
     ? [
-      condition(
+      decision(
         "recognized-credits",
         "既修得単位の認定区分",
         office + "で認定された科目と算入区分を履修科目確認表で照合してください。",
         src,
       ),
-      condition(
+      decision(
         "recognized-period",
         "通算を認められた在学期間",
         office + "で認定された在学期間を確認してください。",
@@ -118,38 +146,17 @@ export function contribution(c, applied) {
   return { title: c.title, code: c.code ?? "", year: c.year ?? "", credits: c.credits, applied };
 }
 
-// One pool uses each credit once. Narrow rows precede the rows that take their surplus.
+// The shared engine combines confirmed balances and course evidence. Each leaf
+// contributes up to its own requirement, even when several categories overlap.
 export function subtotal(key, label, required, leaves, src, extra = {}) {
-  const match = combined(...leaves.map((r) => r.match));
-  return credits(key, label, required, match, src, {
+  return credits(key, label, required, combined(...leaves.map((r) => r.match ?? (() => null))), src, {
     kind: "区分計",
-    evaluate: ({ courses, profile }) => {
-      const available = courses.map((c) => Number(c.credits) || 0);
-      const used = courses.map(() => 0);
-      let uncertain = false;
-      for (const row of leaves) {
-        let need = row.required;
-        for (let i = 0; i < courses.length && need > 0; i++) {
-          if (!available[i]) continue;
-          const result = row.match(courses[i], profile);
-          if (result == null) uncertain = true;
-          if (result !== true) continue;
-          const units = Math.min(available[i], need);
-          available[i] -= units;
-          need -= units;
-          used[i] += units;
-        }
-      }
-      const value = used.reduce((sum, v) => sum + v, 0);
-      return {
-        value,
-        contributions: courses.flatMap((c, i) => used[i] ? [contribution(c, used[i])] : []),
-        ...(uncertain && value < required ? { unknown: "科目の開講元・便覧上の区分を学務係で確認してください。" } : {}),
-      };
-    },
+    disjoint: true,
+    pool: leaves.map((r) => ({ key: r.key, cap: r.required ?? undefined })),
+    allocationKeys: leaves.flatMap((r) => [r.key, ...(r.allocationKeys ?? [])]),
     ...extra,
   });
 }
 
 export const stageApproval = (office, src) =>
-  condition("graduation-review", "卒業の認定", office + "で教授会の議を経た卒業認定結果を確認してください。", src);
+  decision("graduation-review", "卒業の認定", office + "で教授会の議を経た卒業認定結果を確認してください。", src);

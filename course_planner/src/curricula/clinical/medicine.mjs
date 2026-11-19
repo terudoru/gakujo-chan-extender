@@ -2,8 +2,8 @@ import {
   act,
   category,
   combined,
-  condition,
   credits,
+  decision,
   named,
   norm,
   recognition,
@@ -155,7 +155,7 @@ export function medicine(p) {
       )
     )
     : [];
-  const generalCheck = condition(
+  const generalCheck = decision(
     "general-designation",
     "教養科目の区分・指定科目",
     "当該年度の医学部規程別表第1で、英語・初修外国語・自然系共通専門基礎等の配分と読替を医学科学務係に確認してください。",
@@ -165,14 +165,14 @@ export function medicine(p) {
     subtotal("major", "当該年次の指定専門科目", rows.reduce((s, r) => s + r.required, 0), rows, src);
   const majorRow = { ...majorSum(major), label: "専門必修科目" };
   const genMatch = general.length ? combined(...general.map((r) => r.match)) : (c, p) => {
+    if (excluded.includes(norm(c.title))) return false;
     if (c.department && c.department !== "84") return false;
     return historicGeneral.some((r) => r.match(c, p) === true) ? true : null;
   };
   const gen = general.length
     ? subtotal("general", "教養教育科目", 43, general, generalSrc)
     : credits("general", "教養教育科目", y >= 2020 ? 43 : 45, genMatch, generalSrc, { unknown: generalCheck.unknown });
-  const totalMatch = combined(genMatch, majorRow.match);
-  const attend = condition(
+  const attend = decision(
     "attendance",
     "専門科目の出席・考査",
     "医学科学務係で考査の受験資格と成績を確認してください。出席が授業時間の3分の2に達しない場合は受験資格を失うことがあります。",
@@ -194,7 +194,7 @@ export function medicine(p) {
       "診療参加型臨床実習の開始",
       "progress",
       ["CBT", "OSCE"].map((n) =>
-        condition(
+        decision(
           "clinical-" + n,
           "臨床実習前共用試験 " + n,
           "医学科学務係で" + n + "の合格結果を確認してください。",
@@ -204,16 +204,9 @@ export function medicine(p) {
       [practice, clinicalExams],
     ),
   );
-  const total = general.length
-    ? subtotal("total", "卒業単位の合計", 43 + majorRow.required, [...general, ...major], src, { kind: "合計" })
-    : credits(
-      "total",
-      "卒業単位の合計",
-      gen.required == null ? null : gen.required + majorRow.required,
-      (c, p) => excluded.includes(norm(c.title)) ? false : totalMatch(c, p),
-      src,
-      { kind: "合計", ...(gen.required == null ? { unknown: generalCheck.unknown } : {}) },
-    );
+  const total = subtotal("total", "卒業単位の合計", gen.required + majorRow.required, [gen, majorRow], src, {
+    kind: "合計",
+  });
   const gradRows = [
     total,
     gen,
@@ -229,7 +222,7 @@ export function medicine(p) {
   if (y >= 2024) gradRows.push(attend);
   if (y >= 2017) {
     gradRows.push(
-      condition(
+      decision(
         "clinical-exam",
         "卒業時の臨床能力評価",
         "医学科学務係で卒業時臨床実習後OSCEの合格と適用される評価方法を確認してください。",
@@ -239,7 +232,7 @@ export function medicine(p) {
   }
   if (/編入/.test(p.entry ?? "")) {
     gradRows.push(
-      condition(
+      decision(
         "transfer-limits",
         "編入学の場合の在学年限・休学期間",
         "医学科学務係で編入認定と在学年限を照合してください。2年次は最長3年、2～4年次通算6年、5～6年次通算4年です。休学期間にも年次別の上限があります。",
@@ -249,7 +242,7 @@ export function medicine(p) {
   }
   if (y < 2024) {
     gradRows.push(
-      condition(
+      decision(
         "transition-2024",
         "2024年改正後の専門科目を履修した場合",
         "施行時の在学者が改正別表第3の科目を算入できる場合があります。対応科目と認定単位を医学科学務係に確認してください。",
@@ -262,8 +255,9 @@ export function medicine(p) {
     title: y + "年度 医学部医学科",
     sources: [medicalAct, src, generalSrc],
     stages,
-    note: (y < 2022
-      ? "教養の単位数は同じ規程期間に大学が公表した卒業総単位数から専門別表の合計を引いた値です。当時の教養科目別の配分と読替は医学科学務係で照合してください。"
-      : "") + "外国人留学生等の日本語・日本事情の代替、再試験、個別の既修得認定は医学科学務係の判定によります。",
+    note:
+      (y < 2022
+        ? "教養の単位数は同じ規程期間に大学が公表した卒業総単位数から専門別表の合計を引いた値です。当時の教養科目別の配分と読替は医学科学務係で照合してください。"
+        : "") + "外国人留学生等の日本語・日本事情の代替、再試験、個別の既修得認定は医学科学務係の判定によります。",
   };
 }
