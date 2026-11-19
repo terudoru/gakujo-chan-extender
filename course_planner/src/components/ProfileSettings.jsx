@@ -13,6 +13,33 @@ import {
 } from "./profile-settings.mjs";
 import "./planner-forms.css";
 
+const TRI_STATE_CHOICES = [
+  ["", "未設定"],
+  ["true", "あり"],
+  ["false", "なし"],
+];
+
+function TriStateField({ label, value, onChange }) {
+  return (
+    <div className="pf-tristate">
+      <span className="pf-tristate-label">{label}</span>
+      <div className="pf-program-chips" role="group" aria-label={label}>
+        {TRI_STATE_CHOICES.map(([optionValue, optionLabel]) => (
+          <button
+            key={optionLabel}
+            type="button"
+            className="pf-chip"
+            aria-pressed={value === optionValue}
+            onClick={() => onChange(optionValue)}
+          >
+            {optionLabel}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProfileSettings({
   state,
   mutate,
@@ -75,6 +102,36 @@ export function ProfileSettings({
     ACADEMIC_YEARS.filter(
       (year) => cleanNumericText(draft.yearAttendanceMonths[year]) !== "",
     ).length;
+
+  const isLaw = draft.faculty === "法学部";
+  const isEconomics = draft.faculty === "経済科学部";
+  const isHealthTransfer =
+    draft.faculty === "医学部保健学科" && draft.entry === "編入";
+  const isCreation = draft.faculty === "創生学部";
+  const showFacultySection =
+    isLaw || isEconomics || isHealthTransfer || isCreation;
+
+  const facultyOptionCount = isLaw
+    ? [
+        draft.earlyGraduation,
+        draft.deanException,
+        draft.lawPaperSubstitutionApproved,
+        cleanNumericText(draft.thirdYearCumulativeGpa),
+      ].filter((v) => v !== "").length
+    : isEconomics
+      ? draft.iStepApproved !== ""
+        ? 1
+        : 0
+      : isHealthTransfer
+        ? cleanNumericText(draft.entryGrade) !== ""
+          ? 1
+          : 0
+        : isCreation
+          ? [
+              cleanNumericText(draft.graduationYear),
+              cleanNumericText(draft.graduationMonth),
+            ].filter((v) => v !== "").length
+          : 0;
 
   async function save() {
     setLocalError("");
@@ -183,7 +240,7 @@ export function ProfileSettings({
           <div
             className="pf-program-chips"
             role="group"
-            aria-label="プログラム・分野の候補"
+            aria-label="便覧のプログラム候補"
           >
             {programChoices.map((name) => (
               <button
@@ -261,6 +318,119 @@ export function ProfileSettings({
           </div>
         </div>
       </details>
+      {showFacultySection && (
+        <details className="pf-disclosure">
+          <summary className="pf-disclosure-summary">
+            <span>{draft.faculty}の個別確認項目（任意）</span>
+            {facultyOptionCount > 0 && (
+              <small className="pf-disclosure-count">
+                {facultyOptionCount}項目入力中
+              </small>
+            )}
+          </summary>
+          <div className="pf-disclosure-body">
+            {isLaw && (
+              <>
+                <p className="pf-note">
+                  申請・認定済みの特例のみ選択してください。未設定の項目は自動判定しません。
+                </p>
+                <TriStateField
+                  label="早期卒業を申請"
+                  value={draft.earlyGraduation}
+                  onChange={(v) => update("earlyGraduation", v)}
+                />
+                <TriStateField
+                  label="D類履修の学部長特認"
+                  value={draft.deanException}
+                  onChange={(v) => update("deanException", v)}
+                />
+                <TriStateField
+                  label="ジュニア・リサーチ・ペーパーのE類8単位代替の学部長認定"
+                  value={draft.lawPaperSubstitutionApproved}
+                  onChange={(v) => update("lawPaperSubstitutionApproved", v)}
+                />
+                <TextInput
+                  label="3年次末累積GPA"
+                  placeholder="0〜5"
+                  inputMode="decimal"
+                  value={draft.thirdYearCumulativeGpa}
+                  onChange={(v) => update("thirdYearCumulativeGpa", v)}
+                />
+              </>
+            )}
+            {isEconomics && (
+              <>
+                <p className="pf-note">
+                  学務係へ申出・確認済みの場合のみ「あり」を選択してください。
+                </p>
+                <TriStateField
+                  label="iStep振替の学務係への申出・確認"
+                  value={draft.iStepApproved}
+                  onChange={(v) => update("iStepApproved", v)}
+                />
+              </>
+            )}
+            {isHealthTransfer && (
+              <>
+                <p className="pf-note">
+                  編入時の年次（例：3年次編入なら3）を入力してください。
+                </p>
+                <TextInput
+                  label="編入した年次"
+                  placeholder="例 3"
+                  inputMode="numeric"
+                  value={draft.entryGrade}
+                  onChange={(v) => update("entryGrade", v)}
+                />
+              </>
+            )}
+            {isCreation && (
+              <>
+                <p className="pf-note">
+                  春季・夏季休業中科目の算入可否の確認に使います。卒業予定は暦年（例：2026年度3月卒業は2027）で入力し、通常は3月または9月（その他は1〜12の月）を指定します。
+                </p>
+                <div className="pair">
+                  <TextInput
+                    label="卒業予定（暦年）"
+                    placeholder="例 2027"
+                    inputMode="numeric"
+                    value={draft.graduationYear}
+                    onChange={(v) => update("graduationYear", v)}
+                  />
+                  <TextInput
+                    label="卒業予定月"
+                    placeholder="3・9（1〜12）"
+                    inputMode="numeric"
+                    value={draft.graduationMonth}
+                    onChange={(v) => update("graduationMonth", v)}
+                  />
+                </div>
+                <div
+                  className="pf-program-chips"
+                  role="group"
+                  aria-label="標準の卒業月を選択"
+                >
+                  {[
+                    ["3", "3月"],
+                    ["9", "9月"],
+                    ["", "未設定"],
+                  ].map(([mVal, mLabel]) => (
+                    <button
+                      key={mLabel}
+                      type="button"
+                      className="pf-chip"
+                      aria-pressed={cleanNumericText(draft.graduationMonth) === mVal}
+                      onClick={() => update("graduationMonth", mVal)}
+                    >
+                      {mLabel}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </details>
+      )}
       <div className="pair">
         <TextInput
           label="個別のCAP上限"
@@ -271,7 +441,7 @@ export function ProfileSettings({
         />
         <TextInput
           label="前学期GPA"
-          placeholder="0〜4"
+          placeholder="0〜5"
           inputMode="decimal"
           value={draft.gpa}
           onChange={(v) => update("gpa", v)}

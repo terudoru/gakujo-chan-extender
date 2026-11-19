@@ -245,11 +245,15 @@ test("ProfileSettings keeps empty and 0 distinct, never infers dates, preserves 
   assert.equal(validatedEmpty.cap, "");
   assert.equal(validatedEmpty.yearOfStudy, "");
 
+  // GPA 4.5 and 5 are valid on the 0..5 scale; > 5 throws
+  assert.equal(validateProfileDraft({ ...validatedEmpty, gpa: "4.5" }).gpa, "4.5");
+  assert.equal(validateProfileDraft({ ...validatedEmpty, gpa: "5" }).gpa, "5");
+
   // Invalid inputs throw
   assert.throws(() => validateProfileDraft({ ...validatedEmpty, faculty: "" }));
   assert.throws(() => validateProfileDraft({ ...validatedEmpty, handbook: "26" }));
   assert.throws(() => validateProfileDraft({ ...validatedEmpty, admitted: "abc" }));
-  assert.throws(() => validateProfileDraft({ ...validatedEmpty, gpa: "4.5" }));
+  assert.throws(() => validateProfileDraft({ ...validatedEmpty, gpa: "5.1" }));
   assert.throws(() => validateProfileDraft({ ...validatedEmpty, attendanceMonths: "-1" }));
   assert.throws(() => validateProfileDraft({ ...validatedEmpty, yearOfStudy: "0" }));
 

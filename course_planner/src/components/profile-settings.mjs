@@ -22,6 +22,25 @@ export const SCALAR_OWNED_PROFILE_KEYS = Object.freeze([
   "assessmentDate",
 ]);
 
+export const TRI_STATE_PROFILE_KEYS = Object.freeze([
+  "earlyGraduation",
+  "deanException",
+  "lawPaperSubstitutionApproved",
+  "iStepApproved",
+]);
+
+export const OPTIONAL_NUMERIC_PROFILE_KEYS = Object.freeze([
+  "thirdYearCumulativeGpa",
+  "entryGrade",
+  "graduationYear",
+  "graduationMonth",
+]);
+
+export const CONDITIONAL_PROFILE_KEYS = Object.freeze([
+  ...TRI_STATE_PROFILE_KEYS,
+  ...OPTIONAL_NUMERIC_PROFILE_KEYS,
+]);
+
 export const OWNED_PROFILE_KEYS = Object.freeze([
   ...SCALAR_OWNED_PROFILE_KEYS,
   "yearAttendanceMonths",
@@ -30,6 +49,12 @@ export const OWNED_PROFILE_KEYS = Object.freeze([
 export function toInputText(value) {
   if (value === null || value === undefined) return "";
   return String(value);
+}
+
+export function toTriStateText(value) {
+  if (value === true) return "true";
+  if (value === false) return "false";
+  return "";
 }
 
 export function cleanNumericText(value) {
@@ -92,6 +117,16 @@ export function initialProfileDraft(profile = {}) {
     yearAttendanceMonths: initialYearAttendanceDraft(
       profile.yearAttendanceMonths,
     ),
+    earlyGraduation: toTriStateText(profile.earlyGraduation),
+    deanException: toTriStateText(profile.deanException),
+    lawPaperSubstitutionApproved: toTriStateText(
+      profile.lawPaperSubstitutionApproved,
+    ),
+    thirdYearCumulativeGpa: toInputText(profile.thirdYearCumulativeGpa),
+    iStepApproved: toTriStateText(profile.iStepApproved),
+    entryGrade: toInputText(profile.entryGrade),
+    graduationYear: toInputText(profile.graduationYear),
+    graduationMonth: toInputText(profile.graduationMonth),
   };
 }
 
@@ -187,6 +222,19 @@ export function programChoicesFor(
   return [];
 }
 
+function validateGpaText(raw, label) {
+  const cleaned = cleanNumericText(raw);
+  if (cleaned === "") return "";
+  if (
+    !Number.isFinite(Number(cleaned)) ||
+    Number(cleaned) < 0 ||
+    Number(cleaned) > 5
+  ) {
+    throw Error(`${label}は0〜5の範囲で入力してください。`);
+  }
+  return cleaned;
+}
+
 function validateScalarField(key, raw) {
   switch (key) {
     case "faculty": {
@@ -236,16 +284,8 @@ function validateScalarField(key, raw) {
       }
       return attendanceMonths;
     }
-    case "gpa": {
-      const gpa = cleanNumericText(raw);
-      if (
-        gpa !== "" &&
-        (!Number.isFinite(Number(gpa)) || Number(gpa) < 0 || Number(gpa) > 4)
-      ) {
-        throw Error("前学期GPAは0〜4の範囲で入力してください。");
-      }
-      return gpa;
-    }
+    case "gpa":
+      return validateGpaText(raw, "前学期GPA");
     case "cap": {
       const cap = cleanNumericText(raw);
       if (cap !== "" && (!Number.isFinite(Number(cap)) || Number(cap) < 0)) {
@@ -267,6 +307,58 @@ function validateScalarField(key, raw) {
   }
 }
 
+function validateConditionalField(key, raw) {
+  if (TRI_STATE_PROFILE_KEYS.includes(key)) {
+    if (raw === true || raw === "true") return true;
+    if (raw === false || raw === "false") return false;
+    const text = toInputText(raw).trim();
+    if (text === "") return undefined;
+    throw Error("該当・非該当または未設定を選択してください。");
+  }
+  switch (key) {
+    case "thirdYearCumulativeGpa": {
+      const cleaned = validateGpaText(raw, "3年次末累積GPA");
+      if (cleaned === "") return undefined;
+      const n = Number(cleaned);
+      return Object.is(n, -0) ? 0 : n;
+    }
+    case "entryGrade": {
+      const cleaned = cleanNumericText(raw);
+      if (cleaned === "") return undefined;
+      if (
+        !/^\d+$/.test(cleaned) ||
+        Number(cleaned) < 1 ||
+        !Number.isSafeInteger(Number(cleaned))
+      ) {
+        throw Error("編入した年次は1以上の整数で入力してください。");
+      }
+      return Number(cleaned);
+    }
+    case "graduationYear": {
+      const cleaned = cleanNumericText(raw);
+      if (cleaned === "") return undefined;
+      if (!/^\d{4}$/.test(cleaned)) {
+        throw Error("卒業予定（暦年）は4桁の西暦で入力してください。");
+      }
+      return Number(cleaned);
+    }
+    case "graduationMonth": {
+      const cleaned = cleanNumericText(raw);
+      if (cleaned === "") return undefined;
+      if (
+        !/^\d+$/.test(cleaned) ||
+        Number(cleaned) < 1 ||
+        Number(cleaned) > 12
+      ) {
+        throw Error("卒業予定月は1〜12の整数で入力してください。");
+      }
+      return Number(cleaned);
+    }
+    default:
+      return undefined;
+  }
+}
+
 function validateYearMonthValue(raw) {
   const cleaned = cleanNumericText(raw);
   if (cleaned === "") return null;
@@ -282,6 +374,11 @@ function validateYearMonthValue(raw) {
 
 function normalizeForDiff(key, raw) {
   if (key === "faculty" || key === "program" || key === "entry") {
+    return toInputText(raw).trim();
+  }
+  if (TRI_STATE_PROFILE_KEYS.includes(key)) {
+    if (raw === true || raw === "true") return "true";
+    if (raw === false || raw === "false") return "false";
     return toInputText(raw).trim();
   }
   return cleanNumericText(raw);
@@ -301,6 +398,12 @@ export function validateProfileDraft(draft) {
     }
   }
   result.yearAttendanceMonths = yearMonths;
+  for (const key of CONDITIONAL_PROFILE_KEYS) {
+    const parsed = validateConditionalField(key, draft?.[key]);
+    if (parsed !== undefined) {
+      result[key] = parsed;
+    }
+  }
   return result;
 }
 
@@ -311,6 +414,18 @@ export function diffProfileDraft(initialDraft, submittedDraft) {
     const after = normalizeForDiff(key, submittedDraft?.[key]);
     if (before !== after) {
       scalarChanges[key] = validateScalarField(key, submittedDraft?.[key]);
+    }
+  }
+
+  const conditionalChanges = {};
+  for (const key of CONDITIONAL_PROFILE_KEYS) {
+    const before = normalizeForDiff(key, initialDraft?.[key]);
+    const after = normalizeForDiff(key, submittedDraft?.[key]);
+    if (before !== after) {
+      conditionalChanges[key] = validateConditionalField(
+        key,
+        submittedDraft?.[key],
+      );
     }
   }
 
@@ -325,7 +440,7 @@ export function diffProfileDraft(initialDraft, submittedDraft) {
     }
   }
 
-  return { scalarChanges, yearMonthChanges };
+  return { scalarChanges, conditionalChanges, yearMonthChanges };
 }
 
 export function applyProfilePatch(state, draft, initialDraft) {
@@ -337,6 +452,13 @@ export function applyProfilePatch(state, draft, initialDraft) {
     const nextProfile = { ...currentProfile };
     for (const key of SCALAR_OWNED_PROFILE_KEYS) {
       nextProfile[key] = validated[key];
+    }
+    for (const key of CONDITIONAL_PROFILE_KEYS) {
+      if (Object.hasOwn(validated, key)) {
+        nextProfile[key] = validated[key];
+      } else {
+        delete nextProfile[key];
+      }
     }
     const existingYearMonths =
       currentProfile.yearAttendanceMonths &&
@@ -356,11 +478,17 @@ export function applyProfilePatch(state, draft, initialDraft) {
     return nextProfile;
   }
 
-  const { scalarChanges, yearMonthChanges } = diffProfileDraft(
-    initialDraft,
-    draft,
-  );
+  const { scalarChanges, conditionalChanges, yearMonthChanges } =
+    diffProfileDraft(initialDraft, draft);
   const nextProfile = { ...currentProfile, ...scalarChanges };
+
+  for (const [key, value] of Object.entries(conditionalChanges)) {
+    if (value === undefined) {
+      delete nextProfile[key];
+    } else {
+      nextProfile[key] = value;
+    }
+  }
 
   // Validate required profile invariants against the merged latest state.
   validateScalarField("faculty", nextProfile.faculty);
