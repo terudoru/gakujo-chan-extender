@@ -8,6 +8,7 @@ import {
   allocationAppliesToStage,
   courseMatch,
   evidence,
+  hasFailedGrade,
   isAcademicFieldKey,
   prepareCourses,
   quantity,
@@ -274,6 +275,15 @@ function addRecognitions(result, row, credits, unidentified = 0) {
   result.unidentifiedStatement = Math.max(0, unidentified - earned);
 }
 
+// An opted-in condition sees confirmed failing attempts as column "evaluation"
+// with the original grade and earnedCredits: 0; its own evaluator decides
+// whether that final evaluation satisfies the handbook's condition.
+const acceptsFailedEvaluations = (row) =>
+  row.unit === "condition" &&
+  row.includeFailedEvaluations === true &&
+  typeof row.evaluate === "function" &&
+  !row.profileValue;
+
 // evaluate({courses, profile, baseline}) is called for earned courses and then
 // for earned + planned. Return the full audited value and optional contributions
 // [{course, applied}] or [{code, year, title, credits, applied}]. baseline is a
@@ -302,6 +312,13 @@ function evaluated(
     }
   }
   for (const c of courses) {
+    if (
+      acceptsFailedEvaluations(row) &&
+      c.column !== "evaluation" &&
+      (hasFailedGrade(c.grade || c.result) ||
+        (!c.grade && c.evaluated === true))
+    )
+      continue;
     if (inherited.has(c)) {
       recognized.set(c, inherited.get(c));
       continue;
@@ -457,7 +474,7 @@ function pooled(row, get, definitions, courses, balances, profile) {
   return result;
 }
 
-function assess(rows, courses, profile, balances, before) {
+function assess(rows, courses, profile, balances, failedEvaluations, before) {
   const values = new Map(),
     visiting = new Set();
   const definitions = new Map(rows.map((r) => [r.key, r]));
@@ -609,6 +626,40 @@ function assess(rows, courses, profile, balances, before) {
     return result;
   }
   for (const row of rows) get(row.key);
+  // Complete the ordinary credit and pool calculations before evaluating
+  // conditions that explicitly accept a final failing grade. A condition's
+  // witness never becomes an input to another row or a source of credit.
+  if (failedEvaluations.length) {
+    for (const row of rows) {
+      if (!acceptsFailedEvaluations(row) || balances.has(row.key)) continue;
+      const unavailable = new Set();
+      const peers = row.required !== null && groups.get(row.exclusive);
+      if (peers) {
+        if (values.get(row.key).value >= row.required) continue;
+        for (const peer of peers) {
+          if (peer === row) continue;
+          const assigned = values.get(peer.key);
+          for (const map of [assigned.applied, assigned.covered ?? []])
+            for (const [c, n] of map) if (n > 0) unavailable.add(c);
+        }
+      }
+      const eligible = failedEvaluations.filter(
+        (c) =>
+          !unavailable.has(c) && (!row.match || row.match(c, profile) === true),
+      );
+      if (!eligible.length) continue;
+      const result = evaluated(
+        row,
+        [...courses.filter((c) => !unavailable.has(c)), ...eligible],
+        profile,
+        baseline,
+      );
+      // An exclusive allocation needs an identified witness to reserve it.
+      if (peers && !eligible.some((c) => result.applied.get(c) > 0)) continue;
+      result.reason ??= row.unknown;
+      values.set(row.key, result);
+    }
+  }
   return values;
 }
 
@@ -681,12 +732,14 @@ export function evaluateStage(
     return mapped.key ? { ...course, allocationKey: mapped.key } : course;
   }
   const earned = ledger.earned.map(recognition);
-  const current = assess(rows, earned, state.profile, balances);
+  const failures = ledger.failedEvaluations ?? [];
+  const current = assess(rows, earned, state.profile, balances, failures);
   const future = assess(
     rows,
     [...earned, ...ledger.planned.map(recognition)],
     state.profile,
     balances,
+    failures,
     current,
   );
   return rows.map((row) => {
@@ -703,7 +756,13 @@ export function evaluateStage(
       balance?.source;
     const refs = (map, column) =>
       [...(map ?? [])]
-        .filter(([c, n]) => n > 0 && (!column || c.column === column))
+        .filter(
+          ([c, n]) =>
+            n > 0 &&
+            (!column ||
+              c.column === column ||
+              (column === "earned" && c.column === "evaluation")),
+        )
         .map(([c, n]) => evidence(c, n, undefined, source));
     const earned = refs(a.applied),
       planned = refs(b.applied, "planned"),

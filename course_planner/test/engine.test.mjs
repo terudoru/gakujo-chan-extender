@@ -97,6 +97,225 @@ const balance = (key, current, patch = {}) => ({
   ...patch,
 });
 
+test("only a matched final failure supplies a noncredit witness to the opted-in practicum condition", () => {
+  const gate = {
+    key: "practicum",
+    label: "教育実習の履修資格",
+    unit: "condition",
+    required: 1,
+    includeFailedEvaluations: true,
+    officialDecision: true,
+    source,
+    match: (c) => c.code === aOnly.code,
+    evaluate({ courses }) {
+      const c = courses.find(
+        (c) => ["不可", "不合格"].includes(c.grade) || c.evaluated === true,
+      );
+      return {
+        value: c ? 1 : 0,
+        contributions: c ? [{ course: c, applied: 1 }] : [],
+      };
+    },
+  };
+  const api = apiFor([
+    gate,
+    { ...gate, key: "ordinary", includeFailedEvaluations: false },
+    { ...gate, key: "numeric", unit: "credits" },
+    { ...gate, key: "wrong-subject", match: (c) => c.code === bOnly.code },
+    { ...gate, key: "direct", evaluate: undefined },
+    { key: "total", required: 8, pool: ["practicum", "numeric"] },
+    leaf("degree-credit", 2, { match: () => true }),
+  ]);
+  const failed = {
+    grade: "不可",
+    counts: false,
+    finalEvaluation: true,
+    code: "original-code",
+    title: "成績表の旧表記",
+    year: "2026",
+    credits: 2,
+    recordId: "evaluation-1",
+    sourceId: "synthetic-transcript",
+    matchedCourse: {
+      ...aOnly,
+      confirmed: true,
+      sourceUrl: "https://example.invalid/offering",
+    },
+  };
+  const check = (grades, planned = [], balances = []) =>
+    api.requirementRows(state(grades, balances), byCode, planned);
+  const rows = check([failed, { ...failed }]);
+  assert.deepEqual(
+    rows.map((r) => [r.current, r.future]),
+    [
+      [1, 1],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ],
+  );
+  const [witness] = rows[0].earned;
+  assert.equal(witness.credits, 2);
+  assert.deepEqual(
+    [
+      witness.grade,
+      witness.earnedCredits,
+      witness.applied,
+      witness.column,
+      witness.title,
+      witness.code,
+      witness.matchedCode,
+      witness.year,
+      witness.recordId,
+      witness.sourceId,
+      witness.sourceUrl,
+    ],
+    [
+      "不可",
+      0,
+      1,
+      "evaluation",
+      failed.title,
+      failed.code,
+      aOnly.code,
+      "2026",
+      failed.recordId,
+      failed.sourceId,
+      failed.matchedCourse.sourceUrl,
+    ],
+  );
+  assert.deepEqual(rows[0].projectedEarned, rows[0].earned);
+  assert.deepEqual(rows[0].planned, []);
+  assert.deepEqual(api.academicFieldRows(state([failed]), byCode, []), []);
+  const ledger = api.courseLedger(state([failed, { ...failed }]), byCode, []);
+  assert.deepEqual(
+    [
+      ledger.earned.length,
+      ledger.planned.length,
+      ledger.failedEvaluations.length,
+    ],
+    [0, 0, 1],
+  );
+  assert.ok(ledger.additionalCourse(aOnly));
+  assert.equal(
+    check(
+      [failed],
+      [],
+      [balance("practicum", 0, { unit: "condition", required: 1 })],
+    )[0].current,
+    0,
+  );
+  for (const patch of [
+    { grade: "---" },
+    { grade: "欠席" },
+    { grade: "放棄" },
+    { grade: "履修取消" },
+    { grade: "未修得" },
+    { grade: "履修中" },
+    { grade: "申請中" },
+    { grade: "", result: "不可" },
+    { grade: "", evaluated: true },
+    { evaluated: false },
+    { finalEvaluation: false },
+    { result: "欠席" },
+    { passed: true },
+    { status: "登録取消" },
+    { status: "申請中" },
+    { duplicate: true },
+    { duplicateOf: "another" },
+    { ambiguousRepeat: true },
+    { identityUnresolved: true },
+    { possibleDuplicate: true },
+    { matchedCourse: null },
+    { matchStatus: "unresolved" },
+    { matchedCourse: { ...aOnly, confirmed: false } },
+    { year: "2025" },
+    { year: "" },
+  ]) {
+    const r = check([{ ...failed, ...patch }])[0];
+    assert.deepEqual([r.current, r.future], [0, 0], JSON.stringify(patch));
+  }
+  assert.equal(check([], [{ ...aOnly, grade: "不可" }])[0].future, 0);
+  const retake = grade(
+    { ...aOnly, year: "2027" },
+    { matchedCourse: { ...aOnly, year: "2027", confirmed: true } },
+  );
+  assert.equal(named(check([failed, retake]), "degree-credit").current, 2);
+  const conflicting = { ...failed, grade: "可", credits: 2, counts: true };
+  assert.equal(check([failed, conflicting])[0].current, 0);
+  const exclusive = apiFor(
+    [gate, { ...gate, key: "second" }].map((r) => ({
+      ...r,
+      exclusive: "one-attempt",
+    })),
+  );
+  assert.deepEqual(
+    exclusive
+      .requirementRows(state([failed]), byCode, [])
+      .map((r) => r.current),
+    [1, 0],
+  );
+});
+
+test("planned selections and simulated candidates use the latest official registration status", () => {
+  const gate = {
+    key: "practicum",
+    label: "履修中",
+    unit: "condition",
+    required: 1,
+    includeFailedEvaluations: true,
+    match: (c) => c.code === aOnly.code && c.registered === true,
+    evaluate({ courses }) {
+      const c = courses.find(
+        (c) => c.code === aOnly.code && c.registered === true,
+      );
+      return {
+        value: c ? 1 : 0,
+        contributions: c ? [{ course: c, applied: 1 }] : [],
+      };
+    },
+  };
+  const api = apiFor([gate]);
+  const history = grade(aOnly, { grade: "申請中", registered: true });
+  assert.equal(api.requirementRows(state([history]), byCode, [])[0].future, 0);
+  for (const [official, oldStatus, registered, expected] of [
+    ["許可", "申請中", false, true],
+    ["申請中", "許可", true, false],
+    ["不許可", "許可", true, false],
+    ["要確認", undefined, true, false],
+    [undefined, undefined, true, true],
+    [undefined, "申請中", true, false],
+    [undefined, undefined, false, false],
+  ]) {
+    const s = state(),
+      planned = { ...aOnly, status: oldStatus, registered };
+    if (official !== undefined) s.status[aOnly.code] = official;
+    const ledger = api.courseLedger(s, byCode, []),
+      candidate = ledger.additionalCourse(planned);
+    const row = api.requirementRows(s, byCode, [planned])[0];
+    assert.deepEqual(
+      [row.current, row.future],
+      [0, Number(expected)],
+      String(official),
+    );
+    assert.equal(
+      api.shortageFilter(s, byCode, [], { key: gate.key, stageId: "degree" })(
+        planned,
+      ),
+      expected,
+    );
+    if (official === "不許可") assert.equal(candidate, null);
+    else
+      assert.deepEqual(
+        [candidate.status, candidate.registered],
+        [official ?? oldStatus, expected],
+      );
+  }
+});
+
 test("registry resolves handbook, actual program, and exact stage; unknown dates stay selectable", () => {
   const api = apiFor([a, b]);
   assert.deepEqual(api.availableHandbooks(profile), [book]);

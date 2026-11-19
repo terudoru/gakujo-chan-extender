@@ -60,6 +60,19 @@ export function gradeCourses(state, byCode = new Map()) {
 
 const passed = /^(?:秀|優|良|可|合格|認定|修得(?:済み?)?|S|[ABC][+-]?|P)$/i;
 const inProgress = /^(?:履修中|受講中|履修予定|申請中|許可)$/;
+export const hasFailedGrade = (value) => /^(?:不可|不合格|F|D)$/i.test(value);
+const notEvaluated =
+  /^(?:欠席|欠試|未受験|放棄|未確定|未評価|評価なし|未修得|登録取消|履修取消|辞退|不許可|要確認|申請中|履修予定|履修中|受講中|[-－ー]+)$/;
+const unregistered =
+  /^(?:申請中|履修予定|不許可|登録取消|履修取消|辞退|放棄|要確認)$/;
+
+function registration(course, status) {
+  if (!status) return course;
+  const registered =
+    ["許可", "履修中", "受講中"].includes(status) ||
+    (course.registered === true && !unregistered.test(status));
+  return { ...course, status, registered };
+}
 
 function ledgerCourse(course, column, fromGrade = false) {
   const match = course.matchedCourse;
@@ -89,15 +102,33 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
     ignored = [],
     identityReview = [];
   const history = gradeCourses(state, byCode);
+  // A current registration decision supersedes stale flags on a saved plan.
+  // Apply it to discovery simulations through the same entry point.
+  function plannedCourse(course) {
+    const status =
+      state.status?.[course.code] ||
+      course.status ||
+      (inProgress.test(course.grade) && course.grade);
+    return ledgerCourse(registration(course, status), "planned");
+  }
   const records = history
     .filter((g) => !inProgress.test(g.grade))
     .map((g) => ledgerCourse(g, "earned", true));
   records.push(
     ...history
       .filter((g) => inProgress.test(g.grade))
-      .map((g) => ledgerCourse(g, "planned", true)),
+      .map((g) =>
+        ledgerCourse(
+          registration(
+            g,
+            unregistered.test(g.grade) ? g.grade : g.status || g.grade,
+          ),
+          "planned",
+          true,
+        ),
+      ),
   );
-  records.push(...planned.map((c) => ledgerCourse(c, "planned")));
+  records.push(...planned.map(plannedCourse));
   const identities = new Set(),
     titles = new Map(),
     heldKeys = new Set(),
@@ -211,8 +242,56 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
     if (title) titles.set(title, c);
     (c.column === "earned" ? earned : upcoming).push(c);
   }
+  // A failed evaluation is evidence of an assessed attempt only. It must not
+  // reserve an offering, suppress a later retake or enter an earned ledger.
+  const failedEvaluations = [];
+  let seenEvaluations;
+  for (const [i, g] of history.entries()) {
+    if (
+      !hasFailedGrade(g.grade) ||
+      g.finalEvaluation === false ||
+      g.evaluated === false ||
+      g.passed === true ||
+      g.earned === true ||
+      notEvaluated.test(g.status) ||
+      passed.test(g.status) ||
+      notEvaluated.test(g.result) ||
+      passed.test(g.result) ||
+      g.duplicate ||
+      g.duplicateOf ||
+      g.ambiguousRepeat ||
+      awaitingIdentity(g) ||
+      !g.year ||
+      !(g.title || g.code) ||
+      state.grades[i].matchedCourse?.confirmed !== true ||
+      /unknown|ambiguous|unresolved|pending|要確認/i.test(
+        g.matchStatus ?? "",
+      ) ||
+      !g.matchedCourse?.code ||
+      !g.matchedCourse.title
+    )
+      continue;
+    const c = {
+      ...ledgerCourse(g, "evaluation", true),
+      evaluated: true,
+      earnedCredits: 0,
+    };
+    const { keys } = identity(c);
+    // Two contradictory results for the same recorded attempt need review.
+    // A pass in a later year is a distinct attempt and keeps its own evidence.
+    seenEvaluations ??= new Set(
+      earned.flatMap((c) =>
+        identity(c).keys.filter(
+          (k) => k.startsWith("record:") || k.startsWith("offering:"),
+        ),
+      ),
+    );
+    if (keys.some((k) => seenEvaluations.has(k) || heldKeys.has(k))) continue;
+    for (const k of keys) seenEvaluations.add(k);
+    failedEvaluations.push(c);
+  }
   function additionalCourse(input) {
-    const c = ledgerCourse(input, "planned");
+    const c = plannedCourse(input);
     const id = identity(c);
     const { title, keys, commonId } = id;
     if (
@@ -228,6 +307,7 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
   }
   return {
     earned,
+    failedEvaluations,
     planned: upcoming,
     ignored,
     identityReview,
@@ -253,6 +333,11 @@ export function evidence(course, applied, reason, source) {
     credits: quantity(course.credits),
     applied,
     column: course.column,
+    ...(course.column === "evaluation" && {
+      grade: course.grade,
+      earnedCredits: 0,
+      reason: "最終評価 " + course.grade + "（修得単位なし）",
+    }),
     recordId: course.recordId ?? course.importId,
     sourceId: course.sourceId,
     sourceUrl: /^https?:\/\//i.test(sourceUrl ?? "") ? sourceUrl : null,

@@ -254,15 +254,15 @@ export function createRequirementAPI(packs = installedPacks) {
           : !slotsFor(course).includes(context.slot))
       )
         return false;
-      if (
-        !course.recognized &&
-        rule?.match &&
-        courseMatch(rule, course, state.profile) !== true
-      )
-        return false;
       if (!rule && !course.fields?.includes(key.slice(6))) return false;
       const candidate = ledger.additionalCourse(course);
       if (!candidate) return false;
+      if (
+        !candidate.recognized &&
+        rule?.match &&
+        courseMatch(rule, candidate, state.profile) !== true
+      )
+        return false;
       let candidateLedger;
       if (course.equivalentTo || course.equivalentTitle) {
         // A new equivalence can also join two existing identity groups.
