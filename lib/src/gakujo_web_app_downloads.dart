@@ -953,7 +953,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     var effectiveRequest = request;
     GakujoDownloadSnapshot? uploadSnapshot;
     try {
-      if (!request.courseNameAmbiguous &&
+      // A failed entry belongs to its original page, even when its course is unknown.
+      if (retryEntryId == null &&
+          !request.courseNameAmbiguous &&
           !isUsefulGakujoCourseName(request.courseName)) {
         final pageEstimate = mounted && revision == _navigationRevision
             ? await _estimateCourseNameFromPage(await _controller.getTitle())
