@@ -1997,6 +1997,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   // The setup wizard can open before macOS reads the saved download folder.
   VoidCallback? _refreshSetupWizard;
   DateTime? _lastAssignmentRefresh;
+  DateTime? _lastMessageRefresh;
+  bool _backgroundActivityRefreshRunning = false;
   Timer? _backgroundRefreshTimer;
   late final GakujoCollectionSyncScheduler _collectionSyncScheduler;
   bool _isImportingSettings = false;
@@ -2436,6 +2438,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         if (mounted && revision == _loginIdentity.revision && (stillValid?.call() ?? true)) {
           _activeLoginAccount = account;
           _lastAssignmentRefresh = null;
+          _lastMessageRefresh = null;
           unawaited(_syncReminders(allowPermissionRequest: false));
         } else {
           await _writeStoredLoginAccount(null);
@@ -6623,121 +6626,164 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     bool allowPermissionRequest = true,
   }) async {
     if (!_canRunPageScripts ||
-        _calendarOperationGate.isRunning) {
+        _calendarOperationGate.isRunning ||
+        _backgroundActivityRefreshRunning) {
       return;
     }
     final now = DateTime.now();
-    final last = _lastAssignmentRefresh;
-    if (last != null && now.difference(last) < const Duration(minutes: 30)) {
-      return;
-    }
-    _lastAssignmentRefresh = now;
+    bool isDue(DateTime? last) =>
+        last == null || now.difference(last) >= const Duration(minutes: 30);
+    final fetchAssignments = isDue(_lastAssignmentRefresh);
+    final messageMode = _appSettings.messageNotification.mode;
+    final fetchMessages =
+        isDue(_lastMessageRefresh) &&
+        messageMode != GakujoMessageNotificationMode.off &&
+        _appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineNotifications);
+    if (!fetchAssignments && !fetchMessages) return;
+
     final account = _activeLoginAccount;
     final revision = _loginIdentity.revision;
-    bool stillSameAccount() => mounted &&
-        revision == _loginIdentity.revision && account == _activeLoginAccount;
+    bool stillSameAccount() =>
+        mounted &&
+        revision == _loginIdentity.revision &&
+        account == _activeLoginAccount;
+
+    _backgroundActivityRefreshRunning = true;
     try {
-      final result = await _controller.runJavaScriptReturningResult(
-        gakujoAssignmentListFetchScript,
-      ).timeout(const Duration(seconds: 60));
-      if (!stillSameAccount()) {
-        _lastAssignmentRefresh = null;
-        return;
+      List<GakujoDeadlineEntry>? assignments;
+      if (fetchAssignments) {
+        try {
+          assignments = await _fetchAssignmentDeadlinesInBackground(
+            now,
+            notificationAccount: account,
+            stillSameAccount: stillSameAccount,
+          );
+          if (!stillSameAccount()) return;
+          _lastAssignmentRefresh = assignments == null ? null : now;
+        } on Object catch (error, stackTrace) {
+          if (!stillSameAccount()) return;
+          _lastAssignmentRefresh = null;
+          developer.log(
+            'Failed to refresh assignments in the background',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
       }
-      final decoded = jsonDecode(_stringFromJavaScriptResult(result));
-      if (decoded is! Map || decoded['status'] != 'ok') {
-        // Not signed in yet; try again on a later page.
-        _lastAssignmentRefresh = null;
-        return;
-      }
-      final rows = decoded['rows'];
-      final assignments = [
-        if (rows is List)
-          for (final row in rows.whereType<Map<dynamic, dynamic>>())
-            ?GakujoAssignment.fromReportRow(
-              row,
-              capturedAt: now,
-              notificationAccount: account,
-              url: _reportListPortalUrl,
-            ),
-      ];
-      final total = decoded['total'];
-      await _activityStore.mergeAssignments(
-        assignments,
-        isWholeList: rows is List && total is num && rows.length == total,
-      );
-      late final ({
+
+      ({
         List<GakujoDeadlineEntry> entries,
         List<String>? unreadMessageUrls,
-      }) messages;
-      var messageFetchFailed = false;
-      try {
-        messages = await _fetchMessageDeadlinesInBackground(account);
-      } on Object catch (error, stackTrace) {
-        messages = (
-          entries: const <GakujoDeadlineEntry>[],
-          unreadMessageUrls: null,
-        );
-        messageFetchFailed = true;
-        developer.log(
-          'Failed to fetch message deadlines in the background',
-          name: 'MoreBetterGakujo',
-          error: error,
-          stackTrace: stackTrace,
-        );
+        bool partial,
+      })? messages;
+      if (fetchMessages) {
+        try {
+          messages = await _fetchMessageDeadlinesInBackground(
+            messageMode,
+            notificationAccount: account,
+          );
+          if (!stillSameAccount()) return;
+          _lastMessageRefresh = messages == null || messages.partial ? null : now;
+        } on Object catch (error, stackTrace) {
+          if (!stillSameAccount()) return;
+          _lastMessageRefresh = null;
+          developer.log(
+            'Failed to fetch message deadlines in the background',
+            name: 'MoreBetterGakujo',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
       }
-      if (!stillSameAccount()) {
-        _lastAssignmentRefresh = null;
-        return;
-      }
+      if (assignments == null && messages == null) return;
       await _activityStore.mergeDeadlines([
-        ...deadlineEntriesForAssignments(
-          assignments,
-          url: _reportListPortalUrl,
-          detectedAt: now,
-        ),
-        ...messages.entries,
-      ], unreadMessageUrls: messages.unreadMessageUrls);
+        ...?assignments,
+        ...?messages?.entries,
+      ], unreadMessageUrls: messages?.unreadMessageUrls);
+      if (!stillSameAccount()) return;
       await _notifyPendingDeadlines(
         allowPermissionRequest: allowPermissionRequest,
       );
       await _syncReminders(allowPermissionRequest: allowPermissionRequest);
-      if (messageFetchFailed) {
-        _lastAssignmentRefresh = null;
-      }
     } on Object catch (error, stackTrace) {
-      // The page may have navigated away mid-fetch; try again soon.
-      _lastAssignmentRefresh = null;
+      if (!stillSameAccount()) return;
+      if (fetchAssignments) _lastAssignmentRefresh = null;
+      if (fetchMessages) _lastMessageRefresh = null;
       developer.log(
-        'Failed to refresh assignments in the background',
+        'Failed to process the background activity scan',
         name: 'MoreBetterGakujo',
         error: error,
         stackTrace: stackTrace,
       );
+    } finally {
+      _backgroundActivityRefreshRunning = false;
     }
   }
 
-  /// The 連絡通知 未読一覧 as deadline entries, read the way a visit to the
-  /// list reads them. Skipped while 連絡通知 are not notified at all.
-  Future<({List<GakujoDeadlineEntry> entries, List<String>? unreadMessageUrls})>
-      _fetchMessageDeadlinesInBackground(String? notificationAccount) async {
-    if (_appSettings.messageNotification.mode ==
-            GakujoMessageNotificationMode.off ||
-        !_appSettings.isFeatureEnabled(
-          GakujoFeatureFlag.deadlineNotifications,
-        )) {
-      return (entries: const <GakujoDeadlineEntry>[], unreadMessageUrls: null);
-    }
-    final result = await _controller.runJavaScriptReturningResult(
-      gakujoMessageListFetchScript,
-    ).timeout(const Duration(seconds: 60));
+  Future<List<GakujoDeadlineEntry>?> _fetchAssignmentDeadlinesInBackground(
+    DateTime now, {
+    required String? notificationAccount,
+    required bool Function() stillSameAccount,
+  }) async {
+    final result = await _controller
+        .runJavaScriptReturningResult(gakujoAssignmentListFetchScript)
+        .timeout(const Duration(seconds: 60));
+    if (!stillSameAccount()) return null;
     final decoded = jsonDecode(_stringFromJavaScriptResult(result));
-    final items =
-        decoded is Map && decoded['status'] == 'ok' ? decoded['items'] : null;
-    if (items is! List) {
-      return (entries: const <GakujoDeadlineEntry>[], unreadMessageUrls: null);
-    }
-    final entries = _extractDeadlines(
+    if (decoded is! Map || decoded['status'] != 'ok') return null;
+    final rows = decoded['rows'];
+    final assignments = [
+      if (rows is List)
+        for (final row in rows.whereType<Map<dynamic, dynamic>>())
+          ?GakujoAssignment.fromReportRow(
+            row,
+            capturedAt: now,
+            url: _reportListPortalUrl,
+            notificationAccount: notificationAccount,
+          ),
+    ];
+    final total = decoded['total'];
+    await _activityStore.mergeAssignments(
+      assignments,
+      isWholeList: rows is List && total is num && rows.length == total,
+    );
+    return deadlineEntriesForAssignments(
+      assignments,
+      url: _reportListPortalUrl,
+      detectedAt: now,
+    );
+  }
+
+  /// The 連絡通知 未読一覧 as deadline entries, read the way a visit to the
+  /// list reads them. Null means the list was unavailable.
+  Future<
+    ({
+      List<GakujoDeadlineEntry> entries,
+      List<String>? unreadMessageUrls,
+      bool partial,
+    })?
+  >
+  _fetchMessageDeadlinesInBackground(
+    GakujoMessageNotificationMode mode, {
+    required String? notificationAccount,
+  }) async {
+    final keywordMode = mode == GakujoMessageNotificationMode.keywords;
+    final result = await _controller
+        .runJavaScriptReturningResult(
+          keywordMode
+              ? gakujoKeywordMessageListFetchScript
+              : gakujoMessageListFetchScript,
+        )
+        .timeout(const Duration(seconds: 60));
+    final decoded = jsonDecode(_stringFromJavaScriptResult(result));
+    if (decoded is! Map) return null;
+    final status = decoded['status'];
+    if (status != 'ok' && status != 'partial') return null;
+    final complete = status == 'ok' && decoded['complete'] == true;
+    final items = decoded['items'];
+    if (items is! List) return null;
+    final allEntries = _extractDeadlines(
       category: '連絡通知',
       title: '連絡通知',
       url: _messageListPortalUrl,
@@ -6748,13 +6794,37 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ],
       notificationAccount: notificationAccount,
     );
+    // Prioritize matching rows before storing this bounded batch, so later
+    // pages with matches are not crowded out by nonmatches on page one.
+    final matches = keywordMode
+        ? allEntries
+              .where(
+                (entry) => isNotifiableDeadline(
+                  entry,
+                  topics: const {},
+                  messages: _appSettings.messageNotification,
+                  excludeKeywords: _appSettings.messageExcludeKeywords,
+                ),
+              )
+              .toSet()
+        : const <GakujoDeadlineEntry>{};
     return (
-      entries: entries,
-      unreadMessageUrls: [
-        for (final item in items)
-          gakujoMessageLinkFor(
-              item is Map ? item['url']?.toString() ?? '' : ''),
-      ],
+      partial: status == 'partial',
+      entries: keywordMode && allEntries.length > 60
+          ? [
+              ...matches,
+              ...allEntries.take(60).where((entry) => !matches.contains(entry)),
+            ].take(60).toList()
+          : allEntries,
+      // Only a complete keyword scan can use absence as evidence of a read.
+      unreadMessageUrls: keywordMode && !complete
+          ? null
+          : [
+              for (final item in items)
+                gakujoMessageLinkFor(
+                  item is Map ? item['url']?.toString() ?? '' : '',
+                ),
+            ],
     );
   }
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'gakujo_dated_activity.dart';
 import 'migrating_secure_storage.dart';
 import 'protected_secrets_vault.dart';
 import 'secure_storage_factory.dart';
@@ -453,16 +454,23 @@ class GakujoMessageNotificationSettings {
   final DateTime? since;
 
   /// Whether a 連絡通知 should be notified. Older cached entries may only
-  /// have combined text, so use its first date only when [postedAt] is absent.
+  /// have combined text, so look for a posting date there if needed.
   bool allows({
     required String text,
     required bool isDeadline,
     String? postedAt,
   }) {
     final since = this.since;
+    final isKeywordMode = mode == GakujoMessageNotificationMode.keywords;
+    final postingText = postedAt == null || postedAt.trim().isEmpty
+        ? isKeywordMode
+              ? GakujoDatedActivity.messagePostedAt(text) ?? ''
+              : text
+        : postedAt;
     final posted = RegExp(
-      r'([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})\s+([0-9]{1,2}):([0-9]{2})',
-    ).firstMatch(postedAt == null || postedAt.trim().isEmpty ? text : postedAt);
+      r'([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})\s+([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?',
+    ).firstMatch(postingText);
+    if (isKeywordMode && since != null && posted == null) return false;
     if (since != null && posted != null) {
       // 掲載日時 is Japan time whatever the device's time zone is.
       final postedAt = DateTime.utc(
@@ -471,9 +479,12 @@ class GakujoMessageNotificationSettings {
         int.parse(posted.group(3)!),
         int.parse(posted.group(4)!),
         int.parse(posted.group(5)!),
+        isKeywordMode ? int.parse(posted.group(6) ?? '0') : 0,
       ).subtract(const Duration(hours: 9));
       if (postedAt.isBefore(
-        since.toUtc().subtract(const Duration(minutes: 1)),
+        isKeywordMode
+            ? since.toUtc()
+            : since.toUtc().subtract(const Duration(minutes: 1)),
       )) {
         return false;
       }
@@ -481,9 +492,16 @@ class GakujoMessageNotificationSettings {
     return switch (mode) {
       GakujoMessageNotificationMode.off => false,
       GakujoMessageNotificationMode.deadlines => isDeadline,
-      GakujoMessageNotificationMode.keywords =>
-        keywords.any((keyword) => text.contains(keyword)),
+      GakujoMessageNotificationMode.keywords => _matchesKeyword(text),
     };
+  }
+
+  bool _matchesKeyword(String text) {
+    final normalized = _normalizeMessageMatchText(text);
+    return keywords.any((keyword) {
+      final term = _normalizeMessageMatchText(keyword);
+      return term.isNotEmpty && normalized.contains(term);
+    });
   }
 
   GakujoMessageNotificationSettings copyWith({
@@ -545,6 +563,39 @@ class GakujoMessageNotificationSettings {
           : GakujoMessageNotificationMode.off,
     );
   }
+}
+
+// Fold the ASCII and katakana width variants handled by the list's NFKC
+// search. Dart has no built-in Unicode normalization.
+String _normalizeMessageMatchText(String value) {
+  const halfwidthKana =
+      '。「」、・ヲァィゥェォャュョッーアイウエオ'
+      'カキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモ'
+      'ヤユヨラリルレロワン\u3099\u309a';
+  const voicedBase = 'ウカキクケコサシスセソタチツテトハヒフヘホワヰヱヲ';
+  const voiced = 'ヴガギグゲゴザジズゼゾダヂヅデドバビブベボヷヸヹヺ';
+  const semiVoicedBase = 'ハヒフヘホ';
+  const semiVoiced = 'パピプペポ';
+  return value
+      .replaceAllMapped(RegExp(r'[\uff01-\uff9f\uffe5]'), (match) {
+        final char = match[0]!;
+        final code = char.codeUnitAt(0);
+        if (code <= 0xff5e) return String.fromCharCode(code - 0xfee0);
+        if (code >= 0xff61 && code <= 0xff9f) {
+          return halfwidthKana[code - 0xff61];
+        }
+        return code == 0xffe5 ? '¥' : char;
+      })
+      .replaceAllMapped(RegExp(r'([ァ-ヲ])([\u3099\u309a])'), (match) {
+        final isVoiced = match[2] == '\u3099';
+        final index = (isVoiced ? voicedBase : semiVoicedBase).indexOf(
+          match[1]!,
+        );
+        return index < 0 ? match[0]! : (isVoiced ? voiced : semiVoiced)[index];
+      })
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s\u3000]+'), ' ')
+      .trim();
 }
 
 /// When to be reminded of an assignment that has not been handed in yet.

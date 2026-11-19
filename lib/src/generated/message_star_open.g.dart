@@ -18,29 +18,56 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
     return match ? match[2].replace(/&amp;/g, "&") : "";
   }
 
+  // web_scripts/src/shared/message_list_paging.ts
+  function messageListFlowKey(doc, base) {
+    var link = doc.querySelector('a[href*="_flowExecutionKey="]');
+    if (link) {
+      var value = new URL(link.getAttribute("href"), base).searchParams.get("_flowExecutionKey");
+      if (value) return value;
+    }
+    var input = doc.querySelector('input[name="_flowExecutionKey"]');
+    if (input && input.value) return input.value;
+    var actions = doc.querySelectorAll('[onclick*="_flowExecutionKey="]');
+    for (var i = 0; i < actions.length; i += 1) {
+      var href = messageOnclickUrl(actions[i]);
+      if (!href) continue;
+      var value = new URL(href, base).searchParams.get("_flowExecutionKey");
+      if (value) return value;
+    }
+    return "";
+  }
+  function nextMessageListPage(doc, base) {
+    var controls = doc.querySelectorAll('a,button,input[type="button"],input[type="submit"]');
+    var hasNextControl = false;
+    for (var i = 0; i < controls.length; i += 1) {
+      var control = controls[i];
+      var label = String(control.textContent || control.value || "") + " " + (control.getAttribute("aria-label") || control.getAttribute("title") || "");
+      if (!/次へ|次のページ|次ページ|next/i.test(label) && control.getAttribute("rel") !== "next" || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+      hasNextControl = true;
+      var href = control.getAttribute("href") || "";
+      if (!href || /^(?:javascript:|#)/i.test(href)) {
+        href = messageOnclickUrl(control) || ((control.getAttribute("onclick") || href).match(
+          /['"]([^'"]*[?&](?:_eventId=paging|_displayOffset=)[^'"]*)['"]/
+        ) || [])[1];
+      }
+      if (!href) continue;
+      var target = new URL(href.replace(/&amp;/g, "&"), base + "campussquare.do");
+      if (target.origin !== new URL(base).origin || target.pathname !== "/campusweb/campussquare.do" || target.searchParams.get("_eventId") !== "paging" && !target.searchParams.has("_displayOffset")) continue;
+      const flowKey = messageListFlowKey(doc, base);
+      if (!flowKey || target.searchParams.has("seqNo") || target.username || target.password) continue;
+      target.searchParams.set("_flowExecutionKey", flowKey);
+      target.searchParams.set("_eventId", "paging");
+      return target.href;
+    }
+    return hasNextControl ? null : "";
+  }
+
   // web_scripts/src/message_star/open.ts
   function messageStarOpen() {
     var message = __mbgConfig.message;
     var base = location.origin + "/campusweb/";
     function result(status, url2) {
       return JSON.stringify({ status, url: url2 });
-    }
-    function key(doc2) {
-      var link = doc2.querySelector('a[href*="_flowExecutionKey="]');
-      if (link) {
-        var value = new URL(link.getAttribute("href"), base).searchParams.get("_flowExecutionKey");
-        if (value) return value;
-      }
-      var input = doc2.querySelector('input[name="_flowExecutionKey"]');
-      if (input && input.value) return input.value;
-      var actions = doc2.querySelectorAll('[onclick*="_flowExecutionKey="]');
-      for (var i2 = 0; i2 < actions.length; i2 += 1) {
-        var href2 = messageOnclickUrl(actions[i2]);
-        if (!href2) continue;
-        var value = new URL(href2, base).searchParams.get("_flowExecutionKey");
-        if (value) return value;
-      }
-      return "";
     }
     function get(url2) {
       var xhr = new XMLHttpRequest();
@@ -57,27 +84,6 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
       if (!flowKey) throw new Error("key");
       return base + "campussquare.do?_flowExecutionKey=" + encodeURIComponent(flowKey) + "&_eventId=" + event;
     }
-    function nextPage(doc2) {
-      var controls = doc2.querySelectorAll('a,button,input[type="button"],input[type="submit"]');
-      for (var i2 = 0; i2 < controls.length; i2 += 1) {
-        var control = controls[i2];
-        var label = String(control.textContent || control.value || "") + " " + (control.getAttribute("aria-label") || control.getAttribute("title") || "");
-        if (!/次へ|次のページ|次ページ|next/i.test(label) && control.getAttribute("rel") !== "next" || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
-        var href2 = control.getAttribute("href") || "";
-        if (!href2 || /^(?:javascript:|#)/i.test(href2)) {
-          href2 = messageOnclickUrl(control) || ((control.getAttribute("onclick") || href2).match(
-            /['"]([^'"]*[?&](?:_eventId=paging|_displayOffset=)[^'"]*)['"]/
-          ) || [])[1];
-        }
-        if (!href2) continue;
-        var target = new URL(href2.replace(/&amp;/g, "&"), base + "campussquare.do");
-        if (target.origin !== location.origin || target.pathname !== "/campusweb/campussquare.do" || target.searchParams.get("_eventId") !== "paging" && !target.searchParams.has("_displayOffset")) continue;
-        target.searchParams.set("_flowExecutionKey", key(doc2));
-        target.searchParams.set("_eventId", "paging");
-        return target.href;
-      }
-      return "";
-    }
     try {
       if (location.origin !== "https://gakujo.iess.niigata-u.ac.jp") return result("missing");
       for (var name of ["keijitype", "genrecd", "seqNo"]) {
@@ -85,8 +91,8 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
       }
       var genre = "&keijitype=" + encodeURIComponent(message.keijitype) + "&genrecd=" + encodeURIComponent(message.genrecd);
       var doc = get(base + "campussquare.do?_flowId=KJW0001100-flow");
-      doc = get(url(key(doc), "dispKeijiListGenre") + genre);
-      doc = get(url(key(doc), "paging") + "&_displayCount=500");
+      doc = get(url(messageListFlowKey(doc, base), "dispKeijiListGenre") + genre);
+      doc = get(url(messageListFlowKey(doc, base), "paging") + "&_displayCount=500");
       var found;
       var seenPages = /* @__PURE__ */ new Set();
       for (var page = 0; page < 20; page += 1) {
@@ -105,7 +111,7 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
           }
         }
         if (found) break;
-        var next = nextPage(doc);
+        var next = nextMessageListPage(doc, base);
         if (!next) return result("gone");
         var signature = JSON.stringify(identities);
         if (seenPages.has(signature) || page === 19) return result("error");
@@ -113,7 +119,7 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
         doc = get(next);
       }
       if (!found) return result("gone");
-      var targetUrl = url(key(doc), "confirm") + genre + "&seqNo=" + encodeURIComponent(message.seqNo);
+      var targetUrl = url(messageListFlowKey(doc, base), "confirm") + genre + "&seqNo=" + encodeURIComponent(message.seqNo);
       if (found.getAttribute("onclick") && found.querySelector) found = found.querySelector("p") || found;
       message.title = String(found.innerText || found.textContent || "").replace(/\s+/g, " ").trim().replace(/\s*\[新着\]\s*$/, "");
       try {

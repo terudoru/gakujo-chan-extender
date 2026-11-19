@@ -5,6 +5,67 @@ import 'package:morebettergakujo_flutter/src/gakujo_message_filter_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'desktop search combines terms and exclusions and restores rows on clear',
+    () async {
+      final script = GakujoMessageFilterScript.build(keywords: const ['重要']);
+      final result = await _evaluateMessageFilterScripts(
+        [
+          script,
+          script,
+          script,
+          script,
+          GakujoMessageFilterScript.buildTeardown(),
+          script,
+        ],
+        frame: 'list',
+        initialDisplays: ['table-row', ''],
+        searchQueries: [
+          'api　資料',
+          'ＡＰＩ 文学部',
+          'api 2026/11/19 工学部',
+          '',
+          null,
+          null,
+        ],
+      );
+      expect(result.map((snapshot) => snapshot['rowDisplays']), [
+        ['table-row', 'none'],
+        ['none', 'none'],
+        ['table-row', 'none'],
+        ['table-row', 'none'],
+        ['table-row', ''],
+        ['table-row', 'none'],
+      ]);
+      expect(result.map((snapshot) => snapshot['searchCount']), [
+        '2件中1件',
+        '2件中0件',
+        '2件中1件',
+        '2件中1件',
+        null,
+        '2件中1件',
+      ]);
+      expect(result.first['searchHint'], contains('このページ'));
+      expect(result.first['searchHint'], contains('本文を除く'));
+      expect(result.first['enterPrevented'], isTrue);
+      expect(result.first['enterStopped'], isTrue);
+    },
+  );
+
+  test(
+    'desktop search restores its query when the toolbar is mounted again',
+    () async {
+      final script = GakujoMessageFilterScript.build(keywords: const []);
+      final result = await _evaluateMessageFilterScripts(
+        [script, GakujoMessageFilterScript.buildTeardown(), script],
+        searchQueries: ['工学部', null, null],
+      );
+      expect(result[1]['rowDisplays'], ['', '']);
+      expect(result[2]['searchQuery'], '工学部');
+      expect(result[2]['rowDisplays'], ['', 'none']);
+    },
+  );
+
   test('builds keyword-based message row filter', () {
     final script = GakujoMessageFilterScript.build(
       keywords: ['アンケート', ' 集中  講義 ', 'アンケート'],
@@ -18,6 +79,37 @@ void main() {
     expect(script, contains('"集中 講義"'));
     expect(script, contains('data-mbg-message-filtered'));
     expect(script, contains('除外中: '));
+  });
+
+  test('search offers the largest supported page size via a paging link',
+      () async {
+    final result = await _evaluateMessageFilterScripts(
+      [GakujoMessageFilterScript.build(keywords: const [])],
+      frame: 'list',
+      displayCountControl: true,
+    );
+    final link = Uri.parse(result.single['searchLargerHref'] as String);
+    expect(link.host, 'gakujo.iess.niigata-u.ac.jp');
+    expect(link.path, '/campusweb/campussquare.do');
+    expect(link.queryParameters, {
+      '_eventId': 'paging',
+      '_flowExecutionKey': 'actual',
+      '_displayCount': '500',
+      '_displayOffset': '0',
+    });
+  });
+
+  test('fallback search uses list headings and skips non-list tables', () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const []),
+        GakujoMessageFilterScript.build(keywords: const ['アンケート']),
+      ],
+      directTable: false,
+      decoyTables: true,
+    );
+    expect(result.map((snapshot) => snapshot['searchInList']), [true, true]);
+    expect(result.map((snapshot) => snapshot['searchCount']), ['2件中2件', '2件中1件']);
   });
 
   test('filters rows and restores them when the keywords change', () async {
@@ -198,6 +290,7 @@ void main() {
       );
 
       for (final snapshot in result.cast<Map<String, dynamic>>()) {
+        expect(snapshot['searchCount'], '1件中1件');
         expect(snapshot['rowTextReads'], 0);
         expect(snapshot['tableTextReads'], 0);
         expect(snapshot['attributeWrites'], 0);
@@ -475,6 +568,9 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
   String frame = 'none',
   bool fallbackTable = false,
   int initialStatusCount = 0,
+  List<String?>? searchQueries,
+  bool displayCountControl = false,
+  bool decoyTables = false,
 }) async {
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_filter_');
@@ -491,6 +587,9 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
           'frame': frame,
           'fallbackTable': fallbackTable,
           'initialStatusCount': initialStatusCount,
+          'searchQueries': searchQueries,
+          'displayCountControl': displayCountControl,
+          'decoyTables': decoyTables,
         }),
         encoding: utf8,
       );

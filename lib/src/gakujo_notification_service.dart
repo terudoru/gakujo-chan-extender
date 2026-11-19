@@ -912,6 +912,18 @@ class GakujoDeadlineNotificationCoordinator {
     }
     final isWholeList = await _activityStore.assignmentsAreWholeList();
     final latestSettings = currentSettings?.call();
+    bool hasPassed(GakujoDeadlineEntry entry, GakujoAssignment? assignment) {
+      if (assignment != null) return !assignment.dueAt.isAfter(_now());
+      // A plain announcement can have a posting date in dueText. That
+      // date has already passed by the time the list is scanned.
+      if (entry.source == '連絡通知' &&
+          !entry.isDeadline &&
+          messages.mode == GakujoMessageNotificationMode.keywords) {
+        return false;
+      }
+      return _activityStore.isDeadlinePassed(entry, now: _now());
+    }
+
     final pending = <String, GakujoDeadlineEntry>{};
     for (final entry in deadlines) {
       if (pending.length >= 5) {
@@ -932,9 +944,7 @@ class GakujoDeadlineNotificationCoordinator {
       if (isWholeList && entry.source == 'レポート・小テスト' && assignment == null) {
         continue;
       }
-      if (assignment != null
-          ? !assignment.dueAt.isAfter(_now())
-          : _activityStore.isDeadlinePassed(entry, now: _now())) {
+      if (hasPassed(entry, assignment)) {
         continue;
       }
       if (preferences.skipSubmitted && (assignment?.isSubmitted ?? false)) {
@@ -967,9 +977,7 @@ class GakujoDeadlineNotificationCoordinator {
       if (!stillAllowed(entry, assignment, currentSettings?.call())) {
         continue;
       }
-      if (assignment != null
-          ? !assignment.dueAt.isAfter(_now())
-          : _activityStore.isDeadlinePassed(entry, now: _now())) {
+      if (hasPassed(entry, assignment)) {
         continue;
       }
       if (await _notificationService.notifyDeadline(entry)) {

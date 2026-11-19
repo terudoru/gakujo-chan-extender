@@ -6,3 +6,12 @@ import 'generated/message_list_fetch.g.dart';
 /// is "missing" when Gakujo answers with something else, such as its login
 /// page.
 const gakujoMessageListFetchScript = gakujoMessageListFetchJs;
+
+/// Keyword rules may match rows beyond the deadline scan's first 60.
+const gakujoKeywordMessageListFetchScript =
+    '''
+(function() {
+  const __mbgExpandMessageList = true;
+  return $gakujoMessageListFetchJs;
+})()
+''';

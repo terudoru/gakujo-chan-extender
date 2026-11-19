@@ -11,6 +11,28 @@ const _period = '2026/10/22 13:57から 2026/11/05 13:57まで';
 const _rowText = '2026/10/22 14:00:54 $_title - 授業連絡 (工) 落合 博幸 $_period';
 
 void main() {
+  test(
+    'keyword fetch reads beyond row 60 with a listing-only paging GET',
+    () async {
+      final fetched = await _evaluate('fetch', 'pagedDesktop', [
+        gakujoKeywordMessageListFetchScript,
+      ]);
+      final items = fetched['result']['items'] as List;
+    expect(fetched['result']['complete'], isTrue);
+      expect(items, hasLength(62));
+      expect(items.last['url'], contains('seqNo=508243'));
+      final requests = fetched['requests'] as List;
+      expect(requests, hasLength(2));
+      expect(requests.map((request) => request['method']), everyElement('GET'));
+      final pageUrl = Uri.parse(requests.last['url'] as String);
+      expect(pageUrl.queryParameters, {
+        '_flowExecutionKey': 'desktop key',
+        '_eventId': 'paging',
+        '_displayOffset': '60',
+      });
+    },
+  );
+
   test('desktop fetch and page scan retain the desktop row text and URLs',
       () async {
     final fetched =
@@ -33,6 +55,23 @@ void main() {
             .queryParameters['_flowExecutionKey'],
         'desktop key');
   });
+
+  for (final (scenario, requests, status) in [
+    ('requestCap', 4, 'ok'),
+    ('itemCap', 1, 'ok'),
+    ('repeatPage', 2, 'ok'),
+    ('partialPage', 2, 'partial'),
+    ('unsafeNext', 1, 'ok'),
+  ]) {
+    test('keyword fetch leaves coverage incomplete for $scenario', () async {
+      final fetched = await _evaluate('fetch', scenario, [
+        gakujoKeywordMessageListFetchScript,
+      ]);
+      expect(fetched['requests'], hasLength(requests));
+      expect(fetched['result']['status'], status);
+      expect(fetched['result']['complete'], isFalse);
+    });
+  }
 
   for (final scenario in [
     'unread',

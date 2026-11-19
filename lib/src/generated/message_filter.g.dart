@@ -140,9 +140,49 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
     };
   }
 
+  // web_scripts/src/shared/smartphone_message_rows.ts
+  function messageOnclickUrl(node) {
+    var match = String(node && node.getAttribute("onclick") || "").match(/\blocation\.href\s*=\s*(['"])(.*?)\1/);
+    return match ? match[2].replace(/&amp;/g, "&") : "";
+  }
+
+  // web_scripts/src/shared/message_list_paging.ts
+  function messageListFlowKey(doc, base) {
+    var link = doc.querySelector('a[href*="_flowExecutionKey="]');
+    if (link) {
+      var value = new URL(link.getAttribute("href"), base).searchParams.get("_flowExecutionKey");
+      if (value) return value;
+    }
+    var input = doc.querySelector('input[name="_flowExecutionKey"]');
+    if (input && input.value) return input.value;
+    var actions = doc.querySelectorAll('[onclick*="_flowExecutionKey="]');
+    for (var i = 0; i < actions.length; i += 1) {
+      var href = messageOnclickUrl(actions[i]);
+      if (!href) continue;
+      var value = new URL(href, base).searchParams.get("_flowExecutionKey");
+      if (value) return value;
+    }
+    return "";
+  }
+  function largerMessageListPage(doc, base) {
+    const control = doc.querySelector('select[name="_displayCount"]');
+    if (!control || control.disabled) return null;
+    const sizes = Array.from(control.options, (option) => Number(option.value)).filter((size) => Number.isInteger(size) && size > 0 && size <= 500);
+    const largest = Math.max(...sizes);
+    if (!Number.isFinite(largest) || !(largest > Number(control.value))) return null;
+    const flowKey = messageListFlowKey(doc, base);
+    if (!flowKey) return null;
+    const url = new URL("campussquare.do", base);
+    url.searchParams.set("_flowExecutionKey", flowKey);
+    url.searchParams.set("_eventId", "paging");
+    url.searchParams.set("_displayCount", String(largest));
+    url.searchParams.set("_displayOffset", "0");
+    return { url: url.href, count: largest };
+  }
+
   // web_scripts/src/message_filter/main.ts
   function messageFilter() {
-    var version = 6;
+    var version = 8;
     var keywords = __mbgConfig.keywords.map(function(keyword) {
       return String(keyword || "").trim().toLowerCase();
     }).filter(Boolean);
@@ -170,19 +210,24 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
       return (element && (element.innerText || element.textContent || element.value) || "").replace(/\s+/g, " ").trim();
     }
     function messageTable(doc) {
+      function hasMessageRows(table) {
+        return Array.from(table.querySelectorAll('a[href*="seqNo="]')).some(function(link) {
+          var _a;
+          return ((_a = link.closest("tr")) == null ? void 0 : _a.closest("table")) === table;
+        });
+      }
       var direct = doc.querySelector("table.normal:nth-child(9)");
-      if (direct) {
-        return direct;
-      }
-      var tables = doc.querySelectorAll("table");
-      for (var i = 0; i < tables.length; i += 1) {
-        var table = tables[i];
-        var text = compactText(table);
-        if ((text.indexOf("連絡通知") >= 0 || text.indexOf("全学連絡通知") >= 0 || text.indexOf("掲示") >= 0) && table.querySelector('a[href*="seqNo="]')) {
-          return table;
-        }
-      }
-      return null;
+      if (direct && hasMessageRows(direct)) return direct;
+      return Array.from(doc.querySelectorAll("table")).find(function(table) {
+        if (table.matches("table.keiji-normal") || table.closest("aside") || table.closest("nav") || table.closest('[id="tabmenutable"]') || !hasMessageRows(table)) return false;
+        var heading = table.querySelector("tr");
+        if (!heading || heading.closest("table") !== table) return false;
+        var headings = Array.from(heading.children, function(cell) {
+          return cell.textContent || "";
+        }).join(" ");
+        var caption = table.querySelector("caption");
+        return /連絡通知|掲示/.test(headings) || /掲載日時/.test(headings) && /表題|差出人/.test(headings) || (caption == null ? void 0 : caption.closest("table")) === table && caption.id !== "mbg-message-search" && /連絡通知|掲示/.test(caption.textContent || "");
+      }) || null;
     }
     function smartphoneMessageRows(doc) {
       var rows = [];
@@ -232,10 +277,70 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
       return status;
     }
     function removeStaleStatuses(doc, activeStatuses) {
-      var statuses = doc.querySelectorAll('[id="mbg-message-filter-status"]');
-      Array.prototype.forEach.call(statuses, function(status) {
-        if (activeStatuses.indexOf(status) < 0) status.remove();
+      ["mbg-message-filter-status", "mbg-message-search"].forEach(function(id) {
+        Array.prototype.forEach.call(doc.querySelectorAll('[id="' + id + '"]'), function(status) {
+          if (activeStatuses.indexOf(status) < 0) status.remove();
+        });
       });
+    }
+    function searchText(text) {
+      return text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+    }
+    function searchToolbar(doc, table) {
+      var _a;
+      var toolbar = table.querySelector('caption[id="mbg-message-search"]');
+      if (toolbar) return toolbar;
+      toolbar = doc.createElement("caption");
+      toolbar.id = "mbg-message-search";
+      toolbar.style.textAlign = "start";
+      toolbar.style.padding = "6px 0";
+      toolbar.style.captionSide = "top";
+      var input = doc.createElement("input");
+      input.type = "search";
+      input.placeholder = "連絡通知を検索";
+      input.ariaLabel = "連絡通知を検索";
+      input.style.font = "inherit";
+      input.style.maxWidth = "100%";
+      var storageKey = "mbg-message-search-query";
+      try {
+        input.value = window.sessionStorage.getItem(storageKey) || "";
+      } catch (_) {
+      }
+      input.addEventListener("keydown", function(event) {
+        if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
+      input.addEventListener("input", function() {
+        var _a2;
+        try {
+          window.sessionStorage.setItem(storageKey, input.value);
+        } catch (_) {
+        }
+        (_a2 = window.__MBG_MESSAGE_FILTER_UPDATE) == null ? void 0 : _a2.call(window);
+      });
+      toolbar.appendChild(input);
+      var count = doc.createElement("span");
+      count.ariaLive = "polite";
+      count.style.marginInlineStart = "8px";
+      toolbar.appendChild(count);
+      var hint = doc.createElement("div");
+      hint.textContent = "このページの表題・差出人・ジャンル・日付などを検索（本文を除く）";
+      hint.style.fontSize = "12px";
+      toolbar.appendChild(hint);
+      if (((_a = doc.location) == null ? void 0 : _a.origin) === "https://gakujo.iess.niigata-u.ac.jp") {
+        var larger = largerMessageListPage(doc, doc.location.origin + "/campusweb/");
+        if (larger) {
+          var link = doc.createElement("a");
+          link.href = larger.url;
+          link.textContent = larger.count + "件表示して検索";
+          hint.appendChild(doc.createTextNode(" "));
+          hint.appendChild(link);
+        }
+      }
+      table.insertBefore(toolbar, table.firstChild);
+      return toolbar;
     }
     function restoreRows(doc) {
       var hiddenRows = doc.querySelectorAll("tr[data-mbg-message-filter-display]");
@@ -251,24 +356,47 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
       });
     }
     function applyDocumentFilter(doc, activeStatuses) {
-      if (!keywords.length) {
-        restoreRows(doc);
-        return true;
-      }
       var rows = smartphoneMessageRows(doc);
       var table = rows.length ? null : messageTable(doc);
+      var terms = [];
+      var count = null;
       if (table) {
-        rows = Array.prototype.slice.call(table.querySelectorAll("tr"), 1);
+        rows = Array.from(table.querySelectorAll("tr")).filter(function(row) {
+          return row.closest("table") === table && !!row.querySelector('a[href*="seqNo="]');
+        });
+        var toolbar = searchToolbar(doc, table);
+        activeStatuses.push(toolbar);
+        var query = searchText(toolbar.querySelector("input").value);
+        if (query) terms = query.split(" ");
+        count = toolbar.querySelector("span");
       }
+      if (!keywords.length && !terms.length) restoreRows(doc);
       if (!rows.length) {
         return false;
       }
       var listTable = table ? null : rows[0].closest("table");
       var hiddenCount = 0;
+      var totalCount = 0;
+      var visibleCount = 0;
       rows.forEach(function(row) {
-        var text = compactText(row);
-        var hide = shouldHide(text);
         var originalDisplay = row.getAttribute("data-mbg-message-filter-display");
+        var pageShowsRow = (originalDisplay != null ? originalDisplay : row.style.display) !== "none" && !row.hidden;
+        if (pageShowsRow) totalCount += 1;
+        if (!keywords.length && !terms.length) {
+          if (pageShowsRow) visibleCount += 1;
+          return;
+        }
+        var cells = row.cells;
+        var text = table && (cells == null ? void 0 : cells.length) ? Array.from(cells, function(cell) {
+          return (cell.textContent || "").replace(/\s+/g, " ").trim();
+        }).join(" ") : compactText(row);
+        var excluded = shouldHide(text);
+        var searchable = terms.length ? searchText(text) : "";
+        var hide = excluded || terms.some(function(term) {
+          return !searchable.includes(term);
+        });
+        if (pageShowsRow && excluded) hiddenCount += 1;
+        if (pageShowsRow && !hide) visibleCount += 1;
         if (hide) {
           if (originalDisplay === null) {
             originalDisplay = row.style.display || "";
@@ -276,9 +404,6 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
           }
           if (row.style.display !== "none") {
             row.style.display = "none";
-          }
-          if (originalDisplay !== "none") {
-            hiddenCount += 1;
           }
         } else if (originalDisplay !== null) {
           if (row.style.display !== originalDisplay) {
@@ -291,6 +416,8 @@ const String _gakujoMessageFilterJsPrefix = r'''(function(__mbgConfig) {
           row.setAttribute("data-mbg-message-filtered", filtered);
         }
       });
+      var label = totalCount + "件中" + visibleCount + "件";
+      if (count && count.textContent !== label) count.textContent = label;
       var status = updateStatus(doc, hiddenCount, listTable);
       if (status) activeStatuses.push(status);
       return true;
