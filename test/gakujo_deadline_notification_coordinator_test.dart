@@ -544,6 +544,92 @@ void main() {
     expect(service.notifiedEntries, hasLength(2));
   });
 
+  test(
+    'only a new matching non-deadline list row notifies across scans',
+    () async {
+      final now = DateTime.now();
+      final since = now.subtract(const Duration(minutes: 2));
+      String jst(DateTime instant) {
+        final date = instant.toUtc().add(const Duration(hours: 9));
+        return date
+            .toIso8601String()
+            .substring(0, 19)
+            .replaceAll('-', '/')
+            .replaceFirst('T', ' ');
+      }
+
+      GakujoDeadlineEntry listRow(
+        int seqNo,
+        String sender,
+        DateTime posted, {
+        String flowKey = 'first',
+      }) {
+        const title = '連絡事項';
+        final text = '${jst(posted)} $title - 授業連絡 $sender';
+        final kind = GakujoDatedActivity.kindFor(text: text, category: '連絡通知');
+        return GakujoDeadlineEntry(
+          title: title,
+          url:
+              'https://gakujo.iess.niigata-u.ac.jp/campusweb/campussquare.do'
+              '?_flowExecutionKey=$flowKey&keijitype=1&genrecd=40&seqNo=$seqNo',
+          dueText: GakujoDatedActivity.datedTextPreview(text),
+          detectedAt: now,
+          kind: kind,
+          source: '連絡通知',
+          messageText: text,
+        );
+      }
+
+      final store = GakujoActivityStore();
+      final service = _FakeNotificationService(notifyResult: true);
+      final coordinator = GakujoDeadlineNotificationCoordinator(
+        activityStore: store,
+        notificationService: service,
+        now: () => now,
+      );
+      final rule = GakujoMessageNotificationSettings(
+        mode: GakujoMessageNotificationMode.keywords,
+        keywords: const ['api　ガイド'],
+        since: since,
+      );
+      Future<void> scan(String flowKey) async {
+        await store.mergeDeadlines([
+          listRow(
+            2001,
+            'ＡＰＩ  ｶﾞｲﾄﾞ担当',
+            now.subtract(const Duration(minutes: 1)),
+            flowKey: flowKey,
+          ),
+          listRow(
+            2002,
+            '別の担当',
+            now.subtract(const Duration(minutes: 1)),
+            flowKey: flowKey,
+          ),
+          listRow(
+            2003,
+            'ＡＰＩ  ｶﾞｲﾄﾞ担当',
+            since.subtract(const Duration(seconds: 5)),
+            flowKey: flowKey,
+          ),
+        ]);
+        await coordinator.notifyPendingDeadlines(
+          notificationsEnabled: true,
+          messages: rule,
+        );
+      }
+
+      await scan('first');
+      expect(service.notifiedEntries.single.kind, 'notice');
+      expect(service.notifiedEntries.single.url, contains('seqNo=2001'));
+      await scan('second');
+      expect(service.notifiedEntries, hasLength(1));
+      expect(await store.loadNotifiedDeadlineKeys(), {
+        deadlineNotificationKey(service.notifiedEntries.single, null),
+      });
+    },
+  );
+
   for (final kind in ['notice', 'deadline', 'schedule']) {
     test('legacy $kind message history suppresses a changed detail scan',
         () async {

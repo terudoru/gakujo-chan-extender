@@ -8,7 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_activity_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_assignment.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
+import 'package:morebettergakujo_flutter/src/gakujo_message_list_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_message_star_script.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
@@ -102,6 +104,10 @@ class _Page {
   final markerByUrl = <String, String>{};
   final reads = <String>[];
   final probes = <String>[];
+  final deliveredNotifications = <MethodCall>[];
+  List<Map<String, String>>? messageItems;
+  int assignmentFetches = 0;
+  int messageFetches = 0;
   var reloads = 0;
   var disposed = false;
   var document = '';
@@ -142,6 +148,19 @@ class _Page {
       launcher,
     ]) {
       messenger.setMockMethodCallHandler(channel, (_) async => null);
+    }
+    if (messageItems != null) {
+      messenger.setMockMethodCallHandler(notifications, (call) async {
+        if (call.method == 'requestPermission' ||
+            call.method == 'checkPermission') {
+          return true;
+        }
+        if (call.method == 'notifyDeadline') {
+          deliveredNotifications.add(call);
+          return true;
+        }
+        return null;
+      });
     }
     addTearDown(() async {
       for (final channel in [
@@ -210,6 +229,24 @@ class _Page {
         return 'script';
       case 'executeScript':
         final script = call.arguments as String;
+        if (messageItems != null && script == gakujoAssignmentListFetchScript) {
+          assignmentFetches++;
+          if (assignmentFetches > 1) {
+            throw PlatformException(code: 'fixture-assignment-fetch');
+          }
+          return jsonEncode(jsonEncode({'status': 'missing'}));
+        }
+        if (messageItems != null &&
+            script == gakujoKeywordMessageListFetchScript) {
+          messageFetches++;
+          return jsonEncode(
+            jsonEncode(
+              messageItems!.isEmpty
+                  ? {'status': 'error'}
+                  : {'status': 'ok', 'items': messageItems},
+            ),
+          );
+        }
         if (script ==
             GakujoMessageStarScript.buildOpen(
               keijitype: '1',
@@ -337,6 +374,61 @@ class _Page {
     await tap(_homeButton);
     expect(loads.skip(before), [_home]);
     await finish(_home, storageHeld: true);
+  }
+}
+
+Future<void> _verifyBackgroundMessageScan(WidgetTester tester) async {
+  final app = _Page(tester)..messageItems = [];
+  final now = DateTime.now();
+  app.storage.data['more_better_gakujo_message_notification'] = jsonEncode(
+    GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: const ['教材'],
+      since: now.subtract(const Duration(minutes: 2)),
+    ).toJson(),
+  );
+  final posted = now
+      .toUtc()
+      .add(const Duration(hours: 9))
+      .subtract(const Duration(seconds: 30))
+      .toIso8601String()
+      .substring(0, 19)
+      .replaceAll('-', '/')
+      .replaceFirst('T', ' ');
+  try {
+    await app.mount();
+    await app.waitFor('first message list error', () => app.messageFetches > 0);
+    expect(app.assignmentFetches, greaterThan(0));
+    expect(app.deliveredNotifications, isEmpty);
+    final beforeRetry = app.messageFetches;
+
+    app.messageItems = [
+      {
+        'title': '資料を公開しました',
+        'url': _detail,
+        'text': '$posted 資料を公開しました - 授業連絡 教材担当',
+      },
+    ];
+    await app.finish(_home);
+    await app.waitFor(
+      'keyword notification',
+      () => app.deliveredNotifications.isNotEmpty,
+    );
+    expect(app.assignmentFetches, greaterThan(1));
+    expect(app.messageFetches, greaterThan(beforeRetry));
+    expect(app.deliveredNotifications.single.arguments['title'], '資料を公開しました');
+    final assignmentAttempts = app.assignmentFetches;
+    final messageAttempts = app.messageFetches;
+    await app.finish(_favorite);
+    await app.waitFor(
+      'assignment retry',
+      () => app.assignmentFetches > assignmentAttempts,
+    );
+    expect(app.messageFetches, messageAttempts);
+    expect(app.deliveredNotifications, hasLength(1));
+  } finally {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
   }
 }
 
@@ -493,6 +585,9 @@ void main() {
           expect(find.byType(AlertDialog), findsNothing);
         });
       }
+
+      // Exercise the message scan on the same fake clock as the other mounts.
+      await _verifyBackgroundMessageScan(tester);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.windows),
     skip: !Platform.isWindows,

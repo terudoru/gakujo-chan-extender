@@ -248,6 +248,36 @@ void main() {
         rule.allows(text: '2026/10/21 09:00 授業連絡', isDeadline: false), isTrue);
   });
 
+  test('keyword matching folds case, character width and whitespace', () {
+    const rule = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: ['Ａｐｉ　ガイド', '   '],
+    );
+    expect(rule.allows(text: '公開 API\n\tｶﾞｲﾄﾞ 配布', isDeadline: false), isTrue);
+    expect(rule.allows(text: '公開 API ガイド', isDeadline: false), isTrue);
+    expect(rule.allows(text: '公開 API 担当', isDeadline: false), isFalse);
+  });
+
+  test('keyword cutoff uses seconds in JST and requires a posting time', () {
+    final rule = GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: const ['授業連絡'],
+      since: DateTime.utc(2026, 10, 20, 3, 0, 30),
+    );
+    expect(
+      rule.allows(text: '2026/10/20 12:00:29 授業連絡', isDeadline: false),
+      isFalse,
+    );
+    expect(
+      rule.allows(text: '授業連絡 掲載日時 2026/10/20 12:00:31', isDeadline: false),
+      isTrue,
+    );
+    expect(
+      rule.allows(text: '授業連絡 開催日 2026/10/21 12:00', isDeadline: false),
+      isFalse,
+    );
+  });
+
   test('message keywords beyond the preview survive caching and filtering', () {
     const rule = GakujoMessageNotificationSettings(
       mode: GakujoMessageNotificationMode.keywords,

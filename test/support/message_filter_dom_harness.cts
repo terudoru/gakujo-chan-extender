@@ -22,8 +22,13 @@ class FakeElement {
       }
     });
     this.attributes = {};
+    this.listeners = {};
     this.children = [];
     this.parentNode = null;
+  }
+
+  addEventListener(type: any, listener: any) {
+    this.listeners[type] = listener;
   }
 
   get innerText() {
@@ -144,7 +149,8 @@ function makeDocument(withList: any) {
       return root.querySelector(selector);
     },
     querySelectorAll(selector: any) { return root.querySelectorAll(selector); },
-    createElement(tag: any) { return new FakeElement(tag); }
+    createElement(tag: any) { return new FakeElement(tag); },
+    createTextNode(text: any) { return new FakeElement('#text', text); }
   };
   if (options.smartphone) {
     doc.navigationTable = add(root, 'table');
@@ -169,6 +175,24 @@ function makeDocument(withList: any) {
       add(table, 'tr', '重要なお知らせ')
     ];
     add(doc.rows[0], 'a', '', {href: 'campussquare.do?seqNo=508182'});
+    add(doc.rows[1], 'a', '', {href: 'campussquare.do?seqNo=508183'});
+    if (options.displayCountControl) {
+      doc.location = {origin: 'https://gakujo.iess.niigata-u.ac.jp'};
+      const size = add(root, 'select', '', {name: '_displayCount'});
+      size.value = '20';
+      size.options = ['20', '100', '500', '1000'].map(value => ({value}));
+      doc.rows[0].querySelector('a').setAttribute('href',
+        'campussquare.do?_flowExecutionKey=actual&seqNo=508182');
+    }
+    if (options.searchQueries) {
+      for (const [index, row] of doc.rows.entries()) {
+        row.cells = [
+          add(row, 'td', '2026/11/19 10:00:00'),
+          add(row, 'td', index === 0 ? 'ＡＰＩ　資料' : 'API 資料 重要'),
+          add(row, 'td', index === 0 ? '工学部 講義担当' : '文学部 講義担当')
+        ];
+      }
+    }
     doc.listTable = table;
   } else {
     // All messages share this layout row and list table. Only the outer row of
@@ -219,8 +243,13 @@ for (const doc of documents) {
 
 let nextIntervalId: any = 1;
 const activeIntervals: any = new Map();
+const storage = new Map();
 const window: any = {
   document,
+  sessionStorage: {
+    getItem(key: any) { return storage.get(key) ?? null; },
+    setItem(key: any, value: any) { storage.set(key, value); }
+  },
   clearInterval(id: any) { activeIntervals.delete(id); },
   setInterval(callback: any, delay: any) {
     if (delay !== 500) throw new Error('Expected a 500 ms interval');
@@ -230,7 +259,7 @@ const window: any = {
   }
 };
 window.window = window;
-const context: any = {window, document};
+const context: any = {window, document, URL};
 
 function documentSnapshot(doc: any) {
   const rows: any = doc.rows;
@@ -238,8 +267,13 @@ function documentSnapshot(doc: any) {
   const status: any = doc.getElementById('mbg-message-filter-status');
   const table: any = doc.listTable;
   const navigation: any = doc.navigationTable;
+  const search: any = doc.getElementById('mbg-message-search');
   const sum: any = (nodes: any, field: any) => nodes.reduce((total: any, node: any) => total + node[field], 0);
   return {
+    searchQuery: search?.querySelector('input').value ?? null,
+    searchCount: search?.querySelector('span').textContent ?? null,
+    searchHint: search?.querySelector('div').textContent ?? null,
+    searchLargerHref: search?.querySelector('a')?.href ?? null,
     rowDisplays: rows.map((row: any) => row.style.display || ''),
     rowAttributes: rows.map((row: any) => ({...row.attributes})),
     rowTextReads: sum(elements.filter((node: any) => node.tagName === 'TR'), 'textReads'),
@@ -262,7 +296,7 @@ function documentSnapshot(doc: any) {
 }
 
 const snapshots: any = [];
-for (const script of scripts) {
+for (const [index, script] of scripts.entries()) {
   for (const doc of documents) {
     for (const element of doc.querySelectorAll('*')) {
       element.textReads = 0;
@@ -272,10 +306,26 @@ for (const script of scripts) {
     }
   }
   vm.runInNewContext(script, context);
+  let enterPrevented = false;
+  let enterStopped = false;
+  const input = listDocument.getElementById('mbg-message-search')?.querySelector('input');
+  if (options.searchQueries && input) {
+    const query = options.searchQueries[index];
+    if (query !== null) {
+      input.value = query;
+      input.listeners.input();
+    }
+    input.listeners.keydown({
+      key: 'Enter',
+      preventDefault() { enterPrevented = true; },
+      stopPropagation() { enterStopped = true; }
+    });
+  }
   for (let pass: any = 0; pass < options.intervalPasses; pass += 1) {
     for (const callback of activeIntervals.values()) callback();
   }
   snapshots.push({...documentSnapshot(listDocument),
-    documents: documents.map(documentSnapshot), activeIntervalCount: activeIntervals.size});
+    documents: documents.map(documentSnapshot), activeIntervalCount: activeIntervals.size,
+    enterPrevented, enterStopped});
 }
 process.stdout.write(JSON.stringify(snapshots));
