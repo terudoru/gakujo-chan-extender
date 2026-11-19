@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { initialState } from "../src/study.mjs";
+import { initialState, snapshot } from "../src/study.mjs";
 import { checkpoint, project, reconcile, validateEntries } from "../src/sync/model.mjs";
 import { channelKey, newPairingCode, pairingKey, seal, unseal } from "../src/sync/crypto.mjs";
 import { googleTransport, relayURL } from "../src/sync/transports.mjs";
@@ -325,6 +325,87 @@ test("a scoped local row supersedes a legacy checkpoint, pending write, remote e
   newcomer.balances = [old];
   history(newcomer, b, [late, deletion, upgraded, batch]);
   assert.deepEqual(newcomer.balances, []);
+});
+const clinicalScope = { ...scope, faculty: "医学部", department: "医学科", program: "医学科", field: "", stage: "clinical" };
+const decision = (extras, current = 1) => ({
+  scope: { ...clinicalScope, ...extras }, key: "cbt", label: "CBT", kind: "公式判定",
+  unit: "condition", required: 1, current, confirmed: true,
+});
+test("official decision and allocation scopes retain every supplied dimension only in private history", async () => {
+  const s = initialState(), peer = initialState();
+  const planBefore = project("plan", s);
+  const documented = { entryGrade: 3, assessmentDate: "2026-07-01", graduationYear: 2028, graduationMonth: 3, package: "法学" };
+  const variants = [documented, { ...documented, assessmentDate: "2026-07-02" }, { ...documented, entryGrade: 2 },
+    { ...documented, graduationYear: 2029 }, { ...documented, graduationMonth: 9 }, { ...documented, package: "数学" },
+    { ...documented, assessmentDate: "" }, { entryGrade: 3, graduationYear: 2028, graduationMonth: 3, package: "法学" },
+    {}, { entryGrade: "", assessmentDate: "", graduationYear: "", graduationMonth: "", package: "" }];
+  const expected = variants.map((extra, index) => decision(extra, index % 2));
+  s.balances = structuredClone(expected);
+  s.grades = variants.map((extra, index) => ({ id: "grade-" + index, title: "認定", credits: 1,
+    allocationKey: "major", allocationScope: { ...clinicalScope, ...extra } }));
+  const batch = history(s, a).pending;
+  const key = await channelKey(await pairingKey(newPairingCode()), owner, "history");
+  const packet = await seal(key, owner, "history", batch);
+  const entries = await unseal(key, owner, "history", batch.id, JSON.parse(JSON.stringify(packet)));
+  history(peer, b, [{ id: batch.id, entries }]);
+  assert.deepEqual(project("plan", peer), planBefore);
+  assert.deepEqual(snapshot({ ...peer.lists[0], balances: peer.balances }, 2026), snapshot(initialState().lists[0], 2026));
+  assert.deepEqual(new Set(peer.balances), new Set(expected));
+  for (const g of s.grades) assert.deepEqual(peer.grades.find((p) => p.id === g.id), g);
+  assert.throws(() => validateEntries("plan", batch.entries));
+  const changed = peer.balances.find((b) => b.scope.assessmentDate === "2026-07-02");
+  changed.current = 0;
+  history(s, a, [history(peer, b).pending]);
+  assert.equal(s.balances.find((b) => b.scope.assessmentDate === "2026-07-02").current, 0);
+  peer.balances = peer.balances.filter((b) => b.scope.assessmentDate !== "2026-07-02");
+  history(s, a, [history(peer, b).pending]);
+  assert.deepEqual(s.balances, expected.filter((row) => row.scope.assessmentDate !== "2026-07-02"));
+});
+test("upgrading a pending v2 balance moves only its local documented decisions to distinct keys", () => {
+  const s = initialState(), peer = initialState();
+  s.balances = [decision({})];
+  const old = history(s, a).pending;
+  const key = Object.keys(old.entries).find((k) => JSON.parse(k)[0] === "balance");
+  assert.equal(JSON.parse(JSON.parse(key)[1]).length, 13);
+  s.plannerSync.history.balanceKeysVersion = 2;
+  s.balances = [decision({ assessmentDate: "2026-03-01" }, 0), decision({ assessmentDate: "2026-04-01" })];
+  const upgraded = history(s, a).pending;
+  assert.equal(upgraded.entries[key][2], null);
+  const datedCell = Object.values(upgraded.entries).find((cell) => cell[2]?.scope?.assessmentDate);
+  assert.throws(() => validateEntries("history", { [key]: datedCell }));
+  history(peer, b, [upgraded, old]);
+  assert.deepEqual(peer.balances, s.balances);
+  const unchanged = initialState();
+  history(unchanged, b, [old]);
+  assert.deepEqual(unchanged.balances, [decision({})]);
+  assert.equal(Object.hasOwn(unchanged.balances[0].scope, "assessmentDate"), false);
+  const oldDeletion = { id: crypto.randomUUID(), entries: { [key]: [100, a, null] } };
+  history(peer, b, [oldDeletion]);
+  assert.deepEqual(peer.balances, s.balances);
+  const oldParts = JSON.parse(JSON.parse(key)[1]);
+  for (const malformed of [
+    [null, null, null, null, null], [null, "x", null, null, null], [null, null, null, "15", null],
+  ]) {
+    const badKey = JSON.stringify(["balance", JSON.stringify([...oldParts, ...malformed])]);
+    assert.throws(() => validateEntries("history", { [badKey]: [101, a, null] }));
+  }
+  for (const [field, invalid] of [["assessmentDate", null], ["graduationMonth", 15], ["entryGrade", 0], ["package", {}]]) {
+    s.balances = [decision({ [field]: invalid })];
+    assert.throws(() => project("history", s), /適用範囲/);
+  }
+});
+test("independently entered dated decisions converge without adopting the device profile", () => {
+  const left = initialState(), right = initialState();
+  left.profile.assessmentDate = "2026-05-01";
+  right.profile.assessmentDate = "2026-06-01";
+  const first = decision({ assessmentDate: "2026-03-01" }, 0), second = decision({ assessmentDate: "2026-04-01" });
+  left.balances = [first];
+  right.balances = [second];
+  const x = history(left, a).pending, y = history(right, b).pending;
+  history(left, a, [y]);
+  history(right, b, [x]);
+  assert.deepEqual(new Set(left.balances), new Set([first, second]));
+  assert.deepEqual(new Set(right.balances), new Set([first, second]));
 });
 test("legacy-only figures remain available for rechecking without profile attribution or duplicate uploads", () => {
   const s = initialState();

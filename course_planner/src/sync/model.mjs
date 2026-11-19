@@ -56,9 +56,19 @@ const matchFields = {
   schedule: text, period: text, semester: text, format: text,
 };
 const individual = (v) => flag(v) || text(v);
+const decisionScopeFields = {
+  entryGrade: optionalPositiveInteger,
+  assessmentDate: (s) => s === "" || (text(s) && /^\d{4}-\d{2}-\d{2}$/.test(s)),
+  graduationYear: (v) => v === "" || (positiveInteger(v) && /^\d{4}$/.test(String(v))),
+  graduationMonth: (v) => v === "" || (positiveInteger(v) && Number(v) <= 12),
+  package: (v) => typeof v === "string" && /^[\p{L}\p{M}\p{N}・ ]{0,80}$/u.test(v),
+};
+// The tuple order is part of the persisted balance identity.
+const decisionScopeKeys = Object.keys(decisionScopeFields);
+const balanceKeysVersion = 3;
 const scopeFields = {
   faculty: text, program: text, field: text, handbook: scalar, entry: text, curriculum: text, goal: text, stage: text,
-  admitted: scalar, department: text, individual, stageId: text,
+  admitted: scalar, department: text, individual, stageId: text, ...decisionScopeFields,
 };
 const balanceFields = {
   ...scopeFields,
@@ -70,13 +80,10 @@ const balanceFields = {
 const profileFields = {
   faculty: text, program: text, admitted: scalar, handbook: scalar, gpa: scalar,
   cap: scalar, months: scalar, entry: text, curriculum: text, field: text,
-  assessmentDate: (s) => s === "" || (text(s) && /^\d{4}-\d{2}-\d{2}$/.test(s)),
+  ...decisionScopeFields,
   enrolledMonths: scalar, attendanceMonths: scalar, yearMonths: monthCounts,
   yearAttendanceMonths: (v) => scalar(v) || monthCounts(v), earlyGraduation: flag, deanException: flag,
-  yearOfStudy: optionalPositiveInteger, entryGrade: optionalPositiveInteger,
-  graduationYear: (v) => v === "" || (positiveInteger(v) && /^\d{4}$/.test(String(v))),
-  graduationMonth: (v) => v === "" || (positiveInteger(v) && Number(v) <= 12),
-  package: (v) => typeof v === "string" && /^[\p{L}\p{M}\p{N}・ ]{0,80}$/u.test(v),
+  yearOfStudy: optionalPositiveInteger,
   iStepApproved: flag, lawPaperSubstitutionApproved: flag, thirdYearCumulativeGpa: gpa,
   department: text, individual,
 };
@@ -88,7 +95,8 @@ function pick(value, schema) {
 }
 function checkedScope(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.entries(scopeFields).some(([key, valid]) => value[key] != null && !valid(value[key])))
+      Object.entries(scopeFields).some(([key, valid]) => value[key] === null
+        ? Object.hasOwn(decisionScopeFields, key) : value[key] !== undefined && !valid(value[key])))
     throw Error("履歴の適用範囲を確認してください。");
   return pick(value, scopeFields);
 }
@@ -118,15 +126,24 @@ function balance(row) {
 }
 function balanceId(row) {
   const s = row.scope ?? row;
-  return JSON.stringify([s.faculty ?? null, s.program ?? "", s.field ?? "", s.handbook == null ? null : String(s.handbook),
+  const parts = [s.faculty ?? null, s.program ?? "", s.field ?? "", s.handbook == null ? null : String(s.handbook),
     s.entry ?? "1年次入学", s.curriculum ?? "", s.goal ?? null, s.stageId || s.stage || "", row.key,
-    String(s.admitted ?? ""), s.department ?? "", s.individual ?? "", row.unit ?? "credits"]);
+    String(s.admitted ?? ""), s.department ?? "", s.individual ?? "", row.unit ?? "credits"];
+  // Keep old rows and their tombstones at their original key. Within an
+  // extended key, null means the dimension was absent and "" is a saved blank.
+  if (decisionScopeKeys.some((key) => s[key] !== undefined))
+    parts.push(...decisionScopeKeys.map((key) => s[key] === undefined ? null : String(s[key])));
+  return JSON.stringify(parts);
 }
 const oldIdentity = (parts) => Array.isArray(parts) && parts.length === 9 &&
   parts.every((v) => v === null || scalar(v)) && text(parts[8]);
 function currentIdentity(parts) {
-  return Array.isArray(parts) && parts.length === 13 && oldIdentity(parts.slice(0, 9)) &&
-    text(parts[9]) && text(parts[10]) && individual(parts[11]) && balanceFields.unit(parts[12]);
+  if (!Array.isArray(parts) || !oldIdentity(parts.slice(0, 9)) || !text(parts[9]) ||
+      !text(parts[10]) || !individual(parts[11]) || !balanceFields.unit(parts[12])) return false;
+  if (parts.length === 13) return true;
+  const extra = parts.slice(13);
+  return extra.length === decisionScopeKeys.length && extra.some((v) => v !== null) &&
+    extra.every((v, i) => v === null || (typeof v === "string" && decisionScopeFields[decisionScopeKeys[i]](v)));
 }
 function legacyFamily(parts) {
   // The old writer only saw the top level, ignored stageId, and retained the
@@ -136,7 +153,7 @@ function legacyFamily(parts) {
     entry || "1年次入学", curriculum, goal, stage, key]);
 }
 function fromOldBalance(value) {
-  return value && !value.scope && !["admitted", "department", "individual", "stageId", "unit", "duplicateFree"]
+  return value && !value.scope && !["admitted", "department", "individual", "stageId", "unit", "duplicateFree", ...decisionScopeKeys]
     .some((field) => Object.hasOwn(value, field)) && value.confirmed !== true;
 }
 function scopedOrUnconfirmed(row) {
@@ -414,7 +431,7 @@ export function reconcile({ state, before, owner, device, channel, batches }) {
   const pending = Object.keys(edits).length
     ? { id: crypto.randomUUID(), entries: pendingEntries } : old?.pending ?? null;
   if (old && !batches.length && !Object.keys(edits).length &&
-      (channel !== "history" || old.balanceKeysVersion === 2)) return old;
+      (channel !== "history" || old.balanceKeysVersion === balanceKeysVersion)) return old;
   apply(channel, state, materialized(cells), cells);
   if (state.plannerSync?.owner !== owner) state.plannerSync = { owner, joining: state.plannerSync?.joining };
   if (state.plannerSync.joining) {
@@ -422,5 +439,5 @@ export function reconcile({ state, before, owner, device, channel, batches }) {
     if (!Object.keys(state.plannerSync.joining).length) delete state.plannerSync.joining;
   }
   return state.plannerSync[channel] = { cells, clock, seen: [...seen], pending,
-    ...(channel === "history" && { balanceKeysVersion: 2 }) };
+    ...(channel === "history" && { balanceKeysVersion }) };
 }
