@@ -385,6 +385,8 @@ class _Page {
 Future<void> _verifyBackgroundMessageScan(WidgetTester tester) async {
   final app = _Page(tester)..messageItems = [];
   final now = DateTime.now();
+  app.storage.data['more_better_gakujo_message_exclude_keywords'] =
+      jsonEncode(['教材担当']);
   app.storage.data['more_better_gakujo_message_notification'] = jsonEncode(
     GakujoMessageNotificationSettings(
       mode: GakujoMessageNotificationMode.keywords,
@@ -408,6 +410,12 @@ Future<void> _verifyBackgroundMessageScan(WidgetTester tester) async {
     final beforeRetry = app.messageFetches;
 
     app.messageItems = [
+      for (var i = 0; i < 60; i++)
+        {
+          'title': '一般のお知らせ$i',
+          'url': _detail.replaceFirst('seqNo=2', 'seqNo=${100 + i}'),
+          'text': '$posted 一般のお知らせ$i',
+        },
       {
         'title': '資料を公開しました',
         'url': _detail,

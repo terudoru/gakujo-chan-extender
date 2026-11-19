@@ -365,7 +365,7 @@ void main() {
           release.complete();
         }
         await delivery;
-        final expectedCount = change == 'unchanged'
+        final expectedCount = change == 'unchanged' || change == 'exclude keyword'
             ? 2
             : boundary == 'send' ? 1 : 0;
         expect(service.notifiedEntries, hasLength(expectedCount));

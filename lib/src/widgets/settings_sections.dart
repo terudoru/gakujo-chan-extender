@@ -748,7 +748,8 @@ class MessageExcludeKeywordsSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          '連絡通知タブの通知一覧で、タイトルや行の文字にキーワードを含む通知を非表示にします。',
+          '連絡通知の一覧で、除外キーワードを含む通知を非表示にします。'
+          'キーワード通知を有効にしている場合は、通知用キーワードに一致する通知も一覧に表示します。',
         ),
         const SizedBox(height: 12),
         Row(

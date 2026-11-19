@@ -80,8 +80,8 @@ GakujoNotificationTopic notificationTopicFor(GakujoDeadlineEntry entry) {
 }
 
 /// Whether [entry] may become an OS notification under the student's
-/// choices. A 連絡通知 follows [messages]; in keyword mode it need not carry
-/// a deadline. One the student hid with [excludeKeywords] never notifies.
+/// choices. An explicit notification keyword takes precedence over
+/// [excludeKeywords] and can match a 連絡通知 without a deadline.
 bool isNotifiableDeadline(
   GakujoDeadlineEntry entry, {
   required Set<GakujoNotificationTopic> topics,
@@ -92,12 +92,14 @@ bool isNotifiableDeadline(
     final messageText =
         entry.messageText.isEmpty ? entry.dueText : entry.messageText;
     final text = '${entry.title} $messageText';
-    final lowerText = text.toLowerCase();
-    if (excludeKeywords.any(
-      (keyword) =>
-          keyword.isNotEmpty && lowerText.contains(keyword.toLowerCase()),
-    )) {
-      return false;
+    if (messages.mode == GakujoMessageNotificationMode.deadlines) {
+      final lowerText = text.toLowerCase();
+      if (excludeKeywords.any(
+        (keyword) =>
+            keyword.isNotEmpty && lowerText.contains(keyword.toLowerCase()),
+      )) {
+        return false;
+      }
     }
     return messages.allows(
       text: text,

@@ -7,9 +7,14 @@ class GakujoMessageFilterScript {
 
   static String buildTeardown() => gakujoMessageFilterTeardownJs;
 
-  static String build({required List<String> keywords}) {
+  static String build({
+    required List<String> keywords,
+    List<String> notificationKeywords = const [],
+  }) {
     return gakujoMessageFilterJs({
       'keywords': normalizeMessageExcludeKeywords(keywords),
+      'notificationKeywords':
+          normalizeMessageExcludeKeywords(notificationKeywords),
     });
   }
 }

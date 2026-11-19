@@ -2,14 +2,15 @@ import { watchPage } from '../shared/page_watch.js';
 import { largerMessageListPage } from '../shared/message_list_paging.js';
 export {};
 
-declare const __mbgConfig: { keywords: string[] };
+declare const __mbgConfig: { keywords: string[]; notificationKeywords?: string[] };
 
 function messageFilter() {
-  var version = 8;
+  var version = 9;
   var keywords = __mbgConfig.keywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
-  var signature = JSON.stringify(keywords);
+  var notificationKeywords = (__mbgConfig.notificationKeywords || []).map(searchText).filter(Boolean);
+  var signature = JSON.stringify([keywords, notificationKeywords]);
   if (window.__MBG_MESSAGE_FILTER_VERSION === version &&
       window.__MBG_MESSAGE_FILTER_SIGNATURE === signature) {
     if (window.__MBG_MESSAGE_FILTER_UPDATE) {
@@ -230,8 +231,9 @@ function messageFilter() {
             return (cell.textContent || '').replace(/\s+/g, ' ').trim();
           }).join(' ')
         : compactText(row);
-      var excluded = shouldHide(text);
-      var searchable = terms.length ? searchText(text) : '';
+      var searchable = terms.length || notificationKeywords.length ? searchText(text) : '';
+      var excluded = shouldHide(text) &&
+        !notificationKeywords.some(function(keyword) { return searchable.includes(keyword); });
       var hide = excluded || terms.some(function(term) {
         return !searchable.includes(term);
       });

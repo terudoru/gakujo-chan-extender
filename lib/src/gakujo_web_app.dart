@@ -5861,6 +5861,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     _scheduleStarSync();
+    await _injectMessageFilterIfAllowed();
   });
 
   Future<void> _saveNotificationTopics(
@@ -8092,6 +8093,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await _injectTwoFactorAutofillIfAllowed();
       return;
     }
+    if (flag == GakujoFeatureFlag.deadlineNotifications) {
+      await _injectMessageFilterIfAllowed();
+      return;
+    }
     final _PageScriptBuilder? builder;
     if (flag == GakujoFeatureFlag.downloadCapture) {
       builder = enabled
@@ -8140,10 +8145,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
 
+    final messages = _appSettings.messageNotification;
+    final keywordNotificationsEnabled =
+        messages.mode == GakujoMessageNotificationMode.keywords &&
+        _appSettings.isFeatureEnabled(GakujoFeatureFlag.deadlineNotifications);
     try {
       await _controller.runJavaScript(
         GakujoMessageFilterScript.build(
           keywords: _appSettings.messageExcludeKeywords,
+          notificationKeywords:
+              keywordNotificationsEnabled ? messages.keywords : const [],
         ),
       );
     } catch (error, stackTrace) {

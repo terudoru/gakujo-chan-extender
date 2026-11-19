@@ -302,7 +302,7 @@ void main() {
       expect(
         isNotifiableDeadline(entry,
             topics: const {}, messages: rule, excludeKeywords: ['除外語']),
-        isFalse,
+        isTrue,
       );
     }
   });
@@ -691,10 +691,9 @@ void main() {
     });
   });
 
-  test('a 連絡通知 hidden by an exclude keyword is never notified', () {
+  test('deadline mode respects the notice exclusion filter', () {
     const messages = GakujoMessageNotificationSettings(
-      mode: GakujoMessageNotificationMode.keywords,
-      keywords: ['説明会'],
+      mode: GakujoMessageNotificationMode.deadlines,
     );
     final hidden = _entry('2026/10/22 14:00:54 留学説明会 - アンケート', source: '連絡通知');
     final shown = _entry('2026/10/22 14:00:54 留学説明会 - 全学連絡', source: '連絡通知');

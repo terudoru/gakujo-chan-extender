@@ -5,6 +5,55 @@ import 'package:morebettergakujo_flutter/src/gakujo_message_filter_script.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('notification keywords override exclusions and keep search active',
+      () async {
+    final hidden = GakujoMessageFilterScript.build(
+      keywords: const ['資料'],
+    );
+    final priority = GakujoMessageFilterScript.build(
+      keywords: const ['資料'],
+      notificationKeywords: const ['api 資料 工学部'],
+    );
+    final result = await _evaluateMessageFilterScripts(
+      [hidden, priority, priority, priority, hidden],
+      frame: 'list',
+      searchQueries: [null, null, '文学部', '', null],
+    );
+    expect(result.map((snapshot) => snapshot['rowDisplays']), [
+      ['none', 'none'],
+      ['', 'none'],
+      ['none', 'none'],
+      ['', 'none'],
+      ['none', 'none'],
+    ]);
+    expect(result.map((snapshot) => snapshot['searchCount']), [
+      '2件中0件',
+      '2件中1件',
+      '2件中0件',
+      '2件中1件',
+      '2件中0件',
+    ]);
+  });
+
+  test('notification keywords also restore a matching smartphone row',
+      () async {
+    final hidden = GakujoMessageFilterScript.build(
+      keywords: const ['セキュリティ'],
+    );
+    final priority = GakujoMessageFilterScript.build(
+      keywords: const ['セキュリティ'],
+      notificationKeywords: const ['授業資料'],
+    );
+    final result = await _evaluateMessageFilterScripts(
+      [hidden, priority],
+      smartphone: true,
+      smartphoneMessageCount: 2,
+    );
+    expect(result.first['rowDisplays'], ['none', 'none']);
+    expect(result.last['rowDisplays'], ['', 'none']);
+    expect(result.last['statusText'], '除外中: 1件');
+  });
+
   test(
     'desktop search combines terms and exclusions and restores rows on clear',
     () async {
