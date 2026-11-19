@@ -58,7 +58,7 @@ const matchFields = {
   credits: number, confirmed: flag, section: text, term: text, courseId: text, sourceUrl: offeringSource,
   sourceKind: (s) => ["syllabus", "public-index", "faculty-index", "manual-record", "saved-syllabus"].includes(s),
   fieldSource: (s) => s === "" || offeringSource(s), aliasSource: offeringSource,
-  categorySource: officialDocument,
+  categorySource: officialDocument, creditSource: officialDocument,
   schedule: text, period: text, semester: text, format: text,
 };
 const individual = (v) => flag(v) || text(v);

@@ -20,7 +20,9 @@ node course_planner/sync/relay.mjs serve ../planner-private/relay-data https://p
 
 ## Google ドライブで使う
 
-サイト管理者が、プランナーのオリジンを登録した Web 用の公開 OAuth クライアント ID を `VITE_PLANNER_GOOGLE_CLIENT_ID` に設定してビルドすると、同期先に Google ドライブが表示される。Drive API を有効にしたプロジェクトを使う。初めて接続する端末で「新しいコードを作成」を押し、コードを控えてから Google に接続する。ほかの端末では同じコード・アカウントを選ぶ。
+サイト管理者が、プランナーのオリジンを登録した Web 用の公開 OAuth クライアント ID を `VITE_PLANNER_GOOGLE_CLIENT_ID` に設定してビルドすると、同期先に Google ドライブが表示される。GitHub Pages ではリポジトリの Actions 変数に同名の公開クライアント ID を設定する。Drive API を有効にしたプロジェクトを使う。初めて接続する端末で「新しいコードを作成」を押し、コードを控えてから Google に接続する。ほかの端末では同じコード・アカウントを選ぶ。
+
+More Better Gakujo とブラウザで同じ計画を使うときは、両方で「本人専用の同期サーバー」を選ぶ。Google ドライブには単独のブラウザから接続する。[Google の埋め込みブラウザに関する規定](https://developers.google.com/identity/protocols/oauth2/policies#browsers)
 
 ブラウザ版は GIS のトークンモデルを使い、要求するスコープは `drive.appdata` のみ。Drive が返す本人の `permissionId` に接続を結び付ける。アクセストークンはメモリ内に保持する。ページを開き直したときやトークン期限後は「Googleに再接続」を押す。[Google のトークンモデル](https://developers.google.com/identity/oauth2/web/guides/use-token-model)・[Drive のアプリ専用領域](https://developers.google.com/workspace/drive/api/guides/appdata)・[about.get](https://developers.google.com/workspace/drive/api/reference/rest/v3/about/get)
 

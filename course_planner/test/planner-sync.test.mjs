@@ -273,6 +273,20 @@ test("private history distinguishes absent, unresolved and confirmed matches, in
     clock: 8, pending: null, seen: [] } };
   assert.deepEqual(history(older, a).pending.entries[key], [9, a, entered[1]]);
 });
+test("a final failing evaluation survives encrypted history with no earned credit or public disclosure", async () => {
+  const source = initialState(), remote = initialState();
+  const assessment = { importId: "final-assessment", year: "2026", code: "260K0363",
+    title: "現代教育学概論", grade: "不可", credits: 2, counts: false, duplicate: false, finalEvaluation: true };
+  source.grades = [assessment];
+  const batch = history(source, a).pending;
+  const key = await channelKey(await pairingKey(newPairingCode()), owner, "history");
+  const packet = await seal(key, owner, "history", batch);
+  const entries = await unseal(key, owner, "history", batch.id, packet);
+  history(remote, b, [{ id: batch.id, entries }]);
+  assert.deepEqual(parseSaved(JSON.stringify(remote)).grades, [assessment]);
+  assert.deepEqual(project("plan", source), project("plan", initialState()));
+});
+
 test("faculty profile choices preserve explicit values only on the private history wire", () => {
   const source = initialState(), replica = initialState();
   const options = { entryGrade: 3, graduationYear: "2027", graduationMonth: "03", package: "心理・人間・メディア表現文化学",
@@ -346,7 +360,8 @@ test("each academic scope, eligibility decision and typed source survives histor
   author.balances.push({ ...total, scope: { ...scope, stageId: "fifth", stage: "", rawPDF: "PRIVATE" }, unit: "credits", confirmed: false });
   author.grades = [{ title: "認定A", credits: 1, grade: "認定", recognized: true, allocationKey: "major",
     allocationScope: { ...scope, cookie: "PRIVATE" }, possibleDuplicate: true, duplicateReviewed: true, counts: true, source: "単位修得状況照会",
-    matchedCourse: { code: c1, confirmed: true, categorySource: "https://www.eng.niigata-u.ac.jp/sample.pdf#page=4" } },
+    matchedCourse: { code: c1, confirmed: true, categorySource: "https://www.eng.niigata-u.ac.jp/sample.pdf#page=4",
+      creditSource: "https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf#page=10" } },
     { title: "認定B", credits: 1, source: "PRIVATE", duplicate: true, counts: false }];
   const batch = history(author, a).pending;
   history(receiver, b, [batch]);
@@ -365,10 +380,12 @@ test("each academic scope, eligibility decision and typed source survives histor
   assert.ok(g.possibleDuplicate && g.duplicateReviewed && g.counts);
   assert.equal(g.source, "単位修得状況照会");
   assert.equal(g.matchedCourse.categorySource, "https://www.eng.niigata-u.ac.jp/sample.pdf#page=4");
+  assert.equal(g.matchedCourse.creditSource, "https://www.iess.niigata-u.ac.jp/pdf/subject_list_2020/all.pdf#page=10");
   assert.ok(!JSON.stringify(batch).includes("PRIVATE"));
   assert.doesNotMatch(JSON.stringify(project("plan", author)), /total|法学|認定|duplicate|yearOfStudy|PRIVATE/);
   author.grades[0].matchedCourse.categorySource += "?token=PRIVATE";
-  assert.ok(!JSON.stringify(project("history", author)).includes("categorySource"));
+  author.grades[0].matchedCourse.creditSource += "?token=PRIVATE";
+  assert.doesNotMatch(JSON.stringify(project("history", author)), /categorySource|creditSource|PRIVATE/);
   author.balances[0].department = { token: "PRIVATE" };
   assert.throws(() => project("history", author), /適用範囲/);
 });

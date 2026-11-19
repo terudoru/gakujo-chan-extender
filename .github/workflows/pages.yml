@@ -35,6 +35,8 @@ jobs:
       - run: npm --prefix course_planner ci
       - run: npm --prefix course_planner test
       - run: npm --prefix course_planner run build
+        env:
+          VITE_PLANNER_GOOGLE_CLIENT_ID: ${{ vars.VITE_PLANNER_GOOGLE_CLIENT_ID }}
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:

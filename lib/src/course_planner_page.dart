@@ -225,8 +225,9 @@ class _CoursePlannerPageState extends State<CoursePlannerPage> {
             // Make public syllabus / registration links work in single-view hosts
             // which ignore target=_blank. The navigation delegate vets the URL.
             await _controller.runJavaScript('''
-            if (!document.__mbgPlannerLinks) {
-              document.__mbgPlannerLinks = true;
+            if (document.documentElement.dataset.plannerHost !== 'app') {
+              document.documentElement.dataset.plannerHost = 'app';
+              window.dispatchEvent(new Event('mbg:planner-host'));
               document.addEventListener('click', event => {
                 const link = event.target.closest?.('a[target="_blank"]');
                 if (link) link.target = '_self';

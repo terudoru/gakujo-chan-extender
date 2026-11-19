@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "../ui.jsx";
 import { changeLocal, loadLocal } from "../storage.mjs";
 import { activeCourses, overlaps } from "../study.mjs";
@@ -18,10 +18,19 @@ function collisions(state, catalog) {
     }
   return result;
 }
+function subscribeHostChange(listener) {
+  window.addEventListener("mbg:planner-host", listener);
+  return () => window.removeEventListener("mbg:planner-host", listener);
+}
+const inNativePlanner = () => document.documentElement.dataset.plannerHost === "app";
+
 // Mount once at App level; visible only controls the settings UI.
 export function SyncPanel({ state, setState, catalog, visible = true }) {
   const [view, setView] = useState({ connection: null, message: "", error: false });
-  const [provider, setProvider] = useState(googleClientId ? "google" : "relay");
+  const native = useSyncExternalStore(subscribeHostChange, inNativePlanner, () => false);
+  const googleAvailable = Boolean(googleClientId) && !native;
+  const [choice, setProvider] = useState("google");
+  const provider = googleAvailable ? choice : "relay";
   const [endpoint, setEndpoint] = useState(""), [code, setCode] = useState("");
   const [show, setShow] = useState(false), [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -40,11 +49,11 @@ export function SyncPanel({ state, setState, catalog, visible = true }) {
   const google = (connection?.provider ?? provider) === "google";
   useEffect(() => {
     let current = true;
-    if (visible && google && googleClientId) prepareGoogle()
+    if (visible && google && googleAvailable) prepareGoogle()
       .then(() => { if (current) setReady(true); })
       .catch((e) => { if (current) setError(e.message); });
     return () => { current = false; };
-  }, [google, visible]);
+  }, [google, googleAvailable, visible]);
   useEffect(() => {
     if (!visible || connection) { setCode(""); setShow(false); }
   }, [visible, connection?.session]);
@@ -72,7 +81,7 @@ export function SyncPanel({ state, setState, catalog, visible = true }) {
       <p>自分の端末で候補リストや時間割を編集できます。共用の端末では接続しないでください。</p>
       <label>同期先
         <select value={provider} disabled={busy} onChange={(e) => { setProvider(e.target.value); setCode(""); setShow(false); setError(""); }}>
-          {googleClientId && <option value="google">Google ドライブのアプリ専用領域</option>}
+          {googleAvailable && <option value="google">Google ドライブのアプリ専用領域</option>}
           <option value="relay">本人専用の同期サーバー</option>
         </select>
       </label>
@@ -110,7 +119,7 @@ export function SyncPanel({ state, setState, catalog, visible = true }) {
       </fieldset>
       <p>オフにすると、この端末での送受信が止まります。すでに同期したデータは各端末と同期先に残ります。</p>
       <div className="sync-actions">
-        {google && <Button label="Googleに再接続" variant="secondary" isDisabled={busy || !ready}
+        {google && googleAvailable && <Button label="Googleに再接続" variant="secondary" isDisabled={busy || !ready}
           onClick={() => act(() => engine.current.reauthorize(connection.session))} />}
         <Button label="今すぐ同期" variant="secondary" isDisabled={busy || (!connection.plan && !connection.history)}
           onClick={() => engine.current.wake(0)} />

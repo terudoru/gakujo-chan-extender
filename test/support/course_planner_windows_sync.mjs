@@ -152,6 +152,11 @@ try {
   assert.deepEqual(await grades(chrome), [browserGrade]);
 
   stage = "pairing both clients with independent plan consent";
+  assert.equal(await chrome.evaluate(() => document.documentElement.dataset.plannerHost), undefined);
+  assert.equal(await native.evaluate(() => document.documentElement.dataset.plannerHost), "app");
+  await openPanel(native);
+  assert.deepEqual(await native.locator(".planner-sync select option").evaluateAll((options) =>
+    options.map((option) => option.value)), ["relay"]);
   await pair(chrome, endpoint, code);
   await pair(native, endpoint, code);
   stage = "syncing the chrome list edit to webview";
