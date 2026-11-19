@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+  <meta charset="utf-8" /><title>学務帳票取込テスト</title>
+  <div id="root"></div>
+  <script type="module">
+    import React, { useEffect, useState } from "react";
+    import { createRoot } from "react-dom/client";
+    import { Theme } from "@astryxdesign/core/theme";
+    import { neutralTheme } from "@astryxdesign/theme-neutral/built";
+    import { PlannerImportPanel } from "../src/imports/PlannerImportPanel.jsx";
+    import { installPlannerImportListener } from "../src/imports/native.mjs";
+    import { initialState } from "../src/study.mjs";
+    import "../src/planner.css";
+    const h = React.createElement;
+    const byCode = new Map([
+      [
+        "261G7011",
+        {
+          code: "261G7011",
+          year: "2026",
+          title: "架空科目",
+          department: "84",
+          fields: ["70"],
+          category: "英語",
+          credits: 1,
+        },
+      ],
+    ]);
+    function Harness() {
+      const [source, setSource] = useState(null);
+      const [state, setState] = useState(() => ({
+        ...initialState(),
+        profile: { faculty: "例学部", handbook: "2026", program: "例専攻" },
+      }));
+      useEffect(
+        () => installPlannerImportListener((packet) => setSource({ packet })),
+        [],
+      );
+      const mutate = async (fn) => {
+        const draft = structuredClone(state);
+        fn(draft);
+        setState(draft);
+        return true;
+      };
+      return h(
+        Theme,
+        { theme: neutralTheme },
+        ...["grades", "registration", "balances"].map((kind) =>
+          h("button", { key: kind, onClick: () => setSource({ kind }) }, kind),
+        ),
+        h("output", { id: "result", hidden: true }, JSON.stringify(state)),
+        source &&
+          h(PlannerImportPanel, {
+            ...source,
+            state,
+            byCode,
+            catalogYear: 2026,
+            mutate,
+            onClose: () => setSource(null),
+            goal: "graduation",
+            stage: "卒業",
+            requirementRows: [
+              { key: "english", label: "英語", required: 4, kind: "必修" },
+            ],
+          }),
+      );
+    }
+    createRoot(document.getElementById("root")).render(h(Harness));
+  </script>
+</html>

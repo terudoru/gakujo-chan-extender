@@ -1,10 +1,11 @@
-import { delimitedRows } from "./transcript.mjs";
+import { delimitedRows, kinds, validatePacket } from "./imports/tables.mjs";
+import { pdfPageRows } from "./imports/pdf-rows.mjs";
 import pdfURL from "../../assets/js/upload_compression/pdf.min.js?url";
 import workerURL from "../../assets/js/upload_compression/pdf.worker.min.js?url";
 import mapsURL from "../../assets/js/upload_compression/pdf-cmaps.json?url";
 
 let pdfReady;
-async function readPdf(bytes) {
+async function readPdf(bytes, kind) {
   if (!pdfReady)
     pdfReady = Promise.all([
       new Promise((resolve, reject) => {
@@ -44,59 +45,54 @@ async function readPdf(bytes) {
   }).promise;
   try {
     if (doc.numPages > 150)
-      throw Error("150ページ以内の成績確認表を選んでください。");
-    const rows = [];
+      throw Error("150ページ以内の帳票を選んでください。");
+    const tables = [];
     for (let n = 1; n <= doc.numPages; n++) {
-      const page = await doc.getPage(n),
-        text = await page.getTextContent(),
-        lines = [];
-      for (const token of text.items) {
-        if (!token.str?.trim()) continue;
-        const y = token.transform[5],
-          x = token.transform[4];
-        let line = lines.find((l) => Math.abs(l.y - y) < 2);
-        if (!line) {
-          line = { y, items: [] };
-          lines.push(line);
-        }
-        line.items.push({
-          x,
-          end: x + token.width,
-          height: token.height,
-          text: token.str,
-        });
-      }
-      for (const line of lines.sort((a, b) => b.y - a.y)) {
-        const cells = [];
-        for (const item of line.items.sort((a, b) => a.x - b.x)) {
-          const previous = cells.at(-1);
-          // Japanese glyphs in a single table cell can use separate font runs.
-          if (
-            previous &&
-            item.x - previous.end <= Math.max(1, item.height * 0.22)
-          ) {
-            previous.text += item.text;
-            previous.end = Math.max(previous.end, item.end);
-          } else cells.push({ ...item });
-        }
-        rows.push(cells.map((c) => c.text));
-      }
+      const page = await doc.getPage(n);
+      const { items } = await page.getTextContent();
+      const rows = pdfPageRows(items, kind);
+      tables.push({ heading: "", rows });
+      page.cleanup();
     }
-    return rows;
+    if (!tables.some((t) => t.rows.length))
+      throw Error(
+        "文字を抽出できません。文字を選択できるPDFまたは表形式のテキストを選んでください。",
+      );
+    return tables;
   } finally {
     await doc.destroy();
   }
 }
-export async function readGradeFile(file) {
-  if (file.size > 20 * 1024 * 1024)
-    throw Error("20 MB以内のファイルを選んでください。");
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  if (/\.pdf$/i.test(file.name)) return readPdf(bytes);
-  let text;
+
+function decodeText(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe)
+    return new TextDecoder("utf-16le", { fatal: true }).decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff)
+    return new TextDecoder("utf-16be", { fatal: true }).decode(bytes);
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    text = new TextDecoder("shift_jis").decode(bytes);
+    return new TextDecoder("shift_jis", { fatal: true }).decode(bytes);
   }
-  return delimitedRows(text);
+}
+
+export async function readPlannerFile(file, kind) {
+  if (!kinds.includes(kind)) throw Error("帳票の種類を選んでください。");
+  if (!file?.size || file.size > 20 * 1024 * 1024)
+    throw Error("20 MB以内で、内容のあるファイルを選んでください。");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const pdf = new TextDecoder("ascii")
+    .decode(bytes.subarray(0, 1024))
+    .includes("%PDF-");
+  if (!pdf && /\.pdf$/i.test(file.name))
+    throw Error("PDFの形式を確認してください。");
+  const tables = pdf
+    ? await readPdf(bytes, kind)
+    : [{ heading: "", rows: delimitedRows(decodeText(bytes)) }];
+  return validatePacket({ v: 1, kind, tables });
+}
+export async function readGradeFile(file) {
+  return (await readPlannerFile(file, "grades")).tables.flatMap((t, index) =>
+    index ? [["成績確認表"], ...t.rows] : t.rows,
+  );
 }
