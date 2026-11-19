@@ -5,7 +5,7 @@ export {};
 declare const __mbgConfig: { keywords: string[] };
 
 function messageFilter() {
-  var version = 7;
+  var version = 8;
   var keywords = __mbgConfig.keywords.map(function(keyword) {
     return String(keyword || '').trim().toLowerCase();
   }).filter(Boolean);
@@ -38,22 +38,29 @@ function messageFilter() {
   }
 
   function messageTable(doc: Document) {
+    function hasMessageRows(table: Element) {
+      return Array.from(table.querySelectorAll('a[href*="seqNo="]')).some(function(link) {
+        return link.closest('tr')?.closest('table') === table;
+      });
+    }
     var direct = doc.querySelector('table.normal:nth-child(9)');
-    if (direct && direct.querySelector('a[href*="seqNo="]')) {
-      return direct;
-    }
-    var tables = doc.querySelectorAll<HTMLTableElement>(keywords.length ? 'table' : 'table.normal');
-    for (var i = 0; i < tables.length; i += 1) {
-      var table = tables[i];
-      if (!table.querySelector('a[href*="seqNo="]')) continue;
-      var text = compactText(table);
-      if ((text.indexOf('連絡通知') >= 0 ||
-           text.indexOf('全学連絡通知') >= 0 ||
-           text.indexOf('掲示') >= 0)) {
-        return table;
-      }
-    }
-    return null;
+    if (direct && hasMessageRows(direct)) return direct;
+
+    return Array.from(doc.querySelectorAll('table')).find(function(table) {
+      if (table.matches('table.keiji-normal') ||
+          table.closest('aside') || table.closest('nav') ||
+          table.closest('[id="tabmenutable"]') || !hasMessageRows(table)) return false;
+      var heading = table.querySelector('tr');
+      if (!heading || heading.closest('table') !== table) return false;
+      var headings = Array.from(heading.children, function(cell) {
+        return cell.textContent || '';
+      }).join(' ');
+      var caption = table.querySelector('caption');
+      return /連絡通知|掲示/.test(headings) ||
+        (/掲載日時/.test(headings) && /表題|差出人/.test(headings)) ||
+        (caption?.closest('table') === table && caption.id !== 'mbg-message-search' &&
+          /連絡通知|掲示/.test(caption.textContent || ''));
+    }) || null;
   }
 
   function smartphoneMessageRows(doc: Document) {

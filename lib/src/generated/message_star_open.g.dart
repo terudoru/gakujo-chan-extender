@@ -38,10 +38,12 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
   }
   function nextMessageListPage(doc, base) {
     var controls = doc.querySelectorAll('a,button,input[type="button"],input[type="submit"]');
+    var hasNextControl = false;
     for (var i = 0; i < controls.length; i += 1) {
       var control = controls[i];
       var label = String(control.textContent || control.value || "") + " " + (control.getAttribute("aria-label") || control.getAttribute("title") || "");
       if (!/次へ|次のページ|次ページ|next/i.test(label) && control.getAttribute("rel") !== "next" || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+      hasNextControl = true;
       var href = control.getAttribute("href") || "";
       if (!href || /^(?:javascript:|#)/i.test(href)) {
         href = messageOnclickUrl(control) || ((control.getAttribute("onclick") || href).match(
@@ -57,7 +59,7 @@ const String _gakujoMessageStarOpenJsPrefix = r'''(function(__mbgConfig) {
       target.searchParams.set("_eventId", "paging");
       return target.href;
     }
-    return "";
+    return hasNextControl ? null : "";
   }
 
   // web_scripts/src/message_star/open.ts

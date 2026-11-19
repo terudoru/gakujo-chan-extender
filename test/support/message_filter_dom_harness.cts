@@ -168,8 +168,23 @@ function makeDocument(withList: any) {
   }
   if (!withList) return doc;
   if (!options.smartphone) {
-    const table: any = add(root, 'table', '連絡通知 ');
-    add(add(table, 'tr', '件名'), 'a', '', {href: 'campussquare.do'});
+    add(root, 'h1', '連絡通知');
+    if (options.decoyTables) {
+      const layout = add(root, 'table');
+      add(add(layout, 'tr'), 'th', '掲示');
+      const nested = add(add(add(layout, 'tr'), 'td'), 'table');
+      add(add(nested, 'tr'), 'th', '関連リンク');
+      add(add(add(nested, 'tr'), 'td'), 'a', '詳細', {href: 'campussquare.do?seqNo=507001'});
+      const sidebar = add(add(root, 'aside'), 'table');
+      add(add(sidebar, 'tr'), 'th', '連絡通知');
+      add(add(add(sidebar, 'tr'), 'td'), 'a', '最近の通知', {href: 'campussquare.do?seqNo=507002'});
+      const detail = add(root, 'table', '', {class: 'keiji-normal'});
+      add(add(detail, 'tr'), 'th', '連絡通知元');
+      add(add(add(detail, 'tr'), 'td'), 'a', '関連通知', {href: 'campussquare.do?seqNo=507003'});
+    }
+    const table: any = add(root, 'table');
+    const header = add(table, 'tr');
+    for (const title of ['掲載日時', '表題', '差出人']) add(header, 'th', title);
     doc.rows = [
       add(table, 'tr', '授業アンケートのお願い'),
       add(table, 'tr', '重要なお知らせ')
@@ -273,6 +288,7 @@ function documentSnapshot(doc: any) {
     searchQuery: search?.querySelector('input').value ?? null,
     searchCount: search?.querySelector('span').textContent ?? null,
     searchHint: search?.querySelector('div').textContent ?? null,
+    searchInList: !!search && search.parentNode === table,
     searchLargerHref: search?.querySelector('a')?.href ?? null,
     rowDisplays: rows.map((row: any) => row.style.display || ''),
     rowAttributes: rows.map((row: any) => ({...row.attributes})),

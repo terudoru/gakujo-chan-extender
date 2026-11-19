@@ -18,6 +18,7 @@ void main() {
         gakujoKeywordMessageListFetchScript,
       ]);
       final items = fetched['result']['items'] as List;
+    expect(fetched['result']['complete'], isTrue);
       expect(items, hasLength(62));
       expect(items.last['url'], contains('seqNo=508243'));
       final requests = fetched['requests'] as List;
@@ -54,6 +55,23 @@ void main() {
             .queryParameters['_flowExecutionKey'],
         'desktop key');
   });
+
+  for (final (scenario, requests, status) in [
+    ('requestCap', 4, 'ok'),
+    ('itemCap', 1, 'ok'),
+    ('repeatPage', 2, 'ok'),
+    ('partialPage', 2, 'partial'),
+    ('unsafeNext', 1, 'ok'),
+  ]) {
+    test('keyword fetch leaves coverage incomplete for $scenario', () async {
+      final fetched = await _evaluate('fetch', scenario, [
+        gakujoKeywordMessageListFetchScript,
+      ]);
+      expect(fetched['requests'], hasLength(requests));
+      expect(fetched['result']['status'], status);
+      expect(fetched['result']['complete'], isFalse);
+    });
+  }
 
   for (final scenario in [
     'unread',

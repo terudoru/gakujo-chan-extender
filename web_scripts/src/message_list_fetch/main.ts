@@ -4,6 +4,12 @@ import { readSmartphoneMessageRow } from '../shared/smartphone_message_rows.js';
 declare const __mbgExpandMessageList: boolean | undefined;
 
 function messageListFetch() {
+  var expanded = typeof __mbgExpandMessageList !== 'undefined' && __mbgExpandMessageList;
+  var complete = false;
+  function result(status: string, items: {title: string; url: string; text: string}[]) {
+    return JSON.stringify(expanded ? {status, items, complete} : {status, items});
+  }
+
   function text(node: Element | null) {
     return String(node && ((node as HTMLElement).innerText || node.textContent) || '')
       .replace(/\s+/g, ' ')
@@ -23,10 +29,9 @@ function messageListFetch() {
   }
 
   try {
-    var expanded = typeof __mbgExpandMessageList !== 'undefined' && __mbgExpandMessageList;
     var base = location.origin + '/campusweb/';
     var page = fetchList('/campusweb/campussquare.do?_flowId=KJW0001100-flow');
-    if (!page) return JSON.stringify({status: 'missing', items: []});
+    if (!page) return result('missing', []);
 
     var items: {title: string; url: string; text: string}[] = [];
     var seen = new Set<string>();
@@ -75,7 +80,10 @@ function messageListFetch() {
       try {
         var larger = index === 0 ? largerMessageListPage(page.doc, base) : null;
         var next = larger?.url || nextMessageListPage(page.doc, base);
-        if (!next) break;
+        if (!next) {
+          complete = next === '';
+          break;
+        }
         page = fetchList(next);
         if (!page) partial = true;
       } catch (_) {
@@ -84,9 +92,9 @@ function messageListFetch() {
       }
     }
 
-    return JSON.stringify({status: partial ? 'partial' : 'ok', items: items});
+    return result(partial ? 'partial' : 'ok', items);
   } catch (e) {
-    return JSON.stringify({status: 'error', items: []});
+    return result('error', []);
   }
 }
 __mbgEntryResult = messageListFetch();

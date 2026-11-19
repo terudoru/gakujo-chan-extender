@@ -6654,6 +6654,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (decoded is! Map) return null;
     final status = decoded['status'];
     if (status != 'ok' && status != 'partial') return null;
+    final complete = status == 'ok' && decoded['complete'] == true;
     final items = decoded['items'];
     if (items is! List) return null;
     final allEntries = _extractDeadlines(
@@ -6688,8 +6689,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               ...allEntries.take(60).where((entry) => !matches.contains(entry)),
             ].take(60).toList()
           : allEntries,
-      // A bounded keyword scan may miss unread items on later pages.
-      unreadMessageUrls: keywordMode
+      // Only a complete keyword scan can use absence as evidence of a read.
+      unreadMessageUrls: keywordMode && !complete
           ? null
           : [
               for (final item in items)

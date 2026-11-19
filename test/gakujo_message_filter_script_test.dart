@@ -99,6 +99,19 @@ void main() {
     });
   });
 
+  test('fallback search uses list headings and skips non-list tables', () async {
+    final result = await _evaluateMessageFilterScripts(
+      [
+        GakujoMessageFilterScript.build(keywords: const []),
+        GakujoMessageFilterScript.build(keywords: const ['アンケート']),
+      ],
+      directTable: false,
+      decoyTables: true,
+    );
+    expect(result.map((snapshot) => snapshot['searchInList']), [true, true]);
+    expect(result.map((snapshot) => snapshot['searchCount']), ['2件中2件', '2件中1件']);
+  });
+
   test('filters rows and restores them when the keywords change', () async {
     final result = await _evaluateMessageFilterScripts([
       GakujoMessageFilterScript.build(keywords: const ['アンケート']),
@@ -277,6 +290,7 @@ void main() {
       );
 
       for (final snapshot in result.cast<Map<String, dynamic>>()) {
+        expect(snapshot['searchCount'], '1件中1件');
         expect(snapshot['rowTextReads'], 0);
         expect(snapshot['tableTextReads'], 0);
         expect(snapshot['attributeWrites'], 0);
@@ -556,6 +570,7 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
   int initialStatusCount = 0,
   List<String?>? searchQueries,
   bool displayCountControl = false,
+  bool decoyTables = false,
 }) async {
   final directory =
       Directory.systemTemp.createTempSync('gakujo_message_filter_');
@@ -574,6 +589,7 @@ Future<List<dynamic>> _evaluateMessageFilterScripts(
           'initialStatusCount': initialStatusCount,
           'searchQueries': searchQueries,
           'displayCountControl': displayCountControl,
+          'decoyTables': decoyTables,
         }),
         encoding: utf8,
       );

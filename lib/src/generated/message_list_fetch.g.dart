@@ -67,10 +67,12 @@ const String gakujoMessageListFetchJs = r'''
   }
   function nextMessageListPage(doc, base) {
     var controls = doc.querySelectorAll('a,button,input[type="button"],input[type="submit"]');
+    var hasNextControl = false;
     for (var i = 0; i < controls.length; i += 1) {
       var control = controls[i];
       var label = String(control.textContent || control.value || "") + " " + (control.getAttribute("aria-label") || control.getAttribute("title") || "");
       if (!/次へ|次のページ|次ページ|next/i.test(label) && control.getAttribute("rel") !== "next" || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+      hasNextControl = true;
       var href = control.getAttribute("href") || "";
       if (!href || /^(?:javascript:|#)/i.test(href)) {
         href = messageOnclickUrl(control) || ((control.getAttribute("onclick") || href).match(
@@ -86,7 +88,7 @@ const String gakujoMessageListFetchJs = r'''
       target.searchParams.set("_eventId", "paging");
       return target.href;
     }
-    return "";
+    return hasNextControl ? null : "";
   }
   function largerMessageListPage(doc, base) {
     const control = doc.querySelector('select[name="_displayCount"]');
@@ -106,6 +108,11 @@ const String gakujoMessageListFetchJs = r'''
 
   // web_scripts/src/message_list_fetch/main.ts
   function messageListFetch() {
+    var expanded = typeof __mbgExpandMessageList !== "undefined" && __mbgExpandMessageList;
+    var complete = false;
+    function result(status, items2) {
+      return JSON.stringify(expanded ? { status, items: items2, complete } : { status, items: items2 });
+    }
     function text(node) {
       return String(node && (node.innerText || node.textContent) || "").replace(/\s+/g, " ").trim();
     }
@@ -131,10 +138,9 @@ const String gakujoMessageListFetchJs = r'''
         items.push({ title: item2.title, url: item2.url, text: item2.text });
       };
       var add = add2;
-      var expanded = typeof __mbgExpandMessageList !== "undefined" && __mbgExpandMessageList;
       var base = location.origin + "/campusweb/";
       var page = fetchList("/campusweb/campussquare.do?_flowId=KJW0001100-flow");
-      if (!page) return JSON.stringify({ status: "missing", items: [] });
+      if (!page) return result("missing", []);
       var items = [];
       var seen = /* @__PURE__ */ new Set();
       var limit = expanded ? 500 : 60;
@@ -165,7 +171,10 @@ const String gakujoMessageListFetchJs = r'''
         try {
           var larger = index === 0 ? largerMessageListPage(page.doc, base) : null;
           var next = (larger == null ? void 0 : larger.url) || nextMessageListPage(page.doc, base);
-          if (!next) break;
+          if (!next) {
+            complete = next === "";
+            break;
+          }
           page = fetchList(next);
           if (!page) partial = true;
         } catch (_) {
@@ -173,9 +182,9 @@ const String gakujoMessageListFetchJs = r'''
           break;
         }
       }
-      return JSON.stringify({ status: partial ? "partial" : "ok", items });
+      return result(partial ? "partial" : "ok", items);
     } catch (e) {
-      return JSON.stringify({ status: "error", items: [] });
+      return result("error", []);
     }
   }
   __mbgEntryResult = messageListFetch();

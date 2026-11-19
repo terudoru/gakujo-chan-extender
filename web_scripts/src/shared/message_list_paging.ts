@@ -18,8 +18,10 @@ export function messageListFlowKey(doc: Document, base: string) {
   return '';
 }
 
-export function nextMessageListPage(doc: Document, base: string) {
+/** An empty string means no next control. Null means it cannot be followed safely. */
+export function nextMessageListPage(doc: Document, base: string): string | null {
   var controls = doc.querySelectorAll<HTMLInputElement>('a,button,input[type="button"],input[type="submit"]');
+  var hasNextControl = false;
   for (var i = 0; i < controls.length; i += 1) {
     var control = controls[i];
     var label = String(control.textContent || control.value || '') + ' ' +
@@ -27,6 +29,7 @@ export function nextMessageListPage(doc: Document, base: string) {
     if ((!/次へ|次のページ|次ページ|next/i.test(label) &&
         control.getAttribute('rel') !== 'next') || control.disabled ||
         control.getAttribute('aria-disabled') === 'true') continue;
+    hasNextControl = true;
     var href = control.getAttribute('href') || '';
     if (!href || /^(?:javascript:|#)/i.test(href)) {
       href = messageOnclickUrl(control) ||
@@ -47,7 +50,7 @@ export function nextMessageListPage(doc: Document, base: string) {
     target.searchParams.set('_eventId', 'paging');
     return target.href;
   }
-  return '';
+  return hasNextControl ? null : '';
 }
 
 /** Offer only display counts advertised by the list's own control. */

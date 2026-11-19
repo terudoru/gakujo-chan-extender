@@ -106,6 +106,7 @@ class _Page {
   final probes = <String>[];
   final deliveredNotifications = <MethodCall>[];
   List<Map<String, String>>? messageItems;
+  bool messageListComplete = false;
   int assignmentFetches = 0;
   int messageFetches = 0;
   var reloads = 0;
@@ -243,7 +244,11 @@ class _Page {
             jsonEncode(
               messageItems!.isEmpty
                   ? {'status': 'error'}
-                  : {'status': 'ok', 'items': messageItems},
+                  : {
+                      'status': 'ok',
+                      'items': messageItems,
+                      'complete': messageListComplete,
+                    },
             ),
           );
         }
@@ -432,6 +437,69 @@ Future<void> _verifyBackgroundMessageScan(WidgetTester tester) async {
   }
 }
 
+Future<void> _verifyKeywordReadReconciliation(
+  WidgetTester tester, {
+  required bool complete,
+}) async {
+  const historyKey = 'more_better_gakujo_notified_deadline_keys';
+  final now = DateTime.now();
+  final posted = now
+      .toUtc()
+      .add(const Duration(hours: 9))
+      .subtract(const Duration(seconds: 30))
+      .toIso8601String()
+      .substring(0, 19)
+      .replaceAll('-', '/')
+      .replaceFirst('T', ' ');
+  final cached = GakujoDeadlineEntry(
+    title: '教材の公開',
+    url: _detail.replaceFirst('seqNo=2', 'seqNo=3'),
+    dueText: '$posted 教材の公開',
+    detectedAt: now,
+    kind: 'notice',
+    source: '連絡通知',
+  );
+  final app = _Page(tester)
+    ..messageListComplete = complete
+    ..messageItems = [
+      {
+        'title': '別の連絡',
+        'url': _detail,
+        'text': '$posted 別の連絡',
+      },
+    ];
+  app.storage.data['more_better_gakujo_deadlines'] = jsonEncode([
+    cached.toJson(),
+  ]);
+  app.storage.data['more_better_gakujo_message_notification'] = jsonEncode(
+    GakujoMessageNotificationSettings(
+      mode: GakujoMessageNotificationMode.keywords,
+      keywords: const ['教材'],
+      since: now.subtract(const Duration(minutes: 2)),
+    ).toJson(),
+  );
+  try {
+    await app.mount();
+    await app.waitFor(
+      'notification history after keyword scan (complete: $complete)',
+      () => app.storage.data.containsKey(historyKey),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      jsonDecode(app.storage.data[historyKey]!),
+      contains(gakujoMessageNotificationKey(cached.url)),
+    );
+    if (complete) {
+      expect(app.deliveredNotifications, isEmpty);
+    } else {
+      expect(app.deliveredNotifications.single.arguments['title'], cached.title);
+    }
+  } finally {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
   testWidgets(
     'returned lists belong to the initiating navigation',
@@ -588,6 +656,8 @@ void main() {
 
       // Exercise the message scan on the same fake clock as the other mounts.
       await _verifyBackgroundMessageScan(tester);
+      await _verifyKeywordReadReconciliation(tester, complete: true);
+      await _verifyKeywordReadReconciliation(tester, complete: false);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.windows),
     skip: !Platform.isWindows,

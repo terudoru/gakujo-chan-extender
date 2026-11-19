@@ -95,16 +95,18 @@ function doc() {
     : root.querySelectorAll('style').find((node: any) => node.id === id) || null;
   return root;
 }
+const pagedDesktopScenarios = ['pagedDesktop', 'requestCap', 'itemCap', 'repeatPage', 'partialPage', 'unsafeNext'];
 function list(page = 0) {
   const root: any = doc();
-  if (scenario === 'desktop' || scenario === 'pagedDesktop') {
-    const paged = scenario === 'pagedDesktop';
+  if (scenario === 'desktop' || pagedDesktopScenarios.includes(scenario)) {
     root.title = '連絡通知一覧';
     const table: any = add(root.body, 'table', '', {class: 'normal'});
     const header: any = add(table, 'tr');
     for (const label of ['掲載日時','表題','返信未読','ジャンル','所属','氏名','連絡通知期間']) add(header, 'th', label);
-    const first = paged && page === 1 ? 60 : 0;
-    const end = paged ? (page === 1 ? 62 : 60) : 160;
+    const first = scenario === 'pagedDesktop' ? page * 60 : scenario === 'requestCap' ? page : 0;
+    const end = scenario === 'pagedDesktop' ? (page === 1 ? 62 : 60)
+      : scenario === 'desktop' ? 160 : scenario === 'itemCap' ? 500
+      : scenario === 'requestCap' ? first + 1 : 2;
     for (let i: any = first; i < end; i += 1) {
       const row: any = add(table, 'tr');
       for (const value of ['2026/10/22 14:00:54 ', null, ' - ', '授業連絡 ', '工学部 ', '落合 博幸 ', '2026/10/22 13:57～2026/11/05 13:57']) {
@@ -117,8 +119,11 @@ function list(page = 0) {
         }
       }
     }
-    if (paged && page === 0) {
-      add(root.body, 'a', '次へ', {href: 'campussquare.do?_flowExecutionKey=stale&_eventId=paging&_displayOffset=60'});
+    if (['pagedDesktop', 'repeatPage', 'partialPage', 'unsafeNext'].includes(scenario) && page === 0 ||
+        scenario === 'requestCap' && page < 3) {
+      add(root.body, 'a', '次へ', {href: (scenario === 'unsafeNext' ? 'https://example.test/campusweb/' : '') +
+        'campussquare.do?_flowExecutionKey=stale&_eventId=paging&_displayOffset=' +
+        (scenario === 'pagedDesktop' ? 60 : page + 1)});
     }
     return root;
   }
@@ -213,12 +218,14 @@ const context: any = {document: outer, frames: outer.frame && scenario !== 'same
     open(method: any, url: any, async: any) { requests.push({method, url, async}); }
     send() {
       if (scenario === 'networkError') throw new Error('network');
-      this.status = scenario === 'httpError' ? 500 : 200; this.responseText = 'fixture';
+      this.status = scenario === 'httpError' || scenario === 'partialPage' && requests.length > 1 ? 500 : 200;
+      this.responseText = 'fixture';
     }
   },
   DOMParser: class {
   [key: string]: any; parseFromString() {
-    return scenario === 'pagedDesktop' && requests.length > 1 ? list(1) : inner;
+    return pagedDesktopScenarios.includes(scenario) && requests.length > 1
+      ? list(requests.length - 1) : inner;
   } }
 };
 context.window = context; vm.createContext(context);
