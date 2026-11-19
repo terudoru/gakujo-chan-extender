@@ -87,11 +87,15 @@ export function currentImportIndex(byCode, catalogYear) {
   return index;
 }
 
-// The zero on the transcript describes earned credits. Resolve identity without treating it as an offering fact.
-export function finalEvaluationCredits(attempt, index, catalogYear) {
+// One exact offering supplies every missing fact used to make the transcript row selectable.
+export function resolveImportOffering(attempt, index, catalogYear) {
   const { match } = resolveHistoricalGrade(attempt, index, { review: true });
   if (!match || !(match.credits > 0) || (match.year !== String(catalogYear) && !match.creditSource)) return null;
-  return match.credits;
+  return match;
+}
+
+export function finalEvaluationCredits(attempt, index, catalogYear) {
+  return resolveImportOffering(attempt, index, catalogYear)?.credits ?? null;
 }
 
 // Safe read projection before allocating a local or synced confirmed row. No storage write or network request.

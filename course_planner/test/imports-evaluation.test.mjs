@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { buildHistoricalIndex } from "../src/archive/identity.mjs";
+import { buildHistoricalIndex, resolveHistoricalGrade } from "../src/archive/identity.mjs";
 import { unpackYear } from "../src/archive/packs.mjs";
 import { initialState } from "../src/study.mjs";
 import { reviewGradeRows } from "../src/transcript.mjs";
@@ -48,6 +48,100 @@ const save = (s) => (update) => {
   update(s);
   return true;
 };
+
+test("code-only grade imports recover a title and validate allocated credits from the same offering", async () => {
+  const pack = JSON.parse(await readFile(new URL("../src/archive/packs/2025.json", import.meta.url), "utf8"));
+  const past = unpackYear("2025", pack);
+  const options = { byCode: new Map(catalog.courses.map((c) => [c.code, c])),
+    evaluationIndices: new Map([["2025", past]]), deferMatch: false };
+  const title = "現代教育学概論";
+  const make = (cells, opts = {}) => review([Object.keys(cells), Object.values(cells)], { ...options, ...opts });
+  const base = { 履修年度: "2025", 開講番号: "250K0363", 開講所属: "教育学部", 評価: "不可", 修得単位: "0" };
+  for (const year of ["2025", "2026"]) {
+    const code = year.slice(2) + "0K0363";
+    for (const dept of ["03", "教育学部"]) {
+      const id = { 履修年度: year, 開講番号: code, 開講所属: dept };
+      for (const source of [{}, { 科目名: title }]) {
+        for (const units of [{ 評価: "不可", 修得単位: "0" }, { 評価: "不可", 配当単位: "2", 修得単位: "0" },
+          { 評価: "優", 配当単位: "2" }, { 評価: "優", 修得単位: "2" }]) {
+          const r = make({ ...id, ...source, ...units });
+          const final = units.評価 === "不可";
+          const g = final ? r.rows[0].finalEvaluationCandidate : r.rows[0].value;
+          assert.deepEqual([g.year, g.code, g.offeringDepartment, g.title, g.credits, g.grade, g.counts, g.duplicate],
+            [year, code, dept, title, 2, units.評価, !final, false]);
+          if (!source.科目名 || (final && !units.配当単位)) {
+            assert.equal(g.matchedCourse.code, code);
+            assert.equal(g.matchedCourse.year, year);
+            if (year === "2025") assert.match(g.matchedCourse.creditSource, /\.pdf#page=90$/);
+          }
+          if (final) {
+            assert.equal(r.rows[0].value, undefined);
+            assert.throws(() => applyPlannerImport(initialState(), r, [{ id: r.rows[0].id }]), /最終評価/);
+          }
+        }
+      }
+      const titleOnly = make({ 履修年度: year, 科目名: "教育実践研究Ⅰ", 開講所属: dept, 評価: "不可", 修得単位: "0" });
+      const g = titleOnly.rows[0].finalEvaluationCandidate;
+      assert.deepEqual([g.title, g.code, g.credits, g.matchedCourse.code], ["教育実践研究Ⅰ", "", 2, year.slice(2) + "0K0018"]);
+      assert.equal(make({ 履修年度: year, 科目名: title, 開講所属: dept, 評価: "不可", 修得単位: "0" })
+        .rows[0].finalEvaluationCandidate, undefined);
+    }
+  }
+  const passRow = { 履修年度: "2025", 開講番号: "250K0363", 開講所属: "教育学部", 配当単位: "2", 評価: "優" };
+  const mismatch = make({ ...passRow, 配当単位: "3" }).rows[0];
+  assert.equal(mismatch.value, undefined);
+  assert.match(mismatch.reason, /要確認.*3単位/);
+  for (const row of [
+    { ...base, 開講番号: "260K0363" }, { ...base, 開講番号: "" }, { ...base, 履修年度: "" },
+    { ...base, 科目名: "異なる科目名" }, { ...passRow, 開講所属: "工学部" }, { ...base, 学期: "後期" },
+    { ...passRow, クラス: "B" }, { ...base, 配当単位: "3" }, { ...passRow, 評価: "認定" },
+    { ...passRow, 修得単位: "1" }, { ...passRow, 履修年度: "2015", 開講番号: "150K0363" },
+  ]) {
+    const r = make(row).rows[0];
+    assert.ok(!r.value && !r.finalEvaluationCandidate && !r.evaluationYear, JSON.stringify(row));
+  }
+  const actual = past.byCode.get("250k0363")[0];
+  for (const index of [null, buildHistoricalIndex("2025", [actual, actual]),
+    buildHistoricalIndex("2025", [{ ...actual, creditSource: undefined }])]) {
+    for (const row of [base, passRow]) {
+      const r = make(row, { evaluationIndices: new Map([["2025", index]]) }).rows[0];
+      assert.ok(!r.value && !r.finalEvaluationCandidate && !r.evaluationYear);
+    }
+  }
+  for (const row of [base, { ...base, 配当単位: "2" }, passRow]) {
+    const r = make(row, { evaluationIndices: undefined }).rows[0];
+    assert.ok(!r.value && !r.finalEvaluationCandidate);
+    assert.equal(r.evaluationYear, "2025");
+  }
+  // A later transcript spelling is stronger than a title recovered for a code-only row.
+  for (const record of [base, passRow]) {
+    const state = initialState();
+    const input = { ...record, 開講番号: "250K0018" };
+    const titleOnly = { ...record, 科目名: "教育実践研究Ⅰ" };
+    delete titleOnly.開講番号;
+    let importId;
+    let prepared = 0;
+    for (const source of [input, input, titleOnly, { ...input, 科目名: "教育実践研究Ⅰ" }, input]) {
+      const r = make(source, { grades: state.grades, deferMatch: true });
+      assert.equal(state.grades.length, importId ? 1 : 0);
+      const priorCalls = prepared;
+      await confirmPlannerImport({ review: r, selections: confirm(r), mutate: save(state),
+        prepareGrades(grades) {
+          prepared++;
+          return grades.map((grade) => ({ ...grade, matchedCourse: resolveHistoricalGrade(grade, past).match }));
+        },
+      });
+      assert.equal(prepared, priorCalls + 1);
+      assert.equal(state.grades.length, 1);
+      importId ??= state.grades[0].importId;
+      assert.equal(state.grades[0].importId, importId);
+      assert.equal(state.grades[0].code, "250K0018");
+      assert.equal(state.grades[0].matchedCourse.code, "250K0018");
+    }
+    assert.equal(state.grades[0].title, "教育実践研究Ⅰ");
+    assert.equal(state.grades[0].titleFromOffering, undefined);
+  }
+});
 
 test("earned zero borrows only a unique same-year offering's corroborated allocated credits", async () => {
   const pack = JSON.parse(await readFile(new URL("../src/archive/packs/2025.json", import.meta.url), "utf8"));

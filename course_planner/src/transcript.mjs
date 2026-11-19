@@ -1,7 +1,7 @@
 import { normalize, syllabusURL, validCode } from "./study.mjs";
 import { departmentCode } from "./archive/identity.mjs";
 import { compareOfferingEvidence } from "./archive/offering-evidence.mjs";
-import { archiveYears, currentImportIndex, finalEvaluationCredits } from "./archive/packs.mjs";
+import { archiveYears, currentImportIndex, resolveImportOffering } from "./archive/packs.mjs";
 import { scanTables, readYear, readUnits } from "./imports/tables.mjs";
 export { delimitedRows } from "./imports/tables.mjs";
 
@@ -39,6 +39,10 @@ function evidence(row) {
   );
 }
 
+function outcomeKey(row) {
+  return identity(row.code && row.year ? { ...row, title: "" } : row);
+}
+
 function compatibleAttempt(a, b) {
   const department = (g) => departmentCode(g.offeringDepartment) || normalize(g.offeringDepartment);
   return (
@@ -52,10 +56,12 @@ function compatibleAttempt(a, b) {
   );
 }
 
-function conflictingEvaluationCredits(credits, previous) {
+function conflictsWithArchiveImport(attempt, previous) {
   return previous.length > 1 || previous.some((grade) =>
-    grade.duplicate || grade.identityUncertain || !failedFinal.test(grade.grade) ||
-    (credits != null && grade.credits != null && Number(grade.credits) !== credits),
+    grade.duplicate || grade.identityUncertain ||
+    (failedFinal.test(attempt.grade) ? !failedFinal.test(grade.grade) : grade.grade !== attempt.grade) ||
+    (attempt.title && grade.title && normalize(attempt.title) !== normalize(grade.title)) ||
+    (attempt.credits != null && grade.credits != null && Number(grade.credits) !== attempt.credits),
   );
 }
 
@@ -147,12 +153,8 @@ export function reviewGrades(
       const lookup = year && byCode.get(code);
       const offering =
         lookup && String(lookup.year ?? catalogYear) === year ? lookup : null;
-      const title = v.title || offering?.title;
-      const label =
-        [code, title].filter(Boolean).join(" ") || "科目を特定できない行";
       const evaluation = v.grade || v.result;
       const final = failedFinal.test(evaluation);
-      const attempt = { ...v, year, code, title, grade: evaluation };
       const conflictingResult =
         v.grade &&
         v.result &&
@@ -167,33 +169,38 @@ export function reviewGrades(
             ? !compatibleFinalStatus.test(status)
             : noEvaluation.test(status) || compatibleFailResult.test(status)),
       );
-      outcomes.add(attempt);
-      sourceAttempts.add(attempt);
-      if (notEarned.test(evaluation) || conflictingResult || conflictingStatus)
-        nonEarned.add(identity(attempt));
       const creditCell = v.credits ?? v.earnedCredits;
       const starred = [v.credits, v.earnedCredits].some((s) =>
         /^\s*\*/.test(s),
       );
       const earned = readUnits(v.earnedCredits?.replace(/^\s*\*\s*/, ""), 99);
-      const sameCourse =
-        offering &&
-        normalize(offering.title) === normalize(title) &&
-        (!v.section || normalize(offering.section) === normalize(v.section)) &&
-        (!v.courseId || normalize(offering.courseId) === normalize(v.courseId));
       const markedDuplicate = v.duplicate && !["なし", "-", "無"].includes(v.duplicate);
-      let credits = readUnits(creditCell?.replace(/^\s*\*\s*/, ""), 99);
-      if (final && v.credits == null) {
-        credits = null;
-        if (earned === 0 && !starred && !markedDuplicate && !conflictingResult && !conflictingStatus &&
-            year && (code || title) && (!code || (validCode(code) && code.startsWith(year.slice(-2))))) {
-          const current = year === String(catalogYear);
-          const index = current ? currentImportIndex(byCode, year) : evaluationIndices?.get(year);
-          credits = readUnits(finalEvaluationCredits(attempt, index, catalogYear), 99);
-          const needsIndex = !current && archiveYears.includes(year) && !evaluationIndices?.has(year);
-          inferred.set(origin.id, { attempt, needsIndex });
-        }
+      const needsCredits = final && v.credits == null;
+      const needsTitle = !v.title && !!code;
+      // A zero in 修得単位 is earned credit. Only a separate 配当単位 can constrain the failed offering.
+      let credits = needsCredits ? null : readUnits(creditCell?.replace(/^\s*\*\s*/, ""), 99);
+      const attempt = { ...v, year, code, grade: evaluation, credits };
+      const eligibleUnits = needsCredits ? earned === 0 :
+        credits > 0 && (v.earnedCredits == null || earned === (final ? 0 : credits));
+      let official;
+      if ((needsTitle || needsCredits) && eligibleUnits &&
+          (final || (pass.test(evaluation) && evaluation !== "認定")) &&
+          !starred && !markedDuplicate && !conflictingResult && !conflictingStatus &&
+          year && (code || v.title) && (!code || (validCode(code) && code.startsWith(year.slice(-2))))) {
+        const current = year === String(catalogYear);
+        const index = current ? currentImportIndex(byCode, year) : evaluationIndices?.get(year);
+        official = resolveImportOffering(attempt, index, catalogYear);
+        if (needsCredits) credits = readUnits(official?.credits, 99);
+        const needsIndex = !current && archiveYears.includes(year) && !evaluationIndices?.has(year);
+        inferred.set(origin.id, { attempt, needsIndex, needsCredits, needsTitle });
       }
+      const title = v.title || official?.title || "";
+      const label = [code, title].filter(Boolean).join(" ") || "科目を特定できない行";
+      Object.assign(attempt, { title, credits });
+      outcomes.add(attempt);
+      sourceAttempts.add(attempt);
+      if (notEarned.test(evaluation) || conflictingResult || conflictingStatus)
+        nonEarned.add(outcomeKey(attempt));
       const invalidFinal =
         final &&
         (starred ||
@@ -233,7 +240,10 @@ export function reviewGrades(
         rows.push({
           id: origin.id,
           label,
-          reason: "科目・単位数・評価・履修年度の列を確認してください。",
+          reason: needsTitle && !title
+            ? "要確認：" + [evaluation, credits != null && "帳票 " + credits + "単位"].filter(Boolean).join("・") +
+              "。履修年度の開講情報で科目名・配当単位を確認できません。"
+            : "科目・単位数・評価・履修年度の列を確認してください。",
         });
         return;
       }
@@ -247,17 +257,25 @@ export function reviewGrades(
         (v.duplicate &&
           !["重複", "重複単位", "なし", "-", "無"].includes(v.duplicate));
       const sameOffering =
-        sameCourse &&
+        offering &&
+        normalize(offering.title) === normalize(title) &&
+        (!v.section || normalize(offering.section) === normalize(v.section)) &&
+        (!v.courseId || normalize(offering.courseId) === normalize(v.courseId)) &&
         (offering.credits == null || offering.credits === credits);
-      const match =
-        sameOffering &&
-        !deferMatch &&
-        (!v.offeringDepartment ||
-          normalize(v.offeringDepartment) === normalize(offering.department));
+      let match = deferMatch ? null : official;
+      if (!match && !deferMatch && sameOffering && (!v.offeringDepartment ||
+          normalize(v.offeringDepartment) === normalize(offering.department))) {
+        match = {
+          year, code, title: offering.title, department: offering.department || "",
+          fields: [...(offering.fields ?? [])], category: offering.category || "",
+          sourceUrl: offering.sourceUrl || syllabusURL(offering, year), confirmed: true,
+        };
+      }
       const grade = {
         year,
         code,
         title,
+        ...(needsTitle ? { titleFromOffering: true } : {}),
         credits,
         grade: evaluation,
         section: v.section || "",
@@ -277,22 +295,11 @@ export function reviewGrades(
         )
           ? normalize(origin.heading)
           : "成績表",
-        fields: match ? [...(offering.fields ?? [])] : [],
-        category: match ? offering.category || "" : "",
-        department: match ? offering.department || "" : "",
+        fields: match ? [...match.fields] : [],
+        category: match?.category || "",
+        department: match?.department || "",
+        ...(match ? { matchedCourse: match } : {}),
       };
-      if (match) {
-        grade.matchedCourse = {
-          year,
-          code,
-          title: offering.title,
-          department: grade.department,
-          fields: [...grade.fields],
-          category: grade.category,
-          sourceUrl: offering.sourceUrl || syllabusURL(offering, year),
-          confirmed: true,
-        };
-      }
       const notes = [];
       if (duplicate) notes.push("重複単位のため算入しません。");
       if (starUnclear)
@@ -327,25 +334,25 @@ export function reviewGrades(
   for (const row of rows) {
     const lookup = inferred.get(row.id);
     if (lookup) {
-      const { attempt, needsIndex } = lookup;
+      const { attempt, needsIndex, needsCredits, needsTitle } = lookup;
       const related = [...outcomes.peers(attempt)].filter((other) => compatibleAttempt(attempt, other));
       const previous = related.filter((other) => saved.has(other));
       const repeated = related.some((other) => other !== attempt && sourceAttempts.has(other));
-      if (repeated || conflictingEvaluationCredits(row.value?.credits, previous)) {
+      if (repeated || conflictsWithArchiveImport(attempt, previous)) {
         delete row.value;
         row.reason = "要確認：同じ履修情報が複数あるか、履歴の評価・配当単位と一致しません。";
         continue;
       }
       if (needsIndex) row.evaluationYear = attempt.year;
       if (row.value) {
-        row.inferredCredits = true;
-        row.reason = attempt.year + "年度の開講情報で配当単位を確認しました。";
+        if (needsCredits) row.inferredCredits = true;
+        row.reason = attempt.year + "年度の開講情報で" + (needsTitle ? "科目名と" : "") + "配当単位を確認しました。";
       }
     }
     if (!row.value) continue;
     const key = identity(row.value);
     if (
-      (!row.value.finalEvaluation && nonEarned.has(key)) ||
+      (!row.value.finalEvaluation && nonEarned.has(outcomeKey(row.value))) ||
       outcomes.conflictsWithFinal(row.value)
     ) {
       delete row.value;
@@ -418,9 +425,9 @@ export function mergeGrades(state, rows, reconcileMatch) {
   const names = namesIndex(grades);
   for (const incoming of rows) {
     const { inferredCredits, ...row } = incoming;
-    if (inferredCredits) {
+    if (inferredCredits || row.titleFromOffering) {
       const peers = [...names.peers(row)].filter((g) => compatibleAttempt(row, g));
-      if (conflictingEvaluationCredits(row.credits, peers))
+      if (conflictsWithArchiveImport(row, peers))
         throw Error("保存済みの履修情報・配当単位と一致しません。原票と履修履歴を確認してください。");
     }
     if (names.conflictsWithFinal(row))
@@ -441,16 +448,15 @@ export function mergeGrades(state, rows, reconcileMatch) {
       const possible = sameTitle.filter((g) => compatibleAttempt(row, g));
       const previous = possible.length === 1 ? possible[0] : null;
       const confirmed = previous?.matchedCourse;
-      const sameOffering =
-        previous &&
-        row.year &&
-        row.code &&
-        ((row.year === previous.year && row.code === previous.code) ||
-          (confirmed?.confirmed &&
-            row.year === String(confirmed.year) &&
-            row.code === confirmed.code));
+      const incomingMatch = row.matchedCourse;
+      const confirmedPair = confirmed?.confirmed && incomingMatch?.confirmed && confirmed.code &&
+        row.year === String(confirmed.year) && row.year === previous.year &&
+        confirmed.code === incomingMatch.code && confirmed.year === incomingMatch.year &&
+        confirmed.department === incomingMatch.department;
+      const sameSourceCode = row.code && row.year && ((row.year === previous?.year && row.code === previous.code) ||
+        (confirmed?.confirmed && row.year === String(confirmed.year) && row.code === confirmed.code));
       if (
-        sameOffering &&
+        previous && (sameSourceCode || confirmedPair) &&
         row.credits === previous.credits &&
         row.grade === previous.grade &&
         !previous.identityUncertain &&
@@ -536,18 +542,20 @@ export function mergeGrades(state, rows, reconcileMatch) {
       delete old.allocationKey;
       delete old.allocationScope;
     }
+    const keepSourceTitle = old.title && !old.titleFromOffering;
     Object.assign(
       old,
       row,
       {
         importId: old.importId || row.importId,
-        title: old.title || row.title,
+        title: keepSourceTitle ? old.title : row.title,
         code: old.code || row.code,
         year: old.year || row.year,
       },
       reviewed,
       allocation,
     );
+    if (keepSourceTitle || !row.titleFromOffering) delete old.titleFromOffering;
     names.add(old);
     if (confirmed || decision === null)
       Object.assign(old, {
