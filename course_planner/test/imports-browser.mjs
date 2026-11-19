@@ -63,13 +63,16 @@ try {
   const picked = () => modal.getByRole("checkbox", { name: /を取り込む/ });
   const pdfPage = await context.newPage();
   await pdfPage.setContent(
-    '<meta charset="utf-8"><style>td,th{text-align:left;padding-right:22px}</style><h1>成績確認表</h1><table><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評語</th><th>年度</th></tr><tr><td>261G7011</td><td>架空科目</td><td>1</td><td>良</td><td>2026</td></tr><tr><td></td><td>架空認定</td><td>2</td><td>認定</td><td>2025</td></tr></table>',
+    '<meta charset="utf-8"><style>td,th{text-align:left;padding-right:22px}</style><h1>成績確認表</h1><table><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評語</th><th>年度</th></tr><tr><td>261G7011</td><td>架空科目</td><td>1</td><td>良</td><td>2026</td></tr><tr><td></td><td>架空認定</td><td>2</td><td>認定</td><td>2025</td></tr><tr><td>260K9202</td><td>初等教育実習I</td><td>2</td><td>不可</td><td>2026</td></tr></table>',
   );
   const pdf = await pdfPage.pdf();
   await pdfPage.close();
   await open("grades");
   await upload("確認用.pdf", "application/pdf", pdf);
   const earned = modal.getByRole("checkbox", { name: /架空科目を取り込む/ });
+  const evaluation = modal.getByRole("checkbox", {
+    name: /最終評価を確認して履歴に残す/,
+  });
   await earned.waitFor().catch(async (error) => {
     console.error(await modal.innerText());
     throw error;
@@ -90,6 +93,7 @@ try {
     });
   }
   assert.equal(await earned.isChecked(), false);
+  assert.equal(await evaluation.isChecked(), false);
   assert.equal((await readState()).grades.length, 0);
   await earned.check();
   await accept();
@@ -210,10 +214,75 @@ try {
     ["架空科目", "手入力講義", "新しい講義"],
   );
   assert.equal((await readState()).grades[2].source, "単位修得状況照会");
+  const takeEvaluation = async () => {
+    await evaluation.waitFor();
+    assert.equal(await evaluation.isChecked(), false);
+    await modal.getByText(/配当 2単位・修得 0単位/).waitFor();
+    await evaluation.check();
+    await accept();
+    await modal.waitFor({ state: "hidden" });
+    const outcomes = (await readState()).grades.filter(
+      (grade) => grade.finalEvaluation,
+    );
+    assert.equal(outcomes.length, 1);
+    const [g] = outcomes;
+    assert.deepEqual(
+      [
+        g.title,
+        g.grade,
+        g.credits,
+        g.counts,
+        g.duplicate,
+        g.matchedCourse.code,
+      ],
+      ["初等教育実習I", "不可", 2, false, false, "260K9202"],
+    );
+  };
+  await open("grades");
+  await upload("最終評価.pdf", "application/pdf", pdf);
+  await takeEvaluation();
+  await open("grades");
+  await upload(
+    "最終評価.csv",
+    "text/csv",
+    Buffer.from(
+      "年度,開講番号,科目名,配当単位,修得単位,評価\n2026,260K9202,初等教育実習I,2,0,不可",
+    ),
+  );
+  await takeEvaluation();
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new CustomEvent("mbg:planner-import", {
+        detail: {
+          v: 1,
+          kind: "grades",
+          tables: [
+            {
+              heading: "単位修得状況照会",
+              rows: [
+                ["年度", "開講番号", "科目名", "単位数", "評価", "合否"],
+                ["2026", "260K9202", "初等教育実習I", "2", "不可", "不合格"],
+              ],
+            },
+          ],
+        },
+      }),
+    ),
+  );
+  await takeEvaluation();
+  await open("grades");
+  await modal.getByText("1科目ずつ入力", { exact: true }).click();
+  await modal.getByLabel("評価", { exact: true }).selectOption("不可");
+  await modal.getByLabel("授業名", { exact: true }).fill("初等教育実習I");
+  await modal.getByLabel("開講番号", { exact: true }).fill("260K9202");
+  await modal.getByLabel("履修年度", { exact: true }).fill("2026");
+  await modal.getByLabel("配当単位（修得は0単位）", { exact: true }).fill("2");
+  await modal.getByRole("button", { name: "入力内容を確認" }).click();
+  await takeEvaluation();
   assert.deepEqual(errors, []);
   assert.deepEqual(outgoing, []);
   console.log(
-    "Chrome: PDF, CSV, TSV, manual and native review; selected archive matches, canceled lookup, new dialog, invalid PDF, zero external/upload requests.",
+    "Chrome: PDF, CSV, TSV, manual and native review; zero-credit final evaluation opt-in across four inputs, selected archive matches, canceled lookup, invalid PDF, zero external/upload requests.",
   );
 } finally {
   await browser?.close();

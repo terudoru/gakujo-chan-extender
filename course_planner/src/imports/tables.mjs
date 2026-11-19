@@ -5,8 +5,18 @@ export const kinds = ["grades", "registration", "balances"];
 const labels = {
   code: ["開講番号", "開講コード", "科目コード", "授業コード", "時間割コード"],
   title: ["科目名", "授業科目", "授業科目名", "授業名", "講義名", "開講科目名"],
-  credits: ["単位", "単位数", "修得単位", "修得単位数", "取得単位数"],
-  grade: ["評価", "成績", "評語", "合否", "成績評価", "評価区分"],
+  credits: ["単位", "単位数", "配当単位", "配当単位数", "科目単位数"],
+  earnedCredits: ["修得単位", "修得単位数", "取得単位数", "既修得単位数"],
+  grade: ["評価", "成績", "評語", "成績評価", "評価区分"],
+  result: ["合否", "合否判定"],
+  assessmentStatus: [
+    "成績状態",
+    "成績状況",
+    "評価状態",
+    "評価状況",
+    "確定状況",
+    "履修状態",
+  ],
   year: ["年度", "開講年度", "履修年度", "修得年度", "取得年度"],
   term: ["学期", "履修学期", "修得学期", "ターム"],
   section: ["クラス", "クラス名", "組", "クラス番号"],
@@ -67,7 +77,11 @@ const columns = {
     "code",
     "title",
     "credits",
+    "earnedCredits",
     "grade",
+    "result",
+    "status",
+    "assessmentStatus",
     "year",
     "section",
     "term",
@@ -97,7 +111,9 @@ export function headerColumns(kind, cells) {
     kind === "balances"
       ? has("category") && (has("current") || (has("day") && has("night")))
       : kind === "grades"
-        ? (has("title") || has("code")) && has("grade") && has("credits")
+        ? (has("title") || has("code")) &&
+          (has("grade") || has("result")) &&
+          (has("credits") || has("earnedCredits"))
         : has("code");
   if (!enough) return null;
   return {

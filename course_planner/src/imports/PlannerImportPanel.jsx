@@ -29,7 +29,9 @@ function detail(kind, value) {
     value.offeringDepartment,
     value.courseId,
     value.grade,
-    value.credits + "単位",
+    value.finalEvaluation
+      ? "配当 " + value.credits + "単位・修得 0単位"
+      : value.credits + "単位",
     value.allocationLabel && "帳票の区分「" + value.allocationLabel + "」",
     value.matchedCourse && "シラバスと一致",
   ]
@@ -111,7 +113,11 @@ function ReviewForm({
       <ul className="rows grade-review">
         {review.rows.map((row) => {
           const choice = choices[row.id] || {},
-            value = row.value;
+            value = row.value ?? row.finalEvaluationCandidate;
+          const final = !!row.finalEvaluationCandidate;
+          const action = final
+            ? "の最終評価を確認して履歴に残す"
+            : "を取り込む";
           const isBalance = review.kind === "balances";
           const targetKey = choice.targetKey ?? row.targetKey ?? "";
           const target =
@@ -128,12 +134,18 @@ function ReviewForm({
               <label>
                 <input
                   type="checkbox"
-                  aria-label={row.label + "を取り込む（行" + row.id + "）"}
+                  aria-label={row.label + action + "（行" + row.id + "）"}
                   checked={!!choice.selected && !!canSelect}
                   disabled={!canSelect || busy}
-                  onChange={(e) => set(row.id, { selected: e.target.checked })}
+                  onChange={(e) =>
+                    set(row.id, {
+                      selected: e.target.checked,
+                      confirmFinalEvaluation: final && e.target.checked,
+                    })
+                  }
                 />{" "}
                 {row.label}
+                {final && action}
               </label>
               <small>
                 第{row.id.split("-")[0]}表 {row.id.split("-")[1]}行目　
@@ -172,6 +184,7 @@ function ReviewForm({
               )}
               {value &&
                 review.kind === "grades" &&
+                !final &&
                 !value.duplicate &&
                 !value.identityUncertain && (
                   <label>
@@ -226,6 +239,8 @@ function ReviewForm({
 
 function ManualGrade({ review, onEdit, initiallyOpen }) {
   const editor = useRef(null);
+  const [evaluation, setEvaluation] = useState("修得");
+  const final = evaluation === "不可" || evaluation === "不合格";
   useLayoutEffect(() => {
     if (initiallyOpen) {
       editor.current.open = true;
@@ -273,18 +288,33 @@ function ManualGrade({ review, onEdit, initiallyOpen }) {
         </div>
         <div className="pair">
           <label className="input-label">
-            修得年度
+            {final ? "履修年度" : "修得年度"}
             <input name="year" inputMode="numeric" maxLength={6} />
           </label>
           <label className="input-label">
-            修得単位
+            {final ? "配当単位（修得は0単位）" : "修得単位"}
             <input name="credits" inputMode="decimal" required />
           </label>
         </div>
         <label className="input-label">
           評価
-          <select name="grade">
-            {["修得", "秀", "優", "良", "可", "合格", "認定"].map((grade) => (
+          <select
+            name="grade"
+            aria-label="評価"
+            value={evaluation}
+            onChange={(event) => setEvaluation(event.target.value)}
+          >
+            {[
+              "修得",
+              "秀",
+              "優",
+              "良",
+              "可",
+              "合格",
+              "認定",
+              "不可",
+              "不合格",
+            ].map((grade) => (
               <option key={grade}>{grade}</option>
             ))}
           </select>

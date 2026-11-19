@@ -187,7 +187,15 @@ function selectedRows(review, selections) {
   if (!Array.isArray(selections) || !selections.length)
     throw Error("取り込む行を選んでください。");
   const byId = new Map(review.rows.map((r) => [r.id, r]));
-  const selected = selections.map((s) => ({ choice: s, row: byId.get(s.id) }));
+  const selected = selections.map((choice) => {
+    let row = byId.get(choice.id);
+    if (row?.finalEvaluationCandidate) {
+      if (choice.confirmFinalEvaluation !== true)
+        throw Error("この科目の最終評価を確認してください。");
+      row = { ...row, value: row.value ?? row.finalEvaluationCandidate };
+    }
+    return { choice, row };
+  });
   if (
     new Set(selections.map((s) => s.id)).size !== selections.length ||
     selected.some(({ row }) => !row?.value)
@@ -198,6 +206,7 @@ function selectedRows(review, selections) {
 
 function reviewedGrade({ row, choice }) {
   const grade = row.value;
+  if (grade.finalEvaluation) return grade;
   if (choice.excludeDuplicate)
     return {
       ...grade,
