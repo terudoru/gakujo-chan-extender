@@ -549,17 +549,20 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                                       IconButton(
                                         tooltip: '保存場所をコピー',
                                         icon: const Icon(Icons.copy),
-                                        onPressed: () {
-                                          unawaited(
-                                            Clipboard.setData(
-                                              ClipboardData(
-                                                text:
-                                                    gakujoDownloadLocationLabel(
-                                                        entry.location!),
-                                              ),
+                                        onPressed: () async {
+                                          final write = Clipboard.setData(
+                                            ClipboardData(
+                                              text: gakujoDownloadLocationLabel(
+                                                  entry.location!),
                                             ),
                                           );
                                           Navigator.of(dialogContext).pop();
+                                          try {
+                                            await write;
+                                          } on Object {
+                                            _showSnackBar('保存場所をコピーできませんでした');
+                                            return;
+                                          }
                                           _showSnackBar('保存場所をコピーしました');
                                         },
                                       ),
@@ -765,17 +768,20 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
                                         IconButton(
                                           tooltip: '保存場所をコピー',
                                           icon: const Icon(Icons.copy),
-                                          onPressed: () {
-                                            unawaited(
-                                              Clipboard.setData(
-                                                ClipboardData(
-                                                  text:
-                                                      gakujoDownloadLocationLabel(
-                                                          file.location!),
-                                                ),
+                                          onPressed: () async {
+                                            final write = Clipboard.setData(
+                                              ClipboardData(
+                                                text: gakujoDownloadLocationLabel(
+                                                    file.location!),
                                               ),
                                             );
                                             Navigator.of(dialogContext).pop();
+                                            try {
+                                              await write;
+                                            } on Object {
+                                              _showSnackBar('保存場所をコピーできませんでした');
+                                              return;
+                                            }
                                             _showSnackBar('保存場所をコピーしました');
                                           },
                                         ),
