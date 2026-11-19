@@ -67,6 +67,31 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  test('grade packets retain zero and separate credit columns', () async {
+    final portal = _View();
+    final source = CoursePlannerSource(portal, () => true);
+    for (final (headers, values) in [
+      (['修得単位数'], ['0']),
+      (['単位数', '修得単位数'], ['2', '0']),
+      (['修得単位数', '単位数'], ['1', '2']),
+    ]) {
+      final packet = {
+        'v': 1,
+        'kind': 'grades',
+        'tables': [
+          {
+            'heading': '単位修得状況照会',
+            'rows': [
+              ['開講番号', '評価', ...headers],
+              ['260K0363', '不可', ...values],
+            ],
+          },
+        ],
+      };
+      portal.evaluate = (_) async => jsonEncode(packet);
+      expect(await source.capture(CoursePlannerImportKind.grades), packet);
+    }
+  });
   test(
     'grade packets admit course offering and exclude student affiliation',
     () async {

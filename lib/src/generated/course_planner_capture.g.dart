@@ -13,6 +13,8 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __propIsEnum = Object.prototype.propertyIsEnumerable;
@@ -28,6 +30,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       }
     return a;
   };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
   // web_scripts/src/course_planner/capture.ts
   var origin = "https://gakujo.iess.niigata-u.ac.jp";
@@ -85,11 +88,19 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
     修得単位数: "既修得単位数",
     重複: "重複"
   };
+  var gradeColumns = __spreadProps(__spreadValues({}, columns), {
+    配当単位: "単位数",
+    配当単位数: "単位数",
+    修得単位: "修得単位数",
+    修得単位数: "修得単位数",
+    取得単位数: "修得単位数"
+  });
   var allowed = {
     grades: [
       "開講番号",
       "科目名",
       "単位数",
+      "修得単位数",
       "評価",
       "合否",
       "年度",
@@ -137,6 +148,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       case "年度":
         return ((_b = value.match(/^((?:19|20)\d\d)(?:年度)?$/)) == null ? void 0 : _b[1]) || "";
       case "単位数":
+      case "修得単位数":
       case "既修得単位数":
         return ((_c = value.match(/^([*]?\s*\d{1,3}(?:\.\d{1,2})?)(?:\s*単位)?$/)) == null ? void 0 : _c[1].replace(/\s/g, "")) || "";
       case "合否":
@@ -180,12 +192,14 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
     return kinds;
   }
   function header(table, kind) {
+    const names2 = kind === "grades" ? gradeColumns : columns;
     for (const row of Array.from(table.rows).slice(0, 5)) {
       const cells = Array.from(row.cells);
       if (cells.some((c) => c.rowSpan !== 1)) continue;
-      const labels = cells.map((c) => columns[label(c)] || "");
+      const labels = cells.map((c) => names2[label(c)] || "");
       const has = (s) => labels.includes(s);
-      const match = kind === "balances" ? has("科目区分") && has("既修得単位数") : kind === "registration" ? has("開講番号") && (has("登録状況") || has("科目名") && isRejected(table, row)) : (has("科目名") || has("開講番号")) && has("単位数") && (has("評価") || has("合否"));
+      const courseGrade = (has("科目名") || has("開講番号")) && (has("評価") || has("合否"));
+      const match = kind === "balances" ? !courseGrade && has("科目区分") && has("既修得単位数") : kind === "registration" ? has("開講番号") && (has("登録状況") || has("科目名") && isRejected(table, row)) : courseGrade && (has("単位数") || has("修得単位数"));
       if (match) return { row, labels };
     }
     return null;
@@ -226,7 +240,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
         return value;
       });
       const get = (k) => vals[headers.indexOf(k)];
-      if (kind === "balances" ? !(get("科目区分") && get("既修得単位数")) : kind === "registration" ? !get("開講番号") : !(get("単位数") && (get("科目名") || get("開講番号")) && (get("開講番号") || get("評価") || get("合否"))))
+      if (kind === "balances" ? !(get("科目区分") && get("既修得単位数")) : kind === "registration" ? !get("開講番号") : !((get("単位数") || get("修得単位数")) && (get("科目名") || get("開講番号")) && (get("開講番号") || get("評価") || get("合否"))))
         continue;
       rows.push(vals);
     }

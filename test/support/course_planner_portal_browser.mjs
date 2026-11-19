@@ -93,6 +93,44 @@ try {
     .goto(gradeUrl);
   assert.equal(await ask({ kind: "grades" }), null);
   await page.goto(gradeUrl);
+  function courseCredits(headers, rows) {
+    const cells = (tag, values) =>
+      values.map(v => `<${tag}>${v}</${tag}>`).join("");
+    const body = rows.map(row => `<tr>${cells("td", row)}</tr>`).join("");
+    return `<table><tr>${cells("th", headers)}</tr>${body}</table>`;
+  }
+  const gradeColumns = ["開講番号", "開講所属", "科目区分", "評価", "年度"];
+  const identities = [
+    ["260K0363", "教育学部", "専門", "不可", "2026"],
+    ["250K0363", "教育学部", "専門", "不可", "2025"],
+  ];
+  for (const earned of ["修得単位", "修得単位数", "取得単位数"]) {
+    await page.setContent("<h1>単位修得状況照会</h1>" +
+      courseCredits([...gradeColumns, earned, "学籍番号"],
+        identities.map(row => [...row, "０", "private-student"])) +
+      courseCredits(["科目区分", "修得単位数", "備考"], [["専門", "10", "private-note"]]));
+    assert.deepEqual(await ask({}), ["grades", "balances"]);
+    assert.deepEqual((await ask({ kind: "grades" })).tables.map(t => t.rows), [[
+      [...gradeColumns, "修得単位数"], ...identities.map(row => [...row, "0"]),
+    ]]);
+    assert.deepEqual((await ask({ kind: "balances" })).tables.map(t => t.rows), [[
+      ["科目区分", "既修得単位数"], ["専門", "10"],
+    ]]);
+  }
+  for (const allocated of ["配当単位", "配当単位数"]) {
+    const examples = [
+      ["260K0363", "不可", "0", "2"],
+      ["250K0363", "不可", "1", "2"],
+      ["261K0501", "優", "1", "1"],
+    ];
+    await page.setContent("<h1>単位修得状況照会</h1>" +
+      courseCredits(["開講番号", "評価", "修得単位", "学生氏名", allocated],
+        examples.map(([code, grade, earned, offered]) => [code, grade, earned, "private-name", offered])));
+    assert.deepEqual(await ask({}), ["grades"]);
+    assert.deepEqual((await ask({ kind: "grades" })).tables[0].rows, [
+      ["開講番号", "評価", "修得単位数", "単位数"], ...examples,
+    ]);
+  }
   for (const [offering, section, term] of [
     ["開講所属", "クラス", "学期"],
     ["開講所属コード", "クラス名", "履修学期"],

@@ -57,10 +57,17 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
   await File('${pages.path}/grades.html').writeAsString('''<!doctype html>
     <meta charset="utf-8"><script>history.replaceState(null,"","campussquare.do")</script>
     <h1>単位修得状況照会</h1><form id="taniReferListForm"></form>
-    <table><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評価</th><th>年度</th>
+    <table><tr><th>開講番号</th><th>科目名</th><th>配当単位数</th><th>修得単位数</th><th>評価</th><th>年度</th>
     <th>開講所属</th><th>学生所属</th><th>担当教員</th></tr>
-    <tr><td>$_code</td><td>$_course</td><td>1</td><td>優</td><td>2026</td>
-    <td>人文学部</td><td>教育学部</td><td>PRIVATE-COLUMN-CANARY</td></tr></table>''');
+    <tr><td>$_code</td><td>$_course</td><td>1</td><td>1</td><td>優</td><td>2026</td>
+    <td>人文学部</td><td>教育学部</td><td>PRIVATE-COLUMN-CANARY</td></tr>
+    <tr><td>269K9001</td><td>合成最終評価</td><td>2</td><td>0</td><td>不可</td><td>2026</td>
+    <td>教育学部</td><td></td><td></td></tr>
+    <tr><td>259K9002</td><td>合成矛盾評価</td><td>2</td><td>1</td><td>不可</td><td>2025</td>
+    <td>教育学部</td><td></td><td></td></tr></table>
+    <table><tr><th>開講番号</th><th>科目名</th><th>取得単位数</th><th>評価</th><th>年度</th><th>開講所属</th></tr>
+    <tr><td>260K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2026</td><td>教育学部</td></tr>
+    <tr><td>250K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2025</td><td>教育学部</td></tr></table>''');
   final inner = windows.WebviewController();
   final controller = WindowsGakujoWebViewController(inner);
   await controller.setJavaScriptModeUnrestricted();
@@ -74,7 +81,7 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
   await _waitFor(
     controller,
     '''document.querySelector('iframe')?.contentDocument
-    ?.querySelector('#taniReferListForm + table')?.rows.length === 2''',
+    ?.querySelector('#taniReferListForm + table')?.rows.length === 4''',
   );
   final source = CoursePlannerSource(controller, () => true);
   final choices = await source.choices();
@@ -172,6 +179,10 @@ Future<void> runReactPlannerSmoke(
         '''document.querySelector('dialog[open], [role="dialog"]')''';
     const checkbox =
         '''$dialog?.querySelector('input[type="checkbox"][aria-label*="$_course"]')''';
+    const finalGrade =
+        '''$dialog?.querySelector('input[type="checkbox"][aria-label*="合成最終評価"]')''';
+    const conflict =
+        '''$dialog?.querySelector('input[type="checkbox"][aria-label*="合成矛盾評価"]')''';
     const grades =
         '''(JSON.parse(localStorage.getItem('mbg.course-planner.v1'))?.grades ?? [])''';
     const noneSaved = '$grades.length === 0';
@@ -195,14 +206,22 @@ Future<void> runReactPlannerSmoke(
     await _waitFor(
       planner,
       '''Boolean($checkbox && $dialog.innerText.includes('$_code') &&
+      $dialog.innerText.includes('260K0363') && $dialog.innerText.includes('250K0363') &&
       $dialog.innerText.includes('$_course') && $dialog.innerText.includes('優'))''',
     );
     stage = 'checking that receipt did not select or persist the grade';
     await _check(
       planner,
       '''(!$checkbox.disabled && !$checkbox.checked &&
+      $finalGrade?.disabled === false && !$finalGrade.checked &&
+      $conflict?.disabled === true && !$conflict.checked &&
       (${button(0)}?.matches(':disabled, [aria-disabled="true"]') === true) && $noneSaved)''',
     );
+    await planner.runJavaScript('$finalGrade.click()');
+    await _waitFor(planner, '''Boolean($finalGrade.checked && ${button(1)})''');
+    await _check(planner, noneSaved);
+    await planner.runJavaScript('$finalGrade.click()');
+    await _waitFor(planner, '''Boolean(!$finalGrade.checked && ${button(0)})''');
     await planner.runJavaScript('$checkbox.click()');
     stage = 'checking that row selection alone did not persist the grade';
     await _waitFor(planner, '''Boolean($checkbox.checked && ${button(1)} &&

@@ -66,11 +66,21 @@ const columns: Record<string, string> = {
   修得単位数: "既修得単位数",
   重複: "重複",
 };
+// 修得単位数 is per course on a grade row and per category on a balance row.
+const gradeColumns: Record<string, string> = {
+  ...columns,
+  配当単位: "単位数",
+  配当単位数: "単位数",
+  修得単位: "修得単位数",
+  修得単位数: "修得単位数",
+  取得単位数: "修得単位数",
+};
 const allowed: Record<Kind, string[]> = {
   grades: [
     "開講番号",
     "科目名",
     "単位数",
+    "修得単位数",
     "評価",
     "合否",
     "年度",
@@ -131,6 +141,7 @@ function academicValue(header: string, value: string) {
     case "年度":
       return value.match(/^((?:19|20)\d\d)(?:年度)?$/)?.[1] || "";
     case "単位数":
+    case "修得単位数":
     case "既修得単位数":
       return (
         value
@@ -201,21 +212,22 @@ function pageKinds(doc: Document): Kind[] {
   return kinds;
 }
 function header(table: HTMLTableElement, kind: Kind) {
+  const names = kind === "grades" ? gradeColumns : columns;
   for (const row of Array.from(table.rows).slice(0, 5)) {
     const cells = Array.from(row.cells);
     // Positional projection is valid only in a rectangular, single-header table.
     if (cells.some((c) => c.rowSpan !== 1)) continue;
-    const labels = cells.map((c) => columns[label(c)] || "");
+    const labels = cells.map((c) => names[label(c)] || "");
     const has = (s: string) => labels.includes(s);
+    const courseGrade =
+      (has("科目名") || has("開講番号")) && (has("評価") || has("合否"));
     const match =
       kind === "balances"
-        ? has("科目区分") && has("既修得単位数")
+        ? !courseGrade && has("科目区分") && has("既修得単位数")
         : kind === "registration"
           ? has("開講番号") &&
             (has("登録状況") || (has("科目名") && isRejected(table, row)))
-          : (has("科目名") || has("開講番号")) &&
-            has("単位数") &&
-            (has("評価") || has("合否"));
+          : courseGrade && (has("単位数") || has("修得単位数"));
     if (match) return { row, labels };
   }
   return null;
@@ -281,7 +293,7 @@ function tableData(table: HTMLTableElement, kind: Kind): Table | null {
         : kind === "registration"
           ? !get("開講番号")
           : !(
-              get("単位数") &&
+              (get("単位数") || get("修得単位数")) &&
               (get("科目名") || get("開講番号")) &&
               (get("開講番号") || get("評価") || get("合否"))
             )
