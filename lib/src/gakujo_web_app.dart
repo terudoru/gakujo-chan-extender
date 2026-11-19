@@ -4738,6 +4738,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final returned = returnRevision != null;
     final sorted = [...reportLists]
       ..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
+    var isDeleting = false;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
@@ -4790,6 +4791,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               onPressed: sorted.isEmpty
                   ? null
                   : () async {
+                      if (isDeleting) return;
+                      isDeleting = true;
                       try {
                         await _activityStore.clearReportLists();
                       } on Object catch (error, stackTrace) {
@@ -4801,6 +4804,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         );
                         _showSnackBar('削除できませんでした');
                         return;
+                      } finally {
+                        isDeleting = false;
                       }
                       // The assignments go with the lists, and so do their
                       // booked reminders; fetch the list again soon.
@@ -4809,7 +4814,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       if (!dialogContext.mounted) {
                         return;
                       }
-                      Navigator.of(dialogContext).pop();
+                      if (ModalRoute.of(dialogContext)?.isCurrent == true) {
+                        Navigator.of(dialogContext).pop();
+                      }
                       _showSnackBar('保存済み課題一覧を削除しました');
                     },
               child: const Text('削除'),
