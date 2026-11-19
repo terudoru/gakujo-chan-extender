@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal, Select } from "../ui.jsx";
-import { applyPlannerImport, reviewPlannerImport } from "./review.mjs";
+import { confirmPlannerImport, reviewPlannerImport } from "./review.mjs";
 
 const titles = {
   grades: "成績確認表",
@@ -26,6 +26,7 @@ function detail(kind, value) {
     value.year ? value.year + "年度" : "年度不明",
     value.term,
     value.section,
+    value.offeringDepartment,
     value.courseId,
     value.grade,
     value.credits + "単位",
@@ -36,30 +37,50 @@ function detail(kind, value) {
     .join(" · ");
 }
 
-function ReviewForm({ review, mutate, close }) {
+function ReviewForm({
+  review,
+  previousGrades,
+  prepareGrades,
+  pending,
+  mutate,
+  close,
+}) {
   const [choices, setChoices] = useState({});
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const submitting = useRef(false);
+  useLayoutEffect(() => () => pending.current?.abort(), [pending]);
   const set = (id, update) =>
     setChoices((old) => ({ ...old, [id]: { ...old[id], ...update } }));
   const selected = review.rows.filter((row) => choices[row.id]?.selected);
   async function accept() {
-    if (!selected.length || submitting.current) return;
-    submitting.current = true;
+    if (
+      !selected.length ||
+      (pending.current && !pending.current.signal.aborted)
+    )
+      return;
+    const attempt = new AbortController();
+    pending.current = attempt;
     setBusy(true);
     setError("");
     const selections = selected.map(({ id }) => ({ id, ...choices[id] }));
     try {
       if (
-        await mutate((state) => applyPlannerImport(state, review, selections))
+        (await confirmPlannerImport({
+          review,
+          selections,
+          previousGrades,
+          prepareGrades,
+          mutate,
+          signal: attempt.signal,
+        })) &&
+        !attempt.signal.aborted
       )
         close();
     } catch (e) {
-      setError(e.message);
+      if (!attempt.signal.aborted) setError(e.message);
     } finally {
-      submitting.current = false;
-      setBusy(false);
+      if (pending.current === attempt) pending.current = null;
+      if (!attempt.signal.aborted) setBusy(false);
     }
   }
   return (
@@ -115,7 +136,8 @@ function ReviewForm({ review, mutate, close }) {
                 {row.label}
               </label>
               <small>
-                第{row.id.split("-")[0]}表 {row.id.split("-")[1]}行目　{detail(review.kind, value)}
+                第{row.id.split("-")[0]}表 {row.id.split("-")[1]}行目　
+                {detail(review.kind, value)}
               </small>
               {row.reason && <small>{row.reason}</small>}
               {value && isBalance && (
@@ -202,6 +224,73 @@ function ReviewForm({ review, mutate, close }) {
   );
 }
 
+function ManualGrade({ review, onEdit }) {
+  const editor = useRef(null);
+  function submit(event) {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    review({
+      v: 1,
+      kind: "grades",
+      tables: [
+        {
+          heading: "本人入力",
+          rows: [
+            ["開講番号", "科目名", "単位数", "評語", "履修年度", "クラス"],
+            ["code", "title", "credits", "grade", "year", "section"].map(
+              (key) => values.get(key).trim(),
+            ),
+          ],
+        },
+      ],
+    });
+    editor.current.open = false;
+    editor.current.querySelector("summary").focus();
+  }
+  return (
+    <details ref={editor}>
+      <summary>1科目ずつ入力</summary>
+      <form className="form-stack" onSubmit={submit} onChange={onEdit}>
+        <label className="input-label">
+          授業名
+          <input name="title" required maxLength={300} />
+        </label>
+        <div className="pair">
+          <label className="input-label">
+            開講番号
+            <input name="code" maxLength={20} />
+          </label>
+          <label className="input-label">
+            クラス
+            <input name="section" maxLength={80} />
+          </label>
+        </div>
+        <div className="pair">
+          <label className="input-label">
+            修得年度
+            <input name="year" inputMode="numeric" maxLength={6} />
+          </label>
+          <label className="input-label">
+            修得単位
+            <input name="credits" inputMode="decimal" required />
+          </label>
+        </div>
+        <label className="input-label">
+          評価
+          <select name="grade">
+            {["修得", "秀", "優", "良", "可", "合格", "認定"].map((grade) => (
+              <option key={grade}>{grade}</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="action-link">
+          入力内容を確認
+        </button>
+      </form>
+    </details>
+  );
+}
+
 function ImportSource({
   kind,
   packet,
@@ -211,6 +300,7 @@ function ImportSource({
   goal,
   stage,
   requirementRows,
+  prepareGrades,
   mutate,
   close,
 }) {
@@ -220,7 +310,8 @@ function ImportSource({
     [version, setVersion] = useState(0);
   const request = useRef(0);
   const fileInput = useRef(null);
-  useEffect(
+  const pending = useRef(null);
+  useLayoutEffect(
     () => () => {
       request.current++;
     },
@@ -239,6 +330,7 @@ function ImportSource({
           goal,
           stage,
           requirementRows,
+          deferMatch: !!prepareGrades,
         }),
       };
     } catch (e) {
@@ -253,14 +345,24 @@ function ImportSource({
     goal,
     stage,
     requirementRows,
+    prepareGrades,
   ]);
+  function closeSource() {
+    pending.current?.abort();
+    request.current++;
+    close();
+  }
+  function replaceSource() {
+    pending.current?.abort();
+    setVersion((v) => v + 1);
+    setError("");
+    return ++request.current;
+  }
   async function read(file) {
     if (!file) return;
-    const token = ++request.current;
+    const token = replaceSource();
     setFilePacket(null);
     setBusy(true);
-    setError("");
-    setVersion((v) => v + 1);
     try {
       const { readPlannerFile } = await import("../read-grade-file.js");
       const next = await readPlannerFile(file, kind);
@@ -275,7 +377,7 @@ function ImportSource({
     }
   }
   return (
-    <Modal title={titles[kind] + "を取り込む"} close={close}>
+    <Modal title={titles[kind] + "を取り込む"} close={closeSource}>
       <p>
         端末内で読み取ります。帳票と照合し、保存する行にチェックを入れてください。
       </p>
@@ -289,6 +391,24 @@ function ImportSource({
             onChange={(e) => read(e.currentTarget.files?.[0])}
           />
         </label>
+      )}
+      {!packet && kind === "grades" && (
+        <ManualGrade
+          onEdit={() => {
+            if (filePacket || busy) {
+              replaceSource();
+              if (fileInput.current) fileInput.current.value = "";
+              setFilePacket(null);
+              setBusy(false);
+            }
+          }}
+          review={(manualPacket) => {
+            replaceSource();
+            if (fileInput.current) fileInput.current.value = "";
+            setBusy(false);
+            setFilePacket(manualPacket);
+          }}
+        />
       )}
       {busy && <p role="status">読み取り中…</p>}
       {(error || parsed?.error) && (
@@ -304,8 +424,11 @@ function ImportSource({
             parsed.review.targets,
           ])}
           review={parsed.review}
+          previousGrades={state.grades}
+          prepareGrades={prepareGrades}
+          pending={pending}
           mutate={mutate}
-          close={close}
+          close={closeSource}
         />
       )}
     </Modal>
@@ -321,6 +444,7 @@ export function PlannerImportPanel({
   goal = "graduation",
   stage = "",
   requirementRows = emptyRows,
+  prepareGrades,
   mutate,
   onClose,
 }) {
@@ -340,6 +464,7 @@ export function PlannerImportPanel({
       goal={goal}
       stage={stage}
       requirementRows={requirementRows}
+      prepareGrades={prepareGrades}
       mutate={mutate}
       close={onClose}
     />

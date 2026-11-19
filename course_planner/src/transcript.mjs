@@ -6,11 +6,16 @@ const pass = /^(?:秀|優|良|可|合格|修得|認定|S|A\+?|B\+?|C\+?|P)$/i;
 const notEarned = /^(?:不可|不合格|未修得|履修中|未確定|欠席|放棄|F|D)$/i;
 
 function identity(row) {
-  return JSON.stringify(
-    [row.year, row.code, row.title, row.section, row.term, row.courseId].map(
-      normalize,
-    ),
-  );
+  const parts = [
+    row.year,
+    row.code,
+    row.title,
+    row.section,
+    row.term,
+    row.courseId,
+  ];
+  if (row.offeringDepartment) parts.push(row.offeringDepartment);
+  return JSON.stringify(parts.map(normalize));
 }
 function evidence(row) {
   return JSON.stringify(
@@ -52,7 +57,12 @@ function namesIndex(records) {
 }
 export function reviewGrades(
   packet,
-  { byCode = new Map(), catalogYear = 2026, grades = [] } = {},
+  {
+    byCode = new Map(),
+    catalogYear = 2026,
+    grades = [],
+    deferMatch = false,
+  } = {},
 ) {
   const rows = [];
   const nonEarned = new Set();
@@ -103,13 +113,18 @@ export function reviewGrades(
         (starred && !duplicate) ||
         (v.duplicate &&
           !["重複", "重複単位", "なし", "-", "無"].includes(v.duplicate));
-      const match =
+      const sameOffering =
         offering &&
         normalize(offering.title) === normalize(title) &&
         (!v.section || normalize(offering.section) === normalize(v.section)) &&
         (!v.courseId ||
           normalize(offering.courseId) === normalize(v.courseId)) &&
         (offering.credits == null || offering.credits === credits);
+      const match =
+        sameOffering &&
+        !deferMatch &&
+        (!v.offeringDepartment ||
+          normalize(v.offeringDepartment) === normalize(offering.department));
       const grade = {
         year,
         code,
@@ -119,12 +134,15 @@ export function reviewGrades(
         section: v.section || "",
         term: v.term || "",
         courseId: v.courseId || "",
+        ...(v.offeringDepartment
+          ? { offeringDepartment: v.offeringDepartment }
+          : {}),
         alternativeTitle: v.alternativeTitle || "",
         recognized,
         allocationLabel: v.category || "",
         duplicate,
         counts: !duplicate && !starUnclear,
-        source: ["単位修得状況照会", "成績確認表"].includes(
+        source: ["単位修得状況照会", "成績確認表", "本人入力"].includes(
           normalize(origin.heading),
         )
           ? normalize(origin.heading)
@@ -165,6 +183,7 @@ export function reviewGrades(
         id: origin.id,
         label,
         value: grade,
+        ...(offering && !sameOffering ? { offeringConflict: true } : {}),
         reason: notes.join(" "),
       });
     },
@@ -255,7 +274,14 @@ export function mergeGrades(state, rows) {
     // printed. Merge only if they share an offering and no evidence conflicts.
     if (!old && !related.length) {
       const possible = sameTitle.filter((g) =>
-        ["year", "code", "term", "section", "courseId"].every(
+        [
+          "year",
+          "code",
+          "term",
+          "section",
+          "courseId",
+          "offeringDepartment",
+        ].every(
           (k) => !g[k] || !row[k] || normalize(g[k]) === normalize(row[k]),
         ),
       );
@@ -277,7 +303,7 @@ export function mergeGrades(state, rows) {
         !row.identityUncertain
       ) {
         old = previous;
-        for (const k of ["section", "term", "courseId"])
+        for (const k of ["section", "term", "courseId", "offeringDepartment"])
           row[k] ||= old[k] || "";
         row.importId = identity(row);
       } else if (possible.length) {

@@ -26,6 +26,36 @@
         },
       ],
     ]);
+    const calls = [];
+    const archive = (window.testArchive = { calls, wait: false });
+    async function prepareGrades(grades) {
+      calls.push(
+        grades.map(({ title, matchedCourse }) => ({ title, matchedCourse })),
+      );
+      if (archive.wait) {
+        archive.wait = false;
+        await new Promise((resolve) => {
+          archive.release = resolve;
+        });
+      }
+      return grades.map((g) => ({
+        ...g,
+        matchedCourse: g.recognized
+          ? null
+          : {
+              confirmed: true,
+              title: g.title,
+              year: g.year,
+              code: g.code,
+              department: "84",
+              category: "英語",
+              fields: ["70"],
+              sourceKind: "syllabus",
+              sourceUrl: "https://syllabus.niigata-u.ac.jp/",
+              fieldSource: "https://syllabus.niigata-u.ac.jp/campus-sy/",
+            },
+      }));
+    }
     function Harness() {
       const [source, setSource] = useState(null);
       const [state, setState] = useState(() => ({
@@ -56,6 +86,7 @@
             byCode,
             catalogYear: 2026,
             mutate,
+            prepareGrades,
             onClose: () => setSource(null),
             goal: "graduation",
             stage: "卒業",

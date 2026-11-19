@@ -70,9 +70,14 @@ try {
   await open("grades");
   await upload("確認用.pdf", "application/pdf", pdf);
   const earned = modal.getByRole("checkbox", { name: /架空科目を取り込む/ });
-  await earned.waitFor();
+  await earned.waitFor().catch(async (error) => {
+    console.error(await modal.innerText());
+    throw error;
+  });
   assert.equal(
-    await modal.locator("input[type=file]").evaluate((input) => input.files[0]?.name),
+    await modal
+      .locator("input[type=file]")
+      .evaluate((input) => input.files[0]?.name),
     "確認用.pdf",
   );
   assert.ok(
@@ -90,6 +95,9 @@ try {
   await accept();
   await modal.waitFor({ state: "hidden" });
   assert.equal((await readState()).grades[0].matchedCourse.year, "2026");
+  assert.deepEqual(await page.evaluate(() => window.testArchive.calls[0]), [
+    { title: "架空科目", matchedCourse: null },
+  ]);
   await open("registration");
   await upload(
     "履修状況.txt",
@@ -141,10 +149,71 @@ try {
     .getByText("PDFの形式を確認してください。")
     .waitFor();
   assert.equal((await readState()).grades.length, 1);
+  await modal.getByText("1科目ずつ入力", { exact: true }).click();
+  await modal.getByLabel("授業名", { exact: true }).fill("手入力講義");
+  await modal.getByLabel("修得年度", { exact: true }).fill("2019");
+  await modal.getByLabel("修得単位", { exact: true }).fill("2");
+  await modal.getByRole("button", { name: "入力内容を確認" }).click();
+  assert.equal(await modal.locator("details").evaluate((e) => e.open), false);
+  await picked().check();
+  await accept();
+  await modal.waitFor({ state: "hidden" });
+  const manual = (await readState()).grades[1];
+  assert.deepEqual(
+    [manual.title, manual.credits, manual.source, manual.matchedCourse.year],
+    ["手入力講義", 2, "本人入力", "2019"],
+  );
+
+  const nativeGrade = (title) =>
+    page.evaluate(
+      (name) =>
+        window.dispatchEvent(
+          new CustomEvent("mbg:planner-import", {
+            detail: {
+              v: 1,
+              kind: "grades",
+              tables: [
+                {
+                  heading: "単位修得状況照会",
+                  rows: [
+                    ["科目名", "単位数", "評価", "年度"],
+                    [name, "1", "可", "2018"],
+                  ],
+                },
+              ],
+            },
+          }),
+        ),
+      title,
+    );
+  await page.evaluate(() => {
+    window.testArchive.wait = true;
+  });
+  await nativeGrade("取消講義");
+  await picked().check();
+  await accept();
+  await page.waitForFunction(
+    () => typeof window.testArchive.release === "function",
+  );
+  await page.keyboard.press("Escape");
+  await modal.waitFor({ state: "hidden" });
+  await nativeGrade("新しい講義");
+  await picked().check();
+  await accept();
+  await modal.waitFor({ state: "hidden" });
+  await page.evaluate(async () => {
+    window.testArchive.release();
+    await new Promise(requestAnimationFrame);
+  });
+  assert.deepEqual(
+    (await readState()).grades.map((g) => g.title),
+    ["架空科目", "手入力講義", "新しい講義"],
+  );
+  assert.equal((await readState()).grades[2].source, "単位修得状況照会");
   assert.deepEqual(errors, []);
   assert.deepEqual(outgoing, []);
   console.log(
-    "Chrome: local PDF/CSV/TSV and native review, selective save, invalid PDF, zero external/upload requests.",
+    "Chrome: PDF, CSV, TSV, manual and native review; selected archive matches, canceled lookup, new dialog, invalid PDF, zero external/upload requests.",
   );
 } finally {
   await browser?.close();

@@ -5,7 +5,11 @@ function textLines(items) {
   const tokens = items
     .filter((item) => item.str?.trim())
     .map((item) => ({
-      text: item.str.trim(),
+      // Some Japanese PDF fonts map ordinary kanji to equivalent radical
+      // glyphs (e.g. 科⽬). Recover those without folding titles like 英語Ⅰ.
+      text: item.str
+        .trim()
+        .replace(/[\u2f00-\u2fd5]/gu, (glyph) => glyph.normalize("NFKC")),
       x: item.transform[4],
       y: item.transform[5],
       end: item.transform[4] + item.width,

@@ -9,8 +9,13 @@
 ```jsx
 import { installPlannerImportListener } from "./imports/native.mjs";
 import { PlannerImportPanel } from "./imports/PlannerImportPanel.jsx";
+import { matchHistoricalGrades } from "./archive/packs.mjs";
 
 const [source, setSource] = useState(null);
+const prepareGrades = useCallback(
+  (selected, previous) => matchHistoricalGrades(selected, catalog, previous),
+  [catalog],
+);
 useEffect(
   () =>
     installPlannerImportListener(
@@ -31,6 +36,7 @@ useEffect(
       goal={goal}
       stage={stageId}
       requirementRows={currentStageRows}
+      prepareGrades={prepareGrades}
       mutate={mutate}
       onClose={() => setSource(null)}
     />
@@ -39,6 +45,8 @@ useEffect(
 ```
 
 `mutate(update)` は最新の保存データを `update` に渡し、保存成功で `true` を返す。ファイルと学務の受信データは `reviewPlannerImport(packet, { byCode, catalogYear, grades, profile, goal, stage, requirementRows })` で同じ判定を通る。戻り値の `rows` は読取位置 `id`、表示名 `label`、理由 `reason`、取込可能な行だけに `value` を持つ。`applyPlannerImport(state, review, selections)` の選択は `{id, targetKey?, excludeDuplicate?, confirmDistinct?, confirmTotal?}` の配列で渡す。`readPlannerFile(file, kind)` は `../read-grade-file.js` の非同期関数。
+
+成績のファイル・学務からの受信・「1科目ずつ入力」は同じ確定ボタンを使う。`prepareGrades` はチェック済みの成績だけを受け取り、各行の `reviewRowId` と `importId` をそのまま返す。画面は同じ行の `matchedCourse` とその出典を取り込み、原本の科目名と単位を保存する。索引を取得できない場合は照合を保留して成績を保存する。照合中または保存待ちに閉じた画面の行は取り込まない。
 
 ## 集計で使う項目
 

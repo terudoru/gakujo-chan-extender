@@ -445,10 +445,16 @@ test("PDF font runs, empty columns and the right-hand statement grid keep their 
       t("題", 90, 85),
       t("0.5", 230, 85, 15),
       t("優", 320, 85),
+      t("科", 80, 65),
+      t("⽬", 90, 65),
+      t("Ⅰ", 100, 65),
+      t("1", 230, 65),
+      t("可", 320, 65),
     ],
     "grades",
   );
   assert.deepEqual(pdf[1], ["", "例題", "0.5", "優"]);
+  assert.deepEqual(pdf[2], ["", "科目Ⅰ", "1", "可"]);
   const balance = pdfPageRows(
     [
       t("区分", 212, 104, 20),

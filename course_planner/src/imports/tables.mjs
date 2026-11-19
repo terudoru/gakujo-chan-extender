@@ -11,6 +11,7 @@ const labels = {
   term: ["学期", "履修学期", "修得学期", "ターム"],
   section: ["クラス", "クラス名", "組", "クラス番号"],
   courseId: ["科目番号", "科目ID", "授業ID", "授業科目ID"],
+  offeringDepartment: ["開講所属", "開講所属コード", "開講学部", "開設学部"],
   alternativeTitle: ["旧科目名", "旧名称", "読替科目名", "対応科目名"],
   duplicate: ["重複", "重複区分", "重複履修"],
   category: [
@@ -71,6 +72,7 @@ const columns = {
     "section",
     "term",
     "courseId",
+    "offeringDepartment",
     "alternativeTitle",
     "duplicate",
     "category",
@@ -261,7 +263,15 @@ export function scanTables(packet, visit, issue) {
         continue;
       }
       const values = Object.fromEntries(
-        header.keys.flatMap((key, i) => (key ? [[key, cells[i]]] : [])),
+        header.keys.flatMap((key, i) => {
+          if (!key) return [];
+          // Keep the transcript spelling (e.g. Ⅰ vs I) on the durable record.
+          const value =
+            key === "title" || key === "alternativeTitle"
+              ? table.rows[n][i].trim()
+              : cells[i];
+          return [[key, value]];
+        }),
       );
       visit(values, { id, status, year: scopedYear, heading });
     }

@@ -162,8 +162,7 @@ export function reviewPlannerImport(packet, options = {}) {
   return { kind: packet.kind, rows, targets, scope };
 }
 
-// Used inside the caller's local transaction, against the latest saved state.
-export function applyPlannerImport(state, review, selections) {
+function selectedRows(review, selections) {
   if (!Array.isArray(selections) || !selections.length)
     throw Error("取り込む行を選んでください。");
   const byId = new Map(review.rows.map((r) => [r.id, r]));
@@ -173,6 +172,101 @@ export function applyPlannerImport(state, review, selections) {
     selected.some(({ row }) => !row?.value)
   )
     throw Error("確認できた行だけを選んでください。");
+  return selected;
+}
+
+function reviewedGrade({ row, choice }) {
+  const grade = row.value;
+  if (choice.excludeDuplicate)
+    return {
+      ...grade,
+      counts: false,
+      duplicate: true,
+      duplicateReviewed: true,
+    };
+  if (
+    choice.confirmDistinct &&
+    grade.possibleDuplicate &&
+    !grade.identityUncertain &&
+    !grade.duplicate
+  )
+    return { ...grade, counts: true, duplicateReviewed: true };
+  return grade;
+}
+
+// The matcher spreads the original grade onto its result. reviewRowId identifies
+// a particular selected line even if two identical lines share an importId.
+export async function confirmPlannerImport({
+  review,
+  selections,
+  previousGrades = [],
+  prepareGrades,
+  mutate,
+  signal,
+}) {
+  if (signal?.aborted) return false;
+  let ready = review;
+  if (review.kind === "grades" && prepareGrades) {
+    const selected = selectedRows(review, selections);
+    const grades = selected.map((selection) => ({
+      ...reviewedGrade(selection),
+      matchedCourse: null,
+      fields: [],
+      category: "",
+      department: "",
+      reviewRowId: selection.row.id,
+    }));
+    let prepared;
+    try {
+      prepared = await prepareGrades(grades, previousGrades);
+    } catch {
+      // An unavailable archive cannot invalidate the original earned credit.
+      prepared = [];
+    }
+    if (signal?.aborted) return false;
+    const byRow = new Map();
+    for (const result of Array.isArray(prepared) ? prepared : []) {
+      const id = result?.reviewRowId;
+      byRow.set(id, byRow.has(id) ? null : result);
+    }
+    ready = {
+      ...review,
+      rows: selected.map(({ row }) => {
+        const result = byRow.get(row.id);
+        const candidate = result?.matchedCourse;
+        const matched =
+          result?.importId === row.value.importId &&
+          !row.offeringConflict &&
+          !row.value.identityUncertain &&
+          candidate?.confirmed === true &&
+          Array.isArray(candidate.fields) &&
+          (!row.value.year || String(candidate.year) === row.value.year) &&
+          (!row.value.code || candidate.code === row.value.code)
+            ? candidate
+            : null;
+        return {
+          ...row,
+          value: {
+            ...row.value,
+            matchedCourse: matched,
+            fields: matched?.fields ?? [],
+            category: matched?.category ?? "",
+            department: matched?.department ?? "",
+          },
+        };
+      }),
+    };
+  }
+  // The local storage transaction can itself wait for a cross-tab lock.
+  const saved = await mutate((latest) => {
+    if (!signal?.aborted) applyPlannerImport(latest, ready, selections);
+  });
+  return !!saved && !signal?.aborted;
+}
+
+// Used inside the caller's local transaction, against the latest saved state.
+export function applyPlannerImport(state, review, selections) {
+  const selected = selectedRows(review, selections);
   const scope = review.scope;
   if (
     (review.kind === "balances" ||
@@ -181,26 +275,7 @@ export function applyPlannerImport(state, review, selections) {
   )
     throw Error("適用する便覧・所属が変わりました。帳票を読み直してください。");
   if (review.kind === "grades") {
-    mergeGrades(
-      state,
-      selected.map(({ row, choice }) => {
-        if (choice.excludeDuplicate)
-          return {
-            ...row.value,
-            counts: false,
-            duplicate: true,
-            duplicateReviewed: true,
-          };
-        if (
-          choice.confirmDistinct &&
-          row.value.possibleDuplicate &&
-          !row.value.identityUncertain &&
-          !row.value.duplicate
-        )
-          return { ...row.value, counts: true, duplicateReviewed: true };
-        return row.value;
-      }),
-    );
+    mergeGrades(state, selected.map(reviewedGrade));
   } else if (review.kind === "registration") {
     for (const {
       row: {
