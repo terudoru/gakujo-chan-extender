@@ -7,6 +7,11 @@ const text = (v) => typeof v === "string" && v.length <= 512;
 const number = (v) => Number.isFinite(v) && v >= 0;
 const flag = (v) => typeof v === "boolean";
 const scalar = (v) => text(v) || number(v);
+const positiveInteger = (v) => (typeof v === "number" || (text(v) && /^\d+$/.test(v))) &&
+  Number.isSafeInteger(Number(v)) && Number(v) > 0;
+const optionalPositiveInteger = (v) => v === "" || positiveInteger(v);
+const gpa = (v) => v === "" || ((number(v) || (text(v) && /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(v))) &&
+  Number(v) >= 0 && Number(v) <= 5);
 const monthCounts = (v) => v && typeof v === "object" && !Array.isArray(v) &&
   Object.entries(v).every(([k, n]) => /^[1-6]$/.test(k) && (number(n) || (text(n) && /^\d{0,3}$/.test(n))));
 const fields = (v) => Array.isArray(v) && v.length <= 100 && v.every(text);
@@ -39,7 +44,7 @@ const gradeFields = {
   matchStatus: text, equivalentTitle: text, equivalentTo: text, equivalenceKey: text, repeatGroup: text,
   duplicateOf: text, status: (s) => STATUS.includes(s),
   offeringDepartment: text, offeringFaculty: text,
-  source: (v) => ["成績確認表", "単位修得状況照会", "成績表"].includes(v),
+  source: (v) => ["成績確認表", "単位修得状況照会", "成績表", "本人入力"].includes(v),
   possibleDuplicate: flag, repeatable: flag, identityUnresolved: flag,
 };
 const matchFields = {
@@ -68,7 +73,11 @@ const profileFields = {
   assessmentDate: (s) => s === "" || (text(s) && /^\d{4}-\d{2}-\d{2}$/.test(s)),
   enrolledMonths: scalar, attendanceMonths: scalar, yearMonths: monthCounts,
   yearAttendanceMonths: (v) => scalar(v) || monthCounts(v), earlyGraduation: flag, deanException: flag,
-  yearOfStudy: (v) => v === "" || ((text(v) || Number.isInteger(v)) && /^(?:[1-9]|1[0-2])$/.test(String(v))),
+  yearOfStudy: optionalPositiveInteger, entryGrade: optionalPositiveInteger,
+  graduationYear: (v) => v === "" || (positiveInteger(v) && /^\d{4}$/.test(String(v))),
+  graduationMonth: (v) => v === "" || (positiveInteger(v) && Number(v) <= 12),
+  package: (v) => typeof v === "string" && /^[\p{L}\p{M}\p{N}・ ]{0,80}$/u.test(v),
+  iStepApproved: flag, lawPaperSubstitutionApproved: flag, thirdYearCumulativeGpa: gpa,
   department: text, individual,
 };
 function pick(value, schema) {
@@ -85,7 +94,10 @@ function checkedScope(value) {
 }
 function grade(value) {
   const result = pick(value, gradeFields);
-  if (value?.matchedCourse?.confirmed === true) {
+  // Absence denotes an older grade eligible for a catalog lookup. Explicit
+  // null records the importer's decision to leave its offering unresolved.
+  if (value && Object.hasOwn(value, "matchedCourse") && value.matchedCourse === null) result.matchedCourse = null;
+  else if (value?.matchedCourse?.confirmed === true) {
     const match = pick(value.matchedCourse, matchFields);
     if (match.code || (match.code === "" && match.sourceUrl)) result.matchedCourse = match;
   }

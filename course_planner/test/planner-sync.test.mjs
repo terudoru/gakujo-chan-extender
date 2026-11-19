@@ -164,6 +164,79 @@ test("grade identities, review decisions and official archive evidence survive a
 function history(state, device, batches = [], before = project("history", state)) {
   return reconcile({ state, before, owner, device, channel: "history", batches });
 }
+test("private history distinguishes absent, unresolved and confirmed matches, including a later withdrawal", () => {
+  const source = initialState(), replica = initialState();
+  const row = { title: "合成科目", credits: 2, source: "本人入力", code: c1 };
+  const entered = [
+    { ...row, id: "legacy" },
+    { ...row, id: "unresolved", matchedCourse: null },
+    { ...row, id: "reviewed", matchedCourse: { code: c1, confirmed: true } },
+  ];
+  source.grades = structuredClone(entered);
+  const initial = history(source, a).pending;
+  const gradeKey = (id) => JSON.stringify(["grade", id]);
+  assert.deepEqual(initial.entries[gradeKey("unresolved")][2], entered[1]);
+  assert.equal(Object.hasOwn(initial.entries[gradeKey("legacy")][2], "matchedCourse"), false);
+  assert.equal(Object.hasOwn(project("plan", source), gradeKey("unresolved")), false);
+  history(replica, b, [initial]);
+  const grade = (s, id) => s.grades.find((row) => row.id === id);
+  for (const row of entered) assert.deepEqual(grade(replica, row.id), row);
+
+  grade(replica, "reviewed").matchedCourse = null;
+  const withdrawn = history(replica, b).pending;
+  assert.deepEqual(withdrawn.entries[gradeKey("reviewed")][2], { ...entered[2], matchedCourse: null });
+  history(source, a, [withdrawn, initial]);
+  assert.deepEqual(grade(source, "reviewed"), grade(replica, "reviewed"));
+  const rejoined = initialState();
+  history(rejoined, a, [withdrawn, initial]);
+  assert.deepEqual(grade(rejoined, "reviewed"), { ...entered[2], matchedCourse: null });
+  assert.deepEqual(grade(rejoined, "legacy"), entered[0]);
+
+  // A checkpoint created before the wire knew about null and manual entries
+  // can still publish the explicit state retained in the local planner.
+  const older = initialState();
+  older.grades = [structuredClone(entered[1])];
+  const oldRow = { id: "unresolved", code: c1, title: row.title, credits: 2 };
+  const key = gradeKey("unresolved");
+  older.plannerSync = { owner, history: { balanceKeysVersion: 2, cells: { [key]: [8, b, oldRow] },
+    clock: 8, pending: null, seen: [] } };
+  assert.deepEqual(history(older, a).pending.entries[key], [9, a, entered[1]]);
+});
+test("faculty profile choices preserve explicit values only on the private history wire", () => {
+  const source = initialState(), replica = initialState();
+  const options = { entryGrade: 3, graduationYear: "2027", graduationMonth: "03", package: "心理・人間・メディア表現文化学",
+    yearOfStudy: "14", earlyGraduation: false, deanException: true, iStepApproved: false,
+    lawPaperSubstitutionApproved: true, thirdYearCumulativeGpa: 0 };
+  Object.assign(source.profile, options);
+  const batch = history(source, a).pending;
+  history(replica, b, [batch]);
+  for (const [key, value] of Object.entries(options)) {
+    const wireKey = JSON.stringify(["profile", key]);
+    assert.deepEqual(batch.entries[wireKey][2], value);
+    assert.deepEqual(replica.profile[key], value);
+    assert.equal(Object.hasOwn(project("plan", source), wireKey), false);
+    assert.throws(() => validateEntries("plan", { [wireKey]: [1, a, value] }));
+  }
+  Object.assign(replica.profile, { entryGrade: "3", graduationYear: 2028, graduationMonth: 9, yearOfStudy: 15,
+    earlyGraduation: true, iStepApproved: true, lawPaperSubstitutionApproved: false, thirdYearCumulativeGpa: "0.00" });
+  delete replica.profile.package;
+  history(source, a, [history(replica, b).pending]);
+  for (const key of Object.keys(options)) assert.deepEqual(source.profile[key], replica.profile[key]);
+  assert.equal(Object.hasOwn(source.profile, "package"), false);
+  for (const [key, value] of [
+    ["yearOfStudy", Number.MAX_SAFE_INTEGER], ["yearOfStudy", ""], ["entryGrade", ""], ["graduationMonth", 12],
+    ["graduationYear", ""], ["thirdYearCumulativeGpa", 2.8], ["thirdYearCumulativeGpa", "5"], ["thirdYearCumulativeGpa", ""],
+  ]) {
+    validateEntries("history", { [JSON.stringify(["profile", key])]: [1, a, value] });
+  }
+  for (const [key, value] of [
+    ["yearOfStudy", "0"], ["yearOfStudy", Number.MAX_SAFE_INTEGER + 1], ["entryGrade", -1], ["graduationYear", "2e3"],
+    ["graduationMonth", 13], ["package", { raw: "private" }], ["package", "科".repeat(81)], ["earlyGraduation", "yes"],
+    ["deanException", 0], ["iStepApproved", 1], ["lawPaperSubstitutionApproved", "true"], ["thirdYearCumulativeGpa", 5.01],
+  ]) {
+    assert.throws(() => validateEntries("history", { [JSON.stringify(["profile", key])]: [1, a, value] }));
+  }
+});
 test("plan sends only both explicit semester halves per offering, including updates and removals", () => {
   const local = initialState(), remote = initialState();
   local.semesters = { [c1]: { first: 1.5, second: 0, grade: "SENSITIVE" }, [c2]: { first: 1 }, raw: { first: 0, second: 0 } };
