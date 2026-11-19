@@ -63,6 +63,8 @@ export function App({ catalog }) {
     [listId, setListId] = useState("mine"),
     [course, setCourse] = useState(null);
   const [reopenSlot, setReopenSlot] = useState(false);
+  const [creditGoal, setCreditGoal] = useState("graduation");
+  const [creditView, setCreditView] = useState("rules");
   const [sharing, setSharing] = useState(() => shareFromURL(catalog.year));
   const byCode = useMemo(
     () => new Map(catalog.courses.map((c) => [c.code, c])),
@@ -317,7 +319,13 @@ export function App({ catalog }) {
                 />
               )}
               {page === "credits" && (
-                <Requirements {...{ state, catalog, byCode, mutate, search }} />
+                <Requirements
+                  {...{ state, catalog, byCode, mutate, search }}
+                  goal={creditGoal}
+                  setGoal={setCreditGoal}
+                  view={creditView}
+                  setView={setCreditView}
+                />
               )}
             </>
           )}

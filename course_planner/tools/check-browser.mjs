@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { basename, extname, join } from "node:path";
 import { chromium } from "playwright-core";
+import { initialState } from "../src/study.mjs";
 
 const dist = fileURLToPath(new URL("../../site/planner/", import.meta.url));
 const types = {
@@ -128,6 +129,11 @@ try {
     "4",
   ]);
   assert.equal(await human.locator("b").innerText(), "3");
+  const promotion = p.getByRole("radio", { name: "進級まで" });
+  await promotion.click();
+  await btn(human, "授業を探す").click();
+  await btn(p, "単位・要件に戻る").click();
+  assert.ok(await promotion.isChecked());
   await p.getByRole("radio", { name: "シラバスの分野" }).click();
   await p.getByText("70 英語", { exact: true }).waitFor();
   await p.getByText("10 情報", { exact: true }).waitFor();
@@ -199,6 +205,17 @@ try {
     (await saved(p)).grades.find((g) => g.code === "261G7011").credits,
     1,
   );
+  const unplannedDenial = await browser.newContext();
+  const deniedState = initialState();
+  deniedState.status["261G7011"] = "不許可";
+  await unplannedDenial.addInitScript((state) => {
+    localStorage.setItem("mbg.course-planner.v1", JSON.stringify(state));
+  }, deniedState);
+  const deniedPage = await open(unplannedDenial, base);
+  const deniedSlot = btn(deniedPage, "月曜2限の候補");
+  assert.match(await deniedSlot.innerText(), /不許可/);
+  assert.match(await deniedPage.locator(".cap-body b").innerText(), /^0\s*\//);
+  await unplannedDenial.close();
   assert.deepEqual(errors, []);
   console.log(
     "Desktop and mobile passed: slot search, private snapshot copy, replacement, term CAP, grades and requirements, mobile sheet, persistence.",

@@ -322,10 +322,10 @@ function Balance({ state, goal, mutate, close, fields, rows }) {
     </Modal>
   );
 }
-export function Requirements({ state, catalog, byCode, mutate, search }) {
-  const [goal, setGoal] = useState("graduation"),
-    [view, setView] = useState("rules"),
-    [dialog, setDialog] = useState("");
+export function Requirements({
+  state, catalog, byCode, mutate, search, goal, setGoal, view, setView,
+}) {
+  const [dialog, setDialog] = useState("");
   const info = facultyInfo(state.profile),
     active = activeCourses(state, byCode),
     grades = gradeCourses(state, byCode);

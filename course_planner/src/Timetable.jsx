@@ -73,11 +73,7 @@ export function Timetable({
         push(offered, key, course);
         if (saved.has(course.code)) push(inList, key, course);
         if (chosen.has(course.code)) push(planned, key, course);
-        if (
-          state.status[course.code] === "不許可" &&
-          state.plan.includes(course.code)
-        )
-          push(denied, key, course);
+        if (state.status[course.code] === "不許可") push(denied, key, course);
       }
     }
     return { offered, inList, planned, denied, active };
