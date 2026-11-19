@@ -252,6 +252,52 @@ test("engineering management packages distinguish lectures from labs and combine
   assert.equal(evaluate(old, input).value, 2);
 });
 
+test("a validated semester split resolves only the timing of a CAP-eligible course", () => {
+  const confirmed = { semesterSplitConfirmed: true };
+  for (const [student, lecture] of [
+    [eng(), course("261G3008")],
+    [sci(), course("260G5016")],
+    [agr(), { code: "261A0003", title: "例", format: "講義", credits: 2 }],
+  ]) {
+    const { classify } = resolve(student).cap;
+    for (const period of ["通年", "第2・3ターム"]) {
+      const annual = { ...lecture, period };
+      assert.equal(classify(annual, student), "unknown");
+      assert.equal(classify(annual, student, confirmed), "include");
+      for (const value of [false, 0, "true"]) {
+        assert.equal(
+          classify(annual, student, { semesterSplitConfirmed: value }),
+          "unknown",
+        );
+      }
+      assert.equal(
+        classify(annual, student, { first: -1, second: 3 }),
+        "unknown",
+      );
+    }
+  }
+
+  const student = agr();
+  const { classify } = resolve(student).cap;
+  const annual = { code: "261A0003", title: "例", period: "通年", credits: 2 };
+  assert.equal(
+    classify({ ...annual, format: "講義・演習" }, student, confirmed),
+    "unknown",
+  );
+  assert.equal(
+    classify({ ...annual, format: "実験" }, student, confirmed),
+    "exclude",
+  );
+  assert.equal(
+    classify(
+      { ...annual, format: "講義", failedRetake: true },
+      student,
+      confirmed,
+    ),
+    "exclude",
+  );
+});
+
 test("agriculture checks each cohort's CAP and selected research stage instead of a year-wide promotion", () => {
   assert.equal(resolve(agr("食品科学", "2026", { gpa: "3.49" })).cap.limit, 24);
   const cap = resolve(agr("食品科学", "2026", { gpa: "3.5" })).cap;

@@ -181,12 +181,12 @@ export default function resolve(profile) {
     const descriptor = config.resolve(book, profile);
     selectProgress(descriptor, profile, book);
     const classify = descriptor.cap.classify;
-    descriptor.cap.classify = (course, student) => {
+    descriptor.cap.classify = (course, student, context) => {
       const result = classify(course, student);
-      if (result !== "include") return result;
+      if (result !== "include" || context?.semesterSplitConfirmed === true)
+        return result;
       const period = String(course.period ?? "").normalize("NFKC");
-      // All three faculties publish semester limits. A full-year course needs
-      // its registered credit allocation before it can be charged to either.
+      // The semester calculation confirms both shares before setting the flag.
       const crosses =
         /通年/.test(period + (course.semester ?? "")) ||
         (/ターム/.test(period) && /[12]/.test(period) && /[34]/.test(period));
