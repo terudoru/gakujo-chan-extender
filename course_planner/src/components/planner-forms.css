@@ -318,6 +318,50 @@
   color: var(--soft);
 }
 
+.pf-disclosure {
+  padding: 10px 12px;
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  min-width: 0;
+}
+
+.pf-disclosure-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.pf-disclosure-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--soft);
+}
+
+.pf-disclosure-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  min-width: 0;
+}
+
+.pf-year-months-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.pf-year-cell {
+  min-width: 0;
+}
+
 /* AcademicFields list */
 .af-list {
   display: grid;
@@ -457,5 +501,9 @@
   }
   .pf-handbook-item {
     align-items: flex-start;
+  }
+  .pf-year-months-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 }

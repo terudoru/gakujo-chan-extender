@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Button, External, Modal, Select } from "../ui.jsx";
 import {
+  ACADEMIC_YEARS,
   applyProfilePatch,
   cleanNumericText,
   entryOptionList,
@@ -19,12 +20,24 @@ export function ProfileSettings({
   handbooks = [],
   facultyNames = [],
 }) {
+  const [initialDraft] = useState(() => initialProfileDraft(state?.profile));
   const [draft, setDraft] = useState(() => initialProfileDraft(state?.profile));
   const [localError, setLocalError] = useState("");
 
   const update = (key, value) => {
     setLocalError("");
     setDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updateYearMonths = (year, value) => {
+    setLocalError("");
+    setDraft((prev) => ({
+      ...prev,
+      yearAttendanceMonths: {
+        ...prev.yearAttendanceMonths,
+        [year]: value,
+      },
+    }));
   };
 
   const faculties = useMemo(
@@ -57,11 +70,17 @@ export function ProfileSettings({
     programChoices.length > 0 &&
     !programChoices.includes(draft.program.trim());
 
+  const detailedCount =
+    (cleanNumericText(draft.assessmentDate) !== "" ? 1 : 0) +
+    ACADEMIC_YEARS.filter(
+      (year) => cleanNumericText(draft.yearAttendanceMonths[year]) !== "",
+    ).length;
+
   async function save() {
     setLocalError("");
     try {
       const ok = await mutate((s) => {
-        applyProfilePatch(s, draft);
+        applyProfilePatch(s, draft, initialDraft);
       });
       if (ok) close();
     } catch (e) {
@@ -118,9 +137,7 @@ export function ProfileSettings({
       </div>
       {matchingHandbooks.length > 0 && (
         <section className="pf-section" aria-label="便覧の候補">
-          <h3 className="pf-section-title">
-            {draft.faculty}の便覧候補
-          </h3>
+          <h3 className="pf-section-title">{draft.faculty}の便覧候補</h3>
           <ul className="pf-handbook-list">
             {matchingHandbooks.map((h) => {
               const selected = normalizedHandbook === h.year;
@@ -160,7 +177,9 @@ export function ProfileSettings({
       />
       {programChoices.length > 0 && (
         <div className="pf-section">
-          <span className="pf-section-title">選択中の便覧にあるプログラム候補</span>
+          <span className="pf-section-title">
+            選択中の便覧にあるプログラム候補
+          </span>
           <div
             className="pf-program-chips"
             role="group"
@@ -204,6 +223,44 @@ export function ProfileSettings({
       <p className="pf-note">
         在学年数などの一般的な条件確認に使います。休学・留年・編入時は実際の年次と在学月数を入力してください。未入力と0は区別されます。
       </p>
+      <details className="pf-disclosure">
+        <summary className="pf-disclosure-summary">
+          <span>年次別の在学月数・判定基準日（任意）</span>
+          {detailedCount > 0 && (
+            <small className="pf-disclosure-count">
+              {detailedCount}項目入力中
+            </small>
+          )}
+        </summary>
+        <div className="pf-disclosure-body">
+          <p className="pf-note">
+            年次ごとの確定した在学月数（1〜6年次・整数月）と個別の判定基準日が必要な場合に入力します。未入力と0は区別され、日付や判定結果は自動補完しません。
+          </p>
+          <TextInput
+            label="判定基準日（YYYY-MM-DD）"
+            placeholder="例 2026-04-01"
+            value={draft.assessmentDate}
+            onChange={(v) => update("assessmentDate", v)}
+          />
+          <div
+            className="pf-year-months-grid"
+            role="group"
+            aria-label="年次別の在学月数"
+          >
+            {ACADEMIC_YEARS.map((year) => (
+              <div className="pf-year-cell" key={year}>
+                <TextInput
+                  label={`${year}年次の在学月数`}
+                  placeholder="月"
+                  inputMode="numeric"
+                  value={draft.yearAttendanceMonths[year]}
+                  onChange={(v) => updateYearMonths(year, v)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </details>
       <div className="pair">
         <TextInput
           label="個別のCAP上限"
