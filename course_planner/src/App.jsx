@@ -127,6 +127,7 @@ export function App({ catalog }) {
   function returnFromSearch() {
     const fromSlot = !!context.slot;
     navigate(context.requirement ? "credits" : "week");
+    if (context.requirement) setContext({ requirement: context.requirement });
     setReopenSlot(fromSlot);
   }
   function search(filter = {}) {
@@ -321,6 +322,7 @@ export function App({ catalog }) {
               {page === "credits" && (
                 <Requirements
                   {...{ state, catalog, byCode, mutate, search }}
+                  returnKey={context.requirement}
                   goal={creditGoal}
                   setGoal={setCreditGoal}
                   view={creditView}

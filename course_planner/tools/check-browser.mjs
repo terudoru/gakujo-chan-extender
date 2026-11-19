@@ -131,9 +131,26 @@ try {
   assert.equal(await human.locator("b").innerText(), "3");
   const promotion = p.getByRole("radio", { name: "進級まで" });
   await promotion.click();
+  await btn(p, "確認表の内訳を入力").click();
+  const balanceDialog = p.getByRole("dialog");
+  await balanceDialog.getByRole("combobox", { name: "照合する項目" }).click();
+  await p.getByRole("option", { name: "人文社会・教育科学", exact: true }).click();
+  await balanceDialog.getByLabel("必要単位").fill("4");
+  await balanceDialog.getByLabel("修得済み").fill("1");
+  await btn(balanceDialog, "単位を保存").click();
+  const evidence = human.locator("details");
+  await evidence.locator("summary").click();
+  assert.match(await evidence.innerText(), /確認表の修得済み\s*1単位/);
   await btn(human, "授業を探す").click();
   await btn(p, "単位・要件に戻る").click();
   assert.ok(await promotion.isChecked());
+  await p.waitForFunction(() =>
+    document.activeElement?.matches(".ledger-row summary"),
+  );
+  assert.equal(await evidence.evaluate((details) => details.open), true);
+  assert.ok(
+    await evidence.locator("summary").evaluate((el) => el === document.activeElement),
+  );
   await p.getByRole("radio", { name: "シラバスの分野" }).click();
   await p.getByText("70 英語", { exact: true }).waitFor();
   await p.getByText("10 情報", { exact: true }).waitFor();

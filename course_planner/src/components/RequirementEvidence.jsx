@@ -156,6 +156,7 @@ export function RequirementEvidence({
   planned = [],
   unknown = [],
   sources = [],
+  balance,
   onSearch,
 } = {}) {
   const toRows = (list) =>
@@ -182,7 +183,18 @@ export function RequirementEvidence({
     <details style={detailsStyle}>
       <summary style={summaryStyle}>根拠・内訳</summary>
       <div style={bodyStyle}>
-        <EvidenceGroup heading="修得済み" rows={earnedRows} />
+        {balance && (
+          <div style={sectionStyle}>
+            <strong style={headingStyle}>確認表の修得済み</strong>
+            <span>{balance.current}単位</span>
+          </div>
+        )}
+        {(!balance || earnedRows.length > 0) && (
+          <EvidenceGroup
+            heading={balance ? "照合できた修得科目" : "修得済み"}
+            rows={earnedRows}
+          />
+        )}
         <EvidenceGroup heading="履修予定" rows={plannedRows} />
         {unknownRows.length > 0 && (
           <EvidenceGroup heading="要確認" rows={unknownRows} />

@@ -648,8 +648,12 @@ body {
 .ledger-row > :not(:first-child) {
   text-align: right;
 }
-.ledger-row > div:last-child {
+.ledger-forecast {
   justify-items: end;
+}
+.ledger-row > details {
+  grid-column: 1 / -1;
+  text-align: start;
 }
 .ledger-head {
   color: var(--soft);

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { RequirementEvidence } from "./components/RequirementEvidence.jsx";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   ArrowRight,
@@ -323,9 +324,26 @@ function Balance({ state, goal, mutate, close, fields, rows }) {
   );
 }
 export function Requirements({
-  state, catalog, byCode, mutate, search, goal, setGoal, view, setView,
+  state,
+  catalog,
+  byCode,
+  mutate,
+  search,
+  goal,
+  setGoal,
+  view,
+  setView,
+  returnKey,
 }) {
   const [dialog, setDialog] = useState("");
+  const returnRow = useRef(null);
+  useEffect(() => {
+    const row = returnRow.current;
+    if (!row) return;
+    const details = row.querySelector("details");
+    if (details) details.open = true;
+    (row.querySelector("summary") ?? row).focus();
+  }, [returnKey]);
   const info = facultyInfo(state.profile),
     active = activeCourses(state, byCode),
     grades = gradeCourses(state, byCode);
@@ -417,19 +435,26 @@ export function Requirements({
               {rows
                 .filter((r) => !r.key.startsWith("field-"))
                 .map((r) => {
-                  const known =
-                    !r.needsBalance &&
-                    (!!grades.length ||
-                      state.balances.some(
-                        (b) =>
-                          b.key === r.key &&
-                          b.goal === goal &&
-                          b.faculty === state.profile.faculty &&
-                          b.handbook === state.profile.handbook &&
-                          (b.program ?? "") === state.profile.program,
-                      ));
+                  const balance = r.evidence
+                    ? r.balance
+                    : state.balances.find((b) =>
+                        b.key === r.key &&
+                        b.goal === goal &&
+                        b.faculty === state.profile.faculty &&
+                        b.handbook === state.profile.handbook &&
+                        (b.program ?? "") === state.profile.program &&
+                        (!b.entry || b.entry === state.profile.entry),
+                      );
+                  const known = !r.needsBalance && (!!grades.length || !!balance);
                   return (
-                    <div className="ledger-row" key={r.key}>
+                    <div
+                      className="ledger-row"
+                      key={r.key}
+                      ref={r.key === returnKey ? returnRow : undefined}
+                      role="group"
+                      aria-label={r.label}
+                      tabIndex={-1}
+                    >
                       <div>
                         <strong>{r.label}</strong>
                         <small>
@@ -440,7 +465,7 @@ export function Requirements({
                       <span>{r.required}</span>
                       <span>{known ? r.current : "—"}</span>
                       <span>{known ? r.remaining : "—"}</span>
-                      <div>
+                      <div className="ledger-forecast">
                         <b>{known ? r.after : "—"}</b>
                         {!r.key.startsWith("manual-") &&
                           !r.key.startsWith("ed-") && (
@@ -453,6 +478,9 @@ export function Requirements({
                             </ActionLink>
                           )}
                       </div>
+                      {(r.evidence || balance) && (
+                        <RequirementEvidence {...r.evidence} balance={balance} />
+                      )}
                     </div>
                   );
                 })}
