@@ -1,7 +1,7 @@
 import catalog from "./law-courses.json" with { type: "json" };
 import { page, statute, named, credited, uncertain, mandatory, alternative, any, text, attendance,
   contribution, mergeContributions, general, transferRow, isTransfer, stage, registrationClass, throughYear,
-  previousGpa, gpaSource, minimumYear } from "./rules.mjs";
+  previousGpa, gpaSource, minimumYear, officialDecision } from "./rules.mjs";
 
 const regs = statute("法学部規程第12条・附則", "110000435", "at10");
 const details = statute("法学部履修細則第3～7条・別表", "110000438");
@@ -129,12 +129,14 @@ export default function lawRules(profile,book) {
   const combined=any(electiveMatch,isMandatory);
   const requiredTotal=(threshold,label)=>credited("total",label,threshold,combined,src,{evaluate:total});
   const transferException=/編入|転部/.test(profile.entry||"");
-  const early=profile.earlyGraduation===true && !transferException;
+  const early=selected && profile.earlyGraduation===true && !transferException;
+  // The March 2020 amendment preserves pre-2019 cohorts' former rules.
+  const documentedEarlyRoute=+book.year>=2019;
   const graduation=[attendance(early?36:48,src),requiredTotal(124,"卒業単位の合計"),a,...mandatoryRows];
   if (selected) graduation.push(credited("law-electives","選択E・F類"+(professional?"":"（F類は60単位まで）"),
     124-a.required-4-8-(professional?64:4),any(electiveMatch,professional?mTest:allB,seminar.match),src,{evaluate:elective}));
   else graduation.push(uncertain("law-program","B類またはL・M・N類、E・F類の必要数","所属する法学・法曹養成プログラムを選択してください。",src));
-  const exceptional=transferException||profile.earlyGraduation===true||profile.deanException===true;
+  const exceptional=transferException||early||profile.deanException===true;
   if (isTransfer(profile)) graduation.push({...transferRow(details),...(transferException?{note:"3年次編入・転部は60単位以内、2年次転部は30単位以内で認定。早期卒業は適用外（履修細則第11条）。"}:{})});
   if(early) {
     if(professional) {
@@ -146,12 +148,22 @@ export default function lawRules(profile,book) {
             return g!==undefined && g!==null && g!=="" && Number(g)>=0 && Number(g)<=5?Number(Number(g)>=2.8):null;
           }});
     }
-    graduation.push(uncertain("early-approval","早期卒業の申請と学部判定",professional?
+    graduation.push(uncertain("early-approval","早期卒業の届出・成績要件",professional?
       "2年次末に在学2年・累積GPA2.8以上の届出をしたことを学務係で確認してください。":
-      "教養・専門それぞれ累積GPA3.0以上、可・不可なし、2年次末の書面申請と面接合格を学務係で確認してください。",details));
+      "教養・専門それぞれ累積GPA3.0以上、可・不可なし、2年次末の書面申請を学務係で確認してください。",details));
+    if(documentedEarlyRoute)graduation.push(officialDecision("early-degree-decision","学長による早期卒業の認定",
+      "教授会の議を経た本人宛ての認定結果を確認してください。",
+      statute("法学部規程第12条第2項・第13条（早期卒業の認定）","110000435","at11")));
   }
-  const gate=exceptional?[uncertain("law-d-exception","D類の履修許可・特例","編入・転部、早期卒業、学部長の特認について法学部学務係の履修登録通知を確認してください。",details)]
+  let gate=exceptional?[uncertain("law-d-exception","D類の履修許可・特例","編入・転部、早期卒業、学部長の特認について法学部学務係の履修登録通知を確認してください。",details)]
     : [minimumYear(4,details),...[requiredTotal(60,"3年次終了時点の卒業要件算入単位"),a,...aParts].map(r=>throughYear(r,3)),seminar];
+  if(early && documentedEarlyRoute)gate=[minimumYear(3,details),professional?
+    uncertain("early-filing","第2号早期卒業の届出","履修細則第10条第7～9項の届出を期限までに行ったか、学務係の記録で照合してください。",details):
+    officialDecision("early-interview","第1号早期卒業の面接試験に合格",
+      "3年次のD類登録には、学部が実施した面接の合格通知が必要です（履修細則第10条第4・5項）。",details)];
+  if(!transferException && !early && selected && profile.deanException===true && documentedEarlyRoute)
+    gate=[officialDecision("law-d-dean-decision","D類の通常の履修要件に対する学部長の特認",
+      "履修細則第7条ただし書に基づく本人の履修登録通知で、許可の有無を確認してください。",details)];
   const g=previousGpa(profile);
   return {title:book.title,sources:[book,src,details,gpaSource],stages:[
     stage("law-research","4年次必修D類の履修登録","progress",details,gate),

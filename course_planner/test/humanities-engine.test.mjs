@@ -158,3 +158,32 @@ run("個別認定された区分の単位は同じ学部・段階の合計へ一
     assert.deepEqual([other.get("total").current,other.get("total").status],[0,"unknown"]);
   }
 });
+run("本人宛ての決定だけに入力を許し、法学の課程・早期卒業区分・段階に限定する",()=>{
+  const decisions=(p,stage)=>api.availableStages(p).find(s=>s.id===stage)?.rows.filter(r=>r.officialDecision)??[];
+  const p=profile("法学部","法学",{earlyGraduation:true});
+  const ordinary=profile("法学部","法学"),pro={...p,program:"法曹養成"};
+  const keys=(q,id)=>decisions(q,id).map(r=>r.key);
+  assert.deepEqual(keys(p,"law-research"),["early-interview"]);
+  assert.deepEqual(keys(p,"law-graduation"),["early-degree-decision"]);
+  assert.deepEqual(keys(pro,"law-research"),[]);
+  assert.deepEqual(keys(pro,"law-graduation"),["early-degree-decision"]);
+  assert.deepEqual(keys({...p,entry:"転部"},"law-graduation"),[]);
+  assert.deepEqual(keys({...p,program:""},"law-graduation"),[]);
+  assert.deepEqual(keys({...p,admitted:"2018",handbook:"2018"},"law-graduation"),[]);
+  assert.deepEqual(keys(ordinary,"law-graduation"),[]);
+  assert.deepEqual(keys({...ordinary,deanException:true},"law-research"),["law-d-dean-decision"]);
+  const hu=profile("人文学部","言語文化学"),edu=profile("教育学部","英語教育専修（中学校主免）");
+  assert.deepEqual(keys(hu,"human-thesis-filing"),["thesis-topic-approval"]);
+  assert.deepEqual(keys(hu,"human-graduation"),[]);
+  assert.deepEqual(keys(edu,"education-practicum"),[]);
+  for(const rule of [...decisions(p,"law-research"),...decisions(p,"law-graduation"),...decisions(hu,"human-thesis-filing")]) {
+    assert.equal(rule.unit,"condition");assert.equal(rule.required,1);
+    assert.equal(rule.match,undefined);assert.equal(rule.profileValue,undefined);
+  }
+  const decision="early-degree-decision",s=state(p),stage="law-graduation";
+  const evaluate=current=>rows({...s,balances:current===null?[]:[{scope:{...p,goal:"graduation",stageId:stage},
+    key:decision,unit:"condition",current,required:1,confirmed:true}]},stage);
+  assert.deepEqual([null,0,1].map(n=>evaluate(n).get(decision).status),["unknown","short","met"]);
+  assert.equal(evaluate(1).get("total").current,0);
+  assert.equal(evaluate(1).get("total").remaining,124);
+});

@@ -1,6 +1,6 @@
 import inventory from "./literature-courses.json" with { type: "json" };
 import { text, page, credited, mandatory, stage, sameLanguage, attendance,
-  transferRow, isTransfer, any, named, gCategory, general, irregular, contribution } from "./rules.mjs";
+  transferRow, isTransfer, any, named, gCategory, general, irregular, contribution, officialDecision, minimumYear } from "./rules.mjs";
 
 export const recentPrograms = ["心理・人間学","社会文化学","言語文化学"];
 export const earlyPrograms = ["心理・人間学","社会・地域文化学","歴史文化学","日本・アジア言語文化学","西洋言語文化学","メディア・表現文化学"];
@@ -153,7 +153,14 @@ export default function literature(profile, book) {
   const steps = [stage("human-third","3年次進級（第5セメスター）","progress",promotion,[
     attendance(24,promotion),credited("total","進級に算入する単位",historical?58:54,eligible,promotion,{evaluate:sumEligible}),
     {...fresh,source:promotion},singleLanguage(4,promotion),credited("intro","入門講義",4,intro,promotion),
-    ...(isTransfer(profile)?[transferRow(book)]:[])]),stage("human-graduation","卒業","graduation",grad,rows)];
+    ...(isTransfer(profile)?[transferRow(book)]:[])])];
+  if(+book.year>=2014) {
+    const filing=page(book,y===2014 || y>=2025?30:29,"人文学部履修細則第9条・卒業論文題目の届出");
+    steps.push(stage("human-thesis-filing","卒業論文題目の届出","progress",filing,[minimumYear(4,filing),
+      officialDecision("thesis-topic-approval","卒業論文指導教員による題目の承認",
+        "学部長に届け出る題目について、卒業論文指導教員の承認結果を確認してください。",filing)]));
+  }
+  steps.push(stage("human-graduation","卒業","graduation",grad,rows));
   return {title:book.title, sources:[book,grad,list,promotion,capSrc,languageSource,
     page(book,y===2014 || y>=2025?29:28,"履修細則・卒業論文のCAP除外と3年次編入の扱い")], stages:steps,
     note:"公的語学検定・留学生科目の振替、体育実技の代替、外国語の併修制限は、学部学務係の認定結果を確認してください。",

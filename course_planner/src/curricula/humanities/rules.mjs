@@ -37,6 +37,8 @@ export const credited = (key, label, required, match, source, extra = {}) =>
   ({ key, label, kind: "必要単位", required, match, source, ...extra });
 export const uncertain = (key, label, why, source) =>
   ({ key, label, kind: "要確認", required: null, unknown: why, source });
+export const officialDecision = (key,label,note,source) =>
+  ({key,label,kind:"個別判定",unit:"condition",required:1,officialDecision:true,note,source});
 export const isTransfer = p => /編入|転部|転入|再入学/.test(p.entry || "");
 export const gpaSource = source("新潟大学 成績評価・GPAの算出式",
   "https://www.niigata-u.ac.jp/university/about/announce/studysupport/");
