@@ -328,9 +328,9 @@ function validateConditionalField(key, raw) {
       if (
         !/^\d+$/.test(cleaned) ||
         Number(cleaned) < 1 ||
-        !Number.isSafeInteger(Number(cleaned))
+        Number(cleaned) > 4
       ) {
-        throw Error("編入した年次は1以上の整数で入力してください。");
+        throw Error("編入した年次は1〜4の整数で入力してください。");
       }
       return Number(cleaned);
     }
@@ -345,12 +345,8 @@ function validateConditionalField(key, raw) {
     case "graduationMonth": {
       const cleaned = cleanNumericText(raw);
       if (cleaned === "") return undefined;
-      if (
-        !/^\d+$/.test(cleaned) ||
-        Number(cleaned) < 1 ||
-        Number(cleaned) > 12
-      ) {
-        throw Error("卒業予定月は1〜12の整数で入力してください。");
+      if (cleaned !== "3" && cleaned !== "9") {
+        throw Error("卒業予定月は3月または9月を選択してください（未設定も可）。");
       }
       return Number(cleaned);
     }

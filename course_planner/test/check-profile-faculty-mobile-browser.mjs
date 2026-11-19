@@ -272,7 +272,7 @@ try {
   assert.strictEqual(saved.deanException, true);
   assert.strictEqual(saved.thirdYearCumulativeGpa, 5);
 
-  // --- 4. 医学部保健学科 + 編入 -> entryGrade ---
+  // --- 4. 医学部保健学科 + 編入 -> entryGrade (1..4, reject 5; yearOfStudy stays uncapped) ---
   await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
   await dialog.waitFor();
   await dialog.getByRole("combobox", { name: "学部・学科" }).click();
@@ -293,6 +293,12 @@ try {
       hasText: "医学部保健学科の個別確認項目",
     })
     .click();
+  // Reject invalid 5th original entry grade while ordinary yearOfStudy > 4/12 stays valid
+  await dialog.getByLabel("現在の年次").fill("14");
+  await dialog.getByLabel("編入した年次").fill("5");
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.getByRole("alert").filter({ hasText: "1〜4" }).waitFor();
+
   await dialog.getByLabel("編入した年次").fill("3");
   await assertNoOverflow("医学部保健学科 編入 disclosure");
   await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
@@ -304,8 +310,12 @@ try {
   assert.equal(saved.faculty, "医学部保健学科");
   assert.equal(saved.entry, "編入");
   assert.strictEqual(saved.entryGrade, 3);
+  assert.equal(saved.yearOfStudy, "14");
 
-  // --- 5. 創生学部 graduationYear/graduationMonth + supplied package program suggestions ---
+  // --- 5. 創生学部 graduationYear/graduationMonth (precisely 3月/9月/未設定; historical out-of-range retained until edited) ---
+  await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.injectSync({ graduationMonth: 6 }),
+  );
   await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
   await dialog.waitFor();
   await dialog.getByRole("combobox", { name: "学部・学科" }).click();
@@ -318,14 +328,14 @@ try {
       hasText: "創生学部の個別確認項目",
     })
     .click();
+  // Historical out-of-range 6月 is shown as preserved and retained when editing graduationYear only
+  await dialog.getByText(/現在の保存値「6月」を保持/).waitFor();
+  const monthGroup = dialog.getByRole("group", { name: "卒業予定月" });
+  assert.deepEqual(
+    await monthGroup.getByRole("button").allInnerTexts(),
+    ["未設定", "3月", "9月"],
+  );
   await dialog.getByLabel("卒業予定（暦年）").fill("2027");
-  await dialog
-    .getByRole("group", { name: "標準の卒業月を選択" })
-    .getByRole("button", { name: "3月", exact: true })
-    .click();
-  assert.equal(await dialog.getByLabel("卒業予定月").inputValue(), "3");
-  // Other valid month (e.g. 6) also allowed
-  await dialog.getByLabel("卒業予定月").fill("6");
   await assertNoOverflow("創生学部 disclosure");
   await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
@@ -336,12 +346,58 @@ try {
   assert.equal(saved.faculty, "創生学部");
   assert.equal(saved.program, "サンプル創生コース（サンプルパッケージA）");
   assert.strictEqual(saved.graduationYear, 2027);
-  assert.strictEqual(saved.graduationMonth, 6);
+  assert.strictEqual(saved.graduationMonth, 6); // historical value retained without silent migration!
   assert.strictEqual(saved.entryGrade, 3); // hidden field survived!
+
+  // Reopen, switch graduationMonth to 9月, save, then reopen and confirm persisted values across faculty switch
+  await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
+  await dialog.waitFor();
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "創生学部の個別確認項目",
+    })
+    .click();
+  await dialog
+    .getByRole("group", { name: "卒業予定月" })
+    .getByRole("button", { name: "9月", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  saved = await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.getProfile(),
+  );
+  assert.strictEqual(saved.graduationMonth, 9);
+
+  // Confirm persisted state after switching back to 創生学部 / 医学部保健学科 / 法学部
+  await page.evaluate(() => window.__MOBILE_PROFILE_API__.openDialog());
+  await dialog.waitFor();
+  await dialog
+    .locator("details.pf-disclosure > summary", {
+      hasText: "創生学部の個別確認項目",
+    })
+    .click();
+  assert.equal(
+    await dialog
+      .getByRole("group", { name: "卒業予定月" })
+      .getByRole("button", { name: "9月", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await dialog
+    .getByRole("group", { name: "卒業予定月" })
+    .getByRole("button", { name: "未設定", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "設定を保存", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  saved = await page.evaluate(() =>
+    window.__MOBILE_PROFILE_API__.getProfile(),
+  );
+  assert.equal(Object.hasOwn(saved, "graduationMonth"), false);
 
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   console.log(
-    "Mobile ProfileSettings faculty options check passed on 390x844: GPA 0..5, 法学部/経済科学部/医学部保健学科(編入)/創生学部 disclosures, tri-state clearable booleans, and hidden/concurrent diff preservation.",
+    "Mobile ProfileSettings clinical verification passed on 390x844: GPA >5 guard, 3月/9月/未設定 graduationMonth with historical retention, 1..4 entryGrade rejecting 5 with uncapped yearOfStudy, and post-switch confirmation.",
   );
 } finally {
   await browser?.close();

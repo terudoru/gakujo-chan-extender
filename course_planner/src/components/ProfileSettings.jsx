@@ -373,11 +373,11 @@ export function ProfileSettings({
             {isHealthTransfer && (
               <>
                 <p className="pf-note">
-                  編入時の年次（例：3年次編入なら3）を入力してください。
+                  編入時の年次（1〜4の整数、例：3年次編入なら3）を入力してください。
                 </p>
                 <TextInput
                   label="編入した年次"
-                  placeholder="例 3"
+                  placeholder="1〜4（例 3）"
                   inputMode="numeric"
                   value={draft.entryGrade}
                   onChange={(v) => update("entryGrade", v)}
@@ -387,44 +387,48 @@ export function ProfileSettings({
             {isCreation && (
               <>
                 <p className="pf-note">
-                  春季・夏季休業中科目の算入可否の確認に使います。卒業予定は暦年（例：2026年度3月卒業は2027）で入力し、通常は3月または9月（その他は1〜12の月）を指定します。
+                  春季・夏季休業中科目の算入可否の確認に使います。卒業予定は暦年（例：2026年度3月卒業は2027）で入力し、卒業予定月は3月・9月・未設定から選びます。
                 </p>
-                <div className="pair">
-                  <TextInput
-                    label="卒業予定（暦年）"
-                    placeholder="例 2027"
-                    inputMode="numeric"
-                    value={draft.graduationYear}
-                    onChange={(v) => update("graduationYear", v)}
-                  />
-                  <TextInput
-                    label="卒業予定月"
-                    placeholder="3・9（1〜12）"
-                    inputMode="numeric"
-                    value={draft.graduationMonth}
-                    onChange={(v) => update("graduationMonth", v)}
-                  />
-                </div>
-                <div
-                  className="pf-program-chips"
-                  role="group"
-                  aria-label="標準の卒業月を選択"
-                >
-                  {[
-                    ["3", "3月"],
-                    ["9", "9月"],
-                    ["", "未設定"],
-                  ].map(([mVal, mLabel]) => (
-                    <button
-                      key={mLabel}
-                      type="button"
-                      className="pf-chip"
-                      aria-pressed={cleanNumericText(draft.graduationMonth) === mVal}
-                      onClick={() => update("graduationMonth", mVal)}
-                    >
-                      {mLabel}
-                    </button>
-                  ))}
+                <TextInput
+                  label="卒業予定（暦年）"
+                  placeholder="例 2027"
+                  inputMode="numeric"
+                  value={draft.graduationYear}
+                  onChange={(v) => update("graduationYear", v)}
+                />
+                <div className="pf-tristate">
+                  <span className="pf-tristate-label">卒業予定月</span>
+                  <div
+                    className="pf-program-chips"
+                    role="group"
+                    aria-label="卒業予定月"
+                  >
+                    {[
+                      ["", "未設定"],
+                      ["3", "3月"],
+                      ["9", "9月"],
+                    ].map(([mVal, mLabel]) => (
+                      <button
+                        key={mLabel}
+                        type="button"
+                        className="pf-chip"
+                        aria-pressed={
+                          cleanNumericText(draft.graduationMonth) === mVal
+                        }
+                        onClick={() => update("graduationMonth", mVal)}
+                      >
+                        {mLabel}
+                      </button>
+                    ))}
+                  </div>
+                  {cleanNumericText(draft.graduationMonth) !== "" &&
+                    cleanNumericText(draft.graduationMonth) !== "3" &&
+                    cleanNumericText(draft.graduationMonth) !== "9" && (
+                      <p className="pf-note">
+                        現在の保存値「{draft.graduationMonth}
+                        月」を保持しています。変更する場合は3月・9月・未設定から選んでください。
+                      </p>
+                    )}
                 </div>
               </>
             )}

@@ -80,47 +80,99 @@ test("tri-state conditional booleans keep true, false, and absent distinct with 
   assert.equal(draft.iStepApproved, "true");
 });
 
-test("entryGrade, graduationYear, and graduationMonth validate bounds and omit empty values", () => {
-  const valid = validateProfileDraft({
+test("entryGrade (1..4 or blank), graduationYear, and graduationMonth (3, 9, or blank) validate bounds while yearOfStudy stays uncapped", () => {
+  for (const grade of ["1", "2", "3", "4"]) {
+    const valid = validateProfileDraft({
+      ...BASE,
+      faculty: "医学部保健学科",
+      entry: "編入",
+      entryGrade: grade,
+      yearOfStudy: "14",
+    });
+    assert.strictEqual(valid.entryGrade, Number(grade));
+    assert.equal(valid.yearOfStudy, "14");
+  }
+
+  const valid3 = validateProfileDraft({
     ...BASE,
     faculty: "創生学部",
-    entry: "編入",
-    entryGrade: "3",
     graduationYear: "2027",
     graduationMonth: "3",
   });
-  assert.strictEqual(valid.entryGrade, 3);
-  assert.strictEqual(valid.graduationYear, 2027);
-  assert.strictEqual(valid.graduationMonth, 3);
-
-  // Other valid calendar months 1..12 allowed when source month is unknown
+  assert.strictEqual(valid3.graduationYear, 2027);
+  assert.strictEqual(valid3.graduationMonth, 3);
   assert.strictEqual(
     validateProfileDraft({ ...BASE, graduationMonth: "9" }).graduationMonth,
     9,
   );
-  assert.strictEqual(
-    validateProfileDraft({ ...BASE, graduationMonth: "6" }).graduationMonth,
-    6,
-  );
-  assert.strictEqual(
-    validateProfileDraft({ ...BASE, graduationMonth: "12" }).graduationMonth,
-    12,
-  );
 
-  // Invalid values rejected
-  for (const badGrade of ["0", "-1", "2.5", "abc"]) {
-    assert.throws(() => validateProfileDraft({ ...BASE, entryGrade: badGrade }));
+  // Blank values omit optional keys cleanly
+  const blank = validateProfileDraft({
+    ...BASE,
+    entryGrade: "",
+    graduationYear: "",
+    graduationMonth: "",
+  });
+  assert.equal(Object.hasOwn(blank, "entryGrade"), false);
+  assert.equal(Object.hasOwn(blank, "graduationYear"), false);
+  assert.equal(Object.hasOwn(blank, "graduationMonth"), false);
+
+  // Invalid values rejected: 5th original entryGrade and months other than 3/9
+  for (const badGrade of ["0", "5", "6", "-1", "2.5", "abc"]) {
+    assert.throws(
+      () => validateProfileDraft({ ...BASE, entryGrade: badGrade }),
+      /1〜4/,
+    );
   }
   for (const badYear of ["27", "20265", "abcd"]) {
     assert.throws(() =>
       validateProfileDraft({ ...BASE, graduationYear: badYear }),
     );
   }
-  for (const badMonth of ["0", "13", "-3", "3.5", "abc"]) {
-    assert.throws(() =>
-      validateProfileDraft({ ...BASE, graduationMonth: badMonth }),
+  for (const badMonth of ["0", "1", "6", "12", "13", "-3", "3.5", "abc"]) {
+    assert.throws(
+      () => validateProfileDraft({ ...BASE, graduationMonth: badMonth }),
+      /3月または9月/,
     );
   }
+});
+
+test("historical out-of-range graduationMonth and entryGrade are retained without silent migration until edited", () => {
+  const historicalProfile = {
+    ...BASE,
+    faculty: "創生学部",
+    graduationYear: 2027,
+    graduationMonth: 6,
+    entryGrade: 5,
+  };
+  const initialDraft = initialProfileDraft(historicalProfile);
+  assert.equal(initialDraft.graduationMonth, "6");
+  assert.equal(initialDraft.entryGrade, "5");
+
+  // Editing an unrelated field retains historical values untouched
+  const state = initialState();
+  state.profile = { ...historicalProfile };
+  applyProfilePatch(
+    state,
+    { ...initialDraft, program: "創生学修コース" },
+    initialDraft,
+  );
+  assert.strictEqual(state.profile.graduationMonth, 6);
+  assert.strictEqual(state.profile.entryGrade, 5);
+  assert.equal(state.profile.program, "創生学修コース");
+
+  // Once the user edits graduationMonth to 9, it updates cleanly
+  applyProfilePatch(
+    state,
+    { ...initialDraft, graduationMonth: "9" },
+    initialDraft,
+  );
+  assert.strictEqual(state.profile.graduationMonth, 9);
+
+  // Clearing graduationMonth to blank deletes the key
+  const after9 = initialProfileDraft(state.profile);
+  applyProfilePatch(state, { ...after9, graduationMonth: "" }, after9);
+  assert.equal(Object.hasOwn(state.profile, "graduationMonth"), false);
 });
 
 test("diff-based patch clears edited tri-state to absent while preserving hidden and concurrently synced fields", () => {
