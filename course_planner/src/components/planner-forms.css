@@ -1,0 +1,461 @@
+/* Scoped layout & form styles for Discovery, SyllabusFacts, ProfileSettings, and AcademicFields.
+   Uses existing Meta Astryx Neutral theme tokens from planner.css. */
+
+.sf-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sf-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.sf-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.sf-grid.sf-compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+.sf-item {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sf-item dt {
+  font-size: 11px;
+  color: var(--soft);
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.sf-item dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.sf-item-wide {
+  grid-column: 1 / -1;
+}
+
+.sf-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--rule);
+}
+
+.sf-link-row small,
+.sf-missing {
+  margin: 0;
+  font-size: 11px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+/* Discovery layout & purpose-specific filters */
+.disc-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  align-items: end;
+  gap: 10px 12px;
+  padding-bottom: 14px;
+}
+
+.disc-filter-cell {
+  min-width: 0;
+}
+
+.disc-filter-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding-bottom: 14px;
+}
+
+.disc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.disc-layout.disc-has-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(290px, 370px);
+}
+
+.disc-results-col,
+.disc-panel {
+  min-width: 0;
+}
+
+.disc-panel {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+}
+
+.disc-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.disc-panel-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.disc-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.disc-status-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--soft);
+  line-height: 1.55;
+}
+
+.disc-status-note.disc-conflict {
+  color: var(--color-text-warning, #82551c);
+}
+
+.disc-row {
+  align-items: flex-start !important;
+}
+
+.disc-row-selected {
+  background: var(--tint);
+  padding-inline: 10px !important;
+  margin-inline: -10px;
+  border-radius: 7px;
+}
+
+.disc-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.disc-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.disc-meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--soft);
+}
+
+.disc-compare-section {
+  margin: 16px 0 20px;
+  padding: 14px;
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  display: grid;
+  gap: 12px;
+}
+
+.disc-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.disc-compare-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 12px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  min-width: 0;
+}
+
+/* ProfileSettings suggestions & choices */
+.pf-section {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  min-width: 0;
+}
+
+.pf-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.pf-handbook-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.pf-handbook-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.pf-handbook-item.pf-active {
+  border-color: var(--focus);
+  background: var(--tint);
+}
+
+.pf-handbook-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 170px;
+}
+
+.pf-handbook-info strong {
+  font-size: 13px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.pf-handbook-info small {
+  font-size: 11px;
+  color: var(--soft);
+}
+
+.pf-handbook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-program-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pf-chip {
+  cursor: pointer;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pf-chip:hover {
+  background: var(--wash);
+}
+
+.pf-chip[aria-pressed="true"] {
+  border-color: var(--focus);
+  background: var(--tint);
+  color: var(--focus);
+  font-weight: 600;
+}
+
+.pf-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--soft);
+}
+
+/* AcademicFields list */
+.af-list {
+  display: grid;
+  min-width: 0;
+}
+
+.af-row {
+  min-width: 0;
+}
+
+.af-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 16px;
+  list-style-position: outside;
+}
+
+.af-heading {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.af-heading strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.af-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.af-badge-warn {
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  color: var(--color-text-warning, #82551c);
+}
+
+.af-metrics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.af-summary .af-metrics span {
+  margin-left: 0;
+}
+
+.af-req-summary {
+  color: var(--ink) !important;
+  font-weight: 550 !important;
+}
+
+.af-body {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.af-stats {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 8px 10px;
+  background: var(--wash);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.af-stats > div {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.af-stats dt {
+  font-size: 11px;
+  color: var(--soft);
+}
+
+.af-stats dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.af-courses {
+  margin: 0;
+}
+
+.af-actions {
+  padding-top: 2px;
+}
+
+@media (max-width: 960px) {
+  .disc-layout.disc-has-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .disc-panel {
+    position: static;
+    order: -1;
+  }
+}
+
+@media (max-width: 670px) {
+  .sf-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .disc-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .disc-row {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .disc-row-actions {
+    justify-content: flex-start;
+  }
+  .disc-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-handbook-item {
+    align-items: flex-start;
+  }
+}
