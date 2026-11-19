@@ -1,9 +1,11 @@
 import { createRegistry, installedPacks } from "./curricula/registry.mjs";
 import { evaluateStage, selectStage } from "./curricula/engine.mjs";
 import {
+  allocationAppliesToStage,
   courseMatch,
   prepareCourses,
   quantity,
+  sameProfile,
 } from "./curricula/engine-evidence.mjs";
 export { gradeCourses } from "./curricula/engine-evidence.mjs";
 export {
@@ -21,6 +23,36 @@ import {
 } from "./curricula/engine-legacy.mjs";
 export { FACULTIES, sourceLinks } from "./curricula/engine-legacy.mjs";
 import { courseFields, hasUnscheduled, slotsFor, termsFor } from "./study.mjs";
+
+// A confirmed field subtotal may be the only known requirement for an older
+// handbook. Use its own goal/stage only when the search identifies one scope.
+function statementFieldStage(state, key, context) {
+  if (!/^field-\d+$/.test(key)) return null;
+  const balances = [],
+    scopes = new Map();
+  for (const b of state.balances ?? []) {
+    const scope = b.scope ?? b;
+    if (
+      b.key !== key ||
+      b.confirmed === false ||
+      !sameProfile(scope, state.profile)
+    )
+      continue;
+    const id = scope.stageId || scope.stage || scope.goal;
+    if (
+      !id ||
+      (context.stageId && context.stageId !== id) ||
+      (context.goal && context.goal !== scope.goal)
+    )
+      continue;
+    const goal = scope.goal || context.goal;
+    if (!goal) continue;
+    scopes.set(JSON.stringify([goal, id]), { id, goal, rows: [] });
+    balances.push(b);
+  }
+  if (scopes.size !== 1) return null;
+  return { stage: scopes.values().next().value, state: { ...state, balances } };
+}
 
 // UI integration: pass the selected stage ID to requirementRows. Use its
 // nullable remaining/after values, status/futureStatus, evidence and balance.
@@ -118,6 +150,8 @@ export function createRequirementAPI(packs = installedPacks) {
         ? selector
         : (key.stageId ?? key.goal ?? selector),
     );
+    if (course.recognized && !allocationAppliesToStage(course, stage))
+      return false;
     function matches(k) {
       const row = stage?.rows.find((r) => r.key === k);
       if (!row) return false;
@@ -133,14 +167,18 @@ export function createRequirementAPI(packs = installedPacks) {
   // Requiring a positive marginal contribution accounts for exclusive pools,
   // recognized/repeated credits, same-language minima and alternate pairs.
   function shortageFilter(state, byCode, planned, context) {
-    const d = descriptor(state.profile);
-    const stage = selectStage(
-      d,
-      context.stageId ?? context.goal ?? "graduation",
-    );
     const key = context.key ?? context.requirement;
-    const rule = stage?.rows.find((r) => r.key === key);
-    if (!stage) return () => false;
+    let d = descriptor(state.profile);
+    let stage = selectStage(d, context.stageId || context.goal || "graduation");
+    let auditState = state;
+    if (!stage) {
+      const scoped = statementFieldStage(state, key, context);
+      if (!scoped) return () => false;
+      stage = scoped.stage;
+      auditState = scoped.state;
+      d = { ...d, stages: [stage] };
+    }
+    const rule = stage.rows.find((r) => r.key === key);
     const keys = new Set([key]);
     for (const k of keys) {
       const row = stage.rows.find((r) => r.key === k);
@@ -153,11 +191,22 @@ export function createRequirementAPI(packs = installedPacks) {
     }
     const ledger = prepareCourses(state, byCode, planned, d);
     const audit = (prepared) =>
-      evaluateStage(state, byCode, planned, d, stage.id, prepared, keys).find(
-        (r) => r.key === key,
-      );
+      evaluateStage(
+        auditState,
+        byCode,
+        planned,
+        d,
+        stage.id,
+        prepared,
+        keys,
+      ).find((r) => r.key === key);
     const base = audit(ledger);
-    if (!base?.searchable || base.after === 0) return () => false;
+    if (
+      !base?.searchable ||
+      base.after === 0 ||
+      (!rule && base.required === null)
+    )
+      return () => false;
     const primitive = stage.rows.filter((r) => keys.has(r.key));
     const cacheable = primitive.length && primitive.every((r) => !r.evaluate);
     const cache = new Map();
@@ -178,8 +227,7 @@ export function createRequirementAPI(packs = installedPacks) {
         return false;
       if (rule?.match && courseMatch(rule, course, state.profile) !== true)
         return false;
-      if (!rule && !satisfiesFilter(course, key, state.profile, stage.id))
-        return false;
+      if (!rule && !course.fields?.includes(key.slice(6))) return false;
       const candidate = ledger.additionalCourse(course);
       if (!candidate) return false;
       let candidateLedger;
@@ -216,11 +264,11 @@ export function createRequirementAPI(packs = installedPacks) {
   function resolveCAP(profile, overrides = {}) {
     const cap = descriptor(profile)?.cap;
     const individual = quantity(profile.cap);
-    const limit = individual > 0 ? individual : quantity(cap?.limit);
+    const limit = individual ?? quantity(cap?.limit);
     return {
       ...cap,
       limit,
-      individual: individual > 0,
+      individual: individual !== null,
       status: limit === null ? "unknown" : "known",
       source: cap?.source,
       note:
@@ -248,14 +296,65 @@ export function createRequirementAPI(packs = installedPacks) {
     );
   }
   function academicFieldRows(state, byCode, planned, selector = "graduation") {
-    const ledger = courseLedger(state, byCode, planned);
+    selector ||= "graduation";
+    const d = descriptor(state.profile);
+    const ledger = prepareCourses(state, byCode, planned, d);
     const usable = (courses) =>
       courses.filter((c) => !c.ambiguousRepeat && !c.identityUnresolved);
     const fields = courseFields(usable(ledger.earned), usable(ledger.planned));
     const byField = new Map(fields.map((r) => [r.field, r]));
-    for (const row of requirementRows(state, byCode, planned, selector).filter(
-      (r) => r.key.startsWith("field-"),
-    )) {
+    if (ledger.identityReview.length) {
+      const pending = byField.get("?") ?? {
+        field: "?",
+        earned: 0,
+        planned: 0,
+        courses: [],
+      };
+      for (const course of ledger.identityReview) {
+        pending.courses.push({
+          course,
+          column: course.column,
+          applied: 0,
+          reviewOnly: true,
+          reason: "同じ授業の単位か確認してください。",
+        });
+      }
+      byField.set("?", pending);
+    }
+    let fieldRules = [];
+    if (selectStage(d, selector)) {
+      fieldRules = evaluateStage(
+        state,
+        byCode,
+        planned,
+        d,
+        selector,
+        ledger,
+      ).filter((r) => /^field-\d+$/.test(r.key));
+    } else {
+      const context =
+        typeof selector === "object"
+          ? selector
+          : ["graduation", "progress"].includes(selector)
+            ? { goal: selector }
+            : { stageId: selector };
+      for (const key of new Set((state.balances ?? []).map((b) => b.key))) {
+        const scoped = statementFieldStage(state, key, context);
+        if (scoped)
+          fieldRules.push(
+            ...evaluateStage(
+              scoped.state,
+              byCode,
+              planned,
+              { ...d, stages: [scoped.stage] },
+              scoped.stage.id,
+              ledger,
+              new Set([key]),
+            ),
+          );
+      }
+    }
+    for (const row of fieldRules) {
       const field = row.key.slice(6);
       if (!byField.has(field))
         byField.set(field, { field, earned: 0, planned: 0, courses: [] });
@@ -281,15 +380,25 @@ export function createRequirementAPI(packs = installedPacks) {
             r,
           ]),
         );
-        return evaluateStage(state, byCode, planned, d, s.id, ledger).filter(
+        return evaluateStage(state, byCode, planned, d, s.id, ledger).flatMap(
           (r) => {
             const prior = previous.get(r.key);
-            return (
-              prior.after !== 0 &&
-              r.future !== null &&
-              prior.future !== null &&
-              r.future > prior.future
-            );
+            if (
+              prior.after === null ||
+              r.after === null ||
+              r.after >= prior.after ||
+              prior.future === null ||
+              r.future === null ||
+              r.future <= prior.future
+            )
+              return [];
+            return [
+              {
+                ...r,
+                previousAfter: prior.after,
+                previousFuture: prior.future,
+              },
+            ];
           },
         );
       });

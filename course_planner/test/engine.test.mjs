@@ -646,3 +646,252 @@ test("a statement is confined to the exact admission type, department, curriculu
     s.profile[key] = old;
   }
 });
+
+test("slot comparison exposes both projections per stage and omits unknown deficit changes", () => {
+  const conditional = leaf("conditional", 8, {
+    match: (c) => (c.category === "A" ? true : null),
+  });
+  const api = apiFor([leaf("A", 3), conditional]);
+  const s = state();
+  const impacts = api.slotRequirements(s, byCode, [aOnly, bOnly], [aOnly]);
+  assert.deepEqual(
+    impacts.map((r) => [
+      r.stageId,
+      r.key,
+      r.previousAfter,
+      r.after,
+      r.previousFuture,
+      r.future,
+    ]),
+    [
+      ["fourth", "A", 1, 0, 0, 2],
+      ["degree", "A", 3, 1, 0, 2],
+    ],
+  );
+  assert.deepEqual(
+    api
+      .slotRequirements(s, byCode, [aOnly, bOnly], [aOnly], "graduation")
+      .map((r) => r.stageId),
+    ["degree"],
+  );
+  const unknownBefore = apiFor([
+    leaf("A", 2, { match: (c) => (c.category === "A" ? true : null) }),
+  ]);
+  assert.deepEqual(
+    unknownBefore.slotRequirements(
+      s,
+      byCode,
+      [aOnly, bOnly],
+      [aOnly],
+      "graduation",
+    ),
+    [],
+  );
+});
+
+test("an explicit zero CAP differs from a blank under known and unpublished rules", () => {
+  const api = apiFor([], { cap: { limit: 24 } });
+  for (const cap of [0, "0"]) {
+    for (const handbook of [book.year, "1950"]) {
+      const r = api.resolveCAP({ ...profile, cap, handbook });
+      assert.deepEqual([r.limit, r.individual, r.status], [0, true, "known"]);
+    }
+  }
+  for (const cap of ["", " ", undefined]) {
+    assert.deepEqual(
+      [
+        api.resolveCAP({ ...profile, cap }).limit,
+        api.resolveCAP({ ...profile, cap }).individual,
+      ],
+      [24, false],
+    );
+    assert.equal(
+      api.resolveCAP({ ...profile, cap, handbook: "1950" }).status,
+      "unknown",
+    );
+  }
+});
+
+test("field review preserves positive pending syllabuses and each uncertain identity with zero duplicate credit", () => {
+  const api = apiFor([]);
+  const pending = grade(aOnly, { year: "2020", importId: "pending" });
+  const s = state([
+    pending,
+    grade(bOnly, { importId: "documented", duplicate: true, counts: false }),
+    ...["first", "second"].map((id) =>
+      grade(bOnly, { importId: id, identityUncertain: true, counts: false }),
+    ),
+    grade(flex, {
+      importId: "alternative",
+      possibleDuplicate: true,
+      counts: false,
+    }),
+  ]);
+  const rows = api.academicFieldRows(s, byCode, []);
+  assert.deepEqual(
+    rows.map((r) => [r.field, r.earned, r.planned]),
+    [["?", 2, 0]],
+  );
+  assert.deepEqual(
+    rows[0].courses.map(({ course }) => course.importId).sort(),
+    ["alternative", "first", "pending", "second"],
+  );
+  assert.equal(
+    rows[0].courses.find(({ course }) => course.importId === "pending").course
+      .unresolvedOffering,
+    true,
+  );
+  const held = rows[0].courses.filter((r) => r.reviewOnly);
+  assert.equal(held.length, 3);
+  assert.ok(
+    held.every((r) => r.applied === 0 && r.course.credits === 2 && r.reason),
+  );
+  const reconsidered = api.academicFieldRows(s, byCode, [bOnly]);
+  assert.deepEqual(
+    reconsidered.map((r) => [r.field, r.earned, r.planned]),
+    [["?", 2, 0]],
+  );
+});
+
+test("current catalog fallback requires an unreviewed compatible legacy grade", () => {
+  const offering = { ...aOnly, section: "A", courseId: "101" };
+  const map = new Map([[offering.code, offering]]);
+  const record = grade(offering, { term: "第1学期" });
+  assert.equal(
+    gradeCourses(state([record]), map)[0].matchedCourse?.confirmed,
+    true,
+  );
+  for (const patch of [
+    { importId: "reviewed" },
+    { importId: "reviewed", title: "別名" },
+    { grade: "認定", importId: "no-syllabus" },
+    { title: "別名" },
+    { credits: 1 },
+    { section: "B" },
+    { courseId: "999" },
+    { term: "第2学期" },
+    { year: "2023" },
+    { matchedCourse: null },
+  ]) {
+    const s = state([{ ...record, ...patch }]);
+    assert.equal(gradeCourses(s, map)[0].matchedCourse, null);
+    assert.equal(apiFor([]).academicFieldRows(s, map, [])[0].field, "?");
+  }
+  const explicit = grade(
+    { ...record, title: "原表の略称" },
+    { importId: "accepted", matchedCourse: { ...offering, confirmed: true } },
+  );
+  assert.equal(
+    gradeCourses(state([explicit]), map)[0].matchedCourse.title,
+    offering.title,
+  );
+});
+
+test("field balance discovery uses positive marginal field credit with or without a handbook stage", () => {
+  const archived = course("211T0005", "旧年度科目", "A");
+  archived.year = "2021";
+  const old = grade(archived, {
+    matchedCourse: { ...archived, confirmed: true },
+  });
+  const row = balance("field-70", 1, { label: "A区分", required: 7 });
+  const s = state([old], [row]);
+  s.status[bOnly.code] = "不許可";
+  for (const api of [apiFor([a]), createRequirementAPI([])]) {
+    for (const stageId of [undefined, "", "degree"]) {
+      const eligible = api.shortageFilter(s, byCode, [aOnly], {
+        key: "field-70",
+        goal: "graduation",
+        stageId,
+        slot: "火3",
+        term: 1,
+      });
+      assert.equal(eligible(flex), true);
+      for (const c of [
+        aOnly,
+        bOnly,
+        archived,
+        { ...other, title: archived.title },
+        { ...other, fields: ["10"] },
+        { ...other, credits: 0 },
+        { ...other, period: "第3ターム" },
+        { ...other, schedule: "木2" },
+      ])
+        assert.equal(eligible(c), false);
+    }
+    assert.equal(
+      api.shortageFilter(s, byCode, [], {
+        key: "field-70",
+        stageId: "unrelated",
+      })(flex),
+      false,
+    );
+    assert.equal(
+      api.shortageFilter(s, byCode, [], { key: "field-10" })(other),
+      false,
+    );
+  }
+  const noPack = createRequirementAPI([]);
+  const academic = noPack.academicFieldRows(s, byCode, [aOnly], null);
+  assert.equal(
+    academic.find((row) => row.field === "70").requirement?.after,
+    4,
+  );
+  s.balances.push({ ...row, stageId: "different" });
+  assert.equal(
+    noPack.shortageFilter(s, byCode, [], { key: "field-70" })(flex),
+    false,
+  );
+  s.balances = [{ ...row, current: 7 }];
+  assert.equal(
+    noPack.shortageFilter(s, byCode, [], { key: "field-70" })(flex),
+    false,
+  );
+  s.balances = [{ ...row, unit: "courses" }];
+  assert.equal(
+    noPack.shortageFilter(s, byCode, [], { key: "field-70" })(flex),
+    false,
+  );
+});
+
+test("a recognized allocation imported with scope.stage stays in its program and exact stage within a goal", () => {
+  const api = apiFor([], {
+    stages: ["second", "fourth"].map((id) => ({
+      id,
+      goal: "progress",
+      rows: [a],
+    })),
+  });
+  const recognized = {
+    recognized: true,
+    grade: "認定",
+    title: "認定済",
+    credits: 2,
+    allocationKey: "A",
+    allocationScope: {
+      ...profile,
+      entry: "",
+      goal: "progress",
+      stage: "fourth",
+    },
+  };
+  const s = state([recognized]);
+  assert.equal(api.requirementRows(s, byCode, [], "fourth")[0].current, 2);
+  assert.equal(api.requirementRows(s, byCode, [], "second")[0].remaining, null);
+  assert.equal(api.satisfiesFilter(recognized, "A", profile, "second"), false);
+  for (const patch of [
+    { faculty: "別学部" },
+    { program: "乙" },
+    { handbook: "2022" },
+  ]) {
+    s.grades = [
+      {
+        ...recognized,
+        allocationScope: { ...recognized.allocationScope, ...patch },
+      },
+    ];
+    assert.equal(
+      api.requirementRows(s, byCode, [], "fourth")[0].remaining,
+      null,
+    );
+  }
+});

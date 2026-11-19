@@ -5,6 +5,7 @@ import {
   sumApplied,
 } from "./engine-allocation.mjs";
 import {
+  allocationAppliesToStage,
   courseMatch,
   evidence,
   prepareCourses,
@@ -124,10 +125,18 @@ function balancesFor(state, descriptor, stage) {
             !stage.legacyBalanceScope)
     )
       continue;
-    const mapped = matchBalanceRow(b, stage);
+    // Field balances retain their syllabus-field key even when a curricular
+    // bucket happens to have the same display label.
+    const mapped = /^field-\d+$/.test(b.key)
+      ? { key: b.key }
+      : matchBalanceRow(b, stage);
     const key = mapped.key ?? (!mapped.candidates?.length ? b.key : null);
     const rule = stage.rows.find((r) => r.key === key);
-    if (!key || (rule && (rule.unit ?? "credits") !== (b.unit ?? "credits")))
+    if (
+      !key ||
+      (/^field-\d+$/.test(key) && b.unit && b.unit !== "credits") ||
+      (rule && (rule.unit ?? "credits") !== (b.unit ?? "credits"))
+    )
       continue;
     const current = quantity(b.current),
       required = quantity(b.required);
@@ -433,9 +442,7 @@ export function evaluateStage(
   const ledger = prepared ?? prepareCourses(state, byCode, planned, descriptor);
   function recognition(course) {
     if (!course.recognized) return course;
-    const scopeId = course.allocationScope?.stageId,
-      goal = course.allocationScope?.goal;
-    if ((scopeId && scopeId !== scope.id) || (goal && goal !== scope.goal))
+    if (!allocationAppliesToStage(course, scope))
       return { ...course, allocationKey: null };
     if (course.allocationKey || !course.allocationLabel) return course;
     const mapped = matchBalanceRow({ label: course.allocationLabel }, scope);

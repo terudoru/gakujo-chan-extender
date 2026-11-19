@@ -17,18 +17,33 @@ export function gradeCourses(state, byCode = new Map()) {
     const candidate = byCode.get(grade.code);
     let match = null;
     if (
-      saved?.confirmed &&
+      saved?.confirmed === true &&
       saved.year &&
       (!grade.year || String(saved.year) === String(grade.year))
     ) {
       match = saved;
     } else if (
       !saved &&
+      !grade.importId &&
+      !Object.hasOwn(grade, "matchedCourse") &&
       !/unknown|ambiguous|unresolved|pending|要確認/i.test(
         grade.matchStatus ?? "",
       ) &&
       candidate &&
-      String(grade.year) === String(candidate.year ?? 2026)
+      String(grade.year) === String(candidate.year ?? 2026) &&
+      !!normalize(grade.title) &&
+      normalize(grade.title) === normalize(candidate.title) &&
+      (candidate.credits == null ||
+        (quantity(grade.credits) !== null &&
+          quantity(grade.credits) === quantity(candidate.credits))) &&
+      ["section", "courseId"].every(
+        (key) =>
+          !grade[key] || normalize(grade[key]) === normalize(candidate[key]),
+      ) &&
+      (!grade.term ||
+        [candidate.term, candidate.period, candidate.semester].some(
+          (term) => term && normalize(term) === normalize(grade.term),
+        ))
     ) {
       match = { ...candidate, year: grade.year, confirmed: true };
     }
@@ -71,7 +86,8 @@ function ledgerCourse(course, column, fromGrade = false) {
 export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
   const earned = [],
     upcoming = [],
-    ignored = [];
+    ignored = [],
+    identityReview = [];
   const history = gradeCourses(state, byCode);
   const records = history
     .filter((g) => !inProgress.test(g.grade))
@@ -83,7 +99,9 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
   );
   records.push(...planned.map((c) => ledgerCourse(c, "planned")));
   const identities = new Set(),
-    titles = new Map();
+    titles = new Map(),
+    heldKeys = new Set(),
+    heldTitles = new Set();
   // Union before consuming entries so equivalence chains work in either order.
   const parents = new Map();
   function root(key) {
@@ -127,14 +145,26 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
     }
     return { title, keys, commonId };
   }
-  function excluded(c) {
+  function ineligible(c) {
     return (
-      c.counts === false ||
       c.duplicate ||
       c.duplicateOf ||
       (c.column === "earned" && c.grade && !passed.test(c.grade)) ||
       (c.column === "planned" &&
         (state.status?.[c.code] === "不許可" || c.status === "不許可"))
+    );
+  }
+  function awaitingIdentity(c) {
+    return (
+      c.identityUnresolved ||
+      c.identityUncertain ||
+      (c.possibleDuplicate && !c.duplicateReviewed)
+    );
+  }
+  function overlapsHeld(c, { keys, title, commonId }) {
+    return (
+      keys.some((k) => heldKeys.has(k)) ||
+      (title && !commonId && !c.repeatable && heldTitles.has(title))
     );
   }
   // Within each column use the confirmed offering first, then a stable order
@@ -147,35 +177,62 @@ export function prepareCourses(state, byCode, planned = [], descriptor = {}) {
     String(a.recordId ?? "").localeCompare(String(b.recordId ?? ""));
   records.sort(compare);
   for (const c of records) {
-    if (excluded(c)) {
+    if (ineligible(c)) {
       ignored.push(c);
       continue;
     }
-    const { title, keys, commonId } = identity(c);
+    const id = identity(c);
+    const uncertain =
+      awaitingIdentity(c) || (c.column === "planned" && overlapsHeld(c, id));
+    if (uncertain) {
+      c.identityUnresolved = true;
+      identityReview.push(c);
+      if (c.column === "earned") {
+        for (const k of id.keys) heldKeys.add(k);
+        for (const t of [id.title, normalize(c.alternativeTitle)])
+          if (t) heldTitles.add(t);
+      }
+    }
+    if (c.counts === false) {
+      ignored.push(c);
+      continue;
+    }
+    const { title, keys, commonId } = id;
     const duplicate = keys.some((k) => identities.has(k));
     for (const key of keys) identities.add(key);
     if (duplicate) {
       ignored.push(c);
       continue;
     }
-    if (title && !c.repeatable && !commonId && titles.has(title))
+    if (title && !c.repeatable && !commonId && titles.has(title)) {
       c.ambiguousRepeat = true;
+      if (!uncertain) identityReview.push(c);
+    }
     if (title) titles.set(title, c);
     (c.column === "earned" ? earned : upcoming).push(c);
   }
   function additionalCourse(input) {
     const c = ledgerCourse(input, "planned");
-    const { title, keys, commonId } = identity(c);
+    const id = identity(c);
+    const { title, keys, commonId } = id;
     if (
-      excluded(c) ||
+      c.counts === false ||
+      ineligible(c) ||
       keys.some((k) => identities.has(k)) ||
-      c.identityUnresolved ||
+      awaitingIdentity(c) ||
+      overlapsHeld(c, id) ||
       (title && titles.has(title) && !c.repeatable && !commonId)
     )
       return null;
     return c;
   }
-  return { earned, planned: upcoming, ignored, additionalCourse };
+  return {
+    earned,
+    planned: upcoming,
+    ignored,
+    identityReview,
+    additionalCourse,
+  };
 }
 
 export function evidence(course, applied, reason, source) {
@@ -214,7 +271,7 @@ export function sameProfile(scope, profile) {
       String(scope.admitted) === String(profile.admitted ?? "")) &&
     (scope.program ?? "") === (profile.program ?? "") &&
     (scope.field ?? "") === (profile.field ?? "") &&
-    (scope.entry ?? "1年次入学") === (profile.entry ?? "1年次入学") &&
+    (scope.entry || "1年次入学") === (profile.entry || "1年次入学") &&
     (scope.curriculum ?? "") === (profile.curriculum ?? "")
   );
 }
@@ -245,4 +302,12 @@ export function courseMatch(row, course, profile) {
   return result && (course.ambiguousRepeat || course.identityUnresolved)
     ? null
     : result;
+}
+
+export function allocationAppliesToStage(course, stage) {
+  const scope = course.allocationScope;
+  const id = scope?.stageId || scope?.stage;
+  return (
+    (!id || id === stage?.id) && (!scope?.goal || scope.goal === stage?.goal)
+  );
 }
