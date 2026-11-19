@@ -1881,7 +1881,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   String? _pendingReturnDialog;
   Timer? _pendingReturnDialogTimer;
   BuildContext? _returnedDialogContext;
-  bool _returnedDialogOpening = false;
+  int? _returnedDialogRevision;
+  bool get _returnedDialogOpening =>
+      _returnedDialogRevision == _navigationRevision;
   DownloadDestinationSettings _downloadRoot =
       const DownloadDestinationSettings(isConfigured: false);
   GakujoAppSettings _appSettings = const GakujoAppSettings();
@@ -4729,12 +4731,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showCachedReportsDialog({bool returned = false}) async {
+  Future<void> _showCachedReportsDialog({int? returnRevision}) async {
     final reportLists = await _activityStore.loadReportLists();
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
 
+    final returned = returnRevision != null;
     final sorted = [...reportLists]
       ..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
     await showDialog<void>(
@@ -4822,7 +4823,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
   }
 
   Future<void> _showDataManagementDialog() async {
@@ -5327,12 +5327,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return '$parent${Platform.pathSeparator}$child';
   }
 
-  Future<void> _showFavoritesDialog({bool returned = false}) async {
+  Future<void> _showFavoritesDialog({int? returnRevision}) async {
     var favorites = await _activityStore.loadFavorites();
-    if (!mounted) {
-      return;
-    }
+    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
 
+    final returned = returnRevision != null;
     Future<void> Function()? refreshFavorites;
     await showDialog<void>(
       context: context,
@@ -5413,7 +5412,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
     if (identical(_refreshOpenFavorites, refreshFavorites)) {
       _refreshOpenFavorites = null;
     }
@@ -9186,15 +9184,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showReturnedDialog(String kind) async {
+  bool _isStaleDialogReturn(int? revision) =>
+      revision != null && revision != _navigationRevision;
+
+  Future<void> _showReturnedDialog(String kind, int revision) async {
+    _returnedDialogRevision = revision;
     try {
       switch (kind) {
-        case 'starred': await _showStarredMessagesDialog(returned: true);
-        case 'favorites': await _showFavoritesDialog(returned: true);
-        case 'cachedReports': await _showCachedReportsDialog(returned: true);
+        case 'starred':
+          await _showStarredMessagesDialog(returnRevision: revision);
+        case 'favorites':
+          await _showFavoritesDialog(returnRevision: revision);
+        case 'cachedReports':
+          await _showCachedReportsDialog(returnRevision: revision);
       }
     } finally {
-      _returnedDialogOpening = false;
+      if (_returnedDialogRevision == revision) {
+        _returnedDialogRevision = null;
+        _returnedDialogContext = null;
+      }
     }
   }
 
@@ -9233,8 +9241,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     if (action == GakujoHistoryAction.dialog) {
       if (_returnedDialogOpening || _returnedDialogContext != null) return true;
-      _returnedDialogOpening = true;
-      unawaited(_showReturnedDialog(dialog as String));
+      unawaited(_showReturnedDialog(dialog as String, revision));
       return true;
     }
     _setPendingMessageUrl(null);

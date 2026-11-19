@@ -91,11 +91,13 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showStarredMessagesDialog({bool returned = false}) async {
+  Future<void> _showStarredMessagesDialog({int? returnRevision}) async {
     var entries = await _activityStore.loadStarredMessages();
+    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
+
+    final returned = returnRevision != null;
     var query = '';
     var sort = GakujoStarredMessageSort.starredNewest;
-    if (!mounted) return;
     Future<void> Function()? refreshStarredMessages;
     await showDialog<void>(
       context: context,
@@ -271,7 +273,6 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         );
       },
     );
-    if (returned) _returnedDialogContext = null;
     if (identical(_refreshOpenStarredMessages, refreshStarredMessages)) {
       _refreshOpenStarredMessages = null;
     }
