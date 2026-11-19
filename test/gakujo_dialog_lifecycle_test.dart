@@ -10,7 +10,7 @@ void main() {
     () {
       final source = File('lib/src/gakujo_web_app.dart').readAsStringSync();
       final dialog = source.substring(
-        source.indexOf('Future<void> _showDataManagementDialog()'),
+        source.indexOf('Future<void> _showDataManagementDialog('),
         source.indexOf('Future<void> _checkForUpdatesAfterInitialPage()'),
       );
 

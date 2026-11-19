@@ -508,12 +508,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  Future<void> _showDownloadHistoryDialog() async {
+  Future<void> _showDownloadHistoryDialog(ModalRoute<void> settingsRoute) async {
     final loaded = await readGakujoSavedData(
       _downloadHistoryStore.load,
       showSnackBar: _showSnackBar,
     );
-    if (loaded == null || !mounted) {
+    if (loaded == null || !mounted || !settingsRoute.isActive) {
       return;
     }
     var entries = loaded;
@@ -625,12 +625,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
-  Future<void> _showFailedDownloadsDialog() async {
+  Future<void> _showFailedDownloadsDialog(ModalRoute<void> settingsRoute) async {
     final loaded = await readGakujoSavedData(
       _downloadHistoryStore.loadFailedDownloads,
       showSnackBar: _showSnackBar,
     );
-    if (loaded == null || !mounted) {
+    if (loaded == null || !mounted || !settingsRoute.isActive) {
       return;
     }
     var entries = loaded;
@@ -721,12 +721,12 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     );
   }
 
-  Future<void> _showCourseMaterialsDialog() async {
+  Future<void> _showCourseMaterialsDialog(ModalRoute<void> settingsRoute) async {
     final entries = await readGakujoSavedData(
       _downloadHistoryStore.load,
       showSnackBar: _showSnackBar,
     );
-    if (entries == null || !mounted) {
+    if (entries == null || !mounted || !settingsRoute.isActive) {
       return;
     }
 

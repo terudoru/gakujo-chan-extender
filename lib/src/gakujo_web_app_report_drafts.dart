@@ -26,11 +26,11 @@ extension _GakujoWebAppReportDrafts on _GakujoWebAppState {
     return decoded.cast<Map<String, dynamic>>();
   }
 
-  Future<void> _showReportDraftsDialog() async {
+  Future<void> _showReportDraftsDialog(ModalRoute<void> settingsRoute) async {
     try {
       if (!await _hasReportDraftPage()) return;
       var drafts = await _loadReportDrafts();
-      if (!mounted) return;
+      if (!mounted || !settingsRoute.isActive) return;
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => StatefulBuilder(

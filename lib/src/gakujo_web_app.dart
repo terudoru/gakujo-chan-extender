@@ -3507,7 +3507,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         context: context,
         requestFocus: true,
         builder: (dialogContext) {
-          dialogRoute = ModalRoute.of<void>(dialogContext);
+          final settingsRoute = ModalRoute.of<void>(dialogContext)!;
+          dialogRoute = settingsRoute;
           return StatefulBuilder(
             builder: (context, setDialogState) {
               final canSaveSecret = secretInput.trim().isNotEmpty;
@@ -4304,13 +4305,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       AppDataShortcutsSection(
-                        onShowDownloadHistory: _showDownloadHistoryDialog,
-                        onShowFailedDownloads: _showFailedDownloadsDialog,
-                        onShowCourseMaterials: _showCourseMaterialsDialog,
-                        onShowCachedReports: _showCachedReportsDialog,
-                        onShowDrafts: _showReportDraftsDialog,
-                        onShowFavorites: _showFavoritesDialog,
-                        onShowDataManagement: _showDataManagementDialog,
+                        onShowDownloadHistory: () =>
+                            _showDownloadHistoryDialog(settingsRoute),
+                        onShowFailedDownloads: () =>
+                            _showFailedDownloadsDialog(settingsRoute),
+                        onShowCourseMaterials: () =>
+                            _showCourseMaterialsDialog(settingsRoute),
+                        onShowCachedReports: () =>
+                            _showCachedReportsDialog(settingsRoute: settingsRoute),
+                        onShowDrafts: () => _showReportDraftsDialog(settingsRoute),
+                        onShowFavorites: () =>
+                            _showFavoritesDialog(settingsRoute: settingsRoute),
+                        onShowDataManagement: () =>
+                            _showDataManagementDialog(settingsRoute),
                       ),
                     ],
                   ),
@@ -4770,9 +4777,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _showCachedReportsDialog({int? returnRevision}) async {
+  Future<void> _showCachedReportsDialog({
+    ModalRoute<void>? settingsRoute,
+    int? returnRevision,
+  }) async {
     final reportLists = await _activityStore.loadReportLists();
-    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
+    if (!mounted ||
+        settingsRoute?.isActive == false ||
+        _isStaleDialogReturn(returnRevision)) {
+      return;
+    }
 
     final returned = returnRevision != null;
     final sorted = [...reportLists]
@@ -4871,7 +4885,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
   }
 
-  Future<void> _showDataManagementDialog() async {
+  Future<void> _showDataManagementDialog(ModalRoute<void> settingsRoute) async {
     final data = await readGakujoSavedData(
       () async => (
         history: await _downloadHistoryStore.load(),
@@ -4883,7 +4897,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       ),
       showSnackBar: _showSnackBar,
     );
-    if (data == null || !mounted) {
+    if (data == null || !mounted || !settingsRoute.isActive) {
       return;
     }
 
@@ -5373,9 +5387,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return '$parent${Platform.pathSeparator}$child';
   }
 
-  Future<void> _showFavoritesDialog({int? returnRevision}) async {
+  Future<void> _showFavoritesDialog({
+    ModalRoute<void>? settingsRoute,
+    int? returnRevision,
+  }) async {
     var favorites = await _activityStore.loadFavorites();
-    if (!mounted || _isStaleDialogReturn(returnRevision)) return;
+    if (!mounted ||
+        settingsRoute?.isActive == false ||
+        _isStaleDialogReturn(returnRevision)) {
+      return;
+    }
 
     final returned = returnRevision != null;
     Future<void> Function()? refreshFavorites;
