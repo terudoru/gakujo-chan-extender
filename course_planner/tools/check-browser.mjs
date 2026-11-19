@@ -84,13 +84,21 @@ try {
   await btn(p, "月曜2限の候補").click();
   const row = (title) =>
     p.locator(".inspector .rows li").filter({ hasText: title });
+  const forecast = p.getByRole("region", { name: "選択したコマの修得見込み" });
   await btn(row("データサイエンス入門"), "この授業を選ぶ").click();
   await p.locator(".cap-body b").filter({ hasText: "2 /" }).waitFor();
+  assert.match(await forecast.innerText(), /10 情報\s+履修予定 2単位/);
   await btn(row("英語基礎 L"), "この授業を選ぶ").click();
-  await p.getByRole("dialog", { name: "重なる授業を確認" }).waitFor();
+  const replacement = p.getByRole("dialog", { name: "重なる授業を確認" });
+  assert.match(await replacement.innerText(), /月曜2限/);
+  await btn(replacement, "今の予定を残す").click();
+  assert.deepEqual((await saved(p)).plan, ["261G3008"]);
+  await btn(row("英語基礎 L"), "この授業を選ぶ").click();
   await btn(p, "入れ替える").click();
   await p.locator(".cap-body b").filter({ hasText: "1 /" }).waitFor();
   assert.deepEqual((await saved(p)).plan, ["261G7011"]);
+  assert.match(await forecast.innerText(), /70 英語\s+履修予定 1単位/);
+  assert.doesNotMatch(await forecast.innerText(), /10 情報/);
   assert.deepEqual((await saved(a)).plan, []);
   assert.match(await btn(p, "木曜2限の候補").innerText(), /英語基礎 L/);
   assert.doesNotMatch(
@@ -157,6 +165,12 @@ try {
 
   await nav(p, "時間割").click();
   await btn(p, "月曜2限の候補").click();
+  assert.match(await forecast.innerText(), /70 英語\s+修得 0 → 履修後 1単位/);
+  await forecast.locator("summary").click();
+  const humanImpact = forecast.locator("dl > div").filter({
+    has: p.getByText("卒業 · 人文社会・教育科学", { exact: true }),
+  });
+  assert.equal(await humanImpact.locator("dd").innerText(), "4 → 3単位");
   if (process.env.PLANNER_SHOTS)
     await p.screenshot({
       path: join(process.env.PLANNER_SHOTS, "planner-desktop.png"),
@@ -165,6 +179,9 @@ try {
   await p.setViewportSize({ width: 390, height: 844 });
   await btn(p, "月曜2限の候補").click();
   await p.getByRole("dialog", { name: "月曜2限の授業" }).waitFor();
+  const mobileForecast = p.getByRole("dialog", { name: "月曜2限の授業" })
+    .getByRole("region", { name: "選択したコマの修得見込み" });
+  assert.match(await mobileForecast.innerText(), /70 英語\s+修得 0 → 履修後 1単位/);
   assert.equal(
     await p.locator("body").evaluate((el) => el.scrollWidth <= innerWidth),
     true,
@@ -225,12 +242,14 @@ try {
   const unplannedDenial = await browser.newContext();
   const deniedState = initialState();
   deniedState.status["261G7011"] = "不許可";
+  deniedState.status["261G3008"] = "要確認";
   await unplannedDenial.addInitScript((state) => {
     localStorage.setItem("mbg.course-planner.v1", JSON.stringify(state));
   }, deniedState);
   const deniedPage = await open(unplannedDenial, base);
   const deniedSlot = btn(deniedPage, "月曜2限の候補");
   assert.match(await deniedSlot.innerText(), /不許可/);
+  assert.match(await deniedSlot.innerText(), /261G3008 · 要確認/);
   assert.match(await deniedPage.locator(".cap-body b").innerText(), /^0\s*\//);
   await unplannedDenial.close();
   assert.deepEqual(errors, []);

@@ -347,11 +347,7 @@ export function Requirements({
   const info = facultyInfo(state.profile),
     active = activeCourses(state, byCode),
     grades = gradeCourses(state, byCode);
-  const earnedCodes = new Set(grades.map((g) => g.code).filter(Boolean));
-  const fields = courseFields(
-    grades,
-    active.filter((c) => !earnedCodes.has(c.code)),
-  );
+  const fields = courseFields(grades, active, catalog.year);
   const rows = requirementRows(state, byCode, active, goal);
   const sums = new Map(
     rows

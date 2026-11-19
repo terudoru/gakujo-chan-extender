@@ -307,6 +307,12 @@ body {
   font-size: 11px;
   line-height: 1.45;
 }
+.cell-course {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .cell strong {
   color: var(--ink);
   font-size: 14px;
@@ -949,14 +955,28 @@ details[open] > .form-stack {
   gap: 6px;
   font-size: 12px;
 }
-.slot-impact > div {
+.slot-impact dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+.slot-impact dl > div {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   color: var(--soft);
 }
-.slot-impact b {
+.slot-impact dd {
+  margin: 0;
   color: var(--ink);
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.slot-impact summary {
+  cursor: pointer;
+}
+.slot-impact details[open] dl {
+  margin-top: 7px;
 }
 .mobile-nav {
   display: none;

@@ -154,20 +154,29 @@ export function semesterCredits(courses, term, profile, overrides = {}) {
   return { included, excluded, limit, unconfirmed };
 }
 
-export function courseFields(earned, planned) {
+export function courseFields(earned, planned, catalogYear) {
   const rows = new Map();
+  const countedOfferings = new Set();
   for (const [records, column] of [
     [earned, "earned"],
     [planned, "planned"],
   ]) {
     for (const course of records) {
-      for (const field of new Set(
-        course.fields?.length ? course.fields : ["?"],
-      )) {
+      if (course.counts === false || course.duplicate === true) continue;
+      const offering = course.matchedCourse?.confirmed ? course.matchedCourse : course;
+      const year = offering.year || (column === "planned" ? catalogYear : null);
+      if (offering.code && year) {
+        const key = year + "/" + offering.code;
+        if (column === "planned" && countedOfferings.has(key)) continue;
+        countedOfferings.add(key);
+      }
+      const fields = offering.fields?.length ? offering.fields : ["?"];
+      for (const field of new Set(fields)) {
         if (!rows.has(field))
           rows.set(field, { field, earned: 0, planned: 0, courses: [] });
         const row = rows.get(field);
-        row[column] += course.credits ?? 0;
+        if (Number.isFinite(course.credits)) row[column] += course.credits;
+        else row.needsReview = true;
         row.courses.push({ course, column });
       }
     }

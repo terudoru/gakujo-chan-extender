@@ -150,6 +150,28 @@ test("academic field and curriculum allocation remain distinct across cutoff and
   s.profile.entry = "編入・転部・再入学";
   assert.equal(facultyInfo(s.profile).verified, false);
 });
+test("field forecasts keep distinct years and exclude duplicated or already earned offerings", () => {
+  const confirmed = {
+    code: "", title: english.title, credits: 1, fields: [],
+    matchedCourse: { ...english, year: "2026", confirmed: true },
+  };
+  const rows = courseFields(
+    [
+      confirmed,
+      { ...english, year: "2025", credits: 2 },
+      { ...data, year: "2026", counts: false, duplicate: true },
+      { title: "歴史分野の認定科目", credits: 0.5, fields: [] },
+    ],
+    [english, data, data],
+    2026,
+  );
+  const totals = Object.fromEntries(rows.map((r) => [r.field, [r.earned, r.planned]]));
+  assert.deepEqual(totals, { "70": [3, 0], "10": [0, 2], "?": [0.5, 0] });
+  assert.equal(rows.find((r) => r.field === "70").courses.length, 2);
+  const olderOnly = courseFields([{ ...english, year: "2024" }], [english], 2026);
+  assert.equal(olderOnly[0].planned, 1);
+  assert.equal(courseFields([], [{ ...data, credits: null }], 2026)[0].needsReview, true);
+});
 test("transcript preview never converts scores or failing rows into earned units", () => {
   const header = "科目コード,科目名,単位数,評価,年度";
   const parsed = reviewGradeRows(

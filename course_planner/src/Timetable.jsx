@@ -16,6 +16,7 @@ import {
   activeCourses,
   chooseCourse,
   conflicts,
+  courseFields,
   hasUnscheduled,
   listCandidates,
   semesterCredits,
@@ -32,7 +33,7 @@ import {
   slotTitle,
 } from "./ui.jsx";
 
-import { requirementRows, satisfiesFilter } from "./requirements.mjs";
+import { gradeCourses, requirementRows } from "./requirements.mjs";
 
 export function Timetable({
   state,
@@ -57,7 +58,7 @@ export function Timetable({
     const offered = new Map(),
       inList = new Map(),
       planned = new Map(),
-      denied = new Map();
+      registrationNotes = new Map();
     const saved = new Set(state.lists.flatMap((l) => l.codes));
     const active = activeCourses(state, byCode),
       chosen = new Set(active.map((c) => c.code));
@@ -73,10 +74,14 @@ export function Timetable({
         push(offered, key, course);
         if (saved.has(course.code)) push(inList, key, course);
         if (chosen.has(course.code)) push(planned, key, course);
-        if (state.status[course.code] === "不許可") push(denied, key, course);
+        if (
+          !chosen.has(course.code) &&
+          ["不許可", "要確認"].includes(state.status[course.code])
+        )
+          push(registrationNotes, key, course);
       }
     }
-    return { offered, inList, planned, denied, active };
+    return { offered, inList, planned, registrationNotes, active };
   }, [catalog, byCode, state, term]);
   const cap = semesterCredits(
     maps.active,
@@ -87,28 +92,40 @@ export function Timetable({
   const sem = term <= 2 ? "第1学期" : "第2学期";
   const candidates = listCandidates(state, byCode, term, slot);
   const selected = maps.planned.get(slot) ?? [];
+  const fieldForecast = useMemo(() => {
+    const courseFieldsHere = new Set(
+      (maps.planned.get(slot) ?? []).flatMap((c) =>
+        c.fields?.length ? c.fields : ["?"],
+      ),
+    );
+    if (!courseFieldsHere.size) return [];
+    return courseFields(gradeCourses(state, byCode), maps.active, catalog.year)
+      .filter((row) => courseFieldsHere.has(row.field));
+  }, [state, byCode, maps, slot, catalog.year]);
   const impact = useMemo(() => {
-    if (!selected.length || (!state.grades.length && !state.balances.length))
+    const slotCodes = new Set((maps.planned.get(slot) ?? []).map((c) => c.code));
+    if (!slotCodes.size || (!state.grades.length && !state.balances.length))
       return [];
+    const otherCourses = maps.active.filter((c) => !slotCodes.has(c.code));
     return ["progress", "graduation"].flatMap((goal) => {
-      const rows = requirementRows(state, byCode, maps.active, goal);
-      const applicable = rows.filter(
-        (r) =>
-          !r.needsBalance &&
-          r.future > r.current &&
-          selected.some((c) => satisfiesFilter(c, r.key, state.profile)),
+      const before = new Map(
+        requirementRows(state, byCode, otherCourses, goal).map((r) => [r.key, r.after]),
       );
-      const row =
-        applicable.find((r) => !["区分計", "合計"].includes(r.kind)) ??
-        applicable[0];
-      return row
-        ? [{ goal: goal === "progress" ? "進級・履修条件" : "卒業", row }]
-        : [];
+      return requirementRows(state, byCode, maps.active, goal)
+        .filter(
+          (r) =>
+            !r.needsBalance &&
+            (!r.unit || r.unit === "credits") &&
+            Number.isFinite(before.get(r.key)) &&
+            Number.isFinite(r.after) &&
+            before.get(r.key) > r.after,
+        )
+        .map((row) => ({ goal, row, before: before.get(row.key) }));
     });
   }, [state, maps, slot, byCode]);
   const extras = [
     ...maps.planned.keys(),
-    ...maps.denied.keys(),
+    ...maps.registrationNotes.keys(),
     ...maps.inList.keys(),
     slot,
   ].filter((k) => k !== "他");
@@ -150,6 +167,7 @@ export function Timetable({
   }
   const card = (key) => {
     const entries = maps.planned.get(key) ?? [],
+      notes = maps.registrationNotes.get(key) ?? [],
       options = maps.inList.get(key)?.length ?? 0,
       count = maps.offered.get(key)?.length ?? 0;
     return (
@@ -166,20 +184,13 @@ export function Timetable({
         }
         onClick={() => showSlot(key)}
       >
-        {entries.length ? (
-          <>
-            <strong>{entries.map((c) => c.title).join("・")}</strong>
-            <small>
-              {entries
-                .map((c) => state.status[c.code] ?? "履修予定")
-                .join("・")}
-            </small>
-          </>
-        ) : maps.denied.has(key) ? (
-          <>
-            <strong>{maps.denied.get(key)[0].title}</strong>
-            <small>不許可</small>
-          </>
+        {entries.length || notes.length ? (
+          [...entries, ...notes].map((c) => (
+            <span className="cell-course" key={c.code}>
+              <strong>{c.title}</strong>
+              <small>{c.code} · {state.status[c.code] ?? "履修予定"}</small>
+            </span>
+          ))
         ) : options ? (
           <>
             <strong>候補 {options}件</strong>
@@ -286,19 +297,7 @@ export function Timetable({
             </div>
           </div>
         </section>
-        {impact.length > 0 && (
-          <div className="slot-impact">
-            <strong>このコマの授業を修得した場合</strong>
-            {impact.map(({ goal, row }) => (
-              <div key={goal}>
-                <span>
-                  {goal} · {row.label}
-                </span>
-                <b>あと{row.after}単位</b>
-              </div>
-            ))}
-          </div>
-        )}
+        {renderForecast()}
       </section>
       <aside
         className="inspector desktop-inspector"
@@ -316,14 +315,49 @@ export function Timetable({
             <div className="sheet-close">
               <ActionLink onClick={() => setSheet(false)}>閉じる</ActionLink>
             </div>
-            {renderInspector()}
+            {renderInspector(true)}
           </div>
         </BottomSheet>
       )}
       {renderReplacement()}
     </div>
   );
-  function renderInspector() {
+  function renderForecast() {
+    if (!fieldForecast.length && !impact.length) return null;
+    return (
+      <section className="slot-impact" aria-label="選択したコマの修得見込み">
+        <strong>分野別の修得見込み</strong>
+        <dl>
+          {fieldForecast.map((r) => (
+            <div key={r.field}>
+              <dt>{r.field === "?" ? "分野要確認" : r.field + " " + catalog.fields[r.field]}</dt>
+              <dd>
+                {r.needsReview
+                  ? `確認できた分 ${r.earned + r.planned}単位（ほか要確認）`
+                  : state.grades.length
+                    ? `修得 ${r.earned} → 履修後 ${r.earned + r.planned}単位`
+                    : `履修予定 ${r.planned}単位`}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {impact.length > 0 && (
+          <details>
+            <summary>このコマで減る進級・卒業までの残り単位</summary>
+            <dl>
+              {impact.map(({ goal, row, before }) => (
+                <div key={goal + "/" + row.key}>
+                  <dt>{goal === "progress" ? "進級・履修条件" : "卒業"} · {row.label}</dt>
+                  <dd>{before} → {row.after}単位</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
+        )}
+      </section>
+    );
+  }
+  function renderInspector(showForecast = false) {
     return (
       <>
         <div className="inspector-head">
@@ -344,12 +378,13 @@ export function Timetable({
             </ActionLink>
           </div>
         ))}
-        {(maps.denied.get(slot) ?? []).map((c) => (
+        {(maps.registrationNotes.get(slot) ?? []).map((c) => (
           <div className="selected-course" key={c.code}>
-            <span className="error">不許可</span>
+            <span className="error">{state.status[c.code]}</span>
             <ActionLink onClick={() => openCourse(c)}>{c.title}</ActionLink>
           </div>
         ))}
+        {showForecast && renderForecast()}
         <div className="section-label">
           <h3>リスト内の候補</h3>
           <span>{candidates.length}件</span>
@@ -430,7 +465,7 @@ export function Timetable({
               <li key={course.code}>
                 <strong>{course.title}</strong>
                 <small>
-                  {course.period} · {slots.join("、")} ·{" "}
+                  {course.period} · {slots.map(slotTitle).join("、")} ·{" "}
                   {state.status[course.code] ?? "履修予定"}
                 </small>
               </li>
@@ -438,7 +473,7 @@ export function Timetable({
           </ul>
           <div className="actions">
             <Button
-              label="戻る"
+              label="今の予定を残す"
               variant="secondary"
               onClick={() => setReplacement(null)}
             />
