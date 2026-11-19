@@ -276,24 +276,23 @@ export function sameProfile(scope, profile) {
   );
 }
 
+export const isAcademicFieldKey = (key) => /^field-\d+$/.test(key);
+
 export function courseMatch(row, course, profile) {
   let result;
-  if (course.recognized && !row.key.startsWith("field-")) {
+  if (course.recognized && !isAcademicFieldKey(row.key)) {
     if (
       !course.allocationKey ||
       (course.allocationScope && !sameProfile(course.allocationScope, profile))
     )
       return null;
+    // Recognition proves the assigned bucket. An offering's title or category
+    // cannot move that decision to another bucket or a named child.
+    result = (row.unit ?? "credits") === "credits" || row.unit === "courses";
     result =
-      row.key === course.allocationKey ||
-      row.allocationKeys?.includes(course.allocationKey);
-    if (!result) {
-      if (row.exclusive && row.peerKeys?.includes(course.allocationKey))
-        return false;
-      // A confirmed category alone says nothing about an unrelated subminimum.
-      result = row.match?.(course, profile);
-      if (result !== true && result !== false) result = null;
-    }
+      result &&
+      (row.key === course.allocationKey ||
+        !!row.allocationKeys?.includes(course.allocationKey));
   } else {
     result = row.match?.(course, profile);
     if (course.unresolvedOffering && !row.matchTranscript) return null;

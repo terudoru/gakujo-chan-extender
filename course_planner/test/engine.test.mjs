@@ -895,3 +895,388 @@ test("a recognized allocation imported with scope.stage stays in its program and
     );
   }
 });
+
+const recognitionScope = { ...profile, stage: "degree", goal: "graduation" };
+const assigned = (key, patch = {}) => ({
+  title: "学外で修得した科目",
+  code: "R1",
+  year: "2020",
+  grade: "認定",
+  credits: 0.5,
+  recognized: true,
+  allocationKey: key,
+  allocationScope: recognitionScope,
+  sourceId: "statement",
+  importId: "record1",
+  sourceUrl: "https://example.invalid/decision",
+  ...patch,
+});
+
+test("direct pool recognition retains its course at each ancestor without earning a named child", () => {
+  const rows = [
+    { ...a, match: () => true },
+    b,
+    { key: "major", required: 5, pool: ["A", "B"], disjoint: true },
+    { key: "degree-pool", required: 5, pool: [{ key: "major", cap: 1 }] },
+    { key: "total", required: 5, pool: ["degree-pool"] },
+  ];
+  const api = apiFor(rows);
+  const recognized = assigned("major");
+  const planned = assigned("major", {
+    title: "別の科目",
+    code: "R2",
+    importId: "record2",
+    credits: 1,
+  });
+  const evaluate = (grades, balances = [], plan = []) =>
+    api.requirementRows(state(grades, balances), byCode, plan);
+  const result = evaluate([recognized, { ...recognized }], [], [planned]);
+  assert.deepEqual(
+    result.map((r) => [r.current, r.future]),
+    [
+      [0, 0],
+      [0, 0],
+      [0.5, 1.5],
+      [0.5, 1],
+      [0.5, 1],
+    ],
+  );
+  for (const key of ["major", "degree-pool", "total"]) {
+    const [entry] = named(result, key).earned;
+    assert.deepEqual(
+      [
+        entry.title,
+        entry.year,
+        entry.code,
+        entry.recordId,
+        entry.sourceUrl,
+        entry.applied,
+      ],
+      [recognized.title, "2020", "R1", "record1", recognized.sourceUrl, 0.5],
+    );
+  }
+  assert.deepEqual(
+    named(result, "total").planned.map((c) => [c.recordId, c.applied]),
+    [["record2", 0.5]],
+  );
+  const covered = evaluate([recognized], [balance("major", 0.5)], [planned]);
+  assert.deepEqual(
+    [
+      named(covered, "major").current,
+      named(covered, "major").covered[0].recordId,
+      named(covered, "total").current,
+      named(covered, "total").future,
+    ],
+    [0.5, "record1", 0.5, 1],
+  );
+  assert.deepEqual(named(covered, "major").earned, []);
+  const priorStatement = named(
+    evaluate([], [balance("major", 2)], [planned]),
+    "major",
+  );
+  assert.deepEqual(
+    [
+      priorStatement.current,
+      priorStatement.future,
+      priorStatement.planned[0].applied,
+    ],
+    [2, 3, 1],
+  );
+  const overlap = named(evaluate([recognized], [balance("A", 0.5)]), "major");
+  assert.deepEqual(
+    [overlap.current, overlap.remaining, overlap.earned[0].applied],
+    [0.5, null, 0.5],
+  );
+  const fromLeaf = evaluate([assigned("A")]);
+  assert.deepEqual(
+    fromLeaf.map((r) => r.current),
+    [0.5, 0, 0.5, 0.5, 0.5],
+  );
+  const fromTotal = evaluate([assigned("total")]);
+  assert.deepEqual(
+    fromTotal.map((r) => r.current),
+    [0, 0, 0, 0, 0.5],
+  );
+  for (const wrong of [
+    assigned("unrelated"),
+    assigned("major", {
+      allocationScope: { ...recognitionScope, stage: "fourth" },
+    }),
+    assigned("major", {
+      allocationScope: { ...recognitionScope, program: "乙" },
+    }),
+  ]) {
+    assert.deepEqual(
+      evaluate([wrong]).map((r) => r.current),
+      [0, 0, 0, 0, 0],
+    );
+  }
+});
+
+test("a directly recognized evaluated amount counts once independently of syllabus predicates", () => {
+  const sum = ({ courses }) => ({
+    value: courses.reduce((n, c) => n + c.credits, 0),
+    contributions: courses.map((course) => ({
+      course,
+      applied: course.credits,
+    })),
+  });
+  const api = apiFor([
+    { ...a, match: () => true },
+    { ...b, evaluate: sum, match: () => true },
+    {
+      key: "major",
+      required: 4,
+      evaluate: sum,
+      match: () => false,
+      allocationKeys: ["A", "B"],
+    },
+    { key: "total", required: 8, evaluate: sum, match: () => false },
+    {
+      key: "decision",
+      unit: "condition",
+      required: 1,
+      evaluate: () => ({ value: 0 }),
+    },
+  ]);
+  const result = api.requirementRows(
+    state([assigned("major"), grade(aOnly)]),
+    byCode,
+    [],
+  );
+  assert.deepEqual(
+    result.map((r) => r.current),
+    [2, 0, 2.5, 2.5, 0],
+  );
+  assert.equal(
+    named(result, "total").earned.find((c) => c.recordId === "record1").applied,
+    0.5,
+  );
+  const fromLeaf = api.requirementRows(state([assigned("B")]), byCode, []);
+  assert.deepEqual(
+    fromLeaf.map((r) => r.current),
+    [0, 0.5, 0.5, 0.5, 0],
+  );
+  const superseded = api.requirementRows(
+    state([assigned("B")], [balance("B", 0)]),
+    byCode,
+    [],
+  );
+  assert.deepEqual(
+    superseded.map((r) => r.current),
+    [0, 0, 0, 0, 0],
+  );
+  const directTotal = api.requirementRows(
+    state([assigned("total")]),
+    byCode,
+    [],
+  );
+  assert.deepEqual(
+    directTotal.map((r) => r.current),
+    [0, 0, 0, 0.5, 0],
+  );
+  const unrelated = api.requirementRows(state([assigned("other")]), byCode, []);
+  assert.deepEqual(
+    unrelated.map((r) => r.current),
+    [0, 0, 0, 0, 0],
+  );
+});
+
+test("scalar course totals stay independent of unrelated statements and report possible overlap with an anonymous baseline", () => {
+  const api = apiFor([
+    {
+      key: "major",
+      required: 5,
+      evaluate: ({ courses, baseline }) => ({
+        value:
+          courses.reduce((n, c) => n + c.credits, 0) + (baseline["part"] ?? 0),
+      }),
+    },
+  ]);
+  const run = (balances) =>
+    named(
+      api.requirementRows(
+        state([grade(aOnly), assigned("major")], balances),
+        byCode,
+        [],
+      ),
+      "major",
+    );
+  const ordinary = run([balance("other", 1)]);
+  assert.deepEqual(
+    [ordinary.current, ordinary.remaining, ordinary.earned[0].applied],
+    [2.5, 2.5, 0.5],
+  );
+  const overlapping = run([balance("part", 1)]);
+  assert.deepEqual(
+    [overlapping.current, overlapping.remaining, overlapping.earned[0].applied],
+    [3, null, 0.5],
+  );
+});
+
+test("official decision balances require an enabled boolean rule, an explicit outcome and the captured assessment scope", () => {
+  const gate = {
+    key: "exam",
+    label: "合否",
+    required: 1,
+    unit: "condition",
+    officialDecision: true,
+    unknown: "結果を確認",
+  };
+  const api = apiFor([
+    gate,
+    { ...gate, key: "unmarked", officialDecision: false },
+    {
+      ...gate,
+      key: "gpa",
+      unit: "points",
+      required: 4,
+      profileValue: () => 2.5,
+    },
+    {
+      ...gate,
+      key: "attendance",
+      unit: "months",
+      required: 1,
+      profileValue: () => 0,
+    },
+    { ...gate, key: "multiple", required: 2 },
+    { ...gate, key: "age", officialDecision: false, profileValue: () => 0 },
+  ]);
+  const statement = (current, patch = {}) => ({
+    scope: {
+      ...recognitionScope,
+      entryGrade: "",
+      assessmentDate: "2026-04-01",
+      graduationYear: "2028",
+      graduationMonth: 3,
+      package: "甲",
+    },
+    key: "exam",
+    unit: "condition",
+    required: 1,
+    confirmed: true,
+    current,
+    ...patch,
+  });
+  const s = state();
+  Object.assign(s.profile, statement().scope);
+  const rows = (b) =>
+    api.requirementRows({ ...s, balances: [b] }, byCode, [other]);
+  assert.deepEqual(
+    rows(statement(undefined)).map((r) => r.officialDecision),
+    [true, false, false, false, false, false],
+  );
+  for (const current of [0, 1]) {
+    const r = rows(statement(current))[0];
+    assert.deepEqual(
+      [r.current, r.future, r.remaining, r.after],
+      [current, current, 1 - current, 1 - current],
+    );
+  }
+  for (const patch of [
+    { current: null },
+    { current: 2 },
+    { current: true },
+    { confirmed: false },
+    { required: 2 },
+  ]) {
+    assert.equal(rows(statement(1, patch))[0].current, null);
+  }
+  for (const [key, value] of Object.entries({
+    entryGrade: "3",
+    assessmentDate: "",
+    graduationYear: 2027,
+    graduationMonth: 9,
+    package: "乙",
+    stage: "fourth",
+  })) {
+    assert.equal(
+      rows(statement(1, { scope: { ...statement().scope, [key]: value } }))[0]
+        .current,
+      null,
+    );
+  }
+  assert.equal(rows(statement(1, { scope: recognitionScope }))[0].current, 1);
+  for (const [key, expected] of [
+    ["unmarked", null],
+    ["gpa", 2.5],
+    ["attendance", 0],
+    ["multiple", null],
+    ["age", 0],
+  ])
+    assert.equal(named(rows(statement(1, { key })), key).current, expected);
+});
+
+test("creation domain deficits participate in stage status and legacy decisions follow only the renamed stage rows", () => {
+  const p = { ...profile, faculty: "創生学部" };
+  const scope = { ...p, goal: "graduation", stage: "degree" };
+  const oldKeys = ["field-foundation", "field-advanced", "field-pool"];
+  const newKeys = ["domain-foundation", "domain-advanced", "domain-pool"];
+  const rule = (key) => leaf(key, 2, { match: (c) => c.category === "A" });
+  const pack = (keys) =>
+    createRequirementAPI([
+      {
+        handbooks: [{ ...book, faculty: p.faculty }],
+        default: () => ({
+          sources: [source],
+          stages: [{ id: "degree", goal: "graduation", rows: keys.map(rule) }],
+        }),
+      },
+    ]);
+  for (const keys of [newKeys, oldKeys]) {
+    const api = pack(keys);
+    const s = {
+      ...state(),
+      profile: p,
+      grades: [],
+      balances: oldKeys.map((key, i) => ({
+        scope,
+        key,
+        current: i === 2 ? 0 : 2,
+        confirmed: true,
+      })),
+    };
+    s.balances.push({
+      scope,
+      key: "field-70",
+      label: "学問分野",
+      current: 0,
+      required: 2,
+      confirmed: true,
+    });
+    let result = api.requirementRows(s, byCode, []);
+    assert.deepEqual(
+      result.map((r) => r.current),
+      [2, 2, 0, 0],
+    );
+    assert.equal(stageStatus(result), "short");
+    assert.equal(api.satisfiesFilter(aOnly, "field-pool", p), true);
+    assert.equal(
+      api.shortageFilter(s, byCode, [], { key: "field-pool" })(aOnly),
+      true,
+    );
+    assert.deepEqual(
+      api.academicFieldRows(s, byCode, []).map((r) => r.field),
+      ["70"],
+    );
+    s.balances[2].current = 2;
+    assert.equal(stageStatus(api.requirementRows(s, byCode, [])), "met");
+    s.balances = [];
+    s.grades = [assigned("field-pool", { allocationScope: scope })];
+    result = api.requirementRows(s, byCode, []);
+    assert.deepEqual(
+      result.map((r) => r.current),
+      [0, 0, 0.5],
+    );
+    assert.equal(result[2].earned[0].recordId, "record1");
+    assert.equal(s.grades[0].allocationKey, "field-pool");
+  }
+  const otherFaculty = apiFor(newKeys.map(rule));
+  assert.deepEqual(
+    otherFaculty
+      .requirementRows(state([assigned("field-pool")]), byCode, [])
+      .map((r) => r.current),
+    [0, 0, 0],
+  );
+});

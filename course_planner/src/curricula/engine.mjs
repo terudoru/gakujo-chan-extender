@@ -8,6 +8,7 @@ import {
   allocationAppliesToStage,
   courseMatch,
   evidence,
+  isAcademicFieldKey,
   prepareCourses,
   quantity,
   sameProfile,
@@ -79,9 +80,58 @@ export function selectStage(descriptor, selector = "graduation") {
   );
 }
 
-export function matchBalanceRow(statement, stage) {
+// Older handbooks evaluate graduation totals without an explicit pool. The
+// shared general and major buckets are graduation credit subtotals. A pack's
+// explicit membership (including an empty list) always takes precedence.
+export function recognitionRule(row, stage) {
+  if (
+    row?.key !== "total" ||
+    stage.goal !== "graduation" ||
+    row.pool ||
+    row.allocationKeys
+  )
+    return row;
+  const allocationKeys = stage.rows
+    .filter(
+      (r) =>
+        ["general", "major"].includes(r.key) &&
+        (r.unit ?? "credits") === "credits",
+    )
+    .map((r) => r.key);
+  return { ...row, allocationKeys };
+}
+
+const isOfficialDecision = (row) =>
+  row?.officialDecision === true &&
+  row.unit === "condition" &&
+  quantity(row.required) === 1;
+
+// Earlier creation handbooks used field-* for three curricular domain rows.
+// Stored decisions retain their original keys; remap only in a stage which
+// actually declares the replacement for the same faculty.
+export function curriculumKey(key, stage, faculty) {
+  if (
+    faculty === "創生学部" &&
+    /^field-(foundation|advanced|pool)$/.test(key)
+  ) {
+    const next = "domain-" + key.slice(6);
+    if (
+      stage?.rows.some((r) => r.key === next) &&
+      !stage.rows.some((r) => r.key === key)
+    )
+      return next;
+  }
+  return key;
+}
+
+export function matchBalanceRow(
+  statement,
+  stage,
+  faculty = statement.scope?.faculty ?? statement.faculty,
+) {
   const rows = stage?.rows ?? [];
-  const keyed = rows.find((r) => r.key === statement.key);
+  const key = curriculumKey(statement.key, stage, faculty);
+  const keyed = rows.find((r) => r.key === key);
   const name = normalize(statement.label || statement.allocationLabel);
   const named = name
     ? rows.filter((r) =>
@@ -127,20 +177,40 @@ function balancesFor(state, descriptor, stage) {
       continue;
     // Field balances retain their syllabus-field key even when a curricular
     // bucket happens to have the same display label.
-    const mapped = /^field-\d+$/.test(b.key)
+    const mapped = isAcademicFieldKey(b.key)
       ? { key: b.key }
       : matchBalanceRow(b, stage);
     const key = mapped.key ?? (!mapped.candidates?.length ? b.key : null);
     const rule = stage.rows.find((r) => r.key === key);
     if (
       !key ||
-      (/^field-\d+$/.test(key) && b.unit && b.unit !== "credits") ||
+      (isAcademicFieldKey(key) && b.unit && b.unit !== "credits") ||
       (rule && (rule.unit ?? "credits") !== (b.unit ?? "credits"))
     )
       continue;
     const current = quantity(b.current),
       required = quantity(b.required);
     if (current === null) continue;
+    if (
+      b.unit === "condition" &&
+      (!isOfficialDecision(rule) ||
+        b.confirmed !== true ||
+        stageId !== stage.id ||
+        (current !== 0 && current !== 1) ||
+        (Object.hasOwn(b, "required") && required !== 1) ||
+        [
+          "entryGrade",
+          "assessmentDate",
+          "graduationYear",
+          "graduationMonth",
+          "package",
+        ].some(
+          (k) =>
+            Object.hasOwn(scope, k) &&
+            String(scope[k] ?? "") !== String(state.profile[k] ?? ""),
+        ))
+    )
+      continue;
     const previous = balances.get(key);
     const conflict =
       previous &&
@@ -176,22 +246,103 @@ function independent(row, courses, profile) {
   return result;
 }
 
+// A decision addressed to this credit bucket does not need a syllabus match.
+// Keep the actual record as its witness, including fractional credits. An
+// unidentified earned statement may already include it; planned credits cannot.
+function addRecognitions(result, row, credits, unidentified = 0) {
+  let earned = 0;
+  for (const [c, n] of credits) {
+    if (n === null) {
+      result.pending.push(c);
+      continue;
+    }
+    const previous = result.applied.get(c) ?? 0;
+    const applied = Math.min(n, row.maxPerCourse ?? Infinity) - previous;
+    if (applied <= 0) continue;
+    if (result.value === null) {
+      result.value = 0;
+      result.reason ||= checkCourse;
+    }
+    result.applied.set(c, previous + applied);
+    result.value += applied;
+    if (c.column === "earned") earned += applied;
+  }
+  if (earned && unidentified > 0) {
+    result.value -= Math.min(unidentified, earned);
+    result.reason ||=
+      "認定科目が下位区分の確認表に含まれるか、所属学部で確認してください。";
+  }
+  result.unidentifiedStatement = Math.max(0, unidentified - earned);
+}
+
 // evaluate({courses, profile, baseline}) is called for earned courses and then
 // for earned + planned. Return the full audited value and optional contributions
 // [{course, applied}] or [{code, year, title, credits, applied}]. baseline is a
 // key -> official earned subtotal map. A null value/unknown reason is retained.
-function evaluated(row, courses, profile, baseline) {
+function evaluated(
+  row,
+  courses,
+  profile,
+  baseline,
+  children = new Map(),
+  definitions,
+) {
   const result = empty(),
-    audited = [];
+    audited = [],
+    recognized = new Map();
+  const inherited = new Map();
+  for (const [key, child] of children) {
+    for (const [c, n] of child.applied) {
+      if (c.recognized) inherited.set(c, Math.max(n, inherited.get(c) ?? 0));
+    }
+    // A child's official figure supersedes its course-derived credits. Only
+    // identify underlying records when their combined amount fits the figure.
+    if (child.covered && sumApplied(child.covered) <= baseline[key]) {
+      for (const [c, n] of child.covered)
+        if (c.recognized) inherited.set(c, Math.max(n, inherited.get(c) ?? 0));
+    }
+  }
   for (const c of courses) {
-    const scopeUnknown = c.recognized && courseMatch(row, c, profile) !== true;
+    if (inherited.has(c)) {
+      recognized.set(c, inherited.get(c));
+      continue;
+    }
+    const match = c.recognized ? courseMatch(row, c, profile) : true;
+    if (match === false) {
+      // Some older subtotal callbacks privately enumerate their named leaves.
+      // They may still audit a confirmed offering when the actual syllabus
+      // independently proves both the assigned leaf and the enclosing bucket.
+      const leaf = definitions?.get(c.allocationKey);
+      if (
+        !row.allocationKeys &&
+        ["区分計", "合計"].includes(row.kind) &&
+        c.matchedCourse?.confirmed &&
+        !c.identityUnresolved &&
+        !c.ambiguousRepeat &&
+        leaf &&
+        !leaf.evaluate &&
+        !leaf.pool &&
+        courseMatch(leaf, c, profile) === true &&
+        leaf.match?.(c, profile) === true &&
+        row.match?.(c, profile) === true
+      )
+        audited.push(c);
+      continue;
+    }
     if (
       c.ambiguousRepeat ||
       c.identityUnresolved ||
-      scopeUnknown ||
+      match === null ||
       (c.unresolvedOffering && !row.matchTranscript && !c.allocationKey)
     ) {
       result.pending.push(c);
+    } else if (
+      c.recognized &&
+      (row.unit ?? "credits") === "credits" &&
+      !isAcademicFieldKey(row.key)
+    ) {
+      if (!children.has(c.allocationKey) || c.allocationKey === row.key)
+        recognized.set(c, quantity(c.credits));
     } else audited.push(c);
   }
   const calculated = row.evaluate({ courses: audited, profile, baseline });
@@ -214,13 +365,32 @@ function evaluated(row, courses, profile, baseline) {
     if (candidates.length === 1 && n !== null)
       result.applied.set(candidates[0], n);
   }
+  // A scalar evaluator may legitimately omit witnesses for ordinary courses.
+  // Only the part added by a statement can overlap the recognition records.
+  const anonymous = Math.max(
+    0,
+    (result.value ?? 0) - sumApplied(result.applied),
+  );
+  let unidentified = 0;
+  if (
+    anonymous &&
+    Object.keys(baseline).length &&
+    courses.some((c) => c.recognized)
+  ) {
+    const without = row.evaluate({ courses: audited, profile, baseline: {} });
+    unidentified = Math.min(
+      anonymous,
+      Math.max(0, result.value - (quantity(without?.value) ?? 0)),
+    );
+  }
+  addRecognitions(result, row, recognized, unidentified);
   return result;
 }
 
 // pool: [{key,cap?}, ...] sums child rows with optional per-child ceilings.
 // Offerings shared by several children contribute only once. Statement-only
 // amounts may be summed across disjoint children (exclusive or disjoint:true).
-function pooled(row, get, definitions, courses, balances) {
+function pooled(row, get, definitions, courses, balances, profile) {
   const result = empty();
   const parts = row.pool.map((part) =>
     typeof part === "string" ? { key: part } : part,
@@ -235,6 +405,7 @@ function pooled(row, get, definitions, courses, balances) {
     row.disjoint ||
     (exclusive.size === 1 && !exclusive.has(undefined));
   const target = new Map();
+  let unidentified = 0;
   for (const [part, child] of known) {
     if (!child) throw new Error("Unknown curriculum pool member: " + part.key);
     const cap = part.cap ?? Infinity;
@@ -251,6 +422,10 @@ function pooled(row, get, definitions, courses, balances) {
       anonymous = 0;
     }
     result.value += Math.min(anonymous, cap);
+    const untraced = balances.has(part.key)
+      ? Math.max(0, anonymous - (child.covered ? sumApplied(child.covered) : 0))
+      : (child.unidentifiedStatement ?? 0);
+    unidentified += Math.min(cap, anonymous, untraced);
     target.set(part, Math.max(0, cap - anonymous));
     if (child.value === null || child.value < cap)
       result.pending.push(...child.pending);
@@ -267,6 +442,18 @@ function pooled(row, get, definitions, courses, balances) {
     result.value += sumApplied(entries);
     for (const [c, n] of entries)
       result.applied.set(c, (result.applied.get(c) ?? 0) + n);
+  }
+  if ((row.unit ?? "credits") === "credits") {
+    // Children have already applied their own caps and exclusive allocations.
+    // Only credits addressed directly to this pool bypass its child branches.
+    const direct = new Map();
+    for (const c of courses)
+      if (c.recognized && c.allocationKey === row.key)
+        direct.set(
+          c,
+          courseMatch(row, c, profile) === true ? quantity(c.credits) : null,
+        );
+    addRecognitions(result, row, direct, unidentified);
   }
   return result;
 }
@@ -285,8 +472,6 @@ function assess(rows, courses, profile, balances, before) {
     (r) => r.exclusive,
   );
   for (const group of groups.values()) {
-    const peerKeys = group.map((r) => r.key);
-    for (const row of group) row.peerKeys = peerKeys;
     if (new Set(group.map((r) => r.unit ?? "credits")).size !== 1)
       throw new Error("Incompatible units in exclusive group");
     const customRows = new Map();
@@ -324,10 +509,26 @@ function assess(rows, courses, profile, balances, before) {
         ...empty(),
         value: typeof v === "boolean" ? Number(v) : quantity(v),
       };
-    } else if (row.evaluate)
-      result = evaluated(row, courses, profile, baseline);
-    else if (row.pool)
-      result = pooled(row, get, definitions, courses, balances);
+    } else if (row.evaluate) {
+      const children = new Map();
+      if (
+        (row.unit ?? "credits") === "credits" &&
+        courses.some((c) => c.recognized)
+      ) {
+        for (const k of row.allocationKeys ?? []) {
+          if (k !== key && definitions.has(k)) children.set(k, get(k));
+        }
+      }
+      result = evaluated(
+        row,
+        courses,
+        profile,
+        baseline,
+        children,
+        definitions,
+      );
+    } else if (row.pool)
+      result = pooled(row, get, definitions, courses, balances, profile);
     else if (row.match) result = independent(row, courses, profile);
     else {
       result = independent(row, courses, profile);
@@ -340,8 +541,9 @@ function assess(rows, courses, profile, balances, before) {
       const planned = courses.filter((c) => c.column === "planned");
       let increment = 0,
         pending = [],
-        reason;
-      if (before && planned.length) {
+        reason,
+        confirmedPlanned;
+      if (before && planned.length && !row.officialDecision) {
         if (row.evaluate || row.pool) {
           const prior = before.get(key);
           if (
@@ -352,13 +554,28 @@ function assess(rows, courses, profile, balances, before) {
             increment = rawValue - prior.rawValue;
             pending = result.pending;
             reason = result.reason;
-          } else if (
-            planned.some(
-              (c) => !row.match || courseMatch(row, c, profile) !== false,
+          } else {
+            // A new, explicit award to the bucket itself is independent of
+            // the unidentified courses behind its earlier statement.
+            const direct = planned.filter(
+              (c) =>
+                c.recognized &&
+                c.allocationKey === key &&
+                (row.unit ?? "credits") === "credits",
+            );
+            const addition = independent(row, direct, profile);
+            confirmedPlanned = addition.applied;
+            increment = addition.value;
+            pending = addition.pending;
+            if (
+              planned.some(
+                (c) =>
+                  !direct.includes(c) &&
+                  (!row.match || courseMatch(row, c, profile) !== false),
+              )
             )
-          ) {
-            reason =
-              "履修後の見込みには、確認表に算入済みの科目の内訳が必要です。";
+              reason =
+                "履修後の見込みには、確認表に算入済みの科目の内訳が必要です。";
           }
         } else if (row.match) {
           const addition = independent(row, planned, profile);
@@ -375,11 +592,13 @@ function assess(rows, courses, profile, balances, before) {
         covered: new Map(
           [...result.applied].filter(([c]) => c.column === "earned"),
         ),
-        applied: new Map(
-          [...result.applied].filter(
-            ([c]) => c.column === "planned" && !reason,
+        applied:
+          confirmedPlanned ??
+          new Map(
+            [...result.applied].filter(
+              ([c]) => c.column === "planned" && !reason,
+            ),
           ),
-        ),
         value: balance.current + increment,
         pending,
         reason,
@@ -421,12 +640,16 @@ export function evaluateStage(
     .filter((row) => !onlyKeys || onlyKeys.has(row.key))
     .map((row) => {
       const b = balances.get(row.key);
-      return { ...row, required: b?.required ?? quantity(row.required) };
+      return {
+        ...recognitionRule(row, scope),
+        officialDecision: isOfficialDecision(row),
+        required: b?.required ?? quantity(row.required),
+      };
     });
   const keys = new Set(rows.map((r) => r.key));
   for (const b of balances.values()) {
     if (keys.has(b.key) || (onlyKeys && !onlyKeys.has(b.key))) continue;
-    const field = b.key.startsWith("field-") && b.key.slice(6);
+    const field = isAcademicFieldKey(b.key) && b.key.slice(6);
     rows.push({
       key: b.key,
       label: b.label,
@@ -444,7 +667,17 @@ export function evaluateStage(
     if (!course.recognized) return course;
     if (!allocationAppliesToStage(course, scope))
       return { ...course, allocationKey: null };
-    if (course.allocationKey || !course.allocationLabel) return course;
+    if (course.allocationKey) {
+      const key = curriculumKey(
+        course.allocationKey,
+        scope,
+        state.profile.faculty,
+      );
+      return key === course.allocationKey
+        ? course
+        : { ...course, allocationKey: key };
+    }
+    if (!course.allocationLabel) return course;
     const mapped = matchBalanceRow({ label: course.allocationLabel }, scope);
     return mapped.key ? { ...course, allocationKey: mapped.key } : course;
   }
@@ -495,6 +728,7 @@ export function evaluateStage(
       stageId: scope.id,
       goal: scope.goal,
       unit: row.unit ?? "credits",
+      officialDecision: row.officialDecision === true,
       required: row.required,
       current: a.value,
       future: b.value,
@@ -538,7 +772,7 @@ export function requirementGroups(rows) {
 
 export function stageStatus(rows, projected = false) {
   const statuses = rows
-    .filter((r) => !r.key.startsWith("field-"))
+    .filter((r) => !isAcademicFieldKey(r.key))
     .map((r) => {
       const state = projected ? r.futureStatus : r.status;
       return r.historyAvailable === false && state === "short"

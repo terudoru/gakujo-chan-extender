@@ -1,8 +1,14 @@
 import { createRegistry, installedPacks } from "./curricula/registry.mjs";
-import { evaluateStage, selectStage } from "./curricula/engine.mjs";
+import {
+  curriculumKey,
+  evaluateStage,
+  recognitionRule,
+  selectStage,
+} from "./curricula/engine.mjs";
 import {
   allocationAppliesToStage,
   courseMatch,
+  isAcademicFieldKey,
   prepareCourses,
   quantity,
   sameProfile,
@@ -27,7 +33,7 @@ import { courseFields, hasUnscheduled, slotsFor, termsFor } from "./course-facts
 // A confirmed field subtotal may be the only known requirement for an older
 // handbook. Use its own goal/stage only when the search identifies one scope.
 function statementFieldStage(state, key, context) {
-  if (!/^field-\d+$/.test(key)) return null;
+  if (!isAcademicFieldKey(key)) return null;
   const balances = [],
     scopes = new Map();
   for (const b of state.balances ?? []) {
@@ -141,7 +147,7 @@ export function createRequirementAPI(packs = installedPacks) {
   function satisfiesFilter(course, key, profile, selector = "graduation") {
     const rowKey = typeof key === "string" ? key : (key.key ?? key.requirement);
     if (!rowKey) return false;
-    if (rowKey.startsWith("field-"))
+    if (isAcademicFieldKey(rowKey))
       return !!course.fields?.includes(rowKey.slice(6));
     const stage = selectStage(
       descriptor(profile),
@@ -149,41 +155,65 @@ export function createRequirementAPI(packs = installedPacks) {
         ? selector
         : (key.stageId ?? key.goal ?? selector),
     );
-    if (course.recognized && !allocationAppliesToStage(course, stage))
-      return false;
+    if (course.recognized) {
+      if (!allocationAppliesToStage(course, stage)) return false;
+      course = {
+        ...course,
+        allocationKey: curriculumKey(
+          course.allocationKey,
+          stage,
+          profile.faculty,
+        ),
+      };
+    }
+    const visited = new Set();
     function matches(k) {
-      const row = stage?.rows.find((r) => r.key === k);
+      if (visited.has(k)) return false;
+      visited.add(k);
+      const row = recognitionRule(
+        stage?.rows.find((r) => r.key === k),
+        stage,
+      );
       if (!row) return false;
-      if (row.match) return courseMatch(row, course, profile) === true;
+      if (course.recognized) {
+        if (courseMatch(row, course, profile) === true) return true;
+        if (row.evaluate && row.allocationKeys?.some(matches)) return true;
+      } else if (row.match) return courseMatch(row, course, profile) === true;
       return (
         row.pool?.some((p) => matches(typeof p === "string" ? p : p.key)) ??
         false
       );
     }
-    return matches(rowKey);
+    return matches(curriculumKey(rowKey, stage, profile.faculty));
   }
   // Compile once per discovery view. Re-audit only plausible candidates.
   // Requiring a positive marginal contribution accounts for exclusive pools,
   // recognized/repeated credits, same-language minima and alternate pairs.
   function shortageFilter(state, byCode, planned, context) {
-    const key = context.key ?? context.requirement;
+    const requested = context.key ?? context.requirement;
     let d = descriptor(state.profile);
     let stage = selectStage(d, context.stageId || context.goal || "graduation");
     let auditState = state;
     if (!stage) {
-      const scoped = statementFieldStage(state, key, context);
+      const scoped = statementFieldStage(state, requested, context);
       if (!scoped) return () => false;
       stage = scoped.stage;
       auditState = scoped.state;
       d = { ...d, stages: [stage] };
     }
+    const key = curriculumKey(requested, stage, state.profile.faculty);
     const rule = stage.rows.find((r) => r.key === key);
     const keys = new Set([key]);
     for (const k of keys) {
-      const row = stage.rows.find((r) => r.key === k);
+      const row = recognitionRule(
+        stage.rows.find((r) => r.key === k),
+        stage,
+      );
       if (!row) continue;
       for (const child of row.pool ?? [])
         keys.add(typeof child === "string" ? child : child.key);
+      if (row.evaluate)
+        for (const child of row.allocationKeys ?? []) keys.add(child);
       if (row.exclusive)
         for (const peer of stage.rows)
           if (peer.exclusive === row.exclusive) keys.add(peer.key);
@@ -224,7 +254,11 @@ export function createRequirementAPI(packs = installedPacks) {
           : !slotsFor(course).includes(context.slot))
       )
         return false;
-      if (rule?.match && courseMatch(rule, course, state.profile) !== true)
+      if (
+        !course.recognized &&
+        rule?.match &&
+        courseMatch(rule, course, state.profile) !== true
+      )
         return false;
       if (!rule && !course.fields?.includes(key.slice(6))) return false;
       const candidate = ledger.additionalCourse(course);
@@ -244,7 +278,10 @@ export function createRequirementAPI(packs = installedPacks) {
           planned: [...ledger.planned, candidate],
         };
       const memoKey =
-        cacheable && !course.equivalentTo && !course.equivalentTitle
+        cacheable &&
+        !course.recognized &&
+        !course.equivalentTo &&
+        !course.equivalentTitle
           ? JSON.stringify([
               candidate.credits,
               ...primitive.map((r) => courseMatch(r, candidate, state.profile)),
@@ -329,7 +366,7 @@ export function createRequirementAPI(packs = installedPacks) {
         d,
         selector,
         ledger,
-      ).filter((r) => /^field-\d+$/.test(r.key));
+      ).filter((r) => isAcademicFieldKey(r.key));
     } else {
       const context =
         typeof selector === "object"
