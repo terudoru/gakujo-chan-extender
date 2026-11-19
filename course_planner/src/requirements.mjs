@@ -68,6 +68,7 @@ function statementFieldStage(state, key, context) {
 export function createRequirementAPI(packs = installedPacks) {
   const registry = createRegistry(packs);
   function descriptor(profile) {
+    if (!String(profile.handbook ?? "").trim()) return null;
     const p = {
       ...profile,
       entry: profile.entry ?? "1年次入学",

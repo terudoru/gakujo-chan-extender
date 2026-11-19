@@ -172,6 +172,16 @@ test("academic field and curriculum allocation remain distinct across cutoff and
   s.profile.entry = "編入・転部・再入学";
   assert.equal(facultyInfo(s.profile).verified, false);
 });
+test("a transfer student's admission year cannot stand in for the applicable handbook", () => {
+  for (const faculty of ["理学部", "経済科学部", "工学部"]) {
+    const s = initialState();
+    Object.assign(s.profile, { faculty, admitted: "2026", entry: "編入", handbook: "" });
+    assert.equal(facultyInfo(s.profile).verified, false);
+    assert.deepEqual(requirementRows(s, byCode, [data], "graduation"), []);
+    assert.equal(semesterCredits([data], 1, s.profile).limit, null);
+  }
+});
+
 test("field forecasts keep distinct years and exclude duplicated or already earned offerings", () => {
   const confirmed = {
     code: "", title: english.title, credits: 1, fields: [],
