@@ -48,6 +48,32 @@ test("registered editions resolve without collisions, with explicit evidence", (
   assert.equal(row(d, "major").required, null);
   assert.equal(descriptor(oral, 2026).cap.limit, null);
 });
+test("only official determinations are editable as confirmed decisions", () => {
+  const nursing = descriptor(health, 2026, { program: "看護学専攻" });
+  const med = descriptor(medicine, 2026);
+  const dental = descriptor(dent, 2026);
+  const archive = descriptor(medicine, 1991);
+  const decisions = [
+    row(nursing, "faculty-review", "year-4"),
+    row(med, "graduation-review"),
+    row(med, "clinical-CBT", "clinical-practice"),
+    row(med, "clinical-OSCE", "clinical-practice"),
+    row(dental, "pre-clinical-CBT", "clinical-practice"),
+    row(dental, "pre-clinical-OSCE", "clinical-practice"),
+  ];
+  for (const rule of decisions) assert.equal(rule.officialDecision, true, rule.key);
+
+  const otherRules = [
+    row(nursing, "assessment-month", "year-4"),
+    row(nursing, "year-months", "year-4"),
+    row(nursing, "residency"),
+    row(archive, "year-table", "advancement"),
+    row(archive, "major"),
+    row(descriptor(health, 2026), "program"),
+  ];
+  for (const rule of otherRules) assert.equal(rule.officialDecision, undefined, rule.key);
+});
+
 test("medical cohort amendments, half units, exact department and exam decisions", () => {
   for (
     const [y, major, total] of [[2018, 185.5, 230.5], [2020, 186.5, 229.5], [2022, 186.5, 229.5], [2024, 183, 226], [

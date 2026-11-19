@@ -25,6 +25,7 @@ export const condition = (key, label, unknown, source) => ({
 // Its result is independent of earned courses and of the student's other stages.
 export const decision = (key, label, unknown, source) => ({
   ...condition(key, label, unknown, source),
+  officialDecision: true,
   required: 1,
   profileValue: () => null,
 });
