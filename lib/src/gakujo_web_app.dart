@@ -1929,6 +1929,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   double? _reportedGpa;
   bool _externalServiceNoticeDismissed = false;
   String? _currentCourseName;
+  int _courseDocument = 0;
   final _loginRestore = _PageRestoreReservation();
   String? get _pendingLoginRestoreUrl => _loginRestore.url;
   set _pendingLoginRestoreUrl(String? url) => _loginRestore.update(url);
@@ -3232,15 +3233,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         ) &&
         _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture) &&
         GakujoDownloadUrlPolicy.shouldDownload(request.url)) {
-      final revision = _navigationRevision;
-      final title = await _controller.getTitle();
-      final pageEstimate = await _estimateCourseNameFromPage(title);
-      final course = resolveGakujoDownloadCourseEstimate(
-        pageEstimate: pageEstimate,
-        initialCourseName: null,
-        navigationRevision: revision,
-        currentNavigationRevision: _navigationRevision,
-      );
+      final origin = _captureDownloadCourseOrigin();
+      final course = await _estimateDownloadCourse(origin);
       await _handleDownloadRequest(
         GakujoDownloadRequest(
           url: request.url,
@@ -3250,7 +3244,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           fileName: '',
           formFields: const {},
         ),
-        navigationRevision: revision,
+        courseOrigin: origin,
       );
       return GakujoNavigationDecision.prevent;
     }
@@ -3271,13 +3265,19 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     fallbackTitle: fallbackTitle,
   );
 
-  Future<void> _refreshEstimatedCourseName() async {
+  void _beginCourseDocument() {
+    _currentCourseName = null;
+    _courseDocument += 1;
+  }
+
+  Future<void> _refreshEstimatedCourseName(int document) async {
     final revision = _navigationRevision;
     final estimated = await _estimateCourseNameFromPage(
       await _controller.getTitle(),
     );
     if (!mounted ||
         revision != _navigationRevision ||
+        document != _courseDocument ||
         estimated.courseName == null) {
       return;
     }
@@ -8273,6 +8273,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _captureNavigationRecoveryCandidate(url);
         },
         onDownloadStarting: _handleNativeDownload,
+        onDocumentStarted: _beginCourseDocument,
         onPageStarted: (url) {
           _closeLinuxFind();
           // Only a page that starts loading counts: blocked requests do not.
@@ -8301,6 +8302,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         },
         onPageFinished: (url) async {
           final navigationRevision = _navigationRevision;
+          final courseDocument = _courseDocument;
           bool stillCurrent() =>
               _isCurrentPageCallback(url, navigationRevision);
           if (!mounted) return;
@@ -8451,7 +8453,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             if (!stillCurrent()) {
               return;
             }
-            await _refreshEstimatedCourseName();
+            await _refreshEstimatedCourseName(courseDocument);
             if (!stillCurrent()) {
               return;
             }

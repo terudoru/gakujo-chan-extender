@@ -458,6 +458,12 @@ Future<AuthenticatedDownloadedFile> receiveWindowsWebViewDownload({
   }
 }
 
+typedef _DownloadCourseOrigin = ({
+  int revision,
+  int document,
+  String? courseName,
+});
+
 extension _GakujoWebAppDownloads on _GakujoWebAppState {
   Future<void> _loadDownloadRoot() async {
     try {
@@ -910,10 +916,39 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     await _handleDownloadRequest(request);
   }
 
+  _DownloadCourseOrigin _captureDownloadCourseOrigin() => (
+    revision: _navigationRevision,
+    document: _courseDocument,
+    courseName: isGakujoSharedDownloadsUrl(_currentPageUrl)
+        ? null
+        : _currentCourseName,
+  );
+
+  Future<GakujoCourseEstimate> _estimateDownloadCourse(
+    _DownloadCourseOrigin origin, {
+    String? fallback,
+  }) async {
+    const absent = GakujoCourseEstimate.absent();
+    final estimate = mounted &&
+            origin.revision == _navigationRevision &&
+            origin.document == _courseDocument
+        ? await _estimateCourseNameFromPage(await _controller.getTitle())
+        : absent;
+    // A same-URL reload can replace the document between course script reads.
+    return resolveGakujoDownloadCourseEstimate(
+      pageEstimate: mounted && origin.document == _courseDocument
+          ? estimate
+          : absent,
+      initialCourseName: fallback,
+      navigationRevision: origin.revision,
+      currentNavigationRevision: _navigationRevision,
+    );
+  }
+
   Future<void> _handleDownloadRequest(
     GakujoDownloadRequest request, {
     String? retryEntryId,
-    int? navigationRevision,
+    _DownloadCourseOrigin? courseOrigin,
   }) async {
     if (!AllowedWebOrigins.canLoad(
       request.url,
@@ -939,13 +974,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       return;
     }
 
-    final revision = navigationRevision ?? _navigationRevision;
-    // A later page or the shared downloads tab must not supply a cached course.
-    final initialCourseName =
-        revision != _navigationRevision ||
-            isGakujoSharedDownloadsUrl(_currentPageUrl)
-        ? null
-        : _currentCourseName;
+    final origin = courseOrigin ?? _captureDownloadCourseOrigin();
     try {
       await _driveDownloadsLoad.timeout(const Duration(seconds: 5));
     } on TimeoutException {
@@ -963,14 +992,9 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
       if (retryEntryId == null &&
           !request.courseNameAmbiguous &&
           !isUsefulGakujoCourseName(request.courseName)) {
-        final pageEstimate = mounted && revision == _navigationRevision
-            ? await _estimateCourseNameFromPage(await _controller.getTitle())
-            : const GakujoCourseEstimate.absent();
-        final course = resolveGakujoDownloadCourseEstimate(
-          pageEstimate: pageEstimate,
-          initialCourseName: initialCourseName,
-          navigationRevision: revision,
-          currentNavigationRevision: _navigationRevision,
+        final course = await _estimateDownloadCourse(
+          origin,
+          fallback: origin.courseName,
         );
         final courseName = course.courseName;
         if (courseName != null) {

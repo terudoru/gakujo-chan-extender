@@ -123,6 +123,7 @@ class GakujoNavigationDelegate {
     this.onNavigationRequest,
     this.onNavigationStarting,
     this.onPageStarted,
+    this.onDocumentStarted,
     this.onPageFinished,
     this.onWebResourceError,
     this.onDownloadStarting,
@@ -135,6 +136,9 @@ class GakujoNavigationDelegate {
   /// committed URL changes. This observes intent without changing page state.
   final void Function(String url)? onNavigationStarting;
   final void Function(String url)? onPageStarted;
+
+  /// A new main-frame document has begun loading, including a same-URL reload.
+  final VoidCallback? onDocumentStarted;
   final FutureOr<void> Function(String url)? onPageFinished;
   final void Function(GakujoWebResourceError error)? onWebResourceError;
   final FutureOr<void> Function(GakujoWebViewDownload download)?
@@ -663,6 +667,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   final GakujoJavaScriptChannelGuard _channelGuard = GakujoJavaScriptChannelGuard();
   final Stopwatch _contentProcessRecoveryClock = Stopwatch()..start();
   final List<Duration> _contentProcessRecoveries = [];
+  bool _disposed = false;
 
   set onMouseHistoryNavigation(
     Future<void> Function(MouseHistoryNavigation)? handler,
@@ -851,6 +856,7 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
         onPageStarted: (url) {
           _channelGuard.rotate();
           mainFrameLoadFailed = false;
+          if (!_disposed) delegate.onDocumentStarted?.call();
           delegate.onPageStarted?.call(url);
         },
         onPageFinished: (url) async {
@@ -994,7 +1000,9 @@ class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    _disposed = true;
+  }
 }
 
 /// Reserves one of at most three automatic recoveries in a rolling minute.
@@ -1400,8 +1408,11 @@ class WindowsGakujoWebViewController implements GakujoWebViewController {
       _canGoForward = value.canGoForward;
     }));
     _subscriptions.add(_inner.loadingState.listen((state) {
+      if (_disposed) return;
       if (state == windows.LoadingState.loading) {
         _failedNavigationAwaitingCompletion = false;
+        // WebView2 sends ContentLoading for new documents, even on reload.
+        _delegate?.onDocumentStarted?.call();
       } else if (state == windows.LoadingState.navigationCompleted) {
         if (!_failedNavigationAwaitingCompletion && !_rendererRecoveryStopped) {
           unawaited(_notifyPageFinished());

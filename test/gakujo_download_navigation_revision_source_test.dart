@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-    'intercepted downloads capture the revision before reading the page',
+    'intercepted downloads capture and forward the origin before reading the page',
     () {
       final source = File('lib/src/gakujo_web_app.dart').readAsStringSync();
       final navigation = source.substring(
@@ -15,31 +15,19 @@ void main() {
       );
 
       expect(
-        navigation.indexOf('final revision = _navigationRevision;'),
+        navigation.indexOf('final origin = _captureDownloadCourseOrigin();'),
         inExclusiveRange(0, navigation.indexOf('await ')),
       );
       expect(
         navigation,
         matches(
           RegExp(
-            r'final pageEstimate = await _estimateCourseNameFromPage\(title\);\s*'
-            r'final course =\s*resolveGakujoDownloadCourseEstimate\(\s*'
-            r'pageEstimate: pageEstimate,\s*'
-            r'initialCourseName: null,\s*'
-            r'navigationRevision: revision,\s*'
-            r'currentNavigationRevision: _navigationRevision,\s*'
-            r'\);',
-          ),
-        ),
-      );
-      expect(
-        navigation,
-        matches(
-          RegExp(
+            r'final origin = _captureDownloadCourseOrigin\(\);\s*'
+            r'final course = await _estimateDownloadCourse\(origin\);\s*'
             r'await _handleDownloadRequest\(\s*GakujoDownloadRequest\('
             r"[\s\S]*?courseName: course\.courseName \?\? '',\s*"
             r'courseNameAmbiguous: course\.isAmbiguous,[\s\S]*?\),\s*'
-            r'navigationRevision: revision,\s*\);',
+            r'courseOrigin: origin,\s*\);',
           ),
         ),
       );
@@ -54,20 +42,21 @@ void main() {
       source.indexOf('Future<void> _recordFailedDownload('),
     );
 
-    expect(handler, contains('int? navigationRevision,'));
+    expect(handler, contains('_DownloadCourseOrigin? courseOrigin,'));
     expect(
       handler.indexOf(
-        'final revision = navigationRevision ?? _navigationRevision;',
+        'final origin = courseOrigin ?? _captureDownloadCourseOrigin();',
       ),
       inExclusiveRange(0, handler.indexOf('await ')),
     );
     expect(
-      handler,
+      source,
       matches(
         RegExp(
-          r'final initialCourseName =\s*revision != _navigationRevision \|\|\s*'
-          r'isGakujoSharedDownloadsUrl\(_currentPageUrl\)\s*'
-          r'\? null\s*: _currentCourseName;',
+          r'_DownloadCourseOrigin _captureDownloadCourseOrigin\(\) => \(\s*'
+          r'revision: _navigationRevision,\s*document: _courseDocument,\s*'
+          r'courseName: isGakujoSharedDownloadsUrl\(_currentPageUrl\)\s*'
+          r'\? null\s*: _currentCourseName,\s*\);',
         ),
       ),
     );
@@ -75,13 +64,27 @@ void main() {
       handler,
       matches(
         RegExp(
-          r'final pageEstimate = mounted && revision == _navigationRevision\s*'
+          r'final course = await _estimateDownloadCourse\(\s*origin,\s*'
+          r'fallback: origin\.courseName,\s*\);',
+        ),
+      ),
+    );
+    final estimate = source.substring(
+      source.indexOf('Future<GakujoCourseEstimate> _estimateDownloadCourse('),
+      source.indexOf('Future<void> _handleDownloadRequest('),
+    );
+    expect(
+      estimate,
+      matches(
+        RegExp(
+          r'const absent = GakujoCourseEstimate\.absent\(\);\s*'
+          r'final estimate = mounted &&\s*origin\.revision == _navigationRevision &&\s*'
+          r'origin\.document == _courseDocument\s*'
           r'\? await _estimateCourseNameFromPage\(await _controller.getTitle\(\)\)\s*'
-          r': const GakujoCourseEstimate\.absent\(\);\s*'
-          r'final course = resolveGakujoDownloadCourseEstimate\(\s*'
-          r'pageEstimate: pageEstimate,\s*'
-          r'initialCourseName: initialCourseName,\s*'
-          r'navigationRevision: revision,\s*'
+          r': absent;[\s\S]*?return resolveGakujoDownloadCourseEstimate\(\s*'
+          r'pageEstimate: mounted && origin\.document == _courseDocument\s*'
+          r'\? estimate\s*: absent,\s*initialCourseName: fallback,\s*'
+          r'navigationRevision: origin\.revision,\s*'
           r'currentNavigationRevision: _navigationRevision,',
         ),
       ),
