@@ -1,0 +1,13 @@
+.planner-sync { max-width: 44rem; display: grid; gap: 1rem; }
+.planner-sync p { margin: 0; }
+.planner-sync label:not(.sync-check) { display: grid; gap: .4rem; }
+.planner-sync input:not([type=checkbox]), .planner-sync select {
+  font: inherit; color: inherit; background: var(--surface, white);
+  padding: .6rem .75rem; border: 1px solid #8d938f; border-radius: .4rem; width: 100%; min-width: 0;
+}
+.planner-sync fieldset { min-width: 0; border: 1px solid #c8cdc9; border-radius: .5rem; padding: 1rem; }
+.planner-sync legend { padding: 0 .35rem; font-weight: 600; }
+.planner-sync .sync-check { display: flex; gap: .6rem; align-items: center; }
+.planner-sync fieldset p { margin: .25rem 0 1rem 1.7rem; }
+.planner-sync fieldset p:last-child { margin-bottom: 0; }
+.planner-sync .sync-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
