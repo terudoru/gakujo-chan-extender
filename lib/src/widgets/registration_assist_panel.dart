@@ -10,6 +10,7 @@ class RegistrationAssistPanel extends StatelessWidget {
     this.onNext,
     this.onCancel,
     this.onClose,
+    this.onCopy,
   });
 
   final String status;
@@ -17,6 +18,7 @@ class RegistrationAssistPanel extends StatelessWidget {
   final VoidCallback? onNext;
   final VoidCallback? onCancel;
   final VoidCallback? onClose;
+  final VoidCallback? onCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +54,11 @@ class RegistrationAssistPanel extends StatelessWidget {
                       TextButton(onPressed: onCancel, child: const Text('中止')),
                     if (onClose != null)
                       TextButton(onPressed: onClose, child: const Text('閉じる')),
+                    if (onCopy != null)
+                      TextButton(
+                        onPressed: onCopy,
+                        child: const Text('登録状況を履修手帖用にコピー'),
+                      ),
                   ],
                 ),
               ],

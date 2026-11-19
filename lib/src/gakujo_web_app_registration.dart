@@ -242,6 +242,7 @@ extension _RegistrationAssistActions on _GakujoWebAppState {
     session.run.ended = true;
     session.timer?.cancel();
     _setRegistrationSession(null, summary: '$reason\n${session.run.summary}');
+    unawaited(_refreshRegistrationAvailability());
     if (ticket != null &&
         _hasRegistrationIdentity &&
         session.run.account == _activeLoginAccount &&
@@ -602,6 +603,13 @@ extension _RegistrationAssistActions on _GakujoWebAppState {
         : RegistrationAssistPanel(
             status: summary,
             onClose: () => _setRegistrationSession(null, summary: null),
+            onCopy: _registrationAvailable && _hasRegistrationIdentity
+                ? () => unawaited(
+                    _openCoursePlanner(
+                      _PlannerDestination.registrationClipboard,
+                    ),
+                  )
+                : null,
           );
   }
 }

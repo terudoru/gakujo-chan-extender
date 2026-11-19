@@ -2672,6 +2672,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     value: _ToolbarAction.importCoursePlanner,
                     child: Text('学務の照会結果をプランナーに取り込む'),
                   ),
+                  const PopupMenuItem<Object>(
+                    value: _ToolbarAction.copyCoursePlanner,
+                    child: Text('学務の照会結果を履修手帖用にコピー'),
+                  ),
                   PopupMenuItem<Object>(
                     value: _ToolbarAction.registrationAssist,
                     enabled: _registrationAvailable && _hasRegistrationIdentity &&
@@ -5653,8 +5657,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
       case _ToolbarAction.coursePlanner:
+        await _openCoursePlanner(_PlannerDestination.standalone);
+        return;
       case _ToolbarAction.importCoursePlanner:
-        await _openCoursePlanner(importing: action == _ToolbarAction.importCoursePlanner);
+        await _openCoursePlanner(_PlannerDestination.builtIn);
+        return;
+      case _ToolbarAction.copyCoursePlanner:
+        await _openCoursePlanner(_PlannerDestination.clipboard);
         return;
       case _ToolbarAction.registrationAssist:
         await _openRegistrationAssist();
@@ -5723,6 +5732,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       case _ToolbarAction.reload:
       case _ToolbarAction.coursePlanner:
       case _ToolbarAction.importCoursePlanner:
+      case _ToolbarAction.copyCoursePlanner:
       case _ToolbarAction.registrationAssist:
       case _ToolbarAction.messageStars:
       case _ToolbarAction.notificationHistory:

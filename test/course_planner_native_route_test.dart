@@ -67,6 +67,119 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  test('MBGPLAN1 encodes the existing packets and the exact profile shape', () {
+    for (final (kind, heading, headers, values) in [
+      (CoursePlannerImportKind.grades, '単位修得状況照会', ['評価'], ['良']),
+      (
+        CoursePlannerImportKind.registration,
+        '履修登録・登録状況照会',
+        ['開講番号', '登録状況'],
+        ['171G0057', '申請中'],
+      ),
+      (
+        CoursePlannerImportKind.balances,
+        '履修科目確認表',
+        ['科目区分', '既修得単位数'],
+        ['教養', '2'],
+      ),
+      (CoursePlannerImportKind.profile, '学生所属', ['所属', '学年'], ['理学部物理学科', '']),
+      (CoursePlannerImportKind.profile, '学生所属', ['所属', '学年'], ['理学部物理学科', '2']),
+    ]) {
+      final packet = {
+        'v': 1,
+        'kind': kind.name,
+        if (kind == CoursePlannerImportKind.registration) 'year': '2026',
+        'tables': [
+          {
+            'heading': heading,
+            'rows': [headers, values],
+          },
+        ],
+      };
+      final token = encodeCoursePlannerHandoff(packet, kind)!;
+      expect(token, matches(RegExp(r'^MBGPLAN1\.[A-Za-z0-9_-]+$')));
+      final json = utf8.decode(
+        base64Url.decode(
+          base64Url.normalize(token.substring('MBGPLAN1.'.length)),
+        ),
+      );
+      expect(jsonDecode(json), packet);
+    }
+  });
+
+  test('MBGPLAN1 rejects invalid profiles and oversized encoded packets', () {
+    const kind = CoursePlannerImportKind.profile;
+    for (final rows in [
+      [
+        ['所属', '学年'],
+        ['理学部物理学科', '7'],
+      ],
+      [
+        ['所属', '学年'],
+        ['学籍番号 12A0000B', '2'],
+      ],
+      [
+        ['所属', '学年'],
+        ['fixture@example.invalid', '2'],
+      ],
+      [
+        ['所属', '学年'],
+        ['', '2'],
+      ],
+      [
+        ['所属', '学年', '氏名'],
+        ['理学部物理学科', '2', '合成氏名'],
+      ],
+      [
+        ['所属', '学年'],
+        ['理学部物理学科', '2'],
+        ['理学部物理学科', '3'],
+      ],
+      [
+        ['学年', '所属'],
+        ['2', '理学部物理学科'],
+      ],
+    ]) {
+      expect(
+        encodeCoursePlannerHandoff({
+          'v': 1,
+          'kind': kind.name,
+          'tables': [
+            {'heading': '学生所属', 'rows': rows},
+          ],
+        }, kind),
+        isNull,
+      );
+    }
+    final longRow = [List.filled(140, '科').join()];
+    expect(
+      encodeCoursePlannerHandoff({
+        'v': 1,
+        'kind': 'grades',
+        'tables': [
+          {
+            'heading': '単位修得状況照会',
+            'rows': [
+              ['科目名'],
+              ...List.filled(4000, longRow),
+            ],
+          },
+        ],
+      }, CoursePlannerImportKind.grades),
+      isNull,
+    );
+  });
+
+  test('profile is offered only for the clipboard chooser', () async {
+    final portal = _View()..evaluate = (_) async => '["grades","profile"]';
+    final source = CoursePlannerSource(portal, () => true);
+    expect(await source.choices(), [CoursePlannerImportKind.grades]);
+    expect(await source.choices(includeProfile: true), [
+      CoursePlannerImportKind.grades,
+      CoursePlannerImportKind.profile,
+    ]);
+  });
+
   test('grade packets retain zero and separate credit columns', () async {
     final portal = _View();
     final source = CoursePlannerSource(portal, () => true);

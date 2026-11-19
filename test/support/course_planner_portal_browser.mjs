@@ -208,6 +208,25 @@ try {
     });
   assert.equal(await ask({ kind: "registration" }), null);
   await page.goto(registration);
+  const profileHeader = '<table><tr><th>氏名</th><td>PRIVATE-NAME-CANARY</td>' +
+    '<th>学籍番号</th><td>PRIVATE-ID-CANARY</td></tr>' +
+    '<tr><th>所属</th><td>理学部物理学科</td><th>学年</th><td>２</td></tr></table>';
+  await page.locator("body").evaluate((body, html) => body.insertAdjacentHTML("afterbegin", html), profileHeader);
+  assert.deepEqual(await ask({}), ["registration", "profile"]);
+  const profile = await ask({ kind: "profile" });
+  assert.deepEqual(profile, {
+    v: 1, kind: "profile",
+    tables: [{ heading: "学生所属", rows: [["所属", "学年"], ["理学部物理学科", "2"]] }],
+  });
+  assert.doesNotMatch(JSON.stringify(profile), /PRIVATE-|氏名|学籍番号/);
+  await page.goto(gradeUrl);
+  await page.setContent("<h1>単位修得状況照会</h1>" + profileHeader.replace("２", "7") + table);
+  assert.deepEqual(await ask({}), ["grades", "profile"]);
+  assert.deepEqual((await ask({ kind: "profile" })).tables[0].rows[1], ["理学部物理学科", ""]);
+  await page.setContent("<h1>単位修得状況照会</h1>" + profileHeader.replace("理学部物理学科", "fixture@example.invalid") + table);
+  assert.deepEqual(await ask({}), ["grades"]);
+  assert.equal(await ask({ kind: "profile" }), null);
+  await page.goto(registration);
   await page.setContent(
     "<h1>履修登録・登録状況照会</h1><table><tr><th>開講番号</th><th>科目名</th></tr><tr><td>261G7011</td><td>検索結果だけの科目</td></tr></table>",
   );

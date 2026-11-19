@@ -37,7 +37,8 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
   var names = {
     grades: "単位修得状況照会",
     registration: "履修登録・登録状況照会",
-    balances: "履修科目確認表"
+    balances: "履修科目確認表",
+    profile: "学生所属"
   };
   var rejected = "不許可となった科目";
   var codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
@@ -189,6 +190,7 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       (t) => !!header(t, "balances")
     ))
       kinds.push("balances");
+    if ((grade || registration) && profile(doc)) kinds.push("profile");
     return kinds;
   }
   function header(table, kind) {
@@ -294,7 +296,30 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
       }
     }
   }
+  function profile(doc) {
+    const matches = [];
+    for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
+      if (header(table, "grades") || header(table, "registration") || header(table, "balances") || table.querySelector("form,table")) continue;
+      const cells = Array.from(table.rows).flatMap((row) => Array.from(row.cells)).filter(visible);
+      const values = (key) => cells.filter((cell) => label(cell) === key && cell.nextElementSibling && visible(cell.nextElementSibling)).map((cell) => leaf(cell.nextElementSibling));
+      const affiliations = values("所属");
+      const grades = values("学年");
+      if (affiliations.length !== 1 || grades.length > 1) continue;
+      const affiliation = safeText(affiliations[0]);
+      if (!affiliation) continue;
+      const grade = grades[0] || "";
+      matches.push({ table, data: {
+        heading: names.profile,
+        rows: [["所属", "学年"], [affiliation, /^[1-6]$/.test(grade) ? grade : ""]]
+      } });
+    }
+    return matches.length === 1 ? matches[0] : null;
+  }
   function academicTables(doc, kind) {
+    if (kind === "profile") {
+      const projected = profile(doc);
+      return projected ? [projected.table] : [];
+    }
     return Array.from(doc.querySelectorAll("table")).filter(
       (table) => visible(table) && (header(table, kind) || kind === "registration" && Array.from(table.querySelectorAll('a[onclick*="CallDetail("]')).some(
         (a) => a.closest("table") === table
@@ -335,6 +360,10 @@ const String _coursePlannerCaptureJsPrefix = r'''(function(__mbgConfig) {
     const current = academicTables(doc, kind);
     if (!owner || owner.attempt !== attempt || owner.href !== doc.URL || current.some((t) => !owner.tables.includes(t)) || owner.tables.some((t) => !t.isConnected))
       return null;
+    if (kind === "profile") {
+      const projected = profile(doc);
+      return projected ? { v: 1, kind, tables: [projected.data] } : null;
+    }
     const tables = current.map((t) => tableData(t, kind)).filter((t) => !!t);
     const grid = kind === "registration" ? timetable(doc) : null;
     if (grid) tables.unshift(grid);

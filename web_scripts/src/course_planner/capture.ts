@@ -1,6 +1,7 @@
 export {};
 
-type Kind = "grades" | "registration" | "balances";
+type AcademicKind = "grades" | "registration" | "balances";
+type Kind = AcademicKind | "profile";
 type Table = { heading: string; rows: string[][] };
 declare const __mbgConfig: { attempt: string; kind?: Kind };
 type SourceDocument = Document & {
@@ -16,6 +17,7 @@ const names = {
   grades: "単位修得状況照会",
   registration: "履修登録・登録状況照会",
   balances: "履修科目確認表",
+  profile: "学生所属",
 };
 const rejected = "不許可となった科目";
 const codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
@@ -75,7 +77,7 @@ const gradeColumns: Record<string, string> = {
   修得単位数: "修得単位数",
   取得単位数: "修得単位数",
 };
-const allowed: Record<Kind, string[]> = {
+const allowed: Record<AcademicKind, string[]> = {
   grades: [
     "開講番号",
     "科目名",
@@ -209,9 +211,10 @@ function pageKinds(doc: Document): Kind[] {
     )
   )
     kinds.push("balances");
+  if ((grade || registration) && profile(doc)) kinds.push("profile");
   return kinds;
 }
-function header(table: HTMLTableElement, kind: Kind) {
+function header(table: HTMLTableElement, kind: AcademicKind) {
   const names = kind === "grades" ? gradeColumns : columns;
   for (const row of Array.from(table.rows).slice(0, 5)) {
     const cells = Array.from(row.cells);
@@ -242,7 +245,7 @@ function isRejected(table: HTMLTableElement, headerRow: HTMLTableRowElement) {
     .slice(0, headerRow.rowIndex)
     .some((row) => row.cells.length === 1 && label(row.cells[0]) === rejected);
 }
-function tableData(table: HTMLTableElement, kind: Kind): Table | null {
+function tableData(table: HTMLTableElement, kind: AcademicKind): Table | null {
   if (!visible(table)) return null;
   const h = header(table, kind);
   if (!h) return null;
@@ -374,7 +377,35 @@ function sourceDocuments(doc: SourceDocument, found: SourceDocument[]) {
     }
   }
 }
+function profile(doc: Document) {
+  const matches: { table: HTMLTableElement; data: Table }[] = [];
+  for (const table of Array.from(doc.querySelectorAll("table")).filter(visible)) {
+    if (header(table, "grades") || header(table, "registration") ||
+        header(table, "balances") || table.querySelector("form,table")) continue;
+    const cells = Array.from(table.rows).flatMap((row) => Array.from(row.cells))
+      .filter(visible);
+    const values = (key: string) => cells
+      .filter((cell) => label(cell) === key && cell.nextElementSibling && visible(cell.nextElementSibling))
+      .map((cell) => leaf(cell.nextElementSibling));
+    const affiliations = values("所属");
+    const grades = values("学年");
+    if (affiliations.length !== 1 || grades.length > 1) continue;
+    const affiliation = safeText(affiliations[0]);
+    if (!affiliation) continue;
+    const grade = grades[0] || "";
+    matches.push({ table, data: {
+      heading: names.profile,
+      rows: [["所属", "学年"], [affiliation, /^[1-6]$/.test(grade) ? grade : ""]],
+    } });
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function academicTables(doc: Document, kind: Kind) {
+  if (kind === "profile") {
+    const projected = profile(doc);
+    return projected ? [projected.table] : [];
+  }
   return Array.from(doc.querySelectorAll("table")).filter(
     (table) =>
       visible(table) &&
@@ -426,6 +457,10 @@ function capture() {
     owner.tables.some((t) => !t.isConnected)
   )
     return null;
+  if (kind === "profile") {
+    const projected = profile(doc);
+    return projected ? { v: 1, kind, tables: [projected.data] } : null;
+  }
   const tables = current
     .map((t) => tableData(t, kind))
     .filter((t): t is Table => !!t);
