@@ -208,8 +208,8 @@ export default function economics(p,book) {
   rows.find(r=>r.key==="total").allocationKeys=rows.filter(r=>r.exclusive==="economics-graduation").map(r=>r.key);
   const stages=[2,3,4].map(n=>stage("econ-year-"+n,n+"年次進級","progress",progress,[
     attendance(12,attendanceCriteria,n-1),termEnd(),...(n===4?[attendance(36,progress),throughYear({...total(90),source:progress},3)]:[]),
-    ...(isTransfer(p)?[transferRow(book)]:[])]));
-  stages.push(stage("econ-thesis","4年次の卒業論文履修","progress",progress,[minimumYear(4,progress),uncertain("supervisor","指導教員の決定","所属プログラム担当教員との協議・指導教員決定は学部の通知を確認してください。",progress)]),
+    ...(isTransfer(p)?[transferRow(book)]:[])],[n-1,n-1]));
+  stages.push(stage("econ-thesis","4年次の卒業論文履修","progress",progress,[minimumYear(4,progress),uncertain("supervisor","指導教員の決定","所属プログラム担当教員との協議・指導教員決定は学部の通知を確認してください。",progress)],[4,4]),
     stage("econ-graduation","卒業","graduation",src,rows));
   const g=previousGpa(p);
   const errata=({2022:"ecx29",2023:"ecx31",2024:"ecx33"})[y];

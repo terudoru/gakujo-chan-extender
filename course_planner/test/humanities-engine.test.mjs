@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../src/requirements.mjs";
 import * as pack from "../src/curricula/humanities.mjs";
+import { activeCourses } from "../src/study.mjs";
 import catalog from "../src/catalog-2026.json" with {type:"json"};
 
 const api=engine.createRequirementAPI?.([pack]);
@@ -59,6 +60,36 @@ run("実エンジンで在学期間・学期末・編転入・GPA5と学期CAP�
   assert.equal(api.resolveCAP(p).classify(plan("E","卒業論文","0C",8)),"exclude");
   assert.equal(api.resolveCAP({...p,faculty:"教育学部"}).status,"unknown");
 });
+run("在籍年次に合う次の進級・履修登録を開き、別の段階も明示して照合できる",()=>{
+  const choose="progress-selection";
+  const cases=[
+    [profile("経済科学部","経済学"),["econ-year-2","econ-year-3","econ-year-4","econ-thesis",choose,choose]],
+    [profile("経済学部（旧課程）","経済学科（夜間主コース）",{handbook:"2018",admitted:"2018"}),
+      ["old-econ-2","old-econ-3","old-econ-4","old-econ-research",choose,choose]],
+    [profile("人文学部","社会文化学"),["human-third","human-third","human-thesis-filing","human-thesis-filing",choose,choose]],
+    [profile("教育学部","特別支援教育専修（小教基礎免）"),
+      ["education-practicum","education-practicum",choose,choose,choose,choose]],
+    [profile("法学部","法学"),Array(6).fill("law-research")]
+  ];
+  for(const [base,ids] of cases) for(const [i,id] of ids.entries()) {
+    const p={...base,yearOfStudy:String(i+1)};
+    const result=api.requirementRows(state(p),new Map(),[],"progress");
+    assert.equal(result[0].stageId,id,base.faculty+" "+p.yearOfStudy);
+    for(const s of api.availableStages(p,"progress"))
+      assert.equal(api.requirementRows(state(p),new Map(),[],s.id)[0].stageId,s.id);
+    assert.ok(api.requirementRows(state(p),new Map(),[],"graduation")[0].stageId.endsWith("-graduation"));
+  }
+  const old=profile("教育学部","学校教育学専修",{admitted:"2018",handbook:"2018",yearOfStudy:"3"});
+  for(const [date,id] of [["2021-03-31","education-practicum"],["2021-04-01",choose]]) {
+    const p={...old,assessmentDate:date};
+    assert.equal(api.requirementRows(state(p),new Map(),[],"progress")[0].stageId,id,date);
+  }
+  for(const entered of ["",null,0,7]) {
+    const p={...cases[0][0],yearOfStudy:entered};
+    const r=api.requirementRows(state(p),new Map(),[],"progress")[0];
+    assert.deepEqual([r.stageId,r.status],[choose,"unknown"]);
+  }
+});
 run("法学のB類を正式な開講名で判定し、正の差分だけを候補とする",()=>{
   const lecture=offering("04",s=>s.startsWith("民法II("));
   const seminar=offering("04",s=>s==="民法基礎演習/民事法基礎演習");
@@ -95,20 +126,65 @@ run("長期在学・休学を含む履歴で修得時の年次と単位の根拠
   const insufficient=rows(state(p,extra),"law-research").get("total");
   assert.deepEqual([insufficient.current,insufficient.status],[2,"unknown"]);
 });
-run("教育実習の履修済み・正式登録と教養の日本国憲法を区別する",()=>{
+run("教育実習で最終評価を受けた不可は履修済みとし、卒業単位は加算しない",()=>{
   const p=profile("教育学部","英語教育専修（小学校主免）");
   const ped=offering("03",s=>s==="現代教育学概論"),constitution=offering("84",s=>s==="日本国憲法");
   const s=state(p,[grade(ped,{grade:"履修中"}),grade(constitution)]);
   const pract=rows(s,"education-practicum").get("pedagogy");
   assert.deepEqual([pract.current,pract.future,pract.futureStatus],[0,1,"met"]);
   assert.equal(rows(s,"education-graduation").get("constitution").current,2);
-  const failure=rows(state(p,[grade(ped,{grade:"不可"})]),"education-practicum").get("pedagogy");
-  assert.equal(failure.status,"unknown");
-  assert.equal(rows(state(p,[grade(ped,{grade:"不可"})]),"education-graduation").get("total").current,0);
-  const verified={...state(p,[grade(ped,{grade:"不可"})]),balances:[{scope:{...p,stageId:"education-practicum",goal:"progress"},
-    key:"pedagogy",unit:"condition",current:1,required:1,confirmed:true}]};
-  assert.equal(rows(verified,"education-practicum").get("pedagogy").current,1);
+  const failed=grade(ped,{grade:"不可",finalEvaluation:true,counts:false});
+  const get=(records,profile=p)=>rows(state(profile,records),"education-practicum").get("pedagogy");
+  const failure=get([failed]);
+  assert.deepEqual([failure.current,failure.status,failure.earned[0]?.recordId],[1,"met",failed.recordId]);
+  assert.deepEqual([failure.earned[0].column,failure.earned[0].applied,failure.earned[0].earnedCredits],["evaluation",1,0]);
+  for(const letter of ["不合格","F","D"])assert.equal(get([{...failed,grade:letter}]).status,"met");
+  assert.equal(rows(state(p,[failed]),"education-graduation").get("total").current,0);
+  assert.equal(get([failed],{...p,handbook:"2024"}).status,"unknown");
+  for(const record of [grade(ped,{grade:"---"}),grade(ped,{grade:"欠席"}),grade(ped,{grade:"出席"}),
+    {...failed,finalEvaluation:false}, {...failed,matchedCourse:null,matchStatus:"unresolved"}, {...failed,identityUnresolved:true}]) {
+    assert.deepEqual([get([record]).current,get([record]).status],[0,"unknown"]);
+  }
+  const retake=grade({...ped,year:2027});
+  const credits=rows(state(p,[failed,retake]),"education-graduation").get("total");
+  assert.deepEqual([credits.current,credits.earned[0].recordId],[Number(ped.credits),retake.recordId]);
+});
+run("教育実習で正式な履修中だけを認め、申請中や出席予定は履修済みにしない",()=>{
+  const p=profile("教育学部","英語教育専修（小学校主免）");
+  const ped=offering("03",s=>s==="現代教育学概論"),profession=offering("03",s=>s==="教職概論");
+  const projected=(s,planned,key="pedagogy")=>rows(s,"education-practicum",planned).get(key);
+  const pending=grade(ped,{grade:"申請中",registered:true});
+  const applying=projected(state(p,[pending]),[]);
+  assert.deepEqual([applying.future,applying.futureStatus],[0,"short"]);
+  assert.equal(projected(state(p),[{...ped,registered:true}]).future,1);
+  assert.equal(projected(state(p),[{...ped,registered:false}]).future,0);
+  assert.equal(projected(state(p),[{...profession,registered:true}],"profession").future,0);
+  for(const [status,met] of [["許可",1],["申請中",0],["不許可",0],["",0]]) {
+    const s={...state(p),plan:[ped.code],status:{[ped.code]:status}};
+    const index=new Map([[ped.code,ped]]);
+    const visible=activeCourses(s,index);
+    const r=api.requirementRows(s,index,visible,"education-practicum").find(row=>row.key==="pedagogy");
+    assert.deepEqual([r.current,r.future],[0,met],status);
+    if(status==="申請中")assert.equal(r.futureStatus,"short");
+    if(!status)assert.equal(r.futureStatus,"unknown");
+    const suggest=api.shortageFilter(s,index,[],{key:"pedagogy",stageId:"education-practicum"});
+    assert.equal(suggest(ped),Boolean(met),status);
+  }
+});
+run("教育実習の本人宛て確認結果を同じ適用年度・科目・段階だけに使う",()=>{
+  const p=profile("教育学部","英語教育専修（小学校主免）");
+  const stage="education-practicum",scope={...p,stageId:stage,goal:"progress"};
+  const balance={scope,key:"pedagogy",unit:"condition",current:1,required:1,confirmed:true};
+  const check=(b,profile=p)=>rows({...state(profile),balances:[b]},stage).get("pedagogy");
+  assert.deepEqual([0,1].map(current=>check({...balance,current}).status),["short","met"]);
+  const ambiguous=grade(offering("03",s=>s==="現代教育学概論"),{grade:"出席"});
+  const verified={...state(p,[ambiguous]),balances:[balance]};
+  assert.equal(rows(verified,stage).get("pedagogy").current,1);
+  assert.equal(rows(verified,stage).get("guidance").status,"unknown");
   assert.equal(rows(verified,"education-graduation").get("total").current,0);
+  for(const b of [{...balance,confirmed:false},{...balance,key:"profession"},{...balance,scope:{...scope,stageId:"education-thesis"}},
+    {...balance,scope:{...scope,handbook:"2025"}},{...balance,scope:{...scope,program:"学校教育学専修"}}])
+    assert.equal(check(b).status,"unknown");
 });
 run("人文の外国語重複と経済の科目数・履修根拠を実エンジンで照合する",()=>{
   const p=profile("人文学部","社会文化学");
@@ -175,7 +251,10 @@ run("本人宛ての決定だけに入力を許し、法学の課程・早期卒
   const hu=profile("人文学部","言語文化学"),edu=profile("教育学部","英語教育専修（中学校主免）");
   assert.deepEqual(keys(hu,"human-thesis-filing"),["thesis-topic-approval"]);
   assert.deepEqual(keys(hu,"human-graduation"),[]);
-  assert.deepEqual(keys(edu,"education-practicum"),[]);
+  assert.deepEqual(keys(edu,"education-practicum"),["profession","psychology","pedagogy","practicum-teacher-0","practicum-teacher-1","practicum-teacher-2"]);
+  assert.deepEqual(keys({...edu,handbook:"2024"},"education-practicum"),[]);
+  assert.deepEqual(keys(edu,"education-minor-practicum"),[]);
+  assert.deepEqual(keys(edu,"education-graduation"),[]);
   for(const rule of [...decisions(p,"law-research"),...decisions(p,"law-graduation"),...decisions(hu,"human-thesis-filing")]) {
     assert.equal(rule.unit,"condition");assert.equal(rule.required,1);
     assert.equal(rule.match,undefined);assert.equal(rule.profileValue,undefined);

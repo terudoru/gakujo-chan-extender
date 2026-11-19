@@ -106,13 +106,13 @@ export default function oldEconomics(profile,book){
       rows.push(prog,credited("base","進級に必要な自学科専門基礎",night?16:12,base,src));
       if(management && day) rows.push(mandatory("accounting","会計学概論Ⅰ・Ⅱ",["会計学概論I","会計学概論II"],["05","0C"],src,2));
     }else if(!known && year!==2) rows.push(unknownTrack);
-    stages.push(stage("old-econ-"+year,year+"年次進級","progress",src,rows.map(r=>throughYear(r,year-1))));
+    stages.push(stage("old-econ-"+year,year+"年次進級","progress",src,rows.map(r=>throughYear(r,year-1)),[year-1,year-1]));
   }
   const seminar=night?"文献研究":"演習";
   stages.push(stage("old-econ-research","卒業論文の履修登録","progress",creditRules,known?[
     ...["IA","IB","IIA","IIB"].map(s=>credited("prereq-"+s,seminar+s+"の履修",1,named(["05"],[seminar+s],{sections:true}),creditRules,{unit:"courses"})),
     uncertain("old-thesis-supervision","担当教員の指導・ⅡA/Bの同時履修","ⅠA/Bを3年次末までに修得し、4年次にⅡA/Bを履修する場合も可。担当教員に履修時期を確認してください。",creditRules)
-  ]:[unknownTrack]));
+  ]:[unknownTrack],[4,4]));
   if(isTransfer(profile)) graduation.push(transferRow(book));
   stages.push(stage("old-econ-graduation","卒業","graduation",src,graduation));
   return {title:book.title,sources:[book,src,regulation,creditRules,equivalents],stages,

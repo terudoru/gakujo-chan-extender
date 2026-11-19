@@ -2,7 +2,7 @@ import specializations from "./education-courses.json" with { type: "json" };
 import annexes from "./education-annexes.json" with { type: "json" };
 import publications from "./publications.json" with { type: "json" };
 import { text, source, page, stage, credited, uncertain, mandatory, any, named, gCategory, attendance,
-  transferRow, isTransfer, alternative, contribution } from "./rules.mjs";
+  transferRow, isTransfer, alternative, contribution, assessmentDate } from "./rules.mjs";
 
 const subjects=["国語教育","社会科教育","数学教育","理科教育","音楽教育","美術教育","保健体育","技術教育","家庭科教育","英語教育"];
 export function programs(year) {
@@ -11,20 +11,36 @@ export function programs(year) {
 }
 const totalsPages=[106,98,98,102,102,89,104,104,104];
 const practicumPages=[59,55,55,58,58,53,60,60,60];
+const practicumTablePages=[119,141,132,132,136,136,123,138,138,138];
 const ed=names=>named(["03","84"],names);
 const specificNames=names=>named(["03"],names,{sections:true});
 const corrected = {2021:"edx22",2022:"edx20",2025:"edx16"};
+const taking=["許可","履修中","受講中"];
+const notRegistered=["申請中","不許可","履修予定","登録取消"];
 
-function registrationEvidence(key,title,canBeTaking,src) {
+function registrationEvidence(key,title,canBeTaking,src,evaluationSource) {
   const matches=specificNames([title]);
-  return credited(key,title+"（"+(canBeTaking?"履修済みまたは履修中":"履修済み")+"）",1,matches,src,{unit:"condition",
+  const note=evaluationSource
+    ? "成績通知書に最終評価があれば、不可でも履修済みです。「---」は評価を受けていないことを示します。"
+    : "不可の場合の履修済みの扱いは、入学年度の実習担当に確認してください。";
+  return credited(key,title+"（"+(canBeTaking?"履修済みまたは履修中":"履修済み")+"）",1,matches,evaluationSource??src,{
+    kind:"教育実習の履修要件",unit:"condition",note:note+(canBeTaking?" 履修中は正式な登録記録で確認してください。":""),
+    ...(evaluationSource?{officialDecision:true,includeFailedEvaluations:true}:{}),
     evaluate:({courses})=>{
-      const check=c=>c.evaluated===true || c.earned===true || c.passed===true ||
-        /^(秀|優|良|可|不可|合格|不合格|修得(済み?)?|認定|S|[ABC][+-]?|P)$/i.test(c.grade || c.result || "") ||
-        (canBeTaking && (c.registered===true || c.status==="許可" || ["許可","履修中","受講中"].includes(c.grade)));
-      const selected=courses.filter(c=>matches(c)===true); const hit=selected.find(check);
+      const selected=courses.filter(c=>matches(c)===true);
+      const hit=selected.find(c=>{
+        const grade=c.grade || c.result || "";
+        if(/^(秀|優|良|可|合格|修得(済み?)?|認定|S|[ABC][+-]?|P)$/i.test(grade) ||
+          (!grade && (c.earned===true || c.passed===true)))return true;
+        if(evaluationSource && c.finalEvaluation!==false && c.evaluated!==false &&
+          (["不可","不合格"].includes(grade) || (c.column==="evaluation" && c.evaluated===true) ||
+            (!grade && (c.finalEvaluation===true || c.evaluated===true))))return true;
+        if((grade && !taking.includes(grade)) || notRegistered.includes(c.status))return false;
+        return canBeTaking && (c.registered===true || taking.includes(c.status) || taking.includes(grade));
+      });
+      const pendingOnly=selected.length>0 && selected.every(c=>c.grade==="申請中" || c.status==="申請中");
       return {value:hit?1:0,contributions:hit?[contribution(hit,1,canBeTaking?"履修状況":"評価済み")]:[],
-        ...(!hit?{unknown:"不合格でも評価済みなら履修済みです。成績・正式登録の記録または実習の履修資格確認表で照合してください。"}:{})};
+        ...(!hit && !pendingOnly?{unknown:note+" 実習の履修資格を成績通知書・実習担当の記録で確認してください。"}:{})};
     }});
 }
 
@@ -33,7 +49,17 @@ export default function education(profile,book) {
   const src=page(book,totals,"別表第1 履修基準表");
   const genSrc=page(book,totals+(y>=2024 || y===2017?1:0),"別表第2 教養教育の履修基準");
   const prereq=page(book,y===2023 || y===2017?8:11,"卒業研究の履修資格");
-  const pract=page(book,y===2017?52:practicumPages[y-2018],"教育実習の履修要件・履修済みの定義");
+  const pract=page(book,y===2017?52:practicumPages[y-2018],"教育実習の履修要件");
+  const tablePage=practicumTablePages[y-2017];
+  const majorTable=page(book,tablePage,"教育実習規程別表第1 主専攻実習の履修年次");
+  const minorTable=page(book,tablePage+1,"教育実習規程別表 副専攻実習の履修年次");
+  // From April 2021, appendix 3 also governs the timing of earlier entrants' optional minor placement.
+  const asOf=assessmentDate(profile);
+  const earlierTable=y<2021 && asOf!==null && asOf.getTime()<Date.UTC(2021,3,1);
+  const amendedTables=y<2021 && !earlierTable
+    ? [136,137].map(n=>page({year:"2021",url:publications.ed2021[1]},n,"教育実習規程令和3年附則第2項・別表第3 過年度入学生の副専攻教育実習")):[];
+  const evaluationSource=y>=2025?page(book,61,"教育実習の履修要件・成績通知書による履修済みの定義"):null;
+  const registration=(key,title,canBeTaking)=>registrationEvidence(key,title,canBeTaking,pract,evaluationSource);
   const yrNote=corrected[y]?source(...publications[corrected[y]]):null;
   const prog=text(profile.program).replace(/[()]/g,"").replace(/^学校教員養成課程/,"").replace(/^(学校教育コース|教科教育コース)/,"");
   const valid=programs(y).find(s=>text(s).replace(/[()]/g,"")===prog);
@@ -140,10 +166,10 @@ export default function education(profile,book) {
   rows.find(r=>r.key==="total").allocationKeys=rows.filter(r=>r.exclusive==="education-graduation").map(r=>r.key);
   if(isTransfer(profile)) rows.push(transferRow(book));
   const gate=[uncertain("guidance","実習前の事前指導","事前指導の出席を実習担当の記録で確認してください。",pract),
-    registrationEvidence("profession",y===2017?"教職入門":"教職概論",false,pract),
-    registrationEvidence("psychology",y===2017?"教育心理学":y===2018?"教育・学校心理学":y===2026?"教育心理学A":"教育・学校心理学A",false,pract),
-    registrationEvidence("pedagogy",y===2017?"教育学概論":"現代教育学概論",y>=2025,pract),
-    ...(y===2017?["教育の制度と経営","教育方法・技術"]:["教育政策と法概論",y===2018?"教育方法総論A":"教育方法及び特別活動の指導法A","道徳教育論"]).map((t,i)=>registrationEvidence("practicum-teacher-"+i,t,true,pract)),
+    registration("profession",y===2017?"教職入門":"教職概論",false),
+    registration("psychology",y===2017?"教育心理学":y===2018?"教育・学校心理学":y===2026?"教育心理学A":"教育・学校心理学A",false),
+    registration("pedagogy",y===2017?"教育学概論":"現代教育学概論",y>=2025),
+    ...(y===2017?["教育の制度と経営","教育方法・技術"]:["教育政策と法概論",y===2018?"教育方法総論A":"教育方法及び特別活動の指導法A","道徳教育論"]).map((t,i)=>registration("practicum-teacher-"+i,t,true)),
     uncertain("methods","実習の校種・教科に対応する教科教育法","小学校は1科目履修済み＋別の1科目が履修済み又は履修中。中等は当該教科1科目が履修済み。実習先の校種・教科と評価記録で照合してください。",pract)];
   if(y===2017) gate.push(uncertain("method-alternative","道徳指導法または特別活動研究","いずれかが履修済み又は履修中であることを登録記録で照合してください。高校免許のみの場合は実習担当に適用を確認してください。",pract));
   if(prog.includes("英語教育") && middle) gate.push(uncertain("eiken","中等英語実習の英検2級以上","実習申請時点の合格証明を実習担当に提示してください。",pract));
@@ -151,13 +177,17 @@ export default function education(profile,book) {
   rows.push(uncertain("teaching-licenses",current?"主免と副免の取得資格":"主免の取得資格",current?
     "小学校・中学校、又は特別支援学校・小学校等、所属コースの必須の組合せを学生要覧と免許状取得見込確認表で確認してください。":
     "入学年度・所属専修の必須免許の取得資格を教育学部学務係の免許確認表で照合してください。",license));
-  const stages=[stage("education-thesis","卒業研究の履修登録","progress",prereq,[attendance(36,prereq),credited("total","履修資格に必要な修得単位",95,eligible,prereq)]),
-    stage("education-practicum","初等・中等主専攻実習の履修登録","progress",pract,gate),
-    stage("education-minor-practicum","副専攻実習の履修登録","progress",pract,[uncertain("major-practicum","主専攻教育実習の修了","主専攻教育実習の修了・副免の校種別教科教育法・中等英語の英検2級を実習担当の資料で照合してください。",pract)])];
+  const mainPlacement=stage("education-practicum","初等・中等主専攻実習の履修登録","progress",pract,gate,[1,special?4:3]);
+  mainPlacement.sources.push(majorTable);
+  const minorPlacement=stage("education-minor-practicum","副専攻実習の履修登録","progress",pract,[
+    uncertain("major-practicum","主専攻教育実習の修了","主専攻教育実習の修了・副免の校種別教科教育法・中等英語の英検2級を実習担当の資料で照合してください。",pract)],[earlierTable?4:3,4]);
+  minorPlacement.sources.push(minorTable,...amendedTables);
+  const stages=[stage("education-thesis","卒業研究の履修登録","progress",prereq,[
+    attendance(36,prereq),credited("total","履修資格に必要な修得単位",95,eligible,prereq)],[4,4]),mainPlacement,minorPlacement];
   if(special) stages.push(stage("education-special-practicum","特別支援教育実習の追加履修条件","progress",pract,
-    ["特別支援教育の本質と目標","知的障害心理学"].map((t,i)=>registrationEvidence("support-"+i,t,true,pract))));
+    ["特別支援教育の本質と目標","知的障害心理学"].map((t,i)=>registration("support-"+i,t,true)),[3,4]));
   stages.push(stage("education-graduation","卒業","graduation",src,rows));
-  return {title:book.title,sources:[book,src,genSrc,specSrc,prereq,pract,...(yrNote?[yrNote]:[])],stages,
+  return {title:book.title,sources:[book,src,genSrc,specSrc,prereq,pract,majorTable,minorTable,...amendedTables,...(evaluationSource?[evaluationSource]:[]),...(yrNote?[yrNote]:[])],stages,
     note:"卒業研究・実習の履修登録と、卒業時の単位・主免等の判定は別々に表示します。",
     cap:{period:"semester",unit:"credits",limit:null,source:source("新潟大学 教務関係Q12・学部別の登録上限","https://www.niigata-u.ac.jp/campus/qa/education/"),
       note:"学生要覧で一律の学期上限を確認できません。登録年度・専修の履修指導と教育学部学務係の回答を確認してください。"}};

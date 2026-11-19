@@ -153,12 +153,12 @@ export default function literature(profile, book) {
   const steps = [stage("human-third","3年次進級（第5セメスター）","progress",promotion,[
     attendance(24,promotion),credited("total","進級に算入する単位",historical?58:54,eligible,promotion,{evaluate:sumEligible}),
     {...fresh,source:promotion},singleLanguage(4,promotion),credited("intro","入門講義",4,intro,promotion),
-    ...(isTransfer(profile)?[transferRow(book)]:[])])];
+    ...(isTransfer(profile)?[transferRow(book)]:[])],[1,2])];
   if(+book.year>=2014) {
     const filing=page(book,y===2014 || y>=2025?30:29,"人文学部履修細則第9条・卒業論文題目の届出");
     steps.push(stage("human-thesis-filing","卒業論文題目の届出","progress",filing,[minimumYear(4,filing),
       officialDecision("thesis-topic-approval","卒業論文指導教員による題目の承認",
-        "学部長に届け出る題目について、卒業論文指導教員の承認結果を確認してください。",filing)]));
+        "学部長に届け出る題目について、卒業論文指導教員の承認結果を確認してください。",filing)],[3,4]));
   }
   steps.push(stage("human-graduation","卒業","graduation",grad,rows));
   return {title:book.title, sources:[book,grad,list,promotion,capSrc,languageSource,

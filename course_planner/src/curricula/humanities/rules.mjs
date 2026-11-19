@@ -60,7 +60,7 @@ export const attendance = (required, src, year) => ({
   },
   note: "休学期間を除き、編入等は学部が通算を認定した期間を用います。",
 });
-function assessmentDate(p) {
+export function assessmentDate(p) {
   const s=p.assessmentDate;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s ?? "")) return null;
   const d=new Date(s+"T00:00:00Z");
@@ -79,8 +79,23 @@ export function transferRow(book) {
   return uncertain("recognition", "適用便覧・既修得単位と在学期間の認定",
     "学部学務係の適用年度通知、単位認定結果と履修科目確認表で、認定先と通算期間を確認してください。", book);
 }
-export function stage(id, label, goal, src, rows) {
-  return { id, label, goal, rows, sources: [src] };
+export function stage(id, label, goal, src, rows, initialYears) {
+  return { id, label, goal, rows, sources: [src], ...(initialYears ? {initialYears} : {}) };
+}
+// These years choose the initial display only. Students can still select any gate.
+export function initialProgressStage(descriptor, profile, book) {
+  const gates=descriptor.stages.filter(s=>s.goal==="progress");
+  if(gates.length<2)return;
+  const year=wholeNumber(profile.yearOfStudy);
+  const matches=gates.filter(s=>s.initialYears && year>=s.initialYears[0] && year<=s.initialYears[1]);
+  let chosen=matches[0];
+  if(matches.length!==1) {
+    chosen=stage("progress-selection","照合する判定を選択","progress",book,[
+      uncertain("progress-selection","照合する判定","「照合する学年・履修条件」で確認したい段階を選んでください。",book)]);
+    descriptor.stages.unshift(chosen);
+  }
+  descriptor.defaultStage=chosen.id;
+  for(const s of descriptor.stages)if(s.goal==="progress")s.default=s===chosen;
 }
 export function throughYear(row,lastYear) {
   if(!row.match)return row;

@@ -4,7 +4,7 @@ import education, { programs as educationPrograms } from "./humanities/education
 import law, { lawBooks } from "./humanities/law.mjs";
 import economics, { programs as econPrograms } from "./humanities/economics.mjs";
 import oldEconomics, { oldPrograms } from "./humanities/old-economics.mjs";
-import { source, uncertain, stage, isTransfer, transferRow, numericEvidence } from "./humanities/rules.mjs";
+import { source, uncertain, stage, isTransfer, transferRow, numericEvidence, initialProgressStage } from "./humanities/rules.mjs";
 
 const directory={
   人文学部:source("人文学部 学生便覧・過年度授業科目一覧","https://www.human.niigata-u.ac.jp/education/handbook/"),
@@ -37,6 +37,7 @@ export default function resolve(profile={}) {
   const index=directory[faculty];
   if(book && !(faculty==="人文学部" && +year<=2009)) {
     const descriptor=resolvers[faculty](profile,book);
+    initialProgressStage(descriptor,profile,book);
     for(const stage of descriptor.stages) stage.rows=stage.rows.map(numericEvidence);
     return descriptor;
   }

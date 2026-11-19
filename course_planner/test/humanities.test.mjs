@@ -9,7 +9,7 @@ const evaluate=(r,courses,profile={})=>r.evaluate({courses,profile,baseline:0});
 const g=(title,credits,category)=>course("84",title,credits,{category});
 const econ=(t,n=2)=>course("0C",t,n);
 const law=(t,n=2)=>course("04",t,n);
-const passed=(t,n=2)=>course("03",t,n,{evaluated:true});
+const passed=(t,n=2)=>course("03",t,n,{grade:"優"});
 const E="経済科学部",O="経済学部（旧課程）";
 
 test("公開資料の各年度・プログラムに出典と到達段階がある",()=>{
@@ -61,6 +61,20 @@ test("教育学部の改正年度・主免による内訳と日本国憲法",()=
   assert.equal(evaluate(pr,[enrolled]).value,1);
   assert.equal(evaluate(before,[enrolled]).value,0);
   assert.equal(evaluate(before,[passed("現代教育学概論")]).value,1);
+  for(const year of [2025,2026]) {
+    const rule=row(build(year),"pedagogy","education-practicum");
+    assert.ok(rule.source.url.endsWith("#page=61"));
+    for(const grade of ["不可","不合格"])assert.equal(evaluate(rule,[{...enrolled,registered:false,grade}]).value,1);
+    for(const grade of ["申請中","---","- - -"])assert.equal(evaluate(rule,[{...enrolled,grade}]).value,0);
+    assert.equal(evaluate(rule,[{...enrolled,registered:false,evaluated:false,grade:"不可"}]).value,0);
+  }
+  for(let year=2017;year<=2024;year++) {
+    const rule=row(build(year),"pedagogy","education-practicum");
+    const failed=course("03",year===2017?"教育学概論":"現代教育学概論",2,{grade:"不可"});
+    assert.equal(evaluate(rule,[failed]).value,0);
+    assert.equal(rule.includeFailedEvaluations,undefined);
+    assert.equal(rule.officialDecision,undefined);
+  }
 });
 test("教育の過年度別表第6の括弧内と、別枠の専修科目を区別する",()=>{
   const build=(year,program)=>descriptor("教育学部",year,program);
