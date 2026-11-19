@@ -10,6 +10,8 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
 
+import 'course_planner_windows_react_smoke.dart';
+
 const fixturePacket = {
   'v': 1,
   'kind': 'grades',
@@ -39,6 +41,11 @@ Future<void> main() async {
     throw StateError('A fresh fixture directory is required.');
   }
   final result = File('${root.path}/result.txt');
+  final dist = Platform.environment['MBG_PLANNER_SMOKE_DIST'];
+  if (dist != null && dist.isNotEmpty) {
+    await runReactPlannerSmoke(root, Directory(dist), result);
+    return;
+  }
   final timer = Timer(const Duration(seconds: 45), () {
     result.writeAsStringSync('timeout');
     exit(1);
