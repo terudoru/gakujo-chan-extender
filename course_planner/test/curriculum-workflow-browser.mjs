@@ -60,8 +60,92 @@ async function checkFaculties(cohort) {
   }
 }
 
+async function checkPracticumEvaluation(page, year, code, department, unitsColumn, units) {
+  const education = student("教育学部", "英語教育専修（小学校主免）", { yearOfStudy: 2, admitted: year, handbook: year });
+  await seed(page, education);
+  await btn(page, "成績を取り込む").click();
+  const transcript = page.getByRole("dialog");
+  await transcript.locator("input[type=file]").setInputFiles({
+    name: "assessment.csv", mimeType: "text/csv",
+    buffer: Buffer.from(`履修年度,開講番号,科目名,開講所属,${unitsColumn},評価\n${year},${code},現代教育学概論,${department},${units},不可\n`),
+  });
+  const optIn = transcript.getByRole("checkbox", { name: /現代教育学概論.*最終評価を確認/ });
+  assert.equal(await optIn.isChecked(), false);
+  assert.deepEqual((await saved(page)).grades, []);
+  await optIn.check();
+  await btn(transcript, "選択した1件を取り込む").click();
+  await transcript.waitFor({ state: "hidden" });
+  const [evaluation] = (await saved(page)).grades;
+  assert.deepEqual([evaluation.grade, evaluation.credits, evaluation.finalEvaluation, evaluation.counts, evaluation.matchedCourse?.code, evaluation.matchedCourse?.year],
+    ["不可", 2, true, false, code, year]);
+  assert.equal(await row(page, "卒業単位の合計").locator(":scope > span").nth(1).innerText(), "0");
+  await page.getByRole("radio", { name: "進級まで" }).click();
+  await page.getByRole("combobox", { name: "照合する学年・履修条件" }).click();
+  await page.getByRole("option", { name: "初等・中等主専攻実習の履修登録", exact: true }).click();
+  const pedagogy = page.locator(".ledger-row").filter({ has: page.locator("strong").filter({ hasText: /^現代教育学概論（/ }) });
+  assert.equal(await pedagogy.locator(":scope > span").nth(1).innerText(), "充足");
+  await pedagogy.locator("summary").click();
+  assert.match(await pedagogy.innerText(), /最終評価を受けた科目[\s\S]*修得 0単位/);
+  await page.getByRole("radio", { name: "修得履歴" }).click();
+  assert.match(await page.getByRole("listitem").filter({ hasText: "現代教育学概論" }).innerText(), /不可[\s\S]*配当 2単位 · 修得 0単位/);
+}
+
+export async function checkSavedHistoricalMatch(page) {
+  const state = student("工学部", "機械システム工学プログラム");
+  const title = "実践コミュニケーション英語I", code = "200G0105";
+  const sourceUrl = "https://syllabus.niigata-u.ac.jp/syllabusHtml/2020/84/84_200G0105_ja_JP.html";
+  const legacy = { year: "2020", code, title, department: "84", fields: ["70"], category: "",
+    fieldSource: sourceUrl, sourceUrl, sourceKind: "syllabus", confirmed: true };
+  state.grades = [{ year: "2020", code, title, grade: "優", credits: 3, matchedCourse: legacy }];
+  const fields = page.getByRole("radio", { name: "シラバスの分野" });
+  const history = page.getByRole("radio", { name: "修得履歴" });
+  const english = page.locator(".af-row").filter({ has: page.getByText("70 英語", { exact: true }) });
+  const unknown = page.locator(".af-row").filter({ has: page.getByText("分野要確認", { exact: true }) });
+  const pack = "**/2020.json";
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  await page.route(pack, async (route) => { await gate; await route.continue(); });
+  try {
+    await seed(page, state);
+    await history.click();
+    await page.getByText("履修年度の資料を確認中").waitFor();
+    await fields.click();
+    assert.equal(await english.count(), 0);
+    release();
+    await history.click();
+    await btn(page, "要確認 · シラバスを照合").waitFor();
+    await fields.click();
+    await unknown.locator("summary").click();
+    assert.match(await unknown.innerText(), /実践コミュニケーション英語I[\s\S]*3単位/);
+    assert.equal(await english.count(), 0);
+    assert.deepEqual((await saved(page)).grades, state.grades);
+  } finally {
+    release();
+    await page.unroute(pack);
+  }
+
+  state.grades[0].credits = 1;
+  await seed(page, state);
+  await fields.click();
+  await english.getByText("修得 1 · 履修後 1 単位").waitFor();
+  assert.deepEqual((await saved(page)).grades, state.grades);
+
+  await page.route(pack, (route) => route.abort());
+  try {
+    await seed(page, state);
+    await history.click();
+    await btn(page, "シラバスの対応を確認").waitFor();
+    await fields.click();
+    await english.getByText("修得 1 · 履修後 1 単位").waitFor();
+    assert.deepEqual((await saved(page)).grades, state.grades);
+  } finally {
+    await page.unroute(pack);
+  }
+}
+
 export async function checkCurriculumWorkflows(page) {
   await checkFaculties(page);
+  await checkSavedHistoricalMatch(page);
   const creation = student("創生学部", "DX共創コース", { yearOfStudy: 3, attendanceMonths: 36 });
   const rules = requirementRows(creation, new Map(), [], "year-4");
   creation.balances = rules.filter((r) => r.unit === "credits").map((r) => ({
@@ -100,33 +184,13 @@ export async function checkCurriculumWorkflows(page) {
     }
   }
 
-  const education = student("教育学部", "英語教育専修（小学校主免）", { yearOfStudy: 2 });
-  await seed(page, education);
-  await btn(page, "成績を取り込む").click();
-  const transcript = page.getByRole("dialog");
-  await transcript.locator("input[type=file]").setInputFiles({
-    name: "assessment.csv", mimeType: "text/csv",
-    buffer: Buffer.from("開講番号,科目名,単位数,評価,年度\n260K0363,現代教育学概論,2,不可,2026\n"),
-  });
-  const optIn = transcript.getByRole("checkbox", { name: /現代教育学概論.*最終評価を確認/ });
-  assert.equal(await optIn.isChecked(), false);
-  assert.deepEqual((await saved(page)).grades, []);
-  await optIn.check();
-  await btn(transcript, "選択した1件を取り込む").click();
-  await transcript.waitFor({ state: "hidden" });
-  const [evaluation] = (await saved(page)).grades;
-  assert.deepEqual([evaluation.grade, evaluation.credits, evaluation.finalEvaluation, evaluation.counts, evaluation.matchedCourse?.code],
-    ["不可", 2, true, false, "260K0363"]);
-  assert.equal(await row(page, "卒業単位の合計").locator(":scope > span").nth(1).innerText(), "0");
-  await page.getByRole("radio", { name: "進級まで" }).click();
-  await page.getByRole("combobox", { name: "照合する学年・履修条件" }).click();
-  await page.getByRole("option", { name: "初等・中等主専攻実習の履修登録", exact: true }).click();
-  const pedagogy = page.locator(".ledger-row").filter({ has: page.locator("strong").filter({ hasText: /^現代教育学概論（/ }) });
-  assert.equal(await pedagogy.locator(":scope > span").nth(1).innerText(), "充足");
-  await pedagogy.locator("summary").click();
-  assert.match(await pedagogy.innerText(), /最終評価を受けた科目[\s\S]*修得 0単位/);
-  await page.getByRole("radio", { name: "修得履歴" }).click();
-  assert.match(await page.getByRole("listitem").filter({ hasText: "現代教育学概論" }).innerText(), /不可[\s\S]*配当 2単位 · 修得 0単位/);
+  for (const [year, code, department, column, units] of [
+    ["2026", "260K0363", "03", "配当単位", 2],
+    ["2026", "260K0363", "教育学部", "修得単位", 0],
+    ["2025", "250K0363", "03", "修得単位", 0],
+  ]) {
+    await checkPracticumEvaluation(page, year, code, department, column, units);
+  }
 
   const engineering = student("工学部", "機械システム工学プログラム", { entry: "" });
   engineering.grades = [await grade("261G7011")];

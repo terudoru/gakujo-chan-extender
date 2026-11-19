@@ -54,7 +54,8 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
   await File('${pages.path}/index.html').writeAsString('''<!doctype html>
     <meta charset="utf-8"><script>history.replaceState(null,"","campusportal.do")</script>
     <iframe title="照会画面" src="grades.html"></iframe>''');
-  await File('${pages.path}/grades.html').writeAsString('''<!doctype html>
+  await File('${pages.path}/grades.html').writeAsString(
+    '''<!doctype html>
     <meta charset="utf-8"><script>history.replaceState(null,"","campussquare.do")</script>
     <h1>単位修得状況照会</h1><form id="taniReferListForm"></form>
     <table><tr><th>開講番号</th><th>科目名</th><th>配当単位数</th><th>修得単位数</th><th>評価</th><th>年度</th>
@@ -67,7 +68,8 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
     <td>教育学部</td><td></td><td></td></tr></table>
     <table><tr><th>開講番号</th><th>科目名</th><th>取得単位数</th><th>評価</th><th>年度</th><th>開講所属</th></tr>
     <tr><td>260K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2026</td><td>教育学部</td></tr>
-    <tr><td>250K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2025</td><td>教育学部</td></tr></table>''');
+    <tr><td>250K0363</td><td>現代教育学概論</td><td>0</td><td>不可</td><td>2025</td><td>教育学部</td></tr></table>''',
+  );
   final inner = windows.WebviewController();
   final controller = WindowsGakujoWebViewController(inner);
   await controller.setJavaScriptModeUnrestricted();
@@ -186,10 +188,16 @@ Future<void> runReactPlannerSmoke(
     const grades =
         '''(JSON.parse(localStorage.getItem('mbg.course-planner.v1'))?.grades ?? [])''';
     const noneSaved = '$grades.length === 0';
-    const saved =
+    final selectedCount = sync ? 1 : 2;
+    final archivedSaved = sync
+        ? 'true'
+        : '''rows.some(row => row.code === '250K0363' && String(row.year) === '2025' &&
+          row.grade === '不可' && row.finalEvaluation === true && row.counts === false &&
+          row.credits === 2 && row.matchedCourse?.code === '250K0363')''';
+    final saved =
         '''(() => {
-      const rows = $grades, g = rows[0];
-      return rows.length === 1 && g.title === '$_course' && g.code === '$_code' &&
+      const rows = $grades, g = rows.find(row => row.code === '$_code');
+      return rows.length === $selectedCount && g?.title === '$_course' && $archivedSaved &&
         g.grade === '優' && g.credits === 1 && String(g.year) === '2026' &&
         g.offeringDepartment === '人文学部' && g.matchedCourse === null &&
         !JSON.stringify(g).includes('PRIVATE-COLUMN-CANARY');
@@ -221,14 +229,38 @@ Future<void> runReactPlannerSmoke(
     await _waitFor(planner, '''Boolean($finalGrade.checked && ${button(1)})''');
     await _check(planner, noneSaved);
     await planner.runJavaScript('$finalGrade.click()');
-    await _waitFor(planner, '''Boolean(!$finalGrade.checked && ${button(0)})''');
+    await _waitFor(
+      planner,
+      '''Boolean(!$finalGrade.checked && ${button(0)})''',
+    );
+    for (final code in ['260K0363', '250K0363']) {
+      stage = 'verifying earned-only consent against the offering for $code';
+      final row =
+          '''Array.from($dialog?.querySelectorAll('li') ?? []).find(li => li.innerText.includes('$code'))''';
+      final choice = '''($row)?.querySelector('input[type="checkbox"]')''';
+      await _waitFor(planner, '''Boolean(($choice)?.disabled === false &&
+        !($choice).checked && ($row).innerText.includes('配当 2単位・修得 0単位'))''');
+      await planner.runJavaScript('($choice).click()');
+      await _waitFor(planner, '''Boolean(($choice).checked && ${button(1)})''');
+      await _check(planner, noneSaved);
+      if (sync || code == '260K0363') {
+        await planner.runJavaScript('($choice).click()');
+        await _waitFor(
+          planner,
+          '''Boolean(!($choice).checked && ${button(0)})''',
+        );
+      }
+    }
     await planner.runJavaScript('$checkbox.click()');
     stage = 'checking that row selection alone did not persist the grade';
-    await _waitFor(planner, '''Boolean($checkbox.checked && ${button(1)} &&
-      !${button(1)}.matches(':disabled, [aria-disabled="true"]'))''');
+    await _waitFor(
+      planner,
+      '''Boolean($checkbox.checked && ${button(selectedCount)} &&
+      !${button(selectedCount)}.matches(':disabled, [aria-disabled="true"]'))''',
+    );
     await _check(planner, noneSaved);
     stage = 'confirming the selected row and checking the saved grade';
-    await planner.runJavaScript('${button(1)}.click()');
+    await planner.runJavaScript('${button(selectedCount)}.click()');
     await _waitFor(planner, '(!$dialog && $saved)');
     stage =
         'verifying a fresh planner document and persisted grade after reload';
@@ -251,6 +283,15 @@ Future<void> runReactPlannerSmoke(
     await _waitFor(planner, '''Array.from(document.querySelectorAll('main li'))
       .filter(li => li.getClientRects().length && ['$_course','$_code','2026','優','1単位']
         .every(value => li.innerText.includes(value))).length === 1''');
+    if (!sync) {
+      await _waitFor(
+        planner,
+        '''Array.from(document.querySelectorAll('main li'))
+        .some(li => li.getClientRects().length &&
+          ['250K0363','現代教育学概論','不可','配当 2単位 · 修得 0単位']
+            .every(value => li.innerText.includes(value)))''',
+      );
+    }
     await source.controller.dispose();
     if (sync) {
       stage = 'opening the isolated Windows and Chrome relay driver';

@@ -20,7 +20,7 @@ import { Discovery } from "./Discovery.jsx";
 import { Lists, SharedList } from "./Lists.jsx";
 import { Requirements } from "./Requirements.jsx";
 import { availableStages, handbooks, requirementRows, selectedStage, shortageFilter } from "./requirements.mjs";
-import { matchHistoricalGrades, revalidateGradeMatch } from "./archive/packs.mjs";
+import { archiveYears, loadHistoricalIndex, matchHistoricalGrades, revalidateGradeMatch } from "./archive/packs.mjs";
 import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
 import { buildCandidateMeetings } from "./components/candidate-overlaps.mjs";
 import { SyllabusFacts } from "./components/SyllabusFacts.jsx";
@@ -84,12 +84,41 @@ export function App({ catalog }) {
     () => new Map(catalog.courses.map((c) => [c.code, c])),
     [catalog],
   );
+  const confirmedYears = useMemo(() => {
+    const years = new Set(state.grades
+      .filter((grade) => grade.matchedCourse?.confirmed)
+      .map((grade) => String(grade.matchedCourse.year)));
+    return archiveYears.filter((year) => year !== String(catalog.year) && years.has(year)).join(",");
+  }, [state.grades, catalog.year]);
+  const [historicalIndexes, setHistoricalIndexes] = useState(() => new Map());
+  useEffect(() => {
+    if (!confirmedYears) return;
+    let active = true;
+    function checkYears() {
+      for (const year of confirmedYears.split(",")) {
+        loadHistoricalIndex(year, catalog).catch(() => null).then((index) => {
+          if (active) setHistoricalIndexes((previous) =>
+            previous.get(year) === index ? previous : new Map(previous).set(year, index));
+        });
+      }
+    }
+    checkYears();
+    window.addEventListener("online", checkYears);
+    return () => {
+      active = false;
+      window.removeEventListener("online", checkYears);
+    };
+  }, [confirmedYears, catalog]);
   const checkedGrades = useMemo(() => state.grades.map((grade) => {
     if (!grade.matchedCourse?.confirmed) return grade;
-    const match = revalidateGradeMatch(grade, catalog);
-    return { ...grade, matchedCourse: match, fields: match?.fields ?? [], category: match?.category ?? "",
-      matchStatus: match ? "confirmed" : "unresolved" };
-  }), [state.grades, catalog]);
+    const year = String(grade.matchedCourse.year);
+    const pending = year !== String(catalog.year) && archiveYears.includes(year) && !historicalIndexes.has(year);
+    const match = pending ? null : revalidateGradeMatch(grade, catalog, historicalIndexes.get(year));
+    return {
+      ...grade, matchedCourse: match, fields: match?.fields ?? [], category: match?.category ?? "",
+      matchStatus: pending ? "checking" : match ? "confirmed" : "unresolved",
+    };
+  }), [state.grades, catalog, historicalIndexes]);
   const assessment = useMemo(() => ({ ...state, grades: checkedGrades }), [state, checkedGrades]);
   const list = state.lists.find((l) => l.id === listId) ?? state.lists[0];
   const stages = useMemo(() => availableStages(state.profile, creditGoal), [state.profile, creditGoal]);

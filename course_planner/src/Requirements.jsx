@@ -408,9 +408,13 @@ export function Requirements({
                   </div>
                   <div className="history-actions">
                     <span>{g.finalEvaluation && g.counts === false ? `配当 ${g.credits}単位 · 修得 0単位` : `${g.credits}単位${g.counts === false ? " · 算入対象外" : ""}`}</span>
-                    <ActionLink onClick={() => selectGrade(i)}>
-                      {g.matchedCourse ? "シラバスの対応を確認" : "要確認 · シラバスを照合"}
-                    </ActionLink>
+                    {g.matchStatus === "checking" ? (
+                      <small>履修年度の資料を確認中</small>
+                    ) : (
+                      <ActionLink onClick={() => selectGrade(i)}>
+                        {g.matchedCourse ? "シラバスの対応を確認" : "要確認 · シラバスを照合"}
+                      </ActionLink>
+                    )}
                   </div>
                 </li>
               ))}
