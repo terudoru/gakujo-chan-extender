@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -30,6 +31,9 @@ import 'app_update_service.dart';
 import 'base32.dart';
 import 'course_planner_link.dart';
 import 'course_planner_page.dart';
+import 'generated/registration_assist.g.dart';
+import 'registration_handoff.dart';
+import 'widgets/registration_assist_panel.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
@@ -122,6 +126,7 @@ export 'widgets/settings_sections.dart';
 part 'widgets/gakujo_web_app_private_widgets.dart';
 part 'gakujo_web_app_calendar.dart';
 part 'gakujo_web_app_course_planner.dart';
+part 'gakujo_web_app_registration.dart';
 part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_models.dart';
@@ -2260,6 +2265,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void dispose() {
     _notificationConsumer.dispose();
     _notificationHistoryAccount.dispose();
+    _registrationSession?.timer?.cancel();
     _cancelDriveUploads();
     _deferredPageNavigation?.disposed.complete();
     _status.dispose();
@@ -2362,6 +2368,25 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   int _mainFrameNavigationStarts = 0;
   int _plannerNavigationStarts = 0;
+  bool _registrationAvailable = false;
+  bool _registrationOpening = false;
+  _RegistrationSession? _registrationSession;
+  String? _registrationSummary;
+
+  void _redrawRegistration() => setState(() {});
+
+  void _setRegistrationAvailable(bool value) {
+    if (_registrationAvailable != value && mounted) {
+      setState(() => _registrationAvailable = value);
+    }
+  }
+
+  void _setRegistrationSession(_RegistrationSession? session, {required String? summary}) {
+    setState(() {
+      _registrationSession = session;
+      _registrationSummary = summary;
+    });
+  }
   bool _plannerOpening = false;
 
   void _submitLoginAccount(String account) {
@@ -2415,6 +2440,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _setActiveLoginAccount(String? account, {bool resync = true, bool Function()? stillValid}) async {
     if (account != null && _activeLoginAccount == account) return;
+    _finishRegistration('ログイン状態が変わったため終了しました。');
+    _setRegistrationAvailable(false);
     if (account == null) _authenticatedPageUrl = null;
     final revision = ++_loginIdentity.revision;
     _activeLoginAccount = null;
@@ -2645,6 +2672,12 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     value: _ToolbarAction.importCoursePlanner,
                     child: Text('学務の照会結果をプランナーに取り込む'),
                   ),
+                  PopupMenuItem<Object>(
+                    value: _ToolbarAction.registrationAssist,
+                    enabled: _registrationAvailable && _hasRegistrationIdentity &&
+                        _registrationSession == null,
+                    child: const Text('履修手帖の時間割を履修登録に入力'),
+                  ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
@@ -2734,6 +2767,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     : _buildWebViewArea(),
               ),
             ),
+            ?_buildRegistrationPanel(),
             if (defaultTargetPlatform == TargetPlatform.linux &&
                 _linuxDownloads.isNotEmpty)
               ConstrainedBox(
@@ -5622,6 +5656,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       case _ToolbarAction.importCoursePlanner:
         await _openCoursePlanner(importing: action == _ToolbarAction.importCoursePlanner);
         return;
+      case _ToolbarAction.registrationAssist:
+        await _openRegistrationAssist();
+        return;
       case _ToolbarAction.messageStars:
         await _showStarredMessagesDialog();
         return;
@@ -5686,6 +5723,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       case _ToolbarAction.reload:
       case _ToolbarAction.coursePlanner:
       case _ToolbarAction.importCoursePlanner:
+      case _ToolbarAction.registrationAssist:
       case _ToolbarAction.messageStars:
       case _ToolbarAction.notificationHistory:
         return;
@@ -5948,7 +5986,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _injectMessageFilterIfAllowed();
   });
 
-  void _beginNavigation({bool preservesPendingMessageOpen = false}) {
+  void _beginNavigation({bool preservesPendingMessageOpen = false, bool pageStarted = false}) {
+    _setRegistrationAvailable(false);
+    if (!pageStarted) _finishRegistration('別の画面への操作があったため終了しました。');
     if (mounted && (_virtualPreviewForward || _returnDialogMarker != null)) {
       setState(() {
         _virtualPreviewForward = false;
@@ -8527,6 +8567,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       'MbgPreviewNavigation',
       onMessageReceived: _handlePreviewNavigationState,
     );
+    await _addGakujoJavaScriptChannel(
+      'MbgRegistrationChoice',
+      onMessageReceived: _registrationChoice,
+    );
     await _controller.setNavigationDelegate(
       GakujoNavigationDelegate(
         onNavigationRequest: _handleNavigationRequest,
@@ -8535,12 +8579,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _cancelOfflineRetry();
           _plannerNavigationStarts++;
           _invalidateLoginUrl(url);
+          if (!_isRegistrationServlet(url)) _finishRegistration('履修登録画面を離れたため終了しました。');
           _captureNavigationRecoveryCandidate(url);
         },
         onDownloadStarting: _handleNativeDownload,
         onDocumentStarted: _beginCourseDocument,
         onPageStarted: (url) {
           _closeLinuxFind();
+          if (!_isRegistrationServlet(url)) _finishRegistration('履修登録画面を離れたため終了しました。');
           // Only a page that starts loading counts: blocked requests do not.
           _mainFrameNavigationStarts += 1;
           _invalidateLoginUrl(url);
@@ -8557,6 +8603,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           _beginNavigation(
             preservesPendingMessageOpen: preservesPendingMessageOpen ||
                 _keepsHistoryMessageDuringLogin(url),
+            pageStarted: true,
           );
           _pendingPageFinishedNavigationRevision = _navigationRevision;
           _currentPageUrl = url;
@@ -8669,6 +8716,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
               stillCurrent: stillCurrent,
             );
             if (!stillCurrent()) return;
+            unawaited(_refreshRegistrationAvailability());
             await _injectExpiredPageRecoveryIfAllowed();
             if (!stillCurrent()) {
               return;

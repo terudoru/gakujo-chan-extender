@@ -4,6 +4,7 @@ enum _ToolbarAction {
   addFavorite,
   coursePlanner,
   importCoursePlanner,
+  registrationAssist,
   messageStars,
   notificationHistory,
   copyUrl,
