@@ -17,6 +17,7 @@ import 'package:webview_flutter_linux/webview_flutter_linux.dart'
 
 import 'generated/history_marker.g.dart';
 import 'generated/document_cookie.g.dart';
+import 'generated/favorite_page_identity.g.dart';
 import 'generated/navigator_user_agent.g.dart';
 import 'generated/page_text_activity.g.dart';
 import 'generated/pdf_preview_ready.g.dart';
@@ -5535,7 +5536,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
     switch (action) {
       case _ToolbarAction.addFavorite:
-        final title = await _controller.getTitle();
+        final title = await _titleForFavoriteUrl(url);
         try {
           await _activityStore.addFavorite(
             GakujoFavoritePage(
@@ -6102,6 +6103,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
     completer.complete(url);
     _nextPageFinishedCompleter = null;
+  }
+
+  Future<String?> _titleForFavoriteUrl(String url) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(
+        gakujoFavoritePageIdentityJs,
+      );
+      if (result is String) {
+        final page = jsonDecode(_stringFromJavaScriptResult(result));
+        if (page case {'url': final String pageUrl, 'title': final String title}
+            when pageUrl == url) {
+          return title;
+        }
+      }
+    } on Object {
+      // The selected URL still provides a title if the renderer is unavailable.
+    }
+    return null;
   }
 
   String _favoriteTitle(String? title, String url) {

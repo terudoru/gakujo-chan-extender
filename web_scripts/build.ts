@@ -14,6 +14,7 @@ const entries: ({ source: string; output: string; name: string; kind?: 'statemen
   { source: 'web_scripts/src/navigator_user_agent/main.ts', output: 'lib/src/generated/navigator_user_agent.g.dart', name: 'gakujoNavigatorUserAgentJs', kind: 'expression' },
   { source: 'web_scripts/src/document_cookie/main.ts', output: 'lib/src/generated/document_cookie.g.dart', name: 'gakujoDocumentCookieJs', kind: 'expression' },
   { source: 'web_scripts/src/document_title/main.ts', output: 'lib/src/generated/document_title.g.dart', name: 'gakujoDocumentTitleJs', kind: 'expression' },
+  { source: 'web_scripts/src/favorite_page_identity/main.ts', output: 'lib/src/generated/favorite_page_identity.g.dart', name: 'gakujoFavoritePageIdentityJs', kind: 'expression' },
   { source: 'web_scripts/src/upload_library_callback/main.ts', output: 'lib/src/generated/upload_library_callback.g.dart', name: 'gakujoUploadLibraryCallbackJs', config: true },
   { source: 'web_scripts/src/pdf_preview_orientation/main.ts', output: 'tools/pdf_preview/web/orientation.js', asset: true },
   { source: 'web_scripts/src/pdf_preview_orientation/main.ts', output: 'assets/pdf_preview/web/orientation.js', asset: true },
