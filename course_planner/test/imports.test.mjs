@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyPlannerImport,
   reviewPlannerImport,
+  samePlannerBalance,
 } from "../src/imports/review.mjs";
 import { installPlannerImportListener } from "../src/imports/native.mjs";
 import { delimitedRows } from "../src/transcript.mjs";
@@ -425,6 +426,116 @@ test("day and night earned credits stay distinct from registered credits and omi
     () => applyPlannerImport(switched, r, [{ id: r.rows[0].id }]),
     /変わりました/,
   );
+});
+
+const engineering = { faculty: "工学部", handbook: "2026", admitted: "2026" };
+const human = { key: "human", label: "人文社会・教育科学", required: 4 };
+function engineeringStatement(profile, current, stage = "graduation") {
+  return reviewPlannerImport(
+    packet(
+      "balances",
+      delimitedRows(`区分,既修得単位\n${human.label},${current}`),
+    ),
+    { profile, goal: "graduation", stageId: stage, requirementRows: [human] },
+  );
+}
+
+test("engineering CSV replaces the manual subtotal in both default-entry representations and on reread", () => {
+  for (const [studentEntry, manualEntry] of [
+    [undefined, "1年次入学"],
+    ["1年次入学", ""],
+    ["", undefined],
+  ]) {
+    const profile = { ...engineering };
+    if (studentEntry !== undefined) profile.entry = studentEntry;
+    const scope = { ...engineering, goal: "graduation", stageId: "graduation" };
+    if (manualEntry !== undefined) scope.entry = manualEntry;
+    const manual = { ...human, ...scope, current: 1 };
+    const legacy = {
+      ...human,
+      current: 1,
+      scope: { ...scope, admitted: null },
+    };
+    const s = { ...initialState(), profile, balances: [manual, legacy] };
+    for (const current of [2, 2, 3]) {
+      const r = engineeringStatement(profile, current);
+      applyPlannerImport(s, r, select(r));
+      assert.equal(s.balances.length, 1);
+      const [subtotal] = s.balances;
+      assert.equal(subtotal.entry, "1年次入学");
+      assert.equal(subtotal.unit, "credits");
+      assert.equal(subtotal.current, current);
+      assert.equal(subtotal.required - subtotal.current, 4 - current);
+      assert.equal(subtotal.source, "履修科目確認表");
+      assert.ok(samePlannerBalance(subtotal, manual));
+    }
+  }
+});
+
+test("identically named subtotals keep other cohorts, fields, stages, goals and units", () => {
+  const profile = { ...engineering, field: "機械工学" };
+  const scope = { ...profile, goal: "graduation", stageId: "graduation" };
+  const record = { ...human, current: 1 };
+  const same = { ...record, scope: { ...scope, handbook: 2026, entry: "" } };
+  const separate = [
+    ...[
+      { entry: "外国人留学生" },
+      { entry: "編入" },
+      { field: "" },
+      { curriculum: "留学生" },
+      { department: "別学科" },
+      { program: "別課程" },
+      { individual: "特別認定" },
+      { admitted: 2025 },
+      { handbook: "2025" },
+      { faculty: "理学部" },
+      { stageId: "別段階" },
+      { goal: "progress" },
+    ].map((change) => ({ ...record, scope: { ...scope, ...change } })),
+    { ...record, scope, unit: "courses" },
+    { ...record, scope: { ...scope, unit: "months" } },
+    { ...record, scope, key: "other" },
+  ];
+  const s = { ...initialState(), profile, balances: [...separate, same] };
+  const review = engineeringStatement(profile, 2);
+  const before = structuredClone(separate);
+  applyPlannerImport(s, review, select(review));
+  assert.deepEqual(s.balances.slice(0, -1), before);
+  assert.equal(s.balances.at(-1).current, 2);
+  assert.equal(s.balances.at(-1).field, profile.field);
+  assert.equal(s.balances.length, separate.length + 1);
+  s.profile = { ...profile, field: "材料工学" };
+  assert.throws(
+    () => applyPlannerImport(s, review, select(review)),
+    /所属が変わりました/,
+  );
+  assert.deepEqual(s.balances.slice(0, -1), before);
+});
+
+test("an unstaged subtotal matches an empty legacy stage without overwriting a named stage", () => {
+  const r = engineeringStatement(engineering, 2, "");
+  const other = {
+    ...human,
+    current: 1,
+    scope: { ...engineering, goal: "graduation", stageId: "別段階" },
+  };
+  const s = {
+    ...initialState(),
+    profile: engineering,
+    balances: [
+      { ...human, ...engineering, current: 1, goal: "graduation" },
+      {
+        ...human,
+        scope: { ...engineering, goal: "graduation", stageId: "" },
+        current: 1,
+      },
+      other,
+    ],
+  };
+  applyPlannerImport(s, r, select(r));
+  assert.deepEqual(s.balances.slice(0, -1), [other]);
+  assert.equal(s.balances.at(-1).current, 2);
+  assert.equal(s.balances.at(-1).stage, "");
 });
 
 test("PDF font runs, empty columns and the right-hand statement grid keep their column positions", () => {

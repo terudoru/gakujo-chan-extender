@@ -257,7 +257,7 @@ export function reviewGradeRows(rows, byCode) {
   };
 }
 
-export function mergeGrades(state, rows) {
+export function mergeGrades(state, rows, reconcileMatch) {
   const grades = state.grades.map((g) => ({ ...g }));
   const names = namesIndex(grades);
   for (const incoming of rows) {
@@ -347,11 +347,15 @@ export function mergeGrades(state, rows) {
       names.add(row);
       continue;
     }
-    // A repeated file can add source evidence, but cannot undo a reviewed
-    // archive association, category, or duplicate decision.
-    const confirmed = old.matchedCourse?.confirmed
-      ? old.matchedCourse
-      : row.matchedCourse;
+    // An authoritative negative can revoke only the exact association checked.
+    // All other reimports retain reviewed category and duplicate decisions.
+    const decision = reconcileMatch?.(old, row);
+    const confirmed =
+      decision !== undefined
+        ? decision
+        : old.matchedCourse?.confirmed
+          ? old.matchedCourse
+          : row.matchedCourse;
     const reviewed =
       old.duplicate || old.duplicateReviewed || old.identityUncertain
         ? { counts: old.counts, duplicate: old.duplicate }
@@ -386,12 +390,12 @@ export function mergeGrades(state, rows) {
       allocation,
     );
     names.add(old);
-    if (confirmed)
+    if (confirmed || decision === null)
       Object.assign(old, {
         matchedCourse: confirmed,
-        fields: confirmed.fields ?? [],
-        category: confirmed.category || "",
-        department: confirmed.department || "",
+        fields: confirmed?.fields ?? [],
+        category: confirmed?.category || "",
+        department: confirmed?.department || "",
       });
     if (row.duplicate) old.duplicate = true;
     if (old.duplicate || old.identityUncertain) old.counts = false;

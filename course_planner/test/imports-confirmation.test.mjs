@@ -6,6 +6,7 @@ import {
   reviewPlannerImport,
 } from "../src/imports/review.mjs";
 import { initialState } from "../src/study.mjs";
+import catalog from "../src/catalog-2026.json" with { type: "json" };
 
 const table = (rows, heading = "成績確認表") => ({
   v: 1,
@@ -182,6 +183,53 @@ test("freshly confirmed manual correspondence takes priority over the in-flight 
   assert.equal(state.grades[0].importId, review.rows[0].value.importId);
 });
 
+test("a reimport preserves course-specific decisions including a concurrent edit and an unset answer", async () => {
+  const review = makeReview([b]),
+    selections = choose(review),
+    state = newState();
+  applyPlannerImport(state, review, selections);
+  const original = {
+    studyYear: "3",
+    legacyOffering: true,
+    exchangeWithoutLeave: false,
+    facultyApprovedFree: true,
+    economicsOtherProgramSeminar: false,
+    lawTrainingSection: true,
+    languageOverlapApproved: false,
+    openToAll: true,
+    teacherTrainingOnly: false,
+    museumQualificationOnly: true,
+    holidayPracticum: false,
+    partTimeInstructor: true,
+    minorIntro: false,
+    irregular: true,
+  };
+  Object.assign(state.grades[0], original);
+  const gate = deferred();
+  const pending = confirmPlannerImport({
+    review,
+    selections,
+    previousGrades: state.grades,
+    mutate: commit(state),
+    async prepareGrades(grades) {
+      await gate.promise;
+      return grades.map((g) => ({ ...g, ...original, matchedCourse: null }));
+    },
+  });
+  state.grades[0].studyYear = "4";
+  state.grades[0].facultyApprovedFree = false;
+  delete state.grades[0].irregular;
+  gate.resolve();
+  await pending;
+  const expected = { ...original, studyYear: "4", facultyApprovedFree: false };
+  delete expected.irregular;
+  const [grade] = state.grades;
+  assert.equal(state.grades.length, 1);
+  for (const [key, value] of Object.entries(expected))
+    assert.equal(grade[key], value);
+  assert.ok(!Object.hasOwn(grade, "irregular"));
+});
+
 test("an offline or ambiguous archive leaves original evidence importable and duplicate decisions intact", async () => {
   const review = makeReview([b, c]),
     selections = choose(review);
@@ -238,6 +286,107 @@ test("an offline or ambiguous archive leaves original evidence importable and du
       (g) => g.identityUncertain && !g.counts && !g.matchedCourse,
     ),
   );
+});
+
+test("261K0501 loses only its explicitly disproved prior association at commit", async () => {
+  const offering = catalog.courses.find((c) => c.code === "261K0501");
+  assert.deepEqual(
+    [offering.title, offering.period, offering.credits, offering.fields],
+    ["情報通信技術教育論I", "第1ターム", 1, ["10"]],
+  );
+  const source =
+    "https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/03/03_261K0501_ja_JP.html";
+  const prior = {
+    confirmed: true,
+    year: "2026",
+    code: offering.code,
+    title: offering.title,
+    fields: offering.fields,
+    category: offering.category,
+    department: offering.department,
+    sourceUrl: source,
+  };
+  for (const code of [offering.code, ""]) {
+    const review = reviewPlannerImport(
+      table([
+        ["開講番号", "科目名", "単位数", "履修年度", "学期", "評価"],
+        [code, offering.title, "3", "2026", "第4ターム", "優"],
+      ]),
+      opts,
+    );
+    const selections = choose(review);
+    for (const scenario of [
+      "negative",
+      "offline",
+      "still-current",
+      "manual",
+      "removed",
+      "canceled",
+    ]) {
+      const state = newState();
+      applyPlannerImport(state, review, selections);
+      Object.assign(state.grades[0], {
+        matchedCourse: structuredClone(prior),
+        fields: ["10"],
+        department: prior.department,
+        category: prior.category,
+      });
+      const controller = new AbortController(),
+        gate = deferred();
+      const pending = confirmPlannerImport({
+        review,
+        selections,
+        previousGrades: state.grades,
+        signal: controller.signal,
+        mutate: commit(state),
+        async prepareGrades(grades) {
+          await gate.promise;
+          if (scenario === "offline") throw Error("offline");
+          return grades.map((g) =>
+            scenario === "still-current" || scenario === "removed"
+              ? { ...g, matchedCourse: prior }
+              : { ...g, matchedCourse: null, matchInvalidated: true },
+          );
+        },
+      });
+      if (scenario === "manual") {
+        state.grades[0].matchedCourse.fields.push("11");
+        state.grades[0].matchedCourse.fieldSource =
+          "https://www.niigata-u.ac.jp/example.pdf#page=4";
+      }
+      if (scenario === "removed") state.grades[0].matchedCourse = null;
+      if (scenario === "canceled") controller.abort();
+      gate.resolve();
+      assert.equal(await pending, scenario !== "canceled");
+      const [saved] = state.grades;
+      assert.deepEqual(
+        [
+          state.grades.length,
+          saved.title,
+          saved.code,
+          saved.term,
+          saved.credits,
+          saved.grade,
+        ],
+        [1, offering.title, code, "第4ターム", 3, "優"],
+      );
+      if (scenario === "negative" || scenario === "removed") {
+        assert.deepEqual(
+          [saved.matchedCourse, saved.fields, saved.department, saved.category],
+          [null, [], "", ""],
+        );
+      } else if (scenario === "manual") {
+        assert.deepEqual(saved.fields, ["10", "11"]);
+        assert.equal(
+          saved.matchedCourse.fieldSource,
+          "https://www.niigata-u.ac.jp/example.pdf#page=4",
+        );
+      } else {
+        assert.deepEqual(saved.matchedCourse, prior);
+      }
+      assert.ok(!("matchInvalidated" in saved));
+    }
+  }
 });
 
 test("a canceled lookup and a canceled queued transaction cannot write, and a retry has its own results", async () => {

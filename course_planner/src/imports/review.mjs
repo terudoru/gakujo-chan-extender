@@ -8,22 +8,44 @@ import {
   validatePacket,
 } from "./tables.mjs";
 
-function scopeOf(profile = {}, goal = "graduation", stage = "") {
+export function plannerBalanceScope(profile = {}, goal = "", stage = "") {
   return {
     faculty: profile.faculty || "",
     handbook: String(profile.handbook || ""),
     admitted: String(profile.admitted || ""),
     department: profile.department || "",
     program: profile.program || "",
-    entry: profile.entry || "",
+    field: profile.field || "",
+    entry: profile.entry || "1年次入学",
     curriculum: profile.curriculum || "",
     individual: profile.individual ?? "",
-    goal,
-    stage,
+    goal: goal || "",
+    stage: stage || "",
   };
 }
 function sameScope(a, b) {
-  return Object.keys(b).every((k) => String(a[k] ?? "") === String(b[k] ?? ""));
+  return Object.keys(b).every((key) => a[key] === b[key]);
+}
+
+function recordedScope(balance) {
+  const scope = balance.scope ?? balance;
+  return plannerBalanceScope(
+    scope,
+    scope.goal ?? balance.goal,
+    scope.stageId || scope.stage || balance.stageId || balance.stage,
+  );
+}
+
+// Match the engine's sameProfile contract. Older statements without an
+// admission year apply to the selected handbook; an explicit year is binding.
+export function samePlannerBalance(stored, replacement) {
+  if (stored.key !== replacement.key) return false;
+  const unit = (balance) => balance.unit || balance.scope?.unit || "credits";
+  if (unit(stored) !== unit(replacement)) return false;
+  const old = recordedScope(stored);
+  const next = recordedScope(replacement);
+  if (!old.admitted) old.admitted = next.admitted;
+  return sameScope(old, next);
 }
 function matchingRequirement(label, targets, kind) {
   const exact = targets.filter(
@@ -109,13 +131,12 @@ function balanceRow(v, targets) {
 
 export function reviewPlannerImport(packet, options = {}) {
   validatePacket(packet);
-  const {
+  const { profile, goal = "graduation", requirementRows = [] } = options;
+  const scope = plannerBalanceScope(
     profile,
-    goal = "graduation",
-    stage = "",
-    requirementRows = [],
-  } = options;
-  const scope = scopeOf(profile, goal, stage);
+    goal,
+    options.stageId || options.stage,
+  );
   const targets = requirementRows
     .filter((r) => r?.key && r.label && (!r.unit || r.unit === "credits"))
     .map(({ key, label, required, kind }) => ({ key, label, required, kind }));
@@ -194,6 +215,42 @@ function reviewedGrade({ row, choice }) {
   return grade;
 }
 
+const recordId = (grade) => grade.recordId || grade.id || grade.importId;
+
+function matchFingerprint(match) {
+  // Store the evidence as it was before awaiting the archive. Object key order
+  // may change on sync, while changes to any field or source must be preserved.
+  return JSON.stringify(match, (_, value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((k) => [k, value[k]]),
+        )
+      : value,
+  );
+}
+
+function observedMatches(previous, incoming) {
+  const unique = new Map();
+  for (const row of incoming) {
+    const id = recordId(row);
+    unique.set(id, !unique.has(id));
+  }
+  const observed = new Map();
+  for (const grade of previous) {
+    const id = recordId(grade);
+    if (!id || !unique.get(id)) continue;
+    observed.set(
+      id,
+      !observed.has(id) && grade.matchedCourse?.confirmed
+        ? matchFingerprint(grade.matchedCourse)
+        : null,
+    );
+  }
+  return observed;
+}
+
 // The matcher spreads the original grade onto its result. reviewRowId identifies
 // a particular selected line even if two identical lines share an importId.
 export async function confirmPlannerImport({
@@ -206,6 +263,7 @@ export async function confirmPlannerImport({
 }) {
   if (signal?.aborted) return false;
   let ready = review;
+  let reconcileMatch;
   if (review.kind === "grades" && prepareGrades) {
     const selected = selectedRows(review, selections);
     const grades = selected.map((selection) => ({
@@ -216,6 +274,8 @@ export async function confirmPlannerImport({
       department: "",
       reviewRowId: selection.row.id,
     }));
+    const observed = observedMatches(previousGrades, grades);
+    const invalidated = new Set();
     let prepared;
     try {
       prepared = await prepareGrades(grades, previousGrades);
@@ -234,6 +294,15 @@ export async function confirmPlannerImport({
       rows: selected.map(({ row }) => {
         const result = byRow.get(row.id);
         const candidate = result?.matchedCourse;
+        const id = recordId(row.value);
+        if (
+          result?.matchInvalidated === true &&
+          candidate === null &&
+          result.importId === row.value.importId &&
+          recordId(result) === id &&
+          observed.get(id)
+        )
+          invalidated.add(id);
         const matched =
           result?.importId === row.value.importId &&
           !row.offeringConflict &&
@@ -256,26 +325,38 @@ export async function confirmPlannerImport({
         };
       }),
     };
+    reconcileMatch = (stored, incoming) => {
+      const id = recordId(incoming);
+      const snapshot = observed.get(id);
+      if (!snapshot || id !== recordId(stored)) return undefined;
+      if (matchFingerprint(stored.matchedCourse) !== snapshot)
+        return stored.matchedCourse?.confirmed ? stored.matchedCourse : null;
+      return invalidated.has(id) ? null : undefined;
+    };
   }
   // The local storage transaction can itself wait for a cross-tab lock.
   const saved = await mutate((latest) => {
-    if (!signal?.aborted) applyPlannerImport(latest, ready, selections);
+    if (!signal?.aborted)
+      applyPlannerImport(latest, ready, selections, reconcileMatch);
   });
   return !!saved && !signal?.aborted;
 }
 
 // Used inside the caller's local transaction, against the latest saved state.
-export function applyPlannerImport(state, review, selections) {
+export function applyPlannerImport(state, review, selections, reconcileMatch) {
   const selected = selectedRows(review, selections);
-  const scope = review.scope;
+  const scope = recordedScope(review);
   if (
     (review.kind === "balances" ||
       selected.some(({ row }) => row.value.allocationScope)) &&
-    !sameScope(scopeOf(state.profile, scope.goal, scope.stage), scope)
+    !sameScope(
+      plannerBalanceScope(state.profile, scope.goal, scope.stage),
+      scope,
+    )
   )
     throw Error("適用する便覧・所属が変わりました。帳票を読み直してください。");
   if (review.kind === "grades") {
-    mergeGrades(state, selected.map(reviewedGrade));
+    mergeGrades(state, selected.map(reviewedGrade), reconcileMatch);
   } else if (review.kind === "registration") {
     for (const {
       row: {
@@ -316,6 +397,7 @@ export function applyPlannerImport(state, review, selections) {
       return {
         ...scope,
         key: target.key,
+        unit: "credits",
         label: target.label,
         kind: target.kind || b.kind,
         required,
@@ -326,13 +408,16 @@ export function applyPlannerImport(state, review, selections) {
         ...(b.day != null ? { day: b.day, night: b.night } : {}),
       };
     });
-    if (new Set(balances.map((b) => b.key)).size !== balances.length)
+    const replacements = new Map(balances.map((b) => [b.key, b]));
+    if (replacements.size !== balances.length)
       throw Error(
         "同じ要件に複数の行が選ばれています。対応する区分別の合計を1行選んでください。",
       );
-    const keys = new Set(balances.map((b) => b.key));
     state.balances = [
-      ...state.balances.filter((b) => !sameScope(b, scope) || !keys.has(b.key)),
+      ...state.balances.filter((b) => {
+        const next = replacements.get(b.key);
+        return !next || !samePlannerBalance(b, next);
+      }),
       ...balances,
     ];
   } else throw Error("取込形式を確認してください。");
