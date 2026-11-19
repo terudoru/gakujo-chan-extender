@@ -67,6 +67,33 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  test(
+    'grade packets admit course offering and exclude student affiliation',
+    () async {
+      final portal = _View();
+      final source = CoursePlannerSource(portal, () => true);
+      for (final header in ['開講所属', '学生所属', '所属学部', '学部', '所属', '氏名']) {
+        portal.evaluate = (_) async => jsonEncode({
+          'v': 1,
+          'kind': 'grades',
+          'tables': [
+            {
+              'heading': '単位修得状況照会',
+              'rows': [
+                ['科目名', '単位数', '評価', header, 'クラス', '学期'],
+                ['情報通信技術教育論I', '1', '優', '人文学部', 'A', '第1ターム'],
+              ],
+            },
+          ],
+        });
+        expect(
+          await source.capture(CoursePlannerImportKind.grades),
+          header == '開講所属' ? isNotNull : isNull,
+          reason: header,
+        );
+      }
+    },
+  );
   testWidgets(
     'app menu opens a separate planner from unrelated and syllabus pages',
     (tester) async {

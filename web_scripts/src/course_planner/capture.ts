@@ -19,6 +19,7 @@ const names = {
 };
 const rejected = "不許可となった科目";
 const codePattern = /^(\d{3}[A-Z][A-Z0-9]{4,5})(?:\s*\(T[\d,\s～~-]+\))?$/;
+const offeringColumns = ["開講所属", "クラス", "学期"];
 const columns: Record<string, string> = {
   開講番号: "開講番号",
   授業コード: "開講番号",
@@ -38,6 +39,20 @@ const columns: Record<string, string> = {
   修得年度: "年度",
   履修年度: "年度",
   年度: "年度",
+  // Only the faculty offering this course can disambiguate its syllabus.
+  // A generic 所属 or 学部 column can describe the student.
+  開講所属: "開講所属",
+  開講所属コード: "開講所属",
+  開講学部: "開講所属",
+  開設学部: "開講所属",
+  クラス: "クラス",
+  クラス名: "クラス",
+  クラス番号: "クラス",
+  組: "クラス",
+  学期: "学期",
+  履修学期: "学期",
+  修得学期: "学期",
+  ターム: "学期",
   許可状況: "登録状況",
   登録状況: "登録状況",
   履修状況: "登録状況",
@@ -59,6 +74,7 @@ const allowed: Record<Kind, string[]> = {
     "評価",
     "合否",
     "年度",
+    ...offeringColumns,
     "科目区分",
     "重複",
   ],
@@ -246,9 +262,18 @@ function tableData(table: HTMLTableElement, kind: Kind): Table | null {
       !visible(row)
     )
       continue;
-    const vals = projection.map((c) =>
-      visible(cells[c.i]) ? academicValue(c.name, leaf(cells[c.i])) : "",
-    );
+    const vals = projection.map(({ name, i }) => {
+      const cell = cells[i];
+      const value = visible(cell) ? academicValue(name, leaf(cell)) : "";
+      // An unreadable identity field is not evidence of an unspecified offering.
+      if (
+        !value &&
+        offeringColumns.includes(name) &&
+        (cell.childElementCount || cell.textContent?.trim())
+      )
+        return "要確認";
+      return value;
+    });
     const get = (k: string) => vals[headers.indexOf(k)];
     if (
       kind === "balances"

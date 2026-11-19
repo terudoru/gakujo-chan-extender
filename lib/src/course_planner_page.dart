@@ -80,7 +80,19 @@ class CoursePlannerSource {
     final (headings, columns) = switch (kind) {
       CoursePlannerImportKind.grades => (
         const {'単位修得状況照会'},
-        const {'開講番号', '科目名', '単位数', '評価', '合否', '年度', '科目区分', '重複'},
+        const {
+          '開講番号',
+          '科目名',
+          '単位数',
+          '評価',
+          '合否',
+          '年度',
+          '開講所属',
+          'クラス',
+          '学期',
+          '科目区分',
+          '重複',
+        },
       ),
       CoursePlannerImportKind.registration => (
         const {'履修登録・登録状況照会', '不許可となった科目'},

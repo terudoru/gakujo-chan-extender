@@ -10,7 +10,7 @@ const [project, run, url, marker] = process.argv.slice(2);
 const { chromium } = createRequire(join(project, "package.json"))("playwright-core");
 const { createRelay, provision } = await import(pathToFileURL(join(project, "sync/relay.mjs")));
 const storage = "mbg.course-planner.v1";
-const nativeTitle = "合成演習取込確認", browserTitle = "ブラウザー合成履歴";
+const nativeTitle = "情報通信技術教育論I", browserTitle = "ブラウザー合成履歴";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const plan = (page) => page.getByLabel("候補リストと時間割");
 const history = (page) => page.getByLabel("履修履歴と成績");
@@ -21,8 +21,27 @@ const until = (page, predicate, value) =>
 const grades = (page) => page.evaluate((key) =>
   (JSON.parse(localStorage.getItem(key))?.grades ?? [])
     .map(({ title, grade, credits }) => [title, grade, credits])
-    .sort((a, b) => a[2] - b[2]), storage);
-const nativeGrade = [nativeTitle, "優", 2], browserGrade = [browserTitle, "良", 1];
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0), storage);
+const nativeGrade = [nativeTitle, "優", 1], browserGrade = [browserTitle, "良", 1];
+
+async function importFile(page, csv, title) {
+  await nav(page, "単位・要件");
+  await page.getByRole("button", { name: /^(?:成績|成績確認表)(?:を取り込む|の取り込み)$/ }).click();
+  const review = dialog(page);
+  await review.locator("input[type=file]").setInputFiles({ name: "synthetic.csv", mimeType: "text/csv",
+    buffer: Buffer.from(csv) });
+  await review.getByRole("checkbox", { name: new RegExp(title + "を取り込む") }).check();
+  assert.deepEqual(await grades(page), []);
+  await button(review, "選択した1件を取り込む").click();
+  await review.waitFor({ state: "hidden" });
+}
+async function offeringEvidence(page) {
+  return page.evaluate((key) => {
+    const state = JSON.parse(localStorage.getItem(key));
+    const grade = state.grades.find((g) => g.code === "261K0501");
+    return [grade.offeringDepartment, grade.matchedCourse, JSON.stringify(grade).includes("PRIVATE-COLUMN-CANARY")];
+  }, storage);
+}
 
 async function openPanel(page) {
   if (!(await page.locator(".planner-sync").isVisible()))
@@ -106,16 +125,30 @@ try {
   assert.equal(await chrome.evaluate(() => document.__mbgSmokeHost), undefined);
   assert.deepEqual(await grades(chrome), []);
 
+  stage = "comparing native and file import offering identity";
+  assert.deepEqual(await offeringEvidence(native), ["人文学部", null, false]);
+  for (const faculty of ["人文学部", "教育学部"]) {
+    const context = await browser.newContext();
+    try {
+      const filePage = await context.newPage();
+      await filePage.goto(url);
+      await importFile(filePage, "開講番号,科目名,単位数,評価,年度,開講所属,学生所属,担当教員\n" +
+        "261K0501," + nativeTitle + ",1,優,2026," + faculty + ",教育学部,PRIVATE-COLUMN-CANARY\n", nativeTitle);
+      const evidence = await offeringEvidence(filePage);
+      if (faculty === "人文学部") assert.deepEqual(evidence, await offeringEvidence(native));
+      else {
+        assert.equal(evidence[0], "教育学部");
+        assert.equal(evidence[1]?.department, "03");
+        assert.equal(evidence[1]?.confirmed, true);
+        assert.equal(evidence[2], false);
+      }
+    } finally {
+      await context.close();
+    }
+  }
+
   stage = "importing the independent chrome history through the review";
-  await nav(chrome, "単位・要件");
-  await chrome.getByRole("button", { name: /^(?:成績|成績確認表)(?:を取り込む|の取り込み)$/ }).click();
-  const review = dialog(chrome);
-  await review.locator("input[type=file]").setInputFiles({ name: "synthetic.csv", mimeType: "text/csv",
-    buffer: Buffer.from("科目名,単位数,評価,年度\n" + browserTitle + ",1,良,2026\n") });
-  await review.getByRole("checkbox", { name: new RegExp(browserTitle + "を取り込む") }).check();
-  assert.deepEqual(await grades(chrome), []);
-  await button(review, "選択した1件を取り込む").click();
-  await review.waitFor({ state: "hidden" });
+  await importFile(chrome, "科目名,単位数,評価,年度\n" + browserTitle + ",1,良,2026\n", browserTitle);
   assert.deepEqual(await grades(chrome), [browserGrade]);
 
   stage = "pairing both clients with independent plan consent";
@@ -171,6 +204,7 @@ try {
   const expected = [browserGrade, nativeGrade];
   assert.deepEqual(await grades(native), expected);
   assert.deepEqual(await grades(chrome), expected);
+  assert.deepEqual(await offeringEvidence(chrome), ["人文学部", null, false]);
   stage = "verifying both histories after withdrawal and continued plan edits";
   await history(native).uncheck();
   await history(chrome).uncheck();

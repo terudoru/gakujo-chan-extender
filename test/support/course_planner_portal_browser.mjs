@@ -92,6 +92,29 @@ try {
     .find((f) => f.url() === gradeUrl)
     .goto(gradeUrl);
   assert.equal(await ask({ kind: "grades" }), null);
+  await page.goto(gradeUrl);
+  for (const [offering, section, term] of [
+    ["開講所属", "クラス", "学期"],
+    ["開講所属コード", "クラス名", "履修学期"],
+    ["開講学部", "組", "修得学期"],
+    ["開設学部", "クラス番号", "ターム"],
+  ]) {
+    const faculty = offering.endsWith("コード") ? "01" : "人文学部";
+    const headers = ["開講番号", "科目名", "単位数", "評価", "年度", offering, section, term,
+      "所属", "学部", "所属学部", "学生所属", "氏名", "在籍番号", "担当教員"];
+    const academic = ["261K0501", "情報通信技術教育論I", "1", "優", "2026", faculty, "A", "第1ターム"];
+    const row = [...academic, ...Array(7).fill("PRIVATE-COLUMN-CANARY")];
+    await page.setContent('<form id="taniReferListForm"></form><table><tr>' +
+      headers.map((h) => "<th>" + h + "</th>").join("") + "</tr><tr>" +
+      row.map((v) => "<td>" + v + "</td>").join("") + "</tr></table>");
+    assert.deepEqual(await ask({}), ["grades"]);
+    const captureRow = async () => (await ask({ kind: "grades" })).tables[0].rows;
+    assert.deepEqual(await captureRow(), [
+      ["開講番号", "科目名", "単位数", "評価", "年度", "開講所属", "クラス", "学期"], academic,
+    ]);
+    await page.locator("td").nth(5).evaluate((cell) => { cell.textContent = "fixture@example.invalid"; });
+    assert.deepEqual((await captureRow())[1], [...academic.slice(0, 5), "要確認", "A", "第1ターム"]);
+  }
   const registration = portal + "campussquare.do?_flowId=RSW0001000-flow";
   const grid = (code, marker, color) =>
     "<td><div class=\"tblDivNml\"><a href=\"#\" onclick=\"return CallDetail('2026','09','" +

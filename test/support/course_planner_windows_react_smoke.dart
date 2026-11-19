@@ -10,8 +10,9 @@ import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart'
     as windows;
 
-const _course = '合成演習取込確認';
-const _code = '269Z9901';
+// Public offering in 教育学部 (03), with a deliberately conflicting synthetic transcript.
+const _course = '情報通信技術教育論I';
+const _code = '261K0501';
 
 // CoursePlannerPage still constructs and configures its own Windows controller.
 // Observe it at the point where the production service builds the real widget.
@@ -53,13 +54,13 @@ Future<CoursePlannerSource> _openSyntheticPortal(Directory root) async {
   await File('${pages.path}/index.html').writeAsString('''<!doctype html>
     <meta charset="utf-8"><script>history.replaceState(null,"","campusportal.do")</script>
     <iframe title="照会画面" src="grades.html"></iframe>''');
-  await File('${pages.path}/grades.html').writeAsString(
-    '''<!doctype html>
+  await File('${pages.path}/grades.html').writeAsString('''<!doctype html>
     <meta charset="utf-8"><script>history.replaceState(null,"","campussquare.do")</script>
     <h1>単位修得状況照会</h1><form id="taniReferListForm"></form>
-    <table><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評価</th><th>年度</th></tr>
-    <tr><td>$_code</td><td>$_course</td><td>2</td><td>優</td><td>2026</td></tr></table>''',
-  );
+    <table><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評価</th><th>年度</th>
+    <th>開講所属</th><th>学生所属</th><th>担当教員</th></tr>
+    <tr><td>$_code</td><td>$_course</td><td>1</td><td>優</td><td>2026</td>
+    <td>人文学部</td><td>教育学部</td><td>PRIVATE-COLUMN-CANARY</td></tr></table>''');
   final inner = windows.WebviewController();
   final controller = WindowsGakujoWebViewController(inner);
   await controller.setJavaScriptModeUnrestricted();
@@ -178,7 +179,9 @@ Future<void> runReactPlannerSmoke(
         '''(() => {
       const rows = $grades, g = rows[0];
       return rows.length === 1 && g.title === '$_course' && g.code === '$_code' &&
-        g.grade === '優' && g.credits === 2 && String(g.year) === '2026';
+        g.grade === '優' && g.credits === 1 && String(g.year) === '2026' &&
+        g.offeringDepartment === '人文学部' && g.matchedCourse === null &&
+        !JSON.stringify(g).includes('PRIVATE-COLUMN-CANARY');
     })()''';
     String button(int count) =>
         '''Array.from($dialog?.querySelectorAll('button') ?? [])
@@ -227,7 +230,7 @@ Future<void> runReactPlannerSmoke(
     await _waitFor(planner, 'Boolean($history)');
     await planner.runJavaScript('$history.click()');
     await _waitFor(planner, '''Array.from(document.querySelectorAll('main li'))
-      .filter(li => li.getClientRects().length && ['$_course','$_code','2026','優','2単位']
+      .filter(li => li.getClientRects().length && ['$_course','$_code','2026','優','1単位']
         .every(value => li.innerText.includes(value))).length === 1''');
     await source.controller.dispose();
     if (sync) {
