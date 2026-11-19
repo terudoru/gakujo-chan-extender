@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const entries: ({ source: string; output: string; name: string; kind?: 'statement' | 'expression'; config?: true; asset?: false } | { source: string; output: string; asset: true; name?: never; kind?: never; config?: never })[] = [
+  { source: 'web_scripts/src/course_planner/capture.ts', output: 'lib/src/generated/course_planner_capture.g.dart', name: 'coursePlannerCaptureJs', kind: 'expression', config: true },
+  { source: 'web_scripts/src/course_planner/delivery.ts', output: 'lib/src/generated/course_planner_delivery.g.dart', name: 'coursePlannerDeliveryJs', kind: 'expression', config: true },
   { source: 'web_scripts/src/message_star_refresh/main.ts', output: 'lib/src/generated/message_star_refresh.g.dart', name: 'gakujoMessageStarRefreshJs', config: true },
   { source: 'web_scripts/src/course_name_estimate/main.ts', output: 'lib/src/generated/course_name_estimate.g.dart', name: 'gakujoCourseNameEstimateJs', kind: 'expression' },
   { source: 'web_scripts/src/history_marker/main.ts', output: 'lib/src/generated/history_marker.g.dart', name: 'gakujoHistoryMarkerJs', kind: 'expression', config: true },

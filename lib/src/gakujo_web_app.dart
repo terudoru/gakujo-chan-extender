@@ -30,6 +30,7 @@ import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
 import 'course_planner_link.dart';
+import 'course_planner_page.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
@@ -119,6 +120,7 @@ export 'widgets/settings_sections.dart';
 
 part 'widgets/gakujo_web_app_private_widgets.dart';
 part 'gakujo_web_app_calendar.dart';
+part 'gakujo_web_app_course_planner.dart';
 part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_models.dart';
@@ -740,6 +742,7 @@ class GakujoWebApp extends StatefulWidget {
     this._debugAllowed,
     this._gakujoReachable,
     this._updateService,
+    this._webViewService,
     this.linuxOverlayObscured,
   });
 
@@ -753,6 +756,7 @@ class GakujoWebApp extends StatefulWidget {
   final bool? _debugAllowed;
   final Future<bool> Function()? _gakujoReachable;
   final AppUpdateService? _updateService;
+  final GakujoWebViewService? _webViewService;
   final ValueListenable<bool>? linuxOverlayObscured;
 
   @override
@@ -1932,7 +1936,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     _totpGenerator = widget._totpGenerator ?? const TotpGenerator();
     final platformService = GakujoPlatformService.current();
-    _webViewService = platformService.createWebViewService();
+    _webViewService = widget._webViewService ?? platformService.createWebViewService();
     _calendarService = platformService.createCalendarService();
     _downloadHistoryStore = GakujoDownloadHistoryStore();
     _activityStore = _SyncActivityStore(() {
@@ -2213,6 +2217,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   int _mainFrameNavigationStarts = 0;
+  int _plannerNavigationStarts = 0;
+  bool _plannerOpening = false;
 
   void _submitLoginAccount(String account) {
     final navigation = _navigationRevision;
@@ -2482,6 +2488,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.coursePlanner,
                     child: Text('履修プランナー'),
+                  ),
+                  const PopupMenuItem<Object>(
+                    value: _ToolbarAction.importCoursePlanner,
+                    child: Text('学務の照会結果をプランナーに取り込む'),
                   ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.addFavorite,
@@ -5400,16 +5410,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
       case _ToolbarAction.coursePlanner:
-        const preview = String.fromEnvironment(
-          'MBG_COURSE_PLANNER_URL',
-          defaultValue: coursePlannerUrl,
-        );
-        await _launchExternalUrl(
-          coursePlannerLink(
-            _currentPageUrl,
-            baseUrl: kDebugMode ? preview : coursePlannerUrl,
-          ),
-        );
+      case _ToolbarAction.importCoursePlanner:
+        await _openCoursePlanner(importing: action == _ToolbarAction.importCoursePlanner);
         return;
       case _ToolbarAction.messageStars:
         await _showStarredMessagesDialog();
@@ -5466,6 +5468,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       case _ToolbarAction.reload:
       case _ToolbarAction.coursePlanner:
+      case _ToolbarAction.importCoursePlanner:
       case _ToolbarAction.messageStars:
         return;
     }
@@ -8112,6 +8115,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         onNavigationRequest: _handleNavigationRequest,
         // Windows SourceChanged only sees the final URL of an HTTP redirect.
         onNavigationStarting: (url) {
+          _plannerNavigationStarts++;
           _invalidateLoginUrl(url);
           _captureNavigationRecoveryCandidate(url);
         },

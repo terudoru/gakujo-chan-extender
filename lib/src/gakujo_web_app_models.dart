@@ -3,6 +3,7 @@ part of 'gakujo_web_app.dart';
 enum _ToolbarAction {
   addFavorite,
   coursePlanner,
+  importCoursePlanner,
   messageStars,
   copyUrl,
   openExternal,
