@@ -44,6 +44,18 @@ after(async () => {
   await vite?.close();
 });
 
+test("a completed failing assessment is evidence without earned credits", () => {
+  const record = { title: "現代教育学概論", column: "evaluation", year: "2026", grade: "不可",
+    reason: "最終評価 不可", credits: 2, applied: 1 };
+  const html = renderToStaticMarkup(React.createElement(RequirementEvidence, {
+    earned: [record], projectedEarned: [], unit: "condition",
+  }));
+  assert.match(html, /最終評価を受けた科目/);
+  assert.match(html, /修得 0単位/);
+  assert.match(html, /最終評価 不可/);
+  assert.doesNotMatch(html, /修得済み|履修予定/);
+});
+
 test("handles plain default empty props cleanly", () => {
   const html = renderToStaticMarkup(React.createElement(RequirementEvidence));
   assert.match(html, /^<details\b/);

@@ -1,6 +1,7 @@
 import React from "react";
 import { syllabusURL } from "../study.mjs";
 import { External } from "../ui.jsx";
+import { SyllabusContent } from "../archive/content/SyllabusContent.jsx";
 import {
   departmentLabel,
   formatAcademicFields,
@@ -63,6 +64,7 @@ export function SyllabusFacts({
           <dd>{formatCourseType(course)}</dd>
         </div>
       </dl>
+      <SyllabusContent course={course} year={year} showSource={false} />
       {officialUrl ? (
         <div className="sf-link-row">
           <External href={officialUrl}>{course.sourceKind === "public-index" ? "大学のシラバス検索" : "公式シラバス"}</External>

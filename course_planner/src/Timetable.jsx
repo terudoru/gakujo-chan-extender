@@ -33,7 +33,8 @@ import {
   slotTitle,
 } from "./ui.jsx";
 
-import { academicFieldRows, availableStages, slotRequirements } from "./requirements.mjs";
+import { availableStages, slotRequirements } from "./requirements.mjs";
+import { fieldProgress } from "./field-progress.mjs";
 import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
 
 export function Timetable({
@@ -50,6 +51,7 @@ export function Timetable({
   openCourse,
   reopenSlot,
   candidateIndex,
+  fieldSelector,
   importRegistration,
 }) {
   const [replacement, setReplacement] = useState(null);
@@ -103,9 +105,9 @@ export function Timetable({
       ),
     );
     if (!courseFieldsHere.size) return [];
-    return academicFieldRows(state, byCode, maps.active)
+    return fieldProgress(state, byCode, maps.active, fieldSelector)
       .filter((row) => courseFieldsHere.has(row.field));
-  }, [state, byCode, maps, slot]);
+  }, [state, byCode, maps, slot, fieldSelector]);
   const impact = useMemo(() => {
     const chosen = maps.planned.get(slot);
     if (!chosen?.length || (!state.grades.length && !state.balances.length)) return [];
@@ -338,10 +340,10 @@ export function Timetable({
             <div key={r.field}>
               <dt>{r.field === "?" ? "分野要確認" : r.field + " " + catalog.fields[r.field]}</dt>
               <dd>
-                {r.needsReview
-                  ? `確認できた分 ${r.earned + r.planned}単位（ほか要確認）`
-                  : state.grades.length
-                    ? `修得 ${r.earned} → 履修後 ${r.earned + r.planned}単位`
+                {r.conflicted ? "確認表の修得単位が一致しません"
+                  : r.needsReview ? `確認できた分 ${r.forecast}単位（ほか要確認）`
+                  : r.earnedKnown
+                    ? `修得 ${r.earned} → 履修後 ${r.forecast}単位`
                     : `履修予定 ${r.planned}単位`}
               </dd>
             </div>

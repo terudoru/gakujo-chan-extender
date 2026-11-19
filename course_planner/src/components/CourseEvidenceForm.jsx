@@ -339,7 +339,7 @@ export function CourseEvidenceForm({ grade, faculty, onSave }) {
     setBusy(true);
     setTracked((prev) => ({ ...prev, error: "" }));
     try {
-      const ok = onSave ? await onSave(diff) : true;
+      const ok = onSave ? await onSave(diff, current.initial) : true;
       if (ok !== false) {
         const nextBaseline = { ...current.initial };
         for (const [k, v] of Object.entries(diff)) {

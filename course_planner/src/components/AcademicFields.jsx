@@ -55,7 +55,7 @@ export function AcademicFields({
         const label = fieldHeading(row.field, fieldNames);
         const earned = isFiniteNumber(row.earned) ? row.earned : 0;
         const planned = isFiniteNumber(row.planned) ? row.planned : 0;
-        const forecast = earned + planned;
+        const forecast = isFiniteNumber(row.forecast) ? row.forecast : earned + planned;
         const hasRequired = isFiniteNumber(row.required);
         const hasRemaining = isFiniteNumber(row.remaining);
         const hasAfter = isFiniteNumber(row.after);
@@ -86,7 +86,7 @@ export function AcademicFields({
               </div>
               <div className="af-metrics">
                 <span>
-                  {row.earnedKnown === false
+                  {row.conflicted ? "確認表の修得単位が一致しません" : row.earnedKnown === false
                     ? `成績未取込 · 履修予定 ${planned}単位`
                     : `修得 ${earned} · 履修後 ${forecast} 単位`}
                 </span>

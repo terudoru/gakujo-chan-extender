@@ -261,6 +261,10 @@ body {
   color: var(--soft);
 }
 .stage-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.rule-decision { grid-column: 1 / -1; }
+.syllabus-content dl { display: grid; gap: 2px; margin: 0; }
+.syllabus-content dt { color: var(--soft); font-size: 12px; }
+.syllabus-content dd { margin: 0 0 6px; font-size: 14px; overflow-wrap: anywhere; }
 .stage-summary strong, .cap-rules summary {
   color: var(--ink);
 }

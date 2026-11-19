@@ -8,6 +8,7 @@ import {
   termsFor,
 } from "../study.mjs";
 import { FACULTIES, satisfiesFilter } from "../requirements.mjs";
+import { isAcademicFieldKey } from "../curricula/engine-evidence.mjs";
 
 export const PERIOD_NUMBERS = ["1", "2", "3", "4", "5", "6", "7"];
 export const SYLLABUS_HOST = "syllabus.niigata-u.ac.jp";
@@ -223,8 +224,7 @@ export function initialFiltersFromContext(context = {}) {
   const field =
     context.field != null && context.field !== ""
       ? String(context.field)
-      : typeof context.requirement === "string" &&
-          context.requirement.startsWith("field-")
+      : isAcademicFieldKey(context.requirement)
         ? context.requirement.slice(6)
         : "all";
   return {

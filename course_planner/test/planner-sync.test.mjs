@@ -277,7 +277,7 @@ test("faculty profile choices preserve explicit values only on the private histo
   const source = initialState(), replica = initialState();
   const options = { entryGrade: 3, graduationYear: "2027", graduationMonth: "03", package: "心理・人間・メディア表現文化学",
     yearOfStudy: "14", earlyGraduation: false, deanException: true, iStepApproved: false,
-    lawPaperSubstitutionApproved: true, thirdYearCumulativeGpa: 0 };
+    lawPaperSubstitutionApproved: true, thirdYearCumulativeGpa: 0, internationalStudent: false, enrolledApril2022: true };
   Object.assign(source.profile, options);
   const batch = history(source, a).pending;
   history(replica, b, [batch]);
@@ -291,6 +291,7 @@ test("faculty profile choices preserve explicit values only on the private histo
   Object.assign(replica.profile, { entryGrade: "3", graduationYear: 2028, graduationMonth: 9, yearOfStudy: 15,
     earlyGraduation: true, iStepApproved: true, lawPaperSubstitutionApproved: false, thirdYearCumulativeGpa: "0.00" });
   delete replica.profile.package;
+  delete replica.profile.enrolledApril2022;
   history(source, a, [history(replica, b).pending]);
   for (const key of Object.keys(options)) assert.deepEqual(source.profile[key], replica.profile[key]);
   assert.equal(Object.hasOwn(source.profile, "package"), false);

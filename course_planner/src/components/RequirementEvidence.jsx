@@ -322,7 +322,8 @@ export function RequirementEvidence({
     Array.isArray(list)
       ? list.filter((row) => row && typeof row === "object")
       : [];
-  const earnedRows = toRows(earned);
+  const earnedRows = toRows(earned).filter((r) => r.column !== "evaluation");
+  const evaluations = toRows(earned).filter((r) => r.column === "evaluation");
   const coveredRows = dedupeCoveredRows(toRows(covered), earnedRows);
   const plannedRows = toRows(planned);
   const unknownRows = toRows(unknown);
@@ -353,7 +354,8 @@ export function RequirementEvidence({
 
   const ruleReason = typeof reason === "string" ? reason.trim() : "";
   const ruleNote = typeof note === "string" ? note.trim() : "";
-  const projectedChanges = diffProjectedEarned(earnedRows, projectedEarned);
+  const projectedChanges = diffProjectedEarned(earnedRows, Array.isArray(projectedEarned)
+    ? projectedEarned.filter((r) => r.column !== "evaluation") : projectedEarned);
 
   const validSources = (Array.isArray(sources) ? sources : [])
     .map((source) => {
@@ -369,7 +371,7 @@ export function RequirementEvidence({
     .filter(Boolean);
 
   const hasCourseRows =
-    earnedRows.length > 0 ||
+    earnedRows.length > 0 || evaluations.length > 0 ||
     coveredRows.length > 0 ||
     plannedRows.length > 0 ||
     unknownRows.length > 0 ||
@@ -425,6 +427,10 @@ export function RequirementEvidence({
             <strong style={headingStyle}>注記</strong>
             <p style={noteStyle}>{ruleNote}</p>
           </div>
+        )}
+        {evaluations.length > 0 && (
+          <EvidenceGroup heading="最終評価を受けた科目" rows={evaluations} unit={effectiveUnit}
+            formatRowUnits={() => "修得 0単位"} />
         )}
         {showEarnedGroup && (
           <EvidenceGroup

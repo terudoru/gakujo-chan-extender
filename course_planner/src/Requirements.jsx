@@ -2,8 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RequirementEvidence } from "./components/RequirementEvidence.jsx";
 import { AcademicFields } from "./components/AcademicFields.jsx";
 import { ProfileSettings } from "./components/ProfileSettings.jsx";
+import { CourseEvidenceForm, initialEvidenceDraft } from "./components/CourseEvidenceForm.jsx";
 import { HistoricalMatchPanel } from "./archive/HistoricalMatchPanel.jsx";
-import { sameProfile } from "./curricula/engine-evidence.mjs";
+import { isAcademicFieldKey } from "./curricula/engine-evidence.mjs";
+import { comparableBalances, saveCreditBalance } from "./balance-edit.mjs";
+import { plannerBalanceScope } from "./imports/review.mjs";
+import { decisionRecords, decisionScope, saveDecision } from "./official-decision.mjs";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   ArrowRight,
@@ -14,13 +18,14 @@ import {
 } from "lucide-react";
 import {
   FACULTIES,
-  academicFieldRows,
   facultyInfo,
   gradeCourses,
   sourceLinks,
   stageStatus,
 } from "./requirements.mjs";
 import { activeCourses, normalize } from "./study.mjs";
+import { fieldProgress } from "./field-progress.mjs";
+
 import {
   ActionLink,
   Button,
@@ -30,9 +35,12 @@ import {
   Select,
 } from "./ui.jsx";
 
-
-
-function Balance({ state, goal, stageId, mutate, close, fields, rows }) {
+function Balance({ state, goal, stageId, stages, mutate, close, fields, rows: currentRows }) {
+  const [{ original, scope, rows, stage, allowLegacy }] = useState(() => {
+    const stage = stages.find((item) => item.id === stageId);
+    return { original: state.balances, scope: plannerBalanceScope(state.profile, goal, stageId),
+      rows: currentRows, stage, allowLegacy: stages.length <= 1 || Boolean(stage?.legacyBalanceScope) };
+  });
   const [label, setLabel] = useState(""),
     [kind, setKind] = useState("必修"),
     [req, setReq] = useState(""),
@@ -43,10 +51,17 @@ function Balance({ state, goal, stageId, mutate, close, fields, rows }) {
       <Select
         label="照合する項目"
         value={key}
-        change={setKey}
+        change={(id) => {
+          setKey(id);
+          const row = rows.find((r) => r.key === id);
+          const previous = row?.balance && !row.balance.conflict ? row.balance : null;
+          setCurrent(previous ? String(previous.current) : "");
+          setReq(String(previous?.required ?? row?.required ?? ""));
+          setKind(previous?.kind ?? row?.kind ?? "必修");
+        }}
         options={[
           ["custom", "自分の便覧の区分"],
-          ...rows.filter((r) => (!r.unit || r.unit === "credits") && !r.key.startsWith("field-")).map((r) => [r.key, r.label]),
+          ...rows.filter((r) => !isAcademicFieldKey(r.key)).map((r) => [r.key, r.label]),
           ...Object.entries(fields).map(([f, n]) => [
             "field-" + f,
             "分野 " + f + " " + n,
@@ -87,30 +102,34 @@ function Balance({ state, goal, stageId, mutate, close, fields, rows }) {
               )
                 throw Error("区分名と単位数を確認してください。");
               const id = key === "custom" ? "manual-" + normalize(name) : key;
-              const p = state.profile;
-              const b = {
-                key: id,
-                label: name,
-                kind,
-                required: Number(req),
-                current: Number(current),
-                faculty: p.faculty, handbook: p.handbook, program: p.program, admitted: p.admitted,
-                department: p.department ?? "", field: p.field ?? "", individual: p.individual ?? "",
-                entry: p.entry ?? "1年次入学", curriculum: p.curriculum ?? "", goal, stage: stageId,
-              };
-              if (!sameProfile(b, s.profile)) throw Error("所属設定が変わりました。対象の区分を確認してください。");
-              const previous = rows.find((row) => row.key === id)?.balance;
-              s.balances = s.balances.filter(
-                (r) => !(r.key === id && r.goal === goal && sameProfile(r, p) &&
-                  ((r.stageId || r.stage || "") === stageId ||
-                    (!r.stageId && !r.stage && previous && !previous.stageId && !previous.stage))),
-              );
-              s.balances.push(b);
+              const previous = comparableBalances(original, scope, stage, allowLegacy, id);
+              saveCreditBalance(s, previous, scope, stage, allowLegacy, {
+                key: id, label: name, kind, required: Number(req), current: Number(current),
+                sourceLabel: name, source: "履修科目確認表",
+              });
             })
           )
             close();
         }}
       />
+    </Modal>
+  );
+}
+function OfficialDecision({ subject, mutate, close }) {
+  const { row, scope, original, stageLabel } = subject;
+  const recorded = new Set(original.filter((r) => r.confirmed !== false).map((r) => r.current));
+  const [result, setResult] = useState(recorded.size === 1 ? String([...recorded][0]) : "");
+  return (
+    <Modal title="学務の判定を入力" close={close}>
+      <small>{[scope.faculty, scope.handbook && scope.handbook + "年度の便覧", stageLabel].filter(Boolean).join(" · ")}</small>
+      <h3>{row.label}</h3>
+      <p>{row.reason || "学務から通知された判定結果を選んでください。"}</p>
+      <Select label="学務で確認した結果" value={result} change={setResult}
+        options={[["", "未確認"], ["1", "条件を満たした"], ["0", "条件を満たしていない"]]} />
+      <Button label="確認結果を保存" variant="primary" onClick={async () => {
+        const saved = await mutate((s) => saveDecision(s, row, scope, original, result === "" ? null : Number(result)));
+        if (saved) close();
+      }} />
     </Modal>
   );
 }
@@ -127,6 +146,7 @@ const gradeKey = (g) => g.recordId || g.importId || g.id ||
   JSON.stringify([g.year, g.code, g.title, g.term, g.section, g.courseId, g.credits, g.grade]);
 export function Requirements({
   state,
+  assessment = state,
   catalog,
   byCode,
   mutate,
@@ -145,6 +165,7 @@ export function Requirements({
 }) {
   const [dialog, setDialog] = useState("");
   const [historySelection, setHistorySelection] = useState(null);
+  const [decision, setDecision] = useState(null);
   const returnRow = useRef(null);
   useEffect(() => {
     const row = returnRow.current;
@@ -155,21 +176,10 @@ export function Requirements({
   }, [returnKey]);
   const info = facultyInfo(state.profile),
     active = activeCourses(state, byCode),
-    grades = gradeCourses(state, byCode);
+    grades = gradeCourses(assessment, byCode);
   const fieldRows = useMemo(() => view === "fields"
-    ? academicFieldRows(state, byCode, active, stageId || goal).map((r) => {
-      const rule = r.requirement;
-      return {
-        ...r,
-        earned: rule?.balance?.current ?? r.earned,
-        earnedKnown: !!state.grades.length || !!rule?.balance,
-        required: rule?.required,
-        remaining: rule?.historyAvailable ? rule.remaining : null,
-        after: rule?.historyAvailable ? rule.after : null,
-        needsReview: r.needsReview || rule?.needsBalance,
-        source: rule?.source ?? rule?.evidence?.sources?.[0],
-      };
-    }) : [], [view, state, byCode, stageId, goal]);
+    ? fieldProgress(assessment, byCode, active, stageId || goal)
+    : [], [view, assessment, byCode, stageId, goal]);
   const originalGrade = historySelection && state.grades.find((g) => gradeKey(g) === historySelection);
   async function selectGrade(index) {
     const displayed = state.grades[index];
@@ -269,7 +279,7 @@ export function Requirements({
                 <span>履修後の残り</span>
               </div>
               {rows
-                .filter((r) => !r.key.startsWith("field-"))
+                .filter((r) => !isAcademicFieldKey(r.key))
                 .map((r) => {
                   return (
                     <div
@@ -302,7 +312,14 @@ export function Requirements({
                             </ActionLink>
                           )}
                       </div>
-                      <RequirementEvidence {...r.evidence} balance={r.balance} unit={r.unit} note={r.note} reason={r.reason} />
+                      <RequirementEvidence {...r.evidence} covered={r.covered} balance={r.balance} unit={r.unit} note={r.note} reason={r.reason} />
+                      {r.officialDecision && <div className="rule-decision">
+                        <ActionLink onClick={() => {
+                          const scope = decisionScope(state.profile, goal, r.stageId);
+                          setDecision({ row: r, scope, stageLabel: selectedStage?.label,
+                            original: decisionRecords(state.balances, scope, r.key) });
+                        }}>学務の判定を入力</ActionLink>
+                      </div>}
                     </div>
                   );
                 })}
@@ -363,7 +380,7 @@ export function Requirements({
             rows={fieldRows}
             fieldNames={catalog.fields}
             catalogYear={catalog.year}
-            returnField={returnKey?.startsWith("field-") ? returnKey.slice(6) : undefined}
+            returnField={isAcademicFieldKey(returnKey) ? returnKey.slice(6) : undefined}
             onSearch={({ field, requirement, label }) => search({ field, requirement, label, stageId, goal })}
             onReview={() => setView("history")}
           />
@@ -390,7 +407,7 @@ export function Requirements({
                     </small>
                   </div>
                   <div className="history-actions">
-                    <span>{g.credits}単位{g.counts === false ? " · 算入対象外" : ""}</span>
+                    <span>{g.finalEvaluation && g.counts === false ? `配当 ${g.credits}単位 · 修得 0単位` : `${g.credits}単位${g.counts === false ? " · 算入対象外" : ""}`}</span>
                     <ActionLink onClick={() => selectGrade(i)}>
                       {g.matchedCourse ? "シラバスの対応を確認" : "要確認 · シラバスを照合"}
                     </ActionLink>
@@ -401,6 +418,7 @@ export function Requirements({
           )}
         </>
       )}
+      {decision && <OfficialDecision subject={decision} mutate={mutate} close={() => setDecision(null)} />}
       {originalGrade && (
         <Modal title="履修年度のシラバス" close={() => setHistorySelection(null)}>
           <HistoricalMatchPanel grade={originalGrade} catalog={catalog} onConfirm={(match) =>
@@ -412,6 +430,21 @@ export function Requirements({
               Object.assign(matches[0], { matchedCourse: match, matchStatus: "confirmed" });
             })
           } />
+          <CourseEvidenceForm key={historySelection} grade={originalGrade} faculty={state.profile.faculty}
+            onSave={(changes, initial) => mutate((latest) => {
+              const matches = latest.grades.filter((g) => gradeKey(g) === historySelection);
+              if (matches.length !== 1 || latest.profile.faculty !== state.profile.faculty)
+                throw Error("履修記録または所属が変わりました。科目を開き直してください。");
+              const [current] = matches;
+              const currentDraft = initialEvidenceDraft(current);
+              for (const key of Object.keys(changes)) {
+                if (currentDraft[key] !== initial[key]) throw Error("確認事項が更新されました。科目を開き直してください。");
+              }
+              for (const [key, value] of Object.entries(changes)) {
+                if (value === null) delete current[key];
+                else current[key] = value;
+              }
+            })} />
         </Modal>
       )}
       {dialog === "profile" && (
@@ -426,7 +459,8 @@ export function Requirements({
           state={state}
           goal={goal}
           stageId={stageId || goal}
-          rows={rows.filter((r) => r.unit === "credits" && !r.key.startsWith("field-"))}
+          stages={stages}
+          rows={rows.filter((r) => r.unit === "credits")}
           fields={catalog.fields}
           mutate={mutate}
           close={() => setDialog("")}

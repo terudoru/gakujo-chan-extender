@@ -19,8 +19,8 @@ import { Timetable } from "./Timetable.jsx";
 import { Discovery } from "./Discovery.jsx";
 import { Lists, SharedList } from "./Lists.jsx";
 import { Requirements } from "./Requirements.jsx";
-import { availableStages, handbooks, requirementRows, shortageFilter } from "./requirements.mjs";
-import { matchHistoricalGrades } from "./archive/packs.mjs";
+import { availableStages, handbooks, requirementRows, selectedStage, shortageFilter } from "./requirements.mjs";
+import { matchHistoricalGrades, revalidateGradeMatch } from "./archive/packs.mjs";
 import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
 import { buildCandidateMeetings } from "./components/candidate-overlaps.mjs";
 import { SyllabusFacts } from "./components/SyllabusFacts.jsx";
@@ -84,11 +84,18 @@ export function App({ catalog }) {
     () => new Map(catalog.courses.map((c) => [c.code, c])),
     [catalog],
   );
+  const checkedGrades = useMemo(() => state.grades.map((grade) => {
+    if (!grade.matchedCourse?.confirmed) return grade;
+    const match = revalidateGradeMatch(grade, catalog);
+    return { ...grade, matchedCourse: match, fields: match?.fields ?? [], category: match?.category ?? "",
+      matchStatus: match ? "confirmed" : "unresolved" };
+  }), [state.grades, catalog]);
+  const assessment = useMemo(() => ({ ...state, grades: checkedGrades }), [state, checkedGrades]);
   const list = state.lists.find((l) => l.id === listId) ?? state.lists[0];
   const stages = useMemo(() => availableStages(state.profile, creditGoal), [state.profile, creditGoal]);
   function stageScopeFor(goal) {
-    const { faculty, handbook, program, entry, department, individual } = state.profile;
-    return JSON.stringify([faculty, handbook, program, entry, department, individual, goal]);
+    const { faculty, handbook, admitted, program, entry, department, field, individual, curriculum } = state.profile;
+    return JSON.stringify([faculty, handbook, admitted, program, entry, department, field, individual, curriculum, goal]);
   }
   const stageScope = stageScopeFor(creditGoal);
   const chosenStage = selectedStages[stageScope];
@@ -100,16 +107,16 @@ export function App({ catalog }) {
   );
   const rows = useMemo(
     () => page === "credits" || pendingImport
-      ? requirementRows(state, byCode, planned, selector)
+      ? requirementRows(assessment, byCode, planned, selector)
       : [],
-    [state, byCode, planned, page, selector, pendingImport],
+    [assessment, byCode, planned, page, selector, pendingImport],
   );
-  const stageId = rows[0]?.stageId ?? stages.find((s) => s.id === selector)?.id ??
-    stages.find((s) => s.default)?.id ?? stages[0]?.id ?? "";
+  const defaultStage = useMemo(() => selectedStage(state.profile, selector), [state.profile, selector]);
+  const stageId = rows[0]?.stageId ?? defaultStage?.id ?? "";
   const matchesRequirement = useMemo(() => {
     if (page !== "search" || !context.requirement) return undefined;
-    return shortageFilter(state, byCode, planned, context);
-  }, [state, byCode, planned, page, context]);
+    return shortageFilter(assessment, byCode, planned, context);
+  }, [assessment, byCode, planned, page, context]);
   const prepareGrades = useCallback(
     (incoming, previous) => matchHistoricalGrades(incoming, catalog, previous),
     [catalog],
@@ -336,8 +343,8 @@ export function App({ catalog }) {
               </div>
               {page === "week" && (
                 <Timetable
+                  state={assessment}
                   {...{
-                    state,
                     byCode,
                     catalog,
                     term,
@@ -357,6 +364,7 @@ export function App({ catalog }) {
                     setSelectedStages((old) => ({ ...old, [stageScopeFor(row.goal)]: row.stageId }));
                     setContext({ requirement: row.key });
                   }}
+                  fieldSelector={selector}
                   importRegistration={() => requestImport({ kind: "registration" })}
                   openCourse={setCourse}
                 />
@@ -391,7 +399,7 @@ export function App({ catalog }) {
               )}
               {page === "credits" && (
                 <Requirements
-                  {...{ state, catalog, byCode, mutate, search, rows, requestImport }}
+                  {...{ state, assessment, catalog, byCode, mutate, search, rows, requestImport }}
                   {...{ stages, stageId, handbooks }}
                   setStage={(id) => setSelectedStages((old) => ({ ...old, [stageScope]: id }))}
                   returnKey={context.requirement}

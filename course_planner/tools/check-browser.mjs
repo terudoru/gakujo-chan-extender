@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { basename, extname, join } from "node:path";
 import { chromium } from "playwright-core";
 import { initialState } from "../src/study.mjs";
+import { checkCurriculumWorkflows } from "../test/curriculum-workflow-browser.mjs";
 
 const dist = fileURLToPath(new URL("../../site/planner/", import.meta.url));
 const types = {
@@ -84,6 +85,11 @@ try {
   assert.match(await syllabus.innerText(), /分野／Academic Field[\s\S]*70[^\n]*英語/);
   assert.match(await syllabus.getByRole("link", { name: "公式シラバス" }).getAttribute("href"), /261G7011_/);
   await closeDialog(a);
+  await btn(a.locator(".list-details"), "エンジニアのためのデータサイエンス入門(融合領域分野)").click();
+  const courseFacts = a.getByRole("dialog", { name: "授業の詳細" });
+  await courseFacts.getByText("授業計画の例", { exact: true }).waitFor();
+  assert.match(await courseFacts.innerText(), /課題レポート/);
+  await closeDialog(a);
   await btn(a, "共有").click();
   const link = await a.getByLabel("共有リンク", { exact: true }).inputValue();
   await closeDialog(a);
@@ -152,6 +158,8 @@ try {
   assert.equal(await human.locator("b").innerText(), "3");
   const promotion = p.getByRole("radio", { name: "進級まで" });
   await promotion.click();
+  await p.getByRole("combobox", { name: "照合する学年・履修条件" }).click();
+  await p.getByRole("option", { name: "4年次進級", exact: true }).click();
   await btn(p, "確認表の内訳を入力").click();
   const balanceDialog = p.getByRole("dialog");
   await balanceDialog.getByRole("combobox", { name: "照合する項目" }).click();
@@ -179,6 +187,20 @@ try {
   await nav(p, "時間割").click();
   await btn(p, "月曜2限の候補").click();
   assert.match(await forecast.innerText(), /70 英語\s+修得 0 → 履修後 1単位/);
+  await nav(p, "単位・要件").click();
+  await p.getByRole("radio", { name: "シラバスの分野" }).click();
+  await btn(p, "分野の必要単位を入力").click();
+  await p.getByRole("combobox", { name: "照合する項目" }).click();
+  await p.getByRole("option", { name: "分野 70 英語", exact: true }).click();
+  await p.getByLabel("必要単位").fill("8");
+  await p.getByLabel("修得済み").fill("4");
+  await btn(p, "単位を保存").click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  const confirmedEnglish = p.locator(".af-list details").filter({ has: p.getByText("70 英語", { exact: true }) });
+  assert.match(await confirmedEnglish.innerText(), /修得 4 · 履修後 5 単位/);
+  await nav(p, "時間割").click();
+  await btn(p, "月曜2限の候補").click();
+  assert.match(await forecast.innerText(), /70 英語\s+修得 4 → 履修後 5単位/);
   await forecast.locator("summary").click();
   const humanImpact = forecast.locator("dl > div").filter({
     has: p.getByText("卒業 · 人文社会・教育科学", { exact: true }),
@@ -194,7 +216,7 @@ try {
   await p.getByRole("dialog", { name: "月曜2限の授業" }).waitFor();
   const mobileForecast = p.getByRole("dialog", { name: "月曜2限の授業" })
     .getByRole("region", { name: "選択したコマの修得見込み" });
-  assert.match(await mobileForecast.innerText(), /70 英語\s+修得 0 → 履修後 1単位/);
+  assert.match(await mobileForecast.innerText(), /70 英語\s+修得 4 → 履修後 5単位/);
   assert.equal(
     await p.locator("body").evaluate((el) => el.scrollWidth <= innerWidth),
     true,
@@ -312,6 +334,24 @@ try {
   assert.match(await matched.innerText(), /照合済み/);
   assert.match(await matched.getByRole("link", { name: "この年度の公式シラバス" }).getAttribute("href"), /syllabusHtml\/2020\//);
   await closeDialog(p);
+  await p.getByRole("radio", { name: "シラバスの分野" }).click();
+  await btn(p, "分野の必要単位を入力").click();
+  const target = p.getByRole("dialog");
+  await target.getByRole("combobox", { name: "照合する項目" }).click();
+  await p.getByRole("option", { name: "分野 70 英語", exact: true }).click();
+  await target.getByLabel("必要単位").fill("4");
+  await target.getByLabel("修得済み").fill("2");
+  await btn(target, "単位を保存").click();
+  const field = p.locator(".af-list details").filter({ has: p.getByText("70 英語", { exact: true }) });
+  await field.getByText(/現在の残り 2/).waitFor();
+  await field.locator("summary").click();
+  assert.match(await field.innerText(), /実践コミュニケーション英語I/);
+  assert.match(await field.innerText(), /2020年度/);
+  await btn(field, "この分野の授業を探す").click();
+  await p.locator(".result-list li").first().waitFor();
+  await btn(p, "単位・要件に戻る").click();
+  await p.waitForFunction(() => document.activeElement?.matches(".af-list summary"));
+  assert.ok(await field.evaluate((el) => el.open));
   await nav(p, "同期").click();
   await p.getByRole("heading", { name: "同期", exact: true }).waitFor();
   const unplannedDenial = await browser.newContext();
@@ -327,9 +367,14 @@ try {
   assert.match(await deniedSlot.innerText(), /261G3008 · 要確認/);
   assert.match(await deniedPage.locator(".cap-body b").innerText(), /^0\s*\//);
   await unplannedDenial.close();
+
+  const cohortBrowser = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const cohort = await open(cohortBrowser, base);
+  await checkCurriculumWorkflows(cohort);
+  await cohortBrowser.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Desktop and mobile passed: slot search, private snapshot copy, replacement, term CAP, grades and requirements, mobile sheet, persistence.",
+    "Desktop and mobile passed: candidate and timetable conflicts, list copying, CAP, private grade and registration review, historical syllabus, field deficits and all undergraduate faculties.",
   );
 } finally {
   await browser?.close();

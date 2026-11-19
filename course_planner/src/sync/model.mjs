@@ -40,7 +40,7 @@ const gradeFields = {
   code: historicCode, title: text, year: scalar, grade: text, credits: number,
   fields, category: text, department: text, duplicate: flag, recognized: flag,
   courseId: text, term: text, section: text, alternativeTitle: text, counts: flag,
-  duplicateReviewed: flag, identityUncertain: flag, allocationLabel: text, allocationKey: text,
+  duplicateReviewed: flag, finalEvaluation: flag, identityUncertain: flag, allocationLabel: text, allocationKey: text,
   matchStatus: text, equivalentTitle: text, equivalentTo: text, equivalenceKey: text, repeatGroup: text,
   duplicateOf: text, status: (s) => STATUS.includes(s),
   offeringDepartment: text, offeringFaculty: text,
@@ -91,6 +91,7 @@ const profileFields = {
   yearAttendanceMonths: (v) => scalar(v) || monthCounts(v), earlyGraduation: flag, deanException: flag,
   yearOfStudy: optionalPositiveInteger,
   iStepApproved: flag, lawPaperSubstitutionApproved: flag, thirdYearCumulativeGpa: gpa,
+  internationalStudent: flag, enrolledApril2022: flag,
   department: text, individual,
 };
 function pick(value, schema) {
