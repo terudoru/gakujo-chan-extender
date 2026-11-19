@@ -29,6 +29,7 @@ import 'generated/course_name_tables.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
+import 'course_planner_link.dart';
 import 'desktop_page_zoom_script.dart';
 import 'download_destination_settings.dart';
 import 'download_file_name_policy.dart';
@@ -2478,6 +2479,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       child: Text('${destination.label}へ移動'),
                     ),
                   const PopupMenuDivider(),
+                  const PopupMenuItem<Object>(
+                    value: _ToolbarAction.coursePlanner,
+                    child: Text('履修プランナー'),
+                  ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.addFavorite,
                     child: Text('お気に入りに追加'),
@@ -5394,6 +5399,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
+      case _ToolbarAction.coursePlanner:
+        const preview = String.fromEnvironment(
+          'MBG_COURSE_PLANNER_URL',
+          defaultValue: coursePlannerUrl,
+        );
+        await _launchExternalUrl(
+          coursePlannerLink(
+            _currentPageUrl,
+            baseUrl: kDebugMode ? preview : coursePlannerUrl,
+          ),
+        );
+        return;
       case _ToolbarAction.messageStars:
         await _showStarredMessagesDialog();
         return;
@@ -5448,6 +5465,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _launchExternalUrl(Uri.parse(url));
         return;
       case _ToolbarAction.reload:
+      case _ToolbarAction.coursePlanner:
       case _ToolbarAction.messageStars:
         return;
     }

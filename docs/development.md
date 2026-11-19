@@ -60,6 +60,12 @@ flutter build linux --debug
 | Windows アプリ | `build/windows/x64/runner/Debug/morebettergakujo_flutter.exe` |
 | Linux アプリ | `build/linux/x64/debug/bundle/` |
 
+### 履修プランナー
+
+`course_planner/` で `npm ci`、`npm run dev` を実行し、表示されたローカルURLを開きます。授業一覧は新潟大学の公開シラバスと2026年度の開設一覧から生成します。画面にはMetaのAstryxとNeutralテーマを使用しています。
+
+`npm test` で単位計算と共有形式を確認できます。Chromeをインストールした環境では `npm run test:browser` でPC・スマートフォン幅の操作も検証できます。`npm run build` の出力先は `site/planner/` です。アプリのメニューから開くURLはデバッグビルドの `--dart-define=MBG_COURSE_PLANNER_URL=...` でローカルサーバーに向けられます。
+
 ## 不具合・要望の受付
 
 アカウントなしで報告を受け付ける仕組みは `report_form/` にあります。Google Apps Script のウェブアプリが報告を受け取り、非公開のスプレッドシートに保存します。開発者はスプレッドシートで報告を確認し、公開欄だけを入れた GitHub の Issue 作成画面を開きます。公開の手順と制限は [report_form/README.md](../report_form/README.md) を見てください。

@@ -62,3 +62,6 @@ proxmox-jobs.sqlite3
 /GITHUB_PUBLISHING.md
 /docs/TASKS.md
 /docs/private/
+
+# The Pages workflow builds the course planner from course_planner/.
+/site/planner/
