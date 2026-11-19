@@ -83,6 +83,10 @@
 
 候補を増やしたいときは、コマの候補一覧から「このコマの授業を探す」を開く。ターム・曜日・時限は検索条件に引き継ぐ。見つけた授業を候補リストに追加すると、元のコマの候補一覧に戻り、追加した授業とほかの候補をその場で比較して選べる。
 
+履修を申請した後は、同じ時間割で学務の登録状況を確認できる。申請済みで抽選結果を待つ授業には「申請中」、許可された授業には「許可」、学務の「不許可となった科目」に載った授業には「不許可」と表示する。取り込んだ情報から結果を判別できない場合は「要確認」とする。[学修ガイドブックの履修登録手順][registration-steps]、[学務の登録状況の画面例][registration-view]
+
+たとえば火曜3限の授業が不許可になったら、授業名と結果をコマに残し、その科目を学期のCAPに算入する予定単位数と分野別・要件別の修得見込みから外す。そのコマを押すと、保存していた別の候補を選び直せる。選び直した授業は「履修予定」として扱い、予定単位数と修得見込みを更新する。
+
 More Better Gakujoでは、学務の「単位修得状況照会」画面から修得済みの授業を取り込む。単独Web版では、学生が学務から保存した「成績確認表」のPDFを読み込む。取り込んだ科目を履修年度のシラバスと照合し、「分野／Academic Field」別に修得単位を集計する。同じ科目履歴を、本人に適用される進級・卒業要件の確認にも使う。学部ごとの画面・PDFから履修年度や開講番号を自動で読み取れるかは未検証。
 
 同名の授業が複数あり、履修した授業のシラバスを特定できない場合は、その科目だけに「要確認」と表示する。科目名と修得単位数は履修履歴に残し、本人が候補から該当するシラバスを選んだ時点で、その分野の修得単位に加える。
@@ -118,6 +122,8 @@ More Better Gakujoでは、学務の「単位修得状況照会」画面から�
 [eng-types]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=68
 [eng-types-english]: https://www.eng.niigata-u.ac.jp/student/files/hikkei_2026.pdf#page=69
 [guide]: https://www.niigata-u.ac.jp/wp-content/uploads/2026/04/01_gakushuu_2026.pdf
+[registration-steps]: https://www.niigata-u.ac.jp/wp-content/uploads/2026/04/01_gakushuu_2026.pdf#page=22
+[registration-view]: https://www.niigata-u.ac.jp/wp-content/uploads/2025/03/J_studentweb_manual.pdf#page=7
 [rules]: https://public1.legalcrud.com/niigata_univ/act/110000001.html#at60
 [human-3]: https://www.human.niigata-u.ac.jp/wp-content/uploads/2026/04/binran2026.pdf#page=44
 [human-grad]: https://public1.legalcrud.com/niigata_univ/act/110000378.html#at15
