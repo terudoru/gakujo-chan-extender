@@ -110,6 +110,67 @@ export const handbooks = Object.entries(faculties).flatMap(
     }),
 );
 
+// First and last academic year for each assessment. The optional term orders
+// future gates in the same year. It does not prove completion of an earlier gate.
+const assessmentYears = {
+  year2: [1, 1],
+  year3: [2, 2],
+  year4: [3, 3],
+  assignment: [2, 2],
+  "field-assignment": [2, 2],
+  thesis: [3, 4, 4],
+};
+
+function selectProgress(descriptor, profile, book) {
+  const gates = descriptor.stages.filter((s) => s.goal === "progress");
+  if (gates.length < 2) return;
+  const year = String(profile.yearOfStudy ?? "").trim();
+  let next = [];
+  if (/^[1-4]$/.test(year)) {
+    const current = Number(year);
+    // Both programs give guidance in year three. Applied Life Sciences also
+    // checks a credit threshold at the end of the second academic year.
+    const guidanceYears = profile.program?.includes("応用生命科学")
+      ? [2, 3, 4]
+      : [3, 3, 3];
+    let earliest = Infinity;
+    for (const gate of gates) {
+      const window =
+        gate.id === "research-guidance"
+          ? guidanceYears
+          : assessmentYears[gate.id];
+      if (!window || current > window[1]) continue;
+      const [firstYear, , firstTerm = 1] = window;
+      const due =
+        current >= firstYear ? 0 : 4 * (firstYear - current) + firstTerm;
+      if (due < earliest) {
+        earliest = due;
+        next = [];
+      }
+      if (due === earliest) next.push(gate);
+    }
+  }
+  if (next.length !== 1) {
+    const selection = stage("progress-selection", "照合する判定を選択", [
+      check(
+        "progress-selection",
+        "照合する判定",
+        "「照合する学年・履修条件」で、確認したい判定を選んでください。",
+        book,
+      ),
+    ]);
+    descriptor.stages.unshift(selection);
+    next = [selection];
+  }
+  descriptor.defaultStage = next[0].id;
+  // The engine separately preserves legacy engineering balances at year four.
+  // An explicit false prevents that compatibility rule from changing this default.
+  for (const gate of descriptor.stages) {
+    if (gate.goal === "progress")
+      gate.default = gate.id === descriptor.defaultStage;
+  }
+}
+
 export default function resolve(profile) {
   const faculty = profile.faculty,
     config = faculties[faculty];
@@ -118,6 +179,7 @@ export default function resolve(profile) {
   const book = handbooks.find((b) => b.faculty === faculty && b.year === year);
   if (book) {
     const descriptor = config.resolve(book, profile);
+    selectProgress(descriptor, profile, book);
     const classify = descriptor.cap.classify;
     descriptor.cap.classify = (course, student) => {
       const result = classify(course, student);

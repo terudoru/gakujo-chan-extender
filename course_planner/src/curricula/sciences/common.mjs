@@ -62,7 +62,8 @@ export const stage = (id, label, rows) => ({
   rows,
 });
 export const isThirdTransfer = (p) =>
-  /^(?:第)?3年次編入(?:学)?(?:生)?$/.test(norm(p.entry));
+  /^(?:第)?3年次編入(?:学)?(?:生)?$/.test(norm(p.entry)) ||
+  (p.entry === "編入" && String(p.entryGrade) === "3");
 export const irregular = (p) =>
   !!p.entry && !["1年次入学", "一般入学", "通常入学"].includes(p.entry);
 export function confirmed(c) {

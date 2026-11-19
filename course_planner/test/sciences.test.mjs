@@ -30,6 +30,81 @@ const eng = (p = "機械システム工学", y, x) => profile("工学部", p, y,
 const agr = (p = "応用生命科学", y, x) => profile("農学部", p, y, x);
 const sci = (p = "物理学（総合力）", y, x) => profile("理学部", p, y, x);
 
+test("progress defaults follow the next published gate and keep explicit choices available", () => {
+  const pick = "progress-selection";
+  const biological = agr("生物資源科学（植物資源科学分野）");
+  for (const [student, expected] of [
+    [sci(), ["year2", pick, "year4", pick]],
+    [sci("数学科", "2016"), ["year2", "year3", "year4", pick]],
+    [eng("機械システム工学プログラム"), ["year2", "year4", "year4", pick]],
+    [biological, ["field-assignment", "field-assignment", "thesis", "thesis"]],
+    [
+      agr("食品科学プログラム"),
+      ["research-guidance", "research-guidance", pick, "thesis"],
+    ],
+    [
+      agr("応用生命科学プログラム"),
+      ["research-guidance", "research-guidance", pick, "thesis"],
+    ],
+  ]) {
+    for (const [i, stageId] of expected.entries()) {
+      const info = resolve({ ...student, yearOfStudy: String(i + 1) });
+      assert.equal(info.defaultStage, stageId);
+      assert.deepEqual(
+        info.stages.filter((s) => s.default).map((s) => s.id),
+        [stageId],
+      );
+      const choice = info.stages.find((s) => s.id === pick);
+      if (stageId === pick) {
+        assert.equal(choice.rows[0].required, null);
+        assert.equal(choice.rows[0].officialDecision, undefined);
+        assert.ok(choice.rows[0].unknown);
+      } else assert.equal(choice, undefined);
+    }
+  }
+  for (const yearOfStudy of [undefined, "", 0, 5, "3.5"]) {
+    assert.equal(resolve({ ...sci(), yearOfStudy }).defaultStage, pick);
+  }
+  const fourth = resolve({ ...sci(), yearOfStudy: 4 });
+  assert.deepEqual(
+    fourth.stages.slice(1).map((s) => s.id),
+    ["year2", "assignment", "year3", "year4", "graduation"],
+  );
+  assert.equal(rows(biological, "field-assignment").total.required, 46);
+});
+
+test("single progress gates stay selectable and saved transfer entry grades control exceptions", () => {
+  const transfer = { entry: "編入", entryGrade: 3, yearOfStudy: 4 };
+  for (const [p, expected] of [
+    [sci("物理学（総合力）", "2026", transfer), "year4"],
+    [eng("機械システム工学プログラム", "2026", transfer), "year4"],
+    [agr("食品科学プログラム", "2026", transfer), "thesis"],
+    [agr("流域環境学プログラム", "2026", { yearOfStudy: 4 }), "thesis"],
+  ]) {
+    assert.deepEqual(
+      resolve(p)
+        .stages.filter((s) => s.goal === "progress")
+        .map((s) => s.id),
+      [expected],
+    );
+  }
+  const p = eng("機械システム工学プログラム", "2026", transfer);
+  assert.equal(rows(p, "year4").general.required, 28);
+  assert.equal(rows(p, "year4").recognition.officialDecision, true);
+  assert.equal(rows(p, "graduation").recognition.officialDecision, true);
+  for (const entry of ["転部", "再入学", "編入・転部・再入学"]) {
+    assert.ok(resolve({ ...p, entry }).stages.some((s) => s.id === "year2"));
+  }
+  assert.ok(
+    resolve({ ...p, entryGrade: "" }).stages.some((s) => s.id === "year2"),
+  );
+  assert.equal(
+    rows(sci(), "year4")["program-progress-4"].officialDecision,
+    undefined,
+  );
+  assert.equal(rows(agr(), "thesis").guidance.officialDecision, true);
+});
+
 test("cohort and program descriptors have unique stages, row keys, public sources and valid thresholds", () => {
   assert.equal(handbooks.length, 62);
   for (const book of handbooks) {
