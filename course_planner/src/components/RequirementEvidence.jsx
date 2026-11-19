@@ -149,6 +149,20 @@ function formatUnits(applied, credits, unit) {
   return "";
 }
 
+function formatCoveredUnits(applied, credits, unit) {
+  const hasApplied = hasValue(applied);
+  const hasCredits = hasValue(credits);
+  if (hasApplied && hasCredits) {
+    if (unit === "credits" && String(applied) === String(credits)) {
+      return `確認表に含む ${formatQuantity(applied, unit)}`;
+    }
+    return `確認表に含む ${formatQuantity(applied, unit)}（科目 ${credits}単位）`;
+  }
+  if (hasApplied) return `確認表に含む ${formatQuantity(applied, unit)}`;
+  if (hasCredits) return `${credits}単位`;
+  return "";
+}
+
 function formatTransition(before, after, unit) {
   return `算入 ${formatQuantity(before, unit)} → ${formatQuantity(after, unit)}`;
 }
@@ -159,19 +173,33 @@ function resolveCode(row) {
   return "";
 }
 
-function courseIdentityKey(row, counts) {
-  let base;
+function baseCourseIdentityKey(row) {
   if (hasValue(row.recordId)) {
-    base = `record:${row.sourceId ?? ""}/${row.recordId}`;
-  } else {
-    const code = resolveCode(row);
-    base = code
-      ? `offering:${row.year ?? ""}/${code}/${row.title ?? ""}`
-      : `title:${row.year ?? ""}/${row.title ?? ""}`;
+    return `record:${row.sourceId ?? ""}/${row.recordId}`;
   }
+  const code = resolveCode(row);
+  return code
+    ? `offering:${row.year ?? ""}/${code}/${row.title ?? ""}`
+    : `title:${row.year ?? ""}/${row.title ?? ""}`;
+}
+
+function courseIdentityKey(row, counts) {
+  const base = baseCourseIdentityKey(row);
   const seen = counts.get(base) ?? 0;
   counts.set(base, seen + 1);
   return `${base}#${seen}`;
+}
+
+function dedupeCoveredRows(coveredRows, earnedRows) {
+  const seen = new Set(earnedRows.map(baseCourseIdentityKey));
+  const unique = [];
+  for (const row of coveredRows) {
+    const key = baseCourseIdentityKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(row);
+  }
+  return unique;
 }
 
 function diffProjectedEarned(earnedRows, projectedEarned) {
@@ -256,7 +284,7 @@ function EvidenceItem({ row, unitText }) {
   );
 }
 
-function EvidenceGroup({ heading, rows, unit }) {
+function EvidenceGroup({ heading, rows, unit, formatRowUnits = formatUnits }) {
   return (
     <div style={sectionStyle}>
       <strong style={headingStyle}>{heading}</strong>
@@ -266,7 +294,7 @@ function EvidenceGroup({ heading, rows, unit }) {
             <EvidenceItem
               key={`${resolveCode(row)}-${row.year ?? ""}-${row.title ?? ""}-${index}`}
               row={row}
-              unitText={formatUnits(row.applied, row.credits, unit)}
+              unitText={formatRowUnits(row.applied, row.credits, unit)}
             />
           ))}
         </ul>
@@ -279,6 +307,7 @@ function EvidenceGroup({ heading, rows, unit }) {
 
 export function RequirementEvidence({
   earned = [],
+  covered = [],
   planned = [],
   projectedEarned,
   unknown = [],
@@ -294,6 +323,7 @@ export function RequirementEvidence({
       ? list.filter((row) => row && typeof row === "object")
       : [];
   const earnedRows = toRows(earned);
+  const coveredRows = dedupeCoveredRows(toRows(covered), earnedRows);
   const plannedRows = toRows(planned);
   const unknownRows = toRows(unknown);
   const effectiveUnit = hasValue(unit)
@@ -311,6 +341,9 @@ export function RequirementEvidence({
       hasValue(balance.current),
   );
   const balanceHeading = isCourseUnit ? "確認表の修得済み" : "確認表の記録";
+  const coveredHeading = isCourseUnit
+    ? "確認表の修得済みに含まれる科目"
+    : "確認表の記録に含まれる科目";
   const balanceNote =
     typeof balance?.reason === "string" && balance.reason.trim()
       ? balance.reason.trim()
@@ -337,6 +370,7 @@ export function RequirementEvidence({
 
   const hasCourseRows =
     earnedRows.length > 0 ||
+    coveredRows.length > 0 ||
     plannedRows.length > 0 ||
     unknownRows.length > 0 ||
     projectedChanges.length > 0;
@@ -371,6 +405,14 @@ export function RequirementEvidence({
             </span>
             {balanceNote && <small style={metaStyle}>{balanceNote}</small>}
           </div>
+        )}
+        {coveredRows.length > 0 && (
+          <EvidenceGroup
+            heading={coveredHeading}
+            rows={coveredRows}
+            unit={effectiveUnit}
+            formatRowUnits={formatCoveredUnits}
+          />
         )}
         {ruleReason && (
           <div style={sectionStyle}>

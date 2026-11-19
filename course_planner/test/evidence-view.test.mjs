@@ -251,6 +251,7 @@ test("shows confirmed balance aggregate distinctly without empty course groups a
     }),
   );
   assert.match(confirmedHtml, /確認表の修得済み[\s\S]*1単位/);
+  assert.doesNotMatch(confirmedHtml, /確認表の修得済みに含まれる科目/);
   assert.doesNotMatch(confirmedHtml, /照合できた修得科目/);
   assert.doesNotMatch(confirmedHtml, /履修予定/);
   assert.doesNotMatch(confirmedHtml, /該当する授業はありません/);
@@ -263,6 +264,100 @@ test("shows confirmed balance aggregate distinctly without empty course groups a
   );
   assert.doesNotMatch(unconfirmedHtml, /確認表の修得済み/);
   assert.match(unconfirmedHtml, /未確定の入力値です。/);
+});
+
+test("renders covered earned rows included in confirmed subtotal without summation, duplicates, or phantoms", () => {
+  const props = {
+    balance: { current: 1, required: 4 },
+    earned: [],
+    covered: [
+      {
+        recordId: "rec-cov-1",
+        title: "架空語学基礎 L",
+        code: "SYN-701",
+        year: "2026",
+        credits: 1,
+        applied: 1,
+        sourceUrl: "https://example.test/syllabus/2026/SYN-701",
+      },
+      {
+        recordId: "rec-cov-1",
+        title: "架空語学基礎 L",
+        code: "SYN-701",
+        year: "2026",
+        credits: 1,
+        applied: 1,
+        sourceUrl: "https://example.test/syllabus/2026/SYN-701",
+      },
+    ],
+    planned: [],
+    projectedEarned: [],
+  };
+
+  const firstHtml = renderToStaticMarkup(
+    React.createElement(RequirementEvidence, props),
+  );
+  const reopenedHtml = renderToStaticMarkup(
+    React.createElement(RequirementEvidence, props),
+  );
+
+  assert.equal(reopenedHtml, firstHtml);
+  assert.match(firstHtml, /確認表の修得済み[\s\S]*>1単位<\/span>/);
+  assert.doesNotMatch(firstHtml, />2単位<\/span>/);
+  assert.match(firstHtml, /確認表の修得済みに含まれる科目/);
+  assert.equal((firstHtml.match(/架空語学基礎 L/g) ?? []).length, 1);
+  assert.match(firstHtml, /SYN-701 · 2026 · 確認表に含む 1単位/);
+  assert.match(
+    firstHtml,
+    /href="https:\/\/example\.test\/syllabus\/2026\/SYN-701"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>公式シラバス/,
+  );
+  assert.doesNotMatch(firstHtml, /照合できた修得科目/);
+  assert.doesNotMatch(firstHtml, /履修予定/);
+  assert.doesNotMatch(firstHtml, /要確認/);
+  assert.doesNotMatch(firstHtml, /履修予定に伴う修得済みの算入変更/);
+  assert.doesNotMatch(firstHtml, /該当する授業はありません/);
+});
+
+test("deduplicates covered rows against earned, rejects unsafe covered sourceUrl, and formats courses unit", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(RequirementEvidence, {
+      unit: "courses",
+      balance: { current: 1, required: 2, unit: "courses" },
+      earned: [
+        {
+          title: "架空演習A",
+          code: "SYN-710",
+          year: "2025",
+          credits: 2,
+          applied: 1,
+        },
+      ],
+      covered: [
+        {
+          title: "架空演習A",
+          code: "SYN-710",
+          year: "2025",
+          credits: 2,
+          applied: 1,
+        },
+        {
+          title: "架空演習B",
+          code: "SYN-711",
+          year: "2026",
+          credits: 2,
+          applied: 1,
+          sourceUrl: "javascript:alert(1)",
+        },
+      ],
+    }),
+  );
+
+  assert.match(html, /確認表の修得済み[\s\S]*>1科目<\/span>/);
+  assert.equal((html.match(/架空演習A/g) ?? []).length, 1);
+  assert.equal((html.match(/架空演習B/g) ?? []).length, 1);
+  assert.match(html, /SYN-711 · 2026 · 確認表に含む 1科目（科目 2単位）/);
+  assert.doesNotMatch(html, /公式シラバス/);
+  assert.doesNotMatch(html, /javascript:/i);
 });
 
 test("renders unknown rows without misleading empty earned/planned groups and falls back to matchedCode", () => {
