@@ -21,6 +21,7 @@ class GakujoDeadlineEntry {
     this.courseCode = '',
     this.assignment = '',
     this.messageText = '',
+    this.notificationAccount,
   });
 
   final String title;
@@ -41,6 +42,7 @@ class GakujoDeadlineEntry {
 
   /// Full message row/body, before the dated preview drops non-date text.
   final String messageText;
+  final String? notificationAccount;
 
   String get assignmentKind =>
       RegExp(r'^(\S*(?:レポート|小テスト|アンケート))\s').firstMatch(title)?.group(1) ?? '';
@@ -67,6 +69,7 @@ class GakujoDeadlineEntry {
       if (courseCode.isNotEmpty) 'courseCode': courseCode,
       if (assignment.isNotEmpty) 'assignment': assignment,
       if (messageText.isNotEmpty) 'messageText': messageText,
+      if (notificationAccount != null) 'notificationAccount': notificationAccount,
     };
   }
 
@@ -83,6 +86,10 @@ class GakujoDeadlineEntry {
       courseCode: json['courseCode']?.toString() ?? '',
       assignment: json['assignment']?.toString() ?? '',
       messageText: json['messageText']?.toString() ?? '',
+      notificationAccount: switch (json['notificationAccount']) {
+        final String account => account,
+        _ => null,
+      },
     );
   }
 }
@@ -118,6 +125,7 @@ List<GakujoDeadlineEntry> deadlineEntriesForAssignments(
           course: assignment.course,
           courseCode: assignment.courseCode,
           assignment: assignment.title,
+          notificationAccount: assignment.notificationAccount,
         ),
   ];
 }
@@ -127,6 +135,7 @@ List<GakujoDeadlineEntry> deadlineEntriesForSchedule(
   String text, {
   required String url,
   required DateTime detectedAt,
+  String? notificationAccount,
 }) {
   final entries = <GakujoDeadlineEntry>[];
   final seen = <String>{};
@@ -145,6 +154,7 @@ List<GakujoDeadlineEntry> deadlineEntriesForSchedule(
       course: item.course,
       courseCode: item.courseCode,
       assignment: item.name,
+      notificationAccount: notificationAccount,
     );
     if (seen.add(entry.storageKey)) entries.add(entry);
   }

@@ -740,6 +740,13 @@ class MainActivity : FlutterActivity() {
             "notifyDeadline" -> {
                 result.success(showDeadlineNotification(call))
             }
+            "loadNotificationHistory" -> result.success(
+                DeadlineReminders.history(this, call.argument<String>("account"))
+            )
+            "clearNotificationHistory" -> {
+                if (DeadlineReminders.clearHistory(this)) result.success(null)
+                else result.error("notification_history_failed", "Failed to clear notification history", null)
+            }
             "scheduleReminders" -> {
                 DeadlineReminders.replace(
                     this,
@@ -1800,18 +1807,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun showDeadlineNotification(call: MethodCall): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
-
         val title = call.argument<String>("title")?.takeIf { it.isNotBlank() } ?: "課題期限"
         val body = call.argument<String>("body")?.takeIf { it.isNotBlank() } ?: "提出期限を検出しました"
         val url = call.argument<String>("url").orEmpty()
         val notificationId = "$title\n$body\n$url".hashCode()
-        DeadlineReminders.post(this, notificationId, title, body, url)
-        return true
+        return DeadlineReminders.post(this, notificationId, title, body, url,
+            call.argument<String>("historyAccount"), call.argument<String>("historyUrl"))
     }
 
     private fun notificationUrlFromIntent(intent: Intent?): String? {

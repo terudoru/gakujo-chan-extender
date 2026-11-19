@@ -5,6 +5,7 @@ enum _ToolbarAction {
   coursePlanner,
   importCoursePlanner,
   messageStars,
+  notificationHistory,
   copyUrl,
   openExternal,
   reload,

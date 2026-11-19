@@ -53,7 +53,7 @@ void main() {
   test('delivery records stable keys and trigger times before refilling', () {
     final show = source.substring(
       source.indexOf('fun show(context: Context, intent: Intent)'),
-      source.indexOf('private fun show('),
+      source.indexOf('fun post('),
     );
     expect(show, contains('intent.getLongExtra(EXTRA_AT_MILLIS, 0L)'));
     expect(source, contains('putExtra(EXTRA_AT_MILLIS, reminder.atMillis)'));
@@ -70,10 +70,12 @@ void main() {
     expect(show, contains('stableKey = reminder.stableKey'));
     final record = show.indexOf('DeadlineReminderDelivery.record(');
     final persist = show.indexOf('.putString(KEY_DELIVERED,');
-    final refill = show.indexOf('book(context, load(context))');
+    final refill = show.indexOf('book(context, current)');
     expect(record, greaterThan(0));
     expect(persist, greaterThan(record));
     expect(refill, greaterThan(persist));
+    expect(show.indexOf('reminder !in current'), lessThan(show.indexOf('cancel(context, reminder)')));
+    expect(show.indexOf('post(context, reminder.id'), lessThan(record));
   });
 
   test('delivered history loads legacy numeric ids through the bounded parser',

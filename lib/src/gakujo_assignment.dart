@@ -15,6 +15,7 @@ class GakujoAssignment {
     required this.capturedAt,
     this.courseCode = '',
     this.url = '',
+    this.notificationAccount,
   });
 
   /// レポート, 小テスト or an アンケート kind, as the list's 種別 says.
@@ -30,6 +31,7 @@ class GakujoAssignment {
   final DateTime dueAt;
   final DateTime capturedAt;
   final String url;
+  final String? notificationAccount;
 
   bool get isSubmitted =>
       status.contains('提出済') ||
@@ -64,6 +66,7 @@ class GakujoAssignment {
       'dueAt': dueAt.toIso8601String(),
       'capturedAt': capturedAt.toIso8601String(),
       'url': url,
+      if (notificationAccount != null) 'notificationAccount': notificationAccount,
     };
   }
 
@@ -83,6 +86,10 @@ class GakujoAssignment {
       capturedAt: DateTime.tryParse(json['capturedAt']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
       url: json['url']?.toString() ?? '',
+      notificationAccount: switch (json['notificationAccount']) {
+        final String account => account,
+        _ => null,
+      },
     );
   }
 
@@ -92,6 +99,7 @@ class GakujoAssignment {
     Map<dynamic, dynamic> row, {
     required DateTime capturedAt,
     String url = '',
+    String? notificationAccount,
   }) {
     String field(String name) =>
         (row[name]?.toString() ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -109,6 +117,7 @@ class GakujoAssignment {
       dueAt: dueAt,
       capturedAt: capturedAt,
       url: url,
+      notificationAccount: notificationAccount,
     );
   }
 

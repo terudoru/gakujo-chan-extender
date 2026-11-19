@@ -1117,16 +1117,19 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
   private var channel: FlutterMethodChannel?
   private weak var messenger: FlutterBinaryMessenger?
   private let handoff = NotificationActivationHandoff()
+  private let history = NotificationHistory()
   private var launchPair = NotificationLaunchPair()
 
   override init() {
     super.init()
     UNUserNotificationCenter.current().delegate = self
+    history.registerCategory()
   }
 
   func register(messenger: FlutterBinaryMessenger) {
     UNUserNotificationCenter.current().delegate = self
     guard self.messenger !== messenger else { return }
+    history.collect(account: nil) { _ in }
     self.messenger = messenger
     self.channel?.setMethodCallHandler(nil)
     handoff.replaceMessenger()
@@ -1186,6 +1189,21 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
           }
         }
         result(false)
+      case "loadNotificationHistory":
+        let args = call.arguments as? [String: Any]
+        self.history.collect(account: args?["account"] as? String) { collected in
+          switch collected {
+          case .success(let entries): result(entries)
+          case .failure: result(FlutterError(code: "notification_history_failed", message: nil, details: nil))
+          }
+        }
+      case "clearNotificationHistory":
+        do {
+          try self.history.clear()
+          result(nil)
+        } catch {
+          result(FlutterError(code: "notification_history_failed", message: nil, details: nil))
+        }
       case "notifyDeadline":
         let args = call.arguments as? [String: Any]
         let content = UNMutableNotificationContent()
@@ -1195,6 +1213,7 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
         if let url = args?[Self.notificationURLKey] as? String, !url.isEmpty {
           content.userInfo = [Self.notificationURLKey: url]
         }
+        self.history.tag(content, arguments: args)
         let request = UNNotificationRequest(
           identifier: "deadline-\(Date().timeIntervalSince1970)",
           content: content,
@@ -1235,6 +1254,7 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
             if let url = item[Self.notificationURLKey] as? String, !url.isEmpty {
               content.userInfo = [Self.notificationURLKey: url]
             }
+            self.history.tag(content, arguments: item)
             center.add(
               UNNotificationRequest(
                 identifier: "reminder-\(id)",
@@ -1276,14 +1296,19 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    if #available(macOS 11.0, *) {
-      completionHandler([.banner, .list, .sound, .badge])
-    } else {
-      completionHandler([.alert, .sound, .badge])
+    DispatchQueue.main.async {
+      self.history.observe(notification)
+      if #available(macOS 11.0, *) {
+        completionHandler([.banner, .list, .sound, .badge])
+      } else {
+        completionHandler([.alert, .sound, .badge])
+      }
     }
   }
 
   func rememberLaunchResponse(_ response: UNNotificationResponse) {
+    history.observe(response.notification)
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
     guard let url = Self.url(of: response),
           launchPair.acceptLaunch(response.notification.request.identifier) else { return }
     NSLog("MoreBetterGakujo: app launched from a notification")
@@ -1305,6 +1330,8 @@ private final class MacosNotificationsBridge: NSObject, UNUserNotificationCenter
   ) {
     DispatchQueue.main.async {
       defer { completionHandler() }
+      self.history.observe(response.notification)
+      guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
       guard let url = Self.url(of: response),
             self.launchPair.acceptTap(response.notification.request.identifier) else { return }
       NSApp.activate(ignoringOtherApps: true)

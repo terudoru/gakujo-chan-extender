@@ -891,15 +891,18 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
   private var channel: FlutterMethodChannel?
   private weak var messenger: FlutterBinaryMessenger?
   private let handoff = NotificationActivationHandoff()
+  private let history = NotificationHistory()
 
   override init() {
     super.init()
     UNUserNotificationCenter.current().delegate = self
+    history.registerCategory()
   }
 
   func register(messenger: FlutterBinaryMessenger) {
     UNUserNotificationCenter.current().delegate = self
     guard self.messenger !== messenger else { return }
+    history.collect(account: nil) { _ in }
     self.messenger = messenger
     self.channel?.setMethodCallHandler(nil)
     handoff.replaceMessenger()
@@ -964,6 +967,21 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
             result(opened)
           }
         }
+      case "loadNotificationHistory":
+        let args = call.arguments as? [String: Any]
+        self.history.collect(account: args?["account"] as? String) { collected in
+          switch collected {
+          case .success(let entries): result(entries)
+          case .failure: result(FlutterError(code: "notification_history_failed", message: nil, details: nil))
+          }
+        }
+      case "clearNotificationHistory":
+        do {
+          try self.history.clear()
+          result(nil)
+        } catch {
+          result(FlutterError(code: "notification_history_failed", message: nil, details: nil))
+        }
       case "notifyDeadline":
         let args = call.arguments as? [String: Any]
         let content = UNMutableNotificationContent()
@@ -973,6 +991,7 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
         if let url = args?[Self.notificationURLKey] as? String, !url.isEmpty {
           content.userInfo = [Self.notificationURLKey: url]
         }
+        self.history.tag(content, arguments: args)
         let request = UNNotificationRequest(
           identifier: "deadline-\(Date().timeIntervalSince1970)",
           content: content,
@@ -1013,6 +1032,7 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
             if let url = item[Self.notificationURLKey] as? String, !url.isEmpty {
               content.userInfo = [Self.notificationURLKey: url]
             }
+            self.history.tag(content, arguments: item)
             center.add(
               UNNotificationRequest(
                 identifier: "reminder-\(id)",
@@ -1054,7 +1074,10 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    completionHandler([.banner, .list, .sound, .badge])
+    DispatchQueue.main.async {
+      self.history.observe(notification)
+      completionHandler([.banner, .list, .sound, .badge])
+    }
   }
 
   func userNotificationCenter(
@@ -1064,6 +1087,8 @@ private final class IosNotificationsBridge: NSObject, UNUserNotificationCenterDe
   ) {
     DispatchQueue.main.async {
       defer { completionHandler() }
+      self.history.observe(response.notification)
+      guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
       guard let url = response.notification.request.content.userInfo[Self.notificationURLKey] as? String,
             !url.isEmpty else { return }
       self.handoff.receive(url)

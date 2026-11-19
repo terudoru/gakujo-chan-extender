@@ -63,6 +63,7 @@ import 'gakujo_message_filter_script.dart';
 import 'gakujo_message_list_script.dart';
 import 'gakujo_message_reader_script.dart';
 import 'gakujo_message_star_script.dart';
+import 'gakujo_notification_history.dart';
 import 'gakujo_notification_service.dart';
 import 'gakujo_offline_retry.dart';
 import 'gakujo_pdf_preview_server.dart';
@@ -111,6 +112,7 @@ import 'widgets/linux_download_strip.dart';
 import 'widgets/linux_native_toolbar_tooltips.dart';
 import 'widgets/linux_snack_bar_strip.dart';
 import 'widgets/settings_sections.dart';
+import 'widgets/notification_history_dialog.dart';
 import 'widgets/star_sync_section.dart';
 
 export 'widgets/app_data_sections.dart';
@@ -403,7 +405,7 @@ Future<bool?> showGakujoBackupRestoreConfirmation(BuildContext context) {
       return AlertDialog(
         title: const Text('バックアップから復元しますか？'),
         content: const Text(
-          '現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。',
+          '現在の設定、スター、通知済みの判定、ダウンロード履歴はバックアップの内容に置き換えられます。',
         ),
         actions: [
           TextButton(
@@ -1886,7 +1888,24 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _driveDownloadPreference.matches(_driveAccountHash, _starSyncGoogleAuth.currentEmail);
   final _loginIdentity = GakujoLoginIdentity();
   String? get _activeLoginAccount => _loginIdentity.active;
-  set _activeLoginAccount(String? value) => _loginIdentity.active = value;
+  final _notificationHistoryAccount = ValueNotifier<String?>(null);
+  ({Object owner, _PendingMessageOpen? message})? _historyNavigation;
+  set _activeLoginAccount(String? value) {
+    _loginIdentity.active = value;
+    if (_historyNavigation case (:final owner, :final message)
+        when _notificationHistoryAccount.value != value) {
+      _historyNavigation = null;
+      _loginRestore.release(owner);
+      if (_navigationRecovery.release(owner)) {
+        _navigationRecoveryCandidateFailed = false;
+      }
+      if (message != null && identical(message, _pendingMessageOpen)) {
+        _pendingMessageOpenTimer?.cancel();
+        _pendingMessageOpen = null;
+      }
+    }
+    _notificationHistoryAccount.value = value;
+  }
   String? get _driveAccountHash => _activeLoginAccount;
   late Future<void> _driveDownloadsLoad;
   int _googleCancelGeneration = 0;
@@ -2087,7 +2106,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         shouldSync: () => _canSyncStars,
       ),
     );
-    _notificationService = GakujoNotificationService();
+    _notificationService = GakujoNotificationService(
+      activeAccount: () => _activeLoginAccount,
+    );
     _deadlineNotificationCoordinator = GakujoDeadlineNotificationCoordinator(
       activityStore: _activityStore,
       notificationService: _notificationService,
@@ -2220,6 +2241,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   @override
   void dispose() {
     _notificationConsumer.dispose();
+    _notificationHistoryAccount.dispose();
     _cancelDriveUploads();
     _deferredPageNavigation?.disposed.complete();
     _status.dispose();
@@ -2395,7 +2417,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           return;
         }
         await _writeStoredLoginAccount(account);
-        if (revision == _loginIdentity.revision && (stillValid?.call() ?? true)) {
+        if (mounted && revision == _loginIdentity.revision && (stillValid?.call() ?? true)) {
           _activeLoginAccount = account;
         } else {
           await _writeStoredLoginAccount(null);
@@ -2449,6 +2471,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _scheduleDraftSync() => _collectionSyncScheduler.draftChanged();
 
   Future<void> _resumeNotificationsAndRefresh() async {
+    unawaited(_notificationService.collectHistory());
     try {
       await _deadlineNotificationCoordinator.onAppResumed(
         notificationsEnabled: _appSettings.isFeatureEnabled(
@@ -2592,6 +2615,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.coursePlanner,
                     child: Text('履修プランナー'),
+                  ),
+                  const PopupMenuItem<Object>(
+                    value: _ToolbarAction.notificationHistory,
+                    child: Text('通知履歴'),
                   ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.importCoursePlanner,
@@ -4954,6 +4981,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       await Future.wait([
         _downloadHistoryStore.clear(),
         _downloadHistoryStore.clearFailedDownloads(),
+        _notificationService.clearHistory(),
         _activityStore.deleteRetiredData(),
         _activityStore.clearDeadlines(),
         _activityStore.clearNotifiedDeadlineTimes(),
@@ -5533,6 +5561,35 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _handleToolbarAction(selection as _ToolbarAction);
   }
 
+  Future<void> _showNotificationHistory() async {
+    final account = _activeLoginAccount;
+    final identityRevision = _loginIdentity.revision;
+    final navigation = _navigationRevision;
+    final entries = account == null
+        ? Future.value(const <GakujoNotificationHistoryEntry>[])
+        : _notificationService.loadHistory(account);
+    final target = await showDialog<String>(
+      context: context,
+      builder: (_) => NotificationHistoryDialog(
+        account: account,
+        activeAccount: _notificationHistoryAccount,
+        entries: entries,
+        targetUrl: (url) =>
+            _notificationService.targetUrl(url, debugAllowed: _debugAllowed),
+      ),
+    );
+    if (target == null || !mounted || account != _activeLoginAccount ||
+        identityRevision != _loginIdentity.revision ||
+        navigation != _navigationRevision || _calendarOperationGate.isRunning) {
+      return;
+    }
+    try {
+      await _handleDeadlineNotificationTapped(target, fromHistory: true);
+    } on Object {
+      if (mounted) _showSnackBar('通知のページを開けませんでした');
+    }
+  }
+
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
       case _ToolbarAction.coursePlanner:
@@ -5541,6 +5598,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       case _ToolbarAction.messageStars:
         await _showStarredMessagesDialog();
+        return;
+      case _ToolbarAction.notificationHistory:
+        await _showNotificationHistory();
         return;
       case _ToolbarAction.reload:
         if (_calendarOperationGate.isRunning) {
@@ -5601,6 +5661,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       case _ToolbarAction.coursePlanner:
       case _ToolbarAction.importCoursePlanner:
       case _ToolbarAction.messageStars:
+      case _ToolbarAction.notificationHistory:
         return;
     }
   }
@@ -6230,8 +6291,15 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (!AllowedWebOrigins.canLoad(url, debugAllowed: _debugAllowed)) {
       return;
     }
+    final account = _activeLoginAccount;
+    final revision = _loginIdentity.revision;
+    final navigation = _navigationRevision;
     final result = await _readPageTextForActivity();
     if (result == null) {
+      return;
+    }
+    if (!mounted || revision != _loginIdentity.revision ||
+        navigation != _navigationRevision || account != _activeLoginAccount) {
       return;
     }
 
@@ -6252,6 +6320,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           ?GakujoAssignment.fromReportRow(
             row,
             capturedAt: DateTime.now(),
+            notificationAccount: account,
             // A reminder opens the list it can be submitted from, even when
             // the assignment was found elsewhere.
             url: category == 'レポート・小テスト'
@@ -6270,6 +6339,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         text: result.text,
         messageItems: result.messageItems,
         assignments: assignments,
+        notificationAccount: account,
       );
       await _activityStore.mergeDeadlines(
         extractedDeadlines,
@@ -6349,6 +6419,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     required String text,
     required List<_MessageActivityCandidate> messageItems,
     List<GakujoAssignment> assignments = const [],
+    String? notificationAccount,
   }) {
     // Grades pages contain personal records, not deadlines.
     if (category == '成績') {
@@ -6389,6 +6460,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           detectedAt: now,
           kind: kind,
           source: category,
+          notificationAccount: notificationAccount,
           messageText: messageText.isEmpty || messageText.contains(entryTitle)
               ? messageText
               : '$messageText $entryTitle',
@@ -6429,6 +6501,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         text,
         url: durableGakujoLink(url, category),
         detectedAt: now,
+        notificationAccount: notificationAccount,
       );
     }
 
@@ -6534,10 +6607,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       return;
     }
     _lastAssignmentRefresh = now;
+    final account = _activeLoginAccount;
+    final revision = _loginIdentity.revision;
+    bool stillSameAccount() => mounted &&
+        revision == _loginIdentity.revision && account == _activeLoginAccount;
     try {
       final result = await _controller.runJavaScriptReturningResult(
         gakujoAssignmentListFetchScript,
       ).timeout(const Duration(seconds: 60));
+      if (!stillSameAccount()) {
+        _lastAssignmentRefresh = null;
+        return;
+      }
       final decoded = jsonDecode(_stringFromJavaScriptResult(result));
       if (decoded is! Map || decoded['status'] != 'ok') {
         // Not signed in yet; try again on a later page.
@@ -6551,6 +6632,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
             ?GakujoAssignment.fromReportRow(
               row,
               capturedAt: now,
+              notificationAccount: account,
               url: _reportListPortalUrl,
             ),
       ];
@@ -6565,7 +6647,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       }) messages;
       var messageFetchFailed = false;
       try {
-        messages = await _fetchMessageDeadlinesInBackground();
+        messages = await _fetchMessageDeadlinesInBackground(account);
       } on Object catch (error, stackTrace) {
         messages = (
           entries: const <GakujoDeadlineEntry>[],
@@ -6578,6 +6660,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           error: error,
           stackTrace: stackTrace,
         );
+      }
+      if (!stillSameAccount()) {
+        _lastAssignmentRefresh = null;
+        return;
       }
       await _activityStore.mergeDeadlines([
         ...deadlineEntriesForAssignments(
@@ -6609,7 +6695,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   /// The 連絡通知 未読一覧 as deadline entries, read the way a visit to the
   /// list reads them. Skipped while 連絡通知 are not notified at all.
   Future<({List<GakujoDeadlineEntry> entries, List<String>? unreadMessageUrls})>
-      _fetchMessageDeadlinesInBackground() async {
+      _fetchMessageDeadlinesInBackground(String? notificationAccount) async {
     if (_appSettings.messageNotification.mode ==
             GakujoMessageNotificationMode.off ||
         !_appSettings.isFeatureEnabled(
@@ -6635,6 +6721,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         for (final item in items.whereType<Map<dynamic, dynamic>>())
           _MessageActivityCandidate.fromJson(item),
       ],
+      notificationAccount: notificationAccount,
     );
     return (
       entries: entries,
@@ -8248,7 +8335,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  Future<void> _handleDeadlineNotificationTapped(String targetUrl) async {
+  Future<void> _handleDeadlineNotificationTapped(
+    String targetUrl, {
+    bool fromHistory = false,
+  }) async {
     if (_calendarOperationGate.isRunning) {
       // Do not publish this as the auth restore target yet. An authenticated
       // callback from the in-flight calendar navigation would consume it and
@@ -8262,6 +8352,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     final owner = Object();
     _setPendingMessageUrl(targetUrl, owner: owner);
     _reserveNotificationRestore(targetUrl, owner: owner);
+    if (fromHistory) {
+      _historyNavigation = (owner: owner, message: _pendingMessageOpen);
+    }
     await _loadReservedPage(targetUrl, owner);
   }
 
@@ -8943,6 +9036,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       _loginIdentity.pending = null;
       _loginIdentity.restored = null;
       await _setActiveLoginAccount(null, resync: false);
+      if (Platform.isAndroid || Platform.isIOS || Platform.isMacOS) {
+        await _notificationService.clearHistory();
+      }
       try {
         await _warnPendingDriveChecks();
       } on Object catch (error) {

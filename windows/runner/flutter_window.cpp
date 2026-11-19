@@ -27,6 +27,17 @@ constexpr UINT kFirstDeadlineNotificationId = 2;
 constexpr UINT kDeadlineNotificationCallbackMessage = WM_APP + 1;
 UINT next_deadline_notification_id = kFirstDeadlineNotificationId;
 std::map<UINT, std::string> deadline_notification_urls;
+using NotificationResult = flutter::MethodResult<flutter::EncodableValue>;
+std::map<UINT, std::unique_ptr<NotificationResult>> pending_balloon_results;
+
+void CompleteBalloonResult(HWND hwnd, UINT id, bool shown) {
+  const auto entry = pending_balloon_results.find(id);
+  if (entry == pending_balloon_results.end()) return;
+  auto result = std::move(entry->second);
+  pending_balloon_results.erase(entry);
+  KillTimer(hwnd, id);
+  result->Success(flutter::EncodableValue(shown));
+}
 
 constexpr bool IsDeadlineNotificationDismissed(UINT callback_message) {
   return callback_message == NIN_BALLOONTIMEOUT ||
@@ -103,7 +114,8 @@ void CopyWideString(wchar_t* destination,
 
 bool ShowDeadlineToast(const std::wstring& title,
                        const std::wstring& body,
-                       const std::string& url) {
+                       const std::string& url,
+                       bool& blocked) {
   try {
     using winrt::Windows::Data::Xml::Dom::XmlDocument;
     using winrt::Windows::UI::Notifications::ToastNotification;
@@ -121,6 +133,14 @@ bool ShowDeadlineToast(const std::wstring& title,
 
     const auto notifier =
         ToastNotificationManager::CreateToastNotifier(kAppUserModelId);
+    using winrt::Windows::UI::Notifications::NotificationSetting;
+    const auto setting = notifier.Setting();
+    if (setting != NotificationSetting::Enabled) {
+      // An unpackaged launch can lack a toast registration. User and system
+      // blocks must still apply to the taskbar fallback.
+      blocked = setting != NotificationSetting::DisabledByManifest;
+      return false;
+    }
     ToastNotification toast(document);
     notifier.Show(toast);
     return true;
@@ -131,10 +151,13 @@ bool ShowDeadlineToast(const std::wstring& title,
   }
 }
 
+void DeleteDeadlineNotification(HWND hwnd, UINT notification_id);
+
 bool ShowDeadlineNotification(HWND hwnd,
                               const std::wstring& title,
                               const std::wstring& body,
-                              const std::string& url) {
+                              const std::string& url,
+                              std::unique_ptr<NotificationResult>& result) {
   const std::optional<UINT> notification_id = NextDeadlineNotificationId();
   if (!notification_id) {
     return false;
@@ -162,12 +185,19 @@ bool ShowDeadlineNotification(HWND hwnd,
   }
   if (notification_shown) {
     deadline_notification_urls[*notification_id] = url;
+    // The taskbar may add the icon without presenting its balloon.
+    if (SetTimer(hwnd, *notification_id, 30000, nullptr) != 0) {
+      pending_balloon_results[*notification_id] = std::move(result);
+      return true;
+    }
+    DeleteDeadlineNotification(hwnd, *notification_id);
   }
 
-  return notification_shown != FALSE;
+  return false;
 }
 
 void DeleteDeadlineNotification(HWND hwnd, UINT notification_id) {
+  CompleteBalloonResult(hwnd, notification_id, false);
   NOTIFYICONDATAW data = {};
   data.cbSize = sizeof(NOTIFYICONDATAW);
   data.hWnd = hwnd;
@@ -234,10 +264,13 @@ bool FlutterWindow::OnCreate() {
           }
           const std::wstring wide_title = Utf8ToWide(title);
           const std::wstring wide_body = Utf8ToWide(body);
-          const bool notification_shown =
-              ShowDeadlineToast(wide_title, wide_body, url) ||
-              ShowDeadlineNotification(hwnd, wide_title, wide_body, url);
-          result->Success(flutter::EncodableValue(notification_shown));
+          bool blocked = false;
+          if (ShowDeadlineToast(wide_title, wide_body, url, blocked)) {
+            result->Success(flutter::EncodableValue(true));
+          } else if (blocked || !ShowDeadlineNotification(
+                                    hwnd, wide_title, wide_body, url, result)) {
+            result->Success(flutter::EncodableValue(false));
+          }
           return;
         }
         if (call.method_name() == "takePendingNotificationUrl") {
@@ -305,10 +338,21 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     return TRUE;
   }
 
+  if (message == WM_TIMER &&
+      pending_balloon_results.count(static_cast<UINT>(wparam)) != 0) {
+    DeleteDeadlineNotification(hwnd, static_cast<UINT>(wparam));
+    return 0;
+  }
+
   if (message == kDeadlineNotificationCallbackMessage) {
     const UINT notification_id = static_cast<UINT>(wparam);
     const UINT callback_message = static_cast<UINT>(lparam);
+    if (callback_message == NIN_BALLOONSHOW) {
+      CompleteBalloonResult(hwnd, notification_id, true);
+      return 0;
+    }
     if (callback_message == NIN_BALLOONUSERCLICK) {
+      CompleteBalloonResult(hwnd, notification_id, true);
       const auto url = deadline_notification_urls.find(notification_id);
       if (url != deadline_notification_urls.end()) {
         if (!ConfirmDeadlineNotificationUrl(url->second)) {

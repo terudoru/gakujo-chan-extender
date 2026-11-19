@@ -1073,7 +1073,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('バックアップから復元しますか？'), findsOneWidget);
       expect(
-        find.text('現在の設定、スター、通知履歴、ダウンロード履歴はバックアップの内容に置き換えられます。'),
+        find.text('現在の設定、スター、通知済みの判定、ダウンロード履歴はバックアップの内容に置き換えられます。'),
         findsOneWidget,
       );
       expect(restored, isFalse);

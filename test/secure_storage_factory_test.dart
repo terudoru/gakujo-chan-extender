@@ -22,6 +22,8 @@ void main() {
     const excludedKeys = {
       'more_better_gakujo_secure_storage_bundle_v1',
       'more_better_gakujo_migration_completed_v1',
+      // Windows/Linux use secure storage; macOS keeps a native delivery ledger.
+      'more_better_gakujo_notification_history',
       // Device-authentication protection exists only on Android and iOS.
       'more_better_gakujo_protected',
       'more_better_gakujo_protected_secrets_v1',

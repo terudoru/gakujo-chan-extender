@@ -10,6 +10,7 @@ import 'gakujo_activity_store.dart';
 import 'gakujo_app_settings.dart';
 import 'gakujo_assignment.dart';
 import 'gakujo_dated_activity.dart';
+import 'gakujo_notification_history.dart';
 
 typedef DeadlineNotificationTappedCallback = FutureOr<void> Function(
   String url,
@@ -163,6 +164,7 @@ class GakujoReminder {
     this.assignmentId,
     this.topic,
     this.legacyIds = const [],
+    this.notificationAccount,
   });
 
   final int id;
@@ -175,6 +177,7 @@ class GakujoReminder {
   final GakujoNotificationTopic? topic;
   // Historical OS ids that can be attributed to this assignment.
   final List<int> legacyIds;
+  final String? notificationAccount;
 
   Map<String, Object?> toJson() {
     return {
@@ -262,6 +265,7 @@ List<GakujoReminder> planReminders({
         topic: assignment.isSurvey
             ? GakujoNotificationTopic.survey
             : GakujoNotificationTopic.coursework,
+        notificationAccount: assignment.notificationAccount,
         legacyIds: [
           if (remindableIds[assignment.notificationId] == 1)
             idFor(assignment.notificationId),
@@ -422,10 +426,21 @@ class NotificationTapConsumer {
 }
 
 class GakujoNotificationService {
-  GakujoNotificationService({DateTime Function()? now})
-      : _now = now ?? DateTime.now;
+  GakujoNotificationService({
+    DateTime Function()? now,
+    this.activeAccount,
+    GakujoNotificationHistoryStore? historyStore,
+  }) : _now = now ?? DateTime.now,
+       _historyStore = historyStore ?? GakujoNotificationHistoryStore();
 
   final DateTime Function() _now;
+  final String? Function()? activeAccount;
+  final GakujoNotificationHistoryStore _historyStore;
+
+  bool get _nativeHistory => switch (defaultTargetPlatform) {
+    TargetPlatform.android || TargetPlatform.iOS || TargetPlatform.macOS => true,
+    _ => false,
+  };
 
   static const _channel = MethodChannel(
     'net.yoshida.morebettergakujo/notifications',
@@ -439,6 +454,9 @@ class GakujoNotificationService {
       debugAllowed: debugAllowed,
     );
   }
+
+  bool isForActiveAccount(String? account) =>
+      account == null || account == activeAccount?.call();
 
   void setDeadlineNotificationTappedHandler(
     DeadlineNotificationTappedCallback? handler,
@@ -544,6 +562,7 @@ class GakujoNotificationService {
       title: entry.title,
       body: entry.dueText,
       url: durableGakujoLink(entry.url, entry.source),
+      account: entry.notificationAccount,
     );
   }
 
@@ -552,6 +571,7 @@ class GakujoNotificationService {
       title: reminder.title,
       body: reminder.body,
       url: reminder.url,
+      account: reminder.notificationAccount,
     );
   }
 
@@ -559,17 +579,81 @@ class GakujoNotificationService {
     required String title,
     required String body,
     required String url,
+    required String? account,
   }) async {
+    if (!isForActiveAccount(account)) return false;
+    final historyUrl = targetUrl(url, debugAllowed: kDebugMode);
+    final nativeHistory = _nativeHistory;
+    bool posted;
     try {
-      final result = await _channel.invokeMethod<bool>(
+      posted = await _channel.invokeMethod<bool>(
         'notifyDeadline',
-        {'title': title, 'body': body, 'url': url},
-      );
-      return result ?? false;
+        {
+          'title': title,
+          'body': body,
+          'url': url,
+          if (nativeHistory && account != null) ...{
+            'historyAccount': account,
+            'historyUrl': ?historyUrl,
+          },
+        },
+      ) ?? false;
     } on PlatformException {
       return false;
     } on MissingPluginException {
       return false;
+    }
+    if (posted && !nativeHistory && account != null) {
+      try {
+        await _historyStore.record(account, GakujoNotificationHistoryEntry(
+          title: title.isEmpty ? '課題期限' : title,
+          body: body.isEmpty ? '提出期限を検出しました' : body,
+          postedAt: _now(),
+          url: historyUrl,
+        ));
+      } on Object catch (error) {
+        developer.log('Failed to save notification history: ${error.runtimeType}');
+      }
+    }
+    return posted;
+  }
+
+  Future<List<GakujoNotificationHistoryEntry>> loadHistory(String account) async {
+    if (account != activeAccount?.call()) return [];
+    final entries = _nativeHistory
+        ? GakujoNotificationHistoryEntry.newestFirst(
+            await _channel.invokeListMethod<Object?>(
+              'loadNotificationHistory',
+              {'account': account},
+            ) ?? [],
+          )
+        : await _historyStore.load(account);
+    return account == activeAccount?.call() ? entries : [];
+  }
+
+  Future<void> clearHistory() async {
+    if (_nativeHistory) {
+      try {
+        await _channel.invokeMethod<void>('clearNotificationHistory');
+      } on MissingPluginException {
+        // No local history on older bridges.
+      }
+    } else {
+      await _historyStore.clear();
+    }
+  }
+
+  Future<void> collectHistory() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS &&
+        defaultTargetPlatform != TargetPlatform.macOS) {
+      return;
+    }
+    try {
+      await _channel.invokeListMethod<Object?>('loadNotificationHistory');
+    } on PlatformException {
+      // The history dialog reports read failures on demand.
+    } on MissingPluginException {
+      // No native history bridge.
     }
   }
 
@@ -585,6 +669,8 @@ class GakujoNotificationService {
     List<GakujoReminder> reminders, {
     Future<void> Function(GakujoReminder)? onInAppReminder,
   }) async {
+    final eligible = reminders.where((reminder) =>
+        isForActiveAccount(reminder.notificationAccount)).toList();
     for (final booked in _inAppReminders.values) {
       booked.timer.cancel();
     }
@@ -596,7 +682,16 @@ class GakujoNotificationService {
       final booked = await _channel.invokeMethod<bool>(
         'scheduleReminders',
         {
-          'reminders': [for (final reminder in reminders) reminder.toJson()],
+          'reminders': [
+            for (final reminder in eligible)
+              {
+                ...reminder.toJson(),
+                if (_nativeHistory && reminder.notificationAccount != null) ...{
+                  'historyAccount': reminder.notificationAccount,
+                  'historyUrl': ?targetUrl(reminder.url, debugAllowed: kDebugMode),
+                },
+              },
+          ],
         },
       );
       if (booked == true) {
@@ -608,7 +703,7 @@ class GakujoNotificationService {
       // Same.
     }
     final now = _now();
-    for (final reminder in reminders) {
+    for (final reminder in eligible) {
       _inAppReminders[reminder.id] = (
         reminder: reminder,
         timer: Timer(reminder.at.difference(now), () => _remind(reminder.id)),
@@ -796,7 +891,8 @@ class GakujoDeadlineNotificationCoordinator {
       if (pending.length >= 5) {
         break;
       }
-      if (!isNotifiableDeadline(
+      if (!_notificationService.isForActiveAccount(entry.notificationAccount) ||
+          !isNotifiableDeadline(
         entry,
         topics: topics,
         messages: messages,
@@ -909,7 +1005,8 @@ class GakujoDeadlineNotificationCoordinator {
           lateReminders.clear();
           return _reminderNotificationsEnabled
               ? planReminders(
-                  assignments: availableAssignments,
+                  assignments: availableAssignments.where((assignment) =>
+                      _notificationService.isForActiveAccount(assignment.notificationAccount)),
                   topics: _reminderTopics,
                   preferences: _reminderPreferences,
                   now: _now(),

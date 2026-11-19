@@ -33,6 +33,7 @@ object DeadlineReminders {
     private const val PREFS = "deadline_reminders"
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_DELIVERED = "delivered"
+    private const val KEY_HISTORY = "notification_history"
     private const val KEY_NOTIFICATION_SECRET = "notification_authentication_key"
     private const val EXTRA_ID = "reminder_id"
     private const val EXTRA_STABLE_KEY = "reminder_stable_key"
@@ -41,6 +42,8 @@ object DeadlineReminders {
     private const val EXTRA_TITLE = "reminder_title"
     private const val EXTRA_BODY = "reminder_body"
     private const val EXTRA_URL = "reminder_url"
+    private const val EXTRA_HISTORY_ACCOUNT = "history_account"
+    private const val EXTRA_HISTORY_URL = "history_url"
     private const val EARLY_WINDOW_MILLIS = 15 * 60 * 1000L
     private const val GROUP_KEY = "net.yoshida.morebettergakujo.DEADLINES"
     private const val SUMMARY_ID = 1
@@ -76,7 +79,9 @@ object DeadlineReminders {
         val url: String,
         val atMillis: Long,
         val stableKey: String = id.toString(),
-        val legacyIds: List<Int> = emptyList()
+        val legacyIds: List<Int> = emptyList(),
+        val historyAccount: String? = null,
+        val historyUrl: String? = null
     )
 
     /** Replaces every booked reminder with [reminders]. */
@@ -105,7 +110,9 @@ object DeadlineReminders {
                 url = map["url"] as? String ?: "",
                 atMillis = at,
                 stableKey = (map["stableKey"] as? String)?.takeIf { it.isNotBlank() } ?: id.toString(),
-                legacyIds = (map["legacyIds"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty()
+                legacyIds = (map["legacyIds"] as? List<*>)?.mapNotNull { (it as? Number)?.toInt() }.orEmpty(),
+                historyAccount = map["historyAccount"] as? String,
+                historyUrl = map["historyUrl"] as? String
             )
         }
     }
@@ -119,8 +126,16 @@ object DeadlineReminders {
             atMillis = intent.getLongExtra(EXTRA_AT_MILLIS, 0L),
             stableKey = intent.getStringExtra(EXTRA_STABLE_KEY)
                 ?: intent.getIntExtra(EXTRA_ID, 0).toString(),
-            legacyIds = intent.getIntArrayExtra(EXTRA_LEGACY_IDS)?.toList().orEmpty()
+            legacyIds = intent.getIntArrayExtra(EXTRA_LEGACY_IDS)?.toList().orEmpty(),
+            historyAccount = intent.getStringExtra(EXTRA_HISTORY_ACCOUNT),
+            historyUrl = intent.getStringExtra(EXTRA_HISTORY_URL)
         )
+        val current = load(context)
+        // An alarm already queued for delivery can outlive cancellation or
+        // replacement. Match the current booking before posting or canceling.
+        if (reminder !in current ||
+            reminder.atMillis - System.currentTimeMillis() > EARLY_WINDOW_MILLIS
+        ) return
         // The other alarm booked for this reminder must not show it again.
         cancel(context, reminder)
         val delivered = loadDelivered(context)
@@ -128,7 +143,8 @@ object DeadlineReminders {
                 reminder.id, reminder.atMillis, System.currentTimeMillis(), delivered.toSet(),
                 reminder.stableKey, reminder.legacyIds
             ) &&
-            show(context, reminder)
+            post(context, reminder.id, reminder.title.ifBlank { "課題の締切" },
+                reminder.body, reminder.url, reminder.historyAccount, reminder.historyUrl)
         ) {
             val history = DeadlineReminderDelivery.record(
                 delivered, reminder.id, reminder.atMillis, stableKey = reminder.stableKey
@@ -139,18 +155,7 @@ object DeadlineReminders {
                 .apply()
         }
         // Advance the booking window even while the app is closed.
-        book(context, load(context))
-    }
-
-    private fun show(context: Context, reminder: Reminder): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
-        post(context, reminder.id, reminder.title.ifBlank { "課題の締切" }, reminder.body, reminder.url)
-        return true
+        book(context, current)
     }
 
     /**
@@ -159,16 +164,82 @@ object DeadlineReminders {
      * which opens the app wherever it was and clears them all; this one opens
      * the newest one's page.
      */
-    fun post(context: Context, id: Int, title: String, body: String, url: String) {
-        ensureChannel(context)
+    fun post(
+        context: Context, id: Int, title: String, body: String, url: String,
+        historyAccount: String?, historyUrl: String?
+    ): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java)
-        manager.notify(id, builder(context, id, title, body, url).build())
-        manager.notify(
-            SUMMARY_ID,
-            builder(context, SUMMARY_ID, title, body, url)
-                .setGroupSummary(true)
-                .build()
-        )
+        try {
+            ensureChannel(context)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                !manager.areNotificationsEnabled()
+            ) return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE
+            ) return false
+            manager.notify(id, builder(context, id, title, body, url).build())
+        } catch (error: RuntimeException) {
+            Log.e(TAG, "Failed to post notification", error)
+            return false
+        }
+        if (historyAccount != null) {
+            recordHistory(context, historyAccount, title, body, historyUrl)
+        }
+        DeadlineReminderDelivery.attempt(
+            onError = { Log.e(TAG, "Failed to post notification summary", it) }
+        ) {
+            manager.notify(
+                SUMMARY_ID,
+                builder(context, SUMMARY_ID, title, body, url)
+                    .setGroupSummary(true)
+                    .build()
+            )
+        }
+        return true
+    }
+
+    private fun historyRows(context: Context): JSONArray {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_HISTORY, null) ?: return JSONArray()
+        return try { JSONArray(raw) } catch (_: org.json.JSONException) { JSONArray() }
+    }
+
+    private fun recordHistory(context: Context, account: String, title: String, body: String, url: String?) {
+        val old = historyRows(context)
+        val rows = JSONArray().put(JSONObject()
+            .put("account", account)
+            .put("title", title)
+            .put("body", body)
+            .put("url", url)
+            .put("postedAtMillis", System.currentTimeMillis()))
+        for (index in 0 until minOf(old.length(), 199)) rows.put(old.get(index))
+        if (!context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_HISTORY, rows.toString()).commit()
+        ) Log.e(TAG, "Failed to save notification history")
+    }
+
+    fun history(context: Context, account: String?): List<Map<String, Any?>> =
+        if (account == null) emptyList() else historyRows(context).let { rows ->
+            (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                if (row.optString("account") != account) return@mapNotNull null
+                mapOf(
+                    "title" to row.optString("title"),
+                    "body" to row.optString("body"),
+                    "url" to row.optString("url").takeIf { it.isNotEmpty() },
+                    "postedAtMillis" to row.optLong("postedAtMillis")
+                )
+            }
+        }
+
+    fun clearHistory(context: Context): Boolean {
+        replace(context, emptyList())
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().remove(KEY_HISTORY).commit()
     }
 
     private fun builder(
@@ -280,6 +351,8 @@ object DeadlineReminders {
             putExtra(EXTRA_TITLE, reminder.title)
             putExtra(EXTRA_BODY, reminder.body)
             putExtra(EXTRA_URL, reminder.url)
+            putExtra(EXTRA_HISTORY_ACCOUNT, reminder.historyAccount)
+            putExtra(EXTRA_HISTORY_URL, reminder.historyUrl)
         }
         return PendingIntent.getBroadcast(
             context,
@@ -304,6 +377,8 @@ object DeadlineReminders {
                     .put("body", reminder.body)
                     .put("url", reminder.url)
                     .put("atMillis", reminder.atMillis)
+                    .put("historyAccount", reminder.historyAccount)
+                    .put("historyUrl", reminder.historyUrl)
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -328,7 +403,9 @@ object DeadlineReminders {
                     stableKey = item.optString("stableKey").ifBlank { item.getInt("id").toString() },
                     legacyIds = item.optJSONArray("legacyIds")?.let { ids ->
                         (0 until ids.length()).map { ids.getInt(it) }
-                    }.orEmpty()
+                    }.orEmpty(),
+                    historyAccount = item.optString("historyAccount").takeIf { it.isNotEmpty() },
+                    historyUrl = item.optString("historyUrl").takeIf { it.isNotEmpty() }
                 )
             }
         } catch (_: Exception) {

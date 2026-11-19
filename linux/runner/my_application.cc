@@ -359,6 +359,16 @@ static void notify_freedesktop_deadline(NotificationRequest* request) {
       notify_deadline_cb, request);
 }
 
+static void gtk_notification_added_cb(GObject* object, GAsyncResult* result,
+                                      gpointer user_data) {
+  auto* request = static_cast<NotificationRequest*>(user_data);
+  MyApplication* self = request->application;
+  g_autoptr(GVariant) reply =
+      g_dbus_connection_call_finish(G_DBUS_CONNECTION(object), result, nullptr);
+  notification_request_complete(
+      request, reply != nullptr && !self->notifications_shutdown && self->window != nullptr);
+}
+
 static void gtk_notifications_owner_cb(GObject* object, GAsyncResult* result,
                                         gpointer user_data) {
   auto* request = static_cast<NotificationRequest*>(user_data);
@@ -380,21 +390,38 @@ static void gtk_notifications_owner_cb(GObject* object, GAsyncResult* result,
     return;
   }
   // GNOME stores application actions and their targets for activation after exit.
-  g_autoptr(GNotification) notification = g_notification_new(
-      notification_string_arg(request->method_call, "title", "課題期限"));
-  g_notification_set_body(notification,
-      notification_string_arg(request->method_call, "body", "提出期限を検出しました"));
-  g_autoptr(GIcon) icon = g_themed_icon_new(APPLICATION_ID);
-  g_notification_set_icon(notification, icon);
   g_autofree gchar* id = g_uuid_string_random();
   g_autoptr(GVariant) target = g_variant_ref_sink(g_variant_new(
       "(ss)", id, notification_string_arg(request->method_call, "url", "")));
-  g_notification_set_default_action_and_target_value(
-      notification, "app.open-notification", target);
-  g_notification_add_button_with_target_value(
-      notification, "開く", "app.open-notification", target);
-  g_application_send_notification(G_APPLICATION(self), id, notification);
-  notification_request_complete(request, TRUE);
+  g_autoptr(GIcon) icon = g_themed_icon_new(APPLICATION_ID);
+  g_autoptr(GVariant) serialized_icon = g_icon_serialize(icon);
+  GVariantBuilder button;
+  g_variant_builder_init(&button, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&button, "{sv}", "label", g_variant_new_string("開く"));
+  g_variant_builder_add(&button, "{sv}", "action",
+                        g_variant_new_string("app.open-notification"));
+  g_variant_builder_add(&button, "{sv}", "target", target);
+  GVariantBuilder buttons;
+  g_variant_builder_init(&buttons, G_VARIANT_TYPE("aa{sv}"));
+  g_variant_builder_add_value(&buttons, g_variant_builder_end(&button));
+  GVariantBuilder content;
+  g_variant_builder_init(&content, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&content, "{sv}", "title", g_variant_new_string(
+      notification_string_arg(request->method_call, "title", "課題期限")));
+  g_variant_builder_add(&content, "{sv}", "body", g_variant_new_string(
+      notification_string_arg(request->method_call, "body", "提出期限を検出しました")));
+  g_variant_builder_add(&content, "{sv}", "icon", serialized_icon);
+  g_variant_builder_add(&content, "{sv}", "default-action",
+                        g_variant_new_string("app.open-notification"));
+  g_variant_builder_add(&content, "{sv}", "default-action-target", target);
+  g_variant_builder_add(&content, "{sv}", "buttons", g_variant_builder_end(&buttons));
+  // GApplication's wrapper does not report a rejected AddNotification call.
+  g_dbus_connection_call(
+      self->notification_connection, "org.gtk.Notifications",
+      "/org/gtk/Notifications", "org.gtk.Notifications", "AddNotification",
+      g_variant_new("(ss@a{sv})", APPLICATION_ID, id, g_variant_builder_end(&content)),
+      G_VARIANT_TYPE_UNIT, G_DBUS_CALL_FLAGS_NONE, 5000, nullptr,
+      gtk_notification_added_cb, request);
 }
 
 static void notify_deadline(NotificationRequest* request) {

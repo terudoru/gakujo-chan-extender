@@ -227,7 +227,9 @@ GakujoBackupImport parseGakujoBackup(
     deadlines: _decodeMapList(
       decoded,
       'deadlines',
-      GakujoDeadlineEntry.fromJson,
+      (value) => GakujoDeadlineEntry.fromJson(
+        Map.of(value)..remove('notificationAccount'),
+      ),
     ),
     notifiedDeadlineKeys: decoded.containsKey('notifiedDeadlineKeys')
         ? validateGakujoBackupCollection(

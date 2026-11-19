@@ -92,7 +92,9 @@ Map<String, Object?> buildGakujoBackupPayload({
     'favorites': favorites.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
     if (includeStarredMessages)
       'starredMessages': starredMessages.map((entry) => entry.toJson()).toList(),
-    'deadlines': deadlines.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
+    'deadlines': deadlines.map((entry) => sanitizeGakujoExternalEntry(
+      entry.toJson()..remove('notificationAccount'),
+    )).toList(),
     'notifiedDeadlineKeys': notifiedDeadlineKeys.map(sanitizeGakujoNotificationKey).toList(),
     'reportLists': reportLists.map((entry) => sanitizeGakujoExternalEntry(entry.toJson())).toList(),
   };
