@@ -1,5 +1,6 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal, Select } from "../ui.jsx";
+import { loadHistoricalIndex } from "../archive/packs.mjs";
 import { confirmPlannerImport, reviewPlannerImport } from "./review.mjs";
 
 const titles = {
@@ -151,7 +152,7 @@ function ReviewForm({
                 第{row.id.split("-")[0]}表 {row.id.split("-")[1]}行目　
                 {detail(review.kind, value)}
               </small>
-              {row.reason && <small>{row.reason}</small>}
+              {row.evaluationYear ? <small>配当単位を照合中…</small> : row.reason && <small>{row.reason}</small>}
               {value && isBalance && (
                 <Select
                   label={row.label + "の照合先"}
@@ -345,6 +346,7 @@ function ImportSource({
     [error, setError] = useState("");
   const [busy, setBusy] = useState(false),
     [version, setVersion] = useState(0);
+  const [archives, setArchives] = useState(null);
   const request = useRef(0);
   const fileInput = useRef(null);
   const pending = useRef(null);
@@ -355,6 +357,7 @@ function ImportSource({
     [],
   );
   const source = packet || filePacket;
+  const evaluationIndices = source && archives?.source === source ? archives.indices : undefined;
   const parsed = useMemo(() => {
     if (!source) return null;
     try {
@@ -368,6 +371,7 @@ function ImportSource({
           stage,
           requirementRows,
           deferMatch: !!prepareGrades,
+          evaluationIndices,
         }),
       };
     } catch (e) {
@@ -383,7 +387,20 @@ function ImportSource({
     stage,
     requirementRows,
     prepareGrades,
+    evaluationIndices,
   ]);
+  const years = [...new Set(parsed?.review?.rows.map((r) => r.evaluationYear).filter(Boolean))].sort().join(",");
+  useEffect(() => {
+    if (!years) return;
+    let active = true;
+    // Only public year packs are fetched. Row identities and checks stay on this device.
+    Promise.all(years.split(",").map(async (year) =>
+      [year, await loadHistoricalIndex(year).catch(() => null)],
+    )).then((entries) => {
+      if (active) setArchives({ source, indices: new Map([...(evaluationIndices ?? []), ...entries]) });
+    });
+    return () => { active = false; };
+  }, [source, years, evaluationIndices]);
   function closeSource() {
     pending.current?.abort();
     request.current++;
@@ -449,6 +466,7 @@ function ImportSource({
         />
       )}
       {busy && <p role="status">読み取り中…</p>}
+      {years && <p role="status">{years.split(",").join("・")}年度の開講情報で配当単位を確認しています…</p>}
       {(error || parsed?.error) && (
         <p role="alert" className="error">
           {error || parsed.error}

@@ -4,7 +4,7 @@ import checkedFields from "./content/field-evidence-2026.json" with { type: "jso
 import { normalize } from "../study.mjs";
 import { compareOfferingEvidence } from "./offering-evidence.mjs";
 import { buildHistoricalIndex, contradictsConfirmedOffering, courseSource, dentalSource, officialDocument, resolveHistoricalGrade,
-  retainedHistoricalMatch, searchSource, validYear } from "./identity.mjs";
+  retainedHistoricalMatch, searchSource, validOffering, validYear } from "./identity.mjs";
 
 // Availability of the public search, independent of admission year or the selected handbook.
 export const archiveYears = ["2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025"];
@@ -12,6 +12,7 @@ const categories = ["英語", "初修外国語", "健康・スポーツ", "情�
   "留学生基本科目", "大学学習法", "自然系共通専門基礎", "自然科学", "人文社会・教育科学", "医歯学"];
 const loaded = new Map();
 const currentIndices = new WeakMap();
+const importIndices = new WeakMap();
 
 export function unpackYear(requested, pack) {
   if (pack?.year !== String(requested) || !Array.isArray(pack.rows)) throw Error("指定した年度の索引を確認できません。");
@@ -68,6 +69,29 @@ function currentIndex(catalog) {
     currentIndices.set(catalog, index);
   }
   return currentIndices.get(catalog);
+}
+
+// Import callers receive the current catalog keyed by opening code. Older callers pass its raw entries.
+export function currentImportIndex(byCode, catalogYear) {
+  const year = String(catalogYear);
+  const cached = importIndices.get(byCode);
+  if (cached?.year === year) return cached;
+  const courses = [];
+  for (const course of byCode.values()) {
+    if (course.year != null && String(course.year) !== year) continue;
+    const offering = course.sourceUrl ? course : currentOffering(course, { year });
+    if (validOffering(offering)) courses.push(offering);
+  }
+  const index = buildHistoricalIndex(year, courses);
+  importIndices.set(byCode, index);
+  return index;
+}
+
+// The zero on the transcript describes earned credits. Resolve identity without treating it as an offering fact.
+export function finalEvaluationCredits(attempt, index, catalogYear) {
+  const { match } = resolveHistoricalGrade(attempt, index, { review: true });
+  if (!match || !(match.credits > 0) || (match.year !== String(catalogYear) && !match.creditSource)) return null;
+  return match.credits;
 }
 
 // Safe read projection before allocating a local or synced confirmed row. No storage write or network request.

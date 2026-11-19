@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { buildHistoricalIndex } from "../src/archive/identity.mjs";
+import { unpackYear } from "../src/archive/packs.mjs";
 import { initialState } from "../src/study.mjs";
 import { reviewGradeRows } from "../src/transcript.mjs";
 import {
@@ -45,6 +48,65 @@ const save = (s) => (update) => {
   update(s);
   return true;
 };
+
+test("earned zero borrows only a unique same-year offering's corroborated allocated credits", async () => {
+  const pack = JSON.parse(await readFile(new URL("../src/archive/packs/2025.json", import.meta.url), "utf8"));
+  const past = unpackYear("2025", pack);
+  const actual = past.byCode.get("250k0363")[0];
+  assert.equal(actual.creditSource, pack.listing + "#page=90");
+  const current = catalog.courses.find((c) => c.code === "260K0363");
+  const options = { byCode: new Map([[current.code, current]]), evaluationIndices: new Map([["2025", past]]) };
+  const header = ["履修年度", "開講番号", "科目名", "開講所属", "修得単位", "評価"];
+  const original = ["2025", actual.code, actual.title, "教育学部", "0", "不可"];
+  const rowsFor = (row, suffix = [], extra = {}) =>
+    review([[...header, ...suffix], row], { ...options, ...extra }).rows[0];
+  for (const [year, code] of [["2025", actual.code], ["2026", current.code]]) {
+    for (const department of ["03", "教育学部"]) {
+      const row = rowsFor([year, code, actual.title, department, "0", "不可", "前期"], ["学期"]);
+      assert.equal(row.value, undefined);
+      const g = row.finalEvaluationCandidate;
+      assert.deepEqual([g.year, g.code, g.offeringDepartment, g.credits, g.counts, g.duplicate],
+        [year, code, department, 2, false, false]);
+    }
+  }
+  for (const [suffix, value] of [["学期", "後期"], ["クラス", "A"], ["科目ID", "999"], ["重複", "重複"], ["状態", "保留"]]) {
+    assert.equal(rowsFor([...original, value], [suffix]).finalEvaluationCandidate, undefined, suffix);
+  }
+  for (const [i, value] of [[0, "2026"], [0, ""], [1, current.code], [2, "別の科目"], [3, "工学部"], [4, "1"]]) {
+    const changed = [...original];
+    changed[i] = value;
+    assert.equal(rowsFor(changed).finalEvaluationCandidate, undefined, String(i));
+  }
+  for (const candidates of [[actual, actual], [{ ...actual, creditSource: undefined }], [{ ...actual, credits: undefined }]]) {
+    const index = buildHistoricalIndex("2025", candidates);
+    assert.equal(rowsFor(original, [], { evaluationIndices: new Map([["2025", index]]) }).finalEvaluationCandidate, undefined);
+  }
+  const missing = rowsFor(original, [], { evaluationIndices: new Map() });
+  assert.equal(missing.evaluationYear, "2025");
+  assert.equal(missing.finalEvaluationCandidate, undefined);
+  assert.equal(rowsFor(original, [], { evaluationIndices: new Map([["2025", null]]) }).evaluationYear, undefined);
+  const explicit = rowsFor([...original, "3"], ["配当単位"], { evaluationIndices: undefined });
+  assert.equal(explicit.evaluationYear, undefined);
+  assert.equal(explicit.finalEvaluationCandidate.credits, 3);
+  const duplicate = [...original];
+  duplicate[3] = "03";
+  const repeated = review([header, original, duplicate], options);
+  assert.ok(repeated.rows.every((r) => !r.value && !r.finalEvaluationCandidate && !r.evaluationYear));
+  const sameSemester = review([[...header, "学期"], [...original, "前期"], [...duplicate, "第1学期"]], options);
+  assert.ok(sameSemester.rows.every((r) => !r.finalEvaluationCandidate));
+  const previous = rowsFor(original).finalEvaluationCandidate;
+  assert.equal(rowsFor(original, [], { grades: [{ ...previous, credits: 3 }] }).finalEvaluationCandidate, undefined);
+  const ready = review([header, original], options), state = initialState();
+  await assert.rejects(confirmPlannerImport({
+    review: ready, selections: confirm(ready), mutate: save(state),
+    prepareGrades(incoming) {
+      state.grades = [{ ...previous, credits: 3, teacherTrainingOnly: false }];
+      return incoming;
+    },
+  }), /配当単位/);
+  assert.equal(state.grades[0].credits, 3);
+  assert.equal(state.grades[0].teacherTrainingOnly, false);
+});
 
 test("a final failing evaluation requires its own confirmation, preserves allocated credits and uses the archive", async () => {
   const rows = [headers, failed];

@@ -1,4 +1,7 @@
-import { normalize, syllabusURL } from "./study.mjs";
+import { normalize, syllabusURL, validCode } from "./study.mjs";
+import { departmentCode } from "./archive/identity.mjs";
+import { compareOfferingEvidence } from "./archive/offering-evidence.mjs";
+import { archiveYears, currentImportIndex, finalEvaluationCredits } from "./archive/packs.mjs";
 import { scanTables, readYear, readUnits } from "./imports/tables.mjs";
 export { delimitedRows } from "./imports/tables.mjs";
 
@@ -37,15 +40,22 @@ function evidence(row) {
 }
 
 function compatibleAttempt(a, b) {
-  return [
-    "year",
-    "code",
-    "term",
-    "section",
-    "courseId",
-    "offeringDepartment",
-  ].every(
-    (key) => !a[key] || !b[key] || normalize(a[key]) === normalize(b[key]),
+  const department = (g) => departmentCode(g.offeringDepartment) || normalize(g.offeringDepartment);
+  return (
+    (!a.offeringDepartment || !b.offeringDepartment || department(a) === department(b)) &&
+    ["year", "code", "section", "courseId"].every(
+      (key) => !a[key] || !b[key] || normalize(a[key]) === normalize(b[key]),
+    ) &&
+    (!a.term || !b.term || normalize(a.term) === normalize(b.term) ||
+      (compareOfferingEvidence({ term: a.term }, { term: b.term }) === "match" &&
+       compareOfferingEvidence({ term: b.term }, { term: a.term }) === "match"))
+  );
+}
+
+function conflictingEvaluationCredits(credits, previous) {
+  return previous.length > 1 || previous.some((grade) =>
+    grade.duplicate || grade.identityUncertain || !failedFinal.test(grade.grade) ||
+    (credits != null && grade.credits != null && Number(grade.credits) !== credits),
   );
 }
 
@@ -86,13 +96,15 @@ function namesIndex(records) {
           normalize(other.alternativeTitle) === normalize(row.title)),
     );
   }
-  function conflictsWithFinal(row) {
-    const peers = new Set([
+  function peers(row) {
+    return new Set([
       ...(titles.get(normalize(row.title)) ?? []),
       ...(codes.get(normalize(row.code)) ?? []),
     ]);
+  }
+  function conflictsWithFinal(row) {
     const isFinal = failedFinal.test(row.grade);
-    for (const peer of peers) {
+    for (const peer of peers(row)) {
       const disputed =
         isFinal &&
         (peer.duplicate === true ||
@@ -108,7 +120,7 @@ function namesIndex(records) {
     return false;
   }
   records.forEach(add);
-  return { titles, add, hasAlternative, conflictsWithFinal };
+  return { titles, add, peers, hasAlternative, conflictsWithFinal };
 }
 export function reviewGrades(
   packet,
@@ -117,11 +129,15 @@ export function reviewGrades(
     catalogYear = 2026,
     grades = [],
     deferMatch = false,
+    evaluationIndices,
   } = {},
 ) {
   const rows = [];
   const nonEarned = new Set();
   const outcomes = namesIndex(grades);
+  const sourceAttempts = new Set();
+  const inferred = new Map();
+  const saved = new Set(grades);
   const issue = (id, reason) => rows.push({ id, label: "要確認", reason });
   scanTables(
     packet,
@@ -152,6 +168,7 @@ export function reviewGrades(
             : noEvaluation.test(status) || compatibleFailResult.test(status)),
       );
       outcomes.add(attempt);
+      sourceAttempts.add(attempt);
       if (notEarned.test(evaluation) || conflictingResult || conflictingStatus)
         nonEarned.add(identity(attempt));
       const creditCell = v.credits ?? v.earnedCredits;
@@ -164,28 +181,23 @@ export function reviewGrades(
         normalize(offering.title) === normalize(title) &&
         (!v.section || normalize(offering.section) === normalize(v.section)) &&
         (!v.courseId || normalize(offering.courseId) === normalize(v.courseId));
-      // A zero in 修得単位 is not the course's allocated credit value.
-      const lookupCredits =
-        final &&
-        v.credits == null &&
-        earned === 0 &&
-        sameCourse &&
-        (!v.offeringDepartment ||
-          normalize(v.offeringDepartment) === normalize(offering.department)) &&
-        (!v.term ||
-          [offering.term, offering.period, offering.semester].some(
-            (term) => normalize(term) === normalize(v.term),
-          ));
-      const credits =
-        final && v.credits == null
-          ? lookupCredits
-            ? readUnits(offering.credits, 99)
-            : null
-          : readUnits(creditCell?.replace(/^\s*\*\s*/, ""), 99);
+      const markedDuplicate = v.duplicate && !["なし", "-", "無"].includes(v.duplicate);
+      let credits = readUnits(creditCell?.replace(/^\s*\*\s*/, ""), 99);
+      if (final && v.credits == null) {
+        credits = null;
+        if (earned === 0 && !starred && !markedDuplicate && !conflictingResult && !conflictingStatus &&
+            year && (code || title) && (!code || (validCode(code) && code.startsWith(year.slice(-2))))) {
+          const current = year === String(catalogYear);
+          const index = current ? currentImportIndex(byCode, year) : evaluationIndices?.get(year);
+          credits = readUnits(finalEvaluationCredits(attempt, index, catalogYear), 99);
+          const needsIndex = !current && archiveYears.includes(year) && !evaluationIndices?.has(year);
+          inferred.set(origin.id, { attempt, needsIndex });
+        }
+      }
       const invalidFinal =
         final &&
         (starred ||
-          (v.duplicate && !["なし", "-", "無"].includes(v.duplicate)) ||
+          markedDuplicate ||
           (v.earnedCredits && earned !== 0) ||
           credits == null);
       if (
@@ -313,6 +325,23 @@ export function reviewGrades(
   // and each occurrence, without silently counting or overwriting either one.
   const groups = new Map();
   for (const row of rows) {
+    const lookup = inferred.get(row.id);
+    if (lookup) {
+      const { attempt, needsIndex } = lookup;
+      const related = [...outcomes.peers(attempt)].filter((other) => compatibleAttempt(attempt, other));
+      const previous = related.filter((other) => saved.has(other));
+      const repeated = related.some((other) => other !== attempt && sourceAttempts.has(other));
+      if (repeated || conflictingEvaluationCredits(row.value?.credits, previous)) {
+        delete row.value;
+        row.reason = "要確認：同じ履修情報が複数あるか、履歴の評価・配当単位と一致しません。";
+        continue;
+      }
+      if (needsIndex) row.evaluationYear = attempt.year;
+      if (row.value) {
+        row.inferredCredits = true;
+        row.reason = attempt.year + "年度の開講情報で配当単位を確認しました。";
+      }
+    }
     if (!row.value) continue;
     const key = identity(row.value);
     if (
@@ -388,7 +417,12 @@ export function mergeGrades(state, rows, reconcileMatch) {
   const grades = state.grades.map((g) => ({ ...g }));
   const names = namesIndex(grades);
   for (const incoming of rows) {
-    const row = { ...incoming };
+    const { inferredCredits, ...row } = incoming;
+    if (inferredCredits) {
+      const peers = [...names.peers(row)].filter((g) => compatibleAttempt(row, g));
+      if (conflictingEvaluationCredits(row.credits, peers))
+        throw Error("保存済みの履修情報・配当単位と一致しません。原票と履修履歴を確認してください。");
+    }
     if (names.conflictsWithFinal(row))
       throw Error(
         "保存済みの評価と一致しません。原票と履修履歴を確認してください。",

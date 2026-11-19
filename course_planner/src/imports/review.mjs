@@ -206,7 +206,7 @@ function selectedRows(review, selections) {
 
 function reviewedGrade({ row, choice }) {
   const grade = row.value;
-  if (grade.finalEvaluation) return grade;
+  if (grade.finalEvaluation) return row.inferredCredits ? { ...grade, inferredCredits: true } : grade;
   if (choice.excludeDuplicate)
     return {
       ...grade,
