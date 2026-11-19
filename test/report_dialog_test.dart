@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,7 +9,8 @@ import 'package:morebettergakujo_flutter/src/report_form.dart';
 import 'package:morebettergakujo_flutter/src/widgets/report_dialog.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import 'report_form_test.dart' show FakeReportHttp, Reply;
+import 'report_form_test.dart'
+    show FakeReportHttp, FakeReportRequest, FakeReportResponse, Reply;
 
 const diagnostic =
     '{\n  "downloadHistoryCount": 2,\n  "loginCredentialsConfigured": true\n}';
@@ -36,6 +38,34 @@ class DelayedClient extends ReportClient {
     submissions.add(submission);
     return responses.removeAt(0);
   }
+}
+
+ReportClient _reportClient(FakeReportHttp http) => ReportClient(
+  endpoint: Uri.parse('https://report.example.invalid/exec'),
+  httpClientFactory: () => http,
+);
+
+class _PendingResponseHttp extends FakeReportHttp {
+  _PendingResponseHttp() : super([]);
+
+  final response = Completer<HttpClientResponse>();
+
+  @override
+  Future<HttpClientRequest> postUrl(Uri url) async {
+    final request = _PendingResponseRequest(url, response.future);
+    requests.add(request);
+    return request;
+  }
+}
+
+class _PendingResponseRequest extends FakeReportRequest {
+  _PendingResponseRequest(Uri url, this.response)
+    : super('POST', url, Reply(200));
+
+  final Future<HttpClientResponse> response;
+
+  @override
+  Future<HttpClientResponse> close() => response;
 }
 
 Future<void> openDialog(
@@ -1067,6 +1097,156 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final action in ['Close', 'Back']) {
+    testWidgets(
+      '$action prevents a POST when diagnostics finish during the report exit animation',
+      (tester) async {
+        final pending = Completer<String>();
+        final http = FakeReportHttp([
+          Reply.json({'ok': true, 'receipt': receipt}),
+        ]);
+        await openDialog(
+          tester,
+          client: _reportClient(http),
+          collect: () => pending.future,
+        );
+        await validForm(tester);
+        await send(tester);
+        expect(find.text('診断情報を集めています…'), findsOneWidget);
+        expect(http.requests, isEmpty);
+        final dialog = tester.element(find.byType(ReportDialog));
+        final route = ModalRoute.of(dialog)!;
+        if (action == 'Close') {
+          await tester.tap(find.widgetWithText(TextButton, '閉じる'));
+        } else {
+          expect(await tester.binding.handlePopRoute(), isTrue);
+        }
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 30));
+        expect(route.isCurrent, isFalse);
+        expect(route.animation!.status, AnimationStatus.reverse);
+        expect(dialog.mounted, isTrue);
+        pending.complete(diagnostic);
+        await tester.pumpAndSettle();
+        expect(http.requests, isEmpty);
+        expect(dialog.mounted, isFalse);
+      },
+    );
+  }
+
+  testWidgets('a reopened dialog sends only its own diagnostics', (
+    tester,
+  ) async {
+    final first = Completer<String>();
+    final second = Completer<String>();
+    final collections = [first.future, second.future];
+    final http = FakeReportHttp([
+      Reply.json({'ok': true, 'receipt': receipt}),
+    ]);
+    await openDialog(
+      tester,
+      client: _reportClient(http),
+      collect: () => collections.removeAt(0),
+    );
+    final previous = tester.element(find.byType(ReportDialog));
+    await validForm(tester);
+    await send(tester);
+    await tapVisible(tester, find.widgetWithText(TextButton, '閉じる'));
+    expect(previous.mounted, isFalse);
+
+    await tapVisible(tester, find.text('open'));
+    await validForm(tester);
+    await fill(tester, 'title', '次の件名');
+    await send(tester);
+    expect(collections, isEmpty);
+    first.complete('{"old":true}');
+    await tester.pumpAndSettle();
+    expect(http.requests, isEmpty);
+    second.complete(diagnostic);
+    await tester.pumpAndSettle();
+    final payload = jsonDecode(utf8.decode(http.requests.single.body));
+    expect(payload['title'], '次の件名');
+    expect(payload['diagnostic'], diagnostic);
+    expect(find.text('受付番号：$receipt'), findsOneWidget);
+  });
+
+  testWidgets('opening the type menu leaves a pending submission active', (
+    tester,
+  ) async {
+    final pending = Completer<String>();
+    final http = _PendingResponseHttp();
+    await openDialog(
+      tester,
+      client: _reportClient(http),
+      collect: () => pending.future,
+    );
+    await validForm(tester);
+    await send(tester);
+    final route = ModalRoute.of(tester.element(find.byType(ReportDialog)))!;
+    await tapVisible(tester, find.byKey(const ValueKey('report-type')));
+    expect(route.isCurrent, isFalse);
+    expect(http.requests, isEmpty);
+    pending.complete(diagnostic);
+    await tester.pumpAndSettle();
+    expect(
+      jsonDecode(utf8.decode(http.requests.single.body))['diagnostic'],
+      diagnostic,
+    );
+    expect(route.isCurrent, isFalse);
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(route.isCurrent, isTrue);
+    http.response.complete(
+      FakeReportResponse(Reply.json({'ok': true, 'receipt': receipt})),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('受付番号：$receipt'), findsOneWidget);
+  });
+
+  testWidgets('editing during automatic collection requires a second Send', (
+    tester,
+  ) async {
+    final pending = Completer<String>();
+    final client = RecordingClient([const ReportResult.success(receipt)]);
+    await openDialog(tester, client: client, collect: () => pending.future);
+    await validForm(tester);
+    await send(tester);
+    await fill(tester, 'title', '変更した件名');
+    pending.complete(diagnostic);
+    await tester.pumpAndSettle();
+    expect(client.submissions, isEmpty);
+    expect(
+      find.textContaining('入力内容が変わりました。確認して、もう一度送ってください。'),
+      findsOneWidget,
+    );
+    await send(tester);
+    expect(client.submissions.single.title, '変更した件名');
+    expect(find.text('受付番号：$receipt'), findsOneWidget);
+  });
+
+  testWidgets('Back while awaiting the HTTP response preserves the receipt', (
+    tester,
+  ) async {
+    final http = _PendingResponseHttp();
+    await openDialog(tester, client: _reportClient(http));
+    final route = ModalRoute.of(tester.element(find.byType(ReportDialog)))!;
+    await validForm(tester);
+    await send(tester);
+    expect(
+      jsonDecode(utf8.decode(http.requests.single.body))['diagnostic'],
+      diagnostic,
+    );
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(route.isCurrent, isTrue);
+    http.response.complete(
+      FakeReportResponse(Reply.json({'ok': true, 'receipt': receipt})),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('受付番号：$receipt'), findsOneWidget);
+    expect(http.requests, hasLength(1));
+  });
 
   testWidgets('version lookup failure is optional and running OS is included', (
     tester,
