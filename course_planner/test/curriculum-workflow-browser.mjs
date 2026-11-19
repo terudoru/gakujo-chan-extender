@@ -100,6 +100,34 @@ export async function checkCurriculumWorkflows(page) {
     }
   }
 
+  const education = student("教育学部", "英語教育専修（小学校主免）", { yearOfStudy: 2 });
+  await seed(page, education);
+  await btn(page, "成績を取り込む").click();
+  const transcript = page.getByRole("dialog");
+  await transcript.locator("input[type=file]").setInputFiles({
+    name: "assessment.csv", mimeType: "text/csv",
+    buffer: Buffer.from("開講番号,科目名,単位数,評価,年度\n260K0363,現代教育学概論,2,不可,2026\n"),
+  });
+  const optIn = transcript.getByRole("checkbox", { name: /現代教育学概論.*最終評価を確認/ });
+  assert.equal(await optIn.isChecked(), false);
+  assert.deepEqual((await saved(page)).grades, []);
+  await optIn.check();
+  await btn(transcript, "選択した1件を取り込む").click();
+  await transcript.waitFor({ state: "hidden" });
+  const [evaluation] = (await saved(page)).grades;
+  assert.deepEqual([evaluation.grade, evaluation.credits, evaluation.finalEvaluation, evaluation.counts, evaluation.matchedCourse?.code],
+    ["不可", 2, true, false, "260K0363"]);
+  assert.equal(await row(page, "卒業単位の合計").locator(":scope > span").nth(1).innerText(), "0");
+  await page.getByRole("radio", { name: "進級まで" }).click();
+  await page.getByRole("combobox", { name: "照合する学年・履修条件" }).click();
+  await page.getByRole("option", { name: "初等・中等主専攻実習の履修登録", exact: true }).click();
+  const pedagogy = page.locator(".ledger-row").filter({ has: page.locator("strong").filter({ hasText: /^現代教育学概論（/ }) });
+  assert.equal(await pedagogy.locator(":scope > span").nth(1).innerText(), "充足");
+  await pedagogy.locator("summary").click();
+  assert.match(await pedagogy.innerText(), /最終評価を受けた科目[\s\S]*修得 0単位/);
+  await page.getByRole("radio", { name: "修得履歴" }).click();
+  assert.match(await page.getByRole("listitem").filter({ hasText: "現代教育学概論" }).innerText(), /不可[\s\S]*配当 2単位 · 修得 0単位/);
+
   const engineering = student("工学部", "機械システム工学プログラム", { entry: "" });
   engineering.grades = [await grade("261G7011")];
   await seed(page, engineering);
@@ -151,4 +179,17 @@ export async function checkCurriculumWorkflows(page) {
   assert.match(await unknown.innerText(), /情報通信技術教育論I[\s\S]*3単位/);
   assert.equal(await page.locator(".af-row").filter({ has: page.getByText("10 情報", { exact: true }) }).count(), 0);
   assert.equal((await saved(page)).grades[0].matchedCourse.confirmed, true);
+
+  const teacherTraining = student("工学部", "機械システム工学プログラム", { yearOfStudy: 1 });
+  teacherTraining.lists[0].codes = ["261K0034"];
+  await seed(page, teacherTraining);
+  await btn(page.locator("nav:visible"), "時間割").click();
+  await btn(page, "木曜4限の候補").click();
+  const teachingCourse = page.getByRole("listitem").filter({ hasText: "教職入門" });
+  await btn(teachingCourse, "この授業を選ぶ").click();
+  await page.waitForFunction((key) => JSON.parse(localStorage.getItem(key)).plan.includes("261K0034"), storageKey);
+  const sheet = page.getByRole("dialog", { name: "木曜4限の授業" });
+  if (await sheet.isVisible()) await btn(sheet, "閉じる").click();
+  assert.match(await page.locator(".cap-body b").innerText(), /0\s*\/\s*28\s*単位/);
+  assert.match(await page.locator(".cap-body").innerText(), /対象外 2単位/);
 }
