@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import { External } from "../ui.jsx";
 import { confirmHistoricalMatch, dentalSource, departments, economicsTable, resolveHistoricalGrade,
-  retainedHistoricalMatch, searchSource, validYear } from "./identity.mjs";
+  searchSource, validYear } from "./identity.mjs";
 import { readPublicSyllabusHtml, reviewPublicRecord } from "./manual.mjs";
-import { loadHistoricalIndex } from "./packs.mjs";
+import { loadHistoricalIndex, revalidateGradeMatch } from "./packs.mjs";
 
 function Evidence({ course, catalog }) {
   const names = course.fieldSource === searchSource || (String(catalog?.year) === course.year &&
     !["saved-syllabus", "manual-record"].includes(course.sourceKind)) ? catalog?.fields : null;
   return <div className="course-line">
     <strong>{course.title}</strong>
-    <span>{[course.year + "年度", departments[course.department], course.code, course.period, course.schedule].filter(Boolean).join(" · ")}</span>
+    <span>{[course.year + "年度", departments[course.department], course.code, course.term || course.period || course.semester,
+      course.section, course.schedule, course.credits != null ? course.credits + "単位" : ""].filter(Boolean).join(" · ")}</span>
     <span>分野　{course.fields.map((id) => [id, names?.[id]].filter(Boolean).join(" ")).join("、") || "資料に記載なし・要確認"}</span>
     {course.category && <span>科目区分　{course.category}</span>}
     {course.sourceKind === "public-index" && <small>出典は個別ページのない公式検索結果です。大学の検索でこの年度と開講番号を指定して確認できます。</small>}
@@ -30,13 +31,14 @@ const messages = {
   unavailable: "この年度の全学索引はありません。履修当時の資料で照合できます。",
   "not-found": "この年度の索引に一致する候補がありません。履修当時の資料を確認してください。",
   mismatch: "履修年度・開講所属・開講番号・科目名の組合せが一致しません。",
+  conflict: "成績の学期・クラス・科目番号・単位数と、授業の開講情報が一致しません。履修当時の資料を確認してください。",
   ambiguous: "同じ科目名の授業があります。開講所属・開講番号・時限を確認して選んでください。",
   alias: "経済学部生の読替表に別の科目名が載っています。履修した授業を確認してください。",
-  review: "年度別の掲載情報を成績確認表と照合してください。",
+  review: "学期・クラス・単位数を含め、年度別の掲載情報を成績確認表と照合してください。",
   exact: "履修年度と科目の情報が一致しました。",
 };
 
-function ManualSource({ grade, year, preview }) {
+function ManualSource({ grade, year, index, preview }) {
   const [mode, setMode] = useState("html"), [url, setUrl] = useState(""), [error, setError] = useState("");
   const [file, setFile] = useState(null);
   const generation = useRef(0);
@@ -56,7 +58,7 @@ function ManualSource({ grade, year, preview }) {
       } else {
         match = reviewPublicRecord({ ...Object.fromEntries(form), year }, scoped);
       }
-      if (sequence === generation.current) { setError(""); preview(match); }
+      if (sequence === generation.current) { setError(""); preview(confirmHistoricalMatch(scoped, match, index)); }
     } catch (err) {
       if (sequence === generation.current) { setError(err.message); preview(null); }
     }
@@ -77,6 +79,10 @@ function ManualSource({ grade, year, preview }) {
           {Object.entries(departments).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         <label>資料にある科目名<input name="title" required maxLength={300} /></label>
         <label>開講番号<input name="code" maxLength={25} /></label>
+        <label>資料にある開講学期・ターム<input name="period" maxLength={80} /></label>
+        <label>資料にあるクラス<input name="section" maxLength={80} /></label>
+        {grade.courseId && <label>資料にある科目番号<input name="courseId" maxLength={80} /></label>}
+        <label>資料にある単位数<input name="credits" inputMode="decimal" maxLength={10} /></label>
         <label>分野番号（複数は読点区切り）<input name="fields" maxLength={80} /></label>
         <label>科目区分<input name="category" maxLength={100} /></label>
       </>}
@@ -87,38 +93,44 @@ function ManualSource({ grade, year, preview }) {
 }
 
 function Match({ grade, catalog, onConfirm }) {
-  const saved = retainedHistoricalMatch(grade);
+  const saved = revalidateGradeMatch(grade, catalog);
   const [year, setYear] = useState(String(grade.year || saved?.year || ""));
   const [result, setResult] = useState(null), [choice, setChoice] = useState(""), [manual, setManual] = useState(null);
   const [error, setError] = useState(""), [saving, setSaving] = useState(false), [attempt, retry] = useState(0);
-  const [done, setDone] = useState(saved);
+  const [done, setDone] = useState(null), [review, setReview] = useState(false);
   useEffect(() => {
     if (done) return;
     let current = true;
     setResult(null); setChoice(""); setManual(null); setError("");
     loadHistoricalIndex(year, catalog).then((index) => {
-      if (current) setResult({ ...resolveHistoricalGrade(grade, index, { year, review: true }), year });
-    }).catch(() => { if (current) setError("年度別索引を読み込めませんでした。再読み込みするか、保存した資料で確認してください。"); });
+      if (current) setResult({ ...resolveHistoricalGrade(grade, index, { year, review }), year, index });
+    }).catch(() => {
+      if (!current) return;
+      if (!review && saved) setResult({ status: "confirmed", match: saved, year });
+      else setError("年度別索引を読み込めませんでした。再読み込みするか、保存した資料で確認してください。");
+    });
     return () => { current = false; };
-  }, [grade, catalog, year, attempt, done]);
+  }, [grade, catalog, year, attempt, done, review]);
   const active = result?.year === year ? result : null;
+  const confirmed = done || (!review && active?.status === "confirmed" ? active.match : null);
   const candidate = manual || active?.candidates[choice] || active?.match;
   async function save() {
     if (!candidate || saving) return;
     setSaving(true); setError("");
     try {
-      const verified = confirmHistoricalMatch({ ...grade, year }, candidate);
+      const verified = confirmHistoricalMatch({ ...grade, year }, candidate, active?.index);
       if ((await onConfirm(verified)) === false) throw Error("保存できませんでした。もう一度確認してください。");
       setDone(verified);
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
   }
-  if (done) return <div>
-    <p>照合済み</p><Evidence course={done} catalog={catalog} />
-    <button type="button" onClick={() => setDone(null)}>対応する授業を選び直す</button>
+  if (confirmed) return <div>
+    <p>照合済み</p><Evidence course={confirmed} catalog={catalog} />
+    <button type="button" onClick={() => { setReview(true); setResult(null); setDone(null); }}>対応する授業を選び直す</button>
   </div>;
   return <section aria-label="履修年度のシラバス照合">
-    <p><strong>{grade.title}</strong>　{grade.credits}単位　{grade.code}</p>
+    <p><strong>{grade.title}</strong>　{[grade.code, grade.term, grade.section,
+      grade.credits != null ? grade.credits + "単位" : ""].filter(Boolean).join(" · ")}</p>
     {grade.year ? <p>履修年度　{grade.year}年度</p> :
       <label>履修年度<input inputMode="numeric" maxLength={4} value={year} onChange={(e) => {
         setManual(null); setChoice(""); setYear(e.target.value.normalize("NFKC"));
@@ -129,10 +141,11 @@ function Match({ grade, catalog, onConfirm }) {
       <select aria-label="履修した授業" value={choice} onChange={(e) => { setManual(null); setChoice(e.target.value); }}>
         <option value="">選択してください</option>
         {active.candidates.map((c, i) => <option key={i} value={String(i)}>
-          {[c.title, departments[c.department], c.code, c.period, c.schedule].filter(Boolean).join(" · ")}
+          {[c.title, departments[c.department], c.code, c.term || c.period || c.semester, c.section, c.schedule,
+            c.credits != null ? c.credits + "単位" : ""].filter(Boolean).join(" · ")}
         </option>)}
       </select></label>}
-    {validYear(year) && <ManualSource key={year} grade={grade} year={year} preview={setManual} />}
+    {validYear(year) && (active || error) && <ManualSource key={year} grade={grade} year={year} index={active?.index} preview={setManual} />}
     {Number(year) >= 1999 && Number(year) <= 2005 && <External href={dentalSource + "#p1-syl" + year}>歯学部の年度別目次</External>}
     {candidate && <><Evidence course={candidate} catalog={catalog} />
       <button type="button" disabled={saving} onClick={save}>この授業との対応を保存</button></>}
@@ -144,6 +157,7 @@ function Match({ grade, catalog, onConfirm }) {
 export function HistoricalMatchPanel(props) {
   const g = props.grade;
   return <Match key={JSON.stringify([g.id, g.recordId, g.year, g.code, g.title, g.department,
-    g.offeringDepartment, g.offeringFaculty, g.matchedCourse])} {...props} />;
+    g.offeringDepartment, g.offeringFaculty, g.term, g.period, g.semester, g.section, g.courseId, g.credits,
+    g.matchedCourse])} {...props} />;
 }
 export default HistoricalMatchPanel;

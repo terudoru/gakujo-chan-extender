@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildHistoricalIndex, confirmHistoricalMatch, courseSource, dentalSource, economicsTable,
   resolveHistoricalGrade, retainedHistoricalMatch, searchSource } from "../src/archive/identity.mjs";
-import { archiveYears, currentOffering, loadHistoricalIndex, matchHistoricalGrades, unpackYear } from "../src/archive/packs.mjs";
+import { archiveYears, currentOffering, loadHistoricalIndex, matchHistoricalGrades, revalidateGradeMatch, unpackYear } from "../src/archive/packs.mjs";
+import { compareOfferingEvidence } from "../src/archive/offering-evidence.mjs";
 import { reviewPublicRecord } from "../src/archive/manual.mjs";
 import current from "../src/catalog-2026.json" with { type: "json" };
 
@@ -50,12 +51,16 @@ test("require academic year, offering faculty and title agreement even for an ex
   assert.equal(resolveHistoricalGrade({ ...raw, year: "" }, catalog).status, "missing-year");
   assert.equal(resolveHistoricalGrade({ ...raw, code: "261G7011" }, past).match, null);
   const row = { ...raw, code: "250G7002" };
-  assert.equal(resolveHistoricalGrade(row, past).match.code, row.code);
+  const result = resolveHistoricalGrade(row, past);
+  assert.equal(result.status, "review"); // The annual index verifies the code and term, but does not publish units.
+  assert.equal(result.match, null);
+  assert.equal(result.candidates[0].code, row.code);
   for (const change of [{ title: "英語基礎 R" }, { department: "09" }, { offeringFaculty: "工学部" }]) {
     assert.equal(resolveHistoricalGrade({ ...row, ...change }, past).status, "mismatch");
   }
-  assert.equal(resolveHistoricalGrade({ ...row, faculty: "工学部" }, past).status, "exact");
-  assert.throws(() => confirmHistoricalMatch({ ...row, year: "2024" }, resolveHistoricalGrade(row, past).match));
+  assert.equal(resolveHistoricalGrade({ ...row, faculty: "工学部" }, past).status, "review");
+  assert.equal(resolveHistoricalGrade({ ...row, credits: undefined }, past).status, "exact");
+  assert.throws(() => confirmHistoricalMatch({ ...row, year: "2024" }, result.candidates[0]));
 });
 
 test("current fields are corroborated by the exact detail page and the category retains its own evidence", () => {
@@ -122,9 +127,89 @@ test("approved economics equivalents are directional by offering faculty and sub
   assert.ok(newer.candidates.some((c) => c.title === "社会思想史" && c.department === "0C"));
   const wrong = { ...review.candidates[0], department: "04", sourceUrl: courseSource("2019", "04", chosen.code) };
   assert.throws(() => confirmHistoricalMatch(input, wrong));
-  const exact = { ...wrong, title: input.title, code: "190L1234", sourceUrl: courseSource("2019", "04", "190L1234") };
+  const exact = { ...wrong, title: input.title, credits: 2, code: "190L1234", sourceUrl: courseSource("2019", "04", "190L1234") };
   const index = buildHistoricalIndex("2019", [...review.candidates, exact]);
   assert.equal(resolveHistoricalGrade(input, index).match.code, exact.code);
+});
+
+test("a unique name or code cannot overrule contradictory, missing or partially overlapping qualifiers", async () => {
+  const course = catalog.byCode.get("261k0501")[0];
+  assert.deepEqual([course.title, course.period, course.credits], ["情報通信技術教育論I", "第1ターム", 1]);
+  const qualified = { year: "2026", title: course.title, grade: "優", credits: 1, term: "第１ターム" };
+  for (const code of ["", course.code]) {
+    const grade = { ...qualified, code };
+    const match = resolveHistoricalGrade(grade, catalog).match;
+    assert.equal(match.period, "第1ターム");
+    assert.equal(match.credits, 1);
+    assert.equal(match.semester, "第1学期");
+    for (const changed of [{ credits: 3 }, { term: "第4ターム" }, { term: "第4ターム", credits: 3 }]) {
+      const conflicting = { ...grade, ...changed };
+      assert.deepEqual(resolveHistoricalGrade(conflicting, catalog), { status: "conflict", match: null, candidates: [] });
+      assert.throws(() => confirmHistoricalMatch(conflicting, course));
+      const [imported] = await matchHistoricalGrades([conflicting], current);
+      assert.deepEqual(imported, { ...conflicting, matchedCourse: null });
+    }
+    assert.equal(resolveHistoricalGrade({ ...grade, section: "A" }, catalog).status, "review");
+    const section = buildHistoricalIndex("2026", [{ ...course, section: "Ａ", courseId: "U-1" }]);
+    assert.equal(resolveHistoricalGrade({ ...grade, section: "a", courseId: "Ｕ－１" }, section).status, "exact");
+    for (const extra of [{ section: "B" }, { courseId: "U-2" }]) {
+      assert.equal(resolveHistoricalGrade({ ...grade, ...extra }, section).status, "conflict");
+    }
+  }
+  assert.equal(compareOfferingEvidence({ term: "後期" }, { period: "第3,4ターム" }), "match");
+  assert.equal(compareOfferingEvidence({ term: "第1ターム" }, { period: "第1~3ターム" }), "unknown");
+  assert.equal(compareOfferingEvidence({ term: "第4ターム" }, { period: "第1~3ターム" }), "conflict");
+  assert.equal(compareOfferingEvidence({ term: "第2ターム" }, { period: "集中", semester: "第1学期" }), "unknown");
+  assert.equal(compareOfferingEvidence({ term: "第3ターム" }, { period: "集中", semester: "第1学期" }), "conflict");
+  assert.equal(compareOfferingEvidence({ credits: "０.５単位" }, { credits: 0.5 }), "match");
+  assert.equal(compareOfferingEvidence({ credits: 1, term: "通年" }, {}), "unknown");
+  const archived = past.byCode.get("250g7002")[0];
+  assert.equal(archived.credits, undefined);
+  const original = { ...raw, code: archived.code, term: archived.period };
+  assert.equal(resolveHistoricalGrade(original, past).status, "review");
+  const manual = confirmHistoricalMatch(original, archived);
+  assert.equal(manual.period, archived.period);
+  assert.equal(Object.hasOwn(manual, "credits"), false);
+  assert.equal(retainedHistoricalMatch({ ...original, matchedCourse: manual }, past).code, archived.code);
+  const document = { year: "2026", title: course.title, department: "03", code: course.code,
+    sourceUrl: "https://www.niigata-u.ac.jp/example.pdf#page=1", fields: "10" };
+  for (const record of [{ credits: "2" }, { period: "第2学期" }, { section: "B" }]) {
+    assert.throws(() => reviewPublicRecord({ ...document, ...record }, { ...qualified, section: "A" }));
+  }
+  const scoped = reviewPublicRecord({ ...document, section: "A", credits: "１単位" }, { ...qualified, section: "A" });
+  assert.deepEqual([scoped.section, scoped.credits, scoped.period], ["A", 1, undefined]);
+});
+
+test("stored and re-imported confirms are rechecked against known offering evidence; sparse offline decisions survive", async () => {
+  const course = catalog.byCode.get("261k0501")[0];
+  const input = { id: "exact-repro", year: "2026", code: "", title: course.title, credits: 3, term: "第4ターム" };
+  const correctGrade = { ...input, credits: 1, term: "第1ターム" };
+  const full = confirmHistoricalMatch(correctGrade, course);
+  const { credits, period, semester, schedule, ...legacy } = full;
+  for (const saved of [legacy, full]) {
+    const old = { ...input, fields: ["10"], category: course.category, matchedCourse: saved };
+    assert.equal(revalidateGradeMatch(old, current), null);
+    assert.equal(resolveHistoricalGrade(old, catalog).match, null);
+    const [projected] = await matchHistoricalGrades([old], current);
+    assert.deepEqual([projected.credits, projected.term, projected.fields, projected.category, projected.matchedCourse],
+      [3, "第4ターム", [], "", null]);
+    const [reimported] = await matchHistoricalGrades([input], current, [old]);
+    assert.equal(reimported.matchInvalidated, true);
+    assert.equal(reimported.matchedCourse, null);
+    assert.throws(() => confirmHistoricalMatch(input, saved, catalog));
+    const restored = revalidateGradeMatch({ ...correctGrade, matchedCourse: saved }, current);
+    assert.equal(restored.period, "第1ターム");
+    assert.equal(restored.credits, 1);
+    assert.equal(restored.fieldSource, saved.fieldSource);
+  }
+  const sparseOffline = { ...input, matchedCourse: legacy };
+  assert.ok(revalidateGradeMatch(sparseOffline, null));
+  assert.equal(revalidateGradeMatch({ ...input, matchedCourse: full }, null), null);
+  const [retained] = await matchHistoricalGrades([input], null, [sparseOffline]);
+  assert.deepEqual(retained.matchedCourse, legacy);
+  assert.equal(retained.matchInvalidated, undefined);
+  const [noPrior] = await matchHistoricalGrades([{ ...input, matchInvalidated: true }], current);
+  assert.equal(noPrior.matchInvalidated, undefined);
 });
 
 test("index-only records identify the source and never auto-assign a same-name credit", async () => {

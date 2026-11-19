@@ -1,4 +1,5 @@
 import { confirmHistoricalMatch, courseSource, departmentCode, officialDocument, validYear } from "./identity.mjs";
+import { creditValue } from "./offering-evidence.mjs";
 
 // A downloaded page stays in a template's inert document. Scripts, frames and remote images never become live.
 export function readPublicSyllabusHtml(html, sourceUrl, grade, document, filename = "") {
@@ -8,7 +9,7 @@ export function readPublicSyllabusHtml(html, sourceUrl, grade, document, filenam
   for (const cell of template.content.querySelectorAll("tr > th")) {
     const label = cell.textContent.trim().split(/[／/]/)[0].trim();
     const value = cell.nextElementSibling;
-    if (value?.tagName !== "TD" || !["科目名", "開講番号", "開講学期", "分野", "科目区分"].includes(label)) continue;
+    if (value?.tagName !== "TD" || !["科目名", "開講番号", "開講学期", "単位数", "クラス", "クラス名", "分野", "科目区分"].includes(label)) continue;
     const text = value.textContent.trim();
     if (cells.has(label) && cells.get(label) !== text) throw Error("複数の授業があるファイルは読み込めません。");
     cells.set(label, text);
@@ -28,7 +29,10 @@ export function readPublicSyllabusHtml(html, sourceUrl, grade, document, filenam
   const fieldText = (cells.get("分野") ?? "").normalize("NFKC");
   const fields = [...fieldText.matchAll(/(?:^|[^\d])(\d{2})\s*:/g)].map((m) => m[1]);
   const category = (cells.get("科目区分") ?? "").split(/[\s／]/)[0];
-  const course = { year, department: parts[2], code, title, fields, category,
+  const period = cells.get("開講学期").normalize("NFKC").match(/第[1-4](?:[,、・~〜-][1-4])*ターム|第[12]学期|通年|集中|年度跨り/)?.[0];
+  const credits = creditValue(cells.get("単位数"));
+  const section = (cells.get("クラス") || cells.get("クラス名"))?.split("／")[0].trim();
+  const course = { year, department: parts[2], code, title, fields, category, period, section, credits,
     sourceUrl: url, fieldSource: url, sourceKind: "saved-syllabus" };
   return confirmHistoricalMatch(grade, course);
 }
@@ -45,7 +49,10 @@ export function reviewPublicRecord(record, grade) {
   const input = String(record.fields ?? "").normalize("NFKC").trim();
   const fields = input ? input.split(/[\s,、]+/) : [];
   if (fields.some((value) => !/^\d{2}$/.test(value))) throw Error("分野は資料に記載された2桁の番号を入力してください。");
+  const credits = creditValue(record.credits);
+  if (String(record.credits ?? "").trim() && credits == null) throw Error("資料に記載された単位数を確認してください。");
   const course = { year, department, code: String(record.code ?? "").normalize("NFKC").trim(),
+    credits, section: record.section, period: record.period, courseId: record.courseId,
     title: String(record.title ?? "").trim(), fields, category: String(record.category ?? "").trim(),
     sourceUrl, fieldSource: sourceUrl, sourceKind: "manual-record" };
   return confirmHistoricalMatch(grade, course);

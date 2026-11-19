@@ -30,8 +30,16 @@
 
 - `packs.mjs` の `await matchHistoricalGrades(incomingGrades, catalog, previousGrades)` が各行の `matchedCourse` を返す。元の成績の科目名、単位、年度、開講番号は保持する。取り込みを確定するときに保存し、集計には照合済みの分野・科目区分を使う。同名の未解決行は別の成績として維持する。
 - 各行の確認には `<HistoricalMatchPanel grade={originalGrade} catalog={catalog} onConfirm={saveMatch} />` を使う。`saveMatch(matchedCourse)` は対象の成績行だけを更新し、保存に失敗した場合は例外か `false` を返す。ユーザーが選んだ年度は `matchedCourse.year` に残る。
-- 同期・再取り込み時は `matchedCourse` の `year, code, department, title, fields, category, sourceUrl, confirmed` と、出典に関する `sourceKind, fieldSource, categorySource, aliasSource` を保持する。`retainedHistoricalMatch(grade)` は年・所属・番号・科目名が一致する保存済みの対応を検証する。
+- 同期・再取り込み時は `matchedCourse` の `year, code, department, title, fields, category, sourceUrl, confirmed`、出典の `sourceKind, fieldSource, categorySource, aliasSource`、資料に記載がある `term, period, semester, section, courseId, credits, schedule` を保持する。成績の修得単位は引き続き `grade.credits` から集計する。
 - 個別照合には `await loadHistoricalIndex(studyYear, catalog)` と `resolveHistoricalGrade(grade, index)` を使う。授業検索・予定の分野表示を成績と揃えるには、現行カタログの各行を `currentOffering(course, catalog)` に渡す。この関数の `sourceUrl` は参照可能な公式シラバスを指す。
+
+### 学期・クラス・単位数の不一致
+
+科目名や開講番号が一致しても、成績と資料の学期・クラス・科目番号・単位数が矛盾する候補は選択できない。成績にある値を資料で確かめられない場合は本人の照合を待つ。過年度索引には開講時期があっても単位数がない場合がある。本人が対応を確認しても、成績の値から資料の空欄を補わない。2026年度「情報通信技術教育論I」は第1ターム・1単位で、同名の第4ターム・3単位の成績は分野要確認に残る。[授業の公式シラバス](https://syllabus.niigata-u.ac.jp/syllabusHtml/2026/03/03_261K0501_ja_JP.html)
+
+ローカル保存・同期の既存成績は、集計前に `packs.mjs` の同期関数 `revalidateGradeMatch(grade, currentCatalog, historicalIndex?)` で保存済みの対応を確認する。戻り値は確認できた `matchedCourse` または `null`。該当年度の現行カタログ、または読み込み済みの過年度索引で、古い対応に欠けている根拠も確認する。オフラインで索引がない場合には、保存済みの根拠と矛盾しない既存の確認を維持する。集計用の成績コピーに戻り値を設定し、`null` の場合は分野と科目区分を空にする。この表示用処理による保存・同期は不要。
+
+再取り込み時、`matchHistoricalGrades` が一意に対応した旧 `matchedCourse` を資料で反証できた場合だけ、対象行に `matchedCourse: null` と一時フラグ `matchInvalidated: true` を返す。対応が新たに見つからない場合や、年度パック取得に失敗しただけの場合はフラグを付けない。保存時は同じ成績IDの旧対応が読み取り時点と一致する場合だけ解除し、並行操作で本人が確認した別の対応を保持する。フラグは保存・同期しない。
 
 ## データ更新
 

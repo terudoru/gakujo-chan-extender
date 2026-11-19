@@ -2,7 +2,8 @@ import dental from "./dental-index.json" with { type: "json" };
 import currentSources from "./current-sources.json" with { type: "json" };
 import checkedFields from "./content/field-evidence-2026.json" with { type: "json" };
 import { normalize } from "../study.mjs";
-import { buildHistoricalIndex, courseSource, dentalSource, officialDocument, resolveHistoricalGrade,
+import { compareOfferingEvidence } from "./offering-evidence.mjs";
+import { buildHistoricalIndex, contradictsConfirmedOffering, courseSource, dentalSource, officialDocument, resolveHistoricalGrade,
   retainedHistoricalMatch, searchSource, validYear } from "./identity.mjs";
 
 // Availability of the public search, independent of admission year or the selected handbook.
@@ -53,15 +54,28 @@ export function currentOffering(course, catalog) {
     sourceKind: specific ? "syllabus" : "public-index" };
 }
 
+function currentIndex(catalog) {
+  if (!currentIndices.has(catalog)) {
+    const index = buildHistoricalIndex(catalog.year, catalog.courses.map((course) => currentOffering(course, catalog)));
+    currentIndices.set(catalog, index);
+  }
+  return currentIndices.get(catalog);
+}
+
+// Safe read projection before allocating a local or synced confirmed row. No storage write or network request.
+export function revalidateGradeMatch(grade, currentCatalog, historicalIndex) {
+  if (grade?.matchedCourse?.confirmed !== true) return null;
+  const year = String(grade.matchedCourse.year);
+  const index = currentCatalog && String(currentCatalog.year) === year ? currentIndex(currentCatalog) :
+    historicalIndex?.year === year ? historicalIndex : null;
+  return retainedHistoricalMatch(grade, index);
+}
+
 export async function loadHistoricalIndex(year, currentCatalog) {
   year = String(year ?? "");
   if (!validYear(year)) return null;
   if (currentCatalog && String(currentCatalog.year) === year) {
-    if (!currentIndices.has(currentCatalog)) {
-      const index = buildHistoricalIndex(year, currentCatalog.courses.map((course) => currentOffering(course, currentCatalog)));
-      currentIndices.set(currentCatalog, index);
-    }
-    return currentIndices.get(currentCatalog);
+    return currentIndex(currentCatalog);
   }
   if (dental[year]?.length && !loaded.has(year)) {
     loaded.set(year, buildHistoricalIndex(year, dental[year].map((title) => ({
@@ -101,15 +115,20 @@ function uniqueRows(grades) {
 // A prior decision survives a unique row identity on both sides and the original offering checks.
 export async function matchHistoricalGrades(grades, currentCatalog, previousGrades = []) {
   const previous = uniqueRows(previousGrades), incoming = uniqueRows(grades);
-  return Promise.all(grades.map(async (grade) => {
+  return Promise.all(grades.map(async ({ matchInvalidated: previousSignal, ...grade }) => {
     const key = importKey(grade);
     const prior = incoming.get(key) && previous.get(key);
-    const retained = retainedHistoricalMatch(grade) ||
-      (prior && retainedHistoricalMatch({ ...grade, matchedCourse: prior.matchedCourse }));
-    if (retained) return { ...grade, matchedCourse: retained };
     // An offline/missing pack leaves only this row for review. The original credit record remains importable.
-    const index = await loadHistoricalIndex(grade.year, currentCatalog).catch(() => null);
-    const { match } = resolveHistoricalGrade(grade, index);
-    return { ...grade, matchedCourse: match };
+    const index = await loadHistoricalIndex(grade.year || grade.matchedCourse?.year || prior?.matchedCourse?.year,
+      currentCatalog).catch(() => null);
+    const retained = retainedHistoricalMatch(grade, index) ||
+      (prior && compareOfferingEvidence(grade, { ...prior.matchedCourse, ...prior }) === "match" &&
+        retainedHistoricalMatch({ ...grade, matchedCourse: prior.matchedCourse }, index));
+    if (retained) return { ...grade, matchedCourse: retained };
+    const invalidated = contradictsConfirmedOffering(grade, prior?.matchedCourse, index);
+    const match = invalidated ? null : resolveHistoricalGrade(grade, index, { review: true }).match;
+    return { ...grade, matchedCourse: match,
+      ...(!match && (grade.fields?.length || grade.category) ? { fields: [], category: "" } : {}),
+      ...(invalidated ? { matchInvalidated: true } : {}) };
   }));
 }
