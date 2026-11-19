@@ -25,6 +25,7 @@ export function parseSaved(text) {
     ) ||
     !object(raw.status ?? {}) ||
     !object(raw.capOverrides ?? {}) ||
+    !object(raw.semesters ?? {}) ||
     !object(raw.profile ?? {}) ||
     !raw.lists.every(
       (l) =>
@@ -42,6 +43,7 @@ export function parseSaved(text) {
     ...raw,
     status: raw.status ?? {},
     capOverrides: raw.capOverrides ?? {},
+    semesters: raw.semesters ?? {},
     balances: raw.balances ?? [],
     profile: { ...initialState().profile, ...raw.profile },
   };

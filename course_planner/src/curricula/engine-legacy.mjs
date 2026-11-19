@@ -1,5 +1,5 @@
 import sources from "../rule-sources.json" with { type: "json" };
-import { normalize } from "../study.mjs";
+import { normalize } from "../course-facts.mjs";
 import { quantity } from "./engine-evidence.mjs";
 
 // Pre-pack catalog and rules for existing local snapshots and isolated builds.
@@ -313,7 +313,7 @@ function priorCAP(profile) {
   return {
     limit: engineering
       ? 28
-      : gpa === null || gpa > 4
+      : gpa === null || gpa > 5
         ? null
         : gpa >= 3.5
           ? 28

@@ -12,7 +12,7 @@ import {
   quantity,
   sameProfile,
 } from "./engine-evidence.mjs";
-import { normalize } from "../study.mjs";
+import { normalize } from "../course-facts.mjs";
 
 const empty = () => ({ value: 0, applied: new Map(), pending: [] });
 const checkCourse =

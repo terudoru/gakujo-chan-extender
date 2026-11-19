@@ -1,5 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RequirementEvidence } from "./components/RequirementEvidence.jsx";
+import { AcademicFields } from "./components/AcademicFields.jsx";
+import { ProfileSettings } from "./components/ProfileSettings.jsx";
+import { HistoricalMatchPanel } from "./archive/HistoricalMatchPanel.jsx";
+import { sameProfile } from "./curricula/engine-evidence.mjs";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   ArrowRight,
@@ -10,13 +14,13 @@ import {
 } from "lucide-react";
 import {
   FACULTIES,
+  academicFieldRows,
   facultyInfo,
   gradeCourses,
-  requirementRows,
   sourceLinks,
+  stageStatus,
 } from "./requirements.mjs";
-import { activeCourses, courseFields, normalize, validCode } from "./study.mjs";
-import { mergeGrades, reviewGradeRows } from "./transcript.mjs";
+import { activeCourses, normalize } from "./study.mjs";
 import {
   ActionLink,
   Button,
@@ -26,219 +30,9 @@ import {
   Select,
 } from "./ui.jsx";
 
-function Profile({ state, mutate, close }) {
-  const [p, set] = useState({ ...state.profile }),
-    update = (key, value) => set({ ...p, [key]: value });
-  const standard = p.entry ?? "1年次入学";
-  return (
-    <Modal title="所属・適用便覧" close={close}>
-      <Select
-        label="学部・学科"
-        value={p.faculty}
-        options={Object.keys(FACULTIES)}
-        change={(v) => update("faculty", v)}
-      />
-      <TextInput
-        label="プログラム・分野"
-        placeholder="例　融合領域分野"
-        value={p.program}
-        onChange={(v) => update("program", v)}
-      />
-      <Select
-        label="入学区分"
-        value={standard}
-        change={(v) => update("entry", v)}
-        options={["1年次入学", "編入・転部・再入学"]}
-      />
-      <div className="pair">
-        <TextInput
-          label="入学年度"
-          value={p.admitted}
-          onChange={(v) =>
-            set({
-              ...p,
-              admitted: v,
-              handbook: p.admitted === p.handbook ? v : p.handbook,
-            })
-          }
-        />
-        <TextInput
-          label="適用便覧の年度"
-          value={p.handbook}
-          onChange={(v) => update("handbook", v)}
-        />
-      </div>
-      <div className="pair">
-        <TextInput
-          label="個別のCAP上限"
-          value={p.cap}
-          placeholder="単位"
-          onChange={(v) => update("cap", v)}
-        />
-        <TextInput
-          label="前学期GPA"
-          value={p.gpa}
-          onChange={(v) => update("gpa", v)}
-        />
-      </div>
-      <Button
-        label="設定を保存"
-        variant="primary"
-        onClick={async () => {
-          if (
-            await mutate((s) => {
-              if (
-                !p.faculty ||
-                ![p.handbook, p.admitted].every((y) => /^\d{4}$/.test(y))
-              )
-                throw Error("学部と4桁の年度を入力してください。");
-              if (
-                (p.cap !== "" &&
-                  (!Number.isFinite(Number(p.cap)) || Number(p.cap) <= 0)) ||
-                (p.gpa !== "" &&
-                  (!Number.isFinite(Number(p.gpa)) ||
-                    Number(p.gpa) < 0 ||
-                    Number(p.gpa) > 4))
-              )
-                throw Error("CAP上限またはGPAを確認してください。");
-              s.profile = { ...p, entry: standard };
-            })
-          )
-            close();
-        }}
-      />
-    </Modal>
-  );
-}
 
-function Grades({ state, byCode, mutate, close }) {
-  const [review, setReview] = useState(null),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  const [title, setTitle] = useState(""),
-    [units, setUnits] = useState(""),
-    [year, setYear] = useState(""),
-    [code, setCode] = useState("");
-  async function read(file) {
-    if (!file) return;
-    setBusy(true);
-    setError("");
-    setReview(null);
-    try {
-      const { readGradeFile } = await import("./read-grade-file.js");
-      setReview(reviewGradeRows(await readGradeFile(file), byCode));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  function manual() {
-    const course = byCode.get(code.trim().toUpperCase()),
-      enteredTitle = title.trim() || course?.title;
-    if (
-      !enteredTitle ||
-      !units.trim() ||
-      !Number.isFinite(Number(units)) ||
-      Number(units) <= 0 ||
-      Number(units) > 99 ||
-      (year && !/^\d{4}$/.test(year)) ||
-      (code && !validCode(code.trim().toUpperCase()))
-    ) {
-      setError("授業名または科目コード、修得した単位数を確認してください。");
-      return;
-    }
-    setReview({
-      candidates: [
-        {
-          code: code.trim().toUpperCase(),
-          title: enteredTitle,
-          credits: Number(units),
-          year,
-          grade: "修得",
-          fields: course?.fields ?? [],
-          category: course?.category ?? "",
-          department: course?.department ?? "",
-        },
-      ],
-      missing: [],
-    });
-    setError("");
-  }
-  async function accept() {
-    if (await mutate((s) => mergeGrades(s, review.candidates))) {
-      setReview(null);
-      close();
-    }
-  }
-  return (
-    <Modal title="修得済みの授業を取り込む" close={close}>
-      <p>端末内で読み取ります。科目と単位数を確認してから保存してください。</p>
-      <label className="input-label">
-        成績確認表（PDF・CSV・TSV）
-        <input
-          type="file"
-          accept=".pdf,.csv,.tsv"
-          disabled={busy}
-          onChange={(e) => read(e.target.files?.[0])}
-        />
-      </label>
-      {busy && <p role="status">読み取り中…</p>}
-      {review && (
-        <>
-          <strong>読み取れた授業　{review.candidates.length}件</strong>
-          <ul className="rows grade-review">
-            {review.candidates.map((g, i) => (
-              <li key={i}>
-                {g.title}
-                <small>
-                  {g.code}　{g.credits}単位　{g.grade}
-                </small>
-              </li>
-            ))}
-          </ul>
-          {review.missing.length > 0 && (
-            <p>
-              要確認の行が{review.missing.length}
-              件あります。確認できた授業だけを取り込みます。
-            </p>
-          )}
-          {!review.candidates.length && (
-            <p>
-              科目・評価・単位を特定できませんでした。下の欄から修得科目を入力できます。
-            </p>
-          )}
-          {review.candidates.length > 0 && (
-            <Button
-              label="確認した授業を取り込む"
-              variant="primary"
-              onClick={accept}
-            />
-          )}
-        </>
-      )}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      <details>
-        <summary>1科目ずつ入力</summary>
-        <div className="form-stack">
-          <TextInput label="科目コード" value={code} onChange={setCode} />
-          <TextInput label="授業名" value={title} onChange={setTitle} />
-          <div className="pair">
-            <TextInput label="修得単位" value={units} onChange={setUnits} />
-            <TextInput label="修得年度" value={year} onChange={setYear} />
-          </div>
-          <Button label="入力内容を確認" variant="secondary" onClick={manual} />
-        </div>
-      </details>
-    </Modal>
-  );
-}
 
-function Balance({ state, goal, mutate, close, fields, rows }) {
+function Balance({ state, goal, stageId, mutate, close, fields, rows }) {
   const [label, setLabel] = useState(""),
     [kind, setKind] = useState("必修"),
     [req, setReq] = useState(""),
@@ -252,7 +46,7 @@ function Balance({ state, goal, mutate, close, fields, rows }) {
         change={setKey}
         options={[
           ["custom", "自分の便覧の区分"],
-          ...rows.map((r) => [r.key, r.label]),
+          ...rows.filter((r) => (!r.unit || r.unit === "credits") && !r.key.startsWith("field-")).map((r) => [r.key, r.label]),
           ...Object.entries(fields).map(([f, n]) => [
             "field-" + f,
             "分野 " + f + " " + n,
@@ -293,26 +87,23 @@ function Balance({ state, goal, mutate, close, fields, rows }) {
               )
                 throw Error("区分名と単位数を確認してください。");
               const id = key === "custom" ? "manual-" + normalize(name) : key;
+              const p = state.profile;
               const b = {
                 key: id,
                 label: name,
                 kind,
                 required: Number(req),
                 current: Number(current),
-                faculty: state.profile.faculty,
-                handbook: state.profile.handbook,
-                program: state.profile.program,
-                goal,
+                faculty: p.faculty, handbook: p.handbook, program: p.program, admitted: p.admitted,
+                department: p.department ?? "", field: p.field ?? "", individual: p.individual ?? "",
+                entry: p.entry ?? "1年次入学", curriculum: p.curriculum ?? "", goal, stage: stageId,
               };
+              if (!sameProfile(b, s.profile)) throw Error("所属設定が変わりました。対象の区分を確認してください。");
+              const previous = rows.find((row) => row.key === id)?.balance;
               s.balances = s.balances.filter(
-                (r) =>
-                  !(
-                    r.key === id &&
-                    r.goal === goal &&
-                    r.faculty === b.faculty &&
-                    r.handbook === b.handbook &&
-                    (r.program ?? "") === b.program
-                  ),
+                (r) => !(r.key === id && r.goal === goal && sameProfile(r, p) &&
+                  ((r.stageId || r.stage || "") === stageId ||
+                    (!r.stageId && !r.stage && previous && !previous.stageId && !previous.stage))),
               );
               s.balances.push(b);
             })
@@ -323,6 +114,17 @@ function Balance({ state, goal, mutate, close, fields, rows }) {
     </Modal>
   );
 }
+const statusLabel = { met: "充足", short: "不足あり", unknown: "要確認" };
+function rowValue(value, unit, remaining = false, required = 1) {
+  if (!Number.isFinite(value)) return "—";
+  if (unit === "months") return value + "か月";
+  if (unit === "courses") return value + "科目";
+  if (unit === "condition" && required === 1)
+    return (remaining ? value === 0 : value >= 1) ? "充足" : "未充足";
+  return value;
+}
+const gradeKey = (g) => g.recordId || g.importId || g.id ||
+  JSON.stringify([g.year, g.code, g.title, g.term, g.section, g.courseId, g.credits, g.grade]);
 export function Requirements({
   state,
   catalog,
@@ -334,8 +136,15 @@ export function Requirements({
   view,
   setView,
   returnKey,
+  rows,
+  requestImport,
+  handbooks = [],
+  stages,
+  stageId,
+  setStage,
 }) {
   const [dialog, setDialog] = useState("");
+  const [historySelection, setHistorySelection] = useState(null);
   const returnRow = useRef(null);
   useEffect(() => {
     const row = returnRow.current;
@@ -347,17 +156,37 @@ export function Requirements({
   const info = facultyInfo(state.profile),
     active = activeCourses(state, byCode),
     grades = gradeCourses(state, byCode);
-  const fields = courseFields(grades, active, catalog.year);
-  const rows = requirementRows(state, byCode, active, goal);
-  const sums = new Map(
-    rows
-      .filter((r) => r.key.startsWith("field-"))
-      .map((r) => [r.key.slice(6), r]),
-  );
-  const fieldRows = new Map(fields.map((r) => [r.field, r]));
-  for (const f of sums.keys())
-    if (!fieldRows.has(f))
-      fieldRows.set(f, { field: f, earned: 0, planned: 0, courses: [] });
+  const fieldRows = useMemo(() => view === "fields"
+    ? academicFieldRows(state, byCode, active, stageId || goal).map((r) => {
+      const rule = r.requirement;
+      return {
+        ...r,
+        earned: rule?.balance?.current ?? r.earned,
+        earnedKnown: !!state.grades.length || !!rule?.balance,
+        required: rule?.required,
+        remaining: rule?.historyAvailable ? rule.remaining : null,
+        after: rule?.historyAvailable ? rule.after : null,
+        needsReview: r.needsReview || rule?.needsBalance,
+        source: rule?.source ?? rule?.evidence?.sources?.[0],
+      };
+    }) : [], [view, state, byCode, stageId, goal]);
+  const originalGrade = historySelection && state.grades.find((g) => gradeKey(g) === historySelection);
+  async function selectGrade(index) {
+    const displayed = state.grades[index];
+    let key = gradeKey(displayed);
+    if (state.grades.filter((g) => gradeKey(g) === key).length > 1) {
+      const recordId = crypto.randomUUID();
+      const saved = await mutate((s) => {
+        if (JSON.stringify(s.grades[index]) !== JSON.stringify(displayed))
+          throw Error("この履修記録が更新されました。もう一度開いてください。");
+        s.grades[index].recordId = recordId;
+      });
+      if (!saved) return;
+      key = recordId;
+    }
+    setHistorySelection(key);
+  }
+  const selectedStage = stages.find((s) => s.id === stageId);
   return (
     <section className="page-content">
       <div className="profile-strip">
@@ -366,7 +195,7 @@ export function Requirements({
           <strong>{state.profile.faculty || "所属を設定"}</strong>
           <small>
             {state.profile.faculty
-              ? [state.profile.program, state.profile.handbook + "年度の便覧"]
+              ? [state.profile.program, state.profile.handbook ? state.profile.handbook + "年度の便覧" : "適用便覧未設定"]
                   .filter(Boolean)
                   .join(" · ")
               : "学部・適用便覧を選ぶと、必要単位を確認できます。"}
@@ -396,7 +225,7 @@ export function Requirements({
           label="成績を取り込む"
           size="sm"
           variant="secondary"
-          onClick={() => setDialog("grades")}
+          onClick={() => requestImport({ kind: "grades" })}
         />
       </div>
       {view === "rules" && (
@@ -413,6 +242,17 @@ export function Requirements({
               ]}
             />
           </div>
+          {stages.length > 1 && (
+            <Select label="照合する学年・履修条件" value={stageId} change={setStage}
+              options={stages.map((s) => [s.id, s.label])} />
+          )}
+          {rows.length > 0 && (
+            <p className="stage-summary">
+              <strong>{selectedStage?.label || (goal === "graduation" ? "卒業要件" : "進級要件")}</strong>
+              <span>現在　{statusLabel[stageStatus(rows)]}</span>
+              <span>履修後　{statusLabel[stageStatus(rows, true)]}</span>
+            </p>
+          )}
           {info && <p className="hint">{info.note}</p>}
           {!state.grades.length && !state.balances.length && (
             <p className="notice">
@@ -431,17 +271,6 @@ export function Requirements({
               {rows
                 .filter((r) => !r.key.startsWith("field-"))
                 .map((r) => {
-                  const balance = r.evidence
-                    ? r.balance
-                    : state.balances.find((b) =>
-                        b.key === r.key &&
-                        b.goal === goal &&
-                        b.faculty === state.profile.faculty &&
-                        b.handbook === state.profile.handbook &&
-                        (b.program ?? "") === state.profile.program &&
-                        (!b.entry || b.entry === state.profile.entry),
-                      );
-                  const known = !r.needsBalance && (!!grades.length || !!balance);
                   return (
                     <div
                       className="ledger-row"
@@ -458,25 +287,22 @@ export function Requirements({
                           {r.needsBalance ? " · 要確認" : ""}
                         </small>
                       </div>
-                      <span>{r.required}</span>
-                      <span>{known ? r.current : "—"}</span>
-                      <span>{known ? r.remaining : "—"}</span>
+                      <span>{r.unit === "condition" && (r.required == null || r.required === 1) ? "条件確認" : rowValue(r.required, r.unit, false, r.required)}</span>
+                      <span>{r.historyAvailable ? rowValue(r.current, r.unit, false, r.required) : "—"}</span>
+                      <span>{r.historyAvailable ? rowValue(r.remaining, r.unit, true, r.required) : "—"}</span>
                       <div className="ledger-forecast">
-                        <b>{known ? r.after : "—"}</b>
-                        {!r.key.startsWith("manual-") &&
-                          !r.key.startsWith("ed-") && (
+                        <b>{r.historyAvailable ? rowValue(r.after, r.unit, true, r.required) : "—"}</b>
+                        {r.searchable && r.after !== 0 && (
                             <ActionLink
                               onClick={() =>
-                                search({ requirement: r.key, label: r.label })
+                                search({ requirement: r.key, label: r.label, stageId, goal })
                               }
                             >
                               授業を探す <ArrowRight size={12} />
                             </ActionLink>
                           )}
                       </div>
-                      {(r.evidence || balance) && (
-                        <RequirementEvidence {...r.evidence} balance={balance} />
-                      )}
+                      <RequirementEvidence {...r.evidence} balance={r.balance} unit={r.unit} note={r.note} reason={r.reason} />
                     </div>
                   );
                 })}
@@ -491,6 +317,7 @@ export function Requirements({
           )}
           {info && (
             <>
+              <div className="actions">
               <Button
                 label="確認表の内訳を入力"
                 variant="secondary"
@@ -498,6 +325,12 @@ export function Requirements({
                 icon={<Plus size={14} />}
                 onClick={() => setDialog("balance")}
               />
+              <Button
+                label="区分別の単位を取り込む"
+                size="sm" variant="secondary" icon={<FileUp size={14} />}
+                onClick={() => requestImport({ kind: "balances" })}
+              />
+              </div>
               <p className="hint">
                 残りは照合できた単位からの見込みです。指定科目、在学年数、認定単位は所属の規程で確認してください。
               </p>
@@ -526,52 +359,22 @@ export function Requirements({
               onClick={() => setDialog("balance")}
             />
           )}
-          {!fieldRows.size && (
-            <p className="empty">
-              授業を時間割に入れるか成績を取り込むと、分野別の単位が表示されます。
-            </p>
-          )}
-          {[...fieldRows.values()].map((r) => {
-            const b = sums.get(r.field);
-            return (
-              <details className="field-row" key={r.field}>
-                <summary>
-                  <strong>
-                    {r.field === "?"
-                      ? "分野要確認"
-                      : r.field + " " + catalog.fields[r.field]}
-                  </strong>
-                  <span>
-                    修得 {b?.current ?? r.earned} · 履修後{" "}
-                    {(b?.current ?? r.earned) + r.planned} 単位
-                  </span>
-                </summary>
-                {b && (
-                  <p>
-                    必要 {b.required} · 現在の残り {b.remaining} · 履修後の残り{" "}
-                    {Math.max(0, b.remaining - r.planned)} 単位
-                  </p>
-                )}
-                <ul className="rows">
-                  {r.courses.map(({ course, column }, i) => (
-                    <li key={i}>
-                      {course.title}
-                      <small>
-                        {course.year}　
-                        {column === "earned" ? "修得済み" : "履修予定"}　
-                        {course.credits}単位
-                      </small>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            );
-          })}
+          <AcademicFields
+            rows={fieldRows}
+            fieldNames={catalog.fields}
+            catalogYear={catalog.year}
+            returnField={returnKey?.startsWith("field-") ? returnKey.slice(6) : undefined}
+            onSearch={({ field, requirement, label }) => search({ field, requirement, label, stageId, goal })}
+            onReview={() => setView("history")}
+          />
         </>
       )}
       {view === "history" && (
         <>
-          <h2>修得履歴</h2>
+          <div className="split">
+            <h2>修得履歴</h2>
+            <Button label="修得科目を入力" size="sm" variant="secondary" onClick={() => requestImport({ kind: "grades", manual: true })} />
+          </div>
           {!grades.length ? (
             <p className="hint">
               成績確認表を取り込むと、これまでに修得した授業が並びます。
@@ -586,29 +389,44 @@ export function Requirements({
                       {g.code}　{g.year}　{g.grade}
                     </small>
                   </div>
-                  <span>{g.credits}単位</span>
+                  <div className="history-actions">
+                    <span>{g.credits}単位{g.counts === false ? " · 算入対象外" : ""}</span>
+                    <ActionLink onClick={() => selectGrade(i)}>
+                      {g.matchedCourse ? "シラバスの対応を確認" : "要確認 · シラバスを照合"}
+                    </ActionLink>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </>
       )}
-      {dialog === "profile" && (
-        <Profile state={state} mutate={mutate} close={() => setDialog("")} />
+      {originalGrade && (
+        <Modal title="履修年度のシラバス" close={() => setHistorySelection(null)}>
+          <HistoricalMatchPanel grade={originalGrade} catalog={catalog} onConfirm={(match) =>
+            mutate((s) => {
+              const matches = s.grades.filter((g) => gradeKey(g) === historySelection);
+              if (matches.length !== 1 || JSON.stringify(matches[0].matchedCourse ?? null) !==
+                  JSON.stringify(originalGrade.matchedCourse ?? null))
+                throw Error("この履修記録の対応が変わりました。もう一度開いて確認してください。");
+              Object.assign(matches[0], { matchedCourse: match, matchStatus: "confirmed" });
+            })
+          } />
+        </Modal>
       )}
-      {dialog === "grades" && (
-        <Grades
-          state={state}
-          byCode={byCode}
-          mutate={mutate}
+      {dialog === "profile" && (
+        <ProfileSettings
+          {...{ state, mutate, handbooks }} facultyNames={Object.keys(FACULTIES)}
           close={() => setDialog("")}
         />
       )}
+
       {dialog === "balance" && (
         <Balance
           state={state}
           goal={goal}
-          rows={rows.filter((r) => !r.key.startsWith("field-"))}
+          stageId={stageId || goal}
+          rows={rows.filter((r) => r.unit === "credits" && !r.key.startsWith("field-"))}
           fields={catalog.fields}
           mutate={mutate}
           close={() => setDialog("")}

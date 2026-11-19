@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Heading } from "@astryxdesign/core/Heading";
 import { SideNav, SideNavItem } from "@astryxdesign/core/SideNav";
 import {
@@ -6,21 +6,30 @@ import {
   BookMarked,
   CalendarDays,
   ChevronRight,
+  CloudSync,
   GraduationCap,
   LibraryBig,
   Search,
   X,
 } from "lucide-react";
-import { GAKUJO, STATUS, initialState, readShare } from "./study.mjs";
+import { GAKUJO, activeCourses, initialState, readShare, spansSemesters, termsFor } from "./study.mjs";
+import { SemesterCreditSplit } from "./components/SemesterCreditSplit.jsx";
 import { changeLocal, loadLocal, STORAGE_KEY } from "./storage.mjs";
 import { Timetable } from "./Timetable.jsx";
 import { Discovery } from "./Discovery.jsx";
 import { Lists, SharedList } from "./Lists.jsx";
 import { Requirements } from "./Requirements.jsx";
+import { availableStages, handbooks, requirementRows, shortageFilter } from "./requirements.mjs";
+import { matchHistoricalGrades } from "./archive/packs.mjs";
+import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
+import { buildCandidateMeetings } from "./components/candidate-overlaps.mjs";
+import { SyllabusFacts } from "./components/SyllabusFacts.jsx";
+import { PlannerImportPanel } from "./imports/PlannerImportPanel.jsx";
+import { installPlannerImportListener } from "./imports/native.mjs";
+import { SyncPanel } from "./sync/SyncPanel.jsx";
 import {
   AddCourse,
   Button,
-  CourseLine,
   ListPicker,
   Modal,
   PlannerError,
@@ -32,11 +41,13 @@ const pages = [
   ["search", "授業を探す", Search],
   ["lists", "候補リスト", BookMarked],
   ["credits", "単位・要件", GraduationCap],
+  ["sync", "同期", CloudSync],
 ];
 const descriptions = {
   search: "新潟大学の開講科目",
   lists: "保存した授業",
   credits: "修得単位と履修後の見込み",
+  sync: "利用する端末と同期項目",
 };
 function init() {
   try {
@@ -65,12 +76,61 @@ export function App({ catalog }) {
   const [reopenSlot, setReopenSlot] = useState(false);
   const [creditGoal, setCreditGoal] = useState("graduation");
   const [creditView, setCreditView] = useState("rules");
+  const [selectedStages, setSelectedStages] = useState({});
+  const [imports, setImports] = useState([]);
+  const pendingImport = imports[0];
   const [sharing, setSharing] = useState(() => shareFromURL(catalog.year));
   const byCode = useMemo(
     () => new Map(catalog.courses.map((c) => [c.code, c])),
     [catalog],
   );
   const list = state.lists.find((l) => l.id === listId) ?? state.lists[0];
+  const stages = useMemo(() => availableStages(state.profile, creditGoal), [state.profile, creditGoal]);
+  function stageScopeFor(goal) {
+    const { faculty, handbook, program, entry, department, individual } = state.profile;
+    return JSON.stringify([faculty, handbook, program, entry, department, individual, goal]);
+  }
+  const stageScope = stageScopeFor(creditGoal);
+  const chosenStage = selectedStages[stageScope];
+  const selector = stages.some((stage) => stage.id === chosenStage) ? chosenStage : creditGoal;
+  const planned = useMemo(() => activeCourses(state, byCode), [state.plan, state.status, byCode]);
+  const candidateIndex = useMemo(
+    () => buildCandidateMeetings(state.lists, byCode),
+    [state.lists, byCode],
+  );
+  const rows = useMemo(
+    () => page === "credits" || pendingImport
+      ? requirementRows(state, byCode, planned, selector)
+      : [],
+    [state, byCode, planned, page, selector, pendingImport],
+  );
+  const stageId = rows[0]?.stageId ?? stages.find((s) => s.id === selector)?.id ??
+    stages.find((s) => s.default)?.id ?? stages[0]?.id ?? "";
+  const matchesRequirement = useMemo(() => {
+    if (page !== "search" || !context.requirement) return undefined;
+    return shortageFilter(state, byCode, planned, context);
+  }, [state, byCode, planned, page, context]);
+  const prepareGrades = useCallback(
+    (incoming, previous) => matchHistoricalGrades(incoming, catalog, previous),
+    [catalog],
+  );
+  const importTargets = useMemo(() => {
+    if (!pendingImport) return [];
+    const known = new Set(rows.map((r) => r.key));
+    return [...rows.filter((row) => row.unit === "credits"), ...Object.entries(catalog.fields)
+      .filter(([id]) => !known.has("field-" + id))
+      .map(([id, name]) => ({
+        key: "field-" + id, label: "分野 " + id + " " + name, kind: "分野", required: null,
+      }))];
+  }, [catalog.fields, rows, pendingImport]);
+  function requestImport(source) {
+    const item = { ...source, id: crypto.randomUUID() };
+    setImports((queue) => [...queue, item]);
+  }
+  useEffect(() => installPlannerImportListener(
+    (packet) => requestImport({ packet }),
+    (err) => setError(err.message),
+  ), []);
   useEffect(() => {
     function fromSyllabus() {
       const match = /^#course=(\d{4})-(\d{3}[A-Z][A-Z0-9]{4,5})$/.exec(
@@ -287,8 +347,17 @@ export function App({ catalog }) {
                     mutate,
                     search,
                     reopenSlot,
+                    candidateIndex,
                   }}
-                  requirements={() => navigate("credits")}
+                  requirements={(row) => {
+                    navigate("credits");
+                    if (!row) return;
+                    setCreditView("rules");
+                    setCreditGoal(row.goal);
+                    setSelectedStages((old) => ({ ...old, [stageScopeFor(row.goal)]: row.stageId }));
+                    setContext({ requirement: row.key });
+                  }}
+                  importRegistration={() => requestImport({ kind: "registration" })}
                   openCourse={setCourse}
                 />
               )}
@@ -306,11 +375,12 @@ export function App({ catalog }) {
                   }}
                   openCourse={setCourse}
                   returnTo={returnFromSearch}
+                  matchesRequirement={matchesRequirement}
                 />
               )}
               {page === "lists" && (
                 <Lists
-                  {...{ state, byCode, mutate }}
+                  {...{ state, byCode, mutate, candidateIndex }}
                   base={location.href}
                   year={catalog.year}
                   activeId={list.id}
@@ -321,7 +391,9 @@ export function App({ catalog }) {
               )}
               {page === "credits" && (
                 <Requirements
-                  {...{ state, catalog, byCode, mutate, search }}
+                  {...{ state, catalog, byCode, mutate, search, rows, requestImport }}
+                  {...{ stages, stageId, handbooks }}
+                  setStage={(id) => setSelectedStages((old) => ({ ...old, [stageScope]: id }))}
                   returnKey={context.requirement}
                   goal={creditGoal}
                   setGoal={setCreditGoal}
@@ -331,14 +403,17 @@ export function App({ catalog }) {
               )}
             </>
           )}
+          <SyncPanel
+            state={state}
+            setState={setState}
+            catalog={catalog}
+            visible={!sharing.data && page === "sync"}
+          />
         </main>
         {course && (
           <Modal title="授業の詳細" close={() => setCourse(null)}>
-            <CourseLine course={course} fields={catalog.fields} details />
-            <div className="detail-line">
-              <span>開設一覧の科目区分</span>
-              <strong>{course.category || "要確認"}</strong>
-            </div>
+            <SyllabusFacts course={course} fields={catalog.fields} year={catalog.year} />
+            <CandidateOverlaps course={course} index={candidateIndex} onOpenCourse={setCourse} />
             <ListPicker lists={state.lists} id={list.id} setId={setListId} />
             <AddCourse
               course={course}
@@ -351,16 +426,10 @@ export function App({ catalog }) {
             {(state.plan.includes(course.code) || status) && (
               <>
                 <hr />
-                <Select
-                  label="学務で確認した登録状況"
-                  value={status ?? "履修予定"}
-                  options={STATUS}
-                  change={(value) =>
-                    mutate((s) => {
-                      s.status[course.code] = value;
-                    })
-                  }
-                />
+                <div className="detail-line">
+                  <span>登録状況</span>
+                  <strong>{status ?? "履修予定"}</strong>
+                </div>
                 <Select
                   label="CAPの扱い"
                   value={state.capOverrides[course.code] ?? "便覧に従う"}
@@ -373,6 +442,16 @@ export function App({ catalog }) {
                     })
                   }
                 />
+                {spansSemesters(termsFor(course)) && (
+                  <SemesterCreditSplit course={course} split={state.semesters[course.code]}
+                    onSave={(split, original) => mutate((s) => {
+                      const latest = s.semesters[course.code];
+                      if (latest?.first !== original?.first || latest?.second !== original?.second)
+                        throw Error("この授業の学期別単位が更新されました。授業の詳細を開き直して確認してください。");
+                      if (split === null) delete s.semesters[course.code];
+                      else s.semesters[course.code] = split;
+                    })} />
+                )}
                 {state.plan.includes(course.code) &&
                   !["許可", "申請中"].includes(status) && (
                     <Button
@@ -395,6 +474,19 @@ export function App({ catalog }) {
               </>
             )}
           </Modal>
+        )}
+        {pendingImport && (
+          <PlannerImportPanel
+            key={pendingImport.id}
+            {...pendingImport}
+            {...{ state, byCode, mutate }}
+            catalogYear={catalog.year}
+            goal={creditGoal}
+            stage={stageId}
+            prepareGrades={prepareGrades}
+            requirementRows={importTargets}
+            onClose={() => setImports((queue) => queue.filter((item) => item.id !== pendingImport.id))}
+          />
         )}
       </div>
     </PlannerError.Provider>

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { Search } from "lucide-react";
 import { Button, External } from "../ui.jsx";
 import { safeExternalURL } from "./profile-settings.mjs";
@@ -30,9 +30,17 @@ function isFiniteNumber(value) {
 export function AcademicFields({
   rows = [],
   fieldNames = {},
+  catalogYear,
+  returnField,
   onSearch,
   onReview,
 }) {
+  const resume = useRef(null);
+  useEffect(() => {
+    if (!resume.current) return;
+    resume.current.open = true;
+    resume.current.querySelector("summary")?.focus();
+  }, [returnField]);
   if (!rows.length) {
     return (
       <p className="empty">
@@ -67,7 +75,8 @@ export function AcademicFields({
         const showReview = needsReview && typeof onReview === "function";
 
         return (
-          <details className="field-row af-row" key={String(row.field)}>
+          <details className="field-row af-row" key={String(row.field)}
+            ref={returnField === row.field ? resume : undefined}>
             <summary className="af-summary">
               <div className="af-heading">
                 <strong>{label}</strong>
@@ -77,7 +86,9 @@ export function AcademicFields({
               </div>
               <div className="af-metrics">
                 <span>
-                  修得 {earned} · 履修後 {forecast} 単位
+                  {row.earnedKnown === false
+                    ? `成績未取込 · 履修予定 ${planned}単位`
+                    : `修得 ${earned} · 履修後 ${forecast} 単位`}
                 </span>
                 {summaryParts.length > 0 && (
                   <span className="af-req-summary">
@@ -119,9 +130,8 @@ export function AcademicFields({
                   {courses.map((entry, index) => {
                     const course = entry?.course ?? {};
                     const column = entry?.column;
-                    const yearText = course.year
-                      ? `${course.year}年度`
-                      : "年度未記載";
+                    const year = course.year || (column === "planned" ? catalogYear : null);
+                    const yearText = year ? `${year}年度` : "年度未記載";
                     const creditText =
                       course.credits != null
                         ? `${course.credits}単位`
@@ -136,6 +146,7 @@ export function AcademicFields({
                             .filter(Boolean)
                             .join(" · ")}
                         </small>
+                        {entry.reviewOnly && <small>算入 {entry.applied ?? 0}単位 · {entry.reason || "要確認"}</small>}
                       </li>
                     );
                   })}

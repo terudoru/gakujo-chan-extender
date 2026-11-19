@@ -2,58 +2,9 @@ export const DAYS = [..."月火水木金土日"];
 export const GAKUJO =
   "https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=rs";
 export const STATUS = ["履修予定", "申請中", "許可", "不許可", "要確認"];
-export const normalize = (text) =>
-  String(text ?? "")
-    .normalize("NFKC")
-    .replace(/\s+/gu, "")
-    .toLowerCase();
-
-export function termsFor(course) {
-  const period = course.period.normalize("NFKC");
-  if (period === "通年") return [1, 2, 3, 4];
-  if (period.includes("ターム")) {
-    const ns = [...period.matchAll(/[1-4]/g)].map((m) => Number(m[0]));
-    if (/[~〜～]/.test(period) && ns.length === 2) {
-      return [1, 2, 3, 4].filter((n) => n >= ns[0] && n <= ns[1]);
-    }
-    return ns;
-  }
-  if (course.semester.includes("1")) return [1, 2];
-  if (course.semester.includes("2")) return [3, 4];
-  return [];
-}
-
-export function slotsFor(course) {
-  return course.schedule
-    .normalize("NFKC")
-    .split(/[,、]/)
-    .map((s) => s.trim())
-    .filter((s) => /^[月火水木金土日][1-7]$/.test(s));
-}
-export function hasUnscheduled(course) {
-  return course.schedule
-    .normalize("NFKC")
-    .split(/[,、]/)
-    .some((s) => !/^[月火水木金土日][1-7]$/.test(s.trim()));
-}
-export function syllabusURL(course, year = 2026) {
-  if (
-    !/^[A-Z0-9]{2}$/.test(course.department) ||
-    !/^\d{3}[A-Z][A-Z0-9]{4,5}$/.test(course.code)
-  )
-    return null;
-  return (
-    "https://syllabus.niigata-u.ac.jp/syllabusHtml/" +
-    year +
-    "/" +
-    course.department +
-    "/" +
-    course.department +
-    "_" +
-    course.code +
-    "_ja_JP.html"
-  );
-}
+export { courseFields, hasUnscheduled, normalize, slotsFor, syllabusURL, termsFor } from "./course-facts.mjs";
+import { hasUnscheduled, normalize, slotsFor, termsFor } from "./course-facts.mjs";
+import { resolveCAP } from "./requirements.mjs";
 export function activeCourses(state, byCode) {
   const codes = new Set([
     ...state.plan,
@@ -105,84 +56,45 @@ export function chooseCourse(state, course, byCode, replace = false) {
   ];
 }
 
-export function semesterCredits(courses, term, profile, overrides = {}) {
-  const semester = term <= 2 ? 1 : 2;
-  let included = 0,
-    excluded = 0;
+export function spansSemesters(terms) {
+  return terms.some((t) => t <= 2) && terms.some((t) => t > 2);
+}
+export function semesterCredits(courses, term, profile, overrides = {}, splits = {}) {
+  const firstSemester = term <= 2;
+  const policy = resolveCAP(profile, overrides);
   const unconfirmed = [];
-  const currentRules = Number(profile.handbook) === 2026;
-  for (const c of courses) {
-    const terms = termsFor(c);
-    if (!terms.some((t) => (t <= 2 ? 1 : 2) === semester)) continue;
-    const override = overrides[c.code];
-    const cross = terms.some((t) => t <= 2) && terms.some((t) => t >= 3);
-    const engineering = currentRules && profile.faculty === "工学部";
-    const agriculture = currentRules && profile.faculty === "農学部";
-    const formats = (c.format ?? "").split("・");
-    const exempt =
-      ((engineering || agriculture) && c.period === "集中") ||
-      (engineering && c.title.includes("リメディアル演習")) ||
-      (agriculture &&
-        (formats.every((f) => ["演習", "実習", "実技", "実験"].includes(f)) ||
-          c.category === "留学生基本科目"));
-    if (override === "除外" || (override !== "算入" && exempt)) {
-      excluded += c.credits ?? 0;
-    } else if (
-      c.credits == null ||
-      cross ||
-      !terms.length ||
-      (agriculture &&
-        formats.includes("講義") &&
-        formats.length > 1 &&
-        override !== "算入")
-    ) {
-      unconfirmed.push(c);
-    } else {
-      included += c.credits;
+  let included = 0, excluded = 0, scheduled = 0;
+  for (const course of courses) {
+    const terms = termsFor(course);
+    if (!terms.length) {
+      unconfirmed.push(course);
+      continue;
     }
+    if (!terms.some((t) => (t <= 2) === firstSemester)) continue;
+    const crossesSemesters = spansSemesters(terms);
+    let credits = course.credits;
+    if (crossesSemesters) {
+      const split = splits?.[course.code];
+      credits = Number.isFinite(split?.first) && split.first >= 0 &&
+        Number.isFinite(split.second) && split.second >= 0 &&
+        Number.isFinite(course.credits) && Math.abs(split.first + split.second - course.credits) < 1e-8
+        ? (firstSemester ? split.first : split.second)
+        : null;
+    }
+    const classification = policy.classify(course);
+    if (!Number.isFinite(credits) || credits < 0) {
+      if (classification !== "exclude") unconfirmed.push(course);
+      continue;
+    }
+    scheduled += credits;
+    if (classification === "include") included += credits;
+    else if (classification === "exclude") excluded += credits;
+    else unconfirmed.push(course);
   }
-  const limit =
-    profile.cap != null && profile.cap !== ""
-      ? Number(profile.cap)
-      : currentRules && profile.faculty === "工学部"
-        ? 28
-        : currentRules && profile.faculty === "農学部"
-          ? Number(profile.gpa) >= 3.5
-            ? 28
-            : 24
-          : null;
-  return { included, excluded, limit, unconfirmed };
+  return { ...policy, included, excluded, scheduled, unconfirmed };
 }
 
-export function courseFields(earned, planned, catalogYear) {
-  const rows = new Map();
-  const countedOfferings = new Set();
-  for (const [records, column] of [
-    [earned, "earned"],
-    [planned, "planned"],
-  ]) {
-    for (const course of records) {
-      if (course.counts === false || course.duplicate === true) continue;
-      const offering = course.matchedCourse?.confirmed ? course.matchedCourse : course;
-      const year = offering.year || (column === "planned" ? catalogYear : null);
-      if (offering.code && year) {
-        const key = year + "/" + offering.code;
-        if (column === "planned" && countedOfferings.has(key)) continue;
-        countedOfferings.add(key);
-      }
-      const fields = offering.fields?.length ? offering.fields : ["?"];
-      for (const field of new Set(fields)) {
-        if (!rows.has(field))
-          rows.set(field, { field, earned: 0, planned: 0, courses: [] });
-        const row = rows.get(field);
-        if (Number.isFinite(course.credits)) row[column] += course.credits;
-        else row.needsReview = true;
-        row.courses.push({ course, column });
-      }
-    }
-  }
-  return [...rows.values()].sort((a, b) => a.field.localeCompare(b.field));
-}
+
 
 export function initialState() {
   return {
@@ -194,8 +106,8 @@ export function initialState() {
     profile: {
       faculty: "",
       program: "",
-      admitted: "2026",
-      handbook: "2026",
+      admitted: "",
+      handbook: "",
       gpa: "",
       cap: "",
     },

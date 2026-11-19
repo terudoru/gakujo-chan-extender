@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Theme } from "@astryxdesign/core/theme";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { App } from "./App.jsx";
+import { currentOffering } from "./archive/packs.mjs";
 import catalogURL from "./catalog-2026.json?url";
 import "./planner.css";
 
@@ -16,7 +17,10 @@ function Start() {
         if (!r.ok) throw Error();
         return r.json();
       })
-      .then(setCatalog)
+      .then((data) => setCatalog({
+        ...data,
+        courses: data.courses.map((course) => currentOffering(course, data)),
+      }))
       .catch((e) => {
         if (e.name !== "AbortError") setError(true);
       });

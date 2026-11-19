@@ -1,4 +1,4 @@
-import { normalize } from "../../study.mjs";
+import { normalize } from "../../course-facts.mjs";
 
 export const text = normalize;
 export const source = (title, url) => ({ title, url });

@@ -9,11 +9,13 @@ import {
   Share2,
 } from "lucide-react";
 import { shareLink, validName } from "./study.mjs";
+import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
 import { ActionLink, Button, Modal } from "./ui.jsx";
 
 export function Lists({
   state,
   byCode,
+  candidateIndex,
   year,
   activeId,
   setId,
@@ -124,7 +126,8 @@ export function Lists({
                     ) : (
                       <strong>要確認　{code}</strong>
                     )}
-                    <small>{code}</small>
+                    <small>{[code, byCode.get(code)?.period, byCode.get(code)?.schedule].filter(Boolean).join(" · ")}</small>
+                    <CandidateOverlaps course={byCode.get(code)} index={candidateIndex} onOpenCourse={openCourse} />
                   </div>
                   <ActionLink
                     onClick={() =>

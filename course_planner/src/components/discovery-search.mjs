@@ -13,7 +13,7 @@ export const PERIOD_NUMBERS = ["1", "2", "3", "4", "5", "6", "7"];
 export const SYLLABUS_HOST = "syllabus.niigata-u.ac.jp";
 
 const OFFICIAL_SYLLABUS_PATH =
-  /^\/syllabusHtml\/(\d{4})\/([A-Z0-9]{2})\/\2_(\d{3}[A-Z][A-Z0-9]{4,5})_ja_JP\.html$/;
+  /^\/syllabusHtml\/(\d{4})\/([A-Z0-9]{2})\/\2_(\d{3}[A-Z][A-Z0-9]{4,5})_(?:ja_JP|en_US)\.html$/;
 
 function buildFallbackDepartments() {
   const grouped = new Map();
@@ -125,7 +125,7 @@ export function parseOfficialSyllabusURL(raw) {
   } catch {
     return { valid: false, reason: "invalid-url" };
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== SYLLABUS_HOST) {
+  if (parsed.protocol !== "https:" || parsed.host !== SYLLABUS_HOST || parsed.username || parsed.password) {
     return { valid: false, reason: "non-official-host" };
   }
   const match = OFFICIAL_SYLLABUS_PATH.exec(parsed.pathname);
@@ -135,7 +135,8 @@ export function parseOfficialSyllabusURL(raw) {
   const year = Number(match[1]);
   const department = match[2];
   const code = match[3];
-  const canonical = syllabusURL({ department, code }, year);
+  const sourceUrl = `${parsed.origin}${parsed.pathname}`;
+  const canonical = syllabusURL({ department, code, sourceUrl }, year);
   if (!canonical || `${parsed.origin}${parsed.pathname}` !== canonical) {
     return { valid: false, reason: "non-canonical" };
   }

@@ -22,7 +22,7 @@ import {
   priorFacultyInfo,
 } from "./curricula/engine-legacy.mjs";
 export { FACULTIES, sourceLinks } from "./curricula/engine-legacy.mjs";
-import { courseFields, hasUnscheduled, slotsFor, termsFor } from "./study.mjs";
+import { courseFields, hasUnscheduled, slotsFor, termsFor } from "./course-facts.mjs";
 
 // A confirmed field subtotal may be the only known requirement for an older
 // handbook. Use its own goal/stage only when the search identifies one scope.
@@ -58,8 +58,7 @@ function statementFieldStage(state, key, context) {
 // nullable remaining/after values, status/futureStatus, evidence and balance.
 // Compile shortageFilter once per search with { key, stageId, term?, slot? }.
 // slotRequirements returns those same stage/row keys for the selected courses.
-// Pass resolveCAP(profile, overrides) from the UI to the semester calculator;
-// this keeps the catalog utilities independent of the faculty-pack registry.
+// semesterCredits uses the same faculty policy and any individually recorded course overrides.
 export function createRequirementAPI(packs = installedPacks) {
   const registry = createRegistry(packs);
   function descriptor(profile) {

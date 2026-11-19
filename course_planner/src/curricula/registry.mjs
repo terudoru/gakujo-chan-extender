@@ -1,24 +1,7 @@
-// Eager in Vite, including the standalone static site. Node's test runner
-// imports the same packs directly. During isolated development a pack may be
-// absent; an error *inside* an installed pack must still fail the build/tests.
-async function nodePacks() {
-  const packs = [];
-  for (const name of ["humanities", "sciences", "clinical"]) {
-    const url = new URL("./" + name + ".mjs", import.meta.url).href;
-    try {
-      packs.push(await import(/* @vite-ignore */ url));
-    } catch (error) {
-      if (error.code !== "ERR_MODULE_NOT_FOUND" || error.url !== url)
-        throw error;
-    }
-  }
-  return packs;
-}
-export const installedPacks = import.meta.env
-  ? Object.values(
-      import.meta.glob("./{humanities,sciences,clinical}.mjs", { eager: true }),
-    )
-  : await nodePacks();
+import * as humanities from "./humanities.mjs";
+import * as clinical from "./clinical.mjs";
+
+export const installedPacks = [humanities, clinical];
 
 export function createRegistry(packs = installedPacks) {
   const books = packs.flatMap((pack) => pack.handbooks ?? []);

@@ -65,7 +65,7 @@ export function SyllabusFacts({
       </dl>
       {officialUrl ? (
         <div className="sf-link-row">
-          <External href={officialUrl}>公式シラバス</External>
+          <External href={officialUrl}>{course.sourceKind === "public-index" ? "大学のシラバス検索" : "公式シラバス"}</External>
           <small>大学の公開シラバスを別タブで開きます</small>
         </div>
       ) : (

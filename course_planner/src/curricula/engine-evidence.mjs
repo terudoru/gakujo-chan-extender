@@ -1,4 +1,4 @@
-import { normalize, syllabusURL } from "../study.mjs";
+import { normalize, syllabusURL } from "../course-facts.mjs";
 
 export function quantity(value) {
   if (typeof value !== "number" && typeof value !== "string") return null;

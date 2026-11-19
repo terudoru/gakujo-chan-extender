@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChevronRight,
   Clock3,
+  FileUp,
   Plus,
   Search,
 } from "lucide-react";
@@ -16,7 +17,6 @@ import {
   activeCourses,
   chooseCourse,
   conflicts,
-  courseFields,
   hasUnscheduled,
   listCandidates,
   semesterCredits,
@@ -33,7 +33,8 @@ import {
   slotTitle,
 } from "./ui.jsx";
 
-import { gradeCourses, requirementRows } from "./requirements.mjs";
+import { academicFieldRows, availableStages, slotRequirements } from "./requirements.mjs";
+import { CandidateOverlaps } from "./components/CandidateOverlaps.jsx";
 
 export function Timetable({
   state,
@@ -48,6 +49,8 @@ export function Timetable({
   requirements,
   openCourse,
   reopenSlot,
+  candidateIndex,
+  importRegistration,
 }) {
   const [replacement, setReplacement] = useState(null);
   const [extended, setExtended] = useState(false);
@@ -88,6 +91,7 @@ export function Timetable({
     term,
     state.profile,
     state.capOverrides,
+    state.semesters,
   );
   const sem = term <= 2 ? "第1学期" : "第2学期";
   const candidates = listCandidates(state, byCode, term, slot);
@@ -99,30 +103,18 @@ export function Timetable({
       ),
     );
     if (!courseFieldsHere.size) return [];
-    return courseFields(gradeCourses(state, byCode), maps.active, catalog.year)
+    return academicFieldRows(state, byCode, maps.active)
       .filter((row) => courseFieldsHere.has(row.field));
-  }, [state, byCode, maps, slot, catalog.year]);
+  }, [state, byCode, maps, slot]);
   const impact = useMemo(() => {
-    const slotCodes = new Set((maps.planned.get(slot) ?? []).map((c) => c.code));
-    if (!slotCodes.size || (!state.grades.length && !state.balances.length))
-      return [];
-    const otherCourses = maps.active.filter((c) => !slotCodes.has(c.code));
-    return ["progress", "graduation"].flatMap((goal) => {
-      const before = new Map(
-        requirementRows(state, byCode, otherCourses, goal).map((r) => [r.key, r.after]),
-      );
-      return requirementRows(state, byCode, maps.active, goal)
-        .filter(
-          (r) =>
-            !r.needsBalance &&
-            (!r.unit || r.unit === "credits") &&
-            Number.isFinite(before.get(r.key)) &&
-            Number.isFinite(r.after) &&
-            before.get(r.key) > r.after,
-        )
-        .map((row) => ({ goal, row, before: before.get(row.key) }));
-    });
+    const chosen = maps.planned.get(slot);
+    if (!chosen?.length || (!state.grades.length && !state.balances.length)) return [];
+    return slotRequirements(state, byCode, maps.active, chosen);
   }, [state, maps, slot, byCode]);
+  const stageNames = useMemo(
+    () => new Map(availableStages(state.profile, "progress").map((stage) => [stage.id, stage.label ?? stage.title])),
+    [state.profile],
+  );
   const extras = [
     ...maps.planned.keys(),
     ...maps.registrationNotes.keys(),
@@ -218,6 +210,10 @@ export function Timetable({
             change={(v) => setTerm(Number(v))}
             options={[1, 2, 3, 4].map((t) => [t, "第" + t + "ターム"])}
           />
+          <Button
+            size="sm" variant="secondary" label="登録状況を取り込む"
+            icon={<FileUp size={15} />} onClick={importRegistration}
+          />
         </div>
         <div className="table-scroll">
           <div
@@ -266,9 +262,9 @@ export function Timetable({
           </div>
           <div className="cap-body">
             <div className="split">
-              <strong>{sem}のCAP</strong>
+              <strong>{sem}{state.profile.faculty ? "のCAP" : "の登録予定"}</strong>
               <b>
-                {cap.included}
+                {state.profile.faculty ? cap.included : cap.scheduled}
                 <small> / {cap.limit ?? "未設定"} 単位</small>
               </b>
             </div>
@@ -282,7 +278,7 @@ export function Timetable({
             )}
             <div className="split">
               <small>
-                登録予定の算入見込み
+                {state.profile.faculty ? "CAP算入見込み" : "所属を設定するとCAPを確認できます"}
                 {cap.excluded ? " · 対象外 " + cap.excluded + "単位" : ""}
                 {cap.unconfirmed.length
                   ? " · 要確認 " + cap.unconfirmed.length + "科目"
@@ -291,10 +287,20 @@ export function Timetable({
                   ? " · 上限超過"
                   : ""}
               </small>
-              <ActionLink onClick={requirements}>
+              <ActionLink onClick={() => requirements()}>
                 単位・要件へ <ArrowRight size={13} />
               </ActionLink>
             </div>
+            {state.profile.faculty && (cap.note || cap.source?.url || cap.unconfirmed.length > 0) && (
+              <details className="cap-rules">
+                <summary>算入の根拠と要確認の授業</summary>
+                {cap.note && <p>{cap.note}</p>}
+                {cap.source?.url && <External href={cap.source.url}>{cap.source.title || "CAPの規定"}</External>}
+                {cap.unconfirmed.map((c) => <div key={c.code}>
+                  <ActionLink onClick={() => openCourse(c)}>{c.title}（{c.code}）</ActionLink>
+                </div>)}
+              </details>
+            )}
           </div>
         </section>
         {renderForecast()}
@@ -343,12 +349,17 @@ export function Timetable({
         </dl>
         {impact.length > 0 && (
           <details>
-            <summary>このコマで減る進級・卒業までの残り単位</summary>
+            <summary>このコマで減る進級・卒業要件の残り</summary>
             <dl>
-              {impact.map(({ goal, row, before }) => (
-                <div key={goal + "/" + row.key}>
-                  <dt>{goal === "progress" ? "進級・履修条件" : "卒業"} · {row.label}</dt>
-                  <dd>{before} → {row.after}単位</dd>
+              {impact.map((row) => (
+                <div key={row.stageId + "/" + row.key}>
+                  <dt>
+                    <ActionLink onClick={() => requirements(row)}>
+                      {row.goal === "progress" ? "進級・履修条件" : "卒業"} · {row.label}
+                    </ActionLink>
+                    {row.goal === "progress" && <small>{stageNames.get(row.stageId)}</small>}
+                  </dt>
+                  <dd>{row.previousAfter} → {row.after}{row.unit === "courses" ? "科目" : row.unit === "months" ? "か月" : "単位"}</dd>
                 </div>
               ))}
             </dl>
@@ -403,6 +414,7 @@ export function Timetable({
                 <small>
                   {lists.join("・")} · {course.credits ?? "?"}単位
                 </small>
+                <CandidateOverlaps course={course} index={candidateIndex} onOpenCourse={openCourse} />
                 {conflicts(course, state, byCode).map(
                   ({ course: other, slots }) => (
                     <small className="conflict" key={other.code}>

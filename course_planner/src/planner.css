@@ -44,14 +44,15 @@ body {
 }
 .skip {
   position: fixed;
-  top: -90px;
+  top: 8px;
+  clip-path: inset(50%);
   left: 12px;
   z-index: 20;
   padding: 10px;
   background: var(--paper);
 }
 .skip:focus {
-  top: 8px;
+  clip-path: none;
 }
 .sidebar {
   position: sticky;
@@ -250,7 +251,22 @@ body {
   min-height: 46px;
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
 }
+.stage-summary, .cap-rules {
+  font-size: 13px;
+  color: var(--soft);
+}
+.stage-summary { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.stage-summary strong, .cap-rules summary {
+  color: var(--ink);
+}
+.cap-rules summary { cursor: pointer; }
+.history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot-impact dt small { display: block; }
 .table-scroll {
   border: 1px solid var(--rule);
   border-radius: 9px;
@@ -975,6 +991,18 @@ details[open] > .form-stack {
 .slot-impact summary {
   cursor: pointer;
 }
+.candidate-overlaps {
+  font-size: 12px;
+  color: var(--soft);
+}
+.candidate-overlaps summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.candidate-overlaps .rows {
+  margin: 5px 0;
+  padding-inline-start: 12px;
+}
 .slot-impact details[open] dl {
   margin-top: 7px;
 }
@@ -1003,7 +1031,7 @@ details[open] > .form-stack {
 @media (max-width: 670px) {
   .mobile-nav {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 2px;
   }
   .mobile-nav button {

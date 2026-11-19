@@ -28,7 +28,9 @@ const data = byCode.get("261G3008"),
   english = byCode.get("261G7011");
 function engineering() {
   const s = initialState();
-  Object.assign(s.profile, { faculty: "工学部", program: "融合領域分野" });
+  Object.assign(s.profile, {
+    faculty: "工学部", program: "融合領域分野", handbook: "2026", admitted: "2026",
+  });
   return s;
 }
 test("catalog links and paired slots refer to unique undergraduate offerings", () => {
@@ -116,6 +118,24 @@ test("one semester counts all its terms once and flags annual or mixed credits",
     semesterCredits([data], 1, { ...s.profile, handbook: "2017" }).limit,
     null,
   );
+});
+test("annual CAP uses the recorded shares, validates both halves and preserves zero", () => {
+  const profile = engineering().profile;
+  const course = { ...data, period: "通年" };
+  const split = { [course.code]: { first: 0, second: 2 } };
+  const first = semesterCredits([course], 1, profile, {}, split);
+  assert.equal(first.included, 0);
+  assert.deepEqual(first.unconfirmed, []);
+  assert.equal(semesterCredits([course], 4, profile, {}, split).included, 2);
+  for (const bad of [{ first: 1 }, { first: 1, second: 2 }, { first: -1, second: 3 }]) {
+    const result = semesterCredits([course], 1, profile, {}, { [course.code]: bad });
+    assert.deepEqual(result.unconfirmed, [course]);
+    assert.equal(result.included, 0);
+  }
+  const unknown = semesterCredits([data], 1, initialState().profile);
+  assert.equal(unknown.scheduled, 2);
+  assert.equal(unknown.included, 0);
+  assert.equal(unknown.limit, null);
 });
 test("academic field and curriculum allocation remain distinct across cutoff and personal balances", () => {
   const s = engineering(),

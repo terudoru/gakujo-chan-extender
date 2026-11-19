@@ -224,8 +224,14 @@ function ReviewForm({
   );
 }
 
-function ManualGrade({ review, onEdit }) {
+function ManualGrade({ review, onEdit, initiallyOpen }) {
   const editor = useRef(null);
+  useLayoutEffect(() => {
+    if (initiallyOpen) {
+      editor.current.open = true;
+      editor.current.querySelector("input")?.focus();
+    }
+  }, [initiallyOpen]);
   function submit(event) {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
@@ -293,6 +299,7 @@ function ManualGrade({ review, onEdit }) {
 
 function ImportSource({
   kind,
+  manual,
   packet,
   state,
   byCode,
@@ -394,6 +401,7 @@ function ImportSource({
       )}
       {!packet && kind === "grades" && (
         <ManualGrade
+          initiallyOpen={manual}
           onEdit={() => {
             if (filePacket || busy) {
               replaceSource();
@@ -437,6 +445,7 @@ function ImportSource({
 
 export function PlannerImportPanel({
   kind = "grades",
+  manual = false,
   packet = null,
   state,
   byCode,
@@ -457,6 +466,7 @@ export function PlannerImportPanel({
     <ImportSource
       key={type + "/" + delivery.version}
       kind={type}
+      manual={manual}
       packet={packet}
       state={state}
       byCode={byCode}

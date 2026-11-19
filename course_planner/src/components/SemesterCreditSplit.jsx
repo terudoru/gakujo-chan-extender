@@ -109,6 +109,10 @@ export function SemesterCreditSplit({ course, split, onSave }) {
     }));
   };
 
+  const original = current.propFirst !== "" && current.propSecond !== ""
+    ? { first: Number(current.propFirst), second: Number(current.propSecond) }
+    : null;
+
   async function handleSave() {
     let validated;
     try {
@@ -124,7 +128,7 @@ export function SemesterCreditSplit({ course, split, onSave }) {
     setBusy(true);
     setTracked((prev) => ({ ...prev, error: "" }));
     try {
-      const ok = onSave ? await onSave(validated) : true;
+      const ok = onSave ? await onSave(validated, original) : true;
       if (ok !== false) {
         const nextFirst = String(validated.first);
         const nextSecond = String(validated.second);
@@ -157,7 +161,7 @@ export function SemesterCreditSplit({ course, split, onSave }) {
     setBusy(true);
     setTracked((prev) => ({ ...prev, error: "" }));
     try {
-      const ok = onSave ? await onSave(null) : true;
+      const ok = onSave ? await onSave(null, original) : true;
       if (ok !== false) {
         setTracked((prev) =>
           prev.code === courseCode
