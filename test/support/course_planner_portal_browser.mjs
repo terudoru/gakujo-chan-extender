@@ -18,10 +18,8 @@ async function generated(name) {
   );
   return (config) => prefix + JSON.stringify(config) + suffix;
 }
-const capture = await generated("capture"),
-  delivery = await generated("delivery");
+const capture = await generated("capture");
 const portal = "https://gakujo.iess.niigata-u.ac.jp/campusweb/";
-const planner = "https://gakujo.terudoru.com/planner/";
 const delayed = new Map();
 const browser = await chromium.launch({
   channel: process.env.CHROME_CHANNEL || "chrome",
@@ -237,40 +235,8 @@ try {
   await page.goto("https://syllabus.niigata-u.ac.jp/campusweb/campussquare.do");
   await page.setContent(table);
   assert.equal(await ask({}), null);
-  await page.goto(planner);
-  const step = (phase, data) =>
-    page.evaluate(
-      delivery({
-        origin: new URL(planner).origin,
-        path: "/planner/",
-        attempt: "ticket",
-        phase,
-        packet: data,
-      }),
-    );
-  assert.equal(await step("bind"), "bound");
-  assert.equal(await step("probe"), "waiting");
-  await page.evaluate(() => {
-    window.received = [];
-    window.addEventListener("mbg:planner-import", (e) =>
-      window.received.push(e.detail),
-    );
-    window.addEventListener("mbg:planner-probe", () =>
-      window.dispatchEvent(new Event("mbg:planner-ready")),
-    );
-  });
-  assert.equal(await step("probe"), "ready");
-  assert.equal(await step("deliver", packet), "sent");
-  assert.equal(await step("deliver", packet), "sent");
-  assert.deepEqual(await page.evaluate(() => window.received), [packet]);
-  await page.reload();
-  assert.equal(await step("deliver", packet), "wrong-document");
-  await page.goto(planner + "other");
-  assert.equal(await step("bind"), "wrong-document");
-  await page.goto(planner + "#list=unrelated");
-  assert.equal(await step("bind"), "wrong-document");
   console.log(
-    "Portal frame, grade, balance, registration, privacy and planner document checks passed.",
+    "Portal frame, grade, balance, registration, privacy checks passed.",
   );
 } finally {
   await browser.close();

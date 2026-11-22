@@ -26,6 +26,19 @@ const _cleanB = '$_form?entry.123=blue%20sky&entry.123=green&embedded=true';
 const _previous = 'Fictional previous clipboard text';
 const _success = 'URLをコピーしました';
 const _failure = 'URLをコピーできませんでした';
+const _academicPacket = {
+  'v': 1,
+  'kind': 'grades',
+  'tables': [
+    {
+      'heading': '単位修得状況照会',
+      'rows': [
+        ['科目名', '単位数', '評価'],
+        ['合成科目', '1', '認定'],
+      ],
+    },
+  ],
+};
 
 class _Prefs extends Fake implements GakujoLocalPrefsStore {
   @override
@@ -50,6 +63,96 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1250, 1450));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       var viewId = 80;
+      for (final result in ['success', 'false', 'throw']) {
+        final page = _Toolbar(tester, ++viewId);
+        try {
+          await page.mount();
+          final launches = <MethodCall>[];
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            _Toolbar._launcher,
+            (call) async {
+              launches.add(call);
+              if (result == 'throw') {
+                throw PlatformException(code: 'shell_failed');
+              }
+              return result == 'success';
+            },
+          );
+          await page.tap(find.byTooltip('メニュー'));
+          expect(find.byIcon(Icons.more_vert), findsOneWidget);
+          expect(find.text('履修プランナー'), findsNothing);
+          await page.tap(find.text('履修手帖を開く'));
+          expect(launches, hasLength(1));
+          expect(launches.single.method, 'launch');
+          expect(
+            launches.single.arguments,
+            containsPair('url', 'https://gakujo.terudoru.com/syllabus/'),
+          );
+          // url_launcher maps externalApplication to both embedded modes false.
+          expect(launches.single.arguments, containsPair('useSafariVC', false));
+          expect(launches.single.arguments, containsPair('useWebView', false));
+          expect(page.home.isCurrent, isTrue);
+          expect(
+            page.notices,
+            result == 'success' ? isEmpty : ['外部ブラウザで開けませんでした'],
+          );
+          expect(tester.takeException(), isNull);
+        } finally {
+          await page.close();
+        }
+      }
+      final importer = _Toolbar(tester, ++viewId, academicFixture: true);
+      try {
+        await importer.mount();
+        final launches = <MethodCall>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          _Toolbar._launcher,
+          (call) async {
+            launches.add(call);
+            return true;
+          },
+        );
+        for (final label in ['学務の照会結果をプランナーに取り込む', '学務の照会結果を履修手帖用にコピー']) {
+          await importer.tap(find.byTooltip('メニュー'));
+          await importer.tap(find.text(label));
+          await importer.tap(find.text('成績をコピー'));
+          expect(find.textContaining('個人情報を含みます'), findsOneWidget);
+          expect(await importer.readClipboard(), _previous);
+          await importer.tap(find.text('キャンセル'));
+          expect(await importer.readClipboard(), _previous);
+          await importer.tap(find.byTooltip('メニュー'));
+          await importer.tap(find.text(label));
+          await importer.tap(find.text('成績をコピー'));
+          await importer.tap(find.text('コピー'));
+          final token = (await importer.readClipboard())!;
+          expect(token, startsWith('MBGPLAN1.'));
+          expect(
+            jsonDecode(
+              utf8.decode(
+                base64Url.decode(base64Url.normalize(token.substring(9))),
+              ),
+            ),
+            _academicPacket,
+          );
+          expect(
+            find.textContaining('More Better Gakujo から貼り付け'),
+            findsOneWidget,
+          );
+          expect(importer.home.isCurrent, isTrue);
+          await importer.tap(find.text('履修手帖を開く'));
+          expect(
+            launches.last.arguments,
+            containsPair('url', 'https://gakujo.terudoru.com/syllabus/'),
+          );
+          expect(launches.last.arguments, containsPair('useWebView', false));
+          importer._clipboard = _previous;
+        }
+        expect(launches, hasLength(2));
+        expect(tester.takeException(), isNull);
+      } finally {
+        await importer.close();
+      }
+
       Future<void> onPage(Future<void> Function(_Toolbar) exercise) async {
         final page = _Toolbar(tester, ++viewId);
         try {
@@ -145,7 +248,8 @@ void main() {
 }
 
 class _Toolbar {
-  _Toolbar(this.tester, this.id);
+  _Toolbar(this.tester, this.id, {this.academicFixture = false});
+  final bool academicFixture;
   final WidgetTester tester;
   final int id;
   final _pops = _Pops();
@@ -180,6 +284,8 @@ class _Toolbar {
     final data = {
       'more_better_gakujo_setup_completed': 'true',
       'more_better_gakujo_disabled_feature_flags': 'update_notice',
+      if (academicFixture)
+        'more_better_gakujo_active_login_account': 'synthetic-account',
     };
     messenger.setMockMethodCallHandler(
       _storage,
@@ -225,6 +331,18 @@ class _Toolbar {
       if (call.method == 'loadUrl') loads.add(call.arguments as String);
       if (call.method == 'addScriptToExecuteOnDocumentCreated') return 'id';
       if (call.method != 'executeScript') return null;
+      if (academicFixture &&
+          (call.arguments as String).contains(
+            'web_scripts/src/course_planner/capture.ts',
+          )) {
+        return jsonEncode(
+          jsonEncode(
+            (call.arguments as String).contains('"kind":"grades"')
+                ? _academicPacket
+                : ['grades'],
+          ),
+        );
+      }
       if (call.arguments == gakujoPortalAuthStateProbeScript) {
         return jsonEncode('{"hasAuthenticatedMarker":true}');
       }

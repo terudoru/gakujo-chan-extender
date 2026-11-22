@@ -29,8 +29,7 @@ import 'generated/authenticated_session_reset.g.dart';
 import 'allowed_web_origins.dart';
 import 'app_update_service.dart';
 import 'base32.dart';
-import 'course_planner_link.dart';
-import 'course_planner_page.dart';
+import 'course_planner_handoff.dart';
 import 'generated/registration_assist.g.dart';
 import 'registration_handoff.dart';
 import 'widgets/registration_assist_panel.dart';
@@ -2662,7 +2661,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   const PopupMenuDivider(),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.coursePlanner,
-                    child: Text('履修プランナー'),
+                    child: Text('履修手帖を開く'),
                   ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.notificationHistory,
@@ -5657,10 +5656,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
       case _ToolbarAction.coursePlanner:
-        await _openCoursePlanner(_PlannerDestination.standalone);
+        await _launchExternalUrl(Uri.parse('https://gakujo.terudoru.com/syllabus/'));
         return;
       case _ToolbarAction.importCoursePlanner:
-        await _openCoursePlanner(_PlannerDestination.builtIn);
+        await _openCoursePlanner(_PlannerDestination.clipboard);
         return;
       case _ToolbarAction.copyCoursePlanner:
         await _openCoursePlanner(_PlannerDestination.clipboard);

@@ -1,20 +1,11 @@
 part of 'gakujo_web_app.dart';
 
-enum _PlannerDestination {
-  standalone,
-  builtIn,
-  clipboard,
-  registrationClipboard,
-}
+enum _PlannerDestination { clipboard, registrationClipboard }
 
 extension _CoursePlannerActions on _GakujoWebAppState {
   Future<void> _openCoursePlanner(_PlannerDestination destination) async {
     if (_plannerOpening) return;
     _plannerOpening = true;
-    final importing = destination != _PlannerDestination.standalone;
-    final copying =
-        destination == _PlannerDestination.clipboard ||
-        destination == _PlannerDestination.registrationClipboard;
     try {
       final nav = _navigationRevision;
       final starts = _plannerNavigationStarts;
@@ -34,108 +25,62 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       try {
         url = await _controller.currentUrl();
       } on Object {
-        // The standalone planner also opens while the portal is unavailable.
+        // Failure to read the portal URL cannot authorize a capture.
       }
       if (!mounted) return;
       if (!currentPage()) url = null;
       CoursePlannerSource? source;
       CoursePlannerImportKind? choice;
-      if (importing) {
-        if (!currentStudent() ||
-            !AllowedWebOrigins.canLoad(url, debugAllowed: false)) {
-          _showSnackBar('学務にログインし、成績または履修の照会画面を開いてください。');
-          return;
-        }
-        source = CoursePlannerSource(_controller, currentStudent);
-        final kinds = await source.choices(includeProfile: copying);
-        if (!mounted) return;
-        if (kinds.isEmpty || !currentStudent()) {
-          _showSnackBar('「単位修得状況照会」または「履修登録・登録状況照会」で対象の表を表示してください。');
-          return;
-        }
-        if (destination == _PlannerDestination.registrationClipboard) {
-          if (!kinds.contains(CoursePlannerImportKind.registration)) {
-            _showSnackBar('コピーできる履修登録状況が表示されていません。');
-            return;
-          }
-          choice = CoursePlannerImportKind.registration;
-        } else {
-          choice = await showDialog<CoursePlannerImportKind>(
-            context: context,
-            builder: (dialog) => SimpleDialog(
-              title: Text(copying ? '履修手帖に渡す内容' : '履修プランナーに渡す内容'),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    copying
-                        ? '表示中の表からコピーする項目を選んでください。'
-                        : '表示中の表から選んだ項目を読み取ります。保存する前にプランナーで内容を確認できます。',
-                  ),
-                ),
-                for (final kind in kinds)
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(dialog, kind),
-                    child: Text(
-                      copying ? '${kind.label}をコピー' : '${kind.label}を取り込む',
-                    ),
-                  ),
-                SimpleDialogOption(
-                  onPressed: () => Navigator.pop(dialog),
-                  child: const Text('キャンセル'),
-                ),
-              ],
-            ),
-          );
-        }
-        if (choice == null || !mounted) return;
-        if (!currentStudent()) {
-          _showSnackBar('学務の表示またはログイン状態が変わりました。照会画面からやり直してください。');
-          return;
-        }
-        if (copying) {
-          await _copyCoursePlannerPacket(source, choice);
-          return;
-        }
+      if (!currentStudent() ||
+          !AllowedWebOrigins.canLoad(url, debugAllowed: false)) {
+        _showSnackBar('学務にログインし、成績または履修の照会画面を開いてください。');
+        return;
       }
-
-      const configured = String.fromEnvironment('MBG_COURSE_PLANNER_URL');
-      final target = coursePlannerLink(
-        importing ? null : url,
-        baseUrl: coursePlannerBase(configured, debug: kDebugMode),
-      );
+      source = CoursePlannerSource(_controller, currentStudent);
+      final kinds = await source.choices(includeProfile: true);
       if (!mounted) return;
-      final portal = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(
-          builder: (page) => CoursePlannerPage(
-            service: _webViewService,
-            url: target,
-            source: source,
-            kind: choice,
-            onExternalLink: (link) {
-              if (link.host == 'gakujo.iess.niigata-u.ac.jp') {
-                // Return to the existing authenticated app. Open only the fixed
-                // registration inquiry. No course selection or submission.
-                if (ModalRoute.of(page)?.isCurrent == true) {
-                  Navigator.pop(page, true);
-                }
-              } else {
-                unawaited(_launchExternalUrl(link));
-              }
-            },
-          ),
-        ),
-      );
-      if (portal == true && mounted) {
-        await _loadAllowedPageUrl(coursePlannerRegistrationUrl);
+      if (kinds.isEmpty || !currentStudent()) {
+        _showSnackBar('「単位修得状況照会」または「履修登録・登録状況照会」で対象の表を表示してください。');
+        return;
       }
+      if (destination == _PlannerDestination.registrationClipboard) {
+        if (!kinds.contains(CoursePlannerImportKind.registration)) {
+          _showSnackBar('コピーできる履修登録状況が表示されていません。');
+          return;
+        }
+        choice = CoursePlannerImportKind.registration;
+      } else {
+        choice = await showDialog<CoursePlannerImportKind>(
+          context: context,
+          builder: (dialog) => SimpleDialog(
+            title: const Text('履修手帖に渡す内容'),
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text('表示中の表からコピーする項目を選んでください。'),
+              ),
+              for (final kind in kinds)
+                SimpleDialogOption(
+                  onPressed: () => Navigator.pop(dialog, kind),
+                  child: Text('${kind.label}をコピー'),
+                ),
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialog),
+                child: const Text('キャンセル'),
+              ),
+            ],
+          ),
+        );
+      }
+      if (choice == null || !mounted) return;
+      if (!currentStudent()) {
+        _showSnackBar('学務の表示またはログイン状態が変わりました。照会画面からやり直してください。');
+        return;
+      }
+      await _copyCoursePlannerPacket(source, choice);
     } on Object {
       if (mounted) {
-        _showSnackBar(
-          copying
-              ? '学務の照会結果をコピーできませんでした。もう一度お試しください。'
-              : '履修プランナーを開けませんでした。もう一度お試しください。',
-        );
+        _showSnackBar('学務の照会結果をコピーできませんでした。もう一度お試しください。');
       }
     } finally {
       _plannerOpening = false;
@@ -176,6 +121,15 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       return;
     }
     await Clipboard.setData(ClipboardData(text: token));
-    if (mounted) _showSnackBar('コピーしました。履修手帖の「単位・要件」に貼り付けてください。');
+    if (mounted) {
+      _showSnackBar(
+        'コピーしました。履修手帖の設定 →「More Better Gakujo から貼り付け」で貼り付けてください。',
+        action: SnackBarAction(
+          label: '履修手帖を開く',
+          onPressed: () =>
+              unawaited(_handleToolbarAction(_ToolbarAction.coursePlanner)),
+        ),
+      );
+    }
   }
 }
