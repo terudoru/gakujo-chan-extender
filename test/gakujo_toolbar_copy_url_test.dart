@@ -102,6 +102,7 @@ void main() {
         }
       }
       final importer = _Toolbar(tester, ++viewId, academicFixture: true);
+      const copyLabel = '学務の照会結果を履修手帖用にコピー';
       try {
         await importer.mount();
         final launches = <MethodCall>[];
@@ -112,42 +113,42 @@ void main() {
             return true;
           },
         );
-        for (final label in ['学務の照会結果をプランナーに取り込む', '学務の照会結果を履修手帖用にコピー']) {
-          await importer.tap(find.byTooltip('メニュー'));
-          await importer.tap(find.text(label));
-          await importer.tap(find.text('成績をコピー'));
-          expect(find.textContaining('個人情報を含みます'), findsOneWidget);
-          expect(await importer.readClipboard(), _previous);
-          await importer.tap(find.text('キャンセル'));
-          expect(await importer.readClipboard(), _previous);
-          await importer.tap(find.byTooltip('メニュー'));
-          await importer.tap(find.text(label));
-          await importer.tap(find.text('成績をコピー'));
-          await importer.tap(find.text('コピー'));
-          final token = (await importer.readClipboard())!;
-          expect(token, startsWith('MBGPLAN1.'));
-          expect(
-            jsonDecode(
-              utf8.decode(
-                base64Url.decode(base64Url.normalize(token.substring(9))),
-              ),
+        await importer.tap(find.byTooltip('メニュー'));
+        expect(find.text('学務の照会結果をプランナーに取り込む'), findsNothing);
+        expect(find.text(copyLabel), findsOneWidget);
+        await importer.tap(find.text(copyLabel));
+        await importer.tap(find.text('成績をコピー'));
+        expect(find.textContaining('個人情報を含みます'), findsOneWidget);
+        expect(await importer.readClipboard(), _previous);
+        await importer.tap(find.text('キャンセル'));
+        expect(await importer.readClipboard(), _previous);
+        await importer.tap(find.byTooltip('メニュー'));
+        await importer.tap(find.text(copyLabel));
+        await importer.tap(find.text('成績をコピー'));
+        await importer.tap(find.text('コピー'));
+        final token = (await importer.readClipboard())!;
+        expect(token, startsWith('MBGPLAN1.'));
+        expect(
+          jsonDecode(
+            utf8.decode(
+              base64Url.decode(base64Url.normalize(token.substring(9))),
             ),
-            _academicPacket,
-          );
-          expect(
-            find.textContaining('More Better Gakujo から貼り付け'),
-            findsOneWidget,
-          );
-          expect(importer.home.isCurrent, isTrue);
-          await importer.tap(find.text('履修手帖を開く'));
-          expect(
-            launches.last.arguments,
-            containsPair('url', 'https://gakujo.terudoru.com/syllabus/'),
-          );
-          expect(launches.last.arguments, containsPair('useWebView', false));
-          importer._clipboard = _previous;
-        }
-        expect(launches, hasLength(2));
+          ),
+          _academicPacket,
+        );
+        expect(
+          find.textContaining('More Better Gakujo から貼り付け'),
+          findsOneWidget,
+        );
+        expect(importer.home.isCurrent, isTrue);
+        await importer.tap(find.text('履修手帖を開く'));
+        expect(
+          launches.last.arguments,
+          containsPair('url', 'https://gakujo.terudoru.com/syllabus/'),
+        );
+        expect(launches.last.arguments, containsPair('useWebView', false));
+        importer._clipboard = _previous;
+        expect(launches, hasLength(1));
         expect(tester.takeException(), isNull);
       } finally {
         await importer.close();

@@ -2668,10 +2668,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     child: Text('通知履歴'),
                   ),
                   const PopupMenuItem<Object>(
-                    value: _ToolbarAction.importCoursePlanner,
-                    child: Text('学務の照会結果をプランナーに取り込む'),
-                  ),
-                  const PopupMenuItem<Object>(
                     value: _ToolbarAction.copyCoursePlanner,
                     child: Text('学務の照会結果を履修手帖用にコピー'),
                   ),
@@ -5658,9 +5654,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       case _ToolbarAction.coursePlanner:
         await _launchExternalUrl(Uri.parse('https://gakujo.terudoru.com/syllabus/'));
         return;
-      case _ToolbarAction.importCoursePlanner:
-        await _openCoursePlanner(_PlannerDestination.clipboard);
-        return;
       case _ToolbarAction.copyCoursePlanner:
         await _openCoursePlanner(_PlannerDestination.clipboard);
         return;
@@ -5730,7 +5723,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         return;
       case _ToolbarAction.reload:
       case _ToolbarAction.coursePlanner:
-      case _ToolbarAction.importCoursePlanner:
       case _ToolbarAction.copyCoursePlanner:
       case _ToolbarAction.registrationAssist:
       case _ToolbarAction.messageStars:
