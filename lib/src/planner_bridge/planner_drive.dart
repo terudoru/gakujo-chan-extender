@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import '../drive_planner_handoff.dart';
 import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_transport.dart';
 import 'planner_broker.dart';
@@ -60,7 +61,34 @@ class NativePlannerDrive implements PlannerDrive {
 
   String _path(String id) => '/drive/v3/files/${Uri.encodeComponent(id)}';
   @override
-  Future<Map<String, dynamic>> list(String prefix, String? pageToken) async {
+  Future<String> permissionId() async {
+    final data = jsonDecode(
+      utf8.decode(
+        await _request(
+          'GET',
+          '/drive/v3/about',
+          query: {'fields': 'user(permissionId)'},
+        ),
+      ),
+    );
+    final owner = data['user']?['permissionId'];
+    if (owner is! String || owner.isEmpty) {
+      throw const PlannerBridgeException('forbidden');
+    }
+    return owner;
+  }
+
+  @override
+  Future<Map<String, dynamic>> list(
+    String prefix,
+    String? pageToken, {
+    bool exact = false,
+  }) async {
+    if (exact
+        ? prefix != drivePlannerHandoffName
+        : !prefix.startsWith('mbg-planner-')) {
+      throw const PlannerBridgeException('forbidden');
+    }
     // Drive has no startsWith query: filter contains results locally, and
     // preserve pagination even when a page contains no matching names.
     final data = jsonDecode(
@@ -70,8 +98,10 @@ class NativePlannerDrive implements PlannerDrive {
           '/drive/v3/files',
           query: {
             'spaces': 'appDataFolder',
-            'q': "trashed = false and name contains 'mbg-planner-'",
-            'fields': 'nextPageToken,files(id,name,createdTime,appProperties)',
+            'q': exact
+                ? "trashed = false and name = '$drivePlannerHandoffName'"
+                : "trashed = false and name contains 'mbg-planner-'",
+            'fields': 'nextPageToken,files(id,name,createdTime,appProperties,mimeType,spaces,modifiedTime)',
             'pageSize': '1000',
             'pageToken': ?pageToken,
           },
@@ -80,7 +110,11 @@ class NativePlannerDrive implements PlannerDrive {
     ) as Map<String, dynamic>;
     return {
       'files': (data['files'] as List)
-          .where((f) => (f['name'] as String).startsWith(prefix))
+          .where(
+            (f) => exact
+                ? f['name'] == drivePlannerHandoffName
+                : (f['name'] as String).startsWith(prefix),
+          )
           .toList(),
       'nextPageToken': ?data['nextPageToken'],
     };

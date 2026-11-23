@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,8 +8,9 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dar
 import 'package:morebettergakujo_flutter/src/web_view_service.dart';
 
 class _Auth extends Fake implements StarSyncGoogleAuth {
+  int revision = 0;
   @override
-  int get generation => 0;
+  int get generation => revision;
   @override
   String? get currentEmail => null;
 }
@@ -17,13 +19,17 @@ class _Controller extends Fake implements GakujoWebViewController {
   late GakujoNavigationDelegate delegate;
   String? url;
   final scripts = <String>[];
+  late FutureOr<void> Function(String) receive;
   @override
   Future<void> setJavaScriptModeUnrestricted() async {}
   @override
   Future<void> addJavaScriptChannel(
     String name, {
     required FutureOr<void> Function(String) onMessageReceived,
-  }) async {}
+  }) async {
+    receive = onMessageReceived;
+  }
+
   @override
   Future<void> setNavigationDelegate(GakujoNavigationDelegate value) async {
     delegate = value;
@@ -61,15 +67,18 @@ void main() {
     'hosted screen guards frame, origin and path and keeps one controller',
     (tester) async {
       final service = _Service();
+      final auth = _Auth();
       final external = <Uri>[];
       await tester.pumpWidget(
         MaterialApp(
           home: HostedPlannerPage(
             service: service,
-            auth: _Auth(),
+            auth: auth,
             student: () => null,
             signIn: () async {},
-            signOut: () async {},
+            signOut: () async {
+              auth.revision++;
+            },
             onExternalLink: external.add,
           ),
         ),
@@ -97,7 +106,22 @@ void main() {
       }
       expect(external.length, 2);
       await controller.delegate.onPageFinished!(controller.url!);
-      expect(controller.scripts.single, contains('MbgPlannerBridge'));
+      expect(controller.scripts, hasLength(2));
+      expect(controller.scripts.first, contains('MbgPlannerBridge'));
+      expect(controller.scripts.last, contains('"signedIn":false'));
+      final capability = RegExp(r'const capability = "([a-f0-9]+)"')
+          .firstMatch(controller.scripts.first)!
+          .group(1);
+      const id = '00000000-0000-4000-8000-000000000001';
+      await controller.receive(
+        jsonEncode([
+          capability,
+          jsonEncode({'v': 2, 'id': id, 'op': 'signOut', 'args': {}}),
+        ]),
+      );
+      expect(controller.scripts, hasLength(4));
+      expect(controller.scripts[2], contains('"id":"$id"'));
+      expect(controller.scripts[3], contains('"event":"session"'));
       controller.delegate.onDocumentStarted!();
       await tester.pumpWidget(const SizedBox());
     },

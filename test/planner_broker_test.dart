@@ -7,7 +7,7 @@ import 'package:morebettergakujo_flutter/src/planner_bridge/planner_broker.dart'
 import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dart';
 
 class Auth extends Fake implements StarSyncGoogleAuth {
-  String? email = 'fixture@example.invalid';
+  String? email = 'test@example.invalid';
   int revision = 0;
   @override
   String? get currentEmail => email;
@@ -19,16 +19,29 @@ class Drive extends Fake implements PlannerDrive {
   String fileName = 'mbg-planner-account-key-v1';
   String text = 'fixture';
   int writes = 0;
+  String owner = 'synthetic-owner';
+  Completer<String>? pendingOwner;
+  final created = <(String, String, Map<String, String>?)>[];
+  final deleted = <String>[];
+  @override
+  Future<String> permissionId() async =>
+      pendingOwner == null ? owner : pendingOwner!.future;
   Completer<String>? pending;
   Object? error;
   List<dynamic> files = [];
+  final lists = <(String, String?, bool)>[];
   @override
   Future<String> name(String id) async =>
       pending == null ? fileName : pending!.future;
   @override
   Future<String> read(String id) async => text;
   @override
-  Future<Map<String, dynamic>> list(String prefix, String? token) async {
+  Future<Map<String, dynamic>> list(
+    String prefix,
+    String? token, {
+    bool exact = false,
+  }) async {
+    lists.add((prefix, token, exact));
     if (error != null) throw error!;
     return {'files': files};
   }
@@ -40,13 +53,17 @@ class Drive extends Fake implements PlannerDrive {
     Map<String, String>? properties, {
     void Function()? beforeSend,
   }) async {
+    beforeSend?.call();
     writes++;
-    return 'fixture-id';
+    created.add((name, text, properties));
+    return 'synthetic-file';
   }
 
   @override
   Future<void> delete(String id, {void Function()? beforeSend}) async {
+    beforeSend?.call();
     writes++;
+    deleted.add(id);
   }
 }
 
@@ -70,14 +87,17 @@ void main() {
   setUp(() {
     auth = Auth();
     drive = Drive();
-    drive.files = fixture['examples'][3]['response']['result']['files'] as List;
+    drive.files =
+        fixture['operations'][3]['response']['result']['files'] as List;
+    drive.text =
+        fixture['operations'][4]['response']['result']['text'] as String;
     events.clear();
     broker = PlannerBroker(
       auth: auth,
       drive: drive,
       student: () => plannerStudentScope('TEST-STUDENT-001'),
       signIn: () async {
-        auth.email = 'fixture@example.invalid';
+        auth.email = 'test@example.invalid';
         auth.revision++;
       },
       signOut: () async {
@@ -88,38 +108,241 @@ void main() {
       timeout: const Duration(milliseconds: 100),
     );
   });
-  test('shared name and student vectors', () {
-    for (final name in fixture['names']['accept'] as List) {
-      expect(isPlannerWritableName(name as String), isTrue, reason: name);
-    }
-    for (final name in fixture['names']['reject'] as List) {
-      expect(isPlannerWritableName(name as String), isFalse, reason: name);
-    }
-    expect(
-      plannerStudentScope(fixture['student']['userId'] as String),
-      fixture['student']['scope'],
-    );
+  final hash = fixture['studentHash'] as Map;
+  test('studentHash vector includes the exact salt and newline separator', () {
+    expect(plannerStudentSalt, hash['salt']);
+    expect(hash['separator'], '\n');
+    expect(plannerStudentScope(hash['userId'] as String), hash['scope']);
     expect(plannerStudentScope(null), isNull);
   });
-  test('fixture protocol operations echo IDs and exact result keys', () async {
-    for (final example in fixture['examples'] as List) {
-      final request = example['request'] as Map;
-      if ((request['op'] as String).startsWith('drive.')) {
-        auth.email = 'fixture@example.invalid';
-      }
-      final result = await call(
-        request['op'] as String,
-        Map<String, dynamic>.from(request['args'] as Map),
-      );
-      expect(result['id'], id);
-      expect(result['ok'], isTrue, reason: '$result');
-      expect(result, example['response']);
+  for (final accepted in [true, false]) {
+    for (final name
+        in fixture['names'][accepted ? 'accept' : 'reject'] as List) {
+      test('name $accepted: $name', () async {
+        expect(isPlannerWritableName(name as String), accepted);
+        final result = await call('drive.create', {'name': name, 'text': '{}'});
+        expect(result['ok'], accepted);
+        drive.fileName = name;
+        final deletion = await call('drive.delete', {
+          'fileId': 'synthetic-file',
+        });
+        expect(deletion['ok'], accepted);
+        expect(drive.writes, accepted ? 2 : 0);
+        if (!accepted) {
+          expect(result['error']['code'], 'forbidden');
+          expect(deletion['error']['code'], 'forbidden');
+        }
+      });
+    }
+  }
+  for (final example in fixture['operations'] as List) {
+    final request = Map<String, dynamic>.from(example['request'] as Map);
+    test(
+      'exact contract operation: ${request['op']} ${request['args']}',
+      () async {
+        if (request['op'] == 'drive.list') {
+          drive.files = example['response']['result']['files'] as List;
+        }
+        if (request['op'] == 'drive.read') {
+          drive.text = example['response']['result']['text'] as String;
+          if (request['args']['fileId'] == 'synthetic-handoff') {
+            drive.fileName = fixture['names']['acceptForRead'][0] as String;
+          }
+        }
+        final result = await broker.handle(
+          request,
+          document: Uri.parse('https://gakujo.terudoru.com/syllabus/'),
+          topFrame: true,
+        );
+        expect(result, example['response']);
+        if (request['op'] == 'drive.list') {
+          final args = request['args'] as Map;
+          expect(drive.lists.single, (
+            args['nameExact'] ?? args['namePrefix'],
+            args['pageToken'],
+            args.containsKey('nameExact'),
+          ));
+        }
+        if (request['op'] == 'drive.create') {
+          final created = drive.created.single;
+          expect(created.$1, request['args']['name']);
+          expect(created.$2, request['args']['text']);
+          expect(created.$3, request['args']['appProperties']);
+        }
+        if (request['op'] == 'drive.delete') {
+          expect(drive.deleted, [request['args']['fileId']]);
+        }
+      },
+    );
+  }
+  for (final example in fixture['forbiddenOperations'] as List) {
+    final request = Map<String, dynamic>.from(example['request'] as Map);
+    test('forbidden vector: ${request['op']} ${request['args']}', () async {
+      drive.fileName = fixture['names']['acceptForRead'][0] as String;
+      final expected = Map<String, dynamic>.from(example['response'] as Map);
+      final code = expected['error']['code'];
       expect(
-        (result['result'] as Map).keys.toSet(),
-        (example['response']['result'] as Map).keys.toSet(),
+        await broker.handle(
+          request,
+          document: Uri.parse('https://gakujo.terudoru.com/syllabus/'),
+          topFrame: true,
+        ),
+        {
+          ...expected,
+          'error': {'code': code, 'message': code},
+        },
+      );
+      expect(drive.writes, 0);
+    });
+  }
+  for (final accepted in [true, false]) {
+    for (final name
+        in fixture['names'][accepted ? 'acceptForRead' : 'rejectForRead']
+            as List) {
+      test('read name $accepted: $name', () async {
+        drive.fileName = name as String;
+        expect(
+          (await call('drive.read', {'fileId': 'unlisted'}))['ok'],
+          accepted,
+        );
+      });
+    }
+  }
+  for (final name in fixture['names']['rejectForWrite'] as List) {
+    test('reject write name: $name', () async {
+      drive.fileName = name as String;
+      expect(
+        (await call('drive.create', {
+          'name': name,
+          'text': '{}',
+        }))['error']['code'],
+        'forbidden',
+      );
+      expect(
+        (await call('drive.delete', {'fileId': 'unlisted'}))['error']['code'],
+        'forbidden',
+      );
+      expect(drive.writes, 0);
+    });
+  }
+  test('previous negative name regressions remain forbidden', () async {
+    final plan = fixture['names']['accept'][0] as String;
+    for (final name in [
+      'stars/keyring.json',
+      '$plan\n',
+      'x$plan',
+      plan.replaceFirst('.plan.', '.grades.'),
+      plan.replaceFirst('ITR8.plan', 'ITR.plan'),
+    ]) {
+      expect(isPlannerWritableName(name), false);
+      expect(
+        (await call('drive.create', {
+          'name': name,
+          'text': '{}',
+        }))['error']['code'],
+        'forbidden',
+      );
+      drive.fileName = name;
+      expect(
+        (await call('drive.delete', {'fileId': 'unlisted'}))['error']['code'],
+        'forbidden',
       );
     }
-    expect(events.any((e) => e['session']['signedIn'] == false), isTrue);
+    expect(drive.writes, 0);
+  });
+  test('every session event including same-email owner replacement', () async {
+    for (final event in fixture['sessionEvents'] as List) {
+      final session = event['session'] as Map;
+      auth.email = session['email'] as String?;
+      drive.owner = session['permissionId'] as String? ?? '';
+      auth.revision++;
+      await broker.refreshSession();
+      expect(events.last, event);
+    }
+    expect(events, fixture['sessionEvents']);
+  });
+  test(
+    'binding vector can be created, read and purged without rewriting bytes',
+    () async {
+      final binding = fixture['binding'] as Map;
+      final name = binding['name'] as String;
+      final text = binding['text'] as String;
+      expect(jsonDecode(text), {'v': 1, 'scope': hash['scope']});
+      expect(
+        (await call('drive.create', {'name': name, 'text': text}))['ok'],
+        true,
+      );
+      expect(drive.created.single, (name, text, null));
+      drive.fileName = name;
+      drive.text = text;
+      expect(
+        (await call('drive.read', {'fileId': 'synthetic-file'}))['result'],
+        {'text': text},
+      );
+      expect(
+        (await call('drive.delete', {'fileId': 'synthetic-file'}))['ok'],
+        true,
+      );
+      expect(drive.deleted, ['synthetic-file']);
+    },
+  );
+  test('handoff is reachable only by exact name and is read-only', () async {
+    const name = 'mbg-gakujo-handoff.v1.json';
+    drive.fileName = name;
+    expect((await call('drive.read', {'fileId': 'handoff'}))['result'], {
+      'text': drive.text,
+    });
+    expect((await call('drive.list', {'nameExact': name}))['ok'], true);
+    expect(
+      (await call('drive.list', {'namePrefix': name}))['error']['code'],
+      'forbidden',
+    );
+    for (final prefix in ['mbg-planner-', null]) {
+      expect(
+        (await call('drive.list', {
+          'nameExact': name,
+          'namePrefix': prefix,
+        }))['error']['code'],
+        'forbidden',
+      );
+    }
+    expect(
+      (await call('drive.create', {
+        'name': name,
+        'text': '{}',
+      }))['error']['code'],
+      'forbidden',
+    );
+    expect(
+      (await call('drive.delete', {'fileId': 'handoff'}))['error']['code'],
+      'forbidden',
+    );
+    for (final invalid in [
+      'mbg-gakujo-',
+      '$name.extra',
+      'x$name',
+      name.toUpperCase(),
+    ]) {
+      drive.fileName = invalid;
+      expect(
+        (await call('drive.read', {'fileId': 'handoff'}))['error']['code'],
+        'forbidden',
+      );
+      expect(
+        (await call('drive.list', {'namePrefix': invalid}))['error']['code'],
+        'forbidden',
+      );
+    }
+    expect(drive.writes, 0);
+  });
+  test('owner lookup cannot deliver a previous account identity', () async {
+    drive.pendingOwner = Completer<String>();
+    final result = call('hello');
+    await Future<void>.delayed(Duration.zero);
+    auth.revision++;
+    drive.pendingOwner!.complete('previous-owner');
+    expect((await result)['error']['code'], 'stale-session');
+    expect(events, isEmpty);
   });
   test(
     'origin, path, frame, malformed request and unknown operation fail closed',
@@ -221,13 +444,23 @@ void main() {
       }))['error']['code'],
       'not-signed-in',
     );
-    auth.email = 'fixture@example.invalid';
-    for (final code in fixture['errors'] as List) {
-      drive.error = PlannerBridgeException(code as String);
-      expect(
-        (await call('drive.list', {'namePrefix': 'mbg-planner-'}))['error'],
-        {'code': code, 'message': code},
-      );
+    auth.email = 'test@example.invalid';
+    for (final vector in fixture['errors'] as List) {
+      final expected = Map<String, dynamic>.from(vector as Map);
+      final error = expected['error'] as Map;
+      final code = error['code'] as String;
+      expect(error['message'], isA<String>());
+      drive.error = PlannerBridgeException(code);
+      final result = await call('drive.list', {'namePrefix': 'mbg-planner-'});
+      // Fixture messages illustrate the response shape; native errors expose
+      // only the sanitized code, never a backend's explanatory message.
+      expect(result.keys.toSet(), expected.keys.toSet());
+      expect((result['error'] as Map).keys.toSet(), error.keys.toSet());
+      expect(result, {
+        ...expected,
+        'error': {'code': code, 'message': code},
+      });
+      expect(result['error']['message'], isNot(error['message']));
     }
     drive.error = StateError('secret');
     expect(

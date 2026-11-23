@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../drive_planner_handoff.dart';
 import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_transport.dart';
 
@@ -35,13 +36,21 @@ bool isPlannerWritableName(String name) =>
     }.contains(name) ||
     (_plannerName.hasMatch(name) && !name.endsWith('\n'));
 
+bool isPlannerReadableName(String name) =>
+    name.startsWith('mbg-planner-') || name == drivePlannerHandoffName;
+
 class PlannerBridgeException implements Exception {
   const PlannerBridgeException(this.code);
   final String code;
 }
 
 abstract interface class PlannerDrive {
-  Future<Map<String, dynamic>> list(String prefix, String? pageToken);
+  Future<String> permissionId();
+  Future<Map<String, dynamic>> list(
+    String selector,
+    String? pageToken, {
+    bool exact = false,
+  });
   Future<String> name(String id);
   Future<String> read(String id);
   Future<String> create(
@@ -75,21 +84,55 @@ class PlannerBroker {
   bool _disposed = false;
   int? _authGeneration;
   String? _scope;
+  String? _permissionId;
+  Future<String>? _ownerLookup;
+  int? _emittedGeneration;
   Map<String, dynamic> get session => {
     'signedIn': auth.currentEmail != null,
+    if (auth.currentEmail != null && _permissionId != null)
+      'permissionId': _permissionId,
     if (auth.currentEmail != null) 'email': auth.currentEmail,
   };
   void invalidate() {
     generation++;
   }
 
-  void refreshSession() {
+  void _observeSession() {
     final scope = student();
     if (_authGeneration == auth.generation && _scope == scope) return;
+    if (_authGeneration != auth.generation) {
+      _permissionId = null;
+      _ownerLookup = null;
+    }
     _authGeneration = auth.generation;
     _scope = scope;
     invalidate();
-    onSession?.call({'v': 2, 'event': 'session', 'session': session});
+  }
+
+  Future<void> refreshSession() async {
+    if (_disposed) return;
+    _observeSession();
+    final start = generation;
+    if (auth.currentEmail != null && _permissionId == null) {
+      final lookup = _ownerLookup ??= drive.permissionId();
+      String owner;
+      try {
+        owner = await lookup;
+      } on Object {
+        if (identical(_ownerLookup, lookup)) _ownerLookup = null;
+        rethrow;
+      }
+      _observeSession();
+      if (_disposed || generation != start) {
+        throw const PlannerBridgeException('stale-session');
+      }
+      if (owner.isEmpty) throw const PlannerBridgeException('forbidden');
+      _permissionId = owner;
+    }
+    if (_emittedGeneration != generation) {
+      _emittedGeneration = generation;
+      onSession?.call({'v': 2, 'event': 'session', 'session': session});
+    }
   }
 
   void dispose() {
@@ -104,7 +147,6 @@ class PlannerBroker {
   }) async {
     final id = input is Map ? input['id'] : null;
     try {
-      refreshSession();
       if (_disposed || !topFrame || !isHostedPlanner(document)) {
         throw const PlannerBridgeException('forbidden');
       }
@@ -117,10 +159,11 @@ class PlannerBroker {
           input['args'] is! Map) {
         throw const PlannerBridgeException('forbidden');
       }
+      _observeSession();
       final start = generation;
       var expired = false;
       void check() {
-        refreshSession();
+        _observeSession();
         if (_disposed || generation != start) {
           throw const PlannerBridgeException('stale-session');
         }
@@ -128,11 +171,19 @@ class PlannerBroker {
       }
 
       final result =
-          await _operate(
-            input['op'],
-            Map<String, dynamic>.from(input['args'] as Map),
-            check,
-          ).timeout(
+          await (() async {
+            if (input['op'] != 'signIn' &&
+                input['op'] != 'signOut' &&
+                input['op'] != 'student') {
+              await refreshSession();
+            }
+            check();
+            return _operate(
+              input['op'],
+              Map<String, dynamic>.from(input['args'] as Map),
+              check,
+            );
+          })().timeout(
             timeout,
             onTimeout: () {
               expired = true;
@@ -200,12 +251,12 @@ class PlannerBroker {
       case 'signIn':
         check();
         await signIn();
-        refreshSession();
+        await refreshSession();
         return {'session': session};
       case 'signOut':
         check();
         await signOut();
-        refreshSession();
+        await refreshSession();
         return {'session': session};
       case 'drive.list':
       case 'drive.read':
@@ -216,13 +267,23 @@ class PlannerBroker {
         }
         check();
         if (op == 'drive.list') {
-          final prefix = string('namePrefix');
-          if (!prefix.startsWith('mbg-planner-') ||
-              prefix.length > 1024 ||
+          final exact = args.containsKey('nameExact');
+          if (exact && args.containsKey('namePrefix')) {
+            throw const PlannerBridgeException('forbidden');
+          }
+          final selector = string(exact ? 'nameExact' : 'namePrefix');
+          if ((exact
+                  ? selector != drivePlannerHandoffName
+                  : !selector.startsWith('mbg-planner-')) ||
+              selector.length > 1024 ||
               (args['pageToken'] != null && args['pageToken'] is! String)) {
             throw const PlannerBridgeException('forbidden');
           }
-          return drive.list(prefix, args['pageToken'] as String?);
+          return drive.list(
+            selector,
+            args['pageToken'] as String?,
+            exact: exact,
+          );
         }
         if (op == 'drive.create') {
           final name = string('name');
@@ -256,7 +317,7 @@ class PlannerBroker {
         final name = await drive.name(id);
         check();
         if (op == 'drive.read') {
-          if (!name.startsWith('mbg-planner-')) {
+          if (!isPlannerReadableName(name)) {
             throw const PlannerBridgeException('forbidden');
           }
           final text = await drive.read(id);

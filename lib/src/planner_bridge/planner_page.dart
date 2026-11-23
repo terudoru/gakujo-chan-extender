@@ -41,6 +41,8 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
   int _document = 0;
   String? _capability;
   String? _error;
+  int _authReplies = 0;
+  final _deferredSessions = <(Map<String, dynamic>, int)>[];
   final _channel = 'MbgPlannerNative${_random()}';
   static String _random() => List.generate(
     32,
@@ -57,18 +59,33 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
       student: widget.student,
       signIn: widget.signIn,
       signOut: widget.signOut,
-      onSession: (event) => unawaited(_emit(event, _document)),
+      onSession: (event) {
+        if (_authReplies > 0) {
+          _deferredSessions.add((event, _document));
+        } else {
+          unawaited(_emit(event, _document));
+        }
+      },
     );
     _poll = Timer.periodic(
       const Duration(milliseconds: 250),
-      (_) => _broker.refreshSession(),
+      (_) => unawaited(_refreshSession()),
     );
     unawaited(_open());
+  }
+
+  Future<void> _refreshSession() async {
+    try {
+      await _broker.refreshSession();
+    } on Object {
+      // Request replies report errors; background polling retries next time.
+    }
   }
 
   void _invalidate() {
     _document++;
     _capability = null;
+    _deferredSessions.clear();
     _broker.invalidate();
   }
 
@@ -110,12 +127,28 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
       final controller = _controller!;
       final url = await controller.currentUrl();
       if (url == null || document != _document) return;
-      final reply = await _broker.handle(
-        jsonDecode(envelope[1] as String),
-        document: Uri.parse(url),
-        topFrame: true,
-      );
-      await _emit(reply, document);
+      final request = jsonDecode(envelope[1] as String);
+      final auth =
+          request is Map &&
+          (request['op'] == 'signIn' || request['op'] == 'signOut');
+      if (auth) _authReplies++;
+      try {
+        final reply = await _broker.handle(
+          request,
+          document: Uri.parse(url),
+          topFrame: true,
+        );
+        await _emit(reply, document);
+      } finally {
+        if (auth) _authReplies--;
+        if (_authReplies == 0) {
+          final events = _deferredSessions.toList();
+          _deferredSessions.clear();
+          for (final (event, target) in events) {
+            await _emit(event, target);
+          }
+        }
+      }
     } on Object {
       /* Malformed, unauthenticated messages are ignored. */
     }
@@ -189,7 +222,7 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
               window.dispatchEvent(new Event('mbg:planner-host'));
             })();
           ''');
-            _broker.refreshSession();
+            await _refreshSession();
           },
           onWebResourceError: (error) {
             if (mounted && error.isForMainFrame == true) {

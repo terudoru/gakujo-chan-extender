@@ -1,34 +1,6 @@
 {
-  "version": 2,
-  "student": {
-    "salt": "mbg.planner.student.v1",
-    "userId": "TEST-STUDENT-001",
-    "scope": "gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8"
-  },
-  "binding": {
-    "name": "mbg-planner-student-binding-v1",
-    "text": "{\"v\":1,\"scope\":\"gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8\"}"
-  },
-  "names": {
-    "accept": [
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
-      "mbg-planner-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.history.00000000-0000-4000-8000-000000000001",
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.organizer.00000000-0000-4000-8000-000000000001",
-      "mbg-planner-account-key-v1",
-      "mbg-planner-cloud-deleted-v1",
-      "mbg-planner-student-binding-v1"
-    ],
-    "reject": [
-      "stars/keyring.json",
-      "mbg-planner-anything",
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001\n",
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-1000-8000-000000000001",
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.grades.00000000-0000-4000-8000-000000000001",
-      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR.plan.00000000-0000-4000-8000-000000000001",
-      "xmbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001"
-    ]
-  },
-  "examples": [
+  "v": 2,
+  "operations": [
     {
       "request": {
         "v": 2,
@@ -49,7 +21,8 @@
           "sessionGeneration": 1,
           "session": {
             "signedIn": true,
-            "email": "fixture@example.invalid"
+            "permissionId": "synthetic-owner",
+            "email": "test@example.invalid"
           }
         }
       }
@@ -68,7 +41,8 @@
         "result": {
           "session": {
             "signedIn": true,
-            "email": "fixture@example.invalid"
+            "permissionId": "synthetic-owner",
+            "email": "test@example.invalid"
           }
         }
       }
@@ -107,7 +81,7 @@
         "result": {
           "files": [
             {
-              "id": "fixture-id",
+              "id": "synthetic-file",
               "name": "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
               "createdTime": "2026-11-23T00:00:00Z"
             }
@@ -121,7 +95,7 @@
         "id": "00000000-0000-4000-8000-000000000001",
         "op": "drive.read",
         "args": {
-          "fileId": "fixture-id"
+          "fileId": "synthetic-file"
         }
       },
       "response": {
@@ -129,7 +103,7 @@
         "id": "00000000-0000-4000-8000-000000000001",
         "ok": true,
         "result": {
-          "text": "fixture"
+          "text": "{\"v\":1}"
         }
       }
     },
@@ -140,7 +114,10 @@
         "op": "drive.create",
         "args": {
           "name": "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
-          "text": "fixture"
+          "text": "{\"v\":1}",
+          "appProperties": {
+            "plannerRestart": "00000000-0000-4000-8000-000000000001"
+          }
         }
       },
       "response": {
@@ -148,7 +125,7 @@
         "id": "00000000-0000-4000-8000-000000000001",
         "ok": true,
         "result": {
-          "id": "fixture-id"
+          "id": "synthetic-file"
         }
       }
     },
@@ -158,7 +135,7 @@
         "id": "00000000-0000-4000-8000-000000000001",
         "op": "drive.delete",
         "args": {
-          "fileId": "fixture-id"
+          "fileId": "synthetic-file"
         }
       },
       "response": {
@@ -183,24 +160,282 @@
           "scope": "gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8"
         }
       }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.list",
+        "args": {
+          "nameExact": "mbg-gakujo-handoff.v1.json"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "files": [
+            {
+              "id": "synthetic-handoff",
+              "name": "mbg-gakujo-handoff.v1.json",
+              "mimeType": "application/json",
+              "spaces": [
+                "appDataFolder"
+              ],
+              "modifiedTime": "2026-11-24T00:00:00.000Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.read",
+        "args": {
+          "fileId": "synthetic-handoff"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "text": "{\"v\":1,\"kind\":\"mbg-gakujo-handoff\",\"updatedAt\":\"2026-11-24T00:00:00.000Z\",\"packets\":[{\"kind\":\"profile\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoicHJvZmlsZSIsInRhYmxlcyI6W3siaGVhZGluZyI6IuWtpueUn-aJgOWxniIsInJvd3MiOltbIuaJgOWxniIsIuWtpuW5tCJdLFsi55CG5a2m6YOo54mp55CG5a2m56eRIiwiMiJdXX1dfQ\"},{\"kind\":\"grades\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoiZ3JhZGVzIiwidGFibGVzIjpbeyJoZWFkaW5nIjoi5Y2Y5L2N5L-u5b6X54q25rOB54Wn5LyaIiwicm93cyI6W1si6ZaL6Kyb55Wq5Y-3Iiwi56eR55uu5ZCNIiwi5Y2Y5L2N5pWwIiwi6KmV5L6hIiwi5bm05bqmIl0sWyIyNjlHOTAwMSIsIuWQiOaIkOWKm-WtpiIsIjIiLCLlhKoiLCIyMDI2Il1dfV19\"},{\"kind\":\"balances\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoiYmFsYW5jZXMiLCJ0YWJsZXMiOlt7ImhlYWRpbmciOiLlsaXkv67np5Hnm67norroqo3ooagiLCJyb3dzIjpbWyLnp5Hnm67ljLrliIYiLCLml6Lkv67lvpfljZjkvY3mlbAiXSxbIuaVmemkiuaVmeiCsuOBq-mWouOBmeOCi-enkeebriIsIjEwLjUiXV19XX0\"},{\"kind\":\"registration\",\"capturedAt\":\"2026-11-24T00:00:00.000Z\",\"token\":\"MBGPLAN1.eyJ2IjoxLCJraW5kIjoicmVnaXN0cmF0aW9uIiwidGFibGVzIjpbeyJoZWFkaW5nIjoi5bGl5L-u55m76Yyy44O755m76Yyy54q25rOB54Wn5LyaIiwicm93cyI6W1si6ZaL6Kyb55Wq5Y-3Iiwi55m76Yyy54q25rOBIl0sWyIyNjlHOTAwMSIsIueUs-iri-S4rSJdLFsiMjY5RzkwMDIiLCLoqLHlj68iXV19XSwieWVhciI6IjIwMjYifQ\"}]}"
+        }
+      }
     }
   ],
-  "sessionEvent": {
-    "v": 2,
-    "event": "session",
-    "session": {
-      "signedIn": true,
-      "email": "fixture@example.invalid"
+  "sessionEvents": [
+    {
+      "v": 2,
+      "event": "session",
+      "session": {
+        "signedIn": true,
+        "permissionId": "synthetic-owner",
+        "email": "test@example.invalid"
+      }
+    },
+    {
+      "v": 2,
+      "event": "session",
+      "session": {
+        "signedIn": false
+      }
+    },
+    {
+      "v": 2,
+      "event": "session",
+      "session": {
+        "signedIn": true,
+        "permissionId": "other-owner",
+        "email": "test@example.invalid"
+      }
+    },
+    {
+      "v": 2,
+      "event": "session",
+      "session": {
+        "signedIn": true,
+        "permissionId": "synthetic-owner",
+        "email": "test@example.invalid"
+      }
     }
+  ],
+  "binding": {
+    "name": "mbg-planner-student-binding-v1",
+    "text": "{\"v\":1,\"scope\":\"gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8\"}"
+  },
+  "studentHash": {
+    "salt": "mbg.planner.student.v1",
+    "separator": "\n",
+    "userId": "TEST-STUDENT-001",
+    "scope": "gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8"
+  },
+  "names": {
+    "accept": [
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.history.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.organizer.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.history.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.organizer.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-account-key-v1",
+      "mbg-planner-cloud-deleted-v1",
+      "mbg-planner-student-binding-v1"
+    ],
+    "reject": [
+      "unrelated",
+      "mbg-planner-anything",
+      "mbg-planner-account-key-v1.extra",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-1000-8000-000000000001",
+      "mbg-planner-google-v1.short.plan.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.private.00000000-0000-4000-8000-000000000001"
+    ],
+    "acceptForRead": [
+      "mbg-gakujo-handoff.v1.json"
+    ],
+    "rejectForRead": [
+      "mbg-gakujo-handoff.v1.json.extra",
+      "mbg-gakujo-other.v1.json"
+    ],
+    "rejectForWrite": [
+      "mbg-gakujo-handoff.v1.json"
+    ]
   },
   "errors": [
-    "forbidden",
-    "not-signed-in",
-    "auth-cancelled",
-    "network",
-    "quota",
-    "timeout",
-    "stale-session",
-    "internal"
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "forbidden",
+        "message": "Synthetic forbidden"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "not-signed-in",
+        "message": "Synthetic not-signed-in"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "auth-cancelled",
+        "message": "Synthetic auth-cancelled"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "network",
+        "message": "Synthetic network"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "quota",
+        "message": "Synthetic quota"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "timeout",
+        "message": "Synthetic timeout"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "stale-session",
+        "message": "Synthetic stale-session"
+      }
+    },
+    {
+      "v": 2,
+      "id": "00000000-0000-4000-8000-000000000001",
+      "ok": false,
+      "error": {
+        "code": "internal",
+        "message": "Synthetic internal"
+      }
+    }
+  ],
+  "forbiddenOperations": [
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.list",
+        "args": {
+          "namePrefix": "mbg-gakujo-handoff.v1.json"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": false,
+        "error": {
+          "code": "forbidden",
+          "message": "Read-only inquiry handoff"
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.list",
+        "args": {
+          "nameExact": "mbg-gakujo-handoff.v1.json.extra"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": false,
+        "error": {
+          "code": "forbidden",
+          "message": "Read-only inquiry handoff"
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.create",
+        "args": {
+          "name": "mbg-gakujo-handoff.v1.json",
+          "text": "{}"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": false,
+        "error": {
+          "code": "forbidden",
+          "message": "Read-only inquiry handoff"
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.delete",
+        "args": {
+          "fileId": "synthetic-handoff"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": false,
+        "error": {
+          "code": "forbidden",
+          "message": "Read-only inquiry handoff"
+        }
+      }
+    }
   ]
 }

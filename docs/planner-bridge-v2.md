@@ -36,9 +36,18 @@ result shapes or sanitized contract error codes. A 30-second deadline prevents
 late mutation after token/metadata waits. Requests are pinned to the native auth,
 student and document generations; navigation and disposal invalidate requests.
 Session changes are detected at each request and every 250 ms while open and
-emit the contract's id-less session event.
+emit the contract's id-less session event. Signed-in sessions include the Drive
+owner's `permissionId`, fetched from `about.user` and cached only for that native
+auth generation; an old lookup cannot identify a replacement account.
+Sign-in and sign-out replies are delivered before their queued session events.
 
-Drive listing is restricted to `appDataFolder` and a `mbg-planner-` prefix. Read
+Drive listing is restricted to `appDataFolder` and a `mbg-planner-` prefix, with
+one exact-name exception: `mbg-gakujo-handoff.v1.json` is available to list/read
+only. Listing it requires `{nameExact: "mbg-gakujo-handoff.v1.json"}`; prefix
+queries for that name and requests with both selectors are rejected. Planner
+prefix queries never include the handoff. Its exact list result includes
+`mimeType`, `spaces`, and `modifiedTime`. The bridge cannot create or delete that
+handoff, including through previously unlisted IDs. Read
 and delete fetch metadata first, verify `spaces` includes `appDataFolder`, then
 check names. Create/delete use the three fixed names or the exact snapshot
 pattern, including UUID v4 variant bits; UTF-8 bodies are limited to 4 MiB. Native
@@ -86,11 +95,14 @@ would require changes to the app's shared account-identification stack.
 
 ## Fixtures and verification
 
-`test/fixtures/planner_bridge_v2_vectors.json` is derived from the coordinator's
-contract. It includes every op, session events, name cases, binding and hash
-vectors. The 履修手帖 repository is authoritative; reconcile this copy byte for
-byte before integration. No production TypeScript or generated v1 scripts were
-changed; the native URL test's TypeScript adapter now handles path policies.
+`test/fixtures/planner_bridge_v2_vectors.json` is the byte-identical copy of the
+履修手帖 repository's `planner/test/fixtures/bridge-v2-vectors.json` contract.
+It includes every op, session events, name cases, binding and hash vectors.
+The broker tests consume all cases; illustrative error messages are checked for
+shape while native replies keep sanitized codes as their messages. The 履修手帖
+repository remains authoritative. No production TypeScript or generated v1
+scripts were changed; the native URL test's TypeScript adapter now handles path
+policies.
 
 Run `npm --prefix web_scripts run check`, `flutter analyze lib test`, and
 `flutter test`. Focused tests are `planner_broker_test.dart`,
