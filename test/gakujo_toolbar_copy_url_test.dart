@@ -281,6 +281,96 @@ void main() {
         await autoFetch.close();
       }
 
+      // Partial background fetch (registration only) + displayed page offers grades
+      // -> one confirmation dialog listing grades + registration, clipboard has both in order.
+      const regOnlyFetchPayload = {
+        'v': 1,
+        'packets': {
+          'registration': {
+            'v': 1,
+            'kind': 'registration',
+            'tables': [
+              {
+                'heading': '履修登録・登録状況照会',
+                'rows': [
+                  ['開講番号', '登録状況'],
+                  ['269G9001', '申請中'],
+                ],
+              },
+            ],
+            'year': '2026',
+          },
+        },
+      };
+      final partialFetch = _Toolbar(
+        tester,
+        ++viewId,
+        academicFixture: true,
+        fetchHandler: () async => jsonEncode(jsonEncode(regOnlyFetchPayload)),
+      );
+      try {
+        await partialFetch.mount();
+        await partialFetch.tap(find.byTooltip('メニュー'));
+        await partialFetch.tap(find.text(copyLabel));
+        expect(find.text('履修手帖に渡す内容'), findsNothing);
+        expect(find.text('成績、履修登録状況を履修手帖用にコピー'), findsOneWidget);
+        expect(find.textContaining('個人情報を含みます'), findsOneWidget);
+        await partialFetch.tap(find.text('コピー'));
+        final copied = (await partialFetch.readClipboard())!;
+        final tokens = copied.split('\n');
+        expect(tokens, hasLength(2));
+        expect(tokens[0], startsWith('MBGPLAN1.'));
+        expect(tokens[1], startsWith('MBGPLAN1.'));
+        final decoded = tokens
+            .map(
+              (t) => jsonDecode(
+                utf8.decode(
+                  base64Url.decode(base64Url.normalize(t.substring(9))),
+                ),
+              ),
+            )
+            .toList();
+        expect(decoded[0], _academicPacket);
+        expect(
+          decoded[1],
+          (regOnlyFetchPayload['packets'] as Map)['registration'],
+        );
+        expect(find.textContaining('2件をコピーしました'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await partialFetch.close();
+      }
+
+      // Partial background fetch where displayed-page capture fails must keep fetched registration.
+      final partialFetchCaptureError = _Toolbar(
+        tester,
+        ++viewId,
+        academicFixture: true,
+        fetchHandler: () async => jsonEncode(jsonEncode(regOnlyFetchPayload)),
+        captureThrows: true,
+      );
+      try {
+        await partialFetchCaptureError.mount();
+        await partialFetchCaptureError.tap(find.byTooltip('メニュー'));
+        await partialFetchCaptureError.tap(find.text(copyLabel));
+        expect(find.text('履修登録状況を履修手帖用にコピー'), findsOneWidget);
+        await partialFetchCaptureError.tap(find.text('コピー'));
+        final copied = (await partialFetchCaptureError.readClipboard())!;
+        expect(copied.split('\n'), hasLength(1));
+        expect(
+          jsonDecode(
+            utf8.decode(
+              base64Url.decode(base64Url.normalize(copied.substring(9))),
+            ),
+          ),
+          (regOnlyFetchPayload['packets'] as Map)['registration'],
+        );
+        expect(find.textContaining('1件をコピーしました'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await partialFetchCaptureError.close();
+      }
+
       // Background fetch throws -> falls back to displayed-page chooser unchanged.
       final fallbackOnError = _Toolbar(
         tester,
@@ -444,9 +534,11 @@ class _Toolbar {
     this.id, {
     this.academicFixture = false,
     this.fetchHandler,
+    this.captureThrows = false,
   });
   final bool academicFixture;
   final Future<Object?> Function()? fetchHandler;
+  final bool captureThrows;
   final WidgetTester tester;
   final int id;
   final _pops = _Pops();
@@ -535,6 +627,9 @@ class _Toolbar {
           (call.arguments as String).contains(
             'web_scripts/src/course_planner/capture.ts',
           )) {
+        if (captureThrows) {
+          throw PlatformException(code: 'js_error', message: 'capture boom');
+        }
         return jsonEncode(
           jsonEncode(
             (call.arguments as String).contains('"kind":"grades"')

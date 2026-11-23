@@ -236,6 +236,99 @@ void main() {
     expect(evaluated, isTrue);
   });
 
+  test('supplementCoursePlannerHandoffs merges displayed kinds in order and preserves fetched on error', () async {
+    const regPacket = {
+      'v': 1,
+      'kind': 'registration',
+      'tables': [
+        {
+          'heading': '履修登録・登録状況照会',
+          'rows': [
+            ['開講番号', '登録状況'],
+            ['269G9001', '申請中'],
+          ],
+        },
+      ],
+      'year': '2026',
+    };
+    const gradePacket = {
+      'v': 1,
+      'kind': 'grades',
+      'tables': [
+        {
+          'heading': '単位修得状況照会',
+          'rows': [
+            ['開講番号', '科目名', '単位数', '評価', '年度'],
+            ['269G9001', '合成力学', '2', '優', '2026'],
+          ],
+        },
+      ],
+    };
+    const profilePacket = {
+      'v': 1,
+      'kind': 'profile',
+      'tables': [
+        {
+          'heading': '学生所属',
+          'rows': [
+            ['所属', '学年'],
+            ['理学部物理学科', '2'],
+          ],
+        },
+      ],
+    };
+    final regToken = encodeCoursePlannerHandoff(
+      regPacket,
+      CoursePlannerImportKind.registration,
+    )!;
+    final gradeToken = encodeCoursePlannerHandoff(
+      gradePacket,
+      CoursePlannerImportKind.grades,
+    )!;
+    final profileToken = encodeCoursePlannerHandoff(
+      profilePacket,
+      CoursePlannerImportKind.profile,
+    )!;
+
+    final fetched = [(CoursePlannerImportKind.registration, regToken)];
+    final portal = _View()
+      ..evaluate = (script) async {
+        if (script.contains('"kind":"grades"')) return jsonEncode(gradePacket);
+        if (script.contains('"kind":"profile"')) {
+          return jsonEncode(profilePacket);
+        }
+        return '["registration","grades","profile"]';
+      };
+    final merged = await supplementCoursePlannerHandoffs(
+      portal,
+      () => true,
+      fetched,
+    );
+    expect(merged, [
+      (CoursePlannerImportKind.profile, profileToken),
+      (CoursePlannerImportKind.grades, gradeToken),
+      (CoursePlannerImportKind.registration, regToken),
+    ]);
+
+    // Displayed-page failures must not lose the fetched kinds.
+    portal.evaluate = (_) async => throw StateError('capture failed');
+    expect(
+      await supplementCoursePlannerHandoffs(portal, () => true, fetched),
+      fetched,
+    );
+
+    // Identity change during supplementation aborts and returns empty.
+    var current = true;
+    portal.evaluate = (_) async {
+      current = false;
+      return '["grades"]';
+    };
+    expect(
+      await supplementCoursePlannerHandoffs(portal, () => current, fetched),
+      isEmpty,
+    );
+  });
+
   test('MBGPLAN1 encodes the existing packets and the exact profile shape', () {
     for (final (kind, heading, headers, values) in [
       (CoursePlannerImportKind.grades, '単位修得状況照会', ['評価'], ['良']),

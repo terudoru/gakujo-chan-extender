@@ -56,8 +56,20 @@ extension _CoursePlannerActions on _GakujoWebAppState {
           return;
         }
         if (handoffs.isNotEmpty) {
-          await _copyCoursePlannerHandoffs(handoffs, currentStudent);
-          return;
+          handoffs = await supplementCoursePlannerHandoffs(
+            _controller,
+            currentStudent,
+            handoffs,
+          );
+          if (!mounted) return;
+          if (!currentStudent()) {
+            _showSnackBar('学務の表示またはログイン状態が変わりました。もう一度お試しください。');
+            return;
+          }
+          if (handoffs.isNotEmpty) {
+            await _copyCoursePlannerHandoffs(handoffs, currentStudent);
+            return;
+          }
         }
       }
       source = CoursePlannerSource(_controller, currentStudent);

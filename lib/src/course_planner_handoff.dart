@@ -90,6 +90,48 @@ Future<List<(CoursePlannerImportKind, String)>> fetchCoursePlannerHandoffs(
   return decodeCoursePlannerFetch(result);
 }
 
+/// Adds any kinds offered by the displayed page that [fetched] lacks, keeping
+/// [coursePlannerHandoffOrder].
+///
+/// Failures while reading the displayed page do not discard [fetched]. Returns
+/// an empty list if [stillCurrent] becomes false.
+Future<List<(CoursePlannerImportKind, String)>> supplementCoursePlannerHandoffs(
+  GakujoWebViewController controller,
+  bool Function() stillCurrent,
+  List<(CoursePlannerImportKind, String)> fetched,
+) async {
+  if (!stillCurrent()) return const [];
+  final byKind = <CoursePlannerImportKind, String>{
+    for (final (kind, token) in fetched) kind: token,
+  };
+  if (byKind.length < coursePlannerHandoffOrder.length) {
+    final source = CoursePlannerSource(controller, stillCurrent);
+    var displayed = const <CoursePlannerImportKind>[];
+    try {
+      displayed = await source.choices(includeProfile: true);
+    } on Object {
+      // Displayed-page failures must not lose the fetched kinds.
+    }
+    if (!stillCurrent()) return const [];
+    for (final kind in displayed) {
+      if (byKind.containsKey(kind)) continue;
+      try {
+        final packet = await source.capture(kind);
+        if (!stillCurrent()) return const [];
+        final token = encodeCoursePlannerHandoff(packet, kind);
+        if (token != null) byKind[kind] = token;
+      } on Object {
+        if (!stillCurrent()) return const [];
+      }
+    }
+  }
+  if (!stillCurrent()) return const [];
+  return [
+    for (final kind in coursePlannerHandoffOrder)
+      if (byKind[kind] case final token?) (kind, token),
+  ];
+}
+
 /// One MBGPLAN1 token per kind found, in [coursePlannerHandoffOrder].
 List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   Object? result,
