@@ -20,12 +20,15 @@ class _File {
   List<int> bytes;
   final DateTime created;
   int version = 1;
+  DateTime? modified;
+  List<String> spaces = ['appDataFolder'];
 
   Map<String, Object> get json => {
     'id': id,
+    'spaces': spaces,
     'name': name,
     'createdTime': created.toUtc().toIso8601String(),
-    'modifiedTime': created.toUtc().toIso8601String(),
+    'modifiedTime': (modified ?? created).toUtc().toIso8601String(),
     'version': '$version',
     'size': '${bytes.length}',
   };
@@ -172,6 +175,59 @@ void main() {
             entry.key.startsWith('PATCH /upload/'),
       )
       .fold(0, (total, entry) => total + entry.value);
+
+  test(
+    'planner duplicates use newest modified file and delete older exact names',
+    () async {
+      const name = 'mbg-gakujo-handoff.v1.json';
+      drive.add(name, [1], created: DateTime.utc(2020));
+      final latest = drive.add(name, [2], created: DateTime.utc(2019))
+        ..modified = DateTime.utc(2026);
+      final outside = drive.add(name, [9], created: DateTime.utc(2027))
+        ..spaces = ['drive'];
+      final other = drive.add('mbg-planner-keep', [3]);
+      final result = await transport.get(name);
+      expect(result!.bytes, [2]);
+      await transport.put(name, [4]);
+      await transport.removePlannerDuplicates();
+      expect(
+        drive.files
+            .where((f) => f.name == name && f.spaces.contains('appDataFolder'))
+            .single
+            .id,
+        latest.id,
+      );
+      expect(drive.files.contains(outside), isTrue);
+      expect(latest.bytes, [4]);
+      expect(drive.files.contains(other), isTrue);
+    },
+  );
+
+  for (final reason in ['signed out', 'switch OFF', 'account changed']) {
+    test('planner guard cancels after token wait: $reason', () async {
+      var allowed = true;
+      final guarded = StarSyncGoogleDriveTransport(
+        quotaMeter: meter,
+        apiBase: drive.base,
+        checkCurrent: () {
+          if (!allowed) throw StateError('cancelled');
+        },
+        accessToken: ({bool forceRefresh = false}) async {
+          allowed = false;
+          return 'token';
+        },
+      );
+      try {
+        await expectLater(
+          guarded.put('mbg-gakujo-handoff.v1.json', [1]),
+          throwsStateError,
+        );
+        expect(uploadCount(), 0);
+      } finally {
+        guarded.close();
+      }
+    });
+  }
 
   for (final existing in [false, true]) {
     test(

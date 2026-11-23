@@ -149,7 +149,8 @@ List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   if (packets is! Map<String, dynamic>) return const [];
   return [
     for (final kind in coursePlannerHandoffOrder)
-      if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
+      if (encodeCoursePlannerHandoff(packets[kind.name], kind)
+          case final token?)
         (kind, token),
   ];
 }
@@ -267,3 +268,43 @@ final _privateProfileText = RegExp(
   r'https?:|[@<>]|学籍番号|在籍番号|学生番号|氏名|メールアドレス|電話番号|\b\d{2}[A-Za-z]\d{4}[A-Za-z]\b|\d{7,}',
   caseSensitive: false,
 );
+
+/// Shared capture for automatic sharing and the manual copy fallback.
+Future<List<(CoursePlannerImportKind, String)>> captureCoursePlannerHandoffs(
+  GakujoWebViewController controller,
+  bool Function() stillCurrent, {
+  bool background = true,
+  bool displayedFallback = true,
+}) async {
+  var fetched = const <(CoursePlannerImportKind, String)>[];
+  if (background) {
+    try {
+      fetched = await fetchCoursePlannerHandoffs(controller, stillCurrent);
+    } on Object {
+      // The displayed page can still provide inquiry results.
+    }
+  }
+  if (fetched.isEmpty && !displayedFallback) return const [];
+  return supplementCoursePlannerHandoffs(controller, stillCurrent, fetched);
+}
+
+bool validCoursePlannerToken(String token, CoursePlannerImportKind kind) {
+  if (!token.startsWith('MBGPLAN1.') ||
+      token.length > 2 * 1024 * 1024 ||
+      !RegExp(r'^MBGPLAN1\.[A-Za-z0-9_-]+$').hasMatch(token)) {
+    return false;
+  }
+  try {
+    return encodeCoursePlannerHandoff(
+          jsonDecode(
+            utf8.decode(
+              base64Url.decode(base64Url.normalize(token.substring(9))),
+            ),
+          ),
+          kind,
+        ) ==
+        token;
+  } on Object {
+    return false;
+  }
+}

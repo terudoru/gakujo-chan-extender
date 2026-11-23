@@ -18,6 +18,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     Random? random,
     StarSyncQuotaMeter? quotaMeter,
     this.automatic = false,
+    this.checkCurrent,
   }) : _client = (httpClientFactory ?? HttpClient.new)(),
        _apiBase = apiBase ?? Uri.parse('https://www.googleapis.com'),
        _delay = delay ?? Future<void>.delayed,
@@ -27,6 +28,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
   }
 
   final StarSyncAccessTokenProvider accessToken;
+  final void Function()? checkCurrent;
   bool automatic;
   final StarSyncQuotaMeter _quotaMeter;
   final HttpClient _client;
@@ -49,6 +51,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     int maxBytes = starSyncDefaultMaxBytes,
     void Function()? beforeSend,
   }) async {
+    checkCurrent?.call();
     beforeSend?.call();
     var token = await accessToken();
     var refreshed = false;
@@ -71,7 +74,10 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         headers: {...headers, 'authorization': 'Bearer $token'},
         body: body,
         maxBytes: maxBytes,
-        beforeSend: beforeSend,
+        beforeSend: () {
+          checkCurrent?.call();
+          beforeSend?.call();
+        },
       );
       if (response.statusCode == 401 && !refreshed) {
         token = await accessToken(forceRefresh: true);
@@ -131,7 +137,7 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           'spaces': 'appDataFolder',
           'q': 'trashed=false',
           'pageSize': '1000',
-          'fields': 'nextPageToken,files(id,name,version,md5Checksum,modifiedTime,size,createdTime)',
+          'fields': 'nextPageToken,files(id,name,version,md5Checksum,modifiedTime,size,createdTime,spaces)',
           'pageToken': ?token,
         }),
       );
@@ -142,6 +148,11 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         final items = data['files'] as List;
         for (final item in items) {
           final file = _DriveFile.fromJson(item as Map<String, dynamic>);
+          if (file.name == 'mbg-gakujo-handoff.v1.json' &&
+              !(item['spaces'] is List &&
+                  (item['spaces'] as List).contains('appDataFolder'))) {
+            continue;
+          }
           found.putIfAbsent(file.name, () => []).add(file);
         }
         token = data['nextPageToken'] as String?;
@@ -162,7 +173,9 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     } while (token != null);
     for (final files in found.values) {
       files.sort((a, b) {
-        final byTime = a.created.compareTo(b.created);
+        final byTime = a.name == 'mbg-gakujo-handoff.v1.json'
+            ? (b.modified ?? b.created).compareTo(a.modified ?? a.created)
+            : a.created.compareTo(b.created);
         return byTime == 0 ? a.id.compareTo(b.id) : byTime;
       });
     }
@@ -255,7 +268,11 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
           'uploadType': 'media',
           'fields': 'id,name,version,md5Checksum,modifiedTime,size,createdTime',
         }),
-        headers: {'content-type': 'application/octet-stream'},
+        headers: {
+          'content-type': path == 'mbg-gakujo-handoff.v1.json'
+              ? 'application/json'
+              : 'application/octet-stream',
+        },
         body: bytes,
         beforeSend: beforeSend,
       );
@@ -269,11 +286,15 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
     final metadata = jsonEncode({
       'name': path,
       'parents': ['appDataFolder'],
+      if (path == 'mbg-gakujo-handoff.v1.json') 'mimeType': 'application/json',
     });
+    final mediaType = path == 'mbg-gakujo-handoff.v1.json'
+        ? 'application/json'
+        : 'application/octet-stream';
     final body = <int>[
       ...utf8.encode(
         '--$boundary\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
-        '$metadata\r\n--$boundary\r\nContent-Type: application/octet-stream\r\n\r\n',
+        '$metadata\r\n--$boundary\r\nContent-Type: $mediaType\r\n\r\n',
       ),
       ...bytes,
       ...utf8.encode('\r\n--$boundary--\r\n'),
@@ -354,6 +375,15 @@ class StarSyncGoogleDriveTransport implements StarSyncTransport {
         'Invalid Google Drive response',
       );
     }
+  }
+
+  Future<void> removePlannerDuplicates() async {
+    const path = 'mbg-gakujo-handoff.v1.json';
+    final files = await _lookup(path);
+    for (final file in files.skip(1).toList()) {
+      await _deleteId(file.id);
+    }
+    if (files.isNotEmpty) _files[path] = [files.first];
   }
 
   Future<void> _deleteId(String id) async {

@@ -3,6 +3,156 @@ part of 'gakujo_web_app.dart';
 enum _PlannerDestination { clipboard, registrationClipboard }
 
 extension _CoursePlannerActions on _GakujoWebAppState {
+  Future<void> _loadPlannerSharing() async {
+    try {
+      final value = await SecureStorageFactory.create().read(
+        key: 'planner_drive_sharing_enabled',
+      );
+      if (!mounted) return;
+      _setPlannerSharingLoaded(value != 'false');
+      unawaited(_autoSharePlannerResults());
+    } on Object {
+      developer.log('Planner sharing settings unavailable');
+    }
+  }
+
+  Future<void> _autoSharePlannerResults() async {
+    if (!_plannerShareLoaded ||
+        !_plannerShareEnabled ||
+        _plannerShareDeleting ||
+        !mounted ||
+        !_loginIdentity.pageConfirmed ||
+        _activeLoginAccount == null ||
+        _starSyncGoogleAuth.currentEmail == null) {
+      return;
+    }
+    if (_plannerShareBusy) {
+      _plannerSharePending = true;
+      return;
+    }
+    _plannerShareBusy = true;
+    final account = _activeLoginAccount!;
+    final revision = _loginIdentity.revision;
+    final epoch = _plannerShareEpoch;
+    final navigation = _navigationRevision;
+    final starts = _plannerNavigationStarts;
+    final session = StarSyncGoogleAuthSession(
+      _starSyncGoogleAuth,
+      email: _starSyncGoogleAuth.currentEmail,
+    );
+    bool allowed() =>
+        mounted &&
+        _plannerShareEnabled &&
+        !_plannerShareDeleting &&
+        epoch == _plannerShareEpoch &&
+        revision == _loginIdentity.revision &&
+        account == _activeLoginAccount &&
+        _loginIdentity.pageConfirmed &&
+        session.generation == _starSyncGoogleAuth.generation &&
+        session.email == _starSyncGoogleAuth.currentEmail;
+    bool captureAllowed() =>
+        allowed() &&
+        navigation == _navigationRevision &&
+        starts == _plannerNavigationStarts;
+    void checkCurrent() {
+      session.checkCurrent();
+      if (!allowed()) throw const GoogleDriveAccountChanged();
+    }
+
+    StarSyncGoogleDriveTransport? transport;
+    try {
+      final storage = SecureStorageFactory.create();
+      final key = 'planner_drive_last_success_$account';
+      final last = await storage.read(key: key);
+      final now = DateTime.now().toUtc();
+      final attempt = _plannerShareAttempts[account];
+      final background =
+          plannerCaptureDue(last, now) &&
+          (attempt == null ||
+              now.difference(attempt) >= const Duration(minutes: 5));
+      if (!captureAllowed()) return;
+      if (background) _plannerShareAttempts[account] = now;
+      final displayed = await captureCoursePlannerHandoffs(
+        _controller,
+        captureAllowed,
+        background: false,
+      );
+      final fetched = background
+          ? await captureCoursePlannerHandoffs(_controller, captureAllowed)
+          : const <(CoursePlannerImportKind, String)>[];
+      // The displayed inquiry is the source for its kinds, even when a login
+      // capture is also due. Keep fetched kinds that are absent from this page.
+      final byKind = <CoursePlannerImportKind, String>{
+        for (final (kind, token) in fetched) kind: token,
+        for (final (kind, token) in displayed) kind: token,
+      };
+      final captured = [
+        for (final kind in coursePlannerHandoffOrder)
+          if (byKind[kind] case final token?) (kind, token),
+      ];
+      final capturedAt = DateTime.now().toUtc();
+      if (!captureAllowed() || captured.isEmpty) return;
+      transport = StarSyncGoogleDriveTransport(
+        accessToken: session.accessToken,
+        automatic: true,
+        checkCurrent: checkCurrent,
+      );
+      final success = await shareDrivePlannerHandoffs(
+        transport: transport,
+        captured: captured,
+        allowed: allowed,
+        capturedAt: capturedAt,
+      );
+      if (success && allowed()) {
+        await transport.removePlannerDuplicates();
+        if (background && allowed()) {
+          await storage.write(key: key, value: plannerTimestamp(capturedAt));
+        }
+      }
+    } on Object {
+      developer.log(
+        'Planner inquiry sharing skipped',
+        name: 'MoreBetterGakujo',
+      );
+    } finally {
+      transport?.close();
+      _plannerShareBusy = false;
+      if (_plannerSharePending) {
+        _plannerSharePending = false;
+        unawaited(_autoSharePlannerResults());
+      }
+    }
+  }
+
+  Future<void> _deleteSharedPlannerResults() async {
+    if (_plannerShareDeleting || _starSyncGoogleAuth.currentEmail == null) {
+      return;
+    }
+    _plannerShareEpoch++;
+    _plannerShareDeleting = true;
+    _plannerSharePending = false;
+    StarSyncGoogleDriveTransport? transport;
+    try {
+      final session = StarSyncGoogleAuthSession(
+        _starSyncGoogleAuth,
+        email: _starSyncGoogleAuth.currentEmail,
+      );
+      transport = StarSyncGoogleDriveTransport(
+        accessToken: session.accessToken,
+        checkCurrent: session.checkCurrent,
+      );
+      await transport.delete(drivePlannerHandoffName);
+    } on Object {
+      developer.log(
+        'Planner shared inquiry deletion failed',
+        name: 'MoreBetterGakujo',
+      );
+    } finally {
+      transport?.close();
+      _plannerShareDeleting = false;
+    }
+  }
+
   Future<void> _openCoursePlanner(_PlannerDestination destination) async {
     if (_plannerOpening) return;
     _plannerOpening = true;
@@ -41,15 +191,11 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         return;
       }
       if (destination == _PlannerDestination.clipboard) {
-        var handoffs = const <(CoursePlannerImportKind, String)>[];
-        try {
-          handoffs = await fetchCoursePlannerHandoffs(
-            _controller,
-            currentStudent,
-          );
-        } on Object {
-          // The displayed page remains a source when the fetch fails.
-        }
+        var handoffs = await captureCoursePlannerHandoffs(
+          _controller,
+          currentStudent,
+          displayedFallback: false,
+        );
         if (!mounted) return;
         if (!currentStudent()) {
           _showSnackBar('学務の表示またはログイン状態が変わりました。もう一度お試しください。');

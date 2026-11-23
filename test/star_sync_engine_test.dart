@@ -430,7 +430,7 @@ class _SettingsSyncStorage extends _Storage {
 
 class _SettingsSyncDevice {
   _SettingsSyncDevice(this.remote, {_SettingsSyncStorage? persisted})
-      : storage = persisted ?? _SettingsSyncStorage() {
+    : storage = persisted ?? _SettingsSyncStorage() {
     settingsStore = GakujoAppSettingsStore(secureStorage: storage);
     activity = GakujoActivityStore(secureStorage: storage);
     history = GakujoDownloadHistoryStore(secureStorage: storage);
@@ -439,13 +439,15 @@ class _SettingsSyncDevice {
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      collections: [StarSyncSettingsCollection(
-        read: () async => exportStarSyncPortableSettings(cache),
-        apply: apply,
-        localCommitStorage: settingsStore.backupStorage,
-        commitLock: operations.runExclusive,
-        applyWithCommit: apply,
-      )],
+      collections: [
+        StarSyncSettingsCollection(
+          read: () async => exportStarSyncPortableSettings(cache),
+          apply: apply,
+          localCommitStorage: settingsStore.backupStorage,
+          commitLock: operations.runExclusive,
+          applyWithCommit: apply,
+        ),
+      ],
     );
     addTearDown(engine.dispose);
   }
@@ -473,23 +475,31 @@ class _SettingsSyncDevice {
     mirroredKeywords = cache.messageExcludeKeywords;
   });
 
-  Future<bool> apply(Map<String, Object?> entries, {
+  Future<bool> apply(
+    Map<String, Object?> entries, {
     required Map<String, Object?> basedOn,
     bool Function()? stillCurrent,
     StarSyncLocalCommit? commit,
   }) => applyGakujoSyncedSettings(
     operations: operations,
     currentSettings: () => cache,
-    entries: entries, basedOn: basedOn,
+    entries: entries,
+    basedOn: basedOn,
     isMounted: () => mounted,
-    stillCurrent: stillCurrent, commit: commit,
+    stillCurrent: stillCurrent,
+    commit: commit,
     restore: (backup, beforeWrite) => restoreGakujoBackup(
-      backup: backup, settingsStore: settingsStore,
-      historyStore: history, activityStore: activity,
+      backup: backup,
+      settingsStore: settingsStore,
+      historyStore: history,
+      activityStore: activity,
       beforeWrite: beforeWrite,
-      isAllowedUrl: (_) => false, isAllowedNavigationUrl: (_) => false,
+      isAllowedUrl: (_) => false,
+      isAllowedNavigationUrl: (_) => false,
     ),
-    publish: (next, _) { cache = next; },
+    publish: (next, _) {
+      cache = next;
+    },
     mirror: (next) async {
       mirrorCalls++;
       if (failMirror) throw StateError('mirror unavailable');
@@ -519,7 +529,7 @@ class _SettingsSyncDevice {
 }
 
 Future<({_SettingsSyncDevice source, _SettingsSyncDevice receiver})>
-    _settingsSyncPair() async {
+_settingsSyncPair() async {
   final remote = _Transport();
   final source = _SettingsSyncDevice(remote);
   await source.edit('base');
@@ -531,19 +541,21 @@ Future<({_SettingsSyncDevice source, _SettingsSyncDevice receiver})>
 }
 
 class _FavoriteSyncDevice {
-  _FavoriteSyncDevice(this.remote, {
+  _FavoriteSyncDevice(
+    this.remote, {
     _Storage? persisted,
     Future<void> Function()? onChanged,
     String? Function()? loginId,
-  })
-      : storage = persisted ?? _Storage() {
+  }) : storage = persisted ?? _Storage() {
     activity = GakujoActivityStore(secureStorage: storage);
     engine = StarSyncEngine(
       loginId: loginId ?? () => 'student',
       activityStore: activity,
       secureStorage: storage,
       transportFactory: (_) => remote,
-      collections: [StarSyncFavoritesCollection(activity, onChanged: onChanged)],
+      collections: [
+        StarSyncFavoritesCollection(activity, onChanged: onChanged),
+      ],
     );
     addTearDown(engine.dispose);
   }
@@ -557,7 +569,9 @@ class _FavoriteSyncDevice {
 
   Future<void> add([String title = 'Course']) => activity.addFavorite(
     GakujoFavoritePage(
-      title: title, url: url, addedAt: DateTime.utc(2026, 11, 18),
+      title: title,
+      url: url,
+      addedAt: DateTime.utc(2026, 11, 18),
     ),
   );
 
@@ -571,7 +585,7 @@ class _FavoriteSyncDevice {
 }
 
 Future<({_FavoriteSyncDevice source, _FavoriteSyncDevice receiver})>
-    _favoriteSyncPair() async {
+_favoriteSyncPair() async {
   final remote = _Transport();
   final source = _FavoriteSyncDevice(remote);
   final receiver = _FavoriteSyncDevice(remote);
@@ -736,7 +750,8 @@ void main() {
           if (restart) {
             receiver.engine.dispose();
             receiving = _SettingsSyncDevice(
-              receiver.remote, persisted: receiver.storage,
+              receiver.remote,
+              persisted: receiver.storage,
             );
             receiving.cache = await receiving.settingsStore.load();
             await receiving.engine.load();
@@ -745,8 +760,10 @@ void main() {
           await source.engine.syncNow();
           expect(receiving.cache.messageExcludeKeywords, ['latest']);
           expect(source.cache.messageExcludeKeywords, ['latest']);
-          expect((await receiving.settingsStore.load()).messageExcludeKeywords,
-              ['latest']);
+          expect(
+            (await receiving.settingsStore.load()).messageExcludeKeywords,
+            ['latest'],
+          );
           expect(receiving.mirroredKeywords, ['latest']);
         });
       }
@@ -764,7 +781,8 @@ void main() {
         if (restart) {
           receiver.engine.dispose();
           receiving = _SettingsSyncDevice(
-            receiver.remote, persisted: receiver.storage,
+            receiver.remote,
+            persisted: receiver.storage,
           );
           receiving.cache = await receiving.settingsStore.load();
           await receiving.engine.load();
@@ -806,8 +824,10 @@ void main() {
         expect(receiver.effectCalls, effects);
         expect(receiver.backups, backups);
         final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
-        expect(state['collectionStates']['settings']['records']
-            ['messageExcludeKeywords']['value'], ['base']);
+        expect(
+          state['collectionStates']['settings']['records']['messageExcludeKeywords']['value'],
+          ['base'],
+        );
       });
 
       for (final completion in [false, true]) {
@@ -835,14 +855,17 @@ void main() {
           await expectLater(receiver.engine.syncNow(), throwsStateError);
           final expected = completion ? ['imported'] : ['base'];
           expect(receiver.cache.messageExcludeKeywords, expected);
-          expect((await receiver.settingsStore.load()).messageExcludeKeywords,
-              expected);
+          expect(
+            (await receiver.settingsStore.load()).messageExcludeKeywords,
+            expected,
+          );
           expect(receiver.mirroredKeywords, expected);
           receiver.engine.dispose();
           receiver.storage.onWriteValue = null;
           receiver.storage.failWriteKey = null;
           final restarted = _SettingsSyncDevice(
-            receiver.remote, persisted: receiver.storage,
+            receiver.remote,
+            persisted: receiver.storage,
           );
           restarted.cache = await restarted.settingsStore.load();
           await restarted.engine.load();
@@ -856,42 +879,46 @@ void main() {
       }
     }
 
-    test('real queued edit waits through rollback then survives restart', () async {
-      final (:source, :receiver) = await _settingsSyncPair();
-      await source.edit('imported');
-      await source.engine.syncNow();
-      final started = Completer<void>(), release = Completer<void>();
-      receiver.failStateAfterKeywords();
-      receiver.storage.beforeWrite = (key) async {
-        if (key != starSyncStateKey ||
-            receiver.storage.failWriteKeyOnce != starSyncStateKey) {
-          return;
-        }
-        receiver.storage.beforeWrite = null;
-        started.complete();
-        await release.future;
-      };
-      final syncing = receiver.engine.syncNow();
-      await started.future.timeout(const Duration(seconds: 5));
-      var edited = false;
-      final edit = receiver.edit('explicit-local').then((_) => edited = true);
-      await Future<void>.delayed(Duration.zero);
-      expect(edited, false);
-      release.complete();
-      await syncing.timeout(const Duration(seconds: 5));
-      await edit.timeout(const Duration(seconds: 5));
-      expect(receiver.cache.messageExcludeKeywords, ['explicit-local']);
-      expect(receiver.mirroredKeywords, ['explicit-local']);
-      receiver.engine.dispose();
-      final restarted = _SettingsSyncDevice(
-        receiver.remote, persisted: receiver.storage,
-      );
-      restarted.cache = await restarted.settingsStore.load();
-      await restarted.engine.load();
-      await restarted.engine.syncNow();
-      await source.engine.syncNow();
-      expect(source.cache.messageExcludeKeywords, ['explicit-local']);
-    });
+    test(
+      'real queued edit waits through rollback then survives restart',
+      () async {
+        final (:source, :receiver) = await _settingsSyncPair();
+        await source.edit('imported');
+        await source.engine.syncNow();
+        final started = Completer<void>(), release = Completer<void>();
+        receiver.failStateAfterKeywords();
+        receiver.storage.beforeWrite = (key) async {
+          if (key != starSyncStateKey ||
+              receiver.storage.failWriteKeyOnce != starSyncStateKey) {
+            return;
+          }
+          receiver.storage.beforeWrite = null;
+          started.complete();
+          await release.future;
+        };
+        final syncing = receiver.engine.syncNow();
+        await started.future.timeout(const Duration(seconds: 5));
+        var edited = false;
+        final edit = receiver.edit('explicit-local').then((_) => edited = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(edited, false);
+        release.complete();
+        await syncing.timeout(const Duration(seconds: 5));
+        await edit.timeout(const Duration(seconds: 5));
+        expect(receiver.cache.messageExcludeKeywords, ['explicit-local']);
+        expect(receiver.mirroredKeywords, ['explicit-local']);
+        receiver.engine.dispose();
+        final restarted = _SettingsSyncDevice(
+          receiver.remote,
+          persisted: receiver.storage,
+        );
+        restarted.cache = await restarted.settingsStore.load();
+        await restarted.engine.load();
+        await restarted.engine.syncNow();
+        await source.engine.syncNow();
+        expect(source.cache.messageExcludeKeywords, ['explicit-local']);
+      },
+    );
 
     test('account switch at final guard publishes nothing', () async {
       final (:source, :receiver) = await _settingsSyncPair();
@@ -908,32 +935,45 @@ void main() {
       };
       await receiver.engine.syncNow();
       expect(receiver.cache.messageExcludeKeywords, ['base']);
-      expect((await receiver.settingsStore.load()).messageExcludeKeywords, ['base']);
+      expect((await receiver.settingsStore.load()).messageExcludeKeywords, [
+        'base',
+      ]);
       expect(receiver.mirroredKeywords, ['base']);
       expect(receiver.effectCalls, effects);
-      expect(jsonDecode(receiver.storage.values[starSyncStateKey]!)
-          ['localReviewRequired'], true);
+      expect(
+        jsonDecode(
+          receiver.storage.values[starSyncStateKey]!,
+        )['localReviewRequired'],
+        true,
+      );
     });
 
-    test('disposal during persistence still publishes the committed model', () async {
-      final (:source, :receiver) = await _settingsSyncPair();
-      await source.edit('imported');
-      await source.engine.syncNow();
-      final effects = receiver.effectCalls;
-      receiver.storage.onWrite = (key) {
-        if (key != keywordsKey) return;
-        receiver.storage.onWrite = null;
-        receiver.mounted = false;
-      };
-      await receiver.engine.syncNow();
-      expect(receiver.cache.messageExcludeKeywords, ['imported']);
-      expect((await receiver.settingsStore.load()).messageExcludeKeywords,
-          ['imported']);
-      expect(receiver.mirroredKeywords, ['imported']);
-      expect(receiver.effectCalls, effects);
-      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
-      expect(state['collectionStates']['settings']['pendingLocalCommit'], isNull);
-    });
+    test(
+      'disposal during persistence still publishes the committed model',
+      () async {
+        final (:source, :receiver) = await _settingsSyncPair();
+        await source.edit('imported');
+        await source.engine.syncNow();
+        final effects = receiver.effectCalls;
+        receiver.storage.onWrite = (key) {
+          if (key != keywordsKey) return;
+          receiver.storage.onWrite = null;
+          receiver.mounted = false;
+        };
+        await receiver.engine.syncNow();
+        expect(receiver.cache.messageExcludeKeywords, ['imported']);
+        expect((await receiver.settingsStore.load()).messageExcludeKeywords, [
+          'imported',
+        ]);
+        expect(receiver.mirroredKeywords, ['imported']);
+        expect(receiver.effectCalls, effects);
+        final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+        expect(
+          state['collectionStates']['settings']['pendingLocalCommit'],
+          isNull,
+        );
+      },
+    );
 
     test('effect and mirror exceptions cannot restore an old baseline', () async {
       final (:source, :receiver) = await _settingsSyncPair();
@@ -944,13 +984,19 @@ void main() {
       receiver.failEffect = true;
       await receiver.engine.syncNow();
       expect(receiver.cache.messageExcludeKeywords, ['imported']);
-      expect((await receiver.settingsStore.load()).messageExcludeKeywords,
-          ['imported']);
+      expect((await receiver.settingsStore.load()).messageExcludeKeywords, [
+        'imported',
+      ]);
       expect(receiver.backups, backups + 1);
       final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
-      expect(state['collectionStates']['settings']['records']
-          ['messageExcludeKeywords']['value'], ['imported']);
-      expect(state['collectionStates']['settings']['pendingLocalCommit'], isNull);
+      expect(
+        state['collectionStates']['settings']['records']['messageExcludeKeywords']['value'],
+        ['imported'],
+      );
+      expect(
+        state['collectionStates']['settings']['pendingLocalCommit'],
+        isNull,
+      );
       receiver.failMirror = false;
       receiver.failEffect = false;
       await source.edit('latest');
@@ -977,7 +1023,8 @@ void main() {
         if (restart) {
           receiver.engine.dispose();
           receiving = _FavoriteSyncDevice(
-            receiver.remote, persisted: receiver.storage,
+            receiver.remote,
+            persisted: receiver.storage,
           );
           await receiving.engine.load();
         }
@@ -991,11 +1038,14 @@ void main() {
     test('successful import and restart honor later remote deletion', () async {
       final (:source, :receiver) = await _favoriteSyncPair();
       await receiver.engine.syncNow();
-      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
-          'Course');
+      expect(
+        (await receiver.activity.loadFavoritesForBackup()).single.title,
+        'Course',
+      );
       receiver.engine.dispose();
       final restarted = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage,
+        receiver.remote,
+        persisted: receiver.storage,
       );
       await restarted.engine.load();
       await _deleteSyncedFavorite(source);
@@ -1005,30 +1055,38 @@ void main() {
       expect(await source.activity.loadFavoritesForBackup(), isEmpty);
     });
 
-    test('failed local write does not resurrect later remote deletion', () async {
-      final (:source, :receiver) = await _favoriteSyncPair();
-      receiver.storage.failWriteKeyOnce = _FavoriteSyncDevice.favoritesKey;
-      await receiver.engine.syncNow();
-      expect(receiver.engine.status.value.lastError, contains('collections'));
-      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
-      await _deleteSyncedFavorite(source);
-      await receiver.engine.syncNow();
-      await source.engine.syncNow();
-      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
-      expect(await source.activity.loadFavoritesForBackup(), isEmpty);
-    });
+    test(
+      'failed local write does not resurrect later remote deletion',
+      () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        receiver.storage.failWriteKeyOnce = _FavoriteSyncDevice.favoritesKey;
+        await receiver.engine.syncNow();
+        expect(receiver.engine.status.value.lastError, contains('collections'));
+        expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+        await _deleteSyncedFavorite(source);
+        await receiver.engine.syncNow();
+        await source.engine.syncNow();
+        expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+        expect(await source.activity.loadFavoritesForBackup(), isEmpty);
+      },
+    );
 
-    test('successful retry before remote deletion repairs the baseline', () async {
-      final (:source, :receiver) = await _favoriteSyncPair();
-      receiver.failStateAfterFavoriteWrite();
-      await receiver.engine.syncNow();
-      await receiver.engine.syncNow();
-      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
-          'Course');
-      await _deleteSyncedFavorite(source);
-      await receiver.engine.syncNow();
-      expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
-    });
+    test(
+      'successful retry before remote deletion repairs the baseline',
+      () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        receiver.failStateAfterFavoriteWrite();
+        await receiver.engine.syncNow();
+        await receiver.engine.syncNow();
+        expect(
+          (await receiver.activity.loadFavoritesForBackup()).single.title,
+          'Course',
+        );
+        await _deleteSyncedFavorite(source);
+        await receiver.engine.syncNow();
+        expect(await receiver.activity.loadFavoritesForBackup(), isEmpty);
+      },
+    );
 
     test('explicit local edit after failed save survives restart', () async {
       final (:source, :receiver) = await _favoriteSyncPair();
@@ -1037,16 +1095,21 @@ void main() {
       await receiver.add('Explicit local change');
       receiver.engine.dispose();
       final restarted = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage,
+        receiver.remote,
+        persisted: receiver.storage,
       );
       await restarted.engine.load();
       await _deleteSyncedFavorite(source);
       await restarted.engine.syncNow();
       await source.engine.syncNow();
-      expect((await restarted.activity.loadFavoritesForBackup()).single.title,
-          'Explicit local change');
-      expect((await source.activity.loadFavoritesForBackup()).single.title,
-          'Explicit local change');
+      expect(
+        (await restarted.activity.loadFavoritesForBackup()).single.title,
+        'Explicit local change',
+      );
+      expect(
+        (await source.activity.loadFavoritesForBackup()).single.title,
+        'Explicit local change',
+      );
     });
 
     for (final existing in [false, true]) {
@@ -1055,15 +1118,19 @@ void main() {
             '(existing=$existing, state=$stateWrite)', () async {
           final (:source, :receiver) = await _favoriteSyncPair();
           if (existing) {
-            await receiver.activity.addFavorite(GakujoFavoritePage(
-              title: 'Other local course',
-              url: 'https://example.invalid/other',
-              addedAt: DateTime.utc(2026, 11, 17),
-            ));
+            await receiver.activity.addFavorite(
+              GakujoFavoritePage(
+                title: 'Other local course',
+                url: 'https://example.invalid/other',
+                addedAt: DateTime.utc(2026, 11, 17),
+              ),
+            );
           }
-          final before = receiver.storage.values[_FavoriteSyncDevice.favoritesKey];
-          final stateBefore = jsonDecode(receiver.storage.values[starSyncStateKey]!)
-              ['collectionStates']['favorites'];
+          final before =
+              receiver.storage.values[_FavoriteSyncDevice.favoritesKey];
+          final stateBefore = jsonDecode(
+            receiver.storage.values[starSyncStateKey]!,
+          )['collectionStates']['favorites'];
           if (stateWrite) {
             receiver.storage.onWrite = (key) {
               if (key != _FavoriteSyncDevice.favoritesKey) return;
@@ -1076,13 +1143,25 @@ void main() {
           }
           await receiver.engine.syncNow();
           expect(receiver.storage.failWriteKeyAfterCommitOnce, isNull);
-          expect(receiver.storage.values[_FavoriteSyncDevice.favoritesKey], before);
-          expect(jsonDecode(receiver.storage.values[starSyncStateKey]!)
-              ['collectionStates']['favorites'], stateBefore);
-          expect(receiver.engine.status.value.lastError, contains('collections'));
+          expect(
+            receiver.storage.values[_FavoriteSyncDevice.favoritesKey],
+            before,
+          );
+          expect(
+            jsonDecode(
+              receiver.storage.values[starSyncStateKey]!,
+            )['collectionStates']['favorites'],
+            stateBefore,
+          );
+          expect(
+            receiver.engine.status.value.lastError,
+            contains('collections'),
+          );
           await receiver.engine.syncNow();
-          expect(await receiver.activity.loadFavoritesForBackup(),
-              hasLength(existing ? 2 : 1));
+          expect(
+            await receiver.activity.loadFavoritesForBackup(),
+            hasLength(existing ? 2 : 1),
+          );
           expect(await source.activity.loadFavoritesForBackup(), hasLength(1));
         });
       }
@@ -1131,7 +1210,8 @@ void main() {
       var refreshes = 0;
       final refreshedStates = <Map>[];
       final receiving = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage,
+        receiver.remote,
+        persisted: receiver.storage,
         onChanged: () async {
           refreshes++;
           final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
@@ -1146,8 +1226,10 @@ void main() {
       await receiving.engine.syncNow();
       expect(refreshes, 1);
       expect(refreshedStates.single['pendingLocalCommit'], isNull);
-      expect(refreshedStates.single['records'][_FavoriteSyncDevice.url]['deleted'],
-          false);
+      expect(
+        refreshedStates.single['records'][_FavoriteSyncDevice.url]['deleted'],
+        false,
+      );
       await receiving.engine.syncNow();
       expect(refreshes, 1);
       await _deleteSyncedFavorite(source);
@@ -1163,8 +1245,10 @@ void main() {
       receiver.remote.failPutPathOnce = 'sync/favorites/${state['deviceId']}';
       await receiver.engine.syncNow();
       expect(receiver.remote.failPutPathOnce, isNull);
-      expect((await receiver.activity.loadFavoritesForBackup()).single.title,
-          'Course');
+      expect(
+        (await receiver.activity.loadFavoritesForBackup()).single.title,
+        'Course',
+      );
       await _deleteSyncedFavorite(source);
       await receiver.engine.syncNow();
       await source.engine.syncNow();
@@ -1191,7 +1275,8 @@ void main() {
       final sync = receiver.engine.syncNow();
       await started.future.timeout(const Duration(seconds: 5));
       var deleted = false;
-      final deletion = receiver.activity.removeFavorite(_FavoriteSyncDevice.url)
+      final deletion = receiver.activity
+          .removeFavorite(_FavoriteSyncDevice.url)
           .then((_) => deleted = true);
       await Future<void>.delayed(Duration.zero);
       expect(deleted, false);
@@ -1200,7 +1285,8 @@ void main() {
       await deletion;
       receiver.engine.dispose();
       final restarted = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage,
+        receiver.remote,
+        persisted: receiver.storage,
       );
       await restarted.engine.load();
       await restarted.engine.syncNow();
@@ -1209,29 +1295,40 @@ void main() {
       expect(await source.activity.loadFavoritesForBackup(), isEmpty);
     });
 
-    test('account change during baseline write rolls back before review', () async {
-      final (:source, :receiver) = await _favoriteSyncPair();
-      receiver.engine.dispose();
-      var login = 'student';
-      final receiving = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage, loginId: () => login,
-      );
-      await receiving.engine.load();
-      var wroteFavorite = false;
-      receiver.storage.onWriteValue = (key, value) {
-        if (key == _FavoriteSyncDevice.favoritesKey) wroteFavorite = true;
-        if (key == starSyncStateKey && wroteFavorite) {
-          login = 'different-student';
-          receiver.storage.onWriteValue = null;
-        }
-      };
-      await receiving.engine.syncNow();
-      expect(await receiving.activity.loadFavoritesForBackup(), isEmpty);
-      final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
-      expect(state['localReviewRequired'], true);
-      expect(state['collectionStates']['favorites']['pendingLocalCommit'], isNull);
-      expect((await source.activity.loadFavoritesForBackup()).single.title, 'Course');
-    });
+    test(
+      'account change during baseline write rolls back before review',
+      () async {
+        final (:source, :receiver) = await _favoriteSyncPair();
+        receiver.engine.dispose();
+        var login = 'student';
+        final receiving = _FavoriteSyncDevice(
+          receiver.remote,
+          persisted: receiver.storage,
+          loginId: () => login,
+        );
+        await receiving.engine.load();
+        var wroteFavorite = false;
+        receiver.storage.onWriteValue = (key, value) {
+          if (key == _FavoriteSyncDevice.favoritesKey) wroteFavorite = true;
+          if (key == starSyncStateKey && wroteFavorite) {
+            login = 'different-student';
+            receiver.storage.onWriteValue = null;
+          }
+        };
+        await receiving.engine.syncNow();
+        expect(await receiving.activity.loadFavoritesForBackup(), isEmpty);
+        final state = jsonDecode(receiver.storage.values[starSyncStateKey]!);
+        expect(state['localReviewRequired'], true);
+        expect(
+          state['collectionStates']['favorites']['pendingLocalCommit'],
+          isNull,
+        );
+        expect(
+          (await source.activity.loadFavoritesForBackup()).single.title,
+          'Course',
+        );
+      },
+    );
 
     for (final afterMutation in [false, true]) {
       test('state rollback outage never invents a deletion after restart '
@@ -1259,13 +1356,17 @@ void main() {
         receiver.storage.onWriteValue = null;
         receiver.storage.failWriteKey = null;
         final restarted = _FavoriteSyncDevice(
-          receiver.remote, persisted: receiver.storage,
+          receiver.remote,
+          persisted: receiver.storage,
         );
         await restarted.engine.load();
         await restarted.engine.syncNow();
         await source.engine.syncNow();
-        expect((await source.activity.loadFavoritesForBackup()).map((p) => p.title),
-            ['Course'], reason: 'A rolled-back import is not a user deletion');
+        expect(
+          (await source.activity.loadFavoritesForBackup()).map((p) => p.title),
+          ['Course'],
+          reason: 'A rolled-back import is not a user deletion',
+        );
         expect(restarted.engine.collectionEnabled('favorites'), false);
       });
 
@@ -1289,21 +1390,28 @@ void main() {
         };
         await expectLater(receiver.engine.syncNow(), throwsStateError);
         expect(stateWrites, greaterThanOrEqualTo(3));
-        expect((await receiver.activity.loadFavoritesForBackup()).single.title,
-            'Course');
+        expect(
+          (await receiver.activity.loadFavoritesForBackup()).single.title,
+          'Course',
+        );
         receiver.engine.dispose();
         receiver.storage.onWriteValue = null;
         receiver.storage.failWriteKey = null;
         final restarted = _FavoriteSyncDevice(
-          receiver.remote, persisted: receiver.storage,
+          receiver.remote,
+          persisted: receiver.storage,
         );
         await restarted.engine.load();
         await restarted.engine.syncNow();
         await source.engine.syncNow();
-        expect((await restarted.activity.loadFavoritesForBackup()).single.title,
-            'Course');
-        expect((await source.activity.loadFavoritesForBackup()).single.title,
-            'Course');
+        expect(
+          (await restarted.activity.loadFavoritesForBackup()).single.title,
+          'Course',
+        );
+        expect(
+          (await source.activity.loadFavoritesForBackup()).single.title,
+          'Course',
+        );
       });
     }
 
@@ -1317,14 +1425,17 @@ void main() {
       await receiver.engine.syncNow();
       expect(receiver.engine.collectionEnabled('favorites'), false);
       expect(receiver.engine.status.value.lastError, contains('同期を停止'));
-      await expectLater(receiver.engine.setCollectionEnabled('favorites', true),
-          throwsStateError);
+      await expectLater(
+        receiver.engine.setCollectionEnabled('favorites', true),
+        throwsStateError,
+      );
       receiver.storage.failDeleteKey = null;
       await _deleteSyncedFavorite(source);
       await receiver.engine.syncNow();
       receiver.engine.dispose();
       final restarted = _FavoriteSyncDevice(
-        receiver.remote, persisted: receiver.storage,
+        receiver.remote,
+        persisted: receiver.storage,
       );
       await restarted.engine.load();
       await restarted.engine.syncNow();
@@ -1461,13 +1572,15 @@ void main() {
       );
       expect(state.localReviewRequired, isFalse);
       expect(state.identityGapOnly, isFalse);
-      await activity.upsertStarredMessage(GakujoStarredMessage(
-        keijitype: '1',
-        genrecd: '2',
-        seqNo: '3',
-        title: 'star',
-        starredAt: DateTime.utc(2026),
-      ));
+      await activity.upsertStarredMessage(
+        GakujoStarredMessage(
+          keijitype: '1',
+          genrecd: '2',
+          seqNo: '3',
+          title: 'star',
+          starredAt: DateTime.utc(2026),
+        ),
+      );
       final puts = remote.puts;
       await engine.syncNow();
       expect(remote.puts, greaterThan(puts));
@@ -1491,13 +1604,15 @@ void main() {
       await engine.syncNow();
       await engine.runAccountChange(() async => account = null);
       if (scenario != 'scheduled') {
-        await activity.upsertStarredMessage(GakujoStarredMessage(
-          keijitype: '1',
-          genrecd: '2',
-          seqNo: '3',
-          title: 'star',
-          starredAt: DateTime.utc(2026),
-        ));
+        await activity.upsertStarredMessage(
+          GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '3',
+            title: 'star',
+            starredAt: DateTime.utc(2026),
+          ),
+        );
       }
       if (scenario == 'notified') {
         await engine.syncNow(trigger: StarSyncTrigger.localChange);
@@ -1518,56 +1633,62 @@ void main() {
     });
   }
 
-  test('confirmed different account during identity gap requires review', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    String? account = 'A';
-    final engine = StarSyncEngine(
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      loginId: () => account,
-      transportFactory: (_) => remote,
-    );
-    await engine.setUpWithDrive(config);
-    await engine.runAccountChange(() async => account = null);
-    await engine.runAccountChange(() async => account = 'B');
-    await engine.runAccountChange(() async => account = null);
-    await engine.runAccountChange(() async => account = 'A');
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.accountReturned);
-    expect(
-      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
-          .identityGapOnly,
-      isFalse,
-    );
-    engine.dispose();
-  });
+  test(
+    'confirmed different account during identity gap requires review',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      String? account = 'A';
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      await engine.setUpWithDrive(config);
+      await engine.runAccountChange(() async => account = null);
+      await engine.runAccountChange(() async => account = 'B');
+      await engine.runAccountChange(() async => account = null);
+      await engine.runAccountChange(() async => account = 'A');
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .identityGapOnly,
+        isFalse,
+      );
+      engine.dispose();
+    },
+  );
 
-  test('failed transition save keeps a different account conservative', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    String? account = 'A';
-    StarSyncEngine make() => StarSyncEngine(
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      loginId: () => account,
-      transportFactory: (_) => remote,
-    );
-    var engine = make();
-    await engine.setUpWithDrive(config);
-    await engine.runAccountChange(() async => account = null);
-    await engine.runAccountChange(() async {
-      account = 'B';
-      storage.failWriteKeyOnce = starSyncStateKey;
-    });
-    engine.dispose();
-    account = 'A';
-    engine = make();
-    await engine.load();
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.accountReturned);
-    engine.dispose();
-  });
+  test(
+    'failed transition save keeps a different account conservative',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      String? account = 'A';
+      StarSyncEngine make() => StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        loginId: () => account,
+        transportFactory: (_) => remote,
+      );
+      var engine = make();
+      await engine.setUpWithDrive(config);
+      await engine.runAccountChange(() async => account = null);
+      await engine.runAccountChange(() async {
+        account = 'B';
+        storage.failWriteKeyOnce = starSyncStateKey;
+      });
+      engine.dispose();
+      account = 'A';
+      engine = make();
+      await engine.load();
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      engine.dispose();
+    },
+  );
 
   test('a failed star read during identity return requires review', () async {
     final remote = _Transport();
@@ -1660,13 +1781,15 @@ void main() {
     );
     await engine.setUpWithDrive(config);
     await engine.syncNow();
-    await activity.upsertStarredMessage(GakujoStarredMessage(
-      keijitype: '1',
-      genrecd: '2',
-      seqNo: '3',
-      title: 'star',
-      starredAt: DateTime.utc(2026),
-    ));
+    await activity.upsertStarredMessage(
+      GakujoStarredMessage(
+        keijitype: '1',
+        genrecd: '2',
+        seqNo: '3',
+        title: 'star',
+        starredAt: DateTime.utc(2026),
+      ),
+    );
     allowed = false;
     await engine.syncNow(trigger: StarSyncTrigger.localChange);
     expect(
@@ -1689,33 +1812,36 @@ void main() {
     engine.dispose();
   });
 
-  test('local change during gap invalidates an earlier pending change', () async {
-    final remote = _Transport();
-    final storage = _Storage();
-    String? account = 'A';
-    var allowed = false;
-    final engine = StarSyncEngine(
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      loginId: () => account,
-      canSync: () => allowed,
-      transportFactory: (_) => remote,
-    );
-    await engine.setUpWithDrive(config);
-    await engine.syncNow(trigger: StarSyncTrigger.localChange);
-    await engine.runAccountChange(() async => account = null);
-    await engine.syncNow(trigger: StarSyncTrigger.localChange);
-    await engine.runAccountChange(() async => account = 'A');
-    allowed = true;
-    await engine.syncNow();
-    expect(engine.status.value.status, StarSyncStatus.accountReturned);
-    expect(
-      StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
-          .localReviewRequired,
-      isTrue,
-    );
-    engine.dispose();
-  });
+  test(
+    'local change during gap invalidates an earlier pending change',
+    () async {
+      final remote = _Transport();
+      final storage = _Storage();
+      String? account = 'A';
+      var allowed = false;
+      final engine = StarSyncEngine(
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        loginId: () => account,
+        canSync: () => allowed,
+        transportFactory: (_) => remote,
+      );
+      await engine.setUpWithDrive(config);
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      await engine.runAccountChange(() async => account = null);
+      await engine.syncNow(trigger: StarSyncTrigger.localChange);
+      await engine.runAccountChange(() async => account = 'A');
+      allowed = true;
+      await engine.syncNow();
+      expect(engine.status.value.status, StarSyncStatus.accountReturned);
+      expect(
+        StarSyncState.fromJson(jsonDecode(storage.values[starSyncStateKey]!))
+            .localReviewRequired,
+        isTrue,
+      );
+      engine.dispose();
+    },
+  );
 
   for (final path in ['stars', 'favorites']) {
     test('account change while $path apply waits prevents the write', () async {
@@ -1778,11 +1904,7 @@ void main() {
   }
 
   test('failed installation removes both keys and keeps local stars', () async {
-    for (final mode in [
-      'drive',
-      'drive reset',
-      'join',
-    ]) {
+    for (final mode in ['drive', 'drive reset', 'join']) {
       for (final failedKey in [starSyncStateKey, starSyncConfigKey]) {
         final remote = _Transport();
         if (mode == 'join') {
@@ -1827,9 +1949,12 @@ void main() {
                 )
                 .then((_) {});
           default:
-            setup = engine.setUpWithDrive(
-              config, clearLocalStars: await engine.snapshotLocalStars(),
-            ).then((_) {});
+            setup = engine
+                .setUpWithDrive(
+                  config,
+                  clearLocalStars: await engine.snapshotLocalStars(),
+                )
+                .then((_) {});
         }
         await expectLater(setup, throwsStateError);
         expect(engine.status.value.enabled, isFalse);
@@ -1968,7 +2093,8 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUpWithDrive(config,
+      engine.setUpWithDrive(
+        config,
         clearLocalStars: await engine.snapshotLocalStars(),
       ),
       throwsStateError,
@@ -2153,7 +2279,8 @@ void main() {
     );
     storage.failStarWriteOnce = true;
     await expectLater(
-      engine.setUpWithDrive(config,
+      engine.setUpWithDrive(
+        config,
         clearLocalStars: await engine.snapshotLocalStars(),
       ),
       throwsStateError,
@@ -2202,10 +2329,13 @@ void main() {
                     expectedGeneration: generation,
                   )
                   .then((_) {})
-            : engine.setUpWithDrive(config,
-                expectedAccount: expectedAccount,
-                expectedGeneration: generation,
-              ).then((_) {});
+            : engine
+                  .setUpWithDrive(
+                    config,
+                    expectedAccount: expectedAccount,
+                    expectedGeneration: generation,
+                  )
+                  .then((_) {});
         await started.future;
         await engine.runAccountChange(() async => account = 'B');
         await engine.runAccountChange(() async => account = 'A');
@@ -2250,10 +2380,13 @@ void main() {
     remote.getStarted = started;
     remote.getRelease = release;
     final puts = remote.puts;
-    final setup = engine.setUpWithDrive(config,
-      expectedAccount: expectedAccount,
-      expectedGeneration: generation,
-    ).then((_) {});
+    final setup = engine
+        .setUpWithDrive(
+          config,
+          expectedAccount: expectedAccount,
+          expectedGeneration: generation,
+        )
+        .then((_) {});
     await started.future;
     await engine.runAccountChange(() async => account = 'B');
     await engine.runAccountChange(() async => account = 'A');
@@ -2503,10 +2636,13 @@ void main() {
               )
               .then((_) {});
         default:
-          setup = engine.setUpWithDrive(
-            config, clearLocalStars: await engine.snapshotLocalStars(),
-            expectedAccount: expectedAccount,
-          ).then((_) {});
+          setup = engine
+              .setUpWithDrive(
+                config,
+                clearLocalStars: await engine.snapshotLocalStars(),
+                expectedAccount: expectedAccount,
+              )
+              .then((_) {});
       }
       await expectLater(
         setup,
@@ -2551,7 +2687,8 @@ void main() {
               resetExisting: true,
               clearLocalStars: await engine.snapshotLocalStars(),
             )
-          : engine.setUpWithDrive(config,
+          : engine.setUpWithDrive(
+              config,
               resetExisting: true,
               clearLocalStars: await engine.snapshotLocalStars(),
             );
@@ -2603,7 +2740,8 @@ void main() {
     final started = remote.listStarted!;
     final release = remote.listRelease!;
     final joining = b.setUpWithDrive(
-      config, clearLocalStars: await b.snapshotLocalStars(),
+      config,
+      clearLocalStars: await b.snapshotLocalStars(),
     );
     await started.future;
     await b.runAccountChange(() async {
@@ -3236,9 +3374,7 @@ void main() {
           return timer = _TestTimer(callback);
         },
       );
-      await engine.setUpWithDrive(
-        const StarSyncConfig(),
-      );
+      await engine.setUpWithDrive(const StarSyncConfig());
       await meter.charge(starSyncGoogleSoftLimit - 50);
       final lists = remote.lists;
       await engine.syncNow(trigger: StarSyncTrigger.localChange);
@@ -3543,66 +3679,78 @@ void main() {
     );
   });
 
-  for (final boundary in ['quota', 'build', 'keyring', 'directory', 'disposal']) {
+  for (final boundary in [
+    'quota',
+    'build',
+    'keyring',
+    'directory',
+    'disposal',
+  ]) {
     for (final disable in boundary == 'disposal' ? [true] : [false, true]) {
-      test('automatic backup policy after $boundary wait: cancel=$disable', () async {
-        final remote = _Transport();
-        final storage = _Storage();
-        final quotaStorage = _Storage();
-        var allowed = true;
-        final engine = StarSyncEngine(
-          loginId: () => 'student',
-          activityStore: GakujoActivityStore(secureStorage: storage),
-          secureStorage: storage,
-          transportFactory: (_) => remote,
-          quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
-          canSync: () => false,
-          canUploadAutomaticBackup: () => allowed,
-        );
-        addTearDown(engine.dispose);
-        await engine.setUpWithDrive(const StarSyncConfig());
-        final entered = Completer<void>();
-        final release = Completer<void>();
-        Future<void> wait() async {
-          entered.complete();
-          await release.future;
-        }
-        if (boundary == 'quota') {
-          quotaStorage.beforeWrite = (key) async {
-            if (key == starSyncGoogleQuotaKey) {
-              quotaStorage.beforeWrite = null;
-              await wait();
-            }
-          };
-        } else if (boundary == 'keyring') {
-          remote.getStarted = entered;
-          remote.getRelease = release;
-        } else if (boundary == 'directory' || boundary == 'disposal') {
-          remote.beforeEnsureDirectory = (path) async {
-            if (path == 'backups') await wait();
-          };
-        }
-        var builds = 0;
-        final uploading = engine.uploadAutomaticBackupIfDue(() async {
-          builds++;
-          if (boundary == 'build') await wait();
-          return [1, 2, 3];
-        });
-        await entered.future;
-        if (boundary == 'disposal') {
-          engine.dispose();
-        } else {
-          allowed = !disable;
-        }
-        release.complete();
-        expect(await uploading, !disable);
-        expect(remote.files.keys.where((path) => path.startsWith('backups/')),
-            hasLength(disable ? 0 : 1));
-        expect(builds, disable && boundary == 'quota' ? 0 : 1);
-        final saved = jsonDecode(storage.values[starSyncStateKey]!) as Map;
-        expect(saved['lastBackupUploadAt'], disable ? isNull : isNotNull);
-        expect(saved['lastError'], isNull);
-      });
+      test(
+        'automatic backup policy after $boundary wait: cancel=$disable',
+        () async {
+          final remote = _Transport();
+          final storage = _Storage();
+          final quotaStorage = _Storage();
+          var allowed = true;
+          final engine = StarSyncEngine(
+            loginId: () => 'student',
+            activityStore: GakujoActivityStore(secureStorage: storage),
+            secureStorage: storage,
+            transportFactory: (_) => remote,
+            quotaMeter: StarSyncQuotaMeter(storage: quotaStorage),
+            canSync: () => false,
+            canUploadAutomaticBackup: () => allowed,
+          );
+          addTearDown(engine.dispose);
+          await engine.setUpWithDrive(const StarSyncConfig());
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          Future<void> wait() async {
+            entered.complete();
+            await release.future;
+          }
+
+          if (boundary == 'quota') {
+            quotaStorage.beforeWrite = (key) async {
+              if (key == starSyncGoogleQuotaKey) {
+                quotaStorage.beforeWrite = null;
+                await wait();
+              }
+            };
+          } else if (boundary == 'keyring') {
+            remote.getStarted = entered;
+            remote.getRelease = release;
+          } else if (boundary == 'directory' || boundary == 'disposal') {
+            remote.beforeEnsureDirectory = (path) async {
+              if (path == 'backups') await wait();
+            };
+          }
+          var builds = 0;
+          final uploading = engine.uploadAutomaticBackupIfDue(() async {
+            builds++;
+            if (boundary == 'build') await wait();
+            return [1, 2, 3];
+          });
+          await entered.future;
+          if (boundary == 'disposal') {
+            engine.dispose();
+          } else {
+            allowed = !disable;
+          }
+          release.complete();
+          expect(await uploading, !disable);
+          expect(
+            remote.files.keys.where((path) => path.startsWith('backups/')),
+            hasLength(disable ? 0 : 1),
+          );
+          expect(builds, disable && boundary == 'quota' ? 0 : 1);
+          final saved = jsonDecode(storage.values[starSyncStateKey]!) as Map;
+          expect(saved['lastBackupUploadAt'], disable ? isNull : isNotNull);
+          expect(saved['lastError'], isNull);
+        },
+      );
     }
   }
 
@@ -3629,10 +3777,13 @@ void main() {
       await engine.setUpWithDrive(const StarSyncConfig());
       await meter.charge(starSyncGoogleSoftLimit - 50);
       var builds = 0;
-      expect(await engine.uploadAutomaticBackupIfDue(() async {
-        builds++;
-        return [1, 2, 3];
-      }), isFalse);
+      expect(
+        await engine.uploadAutomaticBackupIfDue(() async {
+          builds++;
+          return [1, 2, 3];
+        }),
+        isFalse,
+      );
       await pumpEventQueue();
       expect(builds, 0);
       if (policy != 'unchanged') allowed = false;
@@ -3681,36 +3832,43 @@ void main() {
     expect(await engine.listBackups(), hasLength(1));
   });
 
-  test('automatic backup already submitted completes after policy turns off', () async {
-    final storage = _Storage();
-    final remote = _Transport();
-    var allowed = true;
-    final engine = StarSyncEngine(
-      loginId: () => 'student',
-      activityStore: GakujoActivityStore(secureStorage: storage),
-      secureStorage: storage,
-      transportFactory: (_) => remote,
-      canUploadAutomaticBackup: () => allowed,
-    );
-    addTearDown(engine.dispose);
-    await engine.setUpWithDrive(const StarSyncConfig());
-    final entered = Completer<void>();
-    final release = Completer<void>();
-    remote.afterPut = (path) async {
-      if (path.startsWith('backups/')) {
-        entered.complete();
-        await release.future;
-      }
-    };
-    final uploading = engine.uploadAutomaticBackupIfDue(() async => [1, 2, 3]);
-    await entered.future;
-    allowed = false;
-    release.complete();
-    expect(await uploading, isTrue);
-    expect(await engine.listBackups(), hasLength(1));
-    expect(jsonDecode(storage.values[starSyncStateKey]!)['lastBackupUploadAt'],
-        isNotNull);
-  });
+  test(
+    'automatic backup already submitted completes after policy turns off',
+    () async {
+      final storage = _Storage();
+      final remote = _Transport();
+      var allowed = true;
+      final engine = StarSyncEngine(
+        loginId: () => 'student',
+        activityStore: GakujoActivityStore(secureStorage: storage),
+        secureStorage: storage,
+        transportFactory: (_) => remote,
+        canUploadAutomaticBackup: () => allowed,
+      );
+      addTearDown(engine.dispose);
+      await engine.setUpWithDrive(const StarSyncConfig());
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      remote.afterPut = (path) async {
+        if (path.startsWith('backups/')) {
+          entered.complete();
+          await release.future;
+        }
+      };
+      final uploading = engine.uploadAutomaticBackupIfDue(
+        () async => [1, 2, 3],
+      );
+      await entered.future;
+      allowed = false;
+      release.complete();
+      expect(await uploading, isTrue);
+      expect(await engine.listBackups(), hasLength(1));
+      expect(
+        jsonDecode(storage.values[starSyncStateKey]!)['lastBackupUploadAt'],
+        isNotNull,
+      );
+    },
+  );
 
   test('quota timer retries a blocked automatic backup', () async {
     final remote = _Transport();
@@ -3730,9 +3888,7 @@ void main() {
       now: () => now,
       timerFactory: (duration, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUpWithDrive(
-      const StarSyncConfig(),
-    );
+    await engine.setUpWithDrive(const StarSyncConfig());
     await meter.charge(starSyncGoogleSoftLimit - 50);
     var builds = 0;
     expect(
@@ -4767,30 +4923,42 @@ void main() {
     expect(callbacks, 1);
   });
 
-  test('retired stored configurations are deleted without touching stars', () async {
-    for (final backend in ['webDav', 's3']) {
-      final storage = _Storage();
-      final activity = GakujoActivityStore(secureStorage: storage);
-      await activity.upsertStarredMessage(GakujoStarredMessage(
-        keijitype: '1', genrecd: '2', seqNo: '3', title: 'kept',
-        starredAt: DateTime.utc(2026),
-      ));
-      final stars = storage.values['more_better_gakujo_starred_messages'];
-      storage.values[starSyncConfigKey] = jsonEncode({
-        'backend': backend, backend: {'password': 'sensitive'},
-      });
-      storage.values[starSyncStateKey] = '{"dataKey":"sensitive"}';
-      final engine = StarSyncEngine(activityStore: activity, secureStorage: storage);
-      await engine.load();
-      expect(engine.status.value.status, StarSyncStatus.disabled);
-      expect(engine.config, isNull);
-      expect(storage.values.containsKey(starSyncConfigKey), isFalse);
-      expect(storage.values.containsKey(starSyncStateKey), isFalse);
-      expect(storage.values['more_better_gakujo_starred_messages'], stars);
-      expect((await activity.loadStarredMessages()).single.title, 'kept');
-      engine.dispose();
-    }
-  });
+  test(
+    'retired stored configurations are deleted without touching stars',
+    () async {
+      for (final backend in ['webDav', 's3']) {
+        final storage = _Storage();
+        final activity = GakujoActivityStore(secureStorage: storage);
+        await activity.upsertStarredMessage(
+          GakujoStarredMessage(
+            keijitype: '1',
+            genrecd: '2',
+            seqNo: '3',
+            title: 'kept',
+            starredAt: DateTime.utc(2026),
+          ),
+        );
+        final stars = storage.values['more_better_gakujo_starred_messages'];
+        storage.values[starSyncConfigKey] = jsonEncode({
+          'backend': backend,
+          backend: {'password': 'sensitive'},
+        });
+        storage.values[starSyncStateKey] = '{"dataKey":"sensitive"}';
+        final engine = StarSyncEngine(
+          activityStore: activity,
+          secureStorage: storage,
+        );
+        await engine.load();
+        expect(engine.status.value.status, StarSyncStatus.disabled);
+        expect(engine.config, isNull);
+        expect(storage.values.containsKey(starSyncConfigKey), isFalse);
+        expect(storage.values.containsKey(starSyncStateKey), isFalse);
+        expect(storage.values['more_better_gakujo_starred_messages'], stars);
+        expect((await activity.loadStarredMessages()).single.title, 'kept');
+        engine.dispose();
+      }
+    },
+  );
 
   test('retired configuration deletion failure keeps sync disabled', () async {
     for (final failedKey in [starSyncConfigKey, starSyncStateKey]) {
@@ -4805,9 +4973,12 @@ void main() {
       await engine.load();
       expect(engine.status.value.status, StarSyncStatus.disabled);
       expect(engine.config, isNull);
-      expect(storage.values.containsKey(
-        failedKey == starSyncConfigKey ? starSyncStateKey : starSyncConfigKey,
-      ), isFalse);
+      expect(
+        storage.values.containsKey(
+          failedKey == starSyncConfigKey ? starSyncStateKey : starSyncConfigKey,
+        ),
+        isFalse,
+      );
       engine.dispose();
     }
   });
@@ -5406,7 +5577,8 @@ void main() {
         ),
       );
       expect(await engine.localStarCount(), 1);
-      await engine.setUpWithDrive(config,
+      await engine.setUpWithDrive(
+        config,
         resetExisting: true,
         clearLocalStars: await engine.snapshotLocalStars(),
       );
@@ -5448,10 +5620,7 @@ void main() {
       transportFactory: (_) => remote,
     );
     addTearDown(engine.dispose);
-    await expectLater(
-      engine.setUpWithDrive(config),
-      throwsA(same(firstError)),
-    );
+    await expectLater(engine.setUpWithDrive(config), throwsA(same(firstError)));
     expect(remote.gets['stars/devices/first'], 1);
     expect(remote.gets['stars/devices/second'], 1);
     expect(engine.status.value.enabled, isFalse);
@@ -5481,8 +5650,10 @@ void main() {
     );
     await b.setUpWithDrive(config);
     expect(
-      StarSyncState.fromJson(jsonDecode(second.values[starSyncStateKey]!)).dataKey,
-      StarSyncState.fromJson(jsonDecode(first.values[starSyncStateKey]!)).dataKey,
+      StarSyncState.fromJson(jsonDecode(second.values[starSyncStateKey]!))
+          .dataKey,
+      StarSyncState.fromJson(jsonDecode(first.values[starSyncStateKey]!))
+          .dataKey,
     );
   });
 
@@ -5768,9 +5939,7 @@ void main() {
         secureStorage: storage,
         transportFactory: (_) => remote,
       );
-      await engine.setUpWithDrive(
-        const StarSyncConfig(),
-      );
+      await engine.setUpWithDrive(const StarSyncConfig());
       remote.authFailure = true;
       await engine.syncNow();
       expect(engine.status.value.status, StarSyncStatus.needsGoogleSignIn);
@@ -5792,10 +5961,11 @@ void main() {
       now: () => now,
       timerFactory: (_, callback) => timer = _TestTimer(callback),
     );
-    await engine.setUpWithDrive(
-      const StarSyncConfig(),
+    await engine.setUpWithDrive(const StarSyncConfig());
+    expect(
+      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+      isFalse,
     );
-    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isFalse);
     timer = null;
     remote.driveFailure = StarSyncTransportErrorKind.storageFull;
     await expectLater(
@@ -5804,12 +5974,16 @@ void main() {
     );
     expect(timer, isNotNull);
     expect(timer!.isActive, isTrue);
-    expect(jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'], isTrue);
+    expect(
+      jsonDecode(storage.values[starSyncStateKey]!)['pendingLocalChange'],
+      isTrue,
+    );
     remote.driveFailure = null;
     now = now.add(const Duration(minutes: 2));
     final recovered = Completer<void>();
     engine.status.addListener(() {
-      if (engine.status.value.status == StarSyncStatus.ok && !recovered.isCompleted) {
+      if (engine.status.value.status == StarSyncStatus.ok &&
+          !recovered.isCompleted) {
         recovered.complete();
       }
     });
@@ -5829,9 +6003,7 @@ void main() {
       secureStorage: storage,
       transportFactory: (_) => remote,
     );
-    await engine.setUpWithDrive(
-      const StarSyncConfig(),
-    );
+    await engine.setUpWithDrive(const StarSyncConfig());
     remote.driveFailure = StarSyncTransportErrorKind.storageFull;
     await expectLater(
       engine.syncNow(),
@@ -6865,8 +7037,10 @@ void main() {
     );
     await engine.setUpWithDrive(config);
     remote.files['sync/drafts/old-device'] = [1];
+    remote.files['mbg-gakujo-handoff.v1.json'] = [7, 8, 9];
     await engine.resetRemoteWithDrive();
     expect(remote.files.containsKey('sync/drafts/old-device'), isFalse);
+    expect(remote.files['mbg-gakujo-handoff.v1.json'], [7, 8, 9]);
   });
 
   test('collection documents from another account are skipped', () async {
