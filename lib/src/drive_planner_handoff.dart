@@ -67,9 +67,14 @@ Future<bool> shareDrivePlannerHandoffs({
     maxBytes: drivePlannerMaxBytes,
   );
   if (!allowed()) return false;
-  final previous = remote == null
-      ? null
-      : decodeDrivePlannerHandoff(remote.bytes);
+  Map<String, dynamic>? previous;
+  if (remote != null) {
+    try {
+      previous = decodeDrivePlannerHandoff(remote.bytes);
+    } on FormatException {
+      // Replace unreadable or unsupported handoffs with the captured kinds.
+    }
+  }
   final packets = <String, Map<String, dynamic>>{
     if (previous != null)
       for (final packet in previous['packets'] as List)

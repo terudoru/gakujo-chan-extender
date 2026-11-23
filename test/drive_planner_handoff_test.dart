@@ -69,6 +69,30 @@ void main() {
     expect(await share(drive), isTrue);
     expect(drive.bytes, fixture);
   });
+  for (final corruption in [
+    'malformed JSON',
+    'unsupported version',
+    'invalid token',
+    'invalid UTF-8',
+  ]) {
+    test('replaces existing handoff with $corruption', () async {
+      final previous = jsonDecode(utf8.decode(fixture)) as Map<String, dynamic>;
+      if (corruption == 'unsupported version') previous['v'] = 2;
+      if (corruption == 'invalid token') {
+        previous['packets'][0]['token'] = 'MBGPLAN1.invalid';
+      }
+      final drive = _Drive()
+        ..bytes = switch (corruption) {
+          'malformed JSON' => utf8.encode('{broken'),
+          'invalid UTF-8' => [0xff],
+          _ => utf8.encode(jsonEncode(previous)),
+        };
+      expect(await share(drive), isTrue);
+      expect(drive.writes, 1);
+      expect(drive.bytes, fixture);
+      expect(decodeDrivePlannerHandoff(drive.bytes!), data);
+    });
+  }
   test('merge retains other kinds and unchanged capturedAt', () async {
     final drive = _Drive();
     await share(drive, packets: captured.take(2).toList());

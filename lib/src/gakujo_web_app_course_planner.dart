@@ -125,7 +125,9 @@ extension _CoursePlannerActions on _GakujoWebAppState {
   }
 
   Future<void> _deleteSharedPlannerResults() async {
-    if (_plannerShareDeleting || _starSyncGoogleAuth.currentEmail == null) {
+    if (_plannerShareDeleting) return;
+    if (_starSyncGoogleAuth.currentEmail == null) {
+      if (mounted) _showSnackBar('削除できませんでした。通信を確認してください');
       return;
     }
     _plannerShareEpoch++;
@@ -142,11 +144,15 @@ extension _CoursePlannerActions on _GakujoWebAppState {
         checkCurrent: session.checkCurrent,
       );
       await transport.delete(drivePlannerHandoffName);
+      if (mounted) {
+        _showSnackBar('共有した照会結果を削除しました。自動共有がオンの場合は次の照会で再び共有されます');
+      }
     } on Object {
       developer.log(
         'Planner shared inquiry deletion failed',
         name: 'MoreBetterGakujo',
       );
+      if (mounted) _showSnackBar('削除できませんでした。通信を確認してください');
     } finally {
       transport?.close();
       _plannerShareDeleting = false;
