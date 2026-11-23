@@ -149,8 +149,7 @@ List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
   if (packets is! Map<String, dynamic>) return const [];
   return [
     for (final kind in coursePlannerHandoffOrder)
-      if (encodeCoursePlannerHandoff(packets[kind.name], kind)
-          case final token?)
+      if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
         (kind, token),
   ];
 }
