@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -201,5 +202,5 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(minutes: 5));
     }
-  }, variant: const TargetPlatformVariant({TargetPlatform.windows}));
+  }, variant: const TargetPlatformVariant({TargetPlatform.windows}), skip: !Platform.isWindows);
 }
