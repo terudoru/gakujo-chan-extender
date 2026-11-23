@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_app_settings.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_local_prefs_store.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/generated/course_planner_fetch.g.dart';
 import 'package:morebettergakujo_flutter/src/generated/history_marker.g.dart';
 import 'package:morebettergakujo_flutter/src/secure_storage_transaction.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -38,6 +39,66 @@ const _academicPacket = {
       ],
     },
   ],
+};
+const _multiFetchPayload = {
+  'v': 1,
+  'packets': {
+    // Deliberately out of order to verify canonical profile/grades/balances/registration order.
+    'registration': {
+      'v': 1,
+      'kind': 'registration',
+      'tables': [
+        {
+          'heading': '履修登録・登録状況照会',
+          'rows': [
+            ['開講番号', '登録状況'],
+            ['269G9001', '申請中'],
+            ['269G9002', '許可'],
+          ],
+        },
+      ],
+      'year': '2026',
+    },
+    'balances': {
+      'v': 1,
+      'kind': 'balances',
+      'tables': [
+        {
+          'heading': '履修科目確認表',
+          'rows': [
+            ['科目区分', '既修得単位数'],
+            ['教養教育に関する科目', '10.5'],
+          ],
+        },
+      ],
+    },
+    'grades': {
+      'v': 1,
+      'kind': 'grades',
+      'tables': [
+        {
+          'heading': '単位修得状況照会',
+          'rows': [
+            ['開講番号', '科目名', '単位数', '評価', '年度'],
+            ['269G9001', '合成力学', '2', '優', '2026'],
+          ],
+        },
+      ],
+    },
+    'profile': {
+      'v': 1,
+      'kind': 'profile',
+      'tables': [
+        {
+          'heading': '学生所属',
+          'rows': [
+            ['所属', '学年'],
+            ['理学部物理学科', '2'],
+          ],
+        },
+      ],
+    },
+  },
 };
 
 class _Prefs extends Fake implements GakujoLocalPrefsStore {
@@ -154,6 +215,135 @@ void main() {
         await importer.close();
       }
 
+      // Multi-kind background fetch: one confirmation dialog, ordered multi-token copy,
+      // and identity-change abort while the confirmation dialog is open.
+      final autoFetch = _Toolbar(
+        tester,
+        ++viewId,
+        academicFixture: true,
+        fetchHandler: () async => jsonEncode(jsonEncode(_multiFetchPayload)),
+      );
+      try {
+        await autoFetch.mount();
+        final launches = <MethodCall>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          _Toolbar._launcher,
+          (call) async {
+            launches.add(call);
+            return true;
+          },
+        );
+        await autoFetch.tap(find.byTooltip('メニュー'));
+        await autoFetch.tap(find.text(copyLabel));
+        expect(find.text('履修手帖に渡す内容'), findsNothing);
+        expect(
+          find.text(
+            '所属・学年（候補）、成績、区分別の既修得単位数、履修登録状況を履修手帖用にコピー',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('個人情報を含みます'), findsOneWidget);
+        expect(await autoFetch.readClipboard(), _previous);
+        await autoFetch.tap(find.text('キャンセル'));
+        expect(await autoFetch.readClipboard(), _previous);
+
+        await autoFetch.tap(find.byTooltip('メニュー'));
+        await autoFetch.tap(find.text(copyLabel));
+        await autoFetch.tap(find.text('コピー'));
+        final copied = (await autoFetch.readClipboard())!;
+        expect(
+          copied,
+          File('test/support/planner_handoff_multi.txt').readAsStringSync().trim(),
+        );
+        expect(copied.split('\n'), hasLength(4));
+        expect(find.textContaining('4件をコピーしました'), findsOneWidget);
+        await autoFetch.tap(find.text('履修手帖を開く'));
+        expect(launches, hasLength(1));
+        expect(
+          launches.single.arguments,
+          containsPair('url', 'https://gakujo.terudoru.com/syllabus/'),
+        );
+
+        // Identity/navigation change while confirmation dialog is open aborts copy.
+        autoFetch._clipboard = _previous;
+        await autoFetch.tap(find.byTooltip('メニュー'));
+        await autoFetch.tap(find.text(copyLabel));
+        expect(find.text('コピー'), findsOneWidget);
+        await autoFetch.emit('navigationStarting', _portal);
+        await autoFetch.tap(find.text('コピー'));
+        expect(await autoFetch.readClipboard(), _previous);
+        expect(
+          find.textContaining('学務の表示またはログイン状態が変わりました'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        await autoFetch.close();
+      }
+
+      // Background fetch throws -> falls back to displayed-page chooser unchanged.
+      final fallbackOnError = _Toolbar(
+        tester,
+        ++viewId,
+        academicFixture: true,
+        fetchHandler: () async =>
+            throw PlatformException(code: 'js_error', message: 'boom'),
+      );
+      try {
+        await fallbackOnError.mount();
+        await fallbackOnError.tap(find.byTooltip('メニュー'));
+        await fallbackOnError.tap(find.text(copyLabel));
+        expect(find.text('履修手帖に渡す内容'), findsOneWidget);
+        await fallbackOnError.tap(find.text('成績をコピー'));
+        await fallbackOnError.tap(find.text('コピー'));
+        expect(await fallbackOnError.readClipboard(), startsWith('MBGPLAN1.'));
+        expect(tester.takeException(), isNull);
+      } finally {
+        await fallbackOnError.close();
+      }
+
+      // Identity/navigation change while background fetch is in flight aborts cleanly.
+      final inflight = Completer<Object?>();
+      final abortDuringFetch = _Toolbar(
+        tester,
+        ++viewId,
+        academicFixture: true,
+        fetchHandler: () => inflight.future,
+      );
+      try {
+        await abortDuringFetch.mount();
+        await abortDuringFetch.tap(find.byTooltip('メニュー'));
+        await tester.tap(find.text(copyLabel).hitTestable());
+        await tester.pump();
+        await abortDuringFetch.emit('navigationStarting', _portal);
+        inflight.complete(jsonEncode(jsonEncode(_multiFetchPayload)));
+        await tester.pumpAndSettle();
+        expect(find.text('コピー'), findsNothing);
+        expect(await abortDuringFetch.readClipboard(), _previous);
+        expect(
+          find.textContaining('学務の表示またはログイン状態が変わりました'),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        await abortDuringFetch.close();
+      }
+
+      // Not logged in -> updated prompt without telling the student to open inquiry page first.
+      final loggedOut = _Toolbar(tester, ++viewId);
+      try {
+        await loggedOut.mount();
+        await loggedOut.tap(find.byTooltip('メニュー'));
+        await loggedOut.tap(find.text(copyLabel));
+        expect(
+          loggedOut.notices,
+          ['学務にログインしてから、もう一度お試しください。'],
+        );
+        expect(tester.takeException(), isNull);
+      } finally {
+        await loggedOut.close();
+      }
+
       Future<void> onPage(Future<void> Function(_Toolbar) exercise) async {
         final page = _Toolbar(tester, ++viewId);
         try {
@@ -249,8 +439,14 @@ void main() {
 }
 
 class _Toolbar {
-  _Toolbar(this.tester, this.id, {this.academicFixture = false});
+  _Toolbar(
+    this.tester,
+    this.id, {
+    this.academicFixture = false,
+    this.fetchHandler,
+  });
   final bool academicFixture;
+  final Future<Object?> Function()? fetchHandler;
   final WidgetTester tester;
   final int id;
   final _pops = _Pops();
@@ -332,6 +528,9 @@ class _Toolbar {
       if (call.method == 'loadUrl') loads.add(call.arguments as String);
       if (call.method == 'addScriptToExecuteOnDocumentCreated') return 'id';
       if (call.method != 'executeScript') return null;
+      if (fetchHandler != null && call.arguments == coursePlannerFetchJs) {
+        return await fetchHandler!();
+      }
       if (academicFixture &&
           (call.arguments as String).contains(
             'web_scripts/src/course_planner/capture.ts',
@@ -406,12 +605,12 @@ class _Toolbar {
     expect(signal.isCompleted, isTrue, reason: reason);
   }
 
-  Future<void> visit(String url) async {
-    Future<void> emit(String type, Object value) async {
-      _sink.success({'type': type, 'value': value});
-      await tester.idle();
-    }
+  Future<void> emit(String type, Object value) async {
+    _sink.success({'type': type, 'value': value});
+    await tester.idle();
+  }
 
+  Future<void> visit(String url) async {
     await emit('navigationStarting', url);
     await emit('urlChanged', url);
     await emit('loadingStateChanged', win.LoadingState.loading.index);

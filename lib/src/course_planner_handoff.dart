@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'generated/course_planner_capture.g.dart';
+import 'generated/course_planner_fetch.g.dart';
 import 'web_view_service.dart';
 
 String _attempt() {
@@ -11,8 +12,8 @@ String _attempt() {
 
 // Android / WebView2 may return a quoted JSON string, whereas WebKit
 // returns the JavaScript string itself.
-String? _bridgeString(Object? result) {
-  if (result is! String || result.length > 2 * 1024 * 1024) return null;
+String? _bridgeString(Object? result, {int limit = 2 * 1024 * 1024}) {
+  if (result is! String || result.length > limit) return null;
   return result.startsWith('"') ? jsonDecode(result) as String? : result;
 }
 
@@ -64,6 +65,57 @@ class CoursePlannerSource {
   Future<Map<String, dynamic>?> capture(CoursePlannerImportKind kind) async =>
       _validateCoursePlannerPacket(await _read(kind), kind);
 }
+
+/// The order in which handoff tokens are copied together.
+const coursePlannerHandoffOrder = [
+  CoursePlannerImportKind.profile,
+  CoursePlannerImportKind.grades,
+  CoursePlannerImportKind.balances,
+  CoursePlannerImportKind.registration,
+];
+
+/// Reads the inquiry pages in the background of the logged-in portal.
+///
+/// The result lives only in memory for this one copy; it is empty when the
+/// fetch fails or the caller's login or page changes meanwhile.
+Future<List<(CoursePlannerImportKind, String)>> fetchCoursePlannerHandoffs(
+  GakujoWebViewController controller,
+  bool Function() stillCurrent,
+) async {
+  if (!stillCurrent()) return const [];
+  final result = await controller.runJavaScriptReturningResult(
+    coursePlannerFetchJs,
+  );
+  if (!stillCurrent()) return const [];
+  return decodeCoursePlannerFetch(result);
+}
+
+/// One MBGPLAN1 token per kind found, in [coursePlannerHandoffOrder].
+List<(CoursePlannerImportKind, String)> decodeCoursePlannerFetch(
+  Object? result,
+) {
+  final Object? data;
+  try {
+    final text = _bridgeString(result, limit: 8 * 1024 * 1024);
+    data = text == null ? null : jsonDecode(text);
+  } on Object {
+    // An unreadable reply offers nothing to copy.
+    return const [];
+  }
+  if (data is! Map<String, dynamic> || data['v'] != 1) return const [];
+  final packets = data['packets'];
+  if (packets is! Map<String, dynamic>) return const [];
+  return [
+    for (final kind in coursePlannerHandoffOrder)
+      if (encodeCoursePlannerHandoff(packets[kind.name], kind) case final token?)
+        (kind, token),
+  ];
+}
+
+/// The clipboard text for several handoff tokens.
+String joinCoursePlannerHandoffs(
+  List<(CoursePlannerImportKind, String)> handoffs,
+) => handoffs.map((handoff) => handoff.$2).join('\n');
 
 String? encodeCoursePlannerHandoff(
   Object? packet,

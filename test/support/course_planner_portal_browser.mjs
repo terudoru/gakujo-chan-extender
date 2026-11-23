@@ -18,9 +18,21 @@ async function generated(name) {
   );
   return (config) => prefix + JSON.stringify(config) + suffix;
 }
+async function generatedScript(name) {
+  const file = new URL(
+    "../../lib/src/generated/course_planner_" + name + ".g.dart",
+    import.meta.url,
+  );
+  const text = await readFile(file, "utf8");
+  const [, script] = text.match(/=\s*r'''([\s\S]*?)''';/);
+  return script;
+}
 const capture = await generated("capture");
+const fetchScript = await generatedScript("fetch");
 const portal = "https://gakujo.iess.niigata-u.ac.jp/campusweb/";
 const delayed = new Map();
+const redirects = new Map();
+const requests = [];
 const browser = await chromium.launch({
   channel: process.env.CHROME_CHANNEL || "chrome",
   headless: true,
@@ -28,13 +40,22 @@ const browser = await chromium.launch({
 });
 try {
   const context = await browser.newContext();
-  await context.route("**/*", (route) =>
-    route.fulfill({
+  await context.route("**/*", (route) => {
+    const req = route.request();
+    requests.push({ method: req.method(), url: req.url() });
+    if (redirects.has(req.url())) {
+      return route.fulfill({
+        status: 302,
+        headers: { location: redirects.get(req.url()) },
+        body: "",
+      });
+    }
+    return route.fulfill({
       status: 200,
       contentType: "text/html; charset=utf-8",
-      body: delayed.get(route.request().url()) || "<main>fixture</main>",
-    }),
-  );
+      body: delayed.get(req.url()) || "<main>fixture</main>",
+    });
+  });
   const page = await context.newPage();
   const url = portal + "campusportal.do";
   const gradeUrl = portal + "campussquare.do?view=grade";
@@ -235,8 +256,224 @@ try {
   await page.goto("https://syllabus.niigata-u.ac.jp/campusweb/campussquare.do");
   await page.setContent(table);
   assert.equal(await ask({}), null);
+
+  // --- Background fetch tests (discovery, parity, multi-kind, session expiry) ---
+  const runFetch = async () => JSON.parse(await page.evaluate(fetchScript));
+  const gradesFlowUrl = portal + "campussquare.do?_flowId=SIW0001300-flow";
+  const regFlowUrl = portal + "campussquare.do?_flowId=RSW0001000-flow";
+  const regSem2Url =
+    portal + "campussquare.do?_flowExecutionKey=e1s1&_eventId=search&gakkiKbnCode=2";
+  const menuFrameUrl = portal + "campusportal.do?view=menu";
+
+  // Parity fixture: form#taniReferListForm + table (no <h1>), <br> + nested spans,
+  // inline hidden elements, balances, and student profile.
+  const parityGradesHtml =
+    '<table><tr><th>氏名</th><td>PRIVATE-NAME</td><th>所属</th><td>理学部<br><span>物理<span>学科</span></span></td>' +
+    '<th>学年</th><td><span>２</span></td></tr></table>' +
+    '<form id="taniReferListForm"></form>' +
+    '<table><tr><th>開講<br><span>番号</span></th><th>科<span>目</span><br>名</th><th>単位数</th><th>評価</th><th>年度</th><th>担当教員</th></tr>' +
+    '<tr><td><span>261G</span><span>7011</span></td><td><span>合成</span><br><span><span>力学</span></span><span style="display:none">SECRET</span><template>TMPL</template></td>' +
+    '<td>＊2.0</td><td>認定</td><td>2026</td><td>private-teacher</td></tr>' +
+    '<tr style="display:none"><td>261G9999</td><td>非表示科目</td><td>2</td><td>秀</td><td>2026</td><td>x</td></tr></table>' +
+    '<table hidden><tr><th>開講番号</th><th>科目名</th><th>単位数</th><th>評価</th></tr>' +
+    '<tr><td>261G8888</td><td>隠し表</td><td>2</td><td>優</td></tr></table>' +
+    '<table><tr><th>科目<br><span>区分</span></th><th>既修得<br>単位数</th><th>備考</th></tr>' +
+    '<tr><td><span>教養</span><br><span>教育</span></td><td>10.5</td><td>private-note</td></tr></table>';
+
+  // Parity fixture for registration: all explicit blue encodings + ?/red + ?/blue + non-blue + denied table.
+  const parityRegHtml =
+    "<h1>履修登録・登録状況照会</h1>" +
+    "<table><tr><td>年度・学期</td><td>2026年度 第1学期</td></tr></table>" +
+    "<table><tr>" +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7011\',\'2\',\'3\')" style="color:red">？261G7011 (T1)</a><br>合成申請&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7012\',\'2\',\'3\')" style="color:blue">261G7012 (T1)</a><br>合成青名前&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7013\',\'2\',\'3\')" style="color:#00f">261G7013 (T1)</a><br>合成青短縮&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7014\',\'2\',\'3\')" style="color:#0000ff">261G7014 (T1)</a><br>合成青六桁&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7015\',\'2\',\'3\')" style="color:rgb(0, 0, 255)">261G7015 (T1)</a><br>合成青RGB&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7016\',\'2\',\'3\')"><font color="blue">261G7016 (T1)</font></a><br>合成フォント青&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7017\',\'2\',\'3\')"><font color="#0000ff">261G7017 (T1)</font></a><br>合成フォント六桁&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7018\',\'2\',\'3\')" style="color:blue">？261G7018 (T1)</a><br>合成疑問青&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7019\',\'2\',\'3\')" style="color:purple">261G7019 (T1)</a><br>合成紫&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    "</tr></table>" +
+    '<table><tr><td colspan="3">不許可となった科目</td></tr><tr><td>開講番号</td><td>科目名</td><td>単位数</td></tr>' +
+    "<tr><td>261G7020 (T1)</td><td>合成不許可</td><td>1.0単位</td></tr></table>";
+
+  // Capture live output on exact same HTML fixtures first.
+  delayed.set(gradesFlowUrl, parityGradesHtml);
+  await page.goto(gradesFlowUrl);
+  assert.deepEqual(await ask({}), ["grades", "balances", "profile"]);
+  const liveParityGrades = await ask({ kind: "grades" });
+  const liveParityBalances = await ask({ kind: "balances" });
+  const liveParityProfile = await ask({ kind: "profile" });
+  assert.equal(liveParityGrades.tables[0].rows[1][1], "合成 力学");
+  assert.equal(liveParityProfile.tables[0].rows[1][0], "理学部 物理学科");
+
+  delayed.set(regFlowUrl, parityRegHtml);
+  await page.goto(regFlowUrl);
+  assert.deepEqual(await ask({}), ["registration"]);
+  const liveParityReg = await ask({ kind: "registration" });
+  assert.deepEqual(
+    liveParityReg.tables[0].rows.slice(1).map((r) => r[3]),
+    ["申請中", "許可", "許可", "許可", "許可", "許可", "許可", "要確認", "要確認"],
+  );
+
+  // Now test background fetch from a non-inquiry portal home page with menu links in a same-origin frame.
+  delayed.set(
+    menuFrameUrl,
+    '<nav>' +
+      '<a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow">単位修得状況照会</a>' +
+      '<a href="#" onclick="openMenu(\'/campusweb/campussquare.do?_flowId=RSW0001000-flow\')">履修登録・登録状況照会</a>' +
+      '</nav>',
+  );
+  delayed.set(url, '<iframe src="' + menuFrameUrl + '"></iframe>');
+  await page.goto(url);
+  requests.length = 0;
+  const fetchedParity = await runFetch();
+  assert.deepEqual(Object.keys(fetchedParity.packets), [
+    "profile",
+    "grades",
+    "balances",
+    "registration",
+  ]);
+  assert.equal(JSON.stringify(fetchedParity.packets.grades), JSON.stringify(liveParityGrades));
+  assert.equal(JSON.stringify(fetchedParity.packets.balances), JSON.stringify(liveParityBalances));
+  assert.equal(JSON.stringify(fetchedParity.packets.profile), JSON.stringify(liveParityProfile));
+  assert.equal(JSON.stringify(fetchedParity.packets.registration), JSON.stringify(liveParityReg));
+  assert.deepEqual(requests, [
+    { method: "GET", url: gradesFlowUrl },
+    { method: "GET", url: regFlowUrl },
+  ]);
+
+  // Static mode MUST NOT promote an unstyled timetable link to 許可 (even inside a blue <td>).
+  const unstyledRegHtml =
+    "<h1>履修登録・登録状況照会</h1>" +
+    "<table><tr>" +
+    '<td style="color:blue"><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7021\',\'2\',\'3\')">261G7021 (T1)</a><br>合成無指定&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    '<td><div class="tblDivNml">?<a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7022\',\'2\',\'3\')">261G7022 (T1)</a><br>合成未確定&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    "</tr></table>";
+  delayed.set(regFlowUrl, unstyledRegHtml);
+  const fetchedUnstyled = await runFetch();
+  assert.deepEqual(
+    fetchedUnstyled.packets.registration.tables[0].rows.slice(1).map((r) => [r[1], r[3]]),
+    [
+      ["261G7021", "要確認"],
+      ["261G7022", "申請中"],
+    ],
+  );
+
+  // Semester tab following + deduping + rejection of non-search _eventId links on registration page.
+  const sem1Html =
+    parityRegHtml +
+    '<a href="/campusweb/campussquare.do?_flowExecutionKey=e1s1&_eventId=search&amp;gakkiKbnCode=2">第2学期</a>' +
+    '<a href="/campusweb/campussquare.do?_flowExecutionKey=e1s1&_eventId=delete&amp;gakkiKbnCode=2">削除</a>' +
+    '<a href="https://evil.example/campusweb/campussquare.do?_flowExecutionKey=e1s1&_eventId=search&amp;gakkiKbnCode=3">外部</a>';
+  const sem2Html =
+    "<h1>履修登録・登録状況照会</h1>" +
+    "<table><tr><td>年度・学期</td><td>2026年度 第2学期</td></tr></table>" +
+    "<table><tr>" +
+    '<td><div class="tblDivNml"><a href="#" onclick="return CallDetail(\'2026\',\'09\',\'261G7099\',\'2\',\'3\')" style="color:blue">261G7099 (T3)</a><br>合成後期&nbsp;非公開教室&nbsp;2.0単位</div></td>' +
+    "</tr></table>" +
+    '<table><tr><td colspan="3">不許可となった科目</td></tr><tr><td>開講番号</td><td>科目名</td><td>単位数</td></tr>' +
+    "<tr><td>261G7020 (T1)</td><td>合成不許可</td><td>1.0単位</td></tr></table>";
+  delayed.set(regFlowUrl, sem1Html);
+  delayed.set(regSem2Url, sem2Html);
+  requests.length = 0;
+  const fetchedMultiSem = await runFetch();
+  assert.deepEqual(requests, [
+    { method: "GET", url: gradesFlowUrl },
+    { method: "GET", url: regFlowUrl },
+    { method: "GET", url: regSem2Url },
+  ]);
+  // Sem1 timetable + Sem1 denied + Sem2 timetable (duplicate Sem2 denied table deduped).
+  assert.equal(fetchedMultiSem.packets.registration.tables.length, 3);
+  assert.equal(fetchedMultiSem.packets.registration.year, "2026");
+
+  // Link discovery: onclick & javascript: href work; cross-origin, _eventId, _flowExecutionKey,
+  // non-campussquare, and conflicting duplicate flows are rejected; missing grades link skips grades
+  // without guessing while registration falls back to RSW0001000-flow.
+  delayed.set(
+    url,
+    '<nav>' +
+      '<a href="https://evil.example/campusweb/campussquare.do?_flowId=EVIL-flow">単位修得状況照会</a>' +
+      '<a href="/campusweb/campussquare.do?_flowId=EVIL-flow&_eventId=delete">単位修得状況照会</a>' +
+      '<a href="/campusweb/campussquare.do?_flowId=EVIL-flow&_flowExecutionKey=e1s1">単位修得状況照会</a>' +
+      '<a href="/campusweb/campusportal.do?_flowId=EVIL-flow">単位修得状況照会</a>' +
+      '<a href="/other/campussquare.do?_flowId=EVIL-flow">単位修得状況照会</a>' +
+      '</nav>',
+  );
+  await page.goto(url);
+  requests.length = 0;
+  const fetchedNoGrades = await runFetch();
+  assert.deepEqual(requests, [
+    { method: "GET", url: regFlowUrl },
+    { method: "GET", url: regSem2Url },
+  ]);
+  assert.deepEqual(Object.keys(fetchedNoGrades.packets), ["registration"]);
+
+  // onclick discovery works for grades.
+  delayed.set(
+    url,
+    '<button onclick="go(\'campussquare.do?_flowId=SIW0001300-flow\')">単位修得状況照会</button>',
+  );
+  await page.goto(url);
+  requests.length = 0;
+  const fetchedOnclick = await runFetch();
+  assert.equal(requests[0].url, gradesFlowUrl);
+  assert.ok(fetchedOnclick.packets.grades);
+
+  // javascript: href discovery works for grades.
+  delayed.set(
+    url,
+    '<a href="javascript:openFlow(\'/campusweb/campussquare.do?_flowId=SIW0001300-flow\')">単位修得状況照会</a>',
+  );
+  await page.goto(url);
+  requests.length = 0;
+  const fetchedJsHref = await runFetch();
+  assert.equal(requests[0].url, gradesFlowUrl);
+  assert.ok(fetchedJsHref.packets.grades);
+
+  // Conflicting duplicate grades flows are rejected (ambiguous).
+  delayed.set(
+    url,
+    '<a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow">単位修得状況照会</a>' +
+      '<a href="/campusweb/campussquare.do?_flowId=SIW9999999-flow">単位修得状況照会</a>',
+  );
+  await page.goto(url);
+  requests.length = 0;
+  const fetchedAmbiguous = await runFetch();
+  assert.ok(!fetchedAmbiguous.packets.grades);
+  assert.ok(!requests.some((r) => r.url.includes("SIW")));
+
+  // Session expired: password or ninshoCode in ANY fetched page returns null (nothing, no partial grades).
+  delayed.set(
+    url,
+    '<a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow">単位修得状況照会</a>',
+  );
+  await page.goto(url);
+  // 1) password in registration page after grades succeeded
+  delayed.set(regFlowUrl, '<form><input type="password" name="pw"></form>');
+  assert.equal(await runFetch(), null);
+  // 2) ninshoCode in semester 2 page after grades + semester 1 succeeded
+  delayed.set(regFlowUrl, sem1Html);
+  delayed.set(regSem2Url, '<form><input name="ninshoCode"></form>');
+  assert.equal(await runFetch(), null);
+  // 3) login redirect to campusportal.do containing password input
+  delayed.set(portal + "campusportal.do?login=1", '<form><input type="password"></form>');
+  redirects.set(regFlowUrl, portal + "campusportal.do?login=1");
+  assert.equal(await runFetch(), null);
+  redirects.delete(regFlowUrl);
+  // 4) visible password input in top page aborts before any XHR
+  delayed.set(
+    url,
+    '<input type="password"><a href="/campusweb/campussquare.do?_flowId=SIW0001300-flow">単位修得状況照会</a>',
+  );
+  await page.goto(url);
+  requests.length = 0;
+  assert.equal(await runFetch(), null);
+  assert.deepEqual(requests, []);
+
   console.log(
-    "Portal frame, grade, balance, registration, privacy checks passed.",
+    "Portal frame, grade, balance, registration, privacy, and background-fetch checks passed.",
   );
 } finally {
   await browser.close();

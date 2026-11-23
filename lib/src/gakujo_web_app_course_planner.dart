@@ -33,8 +33,32 @@ extension _CoursePlannerActions on _GakujoWebAppState {
       CoursePlannerImportKind? choice;
       if (!currentStudent() ||
           !AllowedWebOrigins.canLoad(url, debugAllowed: false)) {
-        _showSnackBar('学務にログインし、成績または履修の照会画面を開いてください。');
+        _showSnackBar(
+          destination == _PlannerDestination.clipboard
+              ? '学務にログインしてから、もう一度お試しください。'
+              : '学務にログインし、成績または履修の照会画面を開いてください。',
+        );
         return;
+      }
+      if (destination == _PlannerDestination.clipboard) {
+        var handoffs = const <(CoursePlannerImportKind, String)>[];
+        try {
+          handoffs = await fetchCoursePlannerHandoffs(
+            _controller,
+            currentStudent,
+          );
+        } on Object {
+          // The displayed page remains a source when the fetch fails.
+        }
+        if (!mounted) return;
+        if (!currentStudent()) {
+          _showSnackBar('学務の表示またはログイン状態が変わりました。もう一度お試しください。');
+          return;
+        }
+        if (handoffs.isNotEmpty) {
+          await _copyCoursePlannerHandoffs(handoffs, currentStudent);
+          return;
+        }
       }
       source = CoursePlannerSource(_controller, currentStudent);
       final kinds = await source.choices(includeProfile: true);
@@ -122,14 +146,57 @@ extension _CoursePlannerActions on _GakujoWebAppState {
     }
     await Clipboard.setData(ClipboardData(text: token));
     if (mounted) {
-      _showSnackBar(
+      _showCoursePlannerCopied(
         'コピーしました。履修手帖の設定 →「More Better Gakujo から貼り付け」で貼り付けてください。',
-        action: SnackBarAction(
-          label: '履修手帖を開く',
-          onPressed: () =>
-              unawaited(_handleToolbarAction(_ToolbarAction.coursePlanner)),
-        ),
       );
     }
+  }
+
+  Future<void> _copyCoursePlannerHandoffs(
+    List<(CoursePlannerImportKind, String)> handoffs,
+    bool Function() stillCurrent,
+  ) async {
+    final labels = handoffs.map((handoff) => handoff.$1.label).join('、');
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('$labelsを履修手帖用にコピー'),
+        content: const Text('成績などの個人情報を含みます。履修手帖に貼り付けたら、ほかの場所には貼らないでください。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('コピー'),
+          ),
+        ],
+      ),
+    );
+    if (approved != true || !mounted) return;
+    if (!stillCurrent()) {
+      _showSnackBar('学務の表示またはログイン状態が変わりました。もう一度お試しください。');
+      return;
+    }
+    await Clipboard.setData(
+      ClipboardData(text: joinCoursePlannerHandoffs(handoffs)),
+    );
+    if (mounted) {
+      _showCoursePlannerCopied(
+        '${handoffs.length}件をコピーしました。履修手帖の設定 →「More Better Gakujo から貼り付け」で貼り付けてください。',
+      );
+    }
+  }
+
+  void _showCoursePlannerCopied(String message) {
+    _showSnackBar(
+      message,
+      action: SnackBarAction(
+        label: '履修手帖を開く',
+        onPressed: () =>
+            unawaited(_handleToolbarAction(_ToolbarAction.coursePlanner)),
+      ),
+    );
   }
 }

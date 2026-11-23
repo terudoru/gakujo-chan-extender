@@ -61,6 +61,181 @@ void main() {
     );
   });
 
+  test('multi-kind fetch decoding matches the shared multi-token vector', () {
+    final fetchPayload = {
+      'v': 1,
+      'packets': {
+        // Deliberately out of order to verify canonical ordering.
+        'registration': {
+          'v': 1,
+          'kind': 'registration',
+          'tables': [
+            {
+              'heading': '履修登録・登録状況照会',
+              'rows': [
+                ['開講番号', '登録状況'],
+                ['269G9001', '申請中'],
+                ['269G9002', '許可'],
+              ],
+            },
+          ],
+          'year': '2026',
+        },
+        'balances': {
+          'v': 1,
+          'kind': 'balances',
+          'tables': [
+            {
+              'heading': '履修科目確認表',
+              'rows': [
+                ['科目区分', '既修得単位数'],
+                ['教養教育に関する科目', '10.5'],
+              ],
+            },
+          ],
+        },
+        'grades': {
+          'v': 1,
+          'kind': 'grades',
+          'tables': [
+            {
+              'heading': '単位修得状況照会',
+              'rows': [
+                ['開講番号', '科目名', '単位数', '評価', '年度'],
+                ['269G9001', '合成力学', '2', '優', '2026'],
+              ],
+            },
+          ],
+        },
+        'profile': {
+          'v': 1,
+          'kind': 'profile',
+          'tables': [
+            {
+              'heading': '学生所属',
+              'rows': [
+                ['所属', '学年'],
+                ['理学部物理学科', '2'],
+              ],
+            },
+          ],
+        },
+      },
+    };
+    final expectedVector = File(
+      'test/support/planner_handoff_multi.txt',
+    ).readAsStringSync().trim();
+    for (final raw in [
+      jsonEncode(fetchPayload),
+      jsonEncode(jsonEncode(fetchPayload)),
+    ]) {
+      final handoffs = decodeCoursePlannerFetch(raw);
+      expect(
+        handoffs.map((h) => h.$1).toList(),
+        coursePlannerHandoffOrder,
+      );
+      expect(joinCoursePlannerHandoffs(handoffs), expectedVector);
+    }
+    expect(expectedVector.split('\n'), hasLength(4));
+  });
+
+  test('decodeCoursePlannerFetch rejects invalid replies and skips bad packets', () {
+    expect(decodeCoursePlannerFetch(null), isEmpty);
+    expect(decodeCoursePlannerFetch('null'), isEmpty);
+    expect(decodeCoursePlannerFetch('{bad json'), isEmpty);
+    expect(decodeCoursePlannerFetch('{"v":2,"packets":{}}'), isEmpty);
+    expect(decodeCoursePlannerFetch('{"v":1,"packets":[]}'), isEmpty);
+    final mixed = decodeCoursePlannerFetch(
+      jsonEncode({
+        'v': 1,
+        'packets': {
+          'profile': {
+            'v': 1,
+            'kind': 'profile',
+            'tables': [
+              {
+                'heading': '学生所属',
+                'rows': [
+                  ['所属', '学年'],
+                  ['fixture@example.invalid', '2'],
+                ],
+              },
+            ],
+          },
+          'grades': {
+            'v': 1,
+            'kind': 'grades',
+            'tables': [
+              {
+                'heading': '単位修得状況照会',
+                'rows': [
+                  ['評価'],
+                  ['良'],
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(mixed.map((h) => h.$1).toList(), [CoursePlannerImportKind.grades]);
+  });
+
+  test('fetchCoursePlannerHandoffs drops results when identity changes', () async {
+    var evaluated = false;
+    var current = false;
+    final portal = _View()
+      ..evaluate = (_) async {
+        evaluated = true;
+        return jsonEncode({
+          'v': 1,
+          'packets': {
+            'grades': {
+              'v': 1,
+              'kind': 'grades',
+              'tables': [
+                {
+                  'heading': '単位修得状況照会',
+                  'rows': [
+                    ['評価'],
+                    ['良'],
+                  ],
+                },
+              ],
+            },
+          },
+        });
+      };
+    expect(await fetchCoursePlannerHandoffs(portal, () => current), isEmpty);
+    expect(evaluated, isFalse);
+
+    current = true;
+    portal.evaluate = (_) async {
+      evaluated = true;
+      current = false;
+      return jsonEncode({
+        'v': 1,
+        'packets': {
+          'grades': {
+            'v': 1,
+            'kind': 'grades',
+            'tables': [
+              {
+                'heading': '単位修得状況照会',
+                'rows': [
+                  ['評価'],
+                  ['良'],
+                ],
+              },
+            ],
+          },
+        },
+      });
+    };
+    expect(await fetchCoursePlannerHandoffs(portal, () => current), isEmpty);
+    expect(evaluated, isTrue);
+  });
+
   test('MBGPLAN1 encodes the existing packets and the exact profile shape', () {
     for (final (kind, heading, headers, values) in [
       (CoursePlannerImportKind.grades, '単位修得状況照会', ['評価'], ['良']),
