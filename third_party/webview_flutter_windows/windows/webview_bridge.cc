@@ -927,6 +927,7 @@ void WebviewBridge::HandleMethodCall(
       util::NavigationAllowlist allowlist;
       allowlist.hosts = GetLowercaseStrings(*map, "hosts");
       allowlist.host_suffixes = GetLowercaseStrings(*map, "hostSuffixes");
+      allowlist.path_prefixes = GetLowercaseStrings(*map, "pathPrefixes");
       webview_->SetNavigationAllowlist(std::move(allowlist));
       return result->Success();
     }

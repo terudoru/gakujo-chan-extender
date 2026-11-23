@@ -15,6 +15,8 @@ struct NavigationAllowlist {
   std::vector<std::string> hosts;
   // Suffixes including the leading dot, such as ".example.jp".
   std::vector<std::string> host_suffixes;
+  // Optional case-sensitive path prefixes for dedicated hosted screens.
+  std::vector<std::string> path_prefixes;
 };
 
 inline std::string AsciiLower(std::string value) {
@@ -29,7 +31,7 @@ inline bool IsNavigationAllowed(const std::string& url,
                                 const NavigationAllowlist& allowlist) {
   const std::string lower = AsciiLower(url);
   if (lower == "about:blank") {
-    return true;
+    return allowlist.path_prefixes.empty();
   }
   const std::string scheme = "https://";
   if (lower.compare(0, scheme.size(), scheme) != 0) {
@@ -37,6 +39,21 @@ inline bool IsNavigationAllowed(const std::string& url,
   }
   const size_t start = scheme.size();
   const size_t end = lower.find_first_of("/?#\\", start);
+  if (!allowlist.path_prefixes.empty()) {
+    if (end == std::string::npos || url[end] != '/') return false;
+    const auto path_end = url.find_first_of("?#", end);
+    const auto path = url.substr(end, path_end == std::string::npos
+                                         ? std::string::npos : path_end - end);
+    // Fail closed on ambiguous canonicalization before WebView sends a request.
+    if (path.find('%') != std::string::npos || path.find('\\') != std::string::npos ||
+        path.find("/../") != std::string::npos || path.find("/./") != std::string::npos ||
+        path.size() >= 3 && path.compare(path.size() - 3, 3, "/..") == 0) return false;
+    bool matched = false;
+    for (const auto& prefix : allowlist.path_prefixes) {
+      if (path.compare(0, prefix.size(), prefix) == 0) matched = true;
+    }
+    if (!matched) return false;
+  }
   std::string host = lower.substr(
       start, end == std::string::npos ? std::string::npos : end - start);
   if (host.empty() || host.find('@') != std::string::npos || host[0] == '[') {

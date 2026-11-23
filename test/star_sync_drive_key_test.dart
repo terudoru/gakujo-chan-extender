@@ -283,7 +283,10 @@ void main() {
     await b.syncNow();
     await a.syncNow();
     expect((await activityA.loadStarredMessages()).length, 2);
+    final plannerNames = ['mbg-planner-account-key-v1', 'mbg-planner-cloud-deleted-v1', 'mbg-planner-student-binding-v1', "mbg-planner-google-v1.${'a' * 43}.plan.00000000-0000-4000-8000-000000000001"];
+    for (final name in plannerNames) { remote.files[name] = utf8.encode('planner-preserved'); }
     await a.resetRemoteWithDrive();
+    for (final name in plannerNames) { expect(utf8.decode(remote.files[name]!), 'planner-preserved'); }
     await b.syncNow();
     expect(b.status.value.status, StarSyncStatus.ok);
     expect((await activityB.loadStarredMessages()).length, 2);

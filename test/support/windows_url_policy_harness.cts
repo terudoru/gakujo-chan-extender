@@ -18,14 +18,14 @@ function predicate(source: any, name: any, parameter: any, env: any) {
   const body: any = source.slice(start + 1, end - 1)
     .replace(/^\s*\/\/[^\n]*/gm, '')
     .replace(/const NavigationAllowlist gakujo\{\{"([^"]+)"\}, \{\}\};/g,
-      'const gakujo = {hosts: ["$1"], host_suffixes: []};')
+      'const gakujo = {hosts: ["$1"], host_suffixes: [], path_prefixes: []};')
     .replace(/constexpr char (\w+)\[\]/g, 'const $1')
     .replace(/sizeof\((\w+|"[^"]*")\) - 1/g, '$1.length')
     .replace(/static_cast<size_t>\(\(std::numeric_limits<int>::max\)\(\)\)/g, '2147483647')
     .replace(/std::string::npos/g, 'Infinity')
     .replace(/std::string\(\)/g, '""')
     .replace(/std::string (\w+);/g, 'let $1 = "";')
-    .replace(/(?:(?:const|constexpr) )?(?:size_t|int|char|std::string) (\w+)\s*=/g, 'let $1 =')
+    .replace(/(?:(?:const|constexpr) )?(?:size_t|int|char|bool|auto|std::string) (\w+)\s*=/g, 'let $1 =')
     .replace(/for \(const unsigned char (\w+) : (\w+)\)/g,
       'for (const $1 of Buffer.from($2, "utf8"))')
     .replace(/for \(const auto& (\w+) : ([\w.]+)\)/g, 'for (const $1 of $2)')
@@ -34,7 +34,7 @@ function predicate(source: any, name: any, parameter: any, env: any) {
     .replace(/(\w+)\.size\(\)/g, '$1.length')
     .replace(/(\w+)\.(?:c_str|data)\(\)/g, '$1')
     .replace(/static_cast<[^>]+>\(/g, '(')
-    .replace(/(\w+)\.empty\(\)/g, '($1.length === 0)')
+    .replace(/([\w.]+)\.empty\(\)/g, '($1.length === 0)')
     .replace(/(\w+)\.resize\((\w+)\)/g, '$1 = $1.substr(0, $2)')
     .replace(/(\w+)\.push_back\(([^;]+)\);/g, '$1 += String.fromCharCode($2);')
     .replace(/(\w+)\.find_first_of\(/g, 'findFirstOf($1, ')
@@ -94,6 +94,18 @@ env.IsNavigationAllowed = (url: any, allowlist: any) => {
   env.allowlist = allowlist;
   return allowed(url);
 };
+const plannerPolicy: any = {hosts: ['gakujo.terudoru.com'], host_suffixes: [], path_prefixes: ['/syllabus/']};
+for (const suffix of ['/syllabus/', '/syllabus/nested', '/syllabus/?course=a#plan']) {
+  assert.equal(env.IsNavigationAllowed('https://gakujo.terudoru.com' + suffix, plannerPolicy), true, suffix);
+}
+for (const url of ['about:blank', 'https://gakujo.terudoru.com/planner/',
+  'https://gakujo.terudoru.com/syllabus', 'https://evil.invalid/syllabus/',
+  'https://gakujo.terudoru.com/syllabus/../outside',
+  'https://gakujo.terudoru.com/syllabus/%2e%2e/outside',
+  'https://gakujo.terudoru.com/syllabus/..',
+  'https://gakujo.terudoru.com/SYLLABUS/']) {
+  assert.equal(env.IsNavigationAllowed(url, plannerPolicy), false, url);
+}
 const replayable: any = predicate(navigation, 'IsReplayableGakujoDownload', 'url', env);
 for (const query of ['_eventId=download', 'fileId=42&_EVENTID=DOWNLOAD', '_eventId=download&fileId=42#file']) {
   assert.equal(replayable(base + 'file?' + query), true, query);

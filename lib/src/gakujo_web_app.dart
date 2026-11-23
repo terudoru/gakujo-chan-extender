@@ -1,3 +1,5 @@
+import 'planner_bridge/planner_page.dart';
+import 'planner_bridge/planner_broker.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
@@ -2403,6 +2405,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   bool _plannerShareDeleting = false;
   int _plannerShareEpoch = 0;
   final Map<String, DateTime> _plannerShareAttempts = {};
+  final _plannerStudentScopes = <String, String>{};
 
   void _submitLoginAccount(String account) {
     final navigation = _navigationRevision;
@@ -2677,6 +2680,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       child: Text('${destination.label}へ移動'),
                     ),
                   const PopupMenuDivider(),
+                  const PopupMenuItem<Object>(
+                    value: _ToolbarAction.hostedPlanner,
+                    child: Text('履修手帖'),
+                  ),
                   const PopupMenuItem<Object>(
                     value: _ToolbarAction.coursePlanner,
                     child: Text('履修手帖を開く'),
@@ -5698,6 +5705,35 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _handleToolbarAction(_ToolbarAction action) async {
     switch (action) {
+      case _ToolbarAction.hostedPlanner:
+        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => HostedPlannerPage(
+          service: _webViewService,
+          auth: _starSyncGoogleAuth,
+          student: () {
+            final id = _appSettings.savedLoginId;
+            final account = _activeLoginAccount;
+            if (!_loginIdentity.pageConfirmed || account == null) return null;
+            return _plannerStudentScopes[account] ??
+                (starSyncAccountHash(id) == account ? plannerStudentScope(id?.trim()) : null);
+          },
+          signIn: () async {
+            await _driveDownloadQueue.runExclusive(() async {
+              final config = _starSyncEngine.config;
+              final email = await _starSyncGoogleAuth.signIn(loginHint: config?.googleEmail);
+              if (config != null && !sameGoogleAccount(config.googleEmail, email)) {
+                await _starSyncGoogleAuth.signOut();
+                throw const PlannerBridgeException('forbidden');
+              }
+              _starSyncGoogleEmail = email;
+            });
+          },
+          signOut: () async {
+            if (!await _signOutGoogle(warn: false)) throw const PlannerBridgeException('network');
+            _starSyncGoogleEmail = null;
+          },
+          onExternalLink: (uri) => unawaited(_launchExternalUrl(uri)),
+        )));
+        return;
       case _ToolbarAction.coursePlanner:
         await _launchExternalUrl(Uri.parse('https://gakujo.terudoru.com/syllabus/'));
         return;
@@ -5769,6 +5805,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         await _launchExternalUrl(Uri.parse(url));
         return;
       case _ToolbarAction.reload:
+      case _ToolbarAction.hostedPlanner:
       case _ToolbarAction.coursePlanner:
       case _ToolbarAction.copyCoursePlanner:
       case _ToolbarAction.registrationAssist:

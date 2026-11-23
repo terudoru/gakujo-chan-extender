@@ -48,6 +48,9 @@ extension _GakujoWebAppMessageStars on _GakujoWebAppState {
         final loginId = data['loginId'];
         if (loginId is String) {
           final account = starSyncAccountHash(loginId);
+          if (account != null) {
+            _plannerStudentScopes[account] = plannerStudentScope(loginId.trim())!;
+          }
           if (account != null) _submitLoginAccount(account);
         }
         return;

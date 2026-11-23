@@ -663,6 +663,9 @@ class GakujoJavaScriptChannelGuard {
 class WebViewFlutterGakujoWebViewController implements GakujoWebViewController {
   WebViewFlutterGakujoWebViewController(this._inner);
 
+  /// Called by dedicated hosted screens after checking their document URL.
+  Future<void> installTrustedChannels() => _inner.runJavaScript(_channelGuard.installScript());
+
   final WebViewController _inner;
   final GakujoJavaScriptChannelGuard _channelGuard = GakujoJavaScriptChannelGuard();
   final Stopwatch _contentProcessRecoveryClock = Stopwatch()..start();

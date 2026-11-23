@@ -817,6 +817,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   Future<void> setNavigationAllowlist({
     required Iterable<String> hosts,
     required Iterable<String> hostSuffixes,
+    Iterable<String> pathPrefixes = const [],
   }) async {
     if (_isDisposed) {
       return;
@@ -824,6 +825,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _channel.invokeMethod('setNavigationAllowlist', {
       'hosts': hosts.toList(),
       'hostSuffixes': hostSuffixes.toList(),
+      'pathPrefixes': pathPrefixes.toList(),
     });
   }
 

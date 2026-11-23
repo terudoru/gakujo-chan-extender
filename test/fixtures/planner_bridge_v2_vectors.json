@@ -1,0 +1,206 @@
+{
+  "version": 2,
+  "student": {
+    "salt": "mbg.planner.student.v1",
+    "userId": "TEST-STUDENT-001",
+    "scope": "gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8"
+  },
+  "binding": {
+    "name": "mbg-planner-student-binding-v1",
+    "text": "{\"v\":1,\"scope\":\"gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8\"}"
+  },
+  "names": {
+    "accept": [
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.history.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.organizer.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-account-key-v1",
+      "mbg-planner-cloud-deleted-v1",
+      "mbg-planner-student-binding-v1"
+    ],
+    "reject": [
+      "stars/keyring.json",
+      "mbg-planner-anything",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001\n",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-1000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.grades.00000000-0000-4000-8000-000000000001",
+      "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR.plan.00000000-0000-4000-8000-000000000001",
+      "xmbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001"
+    ]
+  },
+  "examples": [
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "hello",
+        "args": {}
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "version": 2,
+          "capabilities": [
+            "drive-appdata",
+            "native-sign-in"
+          ],
+          "sessionGeneration": 1,
+          "session": {
+            "signedIn": true,
+            "email": "fixture@example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "signIn",
+        "args": {}
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "session": {
+            "signedIn": true,
+            "email": "fixture@example.invalid"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "signOut",
+        "args": {}
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "session": {
+            "signedIn": false
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.list",
+        "args": {
+          "namePrefix": "mbg-planner-"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "files": [
+            {
+              "id": "fixture-id",
+              "name": "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
+              "createdTime": "2026-11-23T00:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.read",
+        "args": {
+          "fileId": "fixture-id"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "text": "fixture"
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.create",
+        "args": {
+          "name": "mbg-planner-google-v1.gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8.plan.00000000-0000-4000-8000-000000000001",
+          "text": "fixture"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "id": "fixture-id"
+        }
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "drive.delete",
+        "args": {
+          "fileId": "fixture-id"
+        }
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {}
+      }
+    },
+    {
+      "request": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "op": "student",
+        "args": {}
+      },
+      "response": {
+        "v": 2,
+        "id": "00000000-0000-4000-8000-000000000001",
+        "ok": true,
+        "result": {
+          "scope": "gQOOFkE1jpRlRuhqfRatobgKFo4t4Iyo9D50UxxITR8"
+        }
+      }
+    }
+  ],
+  "sessionEvent": {
+    "v": 2,
+    "event": "session",
+    "session": {
+      "signedIn": true,
+      "email": "fixture@example.invalid"
+    }
+  },
+  "errors": [
+    "forbidden",
+    "not-signed-in",
+    "auth-cancelled",
+    "network",
+    "quota",
+    "timeout",
+    "stale-session",
+    "internal"
+  ]
+}
