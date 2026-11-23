@@ -23,6 +23,9 @@ const order: Kind[] = ["profile", "grades", "balances", "registration"];
 // Already requested in production by calendar_registration_page_fetch.
 const registrationFallback =
   "/campusweb/campussquare.do?_flowId=RSW0001000-flow";
+// The 単位修得状況照会 portlet flow.
+const gradesFallback =
+  "/campusweb/campussquare.do?_flowId=SIW0001300-flow";
 const maxPageLength = 4 * 1024 * 1024;
 const maxSemesters = 4;
 
@@ -161,7 +164,7 @@ function fetchInquiries() {
   )
     return null;
   const pages: Page[] = [];
-  const grades = discover(docs, names.grades);
+  const grades = discover(docs, names.grades) || gradesFallback;
   if (grades) {
     const page = get(grades);
     if (page) pages.push({ source: "grades", ...page });

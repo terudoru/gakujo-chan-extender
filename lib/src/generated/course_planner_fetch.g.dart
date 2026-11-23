@@ -400,6 +400,7 @@ const String coursePlannerFetchJs = r'''
   // web_scripts/src/course_planner/fetch.ts
   var order = ["profile", "grades", "balances", "registration"];
   var registrationFallback = "/campusweb/campussquare.do?_flowId=RSW0001000-flow";
+  var gradesFallback = "/campusweb/campussquare.do?_flowId=SIW0001300-flow";
   var maxPageLength = 4 * 1024 * 1024;
   var maxSemesters = 4;
   function servlet(url) {
@@ -511,7 +512,7 @@ const String coursePlannerFetchJs = r'''
     ))
       return null;
     const pages = [];
-    const grades = discover(docs, names.grades);
+    const grades = discover(docs, names.grades) || gradesFallback;
     if (grades) {
       const page = get(grades);
       if (page) pages.push(__spreadValues({ source: "grades" }, page));

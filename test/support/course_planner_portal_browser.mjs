@@ -344,6 +344,29 @@ try {
     { method: "GET", url: regFlowUrl },
   ]);
 
+  // The rs portal tab has no grades link: both inquiries must still be fetched.
+  const rsUrl = portal + "campusportal.do?page=main&tabId=rs";
+  delayed.set(rsUrl, '<nav><span onclick="loadPortletMenu(\'main\',\'campussquare.do?_flowId=RSW0001000-flow\')">履修登録・登録状況照会</span></nav>');
+  await page.goto(rsUrl);
+  requests.length = 0;
+  assert.deepEqual(await runFetch(), fetchedParity);
+  assert.deepEqual(requests, [
+    { method: "GET", url: gradesFlowUrl },
+    { method: "GET", url: regFlowUrl },
+  ]);
+
+  // A discovered grades link takes precedence over the fallback, including its query.
+  const discoveredGradesUrl = gradesFlowUrl + "&locale=ja";
+  delayed.set(discoveredGradesUrl, parityGradesHtml);
+  await page.setContent('<a href="' + discoveredGradesUrl + '">単位修得状況照会</a>');
+  requests.length = 0;
+  assert.deepEqual(await runFetch(), fetchedParity);
+  assert.deepEqual(requests, [
+    { method: "GET", url: discoveredGradesUrl },
+    { method: "GET", url: regFlowUrl },
+  ]);
+  await page.goto(url);
+
   // Static mode MUST NOT promote an unstyled timetable link to 許可 (even inside a blue <td>).
   const unstyledRegHtml =
     "<h1>履修登録・登録状況照会</h1>" +
@@ -389,8 +412,8 @@ try {
   assert.equal(fetchedMultiSem.packets.registration.year, "2026");
 
   // Link discovery: onclick & javascript: href work; cross-origin, _eventId, _flowExecutionKey,
-  // non-campussquare, and conflicting duplicate flows are rejected; missing grades link skips grades
-  // without guessing while registration falls back to RSW0001000-flow.
+  // non-campussquare, and conflicting duplicate flows are rejected; missing safe links use
+  // the grades and registration portlet fallbacks.
   delayed.set(
     url,
     '<nav>' +
@@ -405,10 +428,13 @@ try {
   requests.length = 0;
   const fetchedNoGrades = await runFetch();
   assert.deepEqual(requests, [
+    { method: "GET", url: gradesFlowUrl },
     { method: "GET", url: regFlowUrl },
     { method: "GET", url: regSem2Url },
   ]);
-  assert.deepEqual(Object.keys(fetchedNoGrades.packets), ["registration"]);
+  assert.deepEqual(Object.keys(fetchedNoGrades.packets), ["profile", "grades", "balances", "registration"]);
+  assert.deepEqual(fetchedNoGrades.packets.grades, liveParityGrades);
+  assert.deepEqual(fetchedNoGrades.packets.balances, liveParityBalances);
 
   // onclick discovery works for grades.
   delayed.set(
@@ -441,8 +467,9 @@ try {
   await page.goto(url);
   requests.length = 0;
   const fetchedAmbiguous = await runFetch();
-  assert.ok(!fetchedAmbiguous.packets.grades);
-  assert.ok(!requests.some((r) => r.url.includes("SIW")));
+  assert.deepEqual(fetchedAmbiguous.packets.grades, liveParityGrades);
+  assert.equal(requests[0].url, gradesFlowUrl);
+  assert.ok(!requests.some((r) => r.url.includes("SIW9999999")));
 
   // Session expired: password or ninshoCode in ANY fetched page returns null (nothing, no partial grades).
   delayed.set(
