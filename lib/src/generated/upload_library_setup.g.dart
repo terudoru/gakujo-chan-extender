@@ -29,6 +29,12 @@ const String _gakujoUploadLibrarySetupJsPrefix = r'''(function(__mbgConfig) {
         window.__MBG_PDF_CMAPS = sources[4];
         window.__MBG_PDF_STANDARD_FONTS = sources[5];
       }
+    } else if (kind === "preview-edit" && sources.length === 5) {
+      if (!window.__MBG_PDF_WORKER_URL) {
+        window.__MBG_PDF_WORKER_URL = URL.createObjectURL(new Blob([sources[0]], { type: "text/javascript" }));
+      }
+      window.__MBG_PDF_CMAPS = sources[2];
+      window.__MBG_PDF_STANDARD_FONTS = sources[3];
     }
   }
   uploadLibrarySetup();

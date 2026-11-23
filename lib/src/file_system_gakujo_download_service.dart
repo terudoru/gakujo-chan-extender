@@ -93,7 +93,7 @@ class AuthenticatedDownloadedFile {
   Future<void> dispose() async => _cleanup?.call();
 }
 
-@visibleForTesting
+/// Writes a complete replacement to the destination directory before renaming it.
 Future<void> writeDownloadFileAtomically(
   String path,
   Stream<List<int>> bytes,
@@ -369,6 +369,32 @@ class FileSystemGakujoDownloadService extends GakujoDownloadService {
             name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
       }
     }
+  }
+
+
+  Future<void> exportEditedPdf(Uint8List bytes, String suggestedName) async {
+    const mime = 'application/pdf';
+    final fileName = DownloadFileNamePolicy.safeFileName(
+      preferredName: suggestedName,
+      url: '',
+      mimeType: mime,
+    );
+    if (Platform.isIOS) {
+      await _exportToNativePicker(
+        bytes: bytes,
+        fileName: fileName,
+        mimeType: mime,
+      );
+      return;
+    }
+    await _saveToPickedFlutterFile(
+      downloaded: AuthenticatedDownloadedFile(
+        bytes: bytes,
+        finalUrl: '',
+        mimeType: mime,
+      ),
+      fileName: fileName,
+    );
   }
 
   Future<GakujoDownloadResult> _exportToNativePicker({

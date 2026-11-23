@@ -13,6 +13,15 @@ if (window.opener && window.parent === window) {
   window.addEventListener('message', function(event) {
     if (fromOpener(event.source) && event.data instanceof ArrayBuffer) {
       window.postMessage(event.data, '*', [event.data]);
+    } else if (fromOpener(event.source) && event.data?.type === 'mbg-preview-pdf' &&
+               event.data.data instanceof ArrayBuffer && event.data.data.byteLength > 0 &&
+               event.data.data.byteLength <= 512 * 1024 * 1024 &&
+               (event.data.initialPage === undefined ||
+                (Number.isInteger(event.data.initialPage) && event.data.initialPage >= 1 &&
+                 event.data.initialPage <= 2000))) {
+      window.postMessage({
+        type: 'mbg-preview-pdf', data: event.data.data, initialPage: event.data.initialPage
+      }, '*', [event.data.data]);
     } else if (fromOpener(event.source) && event.data &&
                typeof event.data === 'object' && event.data.type === 'mbg-preview-title' &&
                typeof event.data.name === 'string') {
@@ -27,6 +36,9 @@ if (window.opener && window.parent === window) {
                (event.data.note === undefined || typeof event.data.note === 'string') &&
                (event.data.note === undefined || event.data.note.length <= 4000000)) {
       window.postMessage({type: 'mbg-preview-text', text: event.data.text, note: event.data.note}, '*');
+    } else if (event.source === window && event.data?.type === 'mbg-preview-page' &&
+               Number.isInteger(event.data.page) && event.data.page >= 1 && event.data.page <= 2000) {
+      window.opener?.postMessage({type: 'mbg-preview-page', page: event.data.page}, '*');
     } else if (event.source === window && typeof event.data === 'string' &&
                event.data.indexOf('mbg-preview-') === 0) {
       window.opener.postMessage(event.data, '*');

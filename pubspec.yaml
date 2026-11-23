@@ -25,6 +25,8 @@ dependencies:
     path: third_party/webview_flutter_linux
   package_info_plus: ^10.1.0
   image_picker: ^1.2.4
+  image: ^4.12.0
+  pdf: ^3.13.1
   cryptography: ^2.9.0
   xml: ^7.1.0
   google_sign_in: ^7.2.0

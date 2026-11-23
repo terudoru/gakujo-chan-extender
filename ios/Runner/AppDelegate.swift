@@ -25,6 +25,7 @@ import ObjectiveC.runtime
     IosPdfPreviewOverlay.install()
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     downloadsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
+    IosIncomingAttachments.shared.register(messenger: engineBridge.applicationRegistrar.messenger())
     notificationsBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     calendarBridge.register(messenger: engineBridge.applicationRegistrar.messenger())
     driveFolderPicker.register(messenger: engineBridge.applicationRegistrar.messenger())
