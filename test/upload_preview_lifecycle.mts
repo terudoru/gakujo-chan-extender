@@ -10,7 +10,13 @@ class Element {
   constructor(tag: any, doc: any) { this.tagName=tag; this.ownerDocument=doc; this.children=[]; this.style={}; this.listeners={}; this.attributes={}; this.isConnected=true; this.scrollLeft=this.scrollTop=0; this.clientWidth=this.scrollWidth=800; this.clientHeight=600; if(tag==='iframe') this.contentWindow={messages:[],postMessage(...args: any[]){this.messages.push(args);}}; }
   append(...children: any[]) { children.forEach((child: any) => this.appendChild(child)); }
   appendChild(child: any) { this.children.push(child); child.parentNode=this; return child; }
-  insertBefore(child: any) { return this.appendChild(child); }
+  insertBefore(child: any, reference?: any) {
+    const index = this.children.indexOf(reference);
+    if (index < 0) return this.appendChild(child);
+    this.children.splice(index, 0, child);
+    child.parentNode = this;
+    return child;
+  }
   after(child: any) { this.parentNode.appendChild(child); }
   attachShadow() { return new Element('shadow', this.ownerDocument); }
   remove() { this.isConnected=false; if(this.parentNode) this.parentNode.children=this.parentNode.children.filter((x: any) =>x!==this); }
@@ -77,7 +83,11 @@ window.pdfjsLib={AnnotationMode:{ENABLE:1},PDFWorker:{fromPort:()=>({})},
 const context: any={window,document:doc,FileReader,Worker,DOMParser,URL:{createObjectURL(){return 'blob:test';},revokeObjectURL(){}},atob,TextDecoder,
  Promise,ArrayBuffer,Uint8Array,DataView,Math,Number,Error};
 vm.runInNewContext(source,context);
-const controls: any=parent.children.filter((node: any) =>node.tagName==='button');assert.equal(controls.length,2);
+const controls: any=parent.children.filter((node: any) =>node.attributes['data-mbg-upload-preview']==='true');
+assert.equal(controls.length,2);
+const editControls=parent.children.filter((node: any) =>Object.hasOwn(node.attributes,'data-mbg-worksheet'));
+assert.equal(editControls.length,2);
+assert(editControls.every((node: any) => !node.hidden),'selected PDF can be edited from either input');
 controls[0].fire('click');await ticks();assert.equal(readers,1);
 controls[1].fire('click');await ticks();assert.equal(aborted,1);assert.equal(readers,1);
 assert.equal(doc.body.children.filter((x: any) =>x.attributes.role==='dialog').length,1);

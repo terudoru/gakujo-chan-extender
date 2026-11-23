@@ -597,6 +597,7 @@ private class NotificationActivationPlugin : FlutterPlugin {
 
 class MainActivity : FlutterActivity() {
     private lateinit var driveFolderPicker: DriveFolderPicker
+    private val incomingAttachments = IncomingAttachmentReceiver()
     private var pendingPickRootResult: MethodChannel.Result? = null
     private var pendingPickFileResult: MethodChannel.Result? = null
     private var pendingPickFileArgs: Map<*, *>? = null
@@ -620,6 +621,8 @@ class MainActivity : FlutterActivity() {
             ?: java.util.UUID.randomUUID().toString()
         restoredConsumedUrl = savedInstanceState?.getString(KEY_CONSUMED_NOTIFICATION_URL)
         super.onCreate(savedInstanceState)
+        incomingAttachments.prune(this)
+        if (savedInstanceState == null) incomingAttachments.receive(this, intent)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -630,9 +633,13 @@ class MainActivity : FlutterActivity() {
         restoredConsumedUrl?.let { outState.putString(KEY_CONSUMED_NOTIFICATION_URL, it) }
     }
 
+    override fun shouldHandleDeeplinking(): Boolean =
+        intent?.action != Intent.ACTION_SEND && super.shouldHandleDeeplinking()
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        incomingAttachments.receive(this, intent)
         intentId = java.util.UUID.randomUUID().toString()
         restoredConsumedUrl = null
         val bridge = notifications ?: return
@@ -640,6 +647,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        incomingAttachments.detach()
         driveFolderPicker.detach()
         detachNotificationActivity(flutterEngine.plugins.get(NotificationActivationPlugin::class.java))
         super.cleanUpFlutterEngine(flutterEngine)
@@ -663,6 +671,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         driveFolderPicker.attach(flutterEngine.dartExecutor.binaryMessenger)
+        incomingAttachments.register(this, flutterEngine.dartExecutor.binaryMessenger)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

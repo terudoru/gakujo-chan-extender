@@ -80,7 +80,7 @@ void main() {
     final errors = <String>[];
     final result = await pickAndroidUploadFiles(
       const _SelectorParams(isCaptureEnabled: true),
-      chooseSource: () async => throw StateError('capture skips source menu'),
+      chooseSource: (_, _) async => throw StateError('capture skips source menu'),
       imagePicker: _FakeImagePicker(
         cameraError: PlatformException(
           code: 'no_available_camera',
@@ -97,7 +97,7 @@ void main() {
     final errors = <String>[];
     final result = await pickAndroidUploadFiles(
       const _SelectorParams(isCaptureEnabled: true),
-      chooseSource: () async => AndroidUploadSource.camera,
+      chooseSource: (_, _) async => AndroidUploadSource.camera,
       imagePicker: _FakeImagePicker(
         cameraError: PlatformException(code: 'no_available_camera'),
       ),
@@ -112,7 +112,7 @@ void main() {
     final errors = <String>[];
     final result = await pickAndroidUploadFiles(
       const _SelectorParams(isCaptureEnabled: true),
-      chooseSource: () async => AndroidUploadSource.camera,
+      chooseSource: (_, _) async => AndroidUploadSource.camera,
       imagePicker: _FakeImagePicker(
         photo: XFile('${temporary.path}/missing-provider-file.jpg'),
       ),
@@ -128,7 +128,7 @@ void main() {
     for (final source in [null, AndroidUploadSource.camera]) {
       final result = await pickAndroidUploadFiles(
         const _SelectorParams(),
-        chooseSource: () async => source,
+        chooseSource: (_, _) async => source,
         imagePicker: _FakeImagePicker(),
         onError: errors.add,
       );
@@ -141,7 +141,7 @@ void main() {
     final errors = <String>[];
     final result = await pickAndroidUploadFiles(
       const _SelectorParams(),
-      chooseSource: () async => AndroidUploadSource.recoveredPhoto,
+      chooseSource: (_, _) async => AndroidUploadSource.recoveredPhoto,
       takeRecoveredPhoto: () => '${temporary.path}/missing-recovered.jpg',
       onError: errors.add,
     );
@@ -178,6 +178,53 @@ void main() {
     expect(path, cached.path);
     expect(errors, isEmpty);
   });
+
+  test('PDF-only input offers the camera PDF and returns its file', () async {
+    final pdf = await cachedFile('撮影した答案.pdf');
+    final result = await pickAndroidUploadFiles(
+      const _SelectorParams(acceptTypes: ['.PDF']),
+      chooseSource: (acceptsPhotos, acceptsPdf) async {
+        expect(acceptsPhotos, isFalse);
+        expect(acceptsPdf, isTrue);
+        return AndroidUploadSource.scanPdf;
+      },
+      scanPdf: () async => XFile(pdf.path),
+    );
+
+    expect(result, [pdf.uri.toString()]);
+  });
+
+  test('an image-only input cannot receive a camera PDF', () async {
+    var scanned = false;
+    final result = await pickAndroidUploadFiles(
+      const _SelectorParams(),
+      chooseSource: (acceptsPhotos, acceptsPdf) async {
+        expect(acceptsPhotos, isTrue);
+        expect(acceptsPdf, isFalse);
+        return AndroidUploadSource.scanPdf;
+      },
+      scanPdf: () async {
+        scanned = true;
+        return null;
+      },
+    );
+
+    expect(result, isEmpty);
+    expect(scanned, isFalse);
+  });
+
+  test('cancelling PDF creation cancels selection without an error', () async {
+    final messages = <String>[];
+    final result = await pickAndroidUploadFiles(
+      const _SelectorParams(acceptTypes: ['application/pdf']),
+      chooseSource: (_, _) async => AndroidUploadSource.scanPdf,
+      scanPdf: () async => null,
+      onError: messages.add,
+    );
+
+    expect(result, isEmpty);
+    expect(messages, isEmpty);
+  });
 }
 
 // cross_file currently ignores the constructor's name on dart:io. Model a
@@ -190,10 +237,13 @@ class _NamedXFile extends XFile {
 }
 
 class _SelectorParams {
-  const _SelectorParams({this.isCaptureEnabled = false});
+  const _SelectorParams({
+    this.isCaptureEnabled = false,
+    this.acceptTypes = const ['image/*'],
+  });
 
   final bool isCaptureEnabled;
-  List<Object?> get acceptTypes => ['image/*'];
+  final List<Object?> acceptTypes;
 }
 
 class _FakeImagePicker extends ImagePicker {

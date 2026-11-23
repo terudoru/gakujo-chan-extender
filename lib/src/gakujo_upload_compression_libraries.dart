@@ -71,6 +71,13 @@ class GakujoUploadCompressionLibraries {
       'pdf-standard-fonts.json',
     ],
     'preview-office': ['jszip.min.js'],
+    'preview-edit': [
+      'pdf.worker.min.js',
+      'pdf.min.js',
+      'pdf-cmaps.json',
+      'pdf-standard-fonts.json',
+      'pdf-lib.min.js',
+    ],
     'office': ['jszip.min.js'],
   };
 
@@ -115,7 +122,8 @@ class GakujoUploadCompressionLibraries {
   static String buildInjectionScript(String kind, List<String> sources) {
     final buffer = StringBuffer();
     if ((kind == 'pdf' && sources.length == 3) ||
-        (kind == 'preview' && sources.isNotEmpty)) {
+        (kind == 'preview' && sources.isNotEmpty) ||
+        (kind == 'preview-edit' && sources.length == 5)) {
       final setupSources = <Object?>[...sources];
       if (kind == 'preview') {
         if (setupSources.length > 1) setupSources[1] = '';
@@ -125,16 +133,23 @@ class GakujoUploadCompressionLibraries {
         setupSources[4] = jsonDecode(sources[4]);
         setupSources[5] = jsonDecode(sources[5]);
       }
+      if (kind == 'preview-edit') {
+        setupSources[1] = '';
+        setupSources[2] = jsonDecode(sources[2]);
+        setupSources[3] = jsonDecode(sources[3]);
+        setupSources[4] = '';
+      }
       buffer.write(
         gakujoUploadLibrarySetupJs({'kind': kind, 'sources': setupSources}),
       );
     }
-    for (final source
-        in kind == 'pdf'
-            ? <String>[]
-            : kind == 'preview'
-            ? sources.skip(1).take(2)
-            : sources) {
+    final librarySources = switch (kind) {
+      'pdf' => <String>[],
+      'preview' => sources.skip(1).take(2),
+      'preview-edit' when sources.length == 5 => [sources[1], sources[4]],
+      _ => sources,
+    };
+    for (final source in librarySources) {
       buffer
         ..writeln('(function(define, module, exports) {')
         ..writeln(source)
@@ -145,7 +160,7 @@ class GakujoUploadCompressionLibraries {
       'preview-office' => '__MBG_UPLOAD_PREVIEW_OFFICE_LIBRARY_LOADED',
       _ => '__MBG_UPLOAD_COMPRESSION_LIBRARY_LOADED',
     };
-    if (kind != 'preview-office') {
+    if (kind != 'preview-office' && kind != 'preview-edit') {
       buffer.writeln(
         gakujoUploadLibraryCallbackJs({'callback': callback, 'kind': kind}),
       );
