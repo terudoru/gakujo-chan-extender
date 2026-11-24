@@ -110,10 +110,17 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
           return;
       }
       _parentId = null;
-      if (_selectedId != null && widget.parentId != null) {
-        final parent = await widget.parentId!(_selectedId!);
-        if (!mounted) return;
-        _parentId = parent;
+      final selectedId = _selectedId;
+      if (selectedId != null && widget.parentId != null) {
+        try {
+          final parent = await widget.parentId!(selectedId);
+          if (!mounted || _selectedId != selectedId) return;
+          _parentId = parent;
+        } catch (_) {
+          // This optional lookup must not turn a successful action into an error.
+          if (!mounted || _selectedId != selectedId) return;
+          _parentId = null;
+        }
       }
     } catch (error) {
       if (!mounted) return;

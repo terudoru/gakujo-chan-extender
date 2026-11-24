@@ -56,6 +56,62 @@ Future<void> openDialog(
 }
 
 void main() {
+  for (final action in ['load', 'pick', 'create', 'selection']) {
+    testWidgets('parent lookup failure preserves successful $action without errors', (tester) async {
+      final saved = <String?>[];
+      await openDialog(
+        tester,
+        currentId: action == 'load' ? school.id : null,
+        parentId: (_) async => throw StateError('parent unavailable'),
+        pickParent: (_) async => imported,
+        pick: () async => school,
+        create: (_) async => school,
+        save: (id, commit) => commit(() async => saved.add(id)),
+      );
+      switch (action) {
+        case 'pick':
+          await tester.tap(find.text(pickLabel));
+        case 'create':
+          await tester.enterText(find.byType(TextField), 'Math');
+          await tester.tap(find.text('作成'));
+        case 'selection':
+          await tester.tap(find.text(school.path));
+      }
+      await tester.pumpAndSettle();
+      final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+      expect(find.descendant(of: find.byWidget(dialog.title!),
+        matching: find.byType(Text)), findsNWidgets(2));
+      expect(find.text('一覧を再読み込み'), findsNothing);
+      expect(find.text('1つ上のフォルダを選ぶ'), findsNothing);
+      expect(find.text(school.path), findsOneWidget);
+      expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, school.id);
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(saved, [school.id]);
+    });
+  }
+
+  testWidgets('failed lookup for a new selection clears the previous parent', (tester) async {
+    await openDialog(tester,
+      currentId: school.id,
+      load: () async => [school, imported],
+      parentId: (id) async {
+        if (id == school.id) return 'parent';
+        throw StateError('parent unavailable');
+      },
+      pickParent: (_) async => null,
+      save: (_, _) async {},
+    );
+    expect(find.text('1つ上のフォルダを選ぶ'), findsOneWidget);
+    await tester.tap(find.text(imported.path));
+    await tester.pumpAndSettle();
+    expect(find.text('1つ上のフォルダを選ぶ'), findsNothing);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, imported.id);
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    expect(find.descendant(of: find.byWidget(dialog.title!),
+      matching: find.byType(Text)), findsNWidgets(2));
+  });
+
   const parentLabel = '1\u3064\u4e0a\u306e\u30d5\u30a9\u30eb\u30c0\u3092\u9078\u3076';
   testWidgets('parent button hides for default and root, selects parent and climbs', (tester) async {
     final picked = <String>[];
