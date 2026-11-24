@@ -17,6 +17,8 @@ class DriveSaveFolderDialog extends StatefulWidget {
     super.key,
     required this.load,
     required this.pick,
+    this.parentId,
+    this.pickParent,
     required this.create,
     required this.save,
     required this.currentId,
@@ -24,6 +26,8 @@ class DriveSaveFolderDialog extends StatefulWidget {
 
   final Future<List<GoogleDriveFolder>> Function() load;
   final Future<GoogleDriveFolder?> Function() pick;
+  final Future<String?> Function(String)? parentId;
+  final Future<GoogleDriveFolder?> Function(String)? pickParent;
   final Future<GoogleDriveFolder> Function(String) create;
   final Future<void> Function(String?, DriveFolderCommit) save;
   final String? currentId;
@@ -32,7 +36,9 @@ class DriveSaveFolderDialog extends StatefulWidget {
   State<DriveSaveFolderDialog> createState() => _DriveSaveFolderDialogState();
 }
 
-enum _Action { load, pick, create, save }
+enum _Action { load, pick, parent, parentLookup, create, save }
+
+class _NoParent implements Exception {}
 
 class _FolderCommitGuard extends PopEntry<void> {
   @override
@@ -43,6 +49,7 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
   final _name = TextEditingController();
   List<GoogleDriveFolder> _folders = [];
   String? _selectedId;
+  String? _parentId;
   _Action? _action;
   bool _committing = false;
   String? _loadError;
@@ -73,13 +80,25 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
           };
           _folders = byId.values.toList()
             ..sort((a, b) => a.path.compareTo(b.path));
+        case _Action.parentLookup:
+          break;
         case _Action.pick:
+        case _Action.parent:
         case _Action.create:
-          final folder = action == _Action.pick
-              ? await widget.pick()
-              : await widget.create(_name.text);
+          GoogleDriveFolder? folder;
+          if (action == _Action.parent) {
+            final parent = await widget.parentId!(_selectedId!);
+            if (!mounted) return;
+            if (parent == null) throw _NoParent();
+            folder = await widget.pickParent!(parent);
+          } else {
+            folder = action == _Action.pick
+                ? await widget.pick()
+                : await widget.create(_name.text);
+          }
           if (!mounted || folder == null) return;
-          _folders = [..._folders.where((f) => f.id != folder.id), folder]
+          final chosen = folder;
+          _folders = [..._folders.where((f) => f.id != chosen.id), chosen]
             ..sort((a, b) => a.path.compareTo(b.path));
           _selectedId = folder.id;
           if (action == _Action.create) _name.clear();
@@ -88,6 +107,13 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
           if (mounted && ModalRoute.of(context)?.isCurrent == true) {
             Navigator.pop(context);
           }
+          return;
+      }
+      _parentId = null;
+      if (_selectedId != null && widget.parentId != null) {
+        final parent = await widget.parentId!(_selectedId!);
+        if (!mounted) return;
+        _parentId = parent;
       }
     } catch (error) {
       if (!mounted) return;
@@ -120,6 +146,7 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
   }
 
   String _message(Object error, _Action action) => switch (error) {
+    _NoParent() => '1つ上のフォルダがないか、マイドライブのルートです',
     GoogleDriveSaveFolderShared() => 'ご自身が所有し、誰とも共有していないフォルダを選んでください',
     GoogleDriveSaveFolderMissing() =>
       'この Google アカウントでフォルダを確認できません。保存先を選び直してください',
@@ -136,6 +163,7 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
     StarSyncQuotaExceeded() => starSyncErrorMessage(error),
     _ => switch (action) {
       _Action.load => 'フォルダの一覧を読み込めませんでした',
+      _Action.parent || _Action.parentLookup => '1つ上のフォルダを確認・選択できませんでした。もう一度お試しください',
       _Action.pick => 'Google ドライブでフォルダを選べませんでした。もう一度お試しください',
       _Action.create => 'フォルダを作成できませんでした',
       _Action.save => '保存先を変更できませんでした',
@@ -180,7 +208,9 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
               setState(() {
                 _selectedId = value == null || value.isEmpty ? null : value;
                 _error = null;
+                _parentId = null;
               });
+              unawaited(_run(_Action.parentLookup));
             },
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -197,6 +227,15 @@ class _DriveSaveFolderDialogState extends State<DriveSaveFolderDialog> {
                     child: const Text('Google ドライブから選ぶ'),
                   ),
                 ),
+                const Text(
+                  '子フォルダのあるフォルダを選べないときは、その中のフォルダを選んでから「1つ上のフォルダを選ぶ」を押してください。',
+                ),
+                if (_selectedId != null && _parentId != null &&
+                    widget.pickParent != null)
+                  OutlinedButton(
+                    onPressed: idle ? () => _run(_Action.parent) : null,
+                    child: const Text('1つ上のフォルダを選ぶ'),
+                  ),
                 if (!idle) const LinearProgressIndicator(),
                 RadioListTile<String>(
                   title: const Text('既定（More Better Gakujo）'),

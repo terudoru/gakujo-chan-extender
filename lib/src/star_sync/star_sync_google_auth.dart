@@ -87,7 +87,7 @@ abstract interface class StarSyncGoogleAuth {
 
   /// Grants drive.file access to one user-selected folder without changing the
   /// signed-in session. Returns its ID, or null if the user cancelled.
-  Future<String?> pickDriveFolder();
+  Future<String?> pickDriveFolder({List<String>? fileIds});
 
   /// Cancels only an outstanding folder picker. Safe to call when none is open.
   void cancelPendingDriveFolderPick();

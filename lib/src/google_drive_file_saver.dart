@@ -191,6 +191,30 @@ class GoogleDriveFileSaver {
     return files;
   }
 
+  /// Returns an accessible folder's parent, excluding the My Drive root.
+  Future<String?> getParentFolderId(String id) async {
+    final file = _json(await _request('GET',
+      _uri('/drive/v3/files/${Uri.encodeComponent(id)}', {'fields': 'parents'}),
+    ));
+    final parents = file['parents'];
+    if (parents == null || (parents is List && parents.isEmpty)) return null;
+    if (parents is! List || parents.first is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(parents.first as String)) {
+      throw const FormatException('Invalid Drive parent');
+    }
+    final parent = parents.first as String;
+    if (parent == 'root') return null;
+    try {
+      final root = _json(await _request('GET',
+        _uri('/drive/v3/files/root', {'fields': 'id'}),
+      ));
+      if (root['id'] == parent) return null;
+    } catch (_) {
+      // drive.file may not grant access to root; let the picker try the parent.
+    }
+    return parent;
+  }
+
   Future<GoogleDriveFolder> getPrivateFolder(String id) async {
     if (id.isEmpty || id == '.' || id == '..') {
       throw const GoogleDriveSaveFolderMissing();

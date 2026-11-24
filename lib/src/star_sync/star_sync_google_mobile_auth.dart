@@ -275,7 +275,12 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
   }, detectMissingAccount: true);
 
   @override
-  Future<String?> pickDriveFolder() => _guard(() async {
+  Future<String?> pickDriveFolder({List<String>? fileIds}) => _guard(() async {
+    if (fileIds != null && (fileIds!.isEmpty || fileIds!.any(
+      (id) => !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(id)))) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+    }
+    fileIds = fileIds == null ? null : List<String>.of(fileIds!);
     final email = currentEmail;
     if (email == null || email.trim().isEmpty) {
       throw const StarSyncGoogleAuthException(
@@ -292,13 +297,15 @@ class StarSyncGoogleMobileAuth implements StarSyncGoogleAuth {
       final id = await Future.any([
         _folderPicker.invokeMethod<String>('pickFolder', {
           'email': email,
+          'fileIds': ?fileIds,
           if (!_isAndroid) 'iosClientId': config.iosClientId,
         }),
         pick.cancel.future,
       ]);
       if (pick.cancel.isCompleted) return null;
       if (id != null &&
-          (id.isEmpty || id.contains(RegExp(r'[^A-Za-z0-9_-]')))) {
+          (id.isEmpty || id.contains(RegExp(r'[^A-Za-z0-9_-]')) ||
+              (fileIds != null && !fileIds!.contains(id)))) {
         throw const StarSyncGoogleAuthException(
           StarSyncGoogleAuthErrorKind.failed,
         );

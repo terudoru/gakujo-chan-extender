@@ -23,6 +23,8 @@ Future<void> openDialog(
   String? currentId,
   Future<List<GoogleDriveFolder>> Function()? load,
   Future<GoogleDriveFolder?> Function()? pick,
+  Future<String?> Function(String)? parentId,
+  Future<GoogleDriveFolder?> Function(String)? pickParent,
   Future<GoogleDriveFolder> Function(String)? create,
   required Future<void> Function(String?, DriveFolderCommit) save,
 }) async {
@@ -37,6 +39,8 @@ Future<void> openDialog(
                 currentId: currentId,
                 load: load ?? () async => [school],
                 pick: pick ?? () async => null,
+                parentId: parentId,
+                pickParent: pickParent,
                 create: create ?? (_) async => school,
                 save: save,
               ),
@@ -52,6 +56,51 @@ Future<void> openDialog(
 }
 
 void main() {
+  const parentLabel = '1\u3064\u4e0a\u306e\u30d5\u30a9\u30eb\u30c0\u3092\u9078\u3076';
+  testWidgets('parent button hides for default and root, selects parent and climbs', (tester) async {
+    final picked = <String>[];
+    await openDialog(tester,
+      parentId: (id) async => switch (id) {
+        'child' => 'parent', 'parent' => 'grandparent', _ => null,
+      },
+      pickParent: (id) async {
+        picked.add(id);
+        return GoogleDriveFolder(id: id, name: id, path: id);
+      },
+      save: (_, _) async {},
+    );
+    expect(find.text(parentLabel), findsNothing);
+    await tester.tap(find.text(school.path));
+    await tester.pumpAndSettle();
+    expect(find.text(parentLabel), findsOneWidget);
+    await tester.tap(find.text(parentLabel));
+    await tester.pumpAndSettle();
+    expect(picked, ['parent']);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, 'parent');
+    await tester.tap(find.text(parentLabel));
+    await tester.pumpAndSettle();
+    expect(picked, ['parent', 'grandparent']);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, 'grandparent');
+    expect(find.text(parentLabel), findsNothing);
+  });
+
+  testWidgets('parent cancellation preserves selection and busy disables duplicate picks', (tester) async {
+    final pending = Completer<GoogleDriveFolder?>();
+    var calls = 0;
+    await openDialog(tester, currentId: school.id,
+      parentId: (_) async => 'parent',
+      pickParent: (_) { calls++; return pending.future; },
+      save: (_, _) async {},
+    );
+    await tester.tap(find.text(parentLabel));
+    await tester.pump();
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, parentLabel)).onPressed, isNull);
+    expect(calls, 1);
+    pending.complete(null);
+    await tester.pumpAndSettle();
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, school.id);
+  });
+
   testWidgets('lists folders and confirms the selected ID', (tester) async {
     final saved = <String?>[];
     await openDialog(

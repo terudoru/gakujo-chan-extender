@@ -291,7 +291,12 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
   }
 
   @override
-  Future<String?> pickDriveFolder() async {
+  Future<String?> pickDriveFolder({List<String>? fileIds}) async {
+    if (fileIds != null && (fileIds.isEmpty || fileIds.any(
+      (id) => !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(id)))) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+    }
+    fileIds = fileIds == null ? null : List<String>.of(fileIds);
     final session = StarSyncGoogleAuthSession(this, email: currentEmail);
     try {
       final id = await _authorizeInBrowser(
@@ -302,6 +307,8 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
           'access_type': 'online',
           'include_granted_scopes': 'false',
           'trigger_onepick': 'true',
+          'allow_multiple': 'false',
+          if (fileIds != null) 'file_ids': fileIds.join(','),
           'allow_folder_selection': 'true',
           'mimetypes': 'application/vnd.google-apps.folder',
           'login_hint': ?session.email,
@@ -310,6 +317,9 @@ class StarSyncGoogleDesktopAuth implements StarSyncGoogleAuth {
         onGrant: _pickedFolderId,
       );
       session.checkCurrent();
+      if (fileIds != null && !fileIds.contains(id)) {
+        throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+      }
       return id;
     } on StarSyncGoogleAuthException catch (error) {
       if (error.kind == StarSyncGoogleAuthErrorKind.cancelled) return null;

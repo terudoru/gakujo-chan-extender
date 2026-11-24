@@ -344,6 +344,22 @@ void main() {
       };
     });
 
+    test('restricted picker passes file_ids and rejects an unrequested ID', () async {
+      final auth = pickerAuth();
+      await auth.signIn();
+      expect(await auth.pickDriveFolder(fileIds: ['folder_123-X', 'other']), 'folder_123-X');
+      expect(launches.last.queryParameters['file_ids'], 'folder_123-X,other');
+      expect(launches.last.queryParameters['allow_multiple'], 'false');
+      await expectLater(auth.pickDriveFolder(fileIds: ['other']),
+        failsWith(StarSyncGoogleAuthErrorKind.failed));
+      final before = launches.length;
+      for (final ids in [<String>[], ['bad/id'], ['bad\n']]) {
+        await expectLater(auth.pickDriveFolder(fileIds: ids),
+          failsWith(StarSyncGoogleAuthErrorKind.failed));
+      }
+      expect(launches.length, before);
+    });
+
     test('exchanges a folder-only grant and preserves the signed-in session', () async {
       final auth = pickerAuth();
       await auth.signIn();
