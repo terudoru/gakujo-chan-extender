@@ -139,3 +139,54 @@ class GakujoZoomActions extends StatelessWidget {
     );
   }
 }
+
+/// Keeps the menu reachable while the remaining items scroll at narrow widths.
+class GakujoCustomToolbar extends StatelessWidget {
+  const GakujoCustomToolbar({
+    super.key,
+    required this.items,
+    required this.widthOf,
+    required this.itemBuilder,
+  });
+  final List<String> items;
+  final double Function(String) widthOf;
+  final Widget Function(String) itemBuilder;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final total = items.fold<double>(0, (sum, id) => sum + widthOf(id));
+      final overflow = total > constraints.maxWidth;
+      final visible = overflow
+          ? items.where((id) => id != 'menu').toList()
+          : items;
+      final menuWidth = overflow ? 40.0 : 0.0;
+      final viewport = (constraints.maxWidth - menuWidth).clamp(
+        0.0,
+        double.infinity,
+      );
+      final natural = visible.fold<double>(0, (sum, id) => sum + widthOf(id));
+      return Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: natural > viewport ? natural : viewport,
+                child: Row(
+                  children: [
+                    for (final id in visible)
+                      if (id == 'spacer')
+                        const Spacer()
+                      else
+                        SizedBox(width: widthOf(id), child: itemBuilder(id)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (overflow) SizedBox(width: 40, child: itemBuilder('menu')),
+        ],
+      );
+    },
+  );
+}

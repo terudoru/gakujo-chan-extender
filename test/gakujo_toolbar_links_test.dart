@@ -78,12 +78,23 @@ void main() {
             body: TextButton(
               onPressed: () => showDialog<void>(
                 context: context,
-                builder: (_) => GakujoToolbarLinksDialog(
-                  initialLinks: GakujoToolbarLink.defaults.take(2).toList(),
+                builder: (_) => GakujoToolbarLayoutEditor(
+                  initialLayout: GakujoToolbarLayout(
+                    toolbar: const ['settings'],
+                    menu: const ['link:0', 'link:1'],
+                    links: {
+                      for (final (i, link)
+                          in GakujoToolbarLink.defaults.take(2).indexed)
+                        'link:$i': link,
+                    },
+                  ),
                   onSave: (links) async {
                     attempts++;
                     if (attempts == 1) return false;
-                    saved = links;
+                    saved = links.menu
+                        .map((id) => links.links[id])
+                        .nonNulls
+                        .toList();
                     return true;
                   },
                 ),
@@ -96,6 +107,7 @@ void main() {
     );
     await tester.tap(find.text('設定から編集'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('リンクを追加'));
     await tester.tap(find.text('リンクを追加'));
     await tester.pumpAndSettle();
     final fields = find.byType(TextFormField);
@@ -107,7 +119,7 @@ void main() {
     await tester.enterText(fields.at(1), 'https://example.test/form');
     await tester.tap(find.text('適用'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('フォームの操作'));
+    await tester.tap(find.byTooltip('︙メニュー: フォームの操作'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('上へ移動'));
     await tester.pumpAndSettle();
@@ -117,7 +129,7 @@ void main() {
     expect(find.text('フォーム'), findsOneWidget);
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
-    expect(find.text('︙メニューを編集'), findsNothing);
+    expect(find.text('ツールバーとメニューを編集'), findsNothing);
     expect(saved?.map((link) => link.label), ['成績へ移動', 'フォーム', 'レポートへ移動']);
   });
 }

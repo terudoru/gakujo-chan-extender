@@ -40,6 +40,14 @@ class _StartupLocalPrefsStore extends GakujoLocalPrefsStore {
 }
 
 class _MemoryToolbarLinksStore extends GakujoToolbarLinksStore {
+  @override
+  Future<GakujoToolbarLayout> loadLayout() async => GakujoToolbarLayout.defaults(links);
+
+  @override
+  Future<void> saveLayout(GakujoToolbarLayout value) async {
+    links = value.menu.map((id) => value.links[id]).nonNulls.toList();
+  }
+
   List<GakujoToolbarLink> links = GakujoToolbarLink.defaults;
 
   @override
@@ -251,7 +259,7 @@ void main() {
 
     await tester.tap(find.byTooltip('メニュー'));
     await tester.pumpAndSettle();
-    expect(find.text('︙メニューを編集'), findsNothing);
+    expect(find.text('ツールバーとメニューを編集'), findsNothing);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
 
@@ -261,11 +269,12 @@ void main() {
     await tester.ensureVisible(settings);
     await tester.tap(settings);
     await tester.pumpAndSettle();
-    final editor = find.text('︙メニューを編集');
+    final editor = find.text('ツールバーとメニューを編集');
     await tester.ensureVisible(editor);
     await tester.tap(editor);
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('初期状態に戻す'));
     await tester.tap(find.text('初期状態に戻す'));
     await tester.pumpAndSettle();
     final existing = find.text('成績へ移動');
@@ -282,7 +291,7 @@ void main() {
 
     await tester.tap(find.byTooltip('メニュー'));
     await tester.pumpAndSettle();
-    expect(find.text('︙メニューを編集'), findsNothing);
+    expect(find.text('ツールバーとメニューを編集'), findsNothing);
     expect(find.text('成績へ移動'), findsNothing);
     expect(menuStore.links.first.label, '成績表');
     await tester.tap(find.text('成績表'));

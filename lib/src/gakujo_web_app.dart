@@ -137,6 +137,8 @@ part 'gakujo_web_app_diagnostics.dart';
 part 'gakujo_web_app_downloads.dart';
 part 'gakujo_web_app_assignment_files.dart';
 part 'gakujo_web_app_toolbar_links.dart';
+part 'gakujo_toolbar_layout.dart';
+part 'gakujo_toolbar_layout_editor.dart';
 part 'gakujo_web_app_models.dart';
 part 'gakujo_web_app_message_stars.dart';
 part 'gakujo_web_app_report_drafts.dart';
@@ -1957,7 +1959,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   late final GakujoLocalPrefsStore _localPrefsStore;
   late final GakujoToolbarLinksStore _toolbarLinksStore;
   bool _toolbarEditorOpen = false;
-  List<GakujoToolbarLink>? _toolbarLinks;
+  GakujoToolbarLayout? _toolbarLayout;
   Future<bool>? _toolbarLinksLoad;
   int _toolbarLinksGeneration = 0;
   late final MacosInputFocusService _macosInputFocusService;
@@ -2600,157 +2602,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       child: Scaffold(
         appBar: compactPreviewForKeyboard ? null : _wrapToolbar(AppBar(
           toolbarHeight: _compactToolbarHeight,
-          titleSpacing: 12,
-          title: GakujoGpaTaunt(
-            gpa: _reportedGpa,
-          ),
+          automaticallyImplyLeading: false,
+          titleSpacing: 0,
           centerTitle: false,
-          actions: [
-            GakujoNavigationActions(
-              canGoBack: (_canGoBack || _returnDialogMarker != null ||
-                      _previewNavigationState == 'visible') &&
-                  !_calendarOperationGate.isRunning,
-              canGoForward: (_previewNavigationState == 'hidden' ||
-                      (_previewNavigationState == 'none' &&
-                          (_canGoForward || _virtualPreviewForward))) &&
-                  !_calendarOperationGate.isRunning,
-              onBack: () => unawaited(_goBack()),
-              onForward: () => unawaited(_goForward()),
-            ),
-            GakujoReloadAction(
-              enabled: !_calendarOperationGate.isRunning,
-              onReload: () => unawaited(
-                _handleToolbarAction(_ToolbarAction.reload),
-              ),
-            ),
-            IconButton(
-              tooltip: '学務のHOMEへ',
-              onPressed: _calendarOperationGate.isRunning
-                  ? null
-                  : () => unawaited(_openGakujoHome()),
-              icon: const Icon(Icons.home_outlined),
-              iconSize: _toolbarIconSize,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints.tightFor(
-                width: _toolbarButtonExtent,
-                height: _toolbarButtonExtent,
-              ),
-            ),
-            if (_supportsDesktopZoom)
-              GakujoZoomActions(
-                zoomPercent: (_desktopZoom * 100).round(),
-                canZoomOut: _desktopZoom > _minimumDesktopZoom,
-                canZoomIn: _desktopZoom < _maximumDesktopZoom,
-                onZoomOut: () => unawaited(_changeDesktopZoomBy(
-                  -_desktopZoomStep,
-                )),
-                onReset: () => unawaited(_setDesktopZoom(1.0)),
-                onZoomIn: () => unawaited(_changeDesktopZoomBy(
-                  _desktopZoomStep,
-                )),
-              ),
-              IconButton(
-                tooltip: 'スター付き連絡通知',
-                onPressed: _calendarOperationGate.isRunning
-                    ? null
-                    : () => unawaited(_showStarredMessagesDialog()),
-                icon: const Icon(Icons.star_outline),
-                iconSize: _toolbarIconSize,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: _toolbarButtonExtent,
-                  height: _toolbarButtonExtent,
-                ),
-              ),
-            IconButton(
-              tooltip: 'AKIKO（空き講義室検索・CIRCLE 運営の外部サービス）',
-              onPressed: () => unawaited(_openAkiko()),
-              icon: const Icon(Icons.meeting_room_outlined),
-              iconSize: _toolbarIconSize,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints.tightFor(
-                width: _toolbarButtonExtent,
-                height: _toolbarButtonExtent,
-              ),
-            ),
-            IconButton(
-              tooltip: '設定',
-              onPressed: _isSettingsDialogOpen
-                  ? null
-                  : () => unawaited(_showSettingsDialog()),
-              icon: const Icon(Icons.settings),
-              iconSize: _toolbarIconSize,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints.tightFor(
-                width: _toolbarButtonExtent,
-                height: _toolbarButtonExtent,
-              ),
-            ),
-            SizedBox.square(
-              dimension: _toolbarButtonExtent,
-              child: PopupMenuButton<Object>(
-                enabled: !_calendarOperationGate.isRunning,
-                tooltip: 'メニュー',
-                padding: EdgeInsets.zero,
-                iconSize: _toolbarIconSize,
-                icon: const Icon(Icons.more_vert),
-                itemBuilder: (context) => [
-                  for (final link in _toolbarLinks ?? GakujoToolbarLink.defaults)
-                    PopupMenuItem<Object>(
-                      value: link,
-                      child: Text(link.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    ),
-                  if ((_toolbarLinks ?? GakujoToolbarLink.defaults).isNotEmpty)
-                    const PopupMenuDivider(),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.hostedPlanner,
-                    child: Text('履修手帖'),
-                  ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.coursePlanner,
-                    child: Text('履修手帖を開く'),
-                  ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.notificationHistory,
-                    child: Text('通知履歴'),
-                  ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.copyCoursePlanner,
-                    child: Text('学務の照会結果を履修手帖用にコピー'),
-                  ),
-                  PopupMenuItem<Object>(
-                    value: _ToolbarAction.registrationAssist,
-                    enabled: _registrationAvailable && _hasRegistrationIdentity &&
-                        _registrationSession == null,
-                    child: const Text('履修手帖の時間割を履修登録に入力'),
-                  ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.addFavorite,
-                    child: Text('お気に入りに追加'),
-                  ),
-                    const PopupMenuItem<Object>(
-                      value: _ToolbarAction.messageStars,
-                      child: Text('スター付き連絡通知'),
-                    ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.copyUrl,
-                    child: Text('URLをコピー'),
-                  ),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.openExternal,
-                    child: Text('外部ブラウザで開く'),
-                  ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem<Object>(
-                    value: _ToolbarAction.reload,
-                    child: Text('再読み込み'),
-                  ),
-                ],
-                onSelected: (selection) =>
-                    unawaited(_handleToolbarSelection(selection)),
-              ),
-            ),
-          ],
+          title: _buildCustomToolbar(),
         )),
         body: Column(
           children: [
@@ -2842,6 +2697,168 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       onKeyEvent: _handleLinuxFindKeyEvent,
       child: page,
     );
+  }
+
+  Widget _buildCustomToolbar() {
+    final layout = _toolbarLayout ?? GakujoToolbarLayout.defaults();
+    return GakujoCustomToolbar(
+      items: layout.toolbar
+          .where((id) => id != 'zoom' || _supportsDesktopZoom)
+          .toList(),
+      widthOf: (id) => switch (id) {
+        'spacer' => 0,
+        'gpa' => 180,
+        'navigation' => 80,
+        'zoom' => 136,
+        _ => _toolbarButtonExtent,
+      },
+      itemBuilder: (id) {
+        if (id == 'gpa') {
+          return GakujoGpaTaunt(gpa: _reportedGpa);
+        }
+        if (id == 'navigation') {
+          return GakujoNavigationActions(
+            canGoBack:
+                (_canGoBack ||
+                    _returnDialogMarker != null ||
+                    _previewNavigationState == 'visible') &&
+                !_calendarOperationGate.isRunning,
+            canGoForward:
+                (_previewNavigationState == 'hidden' ||
+                    (_previewNavigationState == 'none' &&
+                        (_canGoForward || _virtualPreviewForward))) &&
+                !_calendarOperationGate.isRunning,
+            onBack: () => unawaited(_goBack()),
+            onForward: () => unawaited(_goForward()),
+          );
+        }
+        if (id == 'zoom') {
+          return GakujoZoomActions(
+            zoomPercent: (_desktopZoom * 100).round(),
+            canZoomOut: _desktopZoom > _minimumDesktopZoom,
+            canZoomIn: _desktopZoom < _maximumDesktopZoom,
+            onZoomOut: () => unawaited(_changeDesktopZoomBy(-_desktopZoomStep)),
+            onReset: () => unawaited(_setDesktopZoom(1.0)),
+            onZoomIn: () => unawaited(_changeDesktopZoomBy(_desktopZoomStep)),
+          );
+        }
+        if (id == 'menu') {
+          return PopupMenuButton<String>(
+            tooltip: 'メニュー',
+            padding: EdgeInsets.zero,
+            iconSize: _toolbarIconSize,
+            icon: const Icon(Icons.more_vert),
+            onSelected: (id) => unawaited(_selectLayoutItem(id, layout)),
+            itemBuilder: (_) => [
+              for (final entry in layout.menu)
+                if (entry == 'divider')
+                  const PopupMenuDivider()
+                else if (entry != 'zoom' || _supportsDesktopZoom)
+                  PopupMenuItem(
+                    value: entry,
+                    enabled: _layoutItemEnabled(entry),
+                    child: entry == 'gpa'
+                        ? GakujoGpaTaunt(gpa: _reportedGpa)
+                        : entry == 'navigation'
+                        ? GakujoNavigationActions(
+                            canGoBack:
+                                (_canGoBack ||
+                                    _returnDialogMarker != null ||
+                                    _previewNavigationState == 'visible') &&
+                                !_calendarOperationGate.isRunning,
+                            canGoForward:
+                                (_previewNavigationState == 'hidden' ||
+                                    (_previewNavigationState == 'none' &&
+                                        (_canGoForward ||
+                                            _virtualPreviewForward))) &&
+                                !_calendarOperationGate.isRunning,
+                            onBack: () => unawaited(_goBack()),
+                            onForward: () => unawaited(_goForward()),
+                          )
+                        : entry == 'zoom'
+                        ? GakujoZoomActions(
+                            zoomPercent: (_desktopZoom * 100).round(),
+                            canZoomOut: _desktopZoom > _minimumDesktopZoom,
+                            canZoomIn: _desktopZoom < _maximumDesktopZoom,
+                            onZoomOut: () => unawaited(
+                              _changeDesktopZoomBy(-_desktopZoomStep),
+                            ),
+                            onReset: () => unawaited(_setDesktopZoom(1.0)),
+                            onZoomIn: () => unawaited(
+                              _changeDesktopZoomBy(_desktopZoomStep),
+                            ),
+                          )
+                        : Text(layout.label(entry)),
+                  ),
+            ],
+          );
+        }
+        return IconButton(
+          tooltip: layout.label(id),
+          iconSize: _toolbarIconSize,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+          onPressed: _layoutItemEnabled(id)
+              ? () => unawaited(_selectLayoutItem(id, layout))
+              : null,
+          icon: Icon(switch (id) {
+            'reload' => Icons.refresh,
+            'home' => Icons.home_outlined,
+            'messageStars' => Icons.star_outline,
+            'akiko' => Icons.meeting_room_outlined,
+            'settings' => Icons.settings,
+            'hostedPlanner' || 'coursePlanner' => Icons.calendar_month,
+            'notificationHistory' => Icons.notifications_outlined,
+            'copyCoursePlanner' || 'copyUrl' => Icons.copy,
+            'registrationAssist' => Icons.edit_calendar,
+            'addFavorite' => Icons.bookmark_add_outlined,
+            'openExternal' => Icons.open_in_new,
+            _ => Icons.link,
+          }),
+        );
+      },
+    );
+  }
+
+  bool _layoutItemEnabled(String id) {
+    if (id == 'settings') return !_isSettingsDialogOpen;
+    if (id == 'akiko') return true;
+    if (_calendarOperationGate.isRunning) return false;
+    if (id == 'registrationAssist') {
+      return _registrationAvailable &&
+          _hasRegistrationIdentity &&
+          _registrationSession == null;
+    }
+    return true;
+  }
+
+  Future<void> _selectLayoutItem(String id, GakujoToolbarLayout layout) async {
+    if (!_layoutItemEnabled(id)) return;
+    if (layout.links[id] case final link?) {
+      await _handleToolbarSelection(link);
+      return;
+    }
+    switch (id) {
+      case 'home':
+        await _openGakujoHome();
+        return;
+      case 'akiko':
+        await _openAkiko();
+        return;
+      case 'settings':
+        await _showSettingsDialog();
+        return;
+      case 'gpa':
+      case 'navigation':
+      case 'zoom':
+        return;
+    }
+    for (final action in _ToolbarAction.values) {
+      if (action.name == id) {
+        await _handleToolbarAction(action);
+        return;
+      }
+    }
   }
 
   PreferredSizeWidget _wrapToolbar(PreferredSizeWidget toolbar) {
@@ -3931,7 +3948,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.more_vert),
-                        title: const Text('︙メニューを編集'),
+                        title: const Text('ツールバーとメニューを編集'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => unawaited(_editToolbarLinks(dialogContext)),
                       ),
@@ -5691,16 +5708,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<bool> _loadToolbarLinks() async {
-    if (_toolbarLinks != null) return true;
+    if (_toolbarLayout != null) return true;
     final pending = _toolbarLinksLoad;
     if (pending != null) return pending;
 
     final generation = _toolbarLinksGeneration;
     final load = () async {
       try {
-        final links = await _toolbarLinksStore.load();
+        final links = await _toolbarLinksStore.loadLayout();
         if (!mounted || generation != _toolbarLinksGeneration) return false;
-        setState(() => _toolbarLinks = links);
+        setState(() => _toolbarLayout = links);
         return true;
       } on Object {
         // The default navigation stays available if preferences cannot be read.
@@ -5735,13 +5752,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await showDialog<void>(
       context: settingsContext,
       barrierDismissible: false,
-      builder: (_) => GakujoToolbarLinksDialog(
-        initialLinks: _toolbarLinks!,
+      builder: (_) => GakujoToolbarLayoutEditor(
+        initialLayout: _toolbarLayout!,
         onSave: (links) => _settingsOperations.runExclusive(() async {
           if (!mounted || generation != _toolbarLinksGeneration) return false;
-          await _toolbarLinksStore.save(links);
+          await _toolbarLinksStore.saveLayout(links);
           if (!mounted || generation != _toolbarLinksGeneration) return false;
-          setState(() => _toolbarLinks = links);
+          setState(() => _toolbarLayout = links);
           return true;
         }),
       ),
@@ -9468,7 +9485,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         _toolbarLinksGeneration++;
         _toolbarLinksLoad = null;
         await _toolbarLinksStore.clear();
-        if (mounted) setState(() => _toolbarLinks = GakujoToolbarLink.defaults);
+        if (mounted) setState(() => _toolbarLayout = GakujoToolbarLayout.defaults());
       });
       await _pdfReadingProgress.clear();
       await _applyFeatureFlagRuntimeState(
