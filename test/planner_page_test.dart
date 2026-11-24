@@ -63,6 +63,83 @@ class _Service extends Fake implements GakujoWebViewService {
 }
 
 void main() {
+  for (final navigation in ['fragment', 'document', 'path', 'query']) {
+    testWidgets('bridge capability after $navigation navigation', (
+      tester,
+    ) async {
+      final service = _Service();
+      final auth = _Auth();
+      var signIns = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HostedPlannerPage(
+            service: service,
+            auth: auth,
+            student: () => null,
+            signIn: () async {
+              signIns++;
+              auth.revision++;
+            },
+            signOut: () async {},
+            onExternalLink: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+      final controller = service.controller;
+      final initialUrl = controller.url!;
+      await controller.delegate.onPageFinished!(initialUrl);
+      final capability = RegExp(r'const capability = "([a-f0-9]+)"')
+          .firstMatch(controller.scripts.first)!
+          .group(1);
+      controller.scripts.clear();
+      final urls = switch (navigation) {
+        'fragment' => [
+          '$initialUrl#view=setup&term=1',
+          '$initialUrl#view=notebook&term=2',
+          initialUrl,
+        ],
+        'path' => ['${initialUrl}nested#view=setup'],
+        'query' => ['$initialUrl?year=2026#view=setup'],
+        _ => [initialUrl],
+      };
+      for (final url in urls) {
+        controller.delegate.onNavigationStarting!(url);
+        if (navigation == 'document') {
+          controller.delegate.onDocumentStarted!();
+        }
+        controller.url = url;
+        controller.delegate.onPageStarted!(url);
+        const id = '00000000-0000-4000-8000-000000000002';
+        await controller.receive(
+          jsonEncode([
+            capability,
+            jsonEncode({'v': 2, 'id': id, 'op': 'signIn', 'args': {}}),
+          ]),
+        );
+        if (navigation == 'fragment') {
+          expect(controller.scripts, hasLength(2));
+          expect(controller.scripts.first, contains('"id":"$id"'));
+          expect(controller.scripts.last, contains('"event":"session"'));
+          controller.scripts.clear();
+          await controller.delegate.onPageFinished!(url);
+          expect(controller.scripts, isEmpty);
+        } else {
+          expect(controller.scripts, isEmpty);
+        }
+      }
+      expect(signIns, navigation == 'fragment' ? urls.length : 0);
+      if (navigation == 'fragment') {
+        // Background session delivery must keep working on the hash route too.
+        auth.revision++;
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.pump();
+        expect(controller.scripts.single, contains('"event":"session"'));
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets(
     'hosted screen guards frame, origin and path and keeps one controller',
     (tester) async {

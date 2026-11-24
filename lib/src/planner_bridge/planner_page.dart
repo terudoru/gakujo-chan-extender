@@ -40,6 +40,7 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
   Timer? _poll;
   int _document = 0;
   String? _capability;
+  Uri? _bridgeDocumentUrl;
   String? _error;
   int _authReplies = 0;
   final _deferredSessions = <(Map<String, dynamic>, int)>[];
@@ -85,8 +86,22 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
   void _invalidate() {
     _document++;
     _capability = null;
+    _bridgeDocumentUrl = null;
     _deferredSessions.clear();
     _broker.invalidate();
+  }
+
+  void _navigationStarted(String url) {
+    // Windows also reports SourceChanged for pushState/replaceState and hashes.
+    // Those retain the installed JS bridge; ContentLoading still invalidates
+    // real documents (including a reload of the very same URL).
+    final uri = Uri.tryParse(url);
+    if (_bridgeDocumentUrl != null &&
+        uri != null &&
+        uri.removeFragment() == _bridgeDocumentUrl) {
+      return;
+    }
+    _invalidate();
   }
 
   Future<void> _emit(Map<String, dynamic> value, int document) async {
@@ -181,9 +196,9 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
       );
       await controller.setNavigationDelegate(
         GakujoNavigationDelegate(
-          onNavigationStarting: (_) => _invalidate(),
+          onNavigationStarting: _navigationStarted,
           onDocumentStarted: _invalidate,
-          onPageStarted: (_) => _invalidate(),
+          onPageStarted: _navigationStarted,
           onNavigationRequest: (request) {
             final uri = Uri.tryParse(request.url);
             if (request.isMainFrame && uri != null && isHostedPlanner(uri)) {
@@ -202,10 +217,14 @@ class _HostedPlannerPageState extends State<HostedPlannerPage> {
                 await controller.currentUrl() != url) {
               return;
             }
+            // WebView2 also completes same-document hash navigations. Keep the
+            // existing capability and bridge object until a real document starts.
+            if (_bridgeDocumentUrl == Uri.parse(url).removeFragment()) return;
             if (controller is WebViewFlutterGakujoWebViewController) {
               await controller.installTrustedChannels();
             }
             final capability = _capability = _random();
+            _bridgeDocumentUrl = Uri.parse(url).removeFragment();
             await controller.runJavaScript('''
             (() => {
               if(window !== window.top || location.origin !== 'https://gakujo.terudoru.com' || !location.pathname.startsWith('/syllabus/')) return;
