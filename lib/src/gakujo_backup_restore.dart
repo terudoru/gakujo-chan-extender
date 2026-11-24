@@ -66,6 +66,14 @@ Future<void> restoreGakujoBackup({
       beforeWrite?.call();
       await settingsStore.savePageMode(backup.pageMode!);
     }
+    if (backup.startupPage != null) {
+      beforeWrite?.call();
+      await settingsStore.saveStartupPage(backup.startupPage!);
+    }
+    if (backup.desktopZoomSettings != null) {
+      beforeWrite?.call();
+      await settingsStore.saveDesktopZoomSettings(backup.desktopZoomSettings!);
+    }
     if (backup.disabledFeatureFlags != null) {
       beforeWrite?.call();
       await settingsStore

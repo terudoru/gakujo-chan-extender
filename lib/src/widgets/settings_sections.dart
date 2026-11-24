@@ -424,6 +424,96 @@ class GakujoPageModeSection extends StatelessWidget {
   }
 }
 
+class GakujoStartupPageSection extends StatelessWidget {
+  const GakujoStartupPageSection({
+    super.key,
+    required this.page,
+    required this.onChanged,
+  });
+  final GakujoStartupPage page;
+  final ValueChanged<GakujoStartupPage?> onChanged;
+  @override
+  Widget build(BuildContext context) => SettingsRadioGroup<GakujoStartupPage>(
+    groupValue: page,
+    values: GakujoStartupPage.values,
+    labelFor: (value) => value.label,
+    onChanged: onChanged,
+    decoration: const InputDecoration(
+      labelText: '起動時に開くページ',
+      border: OutlineInputBorder(),
+    ),
+  );
+}
+
+class GakujoDesktopZoomSection extends StatelessWidget {
+  const GakujoDesktopZoomSection({
+    super.key,
+    required this.settings,
+    required this.onStartupChanged,
+    required this.onFixedPercentChanged,
+    required this.onStepChanged,
+  });
+  final GakujoDesktopZoomSettings settings;
+  final ValueChanged<GakujoStartupZoom> onStartupChanged;
+  final ValueChanged<int> onFixedPercentChanged;
+  final ValueChanged<int> onStepChanged;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SettingsRadioGroup<GakujoStartupZoom>(
+        groupValue: settings.startup,
+        values: GakujoStartupZoom.values,
+        labelFor: (value) =>
+            value == GakujoStartupZoom.previous ? '前回の倍率を引き継ぐ' : '固定値',
+        onChanged: (value) {
+          if (value != null) onStartupChanged(value);
+        },
+        decoration: const InputDecoration(
+          labelText: '起動時の表示倍率',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      if (settings.startup == GakujoStartupZoom.fixed)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: '固定の表示倍率',
+              border: OutlineInputBorder(),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<int>(
+                isExpanded: true,
+                value: settings.fixedPercent,
+                items: [
+                  for (var value = 50; value <= 200; value++)
+                    DropdownMenuItem(value: value, child: Text('$value%')),
+                ],
+                onChanged: (value) {
+                  if (value != null) onFixedPercentChanged(value);
+                },
+              ),
+            ),
+          ),
+        ),
+      const SizedBox(height: 16),
+      SettingsRadioGroup<int>(
+        groupValue: settings.stepPercent,
+        values: GakujoDesktopZoomSettings.steps,
+        labelFor: (value) => '$value%',
+        onChanged: (value) {
+          if (value != null) onStepChanged(value);
+        },
+        decoration: const InputDecoration(
+          labelText: '拡大・縮小の刻み',
+          border: OutlineInputBorder(),
+        ),
+      ),
+    ],
+  );
+}
+
 class FeatureFlagsSection extends StatelessWidget {
   const FeatureFlagsSection({
     super.key,

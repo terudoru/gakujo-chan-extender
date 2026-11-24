@@ -28,6 +28,8 @@ class GakujoBackupImport {
     required this.version,
     this.downloadSaveMode,
     this.pageMode,
+    this.startupPage,
+    this.desktopZoomSettings,
     this.setupCompleted,
     this.calendarImportSettings,
     this.messageExcludeKeywords,
@@ -47,6 +49,8 @@ class GakujoBackupImport {
   final int version;
   final DownloadSaveMode? downloadSaveMode;
   final GakujoPageMode? pageMode;
+  final GakujoStartupPage? startupPage;
+  final GakujoDesktopZoomSettings? desktopZoomSettings;
   final bool? setupCompleted;
   final GakujoCalendarImportSettings? calendarImportSettings;
   final List<String>? messageExcludeKeywords;
@@ -130,6 +134,8 @@ GakujoBackupImport parseGakujoBackup(
 
   return GakujoBackupImport(
     version: version,
+    startupPage: GakujoStartupPage.fromJson(decoded['startupPage']),
+    desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(decoded['desktopZoomSettings']),
     downloadSaveMode: decoded.containsKey('downloadSaveMode')
         ? DownloadSaveModeLabels.fromStorageValue(
             decoded['downloadSaveMode']?.toString(),

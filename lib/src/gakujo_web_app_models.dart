@@ -13,15 +13,6 @@ enum _ToolbarAction {
   reload,
 }
 
-enum GakujoQuickJumpDestination {
-  grades,
-  reports,
-  messages,
-  downloads,
-  syllabus,
-  schedule,
-}
-
 enum _CalendarValidationAction { add, delete }
 
 enum _SecureStorageRecoveryAction { retry, reset, continueWithoutStorage }

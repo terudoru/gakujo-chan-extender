@@ -102,6 +102,8 @@ import 'star_sync/star_sync_google_auth.dart';
 import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
+import 'gakujo_quick_jump_destination.dart';
+export 'gakujo_quick_jump_destination.dart';
 import 'login_autofill_assist_script.dart';
 import 'linux_overlay_guard.dart';
 import 'linux_session_settings.dart';
@@ -205,33 +207,6 @@ class _SyncActivityStore extends GakujoActivityStore {
     final after = await loadNotifiedDeadlineKeys();
     if (after.difference(before).isNotEmpty) onNotifiedKeysChanged();
   }
-}
-
-extension GakujoQuickJumpDestinationLabels on GakujoQuickJumpDestination {
-  String get label {
-    return switch (this) {
-      GakujoQuickJumpDestination.grades => '成績',
-      GakujoQuickJumpDestination.reports => 'レポート',
-      GakujoQuickJumpDestination.messages => '連絡通知',
-      GakujoQuickJumpDestination.downloads => 'ダウンロード',
-      GakujoQuickJumpDestination.syllabus => 'シラバス',
-      GakujoQuickJumpDestination.schedule => 'スケジュール',
-    };
-  }
-
-  String get portalTabId {
-    return switch (this) {
-      GakujoQuickJumpDestination.grades => 'si',
-      GakujoQuickJumpDestination.reports => 'en',
-      GakujoQuickJumpDestination.messages => 'kj',
-      GakujoQuickJumpDestination.downloads => 'sd',
-      GakujoQuickJumpDestination.syllabus => 'sy',
-      GakujoQuickJumpDestination.schedule => 'sch',
-    };
-  }
-
-  String get portalUrl =>
-      'https://gakujo.iess.niigata-u.ac.jp/campusweb/campusportal.do?page=main&tabId=$portalTabId';
 }
 
 const _calendarValidationTitle =
@@ -346,6 +321,8 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload, {
   }) as Map<String, Object?>;
   result.remove('downloadSaveMode');
   result.remove('pageMode');
+  result.remove('startupPage');
+  result.remove('desktopZoomSettings');
   if (disabledCollections.contains('favorites')) result.remove('favorites');
   if (disabledCollections.contains('notified-deadlines')) result.remove('notifiedDeadlineKeys');
   if (disabledCollections.contains('settings')) {
@@ -1052,6 +1029,8 @@ Future<GakujoAppSettings> restoreGakujoSettingsLocally({
   final next = currentSettings().copyWith(
     downloadSaveMode: backup.downloadSaveMode,
     pageMode: backup.pageMode,
+    startupPage: backup.startupPage,
+    desktopZoomSettings: backup.desktopZoomSettings,
     disabledFeatureFlags: backup.disabledFeatureFlags,
     setupCompleted: backup.setupCompleted,
     calendarImportSettings: backup.calendarImportSettings,
@@ -2076,9 +2055,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   int? _loginAutofillStoppedNavigationRevision;
   bool _deferLoginAutofillDuringSetup = false;
 
-  static const double _minimumDesktopZoom = 0.5;
-  static const double _maximumDesktopZoom = 2.0;
-  static const double _desktopZoomStep = 0.1;
+  static const double _minimumDesktopZoom = GakujoDesktopZoomSettings.minimum;
+  static const double _maximumDesktopZoom = GakujoDesktopZoomSettings.maximum;
+  double get _desktopZoomStep => _appSettings.desktopZoomSettings.step;
+  Timer? _desktopZoomSaveTimer;
+  bool _startupZoomApplied = false;
   static const double _desktopHistorySwipeThreshold = 120;
   static const double _desktopHorizontalSwipeDominance = 1.35;
 
@@ -2287,6 +2268,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void dispose() {
+    _desktopZoomSaveTimer?.cancel();
     _notificationConsumer.dispose();
     _notificationHistoryAccount.dispose();
     _registrationSession?.timer?.cancel();
@@ -2330,6 +2312,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_supportsDesktopZoom && _desktopZoomSaveTimer?.isActive == true && (state == AppLifecycleState.paused || state == AppLifecycleState.hidden)) {
+      _desktopZoomSaveTimer?.cancel();
+      unawaited(_rememberDesktopZoom());
+    }
     if (state == AppLifecycleState.paused) _protectedSecretPromptGate.background();
     if (state == AppLifecycleState.resumed && _protectedSecretPromptGate.resume()) {
       // The cancelled prompt may have been the 2FA one; retry both.
@@ -3143,19 +3129,32 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   void _handleDesktopWheelZoom(double dy, Offset origin) {
     if (dy == 0) return;
     _desktopHistorySwipe.suppress();
-    final interrupted = _desktopWheelZoomRevision != null &&
+    final interrupted =
+        _desktopWheelZoomRevision != null &&
         _desktopWheelZoomRevision != _previewGestureRevision;
     _desktopWheelZoomRevision ??= _previewGestureRevision;
     _schedulePreviewWheelIdle();
     if (interrupted) return;
     if (_previewNavigationState == 'visible') {
-      _zoomPreviewBy(desktopWheelZoom(1, dy));
+      _zoomPreviewBy(
+        desktopWheelZoom(
+          1,
+          dy,
+          stepPercent: _appSettings.desktopZoomSettings.stepPercent,
+        ),
+      );
       return;
     }
     _desktopZoomOrigin = origin;
-    unawaited(_setDesktopZoomSmooth(
-      desktopWheelZoom(_desktopZoom, dy),
-    ));
+    unawaited(
+      _setDesktopZoomSmooth(
+        desktopWheelZoom(
+          _desktopZoom,
+          dy,
+          stepPercent: _appSettings.desktopZoomSettings.stepPercent,
+        ),
+      ),
+    );
   }
 
   void _handleDesktopPanZoomStart(PointerPanZoomStartEvent event) {
@@ -3203,12 +3202,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (_previewNavigationState == 'visible') {
       _desktopHistorySwipe.suppress();
       _desktopPanZoomSuppressed = true;
-      _zoomPreviewBy(factor);
+      _zoomPreviewBy(_appSettings.desktopZoomSettings.pinchFactor(factor));
       return;
     }
     if (_desktopPanZoomSuppressed) return;
     _desktopZoomOrigin = position;
-    unawaited(_setDesktopZoomSmooth(_desktopPanZoomStartZoom * scale));
+    unawaited(
+      _setDesktopZoomSmooth(
+        _desktopPanZoomStartZoom *
+            _appSettings.desktopZoomSettings.pinchFactor(scale),
+      ),
+    );
   }
 
   void _handleDesktopPanZoomEnd(PointerPanZoomEndEvent event) {
@@ -3273,12 +3277,16 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<void> _changeDesktopZoomBy(double delta) {
-    return _setDesktopZoom(_desktopZoom + delta);
+    return _setDesktopZoomValue(
+      _appSettings.desktopZoomSettings.changeBy(
+        _desktopZoom,
+        delta.sign.toInt(),
+      ),
+    );
   }
 
   Future<void> _setDesktopZoom(double zoom) async {
-    final nextZoom = (zoom / _desktopZoomStep).round() * _desktopZoomStep;
-    return _setDesktopZoomValue(nextZoom);
+    return _setDesktopZoomValue(zoom);
   }
 
   Future<void> _setDesktopZoomSmooth(double zoom) {
@@ -3287,10 +3295,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
 
   Future<void> _setDesktopZoomValue(double zoom) async {
     final clampedZoom = zoom
-        .clamp(
-          _minimumDesktopZoom,
-          _maximumDesktopZoom,
-        )
+        .clamp(_minimumDesktopZoom, _maximumDesktopZoom)
         .toDouble();
     if ((_desktopZoom - clampedZoom).abs() < 0.001) {
       await _applyDesktopZoomIfAllowed();
@@ -3304,7 +3309,29 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     } else {
       _desktopZoom = clampedZoom;
     }
+    _desktopZoomSaveTimer?.cancel();
+    _desktopZoomSaveTimer = Timer(
+      const Duration(milliseconds: 400),
+      () => unawaited(_rememberDesktopZoom()),
+    );
     await _applyDesktopZoomIfAllowed();
+  }
+
+  Future<void> _rememberDesktopZoom() async {
+    if (!mounted || !_appSettingsLoaded) return;
+    final percent = _desktopZoom * 100;
+    try {
+      await _saveDesktopZoomPreference(
+        (settings) => settings.copyWith(lastPercent: percent),
+      );
+    } on Object catch (error, stackTrace) {
+      developer.log(
+        'Failed to remember desktop zoom',
+        name: 'MoreBetterGakujo',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _applyDesktopZoomIfAllowed() async {
@@ -3992,6 +4019,51 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           await _loadAllowedPageUrl(mode.startUrl);
                         },
                       ),
+                      const Divider(height: 32),
+                      GakujoStartupPageSection(
+                        page: _appSettings.startupPage,
+                        onChanged: (page) async {
+                          if (page == null) return;
+                          await _trySaveSettings(
+                            () => _saveViewPreferences(
+                              update: (settings) => settings.copyWith(startupPage: page),
+                              persist: (settings) =>
+                                  _appSettingsStore.saveStartupPage(settings.startupPage),
+                            ),
+                          );
+                          if (dialogContext.mounted) setDialogState(() {});
+                        },
+                      ),
+                      if (_supportsDesktopZoom) ...[
+                        const Divider(height: 32),
+                        GakujoDesktopZoomSection(
+                          settings: _appSettings.desktopZoomSettings,
+                          onStartupChanged: (value) async {
+                            await _trySaveSettings(
+                              () => _saveDesktopZoomPreference(
+                                (settings) => settings.copyWith(startup: value),
+                              ),
+                            );
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onFixedPercentChanged: (value) async {
+                            await _trySaveSettings(
+                              () => _saveDesktopZoomPreference(
+                                (settings) => settings.copyWith(fixedPercent: value),
+                              ),
+                            );
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onStepChanged: (value) async {
+                            await _trySaveSettings(
+                              () => _saveDesktopZoomPreference(
+                                (settings) => settings.copyWith(stepPercent: value),
+                              ),
+                            );
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                        ),
+                      ],
                       const Divider(height: 32),
                       FeatureFlagsSection(
                         settings: _appSettings,
@@ -5967,6 +6039,44 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     return saveGakujoSettingsSafely(save, showSnackBar: _showSnackBar);
   }
 
+  Future<void> _saveViewPreferences({
+    required GakujoAppSettings Function(GakujoAppSettings) update,
+    required Future<void> Function(GakujoAppSettings) persist,
+  }) => _settingsOperations.runExclusive(() async {
+    final next = update(_appSettings);
+    await saveGakujoSettingsChange(
+      save: () async {
+        if (!Platform.isMacOS || _secureStorageAccessAllowed) {
+          await _saveAppSettings(() => persist(next));
+        }
+        if (Platform.isMacOS) {
+          await _localPrefsStore.saveAppSettings(_settingsForPersistence(next));
+        }
+      },
+      currentSettings: () => _appSettings,
+      update: update,
+      apply: (settings) {
+        if (mounted) setState(() => _appSettings = settings);
+      },
+      mirror: Platform.isMacOS ? (_) async {} : _syncLocalSettingsMirror,
+    );
+    _scheduleAutoBackup();
+  });
+
+  Future<void> _saveDesktopZoomPreference(
+    GakujoDesktopZoomSettings Function(GakujoDesktopZoomSettings) update,
+  ) {
+    final percent = _desktopZoom * 100;
+    return _saveViewPreferences(
+      update: (settings) => settings.copyWith(
+        desktopZoomSettings: update(settings.desktopZoomSettings)
+            .copyWith(lastPercent: percent),
+      ),
+      persist: (settings) => _appSettingsStore
+          .saveDesktopZoomSettings(settings.desktopZoomSettings),
+    );
+  }
+
   Future<void> _saveCalendarImportSettings(
     GakujoCalendarImportSettings settings,
   ) => _settingsOperations.runExclusive(() async {
@@ -7940,6 +8050,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           version: backup.version,
           downloadSaveMode: backup.downloadSaveMode,
           pageMode: backup.pageMode,
+          startupPage: fromSyncStorage ? null : backup.startupPage,
+          desktopZoomSettings: fromSyncStorage ? null : backup.desktopZoomSettings,
           setupCompleted: backup.setupCompleted,
           calendarImportSettings: backup.calendarImportSettings,
           messageExcludeKeywords: backup.messageExcludeKeywords,
@@ -8627,6 +8739,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     );
     unawaited(_saveInitialTwoFactorSecretIfAllowed());
     final appSettingsLoaded = await _loadAppSettings();
+    if (!_startupZoomApplied && _supportsDesktopZoom && appSettingsLoaded) {
+      _desktopZoom = _appSettings.desktopZoomSettings.startupZoom;
+      _startupZoomApplied = true;
+    }
     await _applyFeatureFlagRuntimeState(
       GakujoFeatureFlag.downloadCapture,
       enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.downloadCapture),
@@ -8644,10 +8760,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       // In particular, macOS can intentionally start from its non-secret mirror
       // without loading credentials from Keychain.
       final owner = pendingNotificationUrl == null ? null : Object();
+      final preferredUrl = _resolveStartUrl(savedUrl, notificationUrl: pendingNotificationUrl);
       _loginRestore.reserve(
         gakujoInitialPendingRestoreUrl(
           pendingNotificationUrl: pendingNotificationUrl,
-          savedUrl: savedUrl,
+          savedUrl: _appSettings.startupPage == GakujoStartupPage.previous
+              ? savedUrl
+              : preferredUrl,
         ),
         owner: owner,
       );
@@ -8655,9 +8774,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
       final startUrl =
           pendingNotificationUrl != null && !_appSettings.hasLoginCredentials
           ? pendingNotificationUrl
-          : _resolveStartUrl(
-              _appSettings.hasLoginCredentials ? null : savedUrl,
-            );
+          : _appSettings.hasLoginCredentials
+          ? GakujoStartUrlResolver.resolve(
+              debugAllowed: _debugAllowed,
+              debugStartUrl: widget._startUrl,
+              fallbackUrl: _appSettings.pageMode.startUrl,
+            )
+          : preferredUrl;
       await _loadReservedPage(startUrl, owner);
     }, debugAllowed: _debugAllowed);
   }
@@ -9556,11 +9679,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  String _resolveStartUrl(String? savedUrl) {
+  String _resolveStartUrl(String? savedUrl, {String? notificationUrl}) {
     return GakujoStartUrlResolver.resolve(
       debugAllowed: _debugAllowed,
       debugStartUrl: widget._startUrl,
       savedUrl: savedUrl,
+      startupPage: _appSettings.startupPage,
+      notificationUrl: notificationUrl,
       fallbackUrl: _appSettings.pageMode.startUrl,
     );
   }

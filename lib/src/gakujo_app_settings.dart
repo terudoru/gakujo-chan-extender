@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_dated_activity.dart';
+import 'gakujo_startup_settings.dart';
+export 'gakujo_startup_settings.dart';
 import 'migrating_secure_storage.dart';
 import 'protected_secrets_vault.dart';
 import 'secure_storage_factory.dart';
@@ -719,6 +721,8 @@ class GakujoAppSettings {
   const GakujoAppSettings({
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
     this.pageMode = GakujoPageMode.desktop,
+    this.startupPage = GakujoStartupPage.previous,
+    this.desktopZoomSettings = const GakujoDesktopZoomSettings(),
     this.savedLoginId,
     this.disabledFeatureFlags = const {},
     this.setupCompleted = false,
@@ -731,6 +735,8 @@ class GakujoAppSettings {
 
   final DownloadSaveMode downloadSaveMode;
   final GakujoPageMode pageMode;
+  final GakujoStartupPage startupPage;
+  final GakujoDesktopZoomSettings desktopZoomSettings;
   final String? savedLoginId;
   final Set<GakujoFeatureFlag> disabledFeatureFlags;
   final bool setupCompleted;
@@ -749,6 +755,8 @@ class GakujoAppSettings {
   GakujoAppSettings copyWith({
     DownloadSaveMode? downloadSaveMode,
     GakujoPageMode? pageMode,
+    GakujoStartupPage? startupPage,
+    GakujoDesktopZoomSettings? desktopZoomSettings,
     Object? savedLoginId = _unchanged,
     Set<GakujoFeatureFlag>? disabledFeatureFlags,
     bool? setupCompleted,
@@ -761,6 +769,8 @@ class GakujoAppSettings {
     return GakujoAppSettings(
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
       pageMode: pageMode ?? this.pageMode,
+      startupPage: startupPage ?? this.startupPage,
+      desktopZoomSettings: desktopZoomSettings ?? this.desktopZoomSettings,
       savedLoginId: savedLoginId == _unchanged
           ? this.savedLoginId
           : savedLoginId as String?,
@@ -801,6 +811,8 @@ class GakujoAppSettingsStore {
 
   static const _downloadSaveModeKey = 'more_better_gakujo_download_save_mode';
   static const _pageModeKey = 'more_better_gakujo_page_mode';
+  static const _startupPageKey = 'more_better_gakujo_startup_page';
+  static const _desktopZoomSettingsKey = 'more_better_gakujo_desktop_zoom_settings';
   static const _loginIdKey = 'more_better_gakujo_login_id';
   static const _loginPasswordKey = 'more_better_gakujo_login_password';
   static const _loginCredentialsKey = 'more_better_gakujo_login_credentials_v2';
@@ -820,6 +832,8 @@ class GakujoAppSettingsStore {
   static const _settingsKeys = [
     _downloadSaveModeKey,
     _pageModeKey,
+    _startupPageKey,
+    _desktopZoomSettingsKey,
     _loginIdKey,
     _loginPasswordKey,
     _loginCredentialsKey,
@@ -842,6 +856,8 @@ class GakujoAppSettingsStore {
         const [
           _downloadSaveModeKey,
           _pageModeKey,
+          _startupPageKey,
+          _desktopZoomSettingsKey,
           _disabledFeatureFlagsKey,
           _setupCompletedKey,
           _calendarImportSettingsKey,
@@ -909,6 +925,10 @@ class GakujoAppSettingsStore {
         values[_downloadSaveModeKey],
       ),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[_pageModeKey]),
+      startupPage: GakujoStartupPage.fromJson(values[_startupPageKey]),
+      desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(
+        values[_desktopZoomSettingsKey],
+      ),
       savedLoginId: protection.enabled ? protection.loginId : loginCredentials?.loginId,
       disabledFeatureFlags: disabledFeatureFlags,
       setupCompleted: values[_setupCompletedKey] == 'true',
@@ -968,6 +988,18 @@ class GakujoAppSettingsStore {
       ),
     );
   }
+
+  Future<void> saveStartupPage(GakujoStartupPage page) => _enqueue(
+    () => _secureStorage.write(key: _startupPageKey, value: page.name),
+  );
+
+  Future<void> saveDesktopZoomSettings(GakujoDesktopZoomSettings settings) =>
+      _enqueue(
+        () => _secureStorage.write(
+          key: _desktopZoomSettingsKey,
+          value: jsonEncode(settings.toJson()),
+        ),
+      );
 
   Future<void> saveFeatureEnabled(
     GakujoFeatureFlag flag, {

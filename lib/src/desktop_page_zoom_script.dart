@@ -7,9 +7,10 @@ import 'generated/desktop_page_zoom.g.dart';
 const double kLinuxWheelNotchPixels = 100.0;
 
 /// Converts a wheel delta to a smooth multiplicative zoom, with bounded input.
-double desktopWheelZoom(double current, double deltaY) {
+double desktopWheelZoom(double current, double deltaY, {int stepPercent = 10}) {
   if (!current.isFinite || !deltaY.isFinite || deltaY == 0) return current;
-  return current * math.exp((-deltaY * .001).clamp(-.25, .25));
+  final sensitivity = const [5, 10, 25].contains(stepPercent) ? stepPercent / 10 : 1.0;
+  return current * math.exp((-deltaY * .001).clamp(-.25, .25) * sensitivity);
 }
 
 /// Tells a trackpad pinch from a pan whose finger spacing drifts: a gesture

@@ -76,6 +76,8 @@ Map<String, Object?> buildGakujoBackupPayload({
     'createdAt': (createdAt ?? DateTime.now()).toIso8601String(),
     'downloadSaveMode': appSettings.downloadSaveMode.storageValue,
     'pageMode': appSettings.pageMode.storageValue,
+    'startupPage': appSettings.startupPage.name,
+    'desktopZoomSettings': appSettings.desktopZoomSettings.toJson(),
     'setupCompleted': appSettings.setupCompleted,
     'calendarImportSettings': appSettings.calendarImportSettings.toJson(),
     'messageExcludeKeywords': appSettings.messageExcludeKeywords,

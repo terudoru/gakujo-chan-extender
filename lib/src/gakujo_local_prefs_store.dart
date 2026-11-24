@@ -208,6 +208,8 @@ class GakujoLocalPrefsStore {
       if (settings != null) ...{
         'downloadSaveMode': settings.downloadSaveMode.storageValue,
         'pageMode': settings.pageMode.storageValue,
+        'startupPage': settings.startupPage.name,
+        'desktopZoomSettings': settings.desktopZoomSettings.toJson(),
         'disabledFeatureFlags': settings.disabledFeatureFlags
             .map((flag) => flag.storageValue)
             .toList(),
@@ -246,6 +248,8 @@ class GakujoLocalPrefsStore {
     const settingsKeys = {
       'downloadSaveMode',
       'pageMode',
+      'startupPage',
+      'desktopZoomSettings',
       'disabledFeatureFlags',
       'setupCompleted',
       'calendarImportSettings',
@@ -282,6 +286,10 @@ class GakujoLocalPrefsStore {
               ),
               pageMode: GakujoPageModeLabels.fromStorageValue(
                 raw['pageMode']?.toString(),
+              ),
+              startupPage: GakujoStartupPage.fromJson(raw['startupPage']),
+              desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(
+                raw['desktopZoomSettings'],
               ),
               disabledFeatureFlags: disabledFeatureFlags,
               setupCompleted: raw['setupCompleted'] == true,
@@ -358,6 +366,9 @@ GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
   bool has(String key) => keys == null || keys.contains(key);
 
   return secureSettings.copyWith(
+    startupPage: has('startupPage') ? localSettings.startupPage : null,
+    desktopZoomSettings: has('desktopZoomSettings')
+        ? localSettings.desktopZoomSettings : null,
     messageExcludeKeywords: has('messageExcludeKeywords')
         ? localSettings.messageExcludeKeywords
         : null,
