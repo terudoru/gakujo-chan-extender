@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morebettergakujo_flutter/src/gakujo_web_app.dart';
+import 'package:morebettergakujo_flutter/src/widgets/gakujo_gpa_taunt.dart';
 
 void main() {
   test('versioned JSON round trip and legacy file migration', () async {
@@ -162,6 +163,123 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+  Widget gpaToolbar(double? gpa, List<String> items) => MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        height: 40,
+        child: GakujoCustomToolbar(
+          gpa: gpa,
+          items: items,
+          widthOf: (id) => switch (id) {
+            'gpa' => 120,
+            'spacer' => 0,
+            'navigation' => 80,
+            'zoom' => 136,
+            _ => 40,
+          },
+          itemBuilder: (id) => id == 'gpa'
+              ? GakujoGpaTaunt(gpa: gpa)
+              : IconButton(
+                  key: ValueKey(id),
+                  tooltip: id,
+                  onPressed: () {},
+                  icon: const Icon(Icons.star),
+                ),
+        ),
+      ),
+    ),
+  );
+
+  testWidgets(
+    'leading GPA uses remaining width and inset with or without spacer',
+    (tester) async {
+      for (final spacer in [false, true]) {
+        final items = ['gpa', if (spacer) 'spacer', 'reload', 'menu'];
+        await tester.pumpWidget(gpaToolbar(1.5, items));
+        expect(tester.getTopLeft(find.byType(GakujoGpaTaunt)).dx, 12);
+        expect(tester.getSize(find.byType(GakujoGpaTaunt)).width, 708);
+        expect(tester.getTopLeft(find.byKey(const ValueKey('reload'))).dx, 720);
+        expect(tester.getTopRight(find.byKey(const ValueKey('menu'))).dx, 800);
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('hidden GPA leaves zero width before left aligned buttons', (
+    tester,
+  ) async {
+    for (final gpa in [null, 3.0]) {
+      await tester.pumpWidget(gpaToolbar(gpa, ['gpa', 'reload', 'menu']));
+      expect(find.byType(GakujoGpaTaunt), findsNothing);
+      expect(tester.getTopLeft(find.byKey(const ValueKey('reload'))).dx, 0);
+      expect(tester.getTopLeft(find.byKey(const ValueKey('menu'))).dx, 40);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'buttons before GPA stay at left edge with GPA present or absent',
+    (tester) async {
+      for (final gpa in [1.5, null]) {
+        await tester.pumpWidget(
+          gpaToolbar(gpa, ['reload', 'gpa', 'spacer', 'settings', 'menu']),
+        );
+        expect(tester.getTopLeft(find.byKey(const ValueKey('reload'))).dx, 0);
+        expect(
+          tester.getTopLeft(find.byKey(const ValueKey('settings'))).dx,
+          720,
+        );
+        if (gpa != null) {
+          expect(tester.getTopLeft(find.byType(GakujoGpaTaunt)).dx, 40);
+          expect(tester.getSize(find.byType(GakujoGpaTaunt)).width, 680);
+        }
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    '360px GPA grows or scrolls without overflow and disappears cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        gpaToolbar(1.5, ['gpa', 'spacer', 'reload', 'menu']),
+      );
+      expect(tester.getTopLeft(find.byType(GakujoGpaTaunt)).dx, 12);
+      expect(tester.getSize(find.byType(GakujoGpaTaunt)).width, 268);
+      expect(tester.takeException(), isNull);
+      for (final gpa in [1.5, null]) {
+        await tester.pumpWidget(
+          gpaToolbar(gpa, [
+            'gpa',
+            'spacer',
+            'navigation',
+            'zoom',
+            'reload',
+            'settings',
+            'menu',
+          ]),
+        );
+        expect(tester.getTopRight(find.byKey(const ValueKey('menu'))).dx, 360);
+        if (gpa != null) {
+          expect(tester.getSize(find.byType(GakujoGpaTaunt)).width, 120);
+          await tester.drag(
+            find.byType(SingleChildScrollView),
+            const Offset(-240, 0),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('editor add remove reorder reset and failed save retain edits', (
     tester,
   ) async {

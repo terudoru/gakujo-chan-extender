@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'gakujo_gpa_taunt.dart';
+
 const _toolbarButtonExtent = 40.0;
 const _toolbarIconSize = 20.0;
 const _zoomResetButtonWidth = 56.0;
@@ -147,24 +149,33 @@ class GakujoCustomToolbar extends StatelessWidget {
     required this.items,
     required this.widthOf,
     required this.itemBuilder,
+    this.gpa,
   });
   final List<String> items;
   final double Function(String) widthOf;
   final Widget Function(String) itemBuilder;
+  final double? gpa;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final total = items.fold<double>(0, (sum, id) => sum + widthOf(id));
+      final active = items
+          .where((id) => id != 'gpa' || shouldShowGakujoGpaTaunt(gpa))
+          .toList();
+      final hasGpa = active.contains('gpa');
+      final gpaInset = active.firstOrNull == 'gpa' ? 12.0 : 0.0;
+      final total =
+          active.fold<double>(0, (sum, id) => sum + widthOf(id)) + gpaInset;
       final overflow = total > constraints.maxWidth;
       final visible = overflow
-          ? items.where((id) => id != 'menu').toList()
-          : items;
+          ? active.where((id) => id != 'menu').toList()
+          : active;
       final menuWidth = overflow ? 40.0 : 0.0;
       final viewport = (constraints.maxWidth - menuWidth).clamp(
         0.0,
         double.infinity,
       );
-      final natural = visible.fold<double>(0, (sum, id) => sum + widthOf(id));
+      final natural =
+          visible.fold<double>(0, (sum, id) => sum + widthOf(id)) + gpaInset;
       return Row(
         children: [
           Expanded(
@@ -175,8 +186,17 @@ class GakujoCustomToolbar extends StatelessWidget {
                 child: Row(
                   children: [
                     for (final id in visible)
-                      if (id == 'spacer')
-                        const Spacer()
+                      if (id == 'gpa')
+                        Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(left: gpaInset),
+                            child: itemBuilder(id),
+                          ),
+                        )
+                      else if (id == 'spacer')
+                        // GPA consumes the spare width just like the old title.
+                        // Without GPA, the spacer still separates left/right items.
+                        if (hasGpa) const SizedBox.shrink() else const Spacer()
                       else
                         SizedBox(width: widthOf(id), child: itemBuilder(id)),
                   ],

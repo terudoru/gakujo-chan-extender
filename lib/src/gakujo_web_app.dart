@@ -2702,12 +2702,13 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   Widget _buildCustomToolbar() {
     final layout = _toolbarLayout ?? GakujoToolbarLayout.defaults();
     return GakujoCustomToolbar(
+      gpa: _reportedGpa,
       items: layout.toolbar
           .where((id) => id != 'zoom' || _supportsDesktopZoom)
           .toList(),
       widthOf: (id) => switch (id) {
         'spacer' => 0,
-        'gpa' => 180,
+        'gpa' => 120,
         'navigation' => 80,
         'zoom' => 136,
         _ => _toolbarButtonExtent,
