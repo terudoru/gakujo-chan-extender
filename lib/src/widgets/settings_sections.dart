@@ -514,6 +514,67 @@ class GakujoDesktopZoomSection extends StatelessWidget {
   );
 }
 
+class GakujoAutoBackupSection extends StatelessWidget {
+  const GakujoAutoBackupSection({
+    super.key,
+    required this.settings,
+    required this.onIntervalChanged,
+    required this.onGenerationsChanged,
+  });
+  final GakujoAutoBackupSettings settings;
+  final ValueChanged<int?> onIntervalChanged;
+  final ValueChanged<int?> onGenerationsChanged;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SettingsRadioGroup<int>(
+        groupValue: settings.intervalHours,
+        values: GakujoAutoBackupSettings.intervals,
+        labelFor: (value) => '$value時間',
+        onChanged: onIntervalChanged,
+        decoration: const InputDecoration(
+          labelText: '自動バックアップの間隔',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 16),
+      SettingsRadioGroup<int>(
+        groupValue: settings.generations,
+        values: GakujoAutoBackupSettings.generationCounts,
+        labelFor: (value) => '$value世代',
+        onChanged: onGenerationsChanged,
+        decoration: const InputDecoration(
+          labelText: '残す世代数',
+          border: OutlineInputBorder(),
+        ),
+      ),
+    ],
+  );
+}
+
+class GakujoReportInitialSortSection extends StatelessWidget {
+  const GakujoReportInitialSortSection({
+    super.key,
+    required this.sort,
+    required this.onChanged,
+  });
+  final GakujoReportInitialSort sort;
+  final ValueChanged<GakujoReportInitialSort?> onChanged;
+  @override
+  Widget build(BuildContext context) =>
+      SettingsRadioGroup<GakujoReportInitialSort>(
+        groupValue: sort,
+        values: GakujoReportInitialSort.values,
+        labelFor: (value) => value.label,
+        onChanged: onChanged,
+        decoration: const InputDecoration(
+          labelText: '課題一覧の初期並び順',
+          border: OutlineInputBorder(),
+        ),
+      );
+}
+
 class FeatureFlagsSection extends StatelessWidget {
   const FeatureFlagsSection({
     super.key,

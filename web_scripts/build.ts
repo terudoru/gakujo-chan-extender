@@ -31,7 +31,7 @@ const entries: ({ source: string; output: string; name: string; kind?: 'statemen
   { source: 'web_scripts/src/expired_page_recovery/main.ts', output: 'lib/src/generated/expired_page_recovery.g.dart', name: 'gakujoExpiredPageRecoveryJs' },
   { source: 'web_scripts/src/gpa_display/main.ts', output: 'lib/src/generated/gpa_display.g.dart', name: 'gakujoGpaDisplayJs' },
   { source: 'web_scripts/src/message_reader/main.ts', output: 'lib/src/generated/message_reader.g.dart', name: 'gakujoMessageReaderJs' },
-  { source: 'web_scripts/src/report_sorter/main.ts', output: 'lib/src/generated/report_sorter.g.dart', name: 'gakujoReportSorterJs' },
+  { source: 'web_scripts/src/report_sorter/main.ts', output: 'lib/src/generated/report_sorter.g.dart', name: 'gakujoReportSorterJs', config: true },
   { source: 'web_scripts/src/timeout_popup/main.ts', output: 'lib/src/generated/timeout_popup.g.dart', name: 'gakujoTimeoutPopupJs' },
   { source: 'web_scripts/src/portal_auth_state_probe/main.ts', output: 'lib/src/generated/portal_auth_state_probe.g.dart', name: 'gakujoPortalAuthStateProbeJs', kind: 'expression' },
   { source: 'web_scripts/src/authenticated_session_reset/main.ts', output: 'lib/src/generated/authenticated_session_reset.g.dart', name: 'gakujoAuthenticatedSessionResetJs' },

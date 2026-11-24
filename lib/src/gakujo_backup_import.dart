@@ -29,6 +29,8 @@ class GakujoBackupImport {
     this.downloadSaveMode,
     this.pageMode,
     this.startupPage,
+    this.autoBackupSettings,
+    this.reportInitialSort,
     this.desktopZoomSettings,
     this.setupCompleted,
     this.calendarImportSettings,
@@ -50,6 +52,8 @@ class GakujoBackupImport {
   final DownloadSaveMode? downloadSaveMode;
   final GakujoPageMode? pageMode;
   final GakujoStartupPage? startupPage;
+  final GakujoAutoBackupSettings? autoBackupSettings;
+  final GakujoReportInitialSort? reportInitialSort;
   final GakujoDesktopZoomSettings? desktopZoomSettings;
   final bool? setupCompleted;
   final GakujoCalendarImportSettings? calendarImportSettings;
@@ -135,6 +139,8 @@ GakujoBackupImport parseGakujoBackup(
   return GakujoBackupImport(
     version: version,
     startupPage: GakujoStartupPage.fromJson(decoded['startupPage']),
+    autoBackupSettings: GakujoAutoBackupSettings.fromJson(decoded['autoBackupSettings']),
+    reportInitialSort: GakujoReportInitialSort.fromJson(decoded['reportInitialSort']),
     desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(decoded['desktopZoomSettings']),
     downloadSaveMode: decoded.containsKey('downloadSaveMode')
         ? DownloadSaveModeLabels.fromStorageValue(

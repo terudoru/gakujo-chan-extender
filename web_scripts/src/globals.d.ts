@@ -78,7 +78,7 @@ interface Window {
   GakujoGpaReport?: { postMessage: (message: string) => void };
 
   __MBG_REPORT_SORTER_VERSION?: number;
-  __MBG_REPORT_SORTER_UPDATE?: () => boolean;
+  __MBG_REPORT_SORTER_UPDATE?: (initialSort?: string) => boolean;
   __MBG_REPORT_SORTER_INTERVAL?: number;
   __MBG_REPORT_SORTER_DID_INITIAL_SORT?: boolean;
   __MBG_MESSAGE_READER_VERSION?: number;

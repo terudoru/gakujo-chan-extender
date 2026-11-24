@@ -66,6 +66,14 @@ Future<void> restoreGakujoBackup({
       beforeWrite?.call();
       await settingsStore.savePageMode(backup.pageMode!);
     }
+    if (backup.autoBackupSettings != null) {
+      beforeWrite?.call();
+      await settingsStore.saveAutoBackupSettings(backup.autoBackupSettings!);
+    }
+    if (backup.reportInitialSort != null) {
+      beforeWrite?.call();
+      await settingsStore.saveReportInitialSort(backup.reportInitialSort!);
+    }
     if (backup.startupPage != null) {
       beforeWrite?.call();
       await settingsStore.saveStartupPage(backup.startupPage!);

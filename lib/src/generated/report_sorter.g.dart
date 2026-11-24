@@ -2,7 +2,14 @@
 // Source: web_scripts/src/report_sorter/main.ts
 // Regenerate with: npm --prefix web_scripts run build
 
-const String gakujoReportSorterJs = r'''
+import 'dart:convert';
+
+String gakujoReportSorterJs(Map<String, Object?> config) =>
+    _gakujoReportSorterJsPrefix +
+    jsonEncode(config) +
+    _gakujoReportSorterJsSuffix;
+
+const String _gakujoReportSorterJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
   // web_scripts/src/shared/page_watch.ts
@@ -135,10 +142,14 @@ const String gakujoReportSorterJs = r'''
 
   // web_scripts/src/report_sorter/main.ts
   function reportSorter() {
-    var version = 5;
+    var version = 6;
+    function normalizeInitialSort(value) {
+      return value === "original" || value === "title" || value === "courseNumber" ? value : "deadline";
+    }
+    var initialSort = normalizeInitialSort(typeof __mbgConfig === "object" && __mbgConfig ? __mbgConfig.initialSort : void 0);
     if (window.__MBG_REPORT_SORTER_VERSION === version) {
       if (window.__MBG_REPORT_SORTER_UPDATE) {
-        window.__MBG_REPORT_SORTER_UPDATE();
+        window.__MBG_REPORT_SORTER_UPDATE(initialSort);
       }
       return;
     }
@@ -288,7 +299,8 @@ const String gakujoReportSorterJs = r'''
       button.addEventListener("click", handler);
       target.appendChild(button);
     }
-    function update() {
+    function update(nextInitialSort) {
+      if (nextInitialSort !== void 0) initialSort = normalizeInitialSort(nextInitialSort);
       var table = reportTable();
       if (!table) {
         ["mbg-report-title-button", "mbg-report-number-button", "mbg-report-date-button"].forEach(function(id) {
@@ -305,7 +317,18 @@ const String gakujoReportSorterJs = r'''
       colorTemporarySaved(table);
       if (!sortedTables.has(table)) {
         sortedTables.add(table);
-        sortByDate();
+        switch (initialSort) {
+          case "original":
+            break;
+          case "title":
+            sortByTitle();
+            break;
+          case "courseNumber":
+            sortByNumber();
+            break;
+          default:
+            sortByDate();
+        }
       }
       return true;
     }
@@ -317,4 +340,6 @@ const String gakujoReportSorterJs = r'''
   }
   reportSorter();
 })();
+})(''';
+const String _gakujoReportSorterJsSuffix = r''');
 ''';

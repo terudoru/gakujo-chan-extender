@@ -102,6 +102,7 @@ import 'star_sync/star_sync_google_auth.dart';
 import 'star_sync/star_sync_quota_meter.dart';
 import 'star_sync/star_sync_google_drive_transport.dart';
 import 'gakujo_start_url_resolver.dart';
+import 'gakujo_auto_backup_schedule.dart';
 import 'gakujo_quick_jump_destination.dart';
 export 'gakujo_quick_jump_destination.dart';
 import 'login_autofill_assist_script.dart';
@@ -239,7 +240,9 @@ Map<String, String Function()> gakujoPageScriptBuilders(
   Iterable<String> starredIds = const [],
 }) => {
   'gpa': GakujoGpaDisplayScript.build,
-  'report': GakujoReportSorterScript.build,
+  'report': () => GakujoReportSorterScript.build(
+    initialSort: settings.reportInitialSort,
+  ),
   'reader': GakujoMessageReaderScript.build,
   'stars': () => GakujoMessageStarScript.build(starredIds: starredIds),
   for (final entry in _originalExtensionFeatureBuilders.entries)
@@ -322,6 +325,8 @@ Map<String, Object?> portableSyncBackupPayload(Map<String, Object?> payload, {
   result.remove('downloadSaveMode');
   result.remove('pageMode');
   result.remove('startupPage');
+  result.remove('autoBackupSettings');
+  result.remove('reportInitialSort');
   result.remove('desktopZoomSettings');
   if (disabledCollections.contains('favorites')) result.remove('favorites');
   if (disabledCollections.contains('notified-deadlines')) result.remove('notifiedDeadlineKeys');
@@ -1030,6 +1035,8 @@ Future<GakujoAppSettings> restoreGakujoSettingsLocally({
     downloadSaveMode: backup.downloadSaveMode,
     pageMode: backup.pageMode,
     startupPage: backup.startupPage,
+    autoBackupSettings: backup.autoBackupSettings,
+    reportInitialSort: backup.reportInitialSort,
     desktopZoomSettings: backup.desktopZoomSettings,
     disabledFeatureFlags: backup.disabledFeatureFlags,
     setupCompleted: backup.setupCompleted,
@@ -1172,6 +1179,18 @@ Future<void> pruneJsonFilesForRetention(
     }
   }
 }
+
+@visibleForTesting
+Future<void> pruneAutomaticBackupFiles(
+  Directory directory, {
+  required GakujoAutoBackupSettings settings,
+  File? protectedFile,
+}) => pruneJsonFilesForRetention(
+  directory,
+  keep: settings.generations,
+  fileNamePrefix: 'auto-backup-',
+  protectedFile: protectedFile,
+);
 
 @visibleForTesting
 bool javaScriptResultAsBool(Object? result) {
@@ -2029,9 +2048,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   double _touchHistorySwipeViewportWidth = 0;
   int _desktopZoomApplyRevision = 0;
   Offset? _desktopZoomOrigin;
-  Timer? _autoBackupTimer;
-  Timer? _autoBackupDebounce;
-  bool _autoBackupWrittenThisLaunch = false;
+  late final _autoBackupSchedule = GakujoAutoBackupSchedule(
+    onBackup: () => unawaited(_writeAutomaticBackup()),
+  );
   DateTime? _lastAutomaticBackupAt;
   Completer<String>? _nextPageFinishedCompleter;
   ({String url, int revision, Completer<void> disposed})? _deferredPageNavigation;
@@ -2304,8 +2323,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     unawaited(_controller.dispose());
     _desktopHistorySwipe.dispose();
     _previewGestureTimer?.cancel();
-    _autoBackupTimer?.cancel();
-    _autoBackupDebounce?.cancel();
+    _autoBackupSchedule.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -2346,7 +2364,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       unawaited(_saveCurrentPageUrl());
-      // Desktop windows turn inactive on every focus change; keep the ten
+      // Desktop windows turn inactive on every focus change; keep the
       // retained backups from rotating away within minutes.
       final lastBackup = _lastAutomaticBackupAt;
       if (_appSettingsLoaded &&
@@ -4065,6 +4083,26 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         ),
                       ],
                       const Divider(height: 32),
+                      GakujoReportInitialSortSection(
+                        sort: _appSettings.reportInitialSort,
+                        onChanged: (value) async {
+                          if (value == null) return;
+                          final saved = await _trySaveSettings(
+                            () => _saveViewPreferences(
+                              update: (settings) =>
+                                  settings.copyWith(reportInitialSort: value),
+                              persist: (settings) =>
+                                  _appSettingsStore.saveReportInitialSort(
+                                    settings.reportInitialSort,
+                                  ),
+                            ),
+                          );
+                          if (!saved || !dialogContext.mounted) return;
+                          setDialogState(() {});
+                          await _injectReportSorterIfAllowed();
+                        },
+                      ),
+                      const SizedBox(height: 16),
                       FeatureFlagsSection(
                         settings: _appSettings,
                         onChanged: onFlagChanged,
@@ -4577,6 +4615,42 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         onChanged: onFlagChanged,
                         title: null,
                         flags: settingsBackupFeatureFlags,
+                      ),
+                      const SizedBox(height: 16),
+                      GakujoAutoBackupSection(
+                        settings: _appSettings.autoBackupSettings,
+                        onIntervalChanged: (value) async {
+                          if (value == null) return;
+                          await _trySaveSettings(
+                            () => _saveViewPreferences(
+                              update: (settings) => settings.copyWith(
+                                autoBackupSettings: settings.autoBackupSettings
+                                    .copyWith(intervalHours: value),
+                              ),
+                              persist: (settings) =>
+                                  _appSettingsStore.saveAutoBackupSettings(
+                                    settings.autoBackupSettings,
+                                  ),
+                            ),
+                          );
+                          if (dialogContext.mounted) setDialogState(() {});
+                        },
+                        onGenerationsChanged: (value) async {
+                          if (value == null) return;
+                          await _trySaveSettings(
+                            () => _saveViewPreferences(
+                              update: (settings) => settings.copyWith(
+                                autoBackupSettings: settings.autoBackupSettings
+                                    .copyWith(generations: value),
+                              ),
+                              persist: (settings) =>
+                                  _appSettingsStore.saveAutoBackupSettings(
+                                    settings.autoBackupSettings,
+                                  ),
+                            ),
+                          );
+                          if (dialogContext.mounted) setDialogState(() {});
+                        },
                       ),
                     ],
                   ),
@@ -5589,28 +5663,10 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     }
   }
 
-  void _scheduleAutoBackup() {
-    _autoBackupTimer?.cancel();
-    _autoBackupDebounce?.cancel();
-    if (!_appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup)) {
-      return;
-    }
-    _autoBackupTimer = Timer.periodic(
-      const Duration(hours: 6),
-      (_) => unawaited(_writeAutomaticBackup()),
-    );
-    if (!_autoBackupWrittenThisLaunch) {
-      _autoBackupWrittenThisLaunch = true;
-      unawaited(_writeAutomaticBackup());
-      return;
-    }
-    // Only the last ten automatic backups are kept, so a burst of setting
-    // changes must not rotate out older ones: write once things settle.
-    _autoBackupDebounce = Timer(
-      const Duration(minutes: 1),
-      () => unawaited(_writeAutomaticBackup()),
-    );
-  }
+  void _scheduleAutoBackup() => _autoBackupSchedule.schedule(
+    enabled: _appSettings.isFeatureEnabled(GakujoFeatureFlag.autoBackup),
+    settings: _appSettings.autoBackupSettings,
+  );
 
   Future<File?> _writeAutomaticBackup() async {
     _lastAutomaticBackupAt = DateTime.now();
@@ -5630,13 +5686,20 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   }
 
   Future<File> _writeBackupFile({required String prefix}) async {
-    return _writeJsonFile(
+    final file = await _writeJsonFile(
       directoryName: 'MoreBetterGakujoBackups',
       fileName: '$prefix-backup-${DateTime.now().microsecondsSinceEpoch}.json',
       payload: await _backupPayload(includeStarredMessages: prefix != 'auto'),
-      pruneAfterWrite: prefix == 'auto',
-      pruneFileNamePrefix: prefix == 'auto' ? 'auto-backup-' : null,
+      pruneAfterWrite: false,
     );
+    if (prefix == 'auto') {
+      await pruneAutomaticBackupFiles(
+        file.parent,
+        settings: _appSettings.autoBackupSettings,
+        protectedFile: file,
+      );
+    }
+    return file;
   }
 
   Future<File> _writeJsonFile({
@@ -8051,6 +8114,8 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           downloadSaveMode: backup.downloadSaveMode,
           pageMode: backup.pageMode,
           startupPage: fromSyncStorage ? null : backup.startupPage,
+          autoBackupSettings: fromSyncStorage ? null : backup.autoBackupSettings,
+          reportInitialSort: fromSyncStorage ? null : backup.reportInitialSort,
           desktopZoomSettings: fromSyncStorage ? null : backup.desktopZoomSettings,
           setupCompleted: backup.setupCompleted,
           calendarImportSettings: backup.calendarImportSettings,
@@ -8102,6 +8167,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         nextSettings,
       );
       await _injectMessageFilterIfAllowed();
+      await _injectReportSorterIfAllowed();
       await _refreshMessageStars();
       if (backup.starredMessages != null) _scheduleStarSync();
       // The imported notification choices decide which reminders to book.
@@ -8373,6 +8439,18 @@ class _GakujoWebAppState extends State<GakujoWebApp>
         continue;
       }
       await _applyFeatureFlagRuntimeState(flag, enabled: true);
+    }
+  }
+
+  Future<void> _injectReportSorterIfAllowed() async {
+    if (!_canRunPageScripts) return;
+    try {
+      await _controller.runJavaScript(GakujoReportSorterScript.build(
+        initialSort: _appSettings.reportInitialSort,
+      ));
+    } on Object catch (error, stackTrace) {
+      developer.log('Failed to configure report initial sort',
+          name: 'MoreBetterGakujo', error: error, stackTrace: stackTrace);
     }
   }
 

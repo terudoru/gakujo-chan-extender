@@ -209,6 +209,8 @@ class GakujoLocalPrefsStore {
         'downloadSaveMode': settings.downloadSaveMode.storageValue,
         'pageMode': settings.pageMode.storageValue,
         'startupPage': settings.startupPage.name,
+        'autoBackupSettings': settings.autoBackupSettings.toJson(),
+        'reportInitialSort': settings.reportInitialSort.name,
         'desktopZoomSettings': settings.desktopZoomSettings.toJson(),
         'disabledFeatureFlags': settings.disabledFeatureFlags
             .map((flag) => flag.storageValue)
@@ -249,6 +251,8 @@ class GakujoLocalPrefsStore {
       'downloadSaveMode',
       'pageMode',
       'startupPage',
+      'autoBackupSettings',
+      'reportInitialSort',
       'desktopZoomSettings',
       'disabledFeatureFlags',
       'setupCompleted',
@@ -288,6 +292,8 @@ class GakujoLocalPrefsStore {
                 raw['pageMode']?.toString(),
               ),
               startupPage: GakujoStartupPage.fromJson(raw['startupPage']),
+              autoBackupSettings: GakujoAutoBackupSettings.fromJson(raw['autoBackupSettings']),
+              reportInitialSort: GakujoReportInitialSort.fromJson(raw['reportInitialSort']),
               desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(
                 raw['desktopZoomSettings'],
               ),
@@ -367,6 +373,8 @@ GakujoAppSettings mergeMacosLocalMessageFiltersWithSecureSettings({
 
   return secureSettings.copyWith(
     startupPage: has('startupPage') ? localSettings.startupPage : null,
+    autoBackupSettings: has('autoBackupSettings') ? localSettings.autoBackupSettings : null,
+    reportInitialSort: has('reportInitialSort') ? localSettings.reportInitialSort : null,
     desktopZoomSettings: has('desktopZoomSettings')
         ? localSettings.desktopZoomSettings : null,
     messageExcludeKeywords: has('messageExcludeKeywords')

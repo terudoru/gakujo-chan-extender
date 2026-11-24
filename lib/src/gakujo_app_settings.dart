@@ -4,6 +4,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'gakujo_dated_activity.dart';
 import 'gakujo_startup_settings.dart';
+import 'gakujo_automation_settings.dart';
+export 'gakujo_automation_settings.dart';
 export 'gakujo_startup_settings.dart';
 import 'migrating_secure_storage.dart';
 import 'protected_secrets_vault.dart';
@@ -722,6 +724,8 @@ class GakujoAppSettings {
     this.downloadSaveMode = DownloadSaveMode.autoSortToConfiguredFolder,
     this.pageMode = GakujoPageMode.desktop,
     this.startupPage = GakujoStartupPage.previous,
+    this.autoBackupSettings = const GakujoAutoBackupSettings(),
+    this.reportInitialSort = GakujoReportInitialSort.deadline,
     this.desktopZoomSettings = const GakujoDesktopZoomSettings(),
     this.savedLoginId,
     this.disabledFeatureFlags = const {},
@@ -736,6 +740,8 @@ class GakujoAppSettings {
   final DownloadSaveMode downloadSaveMode;
   final GakujoPageMode pageMode;
   final GakujoStartupPage startupPage;
+  final GakujoAutoBackupSettings autoBackupSettings;
+  final GakujoReportInitialSort reportInitialSort;
   final GakujoDesktopZoomSettings desktopZoomSettings;
   final String? savedLoginId;
   final Set<GakujoFeatureFlag> disabledFeatureFlags;
@@ -756,6 +762,8 @@ class GakujoAppSettings {
     DownloadSaveMode? downloadSaveMode,
     GakujoPageMode? pageMode,
     GakujoStartupPage? startupPage,
+    GakujoAutoBackupSettings? autoBackupSettings,
+    GakujoReportInitialSort? reportInitialSort,
     GakujoDesktopZoomSettings? desktopZoomSettings,
     Object? savedLoginId = _unchanged,
     Set<GakujoFeatureFlag>? disabledFeatureFlags,
@@ -770,6 +778,8 @@ class GakujoAppSettings {
       downloadSaveMode: downloadSaveMode ?? this.downloadSaveMode,
       pageMode: pageMode ?? this.pageMode,
       startupPage: startupPage ?? this.startupPage,
+      autoBackupSettings: autoBackupSettings ?? this.autoBackupSettings,
+      reportInitialSort: reportInitialSort ?? this.reportInitialSort,
       desktopZoomSettings: desktopZoomSettings ?? this.desktopZoomSettings,
       savedLoginId: savedLoginId == _unchanged
           ? this.savedLoginId
@@ -811,6 +821,8 @@ class GakujoAppSettingsStore {
 
   static const _downloadSaveModeKey = 'more_better_gakujo_download_save_mode';
   static const _pageModeKey = 'more_better_gakujo_page_mode';
+  static const _autoBackupSettingsKey = 'more_better_gakujo_auto_backup_settings';
+  static const _reportInitialSortKey = 'more_better_gakujo_report_initial_sort';
   static const _startupPageKey = 'more_better_gakujo_startup_page';
   static const _desktopZoomSettingsKey = 'more_better_gakujo_desktop_zoom_settings';
   static const _loginIdKey = 'more_better_gakujo_login_id';
@@ -833,6 +845,8 @@ class GakujoAppSettingsStore {
     _downloadSaveModeKey,
     _pageModeKey,
     _startupPageKey,
+    _autoBackupSettingsKey,
+    _reportInitialSortKey,
     _desktopZoomSettingsKey,
     _loginIdKey,
     _loginPasswordKey,
@@ -857,6 +871,8 @@ class GakujoAppSettingsStore {
           _downloadSaveModeKey,
           _pageModeKey,
           _startupPageKey,
+          _autoBackupSettingsKey,
+          _reportInitialSortKey,
           _desktopZoomSettingsKey,
           _disabledFeatureFlagsKey,
           _setupCompletedKey,
@@ -926,6 +942,8 @@ class GakujoAppSettingsStore {
       ),
       pageMode: GakujoPageModeLabels.fromStorageValue(values[_pageModeKey]),
       startupPage: GakujoStartupPage.fromJson(values[_startupPageKey]),
+      autoBackupSettings: GakujoAutoBackupSettings.fromJson(values[_autoBackupSettingsKey]),
+      reportInitialSort: GakujoReportInitialSort.fromJson(values[_reportInitialSortKey]),
       desktopZoomSettings: GakujoDesktopZoomSettings.fromJson(
         values[_desktopZoomSettingsKey],
       ),
@@ -988,6 +1006,18 @@ class GakujoAppSettingsStore {
       ),
     );
   }
+
+  Future<void> saveAutoBackupSettings(GakujoAutoBackupSettings settings) =>
+      _enqueue(
+        () => _secureStorage.write(
+          key: _autoBackupSettingsKey,
+          value: jsonEncode(settings.toJson()),
+        ),
+      );
+
+  Future<void> saveReportInitialSort(GakujoReportInitialSort sort) => _enqueue(
+    () => _secureStorage.write(key: _reportInitialSortKey, value: sort.name),
+  );
 
   Future<void> saveStartupPage(GakujoStartupPage page) => _enqueue(
     () => _secureStorage.write(key: _startupPageKey, value: page.name),

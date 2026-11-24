@@ -1,10 +1,15 @@
 import { watchPage } from '../shared/page_watch.js';
 export {};
+declare const __mbgConfig: { initialSort?: string };
 function reportSorter() {
-  var version = 5;
+  var version = 6;
+  function normalizeInitialSort(value: unknown) {
+    return value === 'original' || value === 'title' || value === 'courseNumber' ? value : 'deadline';
+  }
+  var initialSort = normalizeInitialSort(typeof __mbgConfig === 'object' && __mbgConfig ? __mbgConfig.initialSort : undefined);
   if (window.__MBG_REPORT_SORTER_VERSION === version) {
     if (window.__MBG_REPORT_SORTER_UPDATE) {
-      window.__MBG_REPORT_SORTER_UPDATE();
+      window.__MBG_REPORT_SORTER_UPDATE(initialSort);
     }
     return;
   }
@@ -177,7 +182,8 @@ function reportSorter() {
     target.appendChild(button);
   }
 
-  function update() {
+  function update(nextInitialSort?: string) {
+    if (nextInitialSort !== undefined) initialSort = normalizeInitialSort(nextInitialSort);
     var table = reportTable();
     if (!table) {
       ['mbg-report-title-button', 'mbg-report-number-button', 'mbg-report-date-button']
@@ -195,7 +201,12 @@ function reportSorter() {
     colorTemporarySaved(table);
     if (!sortedTables.has(table)) {
       sortedTables.add(table);
-      sortByDate();
+      switch (initialSort) {
+        case 'original': break;
+        case 'title': sortByTitle(); break;
+        case 'courseNumber': sortByNumber(); break;
+        default: sortByDate();
+      }
     }
     return true;
   }
