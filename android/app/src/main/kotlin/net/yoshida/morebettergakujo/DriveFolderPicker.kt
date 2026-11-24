@@ -44,7 +44,15 @@ internal class DriveFolderPicker(
                 when (call.method) {
                     "pickFolder" -> {
                         val email = (call.arguments as? Map<*, *>)?.get("email") as? String
-                        pick(email?.trim(), reply)
+                        val rawIds = (call.arguments as? Map<*, *>)?.get("fileIds")
+                        val fileIds = (rawIds as? List<*>)?.mapNotNull { it as? String }
+                        if (rawIds != null && (fileIds == null || fileIds.isEmpty() ||
+                            fileIds.size != (rawIds as List<*>).size ||
+                            fileIds.any { !it.matches(Regex("^[A-Za-z0-9_-]+$")) })) {
+                            reply.error("invalid_file_ids", null, null)
+                        } else {
+                            pick(email?.trim(), fileIds, reply)
+                        }
                     }
                     "cancelPick" -> {
                         requests.cancelPending(activity::finishActivity)
@@ -62,14 +70,14 @@ internal class DriveFolderPicker(
         requests.interrupt()
     }
 
-    private fun pick(email: String?, reply: MethodChannel.Result) {
+    private fun pick(email: String?, fileIds: List<String>?, reply: MethodChannel.Result) {
         if (email.isNullOrEmpty()) {
             reply.error("invalid_account", "Google アカウントを確認できませんでした。", null)
             return
         }
-        val code = requests.begin(reply, isPickerActive()) ?: return
+        val code = requests.begin(reply, isPickerActive(), fileIds) ?: return
         try {
-            val request = AuthorizationRequest.builder()
+            val builder = AuthorizationRequest.builder()
                 .setAccount(Account(email, "com.google"))
                 .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.file")))
                 .setOptOutIncludingGrantedScopes(true)
@@ -78,7 +86,10 @@ internal class DriveFolderPicker(
                 .addResourceParameter(ResourceParameter.PICKER_ALLOW_FOLDER_SELECTION, "true")
                 .addResourceParameter(ResourceParameter.PICKER_MIMETYPES, "application/vnd.google-apps.folder")
                 .addResourceParameter(ResourceParameter.PICKER_ALLOW_MULTIPLE, "false")
-                .build()
+            if (fileIds != null) {
+                builder.addResourceParameter(ResourceParameter.PICKER_FILE_IDS, fileIds.joinToString(","))
+            }
+            val request = builder.build()
             // Activity-scoped listeners are removed on stop and could leave Dart waiting.
             client.authorize(request).addOnCompleteListener { task ->
                 if (requests.activeCode != code) return@addOnCompleteListener
@@ -137,20 +148,20 @@ internal class DriveFolderPicker(
 }
 
 internal class DriveFolderPickRequests(initialCode: Int = FIRST_REQUEST_CODE) {
-    private class Pick(val code: Int, val reply: MethodChannel.Result, var resolutionLaunched: Boolean = false)
+    private class Pick(val code: Int, val reply: MethodChannel.Result, val fileIds: List<String>?, var resolutionLaunched: Boolean = false)
     private var pending: Pick? = null
     val activeCode get() = pending?.code
     var nextCode = initialCode
         private set
 
-    fun begin(reply: MethodChannel.Result, pickerActive: Boolean): Int? {
+    fun begin(reply: MethodChannel.Result, pickerActive: Boolean, fileIds: List<String>? = null): Int? {
         if (pending != null || pickerActive) {
             reply.error("picker_busy", "別の選択画面が開いています。", null)
             return null
         }
         val code = nextCode
         nextCode = if (code == Int.MAX_VALUE) FIRST_REQUEST_CODE else code + 1
-        pending = Pick(code, reply)
+        pending = Pick(code, reply, fileIds)
         return code
     }
 
@@ -200,9 +211,11 @@ internal class DriveFolderPickRequests(initialCode: Int = FIRST_REQUEST_CODE) {
     }
 
     fun selected(code: Int, ids: String?) {
+        val fileIds = pending?.takeIf { it.code == code }?.fileIds
         val reply = take(code) ?: return
         val id = ids?.trim()
-        if (id.isNullOrEmpty() || ',' in id) {
+        if (id.isNullOrEmpty() || !id.matches(Regex("^[A-Za-z0-9_-]+$")) ||
+            (fileIds != null && id !in fileIds)) {
             reply.error("invalid_picker_result", "フォルダを 1 件取得できませんでした。", null)
         } else {
             reply.success(id)

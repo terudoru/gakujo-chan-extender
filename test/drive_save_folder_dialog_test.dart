@@ -23,6 +23,8 @@ Future<void> openDialog(
   String? currentId,
   Future<List<GoogleDriveFolder>> Function()? load,
   Future<GoogleDriveFolder?> Function()? pick,
+  Future<String?> Function(String)? parentId,
+  Future<GoogleDriveFolder?> Function(String)? pickParent,
   Future<GoogleDriveFolder> Function(String)? create,
   required Future<void> Function(String?, DriveFolderCommit) save,
 }) async {
@@ -37,6 +39,8 @@ Future<void> openDialog(
                 currentId: currentId,
                 load: load ?? () async => [school],
                 pick: pick ?? () async => null,
+                parentId: parentId,
+                pickParent: pickParent,
                 create: create ?? (_) async => school,
                 save: save,
               ),
@@ -52,6 +56,107 @@ Future<void> openDialog(
 }
 
 void main() {
+  for (final action in ['load', 'pick', 'create', 'selection']) {
+    testWidgets('parent lookup failure preserves successful $action without errors', (tester) async {
+      final saved = <String?>[];
+      await openDialog(
+        tester,
+        currentId: action == 'load' ? school.id : null,
+        parentId: (_) async => throw StateError('parent unavailable'),
+        pickParent: (_) async => imported,
+        pick: () async => school,
+        create: (_) async => school,
+        save: (id, commit) => commit(() async => saved.add(id)),
+      );
+      switch (action) {
+        case 'pick':
+          await tester.tap(find.text(pickLabel));
+        case 'create':
+          await tester.enterText(find.byType(TextField), 'Math');
+          await tester.tap(find.text('作成'));
+        case 'selection':
+          await tester.tap(find.text(school.path));
+      }
+      await tester.pumpAndSettle();
+      final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+      expect(find.descendant(of: find.byWidget(dialog.title!),
+        matching: find.byType(Text)), findsNWidgets(2));
+      expect(find.text('一覧を再読み込み'), findsNothing);
+      expect(find.text('1つ上のフォルダを選ぶ'), findsNothing);
+      expect(find.text(school.path), findsOneWidget);
+      expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, school.id);
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(saved, [school.id]);
+    });
+  }
+
+  testWidgets('failed lookup for a new selection clears the previous parent', (tester) async {
+    await openDialog(tester,
+      currentId: school.id,
+      load: () async => [school, imported],
+      parentId: (id) async {
+        if (id == school.id) return 'parent';
+        throw StateError('parent unavailable');
+      },
+      pickParent: (_) async => null,
+      save: (_, _) async {},
+    );
+    expect(find.text('1つ上のフォルダを選ぶ'), findsOneWidget);
+    await tester.tap(find.text(imported.path));
+    await tester.pumpAndSettle();
+    expect(find.text('1つ上のフォルダを選ぶ'), findsNothing);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, imported.id);
+    final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
+    expect(find.descendant(of: find.byWidget(dialog.title!),
+      matching: find.byType(Text)), findsNWidgets(2));
+  });
+
+  const parentLabel = '1\u3064\u4e0a\u306e\u30d5\u30a9\u30eb\u30c0\u3092\u9078\u3076';
+  testWidgets('parent button hides for default and root, selects parent and climbs', (tester) async {
+    final picked = <String>[];
+    await openDialog(tester,
+      parentId: (id) async => switch (id) {
+        'child' => 'parent', 'parent' => 'grandparent', _ => null,
+      },
+      pickParent: (id) async {
+        picked.add(id);
+        return GoogleDriveFolder(id: id, name: id, path: id);
+      },
+      save: (_, _) async {},
+    );
+    expect(find.text(parentLabel), findsNothing);
+    await tester.tap(find.text(school.path));
+    await tester.pumpAndSettle();
+    expect(find.text(parentLabel), findsOneWidget);
+    await tester.tap(find.text(parentLabel));
+    await tester.pumpAndSettle();
+    expect(picked, ['parent']);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, 'parent');
+    await tester.tap(find.text(parentLabel));
+    await tester.pumpAndSettle();
+    expect(picked, ['parent', 'grandparent']);
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, 'grandparent');
+    expect(find.text(parentLabel), findsNothing);
+  });
+
+  testWidgets('parent cancellation preserves selection and busy disables duplicate picks', (tester) async {
+    final pending = Completer<GoogleDriveFolder?>();
+    var calls = 0;
+    await openDialog(tester, currentId: school.id,
+      parentId: (_) async => 'parent',
+      pickParent: (_) { calls++; return pending.future; },
+      save: (_, _) async {},
+    );
+    await tester.tap(find.text(parentLabel));
+    await tester.pump();
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, parentLabel)).onPressed, isNull);
+    expect(calls, 1);
+    pending.complete(null);
+    await tester.pumpAndSettle();
+    expect(tester.widget<RadioGroup<String>>(find.byType(RadioGroup<String>)).groupValue, school.id);
+  });
+
   testWidgets('lists folders and confirms the selected ID', (tester) async {
     final saved = <String?>[];
     await openDialog(

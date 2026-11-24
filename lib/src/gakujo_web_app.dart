@@ -1813,6 +1813,7 @@ class GoogleDriveSaveFolderPicker {
   Future<GoogleDriveFolder?> pick({
     required StarSyncGoogleAuthSession session,
     required GoogleDriveFileSaver saver,
+    List<String>? fileIds,
     required void Function() checkCurrent,
   }) async {
     checkCurrent();
@@ -1826,13 +1827,16 @@ class GoogleDriveSaveFolderPicker {
     _active = session;
     final String? id;
     try {
-      id = await session.auth.pickDriveFolder();
+      id = await session.auth.pickDriveFolder(fileIds: fileIds);
       if (!identical(_active, session)) return null;
     } finally {
       if (identical(_active, session)) _active = null;
     }
     checkCurrent();
     if (id == null) return null;
+    if (fileIds != null && !fileIds.contains(id)) {
+      throw const StarSyncGoogleAuthException(StarSyncGoogleAuthErrorKind.failed);
+    }
     final folder = await saver.getPrivateFolder(id);
     checkCurrent();
     return folder;
@@ -7561,6 +7565,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
           pick: () => _driveSaveFolderPicker.pick(
             session: session,
             saver: saver,
+            checkCurrent: checkCurrent,
+          ),
+          parentId: (id) async {
+            final parent = await saver.getParentFolderId(id);
+            checkCurrent();
+            return parent;
+          },
+          pickParent: (id) => _driveSaveFolderPicker.pick(
+            session: session,
+            saver: saver,
+            fileIds: [id],
             checkCurrent: checkCurrent,
           ),
           create: (name) async {

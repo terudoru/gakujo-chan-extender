@@ -165,6 +165,23 @@ void main() {
       });
     }
 
+    test('restricted mobile picker passes fileIds and rejects other IDs', () async {
+      await auth.restore(expectedEmail: email);
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return 'parent';
+      });
+      expect(await auth.pickDriveFolder(fileIds: ['parent']), 'parent');
+      expect((calls.single.arguments as Map)['fileIds'], ['parent']);
+      await expectLater(auth.pickDriveFolder(fileIds: ['other']),
+        throwsA(isA<StarSyncGoogleAuthException>()));
+      final before = calls.length;
+      await expectLater(auth.pickDriveFolder(fileIds: ['bad/id']),
+        throwsA(isA<StarSyncGoogleAuthException>()));
+      expect(calls.length, before);
+    });
+
     test('cancellation and malformed native replies leave the session usable', () async {
       await auth.restore(expectedEmail: email);
       final generation = auth.generation;

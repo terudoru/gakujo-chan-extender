@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import '../drive_planner_handoff.dart';
+import '../star_sync/star_sync_config.dart';
 import '../star_sync/star_sync_google_auth.dart';
 import '../star_sync/star_sync_transport.dart';
 
@@ -250,7 +251,26 @@ class PlannerBroker {
         return {'scope': student()};
       case 'signIn':
         check();
-        await signIn();
+        final email = auth.currentEmail;
+        if (email == null) {
+          await signIn();
+        } else {
+          final current = StarSyncGoogleAuthSession(auth, email: email);
+          for (final scope in starSyncGoogleScopes) {
+            final granted = await auth.hasScope(scope);
+            current.checkCurrent();
+            check();
+            if (!granted) {
+              // Scope consent pins the existing account; a new sign-in could
+              // select a different one when star sync has no account binding.
+              await auth.requestScopes(starSyncGoogleScopes);
+              if (!sameGoogleAccount(email, auth.currentEmail)) {
+                throw const PlannerBridgeException('stale-session');
+              }
+              break;
+            }
+          }
+        }
         await refreshSession();
         return {'session': session};
       case 'signOut':

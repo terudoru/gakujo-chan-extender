@@ -12,13 +12,18 @@ enum DrivePickerError: String, Error {
 
 struct DrivePickerAuthorization {
   private static let scope = "https://www.googleapis.com/auth/drive.file"
+  private let fileIds: [String]?
   private let clientID: String
   let scheme: String
   private var redirectURI: String { "\(scheme):/oauth2redirect" }
   private let state = DrivePickerAuthorization.randomSecret()
   private let verifier = DrivePickerAuthorization.randomSecret()
 
-  init?(clientID: String, registeredSchemes: [String]) {
+  init?(clientID: String, registeredSchemes: [String], fileIds: [String]? = nil) {
+    if let fileIds, fileIds.isEmpty || fileIds.contains(where: {
+      $0.isEmpty || $0.range(of: "[^A-Za-z0-9_-]", options: .regularExpression) != nil
+    }) { return nil }
+    self.fileIds = fileIds
     let scheme = clientID.components(separatedBy: ".").reversed().joined(separator: ".")
     guard clientID.hasSuffix(".apps.googleusercontent.com"),
           registeredSchemes.contains(scheme) else { return nil }
@@ -47,7 +52,7 @@ struct DrivePickerAuthorization {
   func authorizationURL(email: String) -> URL {
     var url = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     let challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
-    url.percentEncodedQuery = form([
+    var items = [
       URLQueryItem(name: "client_id", value: clientID),
       URLQueryItem(name: "redirect_uri", value: redirectURI),
       URLQueryItem(name: "response_type", value: "code"),
@@ -63,7 +68,11 @@ struct DrivePickerAuthorization {
       URLQueryItem(name: "state", value: state),
       URLQueryItem(name: "code_challenge_method", value: "S256"),
       URLQueryItem(name: "code_challenge", value: challenge),
-    ])
+    ]
+    if let fileIds {
+      items.append(URLQueryItem(name: "file_ids", value: fileIds.joined(separator: ",")))
+    }
+    url.percentEncodedQuery = form(items)
     return url.url!
   }
 
@@ -88,6 +97,7 @@ struct DrivePickerAuthorization {
           id.range(of: "[^A-Za-z0-9_-]", options: .regularExpression) == nil else {
       throw DrivePickerError.failed
     }
+    if let fileIds, !fileIds.contains(id) { throw DrivePickerError.failed }
     return (id, code)
   }
 
@@ -181,9 +191,11 @@ final class DriveFolderPicker {
         guard call.method == "pickFolder" else { return result(FlutterMethodNotImplemented) }
         let types = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]]
         let schemes = types?.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] } ?? []
-        guard let args = call.arguments as? [String: String], let email = args["email"], !email.isEmpty,
-              let clientID = args["iosClientId"],
-              let auth = DrivePickerAuthorization(clientID: clientID, registeredSchemes: schemes) else {
+        guard let args = call.arguments as? [String: Any], let email = args["email"] as? String, !email.isEmpty,
+              let clientID = args["iosClientId"] as? String,
+              args["fileIds"] == nil || args["fileIds"] is [String],
+              let auth = DrivePickerAuthorization(clientID: clientID, registeredSchemes: schemes,
+                                                fileIds: args["fileIds"] as? [String]) else {
           return result(FlutterError(code: "invalid_config", message: nil, details: nil))
         }
         guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })

@@ -122,7 +122,7 @@ void main() {
           request.uri.path != '/drive/v3/files') {
         expect(
           request.uri.queryParameters['fields'],
-          anyOf('id,ownedByMe,shared,trashed', 'id,parents,ownedByMe,shared,trashed',
+          anyOf('parents', 'id', 'id,ownedByMe,shared,trashed', 'id,parents,ownedByMe,shared,trashed',
               'id,name,mimeType,ownedByMe,shared,trashed'),
         );
         if (quotaOnCheck && uploads > 0) {
@@ -146,6 +146,7 @@ void main() {
         } else {
           response.write(jsonEncode({
             'trashed': false, 'parents': [matches.single['parent']], ...matches.single,
+            if (id == 'root') 'id': matches.single['canonicalId'] ?? id,
           }));
         }
       } else if (request.method == 'GET') {
@@ -377,6 +378,32 @@ void main() {
     length: 1,
     open: () => Stream.value([0]),
   );
+
+  test('parent lookup returns the first non-root parent', () async {
+    files.addAll([
+      {...folder('child', 'Child', 'parent'), 'parents': ['parent', 'ignored']},
+      folder('root', 'Root', ''),
+    ]);
+    expect(await saver.getParentFolderId('child'), 'parent');
+  });
+
+  test('parent lookup excludes My Drive root by canonical ID', () async {
+    files.addAll([
+      folder('child', 'Child', 'drive-root'),
+      {...folder('root', 'Root', ''), 'canonicalId': 'drive-root'},
+    ]);
+    expect(await saver.getParentFolderId('child'), isNull);
+  });
+
+  test('parent lookup returns null without parents', () async {
+    files.add({...folder('child', 'Child', ''), 'parents': []});
+    expect(await saver.getParentFolderId('child'), isNull);
+  });
+
+  test('parent lookup permits trying a parent when root is inaccessible', () async {
+    files.add(folder('child', 'Child', 'parent'));
+    expect(await saver.getParentFolderId('child'), 'parent');
+  });
 
   test('saves course folder under the selected folder', () async {
     files.add(folder('chosen', 'Chosen', 'root'));
@@ -1265,7 +1292,7 @@ class _FakeGoogleAuth implements StarSyncGoogleAuth {
   int pickerCancels = 0;
   int signInCancels = 0;
   @override
-  Future<String?> pickDriveFolder() => picker();
+  Future<String?> pickDriveFolder({List<String>? fileIds}) => picker();
   @override
   void cancelPendingDriveFolderPick() { pickerCancels++; }
   @override
