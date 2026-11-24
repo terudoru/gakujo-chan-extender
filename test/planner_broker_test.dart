@@ -9,10 +9,26 @@ import 'package:morebettergakujo_flutter/src/star_sync/star_sync_google_auth.dar
 class Auth extends Fake implements StarSyncGoogleAuth {
   String? email = 'test@example.invalid';
   int revision = 0;
+  final scopes = starSyncGoogleScopes.toSet();
+  final checkedScopes = <String>[];
+  final scopeRequests = <List<String>>[];
+  Completer<bool>? pendingScope;
   @override
   String? get currentEmail => email;
   @override
   int get generation => revision;
+  @override
+  Future<bool> hasScope(String scope) async {
+    checkedScopes.add(scope);
+    return pendingScope == null ? scopes.contains(scope) : pendingScope!.future;
+  }
+
+  @override
+  Future<void> requestScopes(List<String> requested) async {
+    scopeRequests.add(requested);
+    scopes.addAll(requested);
+    revision++;
+  }
 }
 
 class Drive extends Fake implements PlannerDrive {
@@ -74,6 +90,7 @@ void main() {
   late Auth auth;
   late Drive drive;
   late PlannerBroker broker;
+  late int signIns;
   final events = <Map<String, dynamic>>[];
   const id = '00000000-0000-4000-8000-000000000001';
   Future<Map<String, dynamic>> call(
@@ -86,6 +103,7 @@ void main() {
   );
   setUp(() {
     auth = Auth();
+    signIns = 0;
     drive = Drive();
     drive.files =
         fixture['operations'][3]['response']['result']['files'] as List;
@@ -97,6 +115,7 @@ void main() {
       drive: drive,
       student: () => plannerStudentScope('TEST-STUDENT-001'),
       signIn: () async {
+        signIns++;
         auth.email = 'test@example.invalid';
         auth.revision++;
       },
@@ -108,6 +127,79 @@ void main() {
       timeout: const Duration(milliseconds: 100),
     );
   });
+  test(
+    'signed-in signIn reuses scoped session without interactive auth',
+    () async {
+      final hello = (await call('hello'))['result'] as Map;
+      final generation = broker.generation;
+      events.clear();
+      expect(await call('signIn'), {
+        'v': 2,
+        'id': id,
+        'ok': true,
+        'result': {'session': hello['session']},
+      });
+      expect(auth.checkedScopes, starSyncGoogleScopes);
+      expect(signIns, 0);
+      expect(auth.scopeRequests, isEmpty);
+      expect(auth.revision, 0);
+      expect(broker.generation, generation);
+      expect(events, isEmpty);
+    },
+  );
+  test(
+    'signed-out signIn invokes interactive auth and binds new session',
+    () async {
+      auth.email = null;
+      final result = await call('signIn');
+      expect(signIns, 1);
+      expect(auth.checkedScopes, isEmpty);
+      expect(auth.scopeRequests, isEmpty);
+      expect(result, {
+        'v': 2,
+        'id': id,
+        'ok': true,
+        'result': {
+          'session': {
+            'signedIn': true,
+            'email': auth.email,
+            'permissionId': drive.owner,
+          },
+        },
+      });
+      expect(events.single['session'], result['result']['session']);
+    },
+  );
+  test('missing scope requests consent for the existing account', () async {
+    await call('hello');
+    final generation = broker.generation;
+    auth.scopes.remove(starSyncGoogleScopes.first);
+    final result = await call('signIn');
+    expect(result['ok'], true);
+    expect(result['result']['session'], {
+      'signedIn': true,
+      'email': 'test@example.invalid',
+      'permissionId': drive.owner,
+    });
+    expect(signIns, 0);
+    expect(auth.scopeRequests.single, starSyncGoogleScopes);
+    expect(broker.generation, greaterThan(generation));
+  });
+  test(
+    'account change during scope check cannot start interactive auth',
+    () async {
+      auth.pendingScope = Completer<bool>();
+      final result = call('signIn');
+      await Future<void>.delayed(Duration.zero);
+      auth.email = 'other@example.invalid';
+      auth.revision++;
+      auth.pendingScope!.complete(false);
+      expect((await result)['error']['code'], 'not-signed-in');
+      expect(signIns, 0);
+      expect(auth.scopeRequests, isEmpty);
+      expect(events, isEmpty);
+    },
+  );
   final hash = fixture['studentHash'] as Map;
   test('studentHash vector includes the exact salt and newline separator', () {
     expect(plannerStudentSalt, hash['salt']);
