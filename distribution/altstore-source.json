@@ -20,13 +20,13 @@
       "category": "utilities",
       "versions": [
         {
-          "version": "0.71.0",
-          "buildVersion": "77",
-          "marketingVersion": "0.71.0 (77)",
-          "date": "2026-11-11",
+          "version": "0.74.0",
+          "buildVersion": "84",
+          "marketingVersion": "0.74.0 (84)",
+          "date": "2026-11-24",
           "localizedDescription": "iOS/iPadOS self-signed build. See the GitHub release notes for details.",
-          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.71.0/MoreBetterGakujo-v0.71.0.ipa",
-          "size": 40010179,
+          "downloadURL": "https://github.com/terudoru/gakujo-chan-extender/releases/download/v0.74.0/MoreBetterGakujo-v0.74.0.ipa",
+          "size": 40989133,
           "minOSVersion": "14.0"
         }
       ],
