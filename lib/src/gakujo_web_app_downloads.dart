@@ -827,7 +827,7 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     if (!_canRunPageScripts) {
       return;
     }
-    const previewKinds = {'preview', 'preview-office', 'preview-edit'};
+    const previewKinds = {'preview', 'preview-office'};
     const compressionKinds = {'pdf', 'office'};
     if (!previewKinds.contains(kind) &&
         !(compressionKinds.contains(kind) &&

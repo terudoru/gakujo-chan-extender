@@ -595,48 +595,24 @@ class _MainPageState extends State<MainPage> with WidgetsBindingObserver {
                               height: size.height,
                             ),
                           ),
-                          // Scroll-thumbs example
-                          //
-                          // Show vertical scroll thumb on the right; it has page number on it
                           PdfViewerScrollThumb(
+                            key: ValueKey(isHorizontalLayout),
                             controller: controller,
-                            orientation: ScrollbarOrientation.right,
+                            orientation: isHorizontalLayout
+                                ? ScrollbarOrientation.bottom
+                                : ScrollbarOrientation.right,
                             thumbSize: const Size(40, 25),
                             thumbBuilder:
                                 (context, thumbSize, pageNumber, controller) =>
                                     Container(
                                       color: Colors.black,
-                                      child: isHorizontalLayout
-                                          ? null
-                                          : Center(
-                                              child: Text(
-                                                pageNumber.toString(),
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                    ),
-                          ),
-                          // Just a simple horizontal scroll thumb on the bottom
-                          PdfViewerScrollThumb(
-                            controller: controller,
-                            orientation: ScrollbarOrientation.bottom,
-                            thumbSize: const Size(40, 25),
-                            thumbBuilder:
-                                (context, thumbSize, pageNumber, controller) =>
-                                    Container(
-                                      color: Colors.black,
-                                      child: !isHorizontalLayout
-                                          ? null
-                                          : Center(
-                                              child: Text(
-                                                pageNumber.toString(),
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        pageNumber.toString(),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                     ),
                           ),
                         ],

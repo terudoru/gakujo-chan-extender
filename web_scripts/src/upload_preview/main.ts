@@ -1,8 +1,6 @@
 import { watchPage } from '../shared/page_watch.js';
 import { mbgValidateImage } from '../shared/image_bounds.js';
-import { setAssignmentAttachment } from '../shared/assignment_attachment.js';
-import { MAX_WORKSHEET_PDF_BYTES, openWorksheetEditor } from './worksheet_editor.js';
-import { loadPdfReadingProgress, saveWorksheetFile } from './document_actions.js';
+import { loadPdfReadingProgress } from './document_actions.js';
 
 const MAX_PDF_PREVIEW_BYTES = 512 * 1024 * 1024;
 
@@ -85,7 +83,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     visit(document);
     return result;
   }
-  function show(input: HTMLInputElement, file: File, onClosed?: () => void, initiallyVisible?: boolean, editOnOpen = false) {
+  function show(input: HTMLInputElement, file: File, onClosed?: () => void, initiallyVisible?: boolean) {
     var owner: Window = window;
     try {
       if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
@@ -98,7 +96,6 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     var doc = input.ownerDocument;
     var remote = input.type === 'hidden';
     var progress: Awaited<ReturnType<typeof loadPdfReadingProgress>> = null;
-    var stopEdit: (() => void) | undefined;
     var overlay = doc.createElement('div');
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
@@ -243,7 +240,6 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       if (closed) return;
       closed = true;
       progress?.flush();
-      stopEdit?.();
       if (imageGestureCleanup) { imageGestureCleanup(); imageGestureCleanup = null; }
       stopPdf();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -412,22 +408,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       }).catch(fail);
     } else if (file.type === 'application/pdf' || extension === 'pdf') {
       if (file.size > MAX_PDF_PREVIEW_BYTES) { fail(new Error('PDFが大きすぎます')); return; }
-      if (editOnOpen) { editWorksheet(input, file); cleanup(); return; }
       armWatchdog();
-      if (file.size <= MAX_WORKSHEET_PDF_BYTES) {
-        const edit = worksheetButton(doc, () => {
-          if (stopEdit) return;
-          stopEdit = openWorksheetEditor({
-            document: doc, container: overlay, file,
-            onExport: result => {
-              if (remote) return saveWorksheetFile(result);
-              if (!setAssignmentAttachment(input, result, file)) throw new Error('添付欄が変わりました');
-            },
-            onClose: () => { stopEdit = undefined; edit.focus(); },
-          });
-        });
-        bar.insertBefore(edit, close);
-      }
       pdfLibrary(function(cancel) { cancelLibrary = cancel; }).then(function() {
         if (closed || pdfStopped) return null;
         if (window.__MBG_PDF_PREVIEW_URL) { flutterViewerActive = true; resizeToolbar(); }
@@ -571,37 +552,6 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     zoomIn.addEventListener('click', function() { setZoom(zoom * 1.2); });
     close.focus();
   }
-  let disposeStandaloneEditor: (() => void) | undefined;
-  function worksheetButton(doc: Document, open: () => void) {
-    const button = doc.createElement('button');
-    button.type = 'button';
-    button.textContent = 'PDFに書き込む';
-    button.setAttribute('data-mbg-worksheet', '');
-    button.style.cssText = 'flex:none;margin:4px;padding:6px 8px';
-    button.addEventListener('click', open);
-    return button;
-  }
-
-  function isEditablePdf(file: File) {
-    return file.size <= MAX_WORKSHEET_PDF_BYTES &&
-      (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
-  }
-
-  window.addEventListener('pagehide', () => disposeStandaloneEditor?.());
-  function editWorksheet(input: HTMLInputElement, file: File) {
-    if (!isEditablePdf(file)) return;
-    disposeStandaloneEditor?.();
-    disposeStandaloneEditor = openWorksheetEditor({
-      document: input.ownerDocument,
-      file,
-      onExport: result => {
-        if (input.type === 'hidden') return saveWorksheetFile(result);
-        if (!setAssignmentAttachment(input, result, file)) throw new Error('添付欄が変わりました');
-      },
-      onClose: () => { disposeStandaloneEditor = undefined; },
-    });
-  }
-
   function attach() {
     documents().forEach(function(doc) {
       var inputs = doc.querySelectorAll<HTMLInputElement>('input[type="file"]');
@@ -615,22 +565,11 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
         button.style.cssText = 'margin:4px 8px;padding:6px 10px';
         input.parentNode.insertBefore(button, input.nextSibling);
         input.__mbgPreviewButton = button;
-        const edit = worksheetButton(doc, () => {
-          const files = Array.from(input.files || []);
-          const pdfs = files.filter(isEditablePdf);
-          if (pdfs.length === 1 && !input.__mbgUploadCompressionPending) editWorksheet(input, pdfs[0]);
-        });
-        button.parentNode?.insertBefore(edit, button.nextSibling);
-        const showEdit = () => {
-          edit.hidden = Array.from(input.files || []).filter(isEditablePdf).length !== 1;
-        };
-        showEdit();
         (function(target: HTMLInputElement, control: HTMLButtonElement) {
           var list: HTMLDivElement | null = null;
           target.addEventListener('change', function() {
-             if (list) { list.remove(); list = null; }
-             showEdit();
-           });
+            if (list) { list.remove(); list = null; }
+          });
           control.addEventListener('click', function() {
             if (list) { list.remove(); list = null; }
             if (target.__mbgUploadCompressionPending) { control.textContent = '圧縮が終わるまでお待ちください'; return; }
@@ -706,13 +645,6 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       button.style.cssText = 'margin:4px 8px;padding:6px 10px';
       anchor.parentNode.insertBefore(button, anchor.nextSibling);
       anchor.__mbgSubmittedPreviewButton = button;
-      if (/\.pdf(?:$|[?#])/i.test(remote.fileName) || /\.pdf(?:$|[?#])/i.test(remote.url)) {
-        const edit = worksheetButton(doc, () => {
-          const request = mbgRemoteFileRequest(anchor);
-          if (request) window.__MBG_OPEN_REMOTE_PREVIEW?.(request, true);
-        });
-        button.parentNode?.insertBefore(edit, button.nextSibling);
-      }
       (function(target: MbgPreviewAnchor, control: HTMLButtonElement) {
         control.addEventListener('click', function() {
           var request = mbgRemoteFileRequest(target);
@@ -791,7 +723,7 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
     })) return false;
     return true;
   }
-  window.__MBG_OPEN_REMOTE_PREVIEW = function(request, editOnOpen) {
+  window.__MBG_OPEN_REMOTE_PREVIEW = function(request) {
     if (!mbgValidateRemotePreviewRequest(request)) return false;
     var url = new URL(request.url, window.location.href);
     var method = String(request.method || '').toUpperCase();
@@ -894,12 +826,8 @@ var mbgCompactAndroid = __mbgConfig.compactAndroid;
       var anchor = doc.createElement('input'); anchor.type = 'hidden'; doc.body.appendChild(anchor);
       var visible = operation.visible;
       var token = (operation as {__mbgToken?: string}).__mbgToken;
-      if (editOnOpen && !isEditablePdf(file)) {
-        anchor.remove();
-        throw new Error('書き込めるPDFを読み込めませんでした');
-      }
       cleanup(true);
-      show(anchor, file, function() { anchor.remove(); }, visible, editOnOpen);
+      show(anchor, file, function() { anchor.remove(); }, visible);
       // Carry the history token of the button that opened this preview.
       var shown = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
       if (token && shown && !shown.__mbgToken) shown.__mbgToken = token;

@@ -86,8 +86,7 @@ vm.runInNewContext(source,context);
 const controls: any=parent.children.filter((node: any) =>node.attributes['data-mbg-upload-preview']==='true');
 assert.equal(controls.length,2);
 const editControls=parent.children.filter((node: any) =>Object.hasOwn(node.attributes,'data-mbg-worksheet'));
-assert.equal(editControls.length,2);
-assert(editControls.every((node: any) => !node.hidden),'selected PDF can be edited from either input');
+assert.equal(editControls.length,0,'file inputs only offer preview controls');
 controls[0].fire('click');await ticks();assert.equal(readers,1);
 controls[1].fire('click');await ticks();assert.equal(aborted,1);assert.equal(readers,1);
 assert.equal(doc.body.children.filter((x: any) =>x.attributes.role==='dialog').length,1);
@@ -98,6 +97,8 @@ assert.deepEqual([...((await new lastOptions.CMapReaderFactory().fetch({name:'sy
 assert.deepEqual([...(await new lastOptions.StandardFontDataFactory().fetch({filename:'sample.pfb'}))],[1,2]);
 await assert.rejects(new lastOptions.CMapReaderFactory().fetch({name:'../unsafe'}));
 const overlay: any=doc.body.children.find((x: any) =>x.attributes.role==='dialog');const bar: any=overlay.children[0];
+assert(!bar.children.some((node: any) => Object.hasOwn(node.attributes,'data-mbg-worksheet')),
+  'PDF preview does not offer worksheet editing');
 assert.equal(window.__MBG_PREVIEW_NAVIGATE('back'),true);
 assert.equal(overlay.style.display,'none','back reveals the underlying page');
 assert.equal(activeViewers,1,'back preserves the viewer');

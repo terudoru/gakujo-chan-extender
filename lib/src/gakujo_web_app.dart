@@ -2069,7 +2069,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
   final GakujoPdfReadingProgress _pdfReadingProgress = GakujoPdfReadingProgress();
   final IncomingAttachmentService _incomingAttachments = IncomingAttachmentService.instance;
   bool _receivingAssignmentAttachment = false;
-  bool _exportingWorksheet = false;
   int _webViewDownloadRequestSequence = 0;
   int _navigationRevision = 0;
   static final _protectedSecretPromptGate = ProtectedSecretPromptGate();
@@ -9003,10 +9002,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     await _addGakujoJavaScriptChannel(
       'MbgPdfReadingProgress',
       onMessageReceived: _handlePdfReadingProgress,
-    );
-    await _addGakujoJavaScriptChannel(
-      'MbgWorksheetExport',
-      onMessageReceived: _handleWorksheetExport,
     );
     if (_supportsIncomingAttachments) {
       await _addGakujoJavaScriptChannel(

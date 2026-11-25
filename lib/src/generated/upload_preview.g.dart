@@ -12,26 +12,6 @@ String gakujoUploadPreviewJs(Map<String, Object?> config) =>
 const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
 "use strict";
 (() => {
-  var __defProp = Object.defineProperty;
-  var __defProps = Object.defineProperties;
-  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-  var __hasOwnProp = Object.prototype.hasOwnProperty;
-  var __propIsEnum = Object.prototype.propertyIsEnumerable;
-  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-  var __spreadValues = (a, b) => {
-    for (var prop in b || (b = {}))
-      if (__hasOwnProp.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    if (__getOwnPropSymbols)
-      for (var prop of __getOwnPropSymbols(b)) {
-        if (__propIsEnum.call(b, prop))
-          __defNormalProp(a, prop, b[prop]);
-      }
-    return a;
-  };
-  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
-
   // web_scripts/src/shared/page_watch.ts
   function collectPageDocuments(win) {
     var docs = [];
@@ -228,582 +208,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     });
   }
 
-  // web_scripts/src/shared/assignment_attachment.ts
-  function acceptsAttachment(input, name, mime) {
-    const filters = input.accept.toLowerCase().split(",").map((value) => value.trim()).filter(Boolean);
-    const fileName = name.toLowerCase();
-    const type = mime.toLowerCase();
-    return !filters.length || filters.some((filter) => filter.startsWith(".") ? fileName.endsWith(filter) : filter.endsWith("/*") ? type.startsWith(filter.slice(0, -1)) : type === filter);
-  }
-  function setAssignmentAttachment(input, file, replace) {
-    return setAssignmentAttachments(input, [file], replace);
-  }
-  function setAssignmentAttachments(input, files, replace) {
-    var _a;
-    const view = input.ownerDocument.defaultView;
-    if (!view || !input.isConnected || input.type !== "file" || input.matches(":disabled") || !files.length || !input.multiple && files.length !== 1 || !files.every((file) => acceptsAttachment(input, file.name, file.type))) return false;
-    const current = Array.from(input.files || []);
-    if (replace && (files.length !== 1 || !current.includes(replace))) return false;
-    const next = replace ? current.map((item) => item === replace ? files[0] : item) : input.multiple ? [...current, ...files] : files;
-    try {
-      const transfer = new view.DataTransfer();
-      next.forEach((item) => transfer.items.add(item));
-      if (transfer.files.length !== next.length) return false;
-      input.files = transfer.files;
-    } catch (_) {
-      return false;
-    }
-    if (((_a = input.files) == null ? void 0 : _a.length) !== next.length) return false;
-    input.dispatchEvent(new view.Event("input", { bubbles: true, composed: true }));
-    input.dispatchEvent(new view.Event("change", { bubbles: true }));
-    return true;
-  }
-
-  // web_scripts/src/upload_preview/worksheet_pdf.ts
-  var penThickness = 1.6;
-  function pdfPoint(viewport, point) {
-    const [x, y] = viewport.convertToPdfPoint(point.x * viewport.width, point.y * viewport.height);
-    return { x, y };
-  }
-  function worksheetTextPlacement(viewport, origin, width, height) {
-    const left = pdfPoint(viewport, { x: origin.x, y: origin.y + height });
-    const right = pdfPoint(viewport, { x: origin.x + width, y: origin.y + height });
-    const top = pdfPoint(viewport, origin);
-    return __spreadProps(__spreadValues({}, left), {
-      width: Math.hypot(right.x - left.x, right.y - left.y),
-      height: Math.hypot(top.x - left.x, top.y - left.y),
-      degrees: Math.atan2(right.y - left.y, right.x - left.x) * 180 / Math.PI
-    });
-  }
-  async function writeWorksheetPdf(library, source, editsByPage) {
-    const output = await library.PDFDocument.load(source, { updateMetadata: false });
-    const color = library.rgb(23 / 255, 61 / 255, 145 / 255);
-    for (const [pageNumber, edited] of editsByPage) {
-      const page = output.getPage(pageNumber - 1);
-      for (const edit of edited.edits) {
-        if (edit.kind === "text") {
-          const image = await output.embedPng(edit.canvas.toDataURL("image/png"));
-          const placement = worksheetTextPlacement(edited.viewport, edit.origin, edit.width, edit.height);
-          page.drawImage(image, {
-            x: placement.x,
-            y: placement.y,
-            width: placement.width,
-            height: placement.height,
-            rotate: library.degrees(placement.degrees)
-          });
-        } else {
-          const points = edit.points.map((point) => pdfPoint(edited.viewport, point));
-          if (points.length === 1) page.drawCircle(__spreadProps(__spreadValues({}, points[0]), { size: penThickness / 2, color }));
-          for (let index = 1; index < points.length; index++) {
-            page.drawLine({ start: points[index - 1], end: points[index], thickness: penThickness, color, lineCap: 1 });
-          }
-        }
-      }
-    }
-    return output.save();
-  }
-
-  // web_scripts/src/upload_preview/worksheet_editor.ts
-  var MAX_WORKSHEET_PDF_BYTES = 64 * 1024 * 1024;
-  var maxEdits = 150;
-  var maxPoints = 1024;
-  var penColor = "#173d91";
-  var fontSize = 13;
-  function loadLibrary(signal) {
-    const owner = window;
-    const available = () => owner["__MBG_UPLOAD_LIBRARY_READY_preview-edit"] && window.pdfjsLib && window.__MBG_PDF_WORKER_URL && owner.PDFLib;
-    const existing = available();
-    if (existing) return Promise.resolve(existing);
-    return new Promise((resolve, reject) => {
-      const channel = window.MbgUploadCompression;
-      if (!channel || signal.aborted) {
-        reject(new Error());
-        return;
-      }
-      const timer = window.setTimeout(failed, 3e4);
-      signal.addEventListener("abort", failed, { once: true });
-      owner.__MBG_UPLOAD_PREVIEW_EDIT_LIBRARY_LOADED = loaded;
-      try {
-        channel.postMessage("preview-edit");
-      } catch (_) {
-        failed();
-      }
-      function cleanup() {
-        window.clearTimeout(timer);
-        signal.removeEventListener("abort", failed);
-        if (owner.__MBG_UPLOAD_PREVIEW_EDIT_LIBRARY_LOADED === loaded) {
-          delete owner.__MBG_UPLOAD_PREVIEW_EDIT_LIBRARY_LOADED;
-        }
-      }
-      function failed() {
-        cleanup();
-        reject(new Error());
-      }
-      function loaded() {
-        const library = available();
-        cleanup();
-        if (library) resolve(library);
-        else reject(new Error());
-      }
-    });
-  }
-  function getPdf(data, worker) {
-    const pdfWorker = window.pdfjsLib.PDFWorker.fromPort({ port: worker });
-    function resource(name, maps) {
-      if (!maps || !/^[A-Za-z0-9_.-]{1,80}$/.test(name) || !Object.prototype.hasOwnProperty.call(maps, name)) {
-        throw new Error();
-      }
-      return Uint8Array.from(atob(maps[name]), (character) => character.charCodeAt(0));
-    }
-    class CMapReaderFactory {
-      async fetch({ name }) {
-        return { cMapData: resource(name, window.__MBG_PDF_CMAPS), compressionType: 1 };
-      }
-    }
-    class StandardFontDataFactory {
-      async fetch({ filename }) {
-        return resource(filename, window.__MBG_PDF_STANDARD_FONTS);
-      }
-    }
-    return window.pdfjsLib.getDocument({
-      data: new Uint8Array(data),
-      worker: pdfWorker,
-      CMapReaderFactory,
-      StandardFontDataFactory,
-      cMapPacked: true,
-      useWorkerFetch: false,
-      enableXfa: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      stopAtErrors: true,
-      maxImageSize: 16e6
-    });
-  }
-  function makeTextCanvas(doc, text, widthLimit, heightLimit) {
-    const canvas = doc.createElement("canvas");
-    const context = canvas.getContext("2d");
-    if (!context || widthLimit < fontSize) throw new Error();
-    const density = 3;
-    const padding = 2;
-    const lineHeight = fontSize * 1.3;
-    const font = fontSize + "px sans-serif";
-    context.font = font;
-    const lines = [];
-    for (const paragraph of text.split("\n")) {
-      let line = "";
-      for (const character of Array.from(paragraph)) {
-        if (line && context.measureText(line + character).width > widthLimit - 2 * padding) {
-          lines.push(line);
-          line = "";
-        }
-        line += character;
-      }
-      lines.push(line);
-    }
-    const width = Math.ceil(Math.max(...lines.map((line) => context.measureText(line).width)) + 2 * padding);
-    const height = Math.ceil(lines.length * lineHeight + 2 * padding);
-    if (width > widthLimit || height > heightLimit || width * height > 7e4) throw new Error();
-    canvas.width = width * density;
-    canvas.height = height * density;
-    context.scale(density, density);
-    context.font = font;
-    context.fillStyle = penColor;
-    context.textBaseline = "top";
-    lines.forEach((line, index) => context.fillText(line, padding, padding + index * lineHeight));
-    return { canvas, width, height };
-  }
-  function openWorksheetEditor(options) {
-    const { document: doc, file, container } = options;
-    const overlay = doc.createElement("div");
-    overlay.setAttribute("role", "dialog");
-    overlay.setAttribute("aria-modal", "true");
-    overlay.setAttribute("aria-label", "PDFに書き込む");
-    overlay.setAttribute("data-mbg-worksheet-editor", "");
-    overlay.style.cssText = "inset:0;z-index:2147483647;background:#eee;color:#161616;display:flex;flex-direction:column;font:16px sans-serif";
-    overlay.style.position = container ? "absolute" : "fixed";
-    const bar = doc.createElement("div");
-    bar.style.cssText = "display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:8px;background:#fff";
-    const status = doc.createElement("div");
-    status.setAttribute("role", "status");
-    status.style.cssText = "min-height:1em;padding:4px 8px;background:#fff;font:14px sans-serif";
-    const content = doc.createElement("div");
-    content.style.cssText = "overflow:auto;flex:1;min-height:0;padding:8px;overscroll-behavior:contain";
-    const stage = doc.createElement("div");
-    stage.style.cssText = "position:relative;line-height:0;margin:0 auto;background:#fff";
-    const raster = doc.createElement("canvas");
-    raster.style.cssText = "width:100%;height:100%;display:block";
-    const ink = doc.createElement("canvas");
-    ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    ink.setAttribute("aria-label", "PDFの編集面");
-    stage.append(raster, ink);
-    content.appendChild(stage);
-    const abort = new AbortController();
-    const pages = /* @__PURE__ */ new Map();
-    let closed = false;
-    let rendering = false;
-    let exporting = false;
-    let worker;
-    let task;
-    let render;
-    let pdf;
-    let library;
-    let pageNumber = 1;
-    let zoom = 1;
-    let viewport;
-    let tool = "view";
-    let stroke;
-    let textOrigin;
-    let editCount = 0;
-    let repaintFrame;
-    function button(label, action) {
-      const control = doc.createElement("button");
-      control.type = "button";
-      control.textContent = label;
-      control.style.cssText = "font:inherit;padding:5px 8px;min-height:34px";
-      control.addEventListener("click", action);
-      return control;
-    }
-    const pageLabel = doc.createElement("span");
-    const previous = button("前のページ", () => navigate(-1));
-    const next = button("次のページ", () => navigate(1));
-    const smaller = button("縮小", () => changeZoom(0.8));
-    const larger = button("拡大", () => changeZoom(1.25));
-    const view = button("閲覧", () => changeTool("view"));
-    const pen = button("ペン", () => changeTool("pen"));
-    const text = button("文字", () => changeTool("text"));
-    const undo = button("元に戻す", undoLast);
-    const save = button("書き込んだPDFを使う", () => {
-      void exportPdf();
-    });
-    const close = button("閉じる", closeEditor);
-    const discard = button("編集を破棄", () => dispose(true));
-    const keepEditing = button("編集に戻る", () => showDiscard(false));
-    discard.hidden = keepEditing.hidden = true;
-    bar.append(previous, pageLabel, next, smaller, larger, view, pen, text, undo, save, close, discard, keepEditing);
-    const textBar = doc.createElement("div");
-    textBar.style.cssText = "display:none;gap:5px;align-items:center;padding:4px 8px;background:#fff;flex-wrap:wrap";
-    const textInput = doc.createElement("textarea");
-    textInput.rows = 2;
-    textInput.maxLength = 200;
-    textInput.setAttribute("aria-label", "PDFに挿入する文字");
-    textInput.style.cssText = "font:16px sans-serif;min-width:0;flex:1";
-    textBar.append(textInput, button("文字を挿入", insertText), button("キャンセル", resetText));
-    overlay.append(bar, textBar, status, content);
-    (container || doc.documentElement || doc.body).appendChild(overlay);
-    close.focus();
-    status.textContent = "PDFを読み込み中…";
-    updateControls();
-    void start();
-    async function start() {
-      try {
-        if (file.size < 1 || file.size > MAX_WORKSHEET_PDF_BYTES) {
-          status.textContent = "64 MiB以下のPDFに書き込めます。";
-          return;
-        }
-        library = await loadLibrary(abort.signal);
-        if (closed) return;
-        const data = await file.arrayBuffer();
-        if (closed) return;
-        worker = new Worker(window.__MBG_PDF_WORKER_URL);
-        task = getPdf(data, worker);
-        const document2 = await task.promise;
-        if (closed) return;
-        if (document2.numPages < 1 || document2.numPages > 2e3) throw new Error();
-        pdf = document2;
-        await drawPage();
-      } catch (_) {
-        if (!closed) status.textContent = "このPDFは編集用に開けませんでした。";
-      }
-    }
-    function closeEditor() {
-      if (editCount) showDiscard(true);
-      else dispose(true);
-    }
-    function showDiscard(show) {
-      resetText();
-      discard.hidden = keepEditing.hidden = !show;
-      status.textContent = show ? "書き込んだ内容を破棄しますか？" : "";
-      updateControls();
-      (show ? keepEditing : close).focus();
-    }
-    function dispose(notify) {
-      var _a;
-      if (closed) return;
-      closed = true;
-      abort.abort();
-      if (repaintFrame !== void 0) window.cancelAnimationFrame(repaintFrame);
-      releaseStroke();
-      try {
-        render == null ? void 0 : render.cancel();
-      } catch (_) {
-      }
-      if (task) void task.destroy().catch(() => {
-      });
-      if (worker) worker.terminate();
-      overlay.remove();
-      if (notify) (_a = options.onClose) == null ? void 0 : _a.call(options);
-    }
-    function updateControls() {
-      var _a;
-      const prompt = !discard.hidden;
-      const blocked = rendering || exporting || prompt;
-      previous.disabled = blocked || pageNumber === 1;
-      next.disabled = blocked || !pdf || pageNumber >= pdf.numPages;
-      smaller.disabled = blocked || !viewport || zoom <= 1;
-      larger.disabled = blocked || !viewport || zoom >= 4;
-      for (const [name, control] of [["view", view], ["pen", pen], ["text", text]]) {
-        control.disabled = blocked || !viewport;
-        control.setAttribute("aria-pressed", String(tool === name));
-        control.style.fontWeight = tool === name ? "bold" : "normal";
-      }
-      undo.disabled = blocked || !((_a = pages.get(pageNumber)) == null ? void 0 : _a.edits.length);
-      save.disabled = blocked || !editCount;
-      close.disabled = exporting || prompt;
-      ink.style.touchAction = blocked || tool === "view" ? "auto" : "none";
-      ink.style.cursor = tool === "view" ? "auto" : "crosshair";
-      pageLabel.textContent = pdf ? pageNumber + " / " + pdf.numPages : "";
-    }
-    function navigate(offset) {
-      pageNumber += offset;
-      resetText();
-      content.scrollTop = 0;
-      void drawPage();
-    }
-    function changeZoom(factor) {
-      zoom = Math.max(1, Math.min(4, zoom * factor));
-      resetText();
-      void drawPage();
-    }
-    function changeTool(nextTool) {
-      releaseStroke();
-      scheduleRepaint();
-      resetText();
-      tool = nextTool;
-      status.textContent = tool === "pen" ? "PDFの上をなぞって書き込めます。" : tool === "text" ? "文字を入れる位置を選んでください。" : "";
-      updateControls();
-    }
-    async function drawPage() {
-      if (!pdf || rendering || closed) return;
-      releaseStroke();
-      viewport = void 0;
-      stage.style.visibility = "hidden";
-      rendering = true;
-      updateControls();
-      try {
-        const page = await pdf.getPage(pageNumber);
-        if (closed) return;
-        const base = page.getViewport({ scale: 1 });
-        if (!Number.isFinite(base.width) || !Number.isFinite(base.height) || base.width <= 0 || base.height <= 0) throw new Error();
-        const cssScale = Math.min(1.5, Math.max(180, content.clientWidth - 16) / base.width) * zoom;
-        const scale = Math.min(
-          cssScale * Math.min(2, window.devicePixelRatio || 1),
-          Math.sqrt(8e6 / base.width / base.height),
-          4096 / Math.max(base.width, base.height)
-        );
-        const scaled = page.getViewport({ scale });
-        const context = raster.getContext("2d");
-        if (!context) throw new Error();
-        raster.width = ink.width = Math.max(1, Math.ceil(scaled.width));
-        raster.height = ink.height = Math.max(1, Math.ceil(scaled.height));
-        stage.style.width = Math.min(8192, base.width * cssScale) + "px";
-        stage.style.height = Math.min(8192, base.height * cssScale) + "px";
-        render = page.render({ canvasContext: context, viewport: scaled });
-        await render.promise;
-        if (closed) return;
-        viewport = base;
-        stage.style.visibility = "";
-        repaint();
-        status.textContent = "";
-      } catch (_) {
-        if (!closed) status.textContent = "ページを表示できませんでした。";
-      } finally {
-        rendering = false;
-        if (!closed) updateControls();
-      }
-    }
-    function getPoint(event) {
-      const bounds = ink.getBoundingClientRect();
-      return {
-        x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width))),
-        y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / Math.max(1, bounds.height)))
-      };
-    }
-    function repaint() {
-      var _a, _b;
-      const context = ink.getContext("2d");
-      if (!context || !viewport) return;
-      context.clearRect(0, 0, ink.width, ink.height);
-      context.strokeStyle = context.fillStyle = penColor;
-      context.lineCap = context.lineJoin = "round";
-      context.lineWidth = penThickness * ink.width / viewport.width;
-      function paintPen(points) {
-        context.beginPath();
-        if (points.length === 1) {
-          context.arc(points[0].x * ink.width, points[0].y * ink.height, context.lineWidth / 2, 0, Math.PI * 2);
-          context.fill();
-          return;
-        }
-        context.moveTo(points[0].x * ink.width, points[0].y * ink.height);
-        for (let index = 1; index < points.length; index++) {
-          context.lineTo(points[index].x * ink.width, points[index].y * ink.height);
-        }
-        context.stroke();
-      }
-      for (const edit of (_b = (_a = pages.get(pageNumber)) == null ? void 0 : _a.edits) != null ? _b : []) {
-        if (edit.kind === "pen") paintPen(edit.points);
-        else context.drawImage(
-          edit.canvas,
-          edit.origin.x * ink.width,
-          edit.origin.y * ink.height,
-          edit.width * ink.width,
-          edit.height * ink.height
-        );
-      }
-      if (stroke) paintPen(stroke.points);
-    }
-    function scheduleRepaint() {
-      if (repaintFrame === void 0) {
-        repaintFrame = window.requestAnimationFrame(() => {
-          repaintFrame = void 0;
-          if (!closed) repaint();
-        });
-      }
-    }
-    function addEdit(edit) {
-      if (!viewport || editCount >= maxEdits) return;
-      let page = pages.get(pageNumber);
-      if (!page) {
-        page = { viewport, edits: [] };
-        pages.set(pageNumber, page);
-      }
-      page.edits.push(edit);
-      editCount++;
-      scheduleRepaint();
-      updateControls();
-    }
-    function releaseStroke() {
-      const current = stroke;
-      if (!current) return;
-      stroke = void 0;
-      if (ink.hasPointerCapture(current.pointerId)) ink.releasePointerCapture(current.pointerId);
-    }
-    function undoLast() {
-      const page = pages.get(pageNumber);
-      if (!page || !page.edits.pop()) return;
-      if (!page.edits.length) pages.delete(pageNumber);
-      editCount--;
-      scheduleRepaint();
-      updateControls();
-    }
-    function resetText() {
-      textOrigin = void 0;
-      textInput.value = "";
-      textBar.style.display = "none";
-    }
-    function insertText() {
-      if (!viewport || !textOrigin || exporting || rendering) return;
-      const value = textInput.value.trim();
-      if (!value) {
-        status.textContent = "文字を入力してください。";
-        return;
-      }
-      try {
-        const placed = makeTextCanvas(doc, value, (1 - textOrigin.x) * viewport.width, (1 - textOrigin.y) * viewport.height);
-        addEdit({
-          kind: "text",
-          origin: textOrigin,
-          canvas: placed.canvas,
-          width: placed.width / viewport.width,
-          height: placed.height / viewport.height
-        });
-        resetText();
-        text.focus();
-        status.textContent = "文字を挿入しました。";
-      } catch (_) {
-        status.textContent = "文字がページ内に収まる位置を選んでください。";
-      }
-    }
-    async function exportPdf() {
-      if (!library || exporting || rendering || !editCount) return;
-      releaseStroke();
-      resetText();
-      exporting = true;
-      status.textContent = "記入済みPDFを作成中…";
-      updateControls();
-      try {
-        const buffer = await file.arrayBuffer();
-        if (closed) return;
-        const bytes = await writeWorksheetPdf(library, buffer, pages);
-        if (closed) return;
-        if (bytes.byteLength > MAX_WORKSHEET_PDF_BYTES) {
-          status.textContent = "記入後のPDFが64 MiBを超えています。";
-          return;
-        }
-        const originalName = file.name.replace(/[/\\\u0000-\u001f\u007f]/g, "_").replace(/\.pdf$/i, "").trim();
-        const editedName = (originalName.slice(0, 100) || "答案") + "_記入済み.pdf";
-        await options.onExport(new File([bytes], editedName, { type: "application/pdf" }));
-        dispose(true);
-      } catch (_) {
-        if (!closed) status.textContent = "PDFを渡せませんでした。書き込んだ内容は残っています。";
-      } finally {
-        exporting = false;
-        if (!closed) updateControls();
-      }
-    }
-    overlay.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      event.preventDefault();
-      if (exporting) return;
-      if (textOrigin) resetText();
-      else if (!discard.hidden) showDiscard(false);
-      else closeEditor();
-    });
-    ink.addEventListener("pointerdown", (event) => {
-      if (!viewport || stroke || rendering || exporting || !discard.hidden || tool === "view" || event.button !== 0 || !event.isPrimary) return;
-      if (editCount >= maxEdits) {
-        status.textContent = "これ以上書き込みを追加できません。";
-        return;
-      }
-      const point = getPoint(event);
-      if (tool === "text") {
-        textOrigin = point;
-        textBar.style.display = "flex";
-        textInput.focus();
-        return;
-      }
-      event.preventDefault();
-      stroke = { pointerId: event.pointerId, points: [point] };
-      ink.setPointerCapture(event.pointerId);
-      scheduleRepaint();
-    });
-    ink.addEventListener("pointermove", (event) => {
-      if ((stroke == null ? void 0 : stroke.pointerId) !== event.pointerId || stroke.points.length >= maxPoints) return;
-      const point = getPoint(event);
-      const points = stroke.points;
-      const last = points[points.length - 1];
-      if (Math.hypot((point.x - last.x) * ink.width, (point.y - last.y) * ink.height) < 1) return;
-      points.push(point);
-      scheduleRepaint();
-    });
-    ink.addEventListener("pointerup", (event) => {
-      if ((stroke == null ? void 0 : stroke.pointerId) !== event.pointerId) return;
-      const { points } = stroke;
-      releaseStroke();
-      addEdit({ kind: "pen", points });
-    });
-    function discardStroke() {
-      releaseStroke();
-      scheduleRepaint();
-    }
-    ink.addEventListener("pointercancel", discardStroke);
-    ink.addEventListener("lostpointercapture", discardStroke);
-    return () => dispose(false);
-  }
-
   // web_scripts/src/upload_preview/document_actions.ts
   var MAX_HASH_BYTES = 64 * 1024 * 1024;
-  var CHUNK_BYTES = 256 * 1024;
   var nextRead = 0;
   var readers = /* @__PURE__ */ new Map();
   async function loadPdfReadingProgress(bytes) {
@@ -859,43 +265,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     } catch (_) {
       return null;
     }
-  }
-  async function saveWorksheetFile(file) {
-    const channel = window.MbgWorksheetExport;
-    if (!channel || window.__MBG_WORKSHEET_EXPORT || file.size > MAX_HASH_BYTES) throw new Error("保存機能を使えません");
-    const id = Array.from(
-      crypto.getRandomValues(new Uint8Array(16)),
-      (byte) => byte.toString(16).padStart(2, "0")
-    ).join("");
-    const contents = new Uint8Array(await file.arrayBuffer());
-    return new Promise((resolve, reject) => {
-      const timer = window.setTimeout(() => finish(false), 3e5);
-      function finish(ok) {
-        window.clearTimeout(timer);
-        delete window.__MBG_WORKSHEET_EXPORT;
-        if (ok) resolve();
-        else reject(new Error("PDFを保存できませんでした"));
-      }
-      window.__MBG_WORKSHEET_EXPORT = {
-        chunk(candidate, offset) {
-          if (candidate !== id || !Number.isSafeInteger(offset) || offset < 0 || offset >= file.size) return null;
-          const bytes = contents.subarray(offset, offset + CHUNK_BYTES);
-          let binary = "";
-          for (let index = 0; index < bytes.length; index += 8192) {
-            binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
-          }
-          return btoa(binary);
-        },
-        reply(candidate, ok) {
-          if (candidate === id) finish(ok === true);
-        }
-      };
-      try {
-        channel.postMessage(JSON.stringify({ id, name: file.name, size: file.size }));
-      } catch (_) {
-        finish(false);
-      }
-    });
   }
 
   // web_scripts/src/upload_preview/main.ts
@@ -986,7 +355,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       visit(document);
       return result;
     }
-    function show(input, file, onClosed, initiallyVisible, editOnOpen = false) {
+    function show(input, file, onClosed, initiallyVisible) {
       var owner = window;
       try {
         if (window.top && window.top.location.origin === window.location.origin) owner = window.top;
@@ -998,7 +367,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       var doc = input.ownerDocument;
       var remote = input.type === "hidden";
       var progress = null;
-      var stopEdit;
       var overlay = doc.createElement("div");
       overlay.setAttribute("role", "dialog");
       overlay.setAttribute("aria-modal", "true");
@@ -1189,7 +557,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         if (closed) return;
         closed = true;
         progress == null ? void 0 : progress.flush();
-        stopEdit == null ? void 0 : stopEdit();
         if (imageGestureCleanup) {
           imageGestureCleanup();
           imageGestureCleanup = null;
@@ -1438,31 +805,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
           fail(new Error("PDFが大きすぎます"));
           return;
         }
-        if (editOnOpen) {
-          editWorksheet(input, file);
-          cleanup();
-          return;
-        }
         armWatchdog();
-        if (file.size <= MAX_WORKSHEET_PDF_BYTES) {
-          const edit = worksheetButton(doc, () => {
-            if (stopEdit) return;
-            stopEdit = openWorksheetEditor({
-              document: doc,
-              container: overlay,
-              file,
-              onExport: (result) => {
-                if (remote) return saveWorksheetFile(result);
-                if (!setAssignmentAttachment(input, result, file)) throw new Error("添付欄が変わりました");
-              },
-              onClose: () => {
-                stopEdit = void 0;
-                edit.focus();
-              }
-            });
-          });
-          bar.insertBefore(edit, close);
-        }
         pdfLibrary(function(cancel) {
           cancelLibrary = cancel;
         }).then(function() {
@@ -1697,38 +1040,8 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       });
       close.focus();
     }
-    let disposeStandaloneEditor;
-    function worksheetButton(doc, open) {
-      const button = doc.createElement("button");
-      button.type = "button";
-      button.textContent = "PDFに書き込む";
-      button.setAttribute("data-mbg-worksheet", "");
-      button.style.cssText = "flex:none;margin:4px;padding:6px 8px";
-      button.addEventListener("click", open);
-      return button;
-    }
-    function isEditablePdf(file) {
-      return file.size <= MAX_WORKSHEET_PDF_BYTES && (file.type === "application/pdf" || /\.pdf$/i.test(file.name));
-    }
-    window.addEventListener("pagehide", () => disposeStandaloneEditor == null ? void 0 : disposeStandaloneEditor());
-    function editWorksheet(input, file) {
-      if (!isEditablePdf(file)) return;
-      disposeStandaloneEditor == null ? void 0 : disposeStandaloneEditor();
-      disposeStandaloneEditor = openWorksheetEditor({
-        document: input.ownerDocument,
-        file,
-        onExport: (result) => {
-          if (input.type === "hidden") return saveWorksheetFile(result);
-          if (!setAssignmentAttachment(input, result, file)) throw new Error("添付欄が変わりました");
-        },
-        onClose: () => {
-          disposeStandaloneEditor = void 0;
-        }
-      });
-    }
     function attach() {
       documents().forEach(function(doc) {
-        var _a;
         var inputs = doc.querySelectorAll('input[type="file"]');
         for (var i = 0; i < inputs.length; i++) {
           var input = inputs[i];
@@ -1741,16 +1054,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
           button.style.cssText = "margin:4px 8px;padding:6px 10px";
           input.parentNode.insertBefore(button, input.nextSibling);
           input.__mbgPreviewButton = button;
-          const edit = worksheetButton(doc, () => {
-            const files = Array.from(input.files || []);
-            const pdfs = files.filter(isEditablePdf);
-            if (pdfs.length === 1 && !input.__mbgUploadCompressionPending) editWorksheet(input, pdfs[0]);
-          });
-          (_a = button.parentNode) == null ? void 0 : _a.insertBefore(edit, button.nextSibling);
-          const showEdit = () => {
-            edit.hidden = Array.from(input.files || []).filter(isEditablePdf).length !== 1;
-          };
-          showEdit();
           (function(target, control) {
             var list = null;
             target.addEventListener("change", function() {
@@ -1758,7 +1061,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
                 list.remove();
                 list = null;
               }
-              showEdit();
             });
             control.addEventListener("click", function() {
               if (list) {
@@ -1823,7 +1125,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
     }
     var mbgRejectedPreviewAnchors = /* @__PURE__ */ new WeakMap();
     function mbgAttachSubmittedPreviews(doc) {
-      var _a;
       var anchors = doc.querySelectorAll('a[href], button, input[type="submit"], input[type="button"]');
       for (var i = 0; i < anchors.length; i++) {
         var anchor = anchors[i];
@@ -1847,14 +1148,6 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         button.style.cssText = "margin:4px 8px;padding:6px 10px";
         anchor.parentNode.insertBefore(button, anchor.nextSibling);
         anchor.__mbgSubmittedPreviewButton = button;
-        if (/\.pdf(?:$|[?#])/i.test(remote.fileName) || /\.pdf(?:$|[?#])/i.test(remote.url)) {
-          const edit = worksheetButton(doc, () => {
-            var _a2;
-            const request = mbgRemoteFileRequest(anchor);
-            if (request) (_a2 = window.__MBG_OPEN_REMOTE_PREVIEW) == null ? void 0 : _a2.call(window, request, true);
-          });
-          (_a = button.parentNode) == null ? void 0 : _a.insertBefore(edit, button.nextSibling);
-        }
         (function(target, control) {
           control.addEventListener("click", function() {
             var request = mbgRemoteFileRequest(target);
@@ -1950,7 +1243,7 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
       })) return false;
       return true;
     }
-    window.__MBG_OPEN_REMOTE_PREVIEW = function(request, editOnOpen) {
+    window.__MBG_OPEN_REMOTE_PREVIEW = function(request) {
       if (!mbgValidateRemotePreviewRequest(request)) return false;
       var url = new URL(request.url, window.location.href);
       var method = String(request.method || "").toUpperCase();
@@ -2080,14 +1373,10 @@ const String _gakujoUploadPreviewJsPrefix = r'''(function(__mbgConfig) {
         doc.body.appendChild(anchor);
         var visible = operation.visible;
         var token = operation.__mbgToken;
-        if (editOnOpen && !isEditablePdf(file)) {
-          anchor.remove();
-          throw new Error("書き込めるPDFを読み込めませんでした");
-        }
         cleanup(true);
         show(anchor, file, function() {
           anchor.remove();
-        }, visible, editOnOpen);
+        }, visible);
         var shown = window.__MBG_ACTIVE_UPLOAD_PREVIEW;
         if (token && shown && !shown.__mbgToken) shown.__mbgToken = token;
       }).catch(function(error) {
