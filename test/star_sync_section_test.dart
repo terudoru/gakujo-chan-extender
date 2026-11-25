@@ -13,6 +13,8 @@ void main() {
   Widget section(
     ValueNotifier<StarSyncStatusSnapshot> status, {
     bool boundEmailMissing = false,
+    Future<void> Function()? onCreateFileBackup,
+    Future<void> Function()? onImportBackupFile,
     bool Function(String)? collectionEnabled,
     Future<void> Function(String, bool)? onCollectionChanged,
     bool googleAvailable = false,
@@ -51,6 +53,8 @@ void main() {
         child: StarSyncSection(
           status: status,
           onBusyChanged: onBusyChanged,
+          onCreateFileBackup: onCreateFileBackup,
+          onImportBackupFile: onImportBackupFile,
           onBackup: onBackup,
           onListBackups: onListBackups,
           onRestoreBackup: onRestoreBackup,
@@ -100,6 +104,52 @@ void main() {
     ),
   );
 
+  testWidgets('backup source and destination are selected before running', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
+    addTearDown(status.dispose);
+    final calls = <String>[];
+    await tester.pumpWidget(
+      section(
+        status,
+        onCreateFileBackup: () async => calls.add('create file'),
+        onImportBackupFile: () async => calls.add('import file'),
+        onBackup: () async => calls.add('create drive'),
+        onListBackups: () async {
+          calls.add('list drive');
+          return [];
+        },
+        onRestoreBackup: (_) async {},
+      ),
+    );
+    expect(find.byType(OutlinedButton), findsNWidgets(4));
+    Future<void> openChoice(String label) async {
+      final button = find.widgetWithText(OutlinedButton, label);
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+    }
+
+    await openChoice('バックアップを作成');
+    await tester.tap(find.text('キャンセル'));
+    await tester.pumpAndSettle();
+    expect(calls, isEmpty);
+    for (final (group, option) in [
+      ('バックアップを作成', 'ファイルに保存'),
+      ('バックアップを作成', 'Google ドライブに保存'),
+      ('バックアップから復元', 'ファイルから読み込み'),
+      ('バックアップから復元', 'Google ドライブから復元'),
+    ]) {
+      await openChoice(group);
+      await tester.tap(find.widgetWithText(ListTile, option));
+      await tester.pumpAndSettle();
+    }
+    expect(calls, ['create file', 'create drive', 'import file', 'list drive']);
+  });
+
   testWidgets('backup actions list and select backups', (tester) async {
     final status = ValueNotifier(const StarSyncStatusSnapshot(enabled: true));
     addTearDown(status.dispose);
@@ -120,8 +170,8 @@ void main() {
         },
       ),
     );
-    await tester.ensureVisible(find.text('今すぐバックアップ'));
-    await tester.tap(find.text('今すぐバックアップ'));
+    await tester.ensureVisible(find.text('バックアップを作成'));
+    await tester.tap(find.text('バックアップを作成'));
     await tester.pumpAndSettle();
     expect(uploads, 1);
     await tester.tap(find.text('バックアップから復元'));
@@ -167,7 +217,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('この端末'), findsOneWidget);
       expect(find.text('他の端末'), findsOneWidget);
-      await tester.ensureVisible(find.text('同期データをリセット'));
+      await tester.ensureVisible(find.text('同期の管理'));
+      await tester.tap(find.text('同期の管理'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('同期データをリセット'));
       await tester.pumpAndSettle();
       expect(resets, 0);
@@ -209,6 +261,8 @@ void main() {
         onResumeKeepingLocal: () => pending.future,
       ),
     );
+    await tester.tap(find.text('同期を再開'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('含めて再開'));
     await tester.pump();
     expect(busy, [true]);
@@ -274,9 +328,13 @@ void main() {
       find.text('同期が止まっていた間に、この端末でスターや設定などが変わった可能性があります。その変更を同期に含めますか？'),
       findsOneWidget,
     );
+    await tester.tap(find.text('同期を再開'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('含めて再開'));
     await tester.pumpAndSettle();
     expect(kept, 1);
+    await tester.tap(find.text('同期を再開'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('同期データの状態に戻して再開'));
     await tester.pumpAndSettle();
     expect(find.text('この端末で、その間に付け外ししたスターは元に戻ります。'), findsOneWidget);
@@ -285,6 +343,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(discarded, 1);
     expect(find.text('同期を無効にする'), findsOneWidget);
+  });
+
+  testWidgets('legacy sync shows a single reset entry', (tester) async {
+    final status = ValueNotifier(
+      const StarSyncStatusSnapshot(
+        enabled: true,
+        status: StarSyncStatus.needsLegacyReset,
+      ),
+    );
+    addTearDown(status.dispose);
+    await tester.pumpWidget(section(status));
+    expect(find.text('作り直す'), findsOneWidget);
+    await tester.tap(find.text('同期の管理'));
+    await tester.pumpAndSettle();
+    expect(find.text('端末の一覧'), findsOneWidget);
+    expect(find.text('同期を無効にする'), findsOneWidget);
+    expect(find.text('同期データをリセット'), findsNothing);
   });
 
   testWidgets('enabled state shows partial sync as a warning', (tester) async {

@@ -241,9 +241,13 @@ void main() {
         await _tap(tester, find.text('保存データ'));
       }
 
-      final failedList = find.widgetWithText(OutlinedButton, '失敗したダウンロード');
+      Future<void> openFailedList() async {
+        await _tap(tester, find.widgetWithText(OutlinedButton, 'ダウンロード記録'));
+        await _tap(tester, find.widgetWithText(ListTile, '失敗したダウンロード'));
+      }
+
       Future<void> retry(int previous, int response) async {
-        await _tap(tester, failedList);
+        await openFailedList();
         final row = find.ancestor(
           of: find.textContaining('HTTP $previous'),
           matching: find.byType(ListTile),
@@ -319,7 +323,7 @@ void main() {
         await tester.pump();
         await mount();
         await openSavedData();
-        await _tap(tester, failedList);
+        await openFailedList();
         expect(find.text(_fileName), findsOneWidget);
         expect(find.textContaining('HTTP 504'), findsOneWidget);
       } finally {

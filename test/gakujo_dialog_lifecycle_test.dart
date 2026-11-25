@@ -22,7 +22,11 @@ void main() {
           RegExp(
             r'onPressed: isClearing\s*\? null\s*: \(\) async \{\s*'
             r'if \(isClearing\) return;\s*'
+            r'final owner = ModalRoute\.of\(dialogContext\);\s*'
             r'setDialogState\(\(\) => isClearing = true\);\s*try \{\s*'
+            r'final confirmed = await showDialog<bool>\([\s\S]*?'
+            r'if \(confirmed != true \|\|\s*!dialogContext\.mounted \|\|\s*'
+            r'owner\?\.isCurrent != true\) \{\s*return;\s*\}\s*'
             r'await clearAll\(\);\s*'
             r'if \(!dialogContext\.mounted \|\|\s*'
             r'ModalRoute\.of\(dialogContext\)\?\.isCurrent != true\) \{\s*'

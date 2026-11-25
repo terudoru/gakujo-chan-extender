@@ -486,28 +486,6 @@ extension _GakujoWebAppDownloads on _GakujoWebAppState {
     }
   }
 
-  Future<void> _checkDownloadDestinationHealth() async {
-    try {
-      final root = await _downloadService.getDownloadRoot();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _downloadRoot = root;
-      });
-      final needsRoot = _appSettings.downloadSaveMode.needsConfiguredRoot;
-      if (!needsRoot) {
-        _showSnackBar('現在の保存モードでは、保存先フォルダの設定は不要です');
-      } else if (root.isConfigured) {
-        _showSnackBar('保存先は利用できます: ${root.displayName ?? root.path ?? '設定済み'}');
-      } else {
-        _showSnackBar('保存先を再設定してください');
-      }
-    } on PlatformException catch (error) {
-      _showSnackBar('保存先を確認できませんでした: ${error.message ?? error.code}');
-    }
-  }
-
   Future<void> _showDownloadHistoryDialog(ModalRoute<void> settingsRoute) async {
     final loaded = await readGakujoSavedData(
       _downloadHistoryStore.load,

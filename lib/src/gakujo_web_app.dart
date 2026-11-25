@@ -3703,6 +3703,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
     var messageNotificationKeywordInput = '';
     final messageNotificationKeywordController = TextEditingController();
     var starSyncBusy = false;
+    var downloadRootRevision = 0;
+    var downloadRootUpdating = false;
+    String? downloadRootCheckError;
     var googleSetupHadDriveSession = false;
     int? googleSetupAuthGeneration;
     final messageExcludeKeywordFocusNode = FocusNode(
@@ -3741,26 +3744,104 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   messageExcludeKeywordInput.trim().isNotEmpty;
 
               Future<void> refreshDownloadRoot(
-                Future<DownloadDestinationSettings> Function() action,
-              ) async {
+                Future<DownloadDestinationSettings> Function() action, {
+                bool checking = false,
+              }) async {
+                if (downloadRootUpdating) return;
+                if (!checking) downloadRootUpdating = true;
+                final revision = ++downloadRootRevision;
                 try {
                   final next = await action();
-                  if (!mounted) {
-                    return;
+                  if (!mounted || revision != downloadRootRevision) return;
+                  if (checking && !settingsRoute.isActive) return;
+                  setState(() => _downloadRoot = next);
+                  downloadRootCheckError = null;
+                  if (!checking) _noticeSessionDownloadRoot(next);
+                  if (dialogContext.mounted) setDialogState(() {});
+                } on Object catch (error, stackTrace) {
+                  if (!mounted || revision != downloadRootRevision) return;
+                  developer.log(
+                    'Could not read or update the download destination',
+                    name: 'MoreBetterGakujo',
+                    error: error,
+                    stackTrace: stackTrace,
+                  );
+                  if (checking) {
+                    if (dialogContext.mounted) {
+                      setDialogState(() {
+                        downloadRootCheckError = '保存先を確認できませんでした';
+                      });
+                    }
+                  } else {
+                    _showSnackBar('ダウンロード保存先を設定できませんでした');
                   }
-                  setState(() {
-                    _downloadRoot = next;
+                } finally {
+                  if (!checking) downloadRootUpdating = false;
+                }
+              }
+
+              Future<void> clearLoginCredentials() async {
+                try {
+                  await _starSyncEngine.runAccountChange(() async {
+                    _cancelDriveUploads();
+                    try {
+                      await _appSettingsStore.clearLoginCredentials();
+                    } finally {
+                      try {
+                        await _applyFeatureFlagRuntimeState(
+                          GakujoFeatureFlag.loginAutofill,
+                          enabled: false,
+                        );
+                      } finally {
+                        TextInput.finishAutofillContext(shouldSave: false);
+                        if (mounted) {
+                          setState(() {
+                            _appSettings = _appSettings.copyWith(
+                              savedLoginId: null,
+                            );
+                          });
+                        }
+                      }
+                    }
                   });
-                  _noticeSessionDownloadRoot(next);
+                  if (!mounted) return;
                   if (!dialogContext.mounted) {
                     return;
                   }
                   setDialogState(() {});
-                } on PlatformException catch (error) {
+                  _showSnackBar('ログイン情報を削除しました');
+                } on Object catch (error, stackTrace) {
+                  developer.log(
+                    'Failed to clear login credentials',
+                    name: 'MoreBetterGakujo',
+                    error: error,
+                    stackTrace: stackTrace,
+                  );
                   if (mounted) {
-                    _showSnackBar(
-                      'ダウンロード保存先を設定できませんでした: ${error.message ?? error.code}',
-                    );
+                    _showSnackBar('ログイン情報を削除できませんでした');
+                  }
+                }
+              }
+
+              Future<void> clearTwoFactorSecret() async {
+                try {
+                  await _secretStore.clear();
+                  await _applyFeatureFlagRuntimeState(
+                    GakujoFeatureFlag.twoFactorAutofill,
+                    enabled: false,
+                  );
+                  if (mounted) {
+                    _showSnackBar('2FA秘密鍵を削除しました');
+                  }
+                } on Object catch (error, stackTrace) {
+                  developer.log(
+                    'Failed to clear two-factor secret',
+                    name: 'MoreBetterGakujo',
+                    error: error,
+                    stackTrace: stackTrace,
+                  );
+                  if (mounted) {
+                    _showSnackBar('2FA秘密鍵を削除できませんでした');
                   }
                 }
               }
@@ -3838,50 +3919,6 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           loginPasswordInput = value;
                           setDialogState(() {});
                         },
-                        onClear: () async {
-                          try {
-                            await _starSyncEngine.runAccountChange(() async {
-                              _cancelDriveUploads();
-                              try {
-                                await _appSettingsStore.clearLoginCredentials();
-                              } finally {
-                                try {
-                                  await _applyFeatureFlagRuntimeState(
-                                    GakujoFeatureFlag.loginAutofill,
-                                    enabled: false,
-                                  );
-                                } finally {
-                                  TextInput.finishAutofillContext(
-                                    shouldSave: false,
-                                  );
-                                  if (mounted) {
-                                    setState(() {
-                                      _appSettings = _appSettings.copyWith(
-                                        savedLoginId: null,
-                                      );
-                                    });
-                                  }
-                                }
-                              }
-                            });
-                            if (!mounted) return;
-                            if (!dialogContext.mounted) {
-                              return;
-                            }
-                            setDialogState(() {});
-                            _showSnackBar('ログイン情報を削除しました');
-                          } on Object catch (error, stackTrace) {
-                            developer.log(
-                              'Failed to clear login credentials',
-                              name: 'MoreBetterGakujo',
-                              error: error,
-                              stackTrace: stackTrace,
-                            );
-                            if (mounted) {
-                              _showSnackBar('ログイン情報を削除できませんでした');
-                            }
-                          }
-                        },
                         onSave: () async {
                           await _saveLoginCredentialsInput(
                             loginId: loginIdInput,
@@ -3948,34 +3985,33 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           secretInput = value;
                           setDialogState(() {});
                         },
-                        onClear: () async {
-                          try {
-                            await _secretStore.clear();
-                            await _applyFeatureFlagRuntimeState(
-                              GakujoFeatureFlag.twoFactorAutofill,
-                              enabled: false,
-                            );
-                            if (mounted) {
-                              _showSnackBar('2FA秘密鍵を削除しました');
-                            }
-                          } on Object catch (error, stackTrace) {
-                            developer.log(
-                              'Failed to clear two-factor secret',
-                              name: 'MoreBetterGakujo',
-                              error: error,
-                              stackTrace: stackTrace,
-                            );
-                            if (mounted) {
-                              _showSnackBar('2FA秘密鍵を削除できませんでした');
-                            }
-                          }
-                        },
                         onSave: () async {
                           await _saveTwoFactorSecretInput(secretInput);
                           if (dialogContext.mounted) {
                             setDialogState(() {});
                           }
                         },
+                      ),
+                      const SizedBox(height: 12),
+                      SettingsActionGroup(
+                        chooser: (
+                          label: '保存済みの認証情報を削除',
+                          icon: Icons.delete_outline,
+                        ),
+                        actions: [
+                          SettingsAction(
+                            label: 'ログイン情報を削除',
+                            icon: Icons.login,
+                            description: 'ログインIDとパスワードを削除し、ログインの自動入力をオフにします。',
+                            run: clearLoginCredentials,
+                          ),
+                          SettingsAction(
+                            label: '2FA秘密鍵を削除',
+                            icon: Icons.key_off_outlined,
+                            description: '秘密鍵を削除し、2段階認証の自動入力をオフにします。',
+                            run: clearTwoFactorSecret,
+                          ),
+                        ],
                       ),
                       const Divider(height: 32),
                       FeatureFlagsSection(
@@ -4166,6 +4202,17 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                   title: 'ダウンロード',
                   icon: Icons.folder_outlined,
                   subtitle: '保存方法・保存先・Google ドライブ',
+                  onExpansionChanged: (expanded) {
+                    if (expanded &&
+                        _appSettings.downloadSaveMode.needsConfiguredRoot) {
+                      unawaited(
+                        refreshDownloadRoot(
+                          _downloadService.getDownloadRoot,
+                          checking: true,
+                        ),
+                      );
+                    }
+                  },
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -4176,7 +4223,9 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                         flags: settingsDownloadFeatureFlags,
                       ),
                       DownloadDestinationSection(
-                        rootLabel: rootLabel,
+                        rootLabel: selectedDownloadSaveMode.needsConfiguredRoot
+                            ? downloadRootCheckError ?? rootLabel
+                            : rootLabel,
                         isConfigured: _downloadRoot.isConfigured,
                         saveMode: selectedDownloadSaveMode,
                         helperText: _downloadDestinationHelperText,
@@ -4215,6 +4264,14 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             return;
                           }
                           setDialogState(() {});
+                          if (mode.needsConfiguredRoot) {
+                            unawaited(
+                              refreshDownloadRoot(
+                                _downloadService.getDownloadRoot,
+                                checking: true,
+                              ),
+                            );
+                          }
                         },
                         onPick: () async {
                           await refreshDownloadRoot(
@@ -4227,46 +4284,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           );
                         },
                       ),
-                      SettingsActionGroup(
-                        actions: [
-                          SettingsAction(
-                            label: '保存先を確認',
-                            icon: Icons.health_and_safety_outlined,
-                            run: _checkDownloadDestinationHealth,
-                          ),
-                        ],
-                      ),
                       if (const StarSyncGoogleAuthConfig().isAvailable) ...[
-                        SwitchListTile(
-                          title: const Text('履修手帖と学務の照会結果を自動で共有'),
-                          value: _plannerShareEnabled,
-                          onChanged: !_plannerShareLoaded
-                              ? null
-                              : (value) async {
-                                  _plannerShareEpoch++;
-                                  setState(() => _plannerShareEnabled = value);
-                                  setDialogState(() {});
-                                  try {
-                                    await SecureStorageFactory.create().write(
-                                      key: 'planner_drive_sharing_enabled',
-                                      value: '$value',
-                                    );
-                                    if (value) {
-                                      unawaited(_autoSharePlannerResults());
-                                    }
-                                  } on Object {
-                                    developer.log(
-                                      'Planner sharing setting could not be saved',
-                                    );
-                                  }
-                                },
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              unawaited(_deleteSharedPlannerResults()),
-                          child: const Text('共有した照会結果をGoogleから削除'),
-                        ),
-                        const Divider(height: 32),
                         DriveDownloadSwitch(
                           value: _driveDownloadsEnabled,
                           signingIn: _driveSwitchSigningIn,
@@ -4429,6 +4447,39 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           if (dialogContext.mounted) setDialogState(() {});
                         },
                       ),
+                      if (const StarSyncGoogleAuthConfig().isAvailable) ...[
+                        const Divider(height: 32),
+                        SwitchListTile(
+                          title: const Text('履修手帖と学務の照会結果を自動で共有'),
+                          value: _plannerShareEnabled,
+                          onChanged: !_plannerShareLoaded
+                              ? null
+                              : (value) async {
+                                  _plannerShareEpoch++;
+                                  setState(() => _plannerShareEnabled = value);
+                                  setDialogState(() {});
+                                  try {
+                                    await SecureStorageFactory.create().write(
+                                      key: 'planner_drive_sharing_enabled',
+                                      value: '$value',
+                                    );
+                                    if (value) {
+                                      unawaited(_autoSharePlannerResults());
+                                    }
+                                  } on Object {
+                                    developer.log(
+                                      'Planner sharing setting could not be saved',
+                                    );
+                                  }
+                                },
+                        ),
+                        TextButton(
+                          onPressed: _starSyncGoogleAuth.currentEmail == null
+                              ? null
+                              : () => unawaited(_deleteSharedPlannerResults()),
+                          child: const Text('共有した照会結果をGoogleから削除'),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -4448,6 +4499,11 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           status: _starSyncEngine.status,
                           onBusyChanged: (busy) {
                             starSyncBusy = busy;
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onCreateFileBackup: _createManualBackup,
+                          onImportBackupFile: () async {
+                            await _importSettingsFromFile();
                             if (dialogContext.mounted) setDialogState(() {});
                           },
                           onBackup: _uploadSyncBackup,
@@ -4602,59 +4658,52 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                             }
                           },
                         ),
-                      const Divider(height: 32),
-                      AppBackupSection(
-                        onCreateBackup: _createManualBackup,
-                        onImportSettingsFromFile: () async {
-                          await _importSettingsFromFile();
-                          if (!dialogContext.mounted) {
-                            return;
-                          }
-                          setDialogState(() {});
-                        },
-                      ),
                       FeatureFlagsSection(
                         settings: _appSettings,
                         onChanged: onFlagChanged,
                         title: null,
                         flags: settingsBackupFeatureFlags,
                       ),
-                      const SizedBox(height: 16),
-                      GakujoAutoBackupSection(
-                        settings: _appSettings.autoBackupSettings,
-                        onIntervalChanged: (value) async {
-                          if (value == null) return;
-                          await _trySaveSettings(
-                            () => _saveViewPreferences(
-                              update: (settings) => settings.copyWith(
-                                autoBackupSettings: settings.autoBackupSettings
-                                    .copyWith(intervalHours: value),
+                      if (_appSettings.isFeatureEnabled(
+                        GakujoFeatureFlag.autoBackup,
+                      ))
+                        GakujoAutoBackupSection(
+                          settings: _appSettings.autoBackupSettings,
+                          onIntervalChanged: (value) async {
+                            if (value == null) return;
+                            await _trySaveSettings(
+                              () => _saveViewPreferences(
+                                update: (settings) => settings.copyWith(
+                                  autoBackupSettings: settings
+                                      .autoBackupSettings
+                                      .copyWith(intervalHours: value),
+                                ),
+                                persist: (settings) =>
+                                    _appSettingsStore.saveAutoBackupSettings(
+                                      settings.autoBackupSettings,
+                                    ),
                               ),
-                              persist: (settings) =>
-                                  _appSettingsStore.saveAutoBackupSettings(
-                                    settings.autoBackupSettings,
-                                  ),
-                            ),
-                          );
-                          if (dialogContext.mounted) setDialogState(() {});
-                        },
-                        onGenerationsChanged: (value) async {
-                          if (value == null) return;
-                          await _trySaveSettings(
-                            () => _saveViewPreferences(
-                              update: (settings) => settings.copyWith(
-                                autoBackupSettings: settings.autoBackupSettings
-                                    .copyWith(generations: value),
+                            );
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                          onGenerationsChanged: (value) async {
+                            if (value == null) return;
+                            await _trySaveSettings(
+                              () => _saveViewPreferences(
+                                update: (settings) => settings.copyWith(
+                                  autoBackupSettings: settings
+                                      .autoBackupSettings
+                                      .copyWith(generations: value),
+                                ),
+                                persist: (settings) =>
+                                    _appSettingsStore.saveAutoBackupSettings(
+                                      settings.autoBackupSettings,
+                                    ),
                               ),
-                              persist: (settings) =>
-                                  _appSettingsStore.saveAutoBackupSettings(
-                                    settings.autoBackupSettings,
-                                  ),
-                            ),
-                          );
-                          if (dialogContext.mounted) setDialogState(() {});
-                        },
-                      ),
+                            );
+                            if (dialogContext.mounted) setDialogState(() {});
+                          },
+                        ),
                     ],
                   ),
                 ),
@@ -5348,8 +5397,35 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                     ? null
                     : () async {
                         if (isClearing) return;
+                        final owner = ModalRoute.of(dialogContext);
                         setDialogState(() => isClearing = true);
                         try {
+                          final confirmed = await showDialog<bool>(
+                            context: dialogContext,
+                            builder: (context) => AlertDialog(
+                              title: const Text('この端末の保存データを削除しますか？'),
+                              content: const Text(
+                                '履歴、お気に入り、スターなどを削除し、この端末の同期とGoogle ドライブへの保存を停止します。',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(false),
+                                  child: const Text('キャンセル'),
+                                ),
+                                FilledButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(true),
+                                  child: const Text('削除する'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed != true ||
+                              !dialogContext.mounted ||
+                              owner?.isCurrent != true) {
+                            return;
+                          }
                           await clearAll();
                           if (!dialogContext.mounted ||
                               ModalRoute.of(dialogContext)?.isCurrent != true) {
@@ -5369,7 +5445,7 @@ class _GakujoWebAppState extends State<GakujoWebApp>
                           }
                         }
                       },
-                child: const Text('全て削除'),
+                child: const Text('この端末の保存データを削除'),
               ),
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),

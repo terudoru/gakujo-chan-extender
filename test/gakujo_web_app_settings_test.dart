@@ -2065,23 +2065,30 @@ void main() {
     );
 
     expect(find.text('バックアップ'), findsOneWidget);
-    expect(find.textContaining('ログイン情報と2FA秘密鍵は含めません'), findsOneWidget);
-    expect(find.text('ファイルから読み込み'), findsOneWidget);
+    expect(find.textContaining('ログイン情報と2FA秘密鍵は含まれません'), findsOneWidget);
+    expect(find.text('バックアップから復元'), findsOneWidget);
 
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'アップデートを確認'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップ作成'));
+    await tester.ensureVisible(
+      find.widgetWithText(OutlinedButton, 'バックアップを作成'),
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップを作成'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'ファイルから読み込み'));
+    await tester.ensureVisible(
+      find.widgetWithText(OutlinedButton, 'バックアップから復元'),
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'バックアップから復元'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.tap(find.widgetWithText(OutlinedButton, '保存先を確認'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
-    await tester.tap(find.widgetWithText(OutlinedButton, 'エラー報告パッケージ作成'));
+    final report = find.widgetWithText(OutlinedButton, '不具合・要望を報告');
+    await tester.ensureVisible(report);
+    await tester.tap(report);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'エラー報告パッケージ作成'));
     await tester.pumpAndSettle();
     await tester.pump();
 
@@ -2151,9 +2158,14 @@ void main() {
       ),
     );
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'ダウンロード履歴'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '失敗したダウンロード'));
-    await tester.tap(find.widgetWithText(OutlinedButton, '授業ごとの資料'));
+    expect(find.byType(OutlinedButton), findsNWidgets(5));
+    final downloads = find.widgetWithText(OutlinedButton, 'ダウンロード記録');
+    for (final label in ['ダウンロード履歴', '失敗したダウンロード', '授業ごとの資料']) {
+      await tester.tap(downloads);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, label));
+      await tester.pumpAndSettle();
+    }
     await tester.tap(find.widgetWithText(OutlinedButton, '保存済み課題一覧'));
     await tester.tap(find.widgetWithText(OutlinedButton, '下書き'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'お気に入り'));
@@ -2228,11 +2240,7 @@ void main() {
     expect(find.text('保存先フォルダ'), findsOneWidget);
     expect(find.text('未設定'), findsOneWidget);
     expect(find.text('フォルダを選択'), findsOneWidget);
-    expect(
-        tester
-            .widget<TextButton>(find.widgetWithText(TextButton, '解除'))
-            .enabled,
-        isFalse);
+    expect(find.widgetWithText(TextButton, '解除'), findsNothing);
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'フォルダを選択'));
     await tester.pump();

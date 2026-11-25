@@ -34,7 +34,7 @@ void main() {
   }
 
   testWidgets(
-    'disabled report keeps package, GitHub action and warning unchanged',
+    'disabled report offers package and GitHub with the public-post warning',
     (tester) async {
       final opened = <Uri>[];
       var packages = 0;
@@ -46,7 +46,10 @@ void main() {
         },
       );
       expect(find.text('アプリから報告する'), findsNothing);
-      expect(find.byType(OutlinedButton), findsNWidgets(2));
+      expect(find.byType(OutlinedButton), findsOneWidget);
+      await tester.tap(find.text('不具合・要望を報告'));
+      await tester.pumpAndSettle();
+      expect(find.text('アプリから報告する'), findsNothing);
       expect(
         find.text('GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。'),
         findsOneWidget,
@@ -54,6 +57,8 @@ void main() {
       await tester.tap(find.text('エラー報告パッケージ作成'));
       await tester.pumpAndSettle();
       expect(packages, 1);
+      await tester.tap(find.text('不具合・要望を報告'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('GitHub で報告（アカウントが必要）'));
       await tester.pumpAndSettle();
       expect(opened, [
@@ -74,7 +79,9 @@ void main() {
         onOpenUrl: (uri) async => opened.add(uri),
         onCreateErrorReport: () async {},
       );
-      expect(find.byType(OutlinedButton), findsNWidgets(3));
+      expect(find.byType(OutlinedButton), findsOneWidget);
+      await tester.tap(find.text('不具合・要望を報告'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('アプリから報告する'));
       await tester.pumpAndSettle();
       expect(find.byType(ReportDialog), findsOneWidget);
@@ -82,6 +89,8 @@ void main() {
       expect(find.text('件名（必須）'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('閉じる'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('不具合・要望を報告'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('GitHub で報告（アカウントが必要）'));
       await tester.pumpAndSettle();

@@ -187,6 +187,13 @@ void main() {
         return ModalRoute.of(tester.element(shortcut))!;
       }
 
+      final downloadsShortcut = find.widgetWithText(OutlinedButton, 'ダウンロード記録');
+      Future<Finder> savedDataAction(String title, Finder shortcut) async {
+        if (shortcut != downloadsShortcut) return shortcut;
+        await tap(shortcut);
+        return find.widgetWithText(ListTile, title);
+      }
+
       try {
         final now = DateTime.now();
         final history = GakujoDownloadHistoryStore();
@@ -257,11 +264,15 @@ void main() {
           ('お気に入り', _favorites, 'Fixture timetable'),
           ('データ管理', _reports, '新着情報・期限・予定'),
         ]) {
-          final shortcut = find.widgetWithText(OutlinedButton, title);
+          final shortcut = switch (title) {
+            'ダウンロード履歴' || '失敗したダウンロード' || '授業ごとの資料' => downloadsShortcut,
+            _ => find.widgetWithText(OutlinedButton, title),
+          };
           final owner = await settings(shortcut);
           final read = pending = _PendingRead(key);
+          final action = await savedDataAction(title, shortcut);
           final before = observer.pushes.length;
-          await tap(shortcut);
+          await tap(action);
           expect(read.started.isCompleted, isTrue, reason: title);
           expect(observer.pushes.length, before);
           final atHold = operations.length;
@@ -305,11 +316,12 @@ void main() {
 
           final current = await settings(shortcut);
           final fresh = pending = _PendingRead(key);
-          await tap(shortcut);
+          await tap(await savedDataAction(title, shortcut));
           expect(fresh.started.isCompleted, isTrue);
           ModalRoute<dynamic>? cover;
           if (key == _favorites) {
             await tap(find.text('このアプリについて'));
+            await tap(find.text('不具合・要望を報告'));
             await tap(find.text('アプリから報告する'));
             cover = ModalRoute.of(tester.element(find.byType(ReportDialog)))!;
             expect(current.isCurrent, isFalse);
@@ -322,6 +334,14 @@ void main() {
             findsOneWidget,
             reason: title,
           );
+          if (title == 'データ管理') {
+            final beforeConfirmation = List<String>.of(operations);
+            await tap(find.text('この端末の保存データを削除'));
+            expect(find.text('この端末の保存データを削除しますか？'), findsOneWidget);
+            expect(operations, beforeConfirmation);
+            await tap(find.text('キャンセル'));
+            expect(operations, beforeConfirmation);
+          }
           await tap(close);
           if (cover != null) {
             expect(cover.isCurrent, isTrue);

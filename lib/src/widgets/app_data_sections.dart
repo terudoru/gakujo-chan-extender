@@ -12,26 +12,104 @@ class SettingsAction {
   const SettingsAction({
     required this.label,
     required this.icon,
-    required this.run,
-  });
+    required this._run,
+    this.description,
+  }) : choices = const [];
+
+  const SettingsAction.chooser({
+    required this.label,
+    required this.icon,
+    required this.choices,
+  }) : _run = null,
+       description = null;
+
   final String label;
   final IconData icon;
-  final Future<void> Function() run;
+  final Future<void> Function()? _run;
+  final String? description;
+  final List<SettingsAction> choices;
+
+  Future<void> run() => _run!();
+}
+
+Future<SettingsAction?> chooseSettingsAction(
+  BuildContext context, {
+  required String title,
+  required List<SettingsAction> actions,
+}) async {
+  final owner = ModalRoute.of(context);
+  final choice = await showDialog<SettingsAction>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text(title),
+      children: [
+        for (final action in actions)
+          ListTile(
+            leading: Icon(action.icon),
+            title: Text(action.label),
+            subtitle: action.description == null
+                ? null
+                : Text(action.description!),
+            onTap: () => Navigator.of(context).pop(action),
+          ),
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('キャンセル'),
+          ),
+        ),
+      ],
+    ),
+  );
+  return context.mounted && owner?.isCurrent != false ? choice : null;
 }
 
 class SettingsActionGroup extends StatefulWidget {
-  const SettingsActionGroup({super.key, required this.actions});
+  const SettingsActionGroup({
+    super.key,
+    required this.actions,
+    this.chooser,
+    this.enabled = true,
+  });
   final List<SettingsAction> actions;
+  final bool enabled;
+  final ({String label, IconData icon})? chooser;
   @override
   State<SettingsActionGroup> createState() => _SettingsActionGroupState();
 }
 
 class _SettingsActionGroupState extends State<SettingsActionGroup> {
   String? _activeDataAction;
+  bool _choosing = false;
 
-  VoidCallback? _dataAction(String label, Future<void> Function() action) {
-    if (_activeDataAction != null) return null;
-    return () => unawaited(_runDataAction(label, action));
+  Future<void> _choose(String label, List<SettingsAction> actions) async {
+    if (!widget.enabled || _choosing || _activeDataAction != null) return;
+    _choosing = true;
+    try {
+      final action = await chooseSettingsAction(
+        context,
+        title: label,
+        actions: actions,
+      );
+      if (mounted && widget.enabled && action != null) {
+        await _runDataAction(action.label, action.run);
+      }
+    } finally {
+      _choosing = false;
+    }
+  }
+
+  VoidCallback? _dataAction(SettingsAction action) {
+    if (!widget.enabled || _activeDataAction != null) return null;
+    return () {
+      if (_choosing) return;
+      if (action.choices.isNotEmpty) {
+        unawaited(_choose(action.label, action.choices));
+      } else {
+        unawaited(_runDataAction(action.label, action.run));
+      }
+    };
   }
 
   Future<void> _runDataAction(
@@ -67,12 +145,21 @@ class _SettingsActionGroupState extends State<SettingsActionGroup> {
         spacing: 8,
         runSpacing: 8,
         children: [
-          for (final action in widget.actions)
+          if (widget.chooser case final chooser?)
             OutlinedButton.icon(
-              onPressed: _dataAction(action.label, action.run),
-              icon: Icon(action.icon),
-              label: Text(action.label),
-            ),
+              onPressed: widget.enabled && _activeDataAction == null
+                  ? () => unawaited(_choose(chooser.label, widget.actions))
+                  : null,
+              icon: Icon(chooser.icon),
+              label: Text(chooser.label),
+            )
+          else
+            for (final action in widget.actions)
+              OutlinedButton.icon(
+                onPressed: _dataAction(action),
+                icon: Icon(action.icon),
+                label: Text(action.label),
+              ),
         ],
       ),
       if (_activeDataAction != null)
@@ -96,35 +183,79 @@ class _SettingsActionGroupState extends State<SettingsActionGroup> {
 class AppBackupSection extends StatelessWidget {
   const AppBackupSection({
     super.key,
-    required this.onCreateBackup,
-    required this.onImportSettingsFromFile,
+    this.onCreateBackup,
+    this.onImportSettingsFromFile,
+    this.onCreateDriveBackup,
+    this.onListDriveBackups,
+    this.enabled = true,
   });
-  final Future<void> Function() onCreateBackup,
-      onImportSettingsFromFile;
+  final Future<void> Function()? onCreateBackup,
+      onImportSettingsFromFile,
+      onCreateDriveBackup,
+      onListDriveBackups;
+  final bool enabled;
+
+  SettingsAction _backupAction(
+    String label,
+    IconData icon,
+    List<SettingsAction> choices,
+  ) => choices.length == 1
+      ? SettingsAction(label: label, icon: icon, run: choices.single.run)
+      : SettingsAction.chooser(label: label, icon: icon, choices: choices);
+
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Text('バックアップ', style: Theme.of(context).textTheme.titleSmall),
-      const SizedBox(height: 8),
-      const Text('設定、履歴、お気に入り、保存済み課題一覧をファイルに保存します。ログイン情報と2FA秘密鍵は含めません。'),
-      const SizedBox(height: 8),
-      SettingsActionGroup(
-        actions: [
-          SettingsAction(
-            label: 'バックアップ作成',
-            icon: Icons.backup_outlined,
-            run: onCreateBackup,
-          ),
-          SettingsAction(
-            label: 'ファイルから読み込み',
-            icon: Icons.file_open_outlined,
-            run: onImportSettingsFromFile,
-          ),
-        ],
-      ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final create = [
+      if (onCreateBackup case final run?)
+        SettingsAction(
+          label: 'ファイルに保存',
+          icon: Icons.save_alt,
+          run: run,
+          description: 'この端末の設定やダウンロード履歴などをJSONに保存します。',
+        ),
+      if (onCreateDriveBackup case final run?)
+        SettingsAction(
+          label: 'Google ドライブに保存',
+          icon: Icons.cloud_upload_outlined,
+          run: run,
+          description: '同期対象のデータを暗号化し、この端末のバックアップを更新します。',
+        ),
+    ];
+    final restore = [
+      if (onImportSettingsFromFile case final run?)
+        SettingsAction(
+          label: 'ファイルから読み込み',
+          icon: Icons.file_open_outlined,
+          run: run,
+          description: '端末の設定やダウンロード履歴などを復元します。',
+        ),
+      if (onListDriveBackups case final run?)
+        SettingsAction(
+          label: 'Google ドライブから復元',
+          icon: Icons.cloud_download_outlined,
+          run: run,
+          description: '同期対象のデータを復元します。端末固有の設定やダウンロード履歴は保持します。',
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('バックアップ', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        const Text('バックアップにログイン情報と2FA秘密鍵は含まれません。'),
+        const SizedBox(height: 8),
+        SettingsActionGroup(
+          enabled: enabled,
+          actions: [
+            if (create.isNotEmpty)
+              _backupAction('バックアップを作成', Icons.backup_outlined, create),
+            if (restore.isNotEmpty)
+              _backupAction('バックアップから復元', Icons.file_open_outlined, restore),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class AppUpdateSection extends StatefulWidget {
@@ -212,18 +343,14 @@ class AppSupportSection extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Text('不具合・要望の報告', style: Theme.of(context).textTheme.titleSmall),
-      const SizedBox(height: 8),
-      if (reportEndpoint != null) ...[
-        const Text('GitHub のアカウントがなくても、アプリから不具合や要望を送れます。'),
-        const SizedBox(height: 8),
-      ],
       SettingsActionGroup(
+        chooser: (label: '不具合・要望を報告', icon: Icons.feedback_outlined),
         actions: [
           if (reportEndpoint case final endpoint?)
             SettingsAction(
               label: 'アプリから報告する',
               icon: Icons.feedback_outlined,
+              description: 'GitHub アカウントを使わずに送信します。',
               run: () async {
                 unawaited(
                   showDialog<void>(
@@ -245,11 +372,14 @@ class AppSupportSection extends StatelessWidget {
           SettingsAction(
             label: 'エラー報告パッケージ作成',
             icon: Icons.inventory_2_outlined,
+            description: '報告用ファイルを端末に作成します。',
             run: onCreateErrorReport,
           ),
           SettingsAction(
             label: 'GitHub で報告（アカウントが必要）',
             icon: Icons.open_in_new,
+            description:
+                'GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。',
             run: () => onOpenUrl(
               Uri.parse(
                 'https://github.com/terudoru/gakujo-chan-extender/issues/new',
@@ -258,8 +388,6 @@ class AppSupportSection extends StatelessWidget {
           ),
         ],
       ),
-      const SizedBox(height: 8),
-      const Text('GitHub の投稿はすぐに公開されます。氏名・学籍番号・ログイン情報・学情の画面内容は書かないでください。'),
     ],
   );
 }
@@ -289,31 +417,37 @@ class AppDataShortcutsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'データと履歴',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        const Text('保存したデータ、履歴、課題一覧を確認します。'),
-        const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
             OutlinedButton.icon(
-              onPressed: () => unawaited(onShowDownloadHistory()),
+              onPressed: () async {
+                final choice = await chooseSettingsAction(
+                  context,
+                  title: 'ダウンロード記録',
+                  actions: [
+                    SettingsAction(
+                      label: 'ダウンロード履歴',
+                      icon: Icons.history,
+                      run: onShowDownloadHistory,
+                    ),
+                    SettingsAction(
+                      label: '失敗したダウンロード',
+                      icon: Icons.error_outline,
+                      run: onShowFailedDownloads,
+                    ),
+                    SettingsAction(
+                      label: '授業ごとの資料',
+                      icon: Icons.folder_copy_outlined,
+                      run: onShowCourseMaterials,
+                    ),
+                  ],
+                );
+                await choice?.run();
+              },
               icon: const Icon(Icons.history),
-              label: const Text('ダウンロード履歴'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => unawaited(onShowFailedDownloads()),
-              icon: const Icon(Icons.error_outline),
-              label: const Text('失敗したダウンロード'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => unawaited(onShowCourseMaterials()),
-              icon: const Icon(Icons.folder_copy_outlined),
-              label: const Text('授業ごとの資料'),
+              label: const Text('ダウンロード記録'),
             ),
             OutlinedButton.icon(
               onPressed: () => unawaited(onShowCachedReports()),

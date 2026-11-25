@@ -198,7 +198,7 @@ void main() {
       try {
         // The app's shared storage queues need one widget-test clock across mounts.
         for (final shortcut in ['ダウンロード履歴', '授業ごとの資料']) {
-          final button = find.widgetWithText(OutlinedButton, shortcut);
+          final button = find.widgetWithText(OutlinedButton, 'ダウンロード記録');
           final pops = _Pops();
           late ModalRoute<dynamic> settings;
           Future<void> openSettings() async {
@@ -223,9 +223,12 @@ void main() {
           }
 
           Future<void> copy(String name) async {
+            await tap(button);
+            final option = find.widgetWithText(ListTile, shortcut);
+            final chooser = ModalRoute.of(tester.element(option))!;
             final previousPops = List.of(pops.routes);
             final previousWrites = List.of(writes);
-            await tap(button);
+            await tap(option);
             if (shortcut == '授業ごとの資料') await tap(find.text(_course));
             Finder row(String name) => find.ancestor(
               of: find.text(name),
@@ -248,7 +251,7 @@ void main() {
             final dialog = ModalRoute.of(tester.element(icon(name)))!;
             await tap(icon(name));
             expect(writes, [...previousWrites, label]);
-            expect(pops.routes, [...previousPops, same(dialog)]);
+            expect(pops.routes, [...previousPops, same(chooser), same(dialog)]);
             expect(settings.isCurrent, isTrue);
             expect(button.hitTestable(), findsOneWidget);
           }
@@ -267,7 +270,7 @@ void main() {
           await reply();
           expect(clipboard, label);
           expect(success, findsOneWidget);
-          expect(pops.routes, hasLength(1));
+          expect(pops.routes, hasLength(2));
 
           for (final file in _files.entries) {
             await copy(file.key);

@@ -95,11 +95,12 @@ class TwoFactorSecretSection extends StatelessWidget {
                 icon: const Icon(Icons.key),
                 label: const Text('秘密鍵を保存'),
               ),
-              TextButton.icon(
-                onPressed: onClear != null ? () => unawaited(onClear!()) : null,
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('秘密鍵を削除'),
-              ),
+              if (onClear case final clear?)
+                TextButton.icon(
+                  onPressed: () => unawaited(clear()),
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('秘密鍵を削除'),
+                ),
             ],
           ),
         ],
@@ -209,15 +210,12 @@ class LoginCredentialsSection extends StatelessWidget {
                   icon: const Icon(Icons.login),
                   label: const Text('ログイン情報を保存'),
                 ),
-                TextButton.icon(
-                  // The visible state may be cleared even if deletion of a
-                  // legacy credential failed; keep deletion retryable.
-                  onPressed: onClear != null
-                      ? () => unawaited(onClear!())
-                      : null,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('ログイン情報を削除'),
-                ),
+                if (onClear case final clear?)
+                  TextButton.icon(
+                    onPressed: () => unawaited(clear()),
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('ログイン情報を削除'),
+                  ),
               ],
             ),
           ],
@@ -267,38 +265,38 @@ class DownloadDestinationSection extends StatelessWidget {
             border: OutlineInputBorder(),
           ),
         ),
-        const SizedBox(height: 8),
-        InputDecorator(
-          decoration: const InputDecoration(
-            labelText: '保存先フォルダ',
-            border: OutlineInputBorder(),
-          ),
-          child: Text(rootLabel),
-        ),
-        if (helperText != null) ...[
+        if (saveMode.needsConfiguredRoot) ...[
           const SizedBox(height: 8),
-          Text(
-            helperText!,
-            style: Theme.of(context).textTheme.bodySmall,
+          InputDecorator(
+            decoration: const InputDecoration(
+              labelText: '保存先フォルダ',
+              border: OutlineInputBorder(),
+            ),
+            child: Text(rootLabel),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onPick,
+                icon: const Icon(Icons.folder_open),
+                label: const Text('フォルダを選択'),
+              ),
+              if (isConfigured)
+                TextButton.icon(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.link_off),
+                  label: const Text('解除'),
+                ),
+            ],
           ),
         ],
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: onPick,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('フォルダを選択'),
-            ),
-            TextButton.icon(
-              onPressed: isConfigured ? onClear : null,
-              icon: const Icon(Icons.link_off),
-              label: const Text('解除'),
-            ),
-          ],
-        ),
+        if (helperText != null) ...[
+          const SizedBox(height: 8),
+          Text(helperText!, style: Theme.of(context).textTheme.bodySmall),
+        ],
       ],
     );
   }
@@ -352,6 +350,7 @@ class SettingsExpansionSection extends StatelessWidget {
     required this.child,
     this.initiallyExpanded = false,
     this.focusNodeOnExpand,
+    this.onExpansionChanged,
     this.subtitle,
   });
 
@@ -361,6 +360,7 @@ class SettingsExpansionSection extends StatelessWidget {
   final Widget child;
   final bool initiallyExpanded;
   final FocusNode? focusNodeOnExpand;
+  final ValueChanged<bool>? onExpansionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -374,6 +374,7 @@ class SettingsExpansionSection extends StatelessWidget {
       childrenPadding: const EdgeInsets.only(bottom: 16),
       expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
       onExpansionChanged: (expanded) {
+        onExpansionChanged?.call(expanded);
         final focusNode = focusNodeOnExpand;
         if (!expanded || focusNode == null) {
           return;
@@ -1005,8 +1006,9 @@ class DriveSaveFolderTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
     dense: true,
     contentPadding: EdgeInsets.zero,
-    title: const Text('保存先フォルダ'),
+    title: const Text('Google ドライブの保存先フォルダ'),
     subtitle: Text(name ?? '既定（マイドライブ / More Better Gakujo）'),
-    trailing: TextButton(onPressed: onChange, child: const Text('変更')),
+    onTap: onChange,
+    trailing: const Icon(Icons.chevron_right),
   );
 }
